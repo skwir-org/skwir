@@ -3269,3 +3269,33 @@ and fix bug or problems you encounter on the way". This is the first.
   until the plugin noted what the trash holds, then read the place's
   icon at once, which `publish` replaces after letting go of its lock
   (watches set up between). The test now waits for the icon too.
+
+## KWallet tried; a refused copy's folder seen swept (2026-10-22, ADR-081, ADR-082)
+
+- KWallet 6.30 in a window on Xvfb, on a private bus with KIO's,
+  kio-fuse's and KWallet's services: `ksecretd` keeps the wallets and
+  answers the Secret Service, `kwalletd6` is KWallet's old interface
+  over it. KDE's password dialog, Remember ticked, wrote the password
+  into `kdewallet`; KIO's session then ended (kio-fuse's mount, `kiod6`
+  stopped, the wallet left open as a session keeps it), Skwir restarted:
+  the server opened with nothing asked, and kio-fuse alone (`mountUrl`
+  over the bus, no `kioclient`) mounted it, the password read from
+  KWallet. Skwir's three keyring tests (the platform's two, the remote
+  plugin's) pass against KWallet's Secret Service on that bus.
+- Found: on a profile without `kdewallet` (no `kwalletrc`, or one naming
+  it), KWallet asked to make a wallet with no name ("Failed to query
+  default collection" in its log), made `.kwl`, and KDE's password
+  server then hung: any KIO job waiting on it hung (a plain `kioclient
+  ls` for 30 s). A Plasma login makes `kdewallet`; the trial made it
+  through the Secret Service (`CreateCollection`, alias `default`).
+  KWallet's, not Skwir's: Skwir's connection can be cancelled meanwhile.
+- What a copy refused at close left on rclone's WebDAV: probed every 5 s
+  with the server's folder cache at 15 s. Its entry of the cut-off
+  upload (`0`) went when the server read the folder again (15 s), and
+  the sweep then removed the staging folder (gone by 20 s). The test now
+  ends so, through the remote plugin (`Known::forget`) and
+  `App::sweep_left_on`: 2 of 2 pass, about 16 s each. With rclone's
+  default cache (5 minutes) the first sweep after it removes the folder;
+  a sweep runs when the plugin asks its mounts whether they answer: as
+  Skwir starts, after a connection is made or let go of, and on Refresh
+  remote folders.

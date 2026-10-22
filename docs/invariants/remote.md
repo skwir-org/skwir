@@ -330,6 +330,16 @@ ADR-077 (which revises ADR-021).
   its user `tester` is the user and `nobody` its guest (`nss_wrapper`),
   on a port of its own; a share asking `tester`'s password, one a guest
   opens (KIO's password dialog no test answers).
+- KDE's dialogs and KWallet are tried in a window on a display of its
+  own, the bus started with that display so `kiod` and `ksecretd` draw
+  there. KWallet 6.30 is `ksecretd` (wallets, the Secret Service) with
+  `kwalletd6` over it: make `kdewallet` first through the Secret Service
+  (`CreateCollection`, alias `default`, then its prompt), as a Plasma
+  login leaves it; without one, KDE's password server asks for a wallet
+  with no name and then hangs. A server's cut-off upload stays an entry
+  in rclone's folder until it reads the folder again: a test that waits
+  for what a refused copy left to be swept gives rclone a short
+  `--dir-cache-time` (15 s), never 0.
 - A server that runs as root (unfs3 with rpcbind for NFS, netatalk for
   AFP) runs in namespaces of its own, user (root mapped to the user,
   subordinate ids beside it), network, mount and pid, with a GVfs of its

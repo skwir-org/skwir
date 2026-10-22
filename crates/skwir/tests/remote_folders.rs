@@ -2770,11 +2770,19 @@ fn a_copy_its_server_refuses_as_it_is_closed_is_told_so_a_move_keeps_its_origina
     std::fs::create_dir_all(served_root.join("into")).unwrap();
     // A server that makes a file but takes no more than a MiB in all:
     // over WebDAV, kio-fuse makes the file as it is opened and sends it up
-    // as it is closed, where the server refuses it.
+    // as it is closed, where the server refuses it. It reads its folders
+    // again after 15 seconds (5 minutes by default).
     let served = Served::start(
         "webdav",
         &served_root,
-        &["--max-transfer", "1M", "--cutoff-mode", "hard"],
+        &[
+            "--max-transfer",
+            "1M",
+            "--cutoff-mode",
+            "hard",
+            "--dir-cache-time",
+            "15s",
+        ],
     );
     let private = PrivateKio::start(&packages, &base);
     let kio = Kio {
@@ -2822,10 +2830,38 @@ fn a_copy_its_server_refuses_as_it_is_closed_is_told_so_a_move_keeps_its_origina
         !served_root.join("into/two MiB.bin").exists(),
         "nothing placed on the server"
     );
-    // What the refused copies left is not swept here: rclone's server keeps
-    // an entry of the upload it cut off that is no folder and holds the
-    // folder (`App::sweep_left_on` tells kio-fuse to forget first, which a
-    // server without such an entry needs).
+    // What the refused copies left is swept once the server lets go of it:
+    // rclone's keeps an entry of the upload it cut off (no folder, the
+    // folder never empty) until it reads the folder again, and kio-fuse is
+    // told to forget what it listed first (`App::sweep_left_on`, with the
+    // forget the plugin knows the mount by).
+    let remotes = Remotes::with(vec![Arc::new(Kio {
+        env: private.env.clone(),
+        runtime: Some(private.runtime.clone()),
+        ..Kio::default()
+    })]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    until(&app, 20, "the mount is known with its forget", || {
+        app.remote(&into)
+            .is_some_and(|(_, known)| known.is_some_and(|k| k.forget.is_some()))
+    });
+    let left = || {
+        std::fs::read_dir(served_root.join("into"))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".skwir-copy-"))
+            .count()
+    };
+    assert!(left() > 0, "the refused copies left their folder");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while left() > 0 {
+        assert!(
+            Instant::now() < deadline,
+            "what the refused copies left stays"
+        );
+        app.sweep_left_on(&connected.point);
+        std::thread::sleep(Duration::from_millis(500));
+    }
     drop(app);
     drop(private);
     drop(served);

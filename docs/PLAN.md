@@ -1338,10 +1338,8 @@ protocol is a scheme a connector maps, or a connector.
   certificate not trusted kio-fuse waits for good); a mount's `Known`
   published before its folder is shown (an F5 there was flaky).
 - **G. Left** (each its own step):
-  - KIO: KWallet and a Plasma session's own kio-fuse not tried (KDE's
-    dialogs tried in a window: passwords, certificates); a copy refused
-    at close leaves its staging folder where the server keeps an entry
-    of the refused upload (rclone's did): not seen swept;
+  - KIO: a Plasma session's own kio-fuse not tried (KDE's dialogs and
+    KWallet tried in a window);
   - an iPhone's (AFC) and a camera's (gPhoto2) GVfs mounts, not
     measured, at the bridge's pace;
   - Automatic's Small files where reads proved fast (only the local

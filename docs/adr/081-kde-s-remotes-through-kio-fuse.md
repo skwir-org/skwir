@@ -121,8 +121,10 @@ seventh decision for KIO alone.
   file read there is first downloaded whole into a file of kio-fuse's
   (in `/tmp`, often memory).
 - A copy refused as it was closed leaves its staging folder on the
-  server (kio-fuse will not remove what it still means to send): noted,
-  and swept once removable (ADR-078), which was not seen.
+  server: noted, and swept once removable (ADR-078), kio-fuse told to
+  forget first. Against rclone's WebDAV it is removable once the server
+  reads the folder again (5 minutes by default): until then it keeps an
+  entry of the upload it cut off. Tested so, the server's cache at 15 s.
 - Copies to and from KIO's remotes go in batches by eight `kioclient
   copy` at once (ADR-078), measured against copies through the mount
   (2026-10-22, 100 files of 16 KiB, a server 20 ms away): WebDAV up 11.2 s
@@ -139,4 +141,10 @@ seventh decision for KIO alone.
   tried in a window on a display of its own, not by the tests: a
   password over WebDAV (asked, cancelled, asked again), a certificate not
   trusted over HTTPS with and without a password, accepted and refused.
-  KWallet was not tried.
+  KWallet (6.30, `ksecretd` with `kwalletd6` beside it) was tried so too:
+  a password KDE was told to remember was found by kio-fuse alone once
+  KIO's session had ended, and Skwir's keyring tests (ADR-082) pass
+  against KWallet's Secret Service. Its wallet `kdewallet` was made
+  first, as a Plasma login does: on a profile without one, KWallet
+  asked to make a wallet with no name, and KDE's password server then
+  hung (a matter of KWallet's, not Skwir's).
