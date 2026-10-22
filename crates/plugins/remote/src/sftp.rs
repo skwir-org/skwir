@@ -13,7 +13,8 @@
 //! sshfs holds for Skwir's mount, the user's own ssh for theirs), asking
 //! nothing. A path goes in double quotes, `"` and `\` escaped: sftp
 //! escapes the glob characters within quotes itself. `put -p` and `get
-//! -p` keep modes and times. Nothing is replaced: a file placed beside
+//! -p` keep modes and times. A file a run cut short was writing, read
+//! back as its source's start, is gone on from by `reput` (ADR-080). Nothing is replaced: a file placed beside
 //! what is there is written in the staging folder, then linked to its
 //! name (`ln`, which the server refuses where the name is taken) and its
 //! first name removed; a link is made where it goes (`symlink`, refused
@@ -331,6 +332,11 @@ impl Transfer for Sftp {
         "sftp"
     }
 
+    /// A file a run cut short was writing is gone on from (`reput`).
+    fn goes_on(&self) -> bool {
+        true
+    }
+
     /// An sshfs mount: it reads the folder from the server again.
     fn show(&self, folder: &Path) -> bool {
         let shown = Mount::of(folder).is_some();
@@ -409,8 +415,9 @@ impl Transfer for Sftp {
         told: &Told<'_>,
         control: &Control,
     ) -> anyhow::Result<()> {
-        // A file cut short starts again (no `put -a`: what it appends to is
-        // never read back); what a run cut short finished stays (`Layout`).
+        // What a run cut short finished stays (`Layout`); a file it was
+        // writing, read back as its source's start (`aside.goes_on`), is
+        // gone on from by `reput` (`put -a`), which appends from its size.
         let temp = aside.temp;
         let sftp = program().ok_or_else(|| anyhow::anyhow!("sftp is not installed"))?;
         let Some(mount) = self.mount_of(into) else {
@@ -442,7 +449,7 @@ impl Transfer for Sftp {
         let here = |path: &Path| local(path).ok_or_else(|| unsaid(path));
         let layout = match temp {
             Some(_) => Layout::files(from, names, into),
-            None => Layout::made(from, names, into)?,
+            None => Layout::made(from, names, into, aside)?,
         };
         if within {
             return self.copy_within(sftp, &mount, &layout, temp, told, control);
@@ -459,9 +466,13 @@ impl Transfer for Sftp {
                 continue;
             }
             let Some(temp) = temp else {
+                let (put, left) = match aside.goes_on.from(dst) {
+                    Some(held) => ("reput", meta.len().saturating_sub(held)),
+                    None => ("put", meta.len()),
+                };
                 files.push((
-                    vec![format!("@put -p {} {}", here(src)?, server(dst)?)],
-                    meta.len(),
+                    vec![format!("@{put} -p {} {}", here(src)?, server(dst)?)],
+                    left,
                 ));
                 continue;
             };

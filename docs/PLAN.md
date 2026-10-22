@@ -1339,7 +1339,9 @@ protocol is a scheme a connector maps, or a connector.
   published before its folder is shown (an F5 there was flaky). Then
   (2026-10-23, the list the user validated for the night): a remote
   folder's bookmark renamed and moved among the folders', in the file's
-  order.
+  order; a batch cut short goes on from the file it was writing, by
+  Skwir's own copy and sftp's `reput`, its source unchanged and its last
+  part read back (`gio` and `kioclient` make it again).
 - **G. Left** (each its own step):
   - an iPhone's (AFC) ways chosen by requests counted against a
     stand-in, an iPhone's own pace not timed (no iPhone at hand);
@@ -1351,9 +1353,7 @@ protocol is a scheme a connector maps, or a connector.
     macFUSE; all compiled only until Phase 5b;
   - a GVfs mount made by another program is used, but its questions are
     the desktop's (Skwir's own connections offer Remember, ADR-082);
-  - going on from a file of a folder copied whole, or one a tool's
-    batch was making (rsync's `--partial-dir`, sftp's `reput`); a retry
-    by itself once a server answers again (ADR-080);
+  - a retry by itself once a server answers again (ADR-080);
   - ADR-077's point 8, if asked: a helper of Skwir's serving SFTP
     through OpenSSH as a connector, then rclone's API for server-side
     copies.

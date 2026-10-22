@@ -91,6 +91,15 @@ asked).
    on. A copy's check calls a target already done when it is its
    source to the second where either keeps no more (`same_tree`),
    as a batch placed it on a server keeping seconds.
+   (2026-10-23, the user's night list) Skwir's own batch and sftp's go on
+   from the file they were writing too, as a large file does (5): each
+   file's source is noted as the batch lays it out (`transfer::Layout`,
+   kept with the batch), and the retry keeps a file cut short whose
+   source is still so, as far as its last part reads as the source's,
+   cut there (`transfer::keep_finished`). Skwir's own copy appends to it;
+   sftp's by `reput` (`put -a`), what it appends to read back first. A
+   transfer that makes each file anew (`gio`, `kioclient`:
+   `Transfer::goes_on`) finds none: they are removed before it copies.
 8. **Not Windows' restartable copy.** Windows' own copy, which keeps
    what a byte copy loses there, can track its progress in the file it
    makes and start again from it (`COPY_FILE_RESTARTABLE`), but flushes
@@ -116,10 +125,13 @@ asked).
   in order (`op::ranges`): the ranges after it would land too soon.
 - A folder copied whole, cut short, keeps what it finished, and its file
   under way goes on (6); a batch cut short too, its file under way gone
-  on by rsync, made again by sftp and `gio` (7). A batch's folder is
-  kept only when its steps fail after it: where they copy what it left
-  (the batch's tool failed alone), the plan ends as before.
-- Not gone on from: a file a batch by sftp or `gio` was writing; a file
+  on by rsync, Skwir's own batch and sftp, made again by `gio` (7). A
+  batch's folder is kept only when its steps fail after it: where they
+  copy what it left (the batch's tool failed alone), the plan ends as
+  before.
+- Not gone on from: a file a batch by `gio` or `kioclient` was writing,
+  or one placed beside what is there (made in a folder of its own each
+  run); a file
   alone that `gio` takes (ADR-078, 16); a copy by Windows' system copy
   (8); a folder whose tool kept nothing, killed outright. No retry happens by itself when a server is back:
   the user, or an agent, asks.

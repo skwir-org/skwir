@@ -1356,7 +1356,11 @@ pub(super) fn finish(df: std::fs::File, src: &Path) -> anyhow::Result<()> {
 /// source's start, or a server that wrote it out of order). A copy cut
 /// short is read back where the system says what it wrote (Unix);
 /// elsewhere it starts again.
-fn goes_on_from(sf: &std::fs::File, df: &std::fs::File, len: u64) -> std::io::Result<u64> {
+pub(super) fn goes_on_from(
+    sf: &std::fs::File,
+    df: &std::fs::File,
+    len: u64,
+) -> std::io::Result<u64> {
     let have = df.metadata()?.len();
     if have == 0 || have > len {
         return Ok(0);

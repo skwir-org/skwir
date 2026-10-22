@@ -158,14 +158,20 @@ pub(super) enum Kept {
 }
 
 /// What a batch cut short made (`transfer::batch`): the folder it copied
-/// into, where it did, and the folder a tool keeps a file it was writing
-/// in (rsync's `--partial-dir`), maybe never made.
+/// into, where it did, the folder a tool keeps a file it was writing in
+/// (rsync's `--partial-dir`), maybe never made, and the sources of the
+/// files it laid out there as they were then (`transfer::Layout`): a file
+/// it was writing is gone on from while its source is still so.
 #[derive(Debug, Clone)]
 pub(super) struct KeptBatch {
     pub(super) from: PathBuf,
     pub(super) into: Option<PathBuf>,
     pub(super) partial: PathBuf,
+    pub(super) sources: std::collections::HashMap<PathBuf, Was>,
 }
+
+/// A source as a copy found it: its length, and when it was modified.
+pub(super) type Was = (u64, Option<std::time::SystemTime>);
 
 /// A file a copy writes byte by byte from its start: where, and its
 /// source as it was then, its length and when it was modified.

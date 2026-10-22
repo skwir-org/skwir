@@ -3484,3 +3484,41 @@ below), worked through in order, each committed after its checks.
   and Move Down, Move Down alone once first) and Rename… wrote the file;
   a folder dragged above the address went before it. A toast now says a
   name as the file keeps it, on one line.
+
+### A batch cut short goes on from the file it was writing
+
+- Before: a batch's retry kept what it had finished and made the file it
+  was writing again, but rsync's (`--partial-dir`). Now Skwir's own
+  batch and sftp's sessions go on from it too (ADR-080, 7, amended).
+  `Layout::made` notes each file's source as it lays the batch out
+  (length and time, kept with the batch); the retry's `keep_finished`
+  keeps a file cut short whose source is still so, as far as its last
+  MiB reads as the source's (`builtin::goes_on_from`, four back at
+  most), cut there, and hands it to the transfer (`Aside::goes_on`).
+  Skwir's own copy appends to it; sftp says `reput -p` for it (OpenSSH's
+  `put -a`, which appends from the server's size: what it appends to was
+  read back and cut first). A transfer that makes each file anew
+  (`Transfer::goes_on` false: `gio`, `kioclient`) is given none: they
+  are removed first. A file placed beside what is there still starts
+  again (a folder of its own each run).
+- Tested in core: a test transfer writes a 20 MiB file's first 12 MiB,
+  its first byte changed, then fails as a server gone; the retry's copy
+  keeps that byte (gone on from, never read again), and copies the file
+  whole when its source's time changed since or the transfer makes files
+  anew (`a_batch_cut_short_goes_on_from_the_file_it_was_writing`).
+  Against OpenSSH's server of the test's own, SFTP-only (no rsync): a
+  folder of 16 and 160 MiB sent by sftp sessions, the server stopped
+  mid-file, the file cut short marked on the server, Retry: the mark
+  stays and the rest is the source's; down, Skwir's own copy through the
+  mount, the same on this machine
+  (`a_folder_cut_short_on_an_sftp_only_server_goes_on_from_its_file`).
+  With sftp's going on turned off, the test fails at the mark.
+- Found running the whole of `remote_folders` after it:
+  `gvfs_opens_an_smb_share_its_password_kept` failed once in that run
+  (alone, 5 of 5 pass): its 300 MiB read through GVfs's bridge, under
+  way while the share was let go of, ended in an I/O error. GVfs
+  refuses to unmount only while one of its reads runs; under load, one
+  of the disconnect's asks fell between two reads and was granted. The
+  test claimed the read whole, which GVfs never promised: it now takes
+  the read whole or cut so, the disconnect having waited its refusals
+  out (what it checks); remote.md says so.

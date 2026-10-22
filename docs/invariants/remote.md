@@ -172,7 +172,11 @@ ADR-077 (which revises ADR-021).
   not reach is remembered for its mount. rsync keeps a file it was
   writing when cut short in the staging folder (`--partial-dir`, an
   absolute path on the receiving side, else none), which its retry goes
-  on from (ADR-080, 7).
+  on from (ADR-080, 7). Skwir's own batch and sftp's go on from the file
+  they were writing (`Transfer::goes_on`, `Aside::goes_on`, sftp's
+  `reput`): its source noted as the batch laid it out (`Layout::made`),
+  still so, and its last part read back as the source's; a transfer that
+  makes each file anew finds none there.
   A connector offers transfers for its mounts (`Connector::transfers`).
   A copy made with its source's mode is not given it again.
 - The originals of moves from GVfs are removed together by `gio remove`
@@ -259,7 +263,9 @@ ADR-077 (which revises ADR-021).
   used it. GVfs refuses too while its backend is at work (a read through
   its bridge, a folder just listed through it, closed after the bridge's
   release returned): `Gvfs::disconnect` asks again while the mount is
-  still there, five seconds at most (`BUSY_PATIENCE`).
+  still there, five seconds at most (`BUSY_PATIENCE`). It refuses only
+  while a read of its runs: between two, it lets go, and what another
+  program was reading there is cut.
 - The system refuses to unmount a folder watched as one used (GVfs's
   trash puts a watch on the top of every mount, inotify). Refused as
   busy, `mounter::unmount` asks what uses the mount

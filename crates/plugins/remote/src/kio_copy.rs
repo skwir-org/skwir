@@ -353,7 +353,7 @@ impl Transfer for KioCopy {
         let (copied, placed, temp) = (told.copied, told.placed, aside.temp);
         let layout = match temp {
             Some(_) => Layout::files(from, names, into),
-            None => Layout::made(from, names, into)?,
+            None => Layout::made(from, names, into, aside)?,
         };
         // Beside what is there, each is copied into `temp` first.
         let files: Vec<(PathBuf, PathBuf, u64)> = layout

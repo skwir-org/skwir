@@ -52,7 +52,7 @@ use anyhow::Context;
 use parking_lot::{Mutex, RwLock};
 
 use super::context::{CopiedAs, Pause};
-use super::staging::KeptBatch;
+use super::staging::{KeptBatch, Was};
 use super::{Cancelled, Copy, Delete, Move, Operation, StepContext, Uncopy};
 use crate::cancel::CancelToken;
 use crate::companions::Companions;
@@ -113,6 +113,14 @@ pub trait Transfer: Send + Sync {
         control: &Control,
     ) -> anyhow::Result<()>;
 
+    /// Whether it goes on from a file a run cut short was writing
+    /// ([`Aside::goes_on`]: the start of its source, read back) rather
+    /// than making it anew (sftp's `reput`). One that does not is given
+    /// none: they are removed before it copies.
+    fn goes_on(&self) -> bool {
+        false
+    }
+
     /// Whether, without `aside.temp`, it may be given as `into` the
     /// destination itself, which moves nothing between its folders (a
     /// camera, ADR-083: `fs::reach::writes_in_place`): it makes there only
@@ -161,7 +169,8 @@ pub trait Transfer: Send + Sync {
 }
 
 /// The folders a transfer writes in beside the one it copies into
-/// ([`Transfer::copy`]).
+/// ([`Transfer::copy`]), and what a run cut short left in it.
+#[derive(Clone, Copy)]
 pub struct Aside<'a> {
     /// Where a file placed beside what is there is written until whole.
     pub temp: Option<&'a Path>,
@@ -170,7 +179,48 @@ pub struct Aside<'a> {
     /// side that receives, made by the tool if it needs it. Kept with the
     /// staging folder for Retry.
     pub partial: &'a Path,
+    /// The files a batch a run cut short was writing in `into`, kept to be
+    /// gone on from (ADR-080): each the start of its source as it is now,
+    /// read back. Given to a transfer that goes on ([`Transfer::goes_on`]);
+    /// to another, none (they are removed first).
+    pub goes_on: &'a GoesOn,
+    /// Where [`Layout::made`] notes each file's source as it lays it out:
+    /// what a retry checks a file cut short against.
+    pub(crate) laid_out: Option<&'a LaidOut>,
 }
+
+/// The files a run cut short was writing, kept to be gone on from, with
+/// the bytes each holds ([`Aside::goes_on`]).
+#[derive(Debug, Default)]
+pub struct GoesOn(HashMap<PathBuf, u64>);
+
+impl GoesOn {
+    /// The bytes the file at `dst` holds, the start of its source, to go
+    /// on from; `None` for a file made anew.
+    pub fn from(&self, dst: &Path) -> Option<u64> {
+        self.0.get(dst).copied()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Remove them, for a transfer that makes each anew.
+    fn remove(&self) {
+        for dst in self.0.keys() {
+            if let Err(error) = std::fs::remove_file(dst)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!("a copy cut short stays: {error}");
+            }
+        }
+    }
+}
+
+/// The sources of the files a batch laid out, as they were then
+/// ([`Aside::laid_out`]).
+#[derive(Debug, Default)]
+pub(crate) struct LaidOut(Mutex<HashMap<PathBuf, Was>>);
 
 /// What a transfer tells as it copies ([`Transfer::copy`]).
 pub struct Told<'a> {
@@ -851,6 +901,8 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
     // tool kept the file it was writing in.
     let kept = ctx.kept_batch(from, dest);
     let (mut made_in, mut partial_in, mut finished) = (None, None, 0);
+    let laid_out = LaidOut::default();
+    let none = GoesOn::default();
     let made = (|| {
         let (staging, name) = ctx.staging_for(dest)?;
         let partial = kept.as_ref().map_or_else(
@@ -859,19 +911,24 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
         );
         partial_in = Some(partial.clone());
         if !staged.is_empty() {
-            let into = if let Some(into) = kept.as_ref().and_then(|kept| kept.into.clone()) {
-                finished = keep_finished(from, &staged, &into)?;
+            let (into, goes_on) = if let Some(kept) = kept.as_ref()
+                && let Some(into) = kept.into.clone()
+            {
+                let (kept_bytes, goes_on) = keep_finished(from, &staged, &into, &kept.sources)?;
+                finished = kept_bytes;
                 advance(finished);
-                into
+                (into, goes_on)
             } else {
                 let into = staging.path().join(format!("batch-{name}"));
                 std::fs::create_dir(&into)?;
-                into
+                (into, GoesOn::default())
             };
             made_in = Some(into.clone());
             let aside = Aside {
                 temp: None,
                 partial: &partial,
+                goes_on: &goes_on,
+                laid_out: Some(&laid_out),
             };
             run(from, (&staged, alone), &into, &aside, &copied, &|_| {}, ctx)?;
             for t in &staged {
@@ -884,6 +941,8 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
             let aside = Aside {
                 temp: Some(&temp),
                 partial: &partial,
+                goes_on: &none,
+                laid_out: None,
             };
             let said: Mutex<std::collections::HashSet<OsString>> = Mutex::default();
             let ran = run(
@@ -949,6 +1008,7 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
                         from: from.to_path_buf(),
                         into: made_in,
                         partial,
+                        sources: laid_out.0.into_inner(),
                     },
                 );
             }
@@ -989,9 +1049,12 @@ fn batch_in_place(
         }
     };
     // No transfer that writes in place keeps a file it was cut short in.
+    let none = GoesOn::default();
     let aside = Aside {
         temp: None,
         partial: dest,
+        goes_on: &none,
+        laid_out: None,
     };
     let ran = run(
         from,
@@ -1038,13 +1101,26 @@ fn batch_in_place(
 /// `taken` of `from`, keep what it finished, which its retry goes on
 /// beside: a file of its source's size and time (given last, as a copy's
 /// step does), a folder with what it holds so, opened to its owner where
-/// its mode was given already. Anything else goes, made again. The bytes
-/// kept.
+/// its mode was given already. A file it was writing whose source is as
+/// it was laid out (`sources`) is kept too, as far as it reads as its
+/// source's start (`builtin::goes_on_from`), to be gone on from
+/// (ADR-080). Anything else goes, made again. The bytes kept, and the
+/// files to go on from.
 ///
 /// # Errors
 /// When what is not kept cannot be removed.
-fn keep_finished(from: &Path, taken: &[&Taken], into: &Path) -> std::io::Result<u64> {
-    fn keep(src: &Path, dst: &Path) -> std::io::Result<u64> {
+fn keep_finished(
+    from: &Path,
+    taken: &[&Taken],
+    into: &Path,
+    sources: &HashMap<PathBuf, Was>,
+) -> std::io::Result<(u64, GoesOn)> {
+    fn keep(
+        src: &Path,
+        dst: &Path,
+        sources: &HashMap<PathBuf, Was>,
+        goes_on: &mut HashMap<PathBuf, u64>,
+    ) -> std::io::Result<u64> {
         let Ok(there) = std::fs::symlink_metadata(dst) else {
             return Ok(0);
         };
@@ -1061,7 +1137,7 @@ fn keep_finished(from: &Path, taken: &[&Taken], into: &Path) -> std::io::Result<
                 let mut kept = 0;
                 for entry in std::fs::read_dir(dst)? {
                     let name = entry?.file_name();
-                    kept += keep(&src.join(&name), &dst.join(&name))?;
+                    kept += keep(&src.join(&name), &dst.join(&name), sources, goes_on)?;
                 }
                 Ok(kept)
             }
@@ -1072,6 +1148,22 @@ fn keep_finished(from: &Path, taken: &[&Taken], into: &Path) -> std::io::Result<
             {
                 Ok(there.len())
             }
+            Some(source)
+                if source.is_file()
+                    && there.is_file()
+                    && sources.get(dst) == Some(&(source.len(), source.modified().ok())) =>
+            {
+                match start_of(src, dst, source.len()) {
+                    Ok(held) if held > 0 => {
+                        goes_on.insert(dst.to_path_buf(), held);
+                        Ok(held)
+                    }
+                    _ => {
+                        super::staging::remove_tree(dst)?;
+                        Ok(0)
+                    }
+                }
+            }
             _ => {
                 super::staging::remove_tree(dst)?;
                 Ok(0)
@@ -1079,10 +1171,31 @@ fn keep_finished(from: &Path, taken: &[&Taken], into: &Path) -> std::io::Result<
         }
     }
     let mut kept = 0;
+    let mut goes_on = HashMap::new();
     for t in taken {
-        kept += keep(&from.join(&t.name), &into.join(&t.name))?;
+        kept += keep(
+            &from.join(&t.name),
+            &into.join(&t.name),
+            sources,
+            &mut goes_on,
+        )?;
     }
-    Ok(kept)
+    Ok((kept, GoesOn(goes_on)))
+}
+
+/// How much of the copy at `dst` of the source `src` of `len` bytes, cut
+/// short, reads as that source's start: cut there, to be gone on from.
+fn start_of(src: &Path, dst: &Path, len: u64) -> std::io::Result<u64> {
+    let sf = crate::fs::file::open_regular(src)?;
+    let df = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(dst)?;
+    let held = super::builtin::goes_on_from(&sf, &df, len)?;
+    if held > 0 {
+        df.set_len(held)?;
+    }
+    Ok(held)
 }
 
 /// The stamp of the file or link at `path_of(item)` for each of `items`,
@@ -1266,6 +1379,11 @@ fn run(
         .into_iter()
         .filter(|t| !in_place || t.writes_in_place(into))
         .collect();
+    // A transfer that makes each file anew finds none a run cut short
+    // was writing: they go first, once.
+    let none = GoesOn::default();
+    let mut gone = false;
+    let mut aside = *aside;
     for transfer in serving {
         tracing::debug!(
             copies = names.len(),
@@ -1273,8 +1391,13 @@ fn run(
             by = transfer.name(),
             "a batch of copies"
         );
+        if !aside.goes_on.is_empty() && !transfer.goes_on() && !gone {
+            aside.goes_on.remove();
+            gone = true;
+            aside.goes_on = &none;
+        }
         let told = Told { copied, placed };
-        match transfer.copy(from, &names, into, aside, &told, &control) {
+        match transfer.copy(from, &names, into, &aside, &told, &control) {
             // It made nothing: the next.
             Err(error) if error.is::<NotServed>() => {}
             ran => {
@@ -1295,7 +1418,7 @@ fn run(
         by = "skwir",
         "a batch of copies"
     );
-    copy_at_once(from, &names, into, temp, copied, placed, &control)
+    copy_at_once(from, &names, into, &aside, copied, placed, &control)
         .with_context(|| format!("skwir copying {} entries", names.len()))
 }
 
@@ -1307,7 +1430,8 @@ fn run(
 /// is paused, each waits before its next file. Beside what is there, each
 /// makes its files in a folder of its own in `temp`: the kernel takes a
 /// folder's lock to make a name in it, and to rename one out of it, so
-/// one folder for all would make them one at a time.
+/// one folder for all would make them one at a time. A file a run cut
+/// short was writing (`aside.goes_on`) is gone on from.
 ///
 /// # Errors
 /// The first copy that failed, or the cancel.
@@ -1315,16 +1439,18 @@ pub(super) fn copy_at_once(
     from: &Path,
     names: &[OsString],
     into: &Path,
-    temp: Option<&Path>,
+    aside: &Aside<'_>,
     copied: &(dyn Fn(u64) + Sync),
     placed: &(dyn Fn(&OsStr) + Sync),
     control: &Control,
 ) -> anyhow::Result<()> {
     let cancel = control.cancel();
+    let temp = aside.temp;
+    let goes_on = aside.goes_on;
     let layout = match temp {
         // Files and links alone are placed beside what is there.
         Some(_) => Layout::files(from, names, into),
-        None => Layout::made(from, names, into)?,
+        None => Layout::made(from, names, into, aside)?,
     };
     let files = &layout.files;
     let next = AtomicUsize::new(0);
@@ -1372,7 +1498,7 @@ pub(super) fn copy_at_once(
                         // Made aside, then placed, never over anything.
                         Some(aside) => {
                             let aside = aside.join(dst.file_name().unwrap_or_default());
-                            copy_one(src, &aside, &wrote).and_then(|()| {
+                            copy_one(src, &aside, None, &wrote).and_then(|()| {
                                 match place(&aside, dst) {
                                     // Taken meanwhile: left to its step.
                                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -1386,7 +1512,7 @@ pub(super) fn copy_at_once(
                                 }
                             })
                         }
-                        None => copy_one(src, dst, &wrote),
+                        None => copy_one(src, dst, goes_on.from(dst), &wrote),
                     };
                     if let Err(error) = made {
                         stop.store(true, Ordering::Relaxed);
@@ -1416,13 +1542,20 @@ pub struct Layout {
 
 impl Layout {
     /// The trees `names` of `from` laid out in `into`: their folders made
-    /// now, in order, and their files and links listed. Where `into` holds
-    /// what a batch a run cut short finished (`keep_finished`), its
-    /// folders are taken as they are and its files left out.
+    /// now, in order, and their files and links listed, each file's source
+    /// noted as it is (`aside.laid_out`). Where `into` holds what a batch
+    /// a run cut short finished (`keep_finished`), its folders are taken
+    /// as they are and its files left out, but those to go on from
+    /// (`aside.goes_on`).
     ///
     /// # Errors
     /// When a folder cannot be read or made.
-    pub fn made(from: &Path, names: &[OsString], into: &Path) -> anyhow::Result<Layout> {
+    pub fn made(
+        from: &Path,
+        names: &[OsString],
+        into: &Path,
+        aside: &Aside<'_>,
+    ) -> anyhow::Result<Layout> {
         let mut layout = Layout {
             files: Vec::new(),
             folders: Vec::new(),
@@ -1430,7 +1563,7 @@ impl Layout {
         // Looked at once: in a folder made now, nothing is there.
         let fresh = std::fs::read_dir(into)?.next().is_none();
         for name in names {
-            layout.lay_out(&from.join(name), &into.join(name), fresh)?;
+            layout.lay_out(&from.join(name), &into.join(name), fresh, aside)?;
         }
         Ok(layout)
     }
@@ -1448,7 +1581,13 @@ impl Layout {
     }
 
     /// Lay out `src` at `dst`; not `fresh`, `dst` may be there already.
-    fn lay_out(&mut self, src: &Path, dst: &Path, fresh: bool) -> anyhow::Result<()> {
+    fn lay_out(
+        &mut self,
+        src: &Path,
+        dst: &Path,
+        fresh: bool,
+        aside: &Aside<'_>,
+    ) -> anyhow::Result<()> {
         let meta = std::fs::symlink_metadata(src)?;
         if meta.is_dir() {
             let made = match std::fs::create_dir(dst) {
@@ -1458,9 +1597,20 @@ impl Layout {
             self.folders.push((src.to_path_buf(), dst.to_path_buf()));
             for entry in std::fs::read_dir(src)? {
                 let name = entry?.file_name();
-                self.lay_out(&src.join(&name), &dst.join(&name), fresh || made)?;
+                self.lay_out(&src.join(&name), &dst.join(&name), fresh || made, aside)?;
             }
-        } else if fresh || std::fs::symlink_metadata(dst).is_err() {
+        } else if fresh
+            || aside.goes_on.from(dst).is_some()
+            || std::fs::symlink_metadata(dst).is_err()
+        {
+            if meta.is_file()
+                && let Some(laid_out) = aside.laid_out
+            {
+                laid_out
+                    .0
+                    .lock()
+                    .insert(dst.to_path_buf(), (meta.len(), meta.modified().ok()));
+            }
             self.files.push((src.to_path_buf(), dst.to_path_buf()));
         }
         Ok(())
@@ -1547,11 +1697,12 @@ pub fn place(made: &Path, dst: &Path) -> std::io::Result<()> {
     super::sys::rename_noreplace(made, dst)
 }
 
-/// Copy the file or link `src` to `dst`, which is not there: its bytes
-/// told to `wrote` as they go, its mode where it was made otherwise, its
-/// time.
-fn copy_one(src: &Path, dst: &Path, wrote: &dyn Fn(u64)) -> anyhow::Result<()> {
-    use std::io::{Read, Write};
+/// Copy the file or link `src` to `dst`, which is not there, or holds the
+/// first `from` bytes of `src` (a copy a run cut short, read back): its
+/// bytes told to `wrote` as they go, its mode where it was made
+/// otherwise, its time.
+fn copy_one(src: &Path, dst: &Path, from: Option<u64>, wrote: &dyn Fn(u64)) -> anyhow::Result<()> {
+    use std::io::{Read, Seek, Write};
     let meta = std::fs::symlink_metadata(src)?;
     if meta.file_type().is_symlink() {
         #[cfg(unix)]
@@ -1563,13 +1714,23 @@ fn copy_one(src: &Path, dst: &Path, wrote: &dyn Fn(u64)) -> anyhow::Result<()> {
         anyhow::bail!("“{}” is a link", src.display());
     }
     let mut sf = crate::fs::file::open_regular(src)?;
-    let mut df = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(dst)?;
+    let (mut df, mut copied) = match from {
+        Some(from) => {
+            let mut df = std::fs::OpenOptions::new().write(true).open(dst)?;
+            sf.seek(std::io::SeekFrom::Start(from))?;
+            df.seek(std::io::SeekFrom::Start(from))?;
+            (df, from)
+        }
+        None => (
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(dst)?,
+            0,
+        ),
+    };
     let made = df.metadata()?;
     let mut buf = vec![0; 1 << 20];
-    let mut copied = 0;
     loop {
         let n = match sf.read(&mut buf) {
             Ok(0) => break,
@@ -1835,15 +1996,7 @@ mod tests {
             control: &Control,
         ) -> anyhow::Result<()> {
             self.into.lock().push(into.to_path_buf());
-            copy_at_once(
-                from,
-                names,
-                into,
-                aside.temp,
-                told.copied,
-                told.placed,
-                control,
-            )
+            copy_at_once(from, names, into, aside, told.copied, told.placed, control)
         }
     }
 
@@ -1867,6 +2020,8 @@ mod tests {
                 removals: None,
                 alone: false,
                 breaks: Mutex::default(),
+                cuts: Mutex::default(),
+                anew: false,
             }),
         );
         transfers.register(
@@ -1938,6 +2093,43 @@ mod tests {
         /// Made unreadable as it fails once, as a server gone: its steps
         /// fail too.
         breaks: Mutex<Option<PathBuf>>,
+        /// A file (below `from`) it writes the first bytes of, its first
+        /// byte changed to `X`, before failing once as a server gone, its
+        /// folder made unreadable ([`Fake::cut`]).
+        cuts: Mutex<Option<(PathBuf, u64)>>,
+        /// Makes a file a run cut short anew ([`Transfer::goes_on`]).
+        anew: bool,
+    }
+
+    impl Fake {
+        fn cut(
+            from: &Path,
+            names: &[OsString],
+            into: &Path,
+            aside: &Aside<'_>,
+            (name, at): (&Path, u64),
+            told: &Told<'_>,
+        ) -> anyhow::Result<()> {
+            use std::os::unix::fs::PermissionsExt;
+            let layout = Layout::made(from, names, into, aside)?;
+            let mut moved = 0;
+            for (src, dst) in &layout.files {
+                if *src == from.join(name) {
+                    let mut bytes = std::fs::read(src)?;
+                    bytes.truncate(usize::try_from(at)?);
+                    bytes[0] = b'X';
+                    std::fs::write(dst, &bytes)?;
+                    moved += at;
+                } else {
+                    copy_one(src, dst, None, &|_| {})?;
+                    moved += std::fs::metadata(src)?.len();
+                }
+                (told.copied)(moved);
+            }
+            let folder = from.join(name.components().next().unwrap());
+            std::fs::set_permissions(folder, std::fs::Permissions::from_mode(0o000))?;
+            anyhow::bail!("the server went away")
+        }
     }
 
     impl Transfer for Fake {
@@ -1949,6 +2141,9 @@ mod tests {
         }
         fn serves_alone(&self, _: &Path, _: &Path) -> bool {
             self.alone
+        }
+        fn goes_on(&self) -> bool {
+            !self.anew
         }
         fn removes(&self, _: &Path) -> bool {
             self.removals.is_some()
@@ -1971,6 +2166,9 @@ mod tests {
             control: &Control,
         ) -> anyhow::Result<()> {
             let (copied, placed, temp) = (told.copied, told.placed, aside.temp);
+            if let Some((name, at)) = self.cuts.lock().take() {
+                return Self::cut(from, names, into, aside, (&name, at), told);
+            }
             self.calls.lock().push(names.to_vec());
             if let Some(cancel) = &self.cancels {
                 cancel.cancel();
@@ -1980,7 +2178,7 @@ mod tests {
                 from,
                 &names[..names.len() / 2],
                 into,
-                temp,
+                aside,
                 copied,
                 placed,
                 control,
@@ -1995,7 +2193,7 @@ mod tests {
                 from,
                 &names[names.len() / 2..],
                 into,
-                temp,
+                aside,
                 copied,
                 placed,
                 control,
@@ -2037,6 +2235,8 @@ mod tests {
             removals: None,
             alone: false,
             breaks: Mutex::default(),
+            cuts: Mutex::default(),
+            anew: false,
         });
         (executor, calls)
     }
@@ -2112,6 +2312,8 @@ mod tests {
             removals: Some(Arc::clone(&removals)),
             alone: false,
             breaks: Mutex::default(),
+            cuts: Mutex::default(),
+            anew: false,
         });
         let r = executor.execute_blocking(&moves(&entries, &dest), &CancelToken::new());
         assert!(r.error.is_none(), "{:?}", r.error);
@@ -2159,6 +2361,8 @@ mod tests {
             removals: Some(Arc::clone(removals)),
             alone: false,
             breaks: Mutex::default(),
+            cuts: Mutex::default(),
+            anew: false,
         })
     }
 
@@ -2261,6 +2465,8 @@ mod tests {
             removals: None,
             alone: false,
             breaks: Mutex::default(),
+            cuts: Mutex::default(),
+            anew: false,
         });
         let r = executor.execute_blocking(&moves(&entries, &dest), &CancelToken::new());
         let error = r.error.expect("the changed one stops the plan");
@@ -2317,9 +2523,17 @@ mod tests {
             std::fs::create_dir(into).unwrap();
             assert!(pause.pause());
             let control = Control::new(cancel.clone(), Arc::clone(&pause));
+            let none = GoesOn::default();
+            let aside = Aside {
+                temp: None,
+                partial: into,
+                goes_on: &none,
+                laid_out: None,
+            };
             std::thread::scope(|s| {
-                let copying = s
-                    .spawn(|| copy_at_once(&from, &listed, into, None, &|_| {}, &|_| {}, &control));
+                let copying = s.spawn(|| {
+                    copy_at_once(&from, &listed, into, &aside, &|_| {}, &|_| {}, &control)
+                });
                 std::thread::sleep(Duration::from_millis(300));
                 let waiting = !copying.is_finished() && !into.join("run.sh").exists();
                 if resume {
@@ -2396,6 +2610,8 @@ mod tests {
                 removals: None,
                 alone,
                 breaks: Mutex::default(),
+                cuts: Mutex::default(),
+                anew: false,
             });
             let plan = copies(std::slice::from_ref(file), &dest);
             let r = executor.execute_blocking(&plan, &CancelToken::new());
@@ -2436,6 +2652,8 @@ mod tests {
             removals: None,
             alone: false,
             breaks: Mutex::new(Some(src.join("a"))),
+            cuts: Mutex::default(),
+            anew: false,
         });
         let plan = copies(&entries, &dest);
         let r = executor.execute_blocking(&plan, &CancelToken::new());
@@ -2474,6 +2692,64 @@ mod tests {
         assert_eq!(a[0], b'X', "finished, kept");
         same(&src.join("b"), &dest.join("b"));
         assert_eq!(names(&dest), ["a", "b"], "nothing staged left");
+    }
+
+    /// A batch cut short in the middle of a file keeps it; retried, its
+    /// copy goes on from it, read back, where the source is as it was laid
+    /// out and the transfer goes on (the byte changed at its start stays,
+    /// never read again); a source changed since, or a transfer that makes
+    /// a file anew, copies it whole.
+    #[test]
+    fn a_batch_cut_short_goes_on_from_the_file_it_was_writing() {
+        use std::os::unix::fs::PermissionsExt;
+        for (changed, anew) in [(false, false), (true, false), (false, true)] {
+            let tmp = home_tempdir();
+            let src = tmp.path().join("served");
+            std::fs::create_dir_all(src.join("big")).unwrap();
+            let large: Vec<u8> = (0..20u32 << 20).map(|n| (n % 251) as u8).collect();
+            std::fs::write(src.join("big/one.bin"), &large).unwrap();
+            std::fs::write(src.join("big/two.bin"), vec![7u8; 1 << 20]).unwrap();
+            let dest = tmp.path().join("here");
+            std::fs::create_dir(&dest).unwrap();
+            crate::fs::reach::pretend_remote(&src);
+            let executor = executor_with(Fake {
+                calls: Arc::default(),
+                fails: false,
+                cancels: None,
+                cancels_after: None,
+                touches: Mutex::default(),
+                removals: None,
+                alone: false,
+                breaks: Mutex::default(),
+                cuts: Mutex::new(Some(("big/one.bin".into(), 12 << 20))),
+                anew,
+            });
+            let plan = copies(&[src.join("big")], &dest);
+            let r = executor.execute_blocking(&plan, &CancelToken::new());
+            assert!(r.error.is_some(), "its step failed after it");
+            assert!(executor.can_retry(plan.id));
+            std::fs::set_permissions(src.join("big"), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+            if changed {
+                let file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(src.join("big/one.bin"))
+                    .unwrap();
+                file.set_modified(SystemTime::now() - Duration::from_secs(3600))
+                    .unwrap();
+            }
+            let r = executor
+                .retry_blocking(plan.id, &CancelToken::new())
+                .expect("retried");
+            assert_eq!((r.applied, r.error), (1, None), "{changed} {anew}");
+            let one = std::fs::read(dest.join("big/one.bin")).unwrap();
+            assert_eq!(one.len(), large.len());
+            let gone_on = !changed && !anew;
+            assert_eq!(one[0] == b'X', gone_on, "gone on from: {gone_on}");
+            assert_eq!(one[1..], large[1..]);
+            same(&src.join("big/two.bin"), &dest.join("big/two.bin"));
+            assert_eq!(names(&dest), ["big"], "nothing staged left");
+        }
     }
 
     #[test]
