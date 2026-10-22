@@ -236,12 +236,15 @@ fn put_in(path: &Path, trash: &Path) -> io::Result<Put> {
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(error) => return Err(error),
         };
-        if let Err(error) = file.write_all(record.as_bytes()) {
-            drop(file);
+        // Written once closing it says so: a share's server may refuse it
+        // there (`sys::close`).
+        if let Err(error) = file
+            .write_all(record.as_bytes())
+            .and_then(|()| super::sys::close(file))
+        {
             let _ = std::fs::remove_file(&info);
             return Err(error);
         }
-        drop(file);
         let item = trash.join("files").join(&named);
         match renamed(path, &item) {
             Ok(()) => return Ok(Put::Done { info }),

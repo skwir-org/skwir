@@ -10,11 +10,14 @@
 //! `remote.chosen` (what the user chose for each, by address).
 
 pub mod address;
+#[cfg(target_os = "linux")]
+mod bus;
 pub mod connector;
 pub mod fstab;
 pub mod gio_copy;
 pub mod gvfs;
 mod gvfs_spec;
+pub mod kio;
 mod known;
 pub mod lan;
 mod mounter;
@@ -60,8 +63,24 @@ const THUMBNAILS: &str = "remote.thumbnails";
 const CHOSEN: &str = "remote.chosen";
 
 /// The tools, in the order the user chose by default (2026-10-20: sshfs
-/// first for SFTP, then GVfs, rclone, the system's mounts).
-const ORDER: &str = "sshfs gvfs rclone fstab";
+/// first for SFTP, then GVfs, rclone, the system's mounts), KIO after GVfs
+/// (ADR-081)...
+const ORDER: &str = "sshfs gvfs kio rclone fstab";
+
+/// ...but before it on KDE's desktop, whose remotes and passwords are KIO's.
+const ORDER_ON_KDE: &str = "sshfs kio gvfs rclone fstab";
+
+/// The tools' order where the user chose none: the desktop's own first.
+fn default_order() -> &'static str {
+    if skwir_platform::apps::current_desktops()
+        .iter()
+        .any(|desktop| desktop.eq_ignore_ascii_case("KDE"))
+    {
+        ORDER_ON_KDE
+    } else {
+        ORDER
+    }
+}
 
 /// A mount of the table, the connector that knows it, and what it is.
 #[derive(Clone)]
@@ -110,6 +129,7 @@ impl Default for Remotes {
         Remotes::with(vec![
             Arc::new(sshfs::Sshfs::default()),
             Arc::new(gvfs::Gvfs::default()),
+            Arc::new(kio::Kio::default()),
             Arc::new(rclone::Rclone),
             Arc::new(fstab::Fstab),
         ])
@@ -136,7 +156,7 @@ impl Remotes {
         let order: String = app
             .settings
             .get(CONNECTORS)
-            .unwrap_or_else(|| ORDER.to_owned());
+            .unwrap_or_else(|| default_order().to_owned());
         let mut ordered: Vec<Arc<dyn Connector>> = order
             .split([' ', ','])
             .filter(|id| !id.is_empty())
@@ -151,37 +171,26 @@ impl Remotes {
     }
 
     /// Every network mount there is, each by the connector that knows it:
-    /// GVfs's one by one. Lists GVfs's bridge: on a worker.
+    /// a bridge's (GVfs's, kio-fuse's) one by one. Lists the bridges, which
+    /// answer from memory: on a worker.
     fn mounted(&self) -> Vec<Mounted> {
-        let mut remotes = Vec::new();
-        for remote in reach::all() {
-            if remote.fstype == gvfs::BRIDGE && remote.device.is_some() {
-                // Each folder of the bridge is a mount of GVfs's; the
-                // bridge answers its list from memory.
-                if let Ok(folders) = std::fs::read_dir(&remote.point) {
-                    remotes.extend(
-                        folders
-                            .flatten()
-                            .filter_map(|folder| reach::of(&folder.path())),
-                    );
-                }
-                continue;
-            }
-            remotes.push(remote);
-        }
-        remotes
-            .into_iter()
-            .map(|remote| {
+        reach::all()
+            .iter()
+            .flat_map(reach::bridged)
+            .filter_map(|remote| {
                 let known = self
                     .connectors
                     .iter()
                     .find_map(|c| Some((Arc::clone(c), c.recognises(&remote)?)));
-                match known {
+                Some(match known {
                     Some((connector, recognised)) => Mounted {
                         remote,
                         connector: Some(connector),
                         recognised,
                     },
+                    // What kio-fuse holds of no remote (an archive KIO
+                    // reads, a local folder) is no mount to show.
+                    None if remote.fstype == kio::BRIDGE => return None,
                     None => Mounted {
                         recognised: Recognised {
                             label: remote.point.file_name().map_or_else(
@@ -195,7 +204,7 @@ impl Remotes {
                         remote,
                         connector: None,
                     },
-                }
+                })
             })
             .collect()
     }
@@ -233,10 +242,32 @@ impl Remotes {
                 .and_then(|top| top.below(address))
             {
                 // A mount whose program died answers nothing: mounted again.
+                // A kio-fuse gone is let go of whole: the bus starts another,
+                // which mounts in a folder of its own.
                 match std::fs::symlink_metadata(&mounted.remote.point) {
                     Err(error) if lost(&error) => {
-                        let _ = mounter::force_unmount(&mounted.remote.point);
+                        let point = if mounted.remote.fstype == kio::BRIDGE {
+                            reach::all()
+                                .iter()
+                                .find(|r| mounted.remote.point.starts_with(&r.point))
+                                .map_or_else(|| mounted.remote.point.clone(), |r| r.point.clone())
+                        } else {
+                            mounted.remote.point.clone()
+                        };
+                        let _ = mounter::force_unmount(&point);
                         break;
+                    }
+                    _ => {}
+                }
+                match &mounted.connector {
+                    // A server kio-fuse holds, but maybe not this folder of
+                    // it yet: asked for it.
+                    Some(connector) if connector.mounts_each_path() => {
+                        let connected = connector
+                            .connect(address, ask, cancel)
+                            .map_err(|error| anyhow::anyhow!("{error:#}"))?;
+                        let below = connected.address.below(address).unwrap_or_default();
+                        return Ok(join(&connected.point, below));
                     }
                     _ => return Ok(join(&mounted.remote.point, below)),
                 }
@@ -436,11 +467,16 @@ impl Remotes {
             } else {
                 address.and_then(|a| state.local.get(&a.host).copied().flatten())
             };
+            let whole = m
+                .connector
+                .as_ref()
+                .is_some_and(|c| c.reads_whole(&m.remote));
             known.push(Known {
                 point: point.clone(),
                 address: address.map(Address::location),
                 label: m.recognised.label.clone(),
-                thumbnails: thumbnails(rule, near),
+                thumbnails: thumbnails(rule, near, whole),
+                forget: m.connector.as_ref().and_then(|c| c.forget(&m.remote)),
             });
             let mut place = match m.recognised.device {
                 Some(device) => Place::new(
@@ -508,24 +544,27 @@ impl Remotes {
 }
 
 /// Whether the user may let go of a mount: Skwir's, GVfs's, one fstab lets
-/// them mount.
+/// them mount; never kio-fuse's, which lets go of no server.
 fn can_disconnect(connector: &dyn Connector, remote: &Remote, recognised: &Recognised) -> bool {
     match connector.id() {
         "fstab" => fstab::user_mountable(&remote.point),
         "sshfs" | "rclone" => recognised.ours || cfg!(target_os = "linux"),
+        "kio" => false,
         _ => true,
     }
 }
 
 /// What a remote's thumbnails follow: the rule chosen (`never`, `small`,
 /// `always`, `automatic`), Automatic being Always on the local network and
-/// Never where that is not known (ADR-077).
-fn thumbnails(rule: &str, near: Option<bool>) -> Thumbnails {
+/// Never where that is not known (ADR-077); Small files near where its
+/// program reads a file `whole` before any part of it (ADR-081).
+fn thumbnails(rule: &str, near: Option<bool>, whole: bool) -> Thumbnails {
     match rule {
         "never" => Thumbnails::Never,
         "small" => Thumbnails::Small,
         "always" => Thumbnails::Always,
         _ => match near {
+            Some(true) if whole => Thumbnails::Small,
             Some(true) => Thumbnails::Always,
             _ => Thumbnails::Never,
         },
@@ -674,8 +713,8 @@ impl Plugin for RemotePlugin {
             SettingSpec::text(
                 CONNECTORS,
                 "Tools that open addresses",
-                "The tools that mount an sftp://, smb:// or other address, tried in this order among those installed that open it: sshfs, gvfs, rclone, fstab.",
-                ORDER,
+                "The tools that mount an sftp://, smb:// or other address, tried in this order among those installed: sshfs, gvfs, kio, rclone, fstab. On KDE's desktop, kio comes before gvfs.",
+                default_order(),
             )
             .page(skwir_core::settings::page::GENERAL)
             .section("Remote folders"),

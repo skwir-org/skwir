@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use crate::app::App;
 use crate::fs::reach::{self, Known, Remote};
-use crate::location::Location;
+use crate::location::{Location, OpenLocation};
+use crate::scheduler::Priority;
 
 /// How often the window coming back reads remote folders again.
 pub const REFRESHED_WITHIN: std::time::Duration = std::time::Duration::from_secs(10);
@@ -60,6 +61,31 @@ impl App {
         }
     }
 
+    /// Read `open` again, from its server where it is a remote folder
+    /// whose program answers from what it read before (`Known::forget`):
+    /// told so first, in the remote's lane, then listed.
+    pub fn read_again(&self, open: &Arc<dyn OpenLocation>) {
+        let forget = open.location().path().and_then(|path| {
+            let (remote, known) = self.remote(&path)?;
+            Some((remote, known?.forget?))
+        });
+        let Some((remote, forget)) = forget else {
+            open.refresh();
+            return;
+        };
+        let open = Arc::clone(open);
+        self.scheduler.spawn_in(
+            remote.lane(),
+            Priority::Visible,
+            "remote.forget",
+            self.lifetime().child(),
+            move || {
+                (forget.0)();
+                open.refresh();
+            },
+        );
+    }
+
     /// Read again each of `folders` a pane shows or keeps beside what it
     /// shows: a plan's transfer changed them beside the mount showing them
     /// (`Executor::set_changed_beside`), and no watch of this machine's saw
@@ -74,7 +100,7 @@ impl App {
                 .collect()
         };
         for open in open {
-            open.refresh();
+            self.read_again(&open);
         }
     }
 
@@ -105,7 +131,7 @@ impl App {
                 .collect()
         };
         for open in open {
-            open.refresh();
+            self.read_again(&open);
         }
     }
 }

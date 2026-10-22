@@ -2039,9 +2039,9 @@ mod builtin {
                 if let Some((open, opened)) =
                     app.with_open(pane, crate::workspace::Pane::opened_locations)
                 {
-                    open.refresh();
+                    app.read_again(&open);
                     for open in opened {
-                        open.refresh();
+                        app.read_again(&open);
                     }
                 }
                 Ok(Outcome::Done)

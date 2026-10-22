@@ -119,6 +119,25 @@ pub trait Connector: Send + Sync {
     fn transfers(&self) -> Vec<std::sync::Arc<dyn skwir_core::op::transfer::Transfer>> {
         Vec::new()
     }
+    /// Whether a mount of its holds only the folders asked of it so far
+    /// (kio-fuse mounts a path, a server's other folders once asked): an
+    /// address on a server it mounted is connected again, which costs its
+    /// tool a look at that path.
+    fn mounts_each_path(&self) -> bool {
+        false
+    }
+    /// What its program is told before a folder of `remote` is read again,
+    /// where it answers from what it read before (`Known::forget`).
+    fn forget(&self, _remote: &Remote) -> Option<skwir_core::fs::reach::Forget> {
+        None
+    }
+    /// Whether its program reads a file of `remote` whole before any part
+    /// of it is read (kio-fuse over WebDAV, FTP, NFS): a thumbnail of a
+    /// video would download it all, so Automatic shows small files' alone
+    /// there, even near.
+    fn reads_whole(&self, _remote: &Remote) -> bool {
+        false
+    }
 }
 
 /// Where Skwir mounts what it connects itself (sshfs, rclone): a folder

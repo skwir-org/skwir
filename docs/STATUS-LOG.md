@@ -3006,3 +3006,75 @@ and fix bug or problems you encounter on the way". This is the first.
   skipped), smoke, a11y-check, poppler-check, mupdf-check, djvu-check,
   bench-check (all budgets met) and release-tools-check (27) passed.
 
+
+## KDE's remotes through kio-fuse (2026-10-22, ADR-081)
+
+- Asked whether KIO could serve as a backend beside GVfs, I read
+  kio-fuse 5.1.1, KIO 6.30, kio-extras 26.08 and kioclient (nixpkgs) and
+  tried kio-fuse against an OpenSSH server of my own, in user, mount and
+  pid namespaces on a session bus of their own, no Plasma (a scratch
+  `.ssh` bound over the home's: libssh takes the user database's home,
+  never `$HOME`). Loopback: `mountUrl` 130–210 ms; 64 MiB read in
+  395–466 ms by one reader, 204–249 by four to eight (`sftp` get
+  259–286); each 256 KiB kernel read an open, a seek, two reads and a
+  close on the server, five workers per server; `kioclient copy` 64 MiB
+  in 253–289 ms down, 360–389 up, a name taken refused without
+  `--overwrite`. Refused: a host key never seen ("Input/output error":
+  no window to ask in), `mtp:`. A file made on the server unseen until
+  `forceNodeTimeout`. With its cache path (`--disable-filejob-io`, as
+  WebDAV, FTP and NFS always are) a write the server refuses is told only
+  by `fsync` and `close` (`EPERM`), the server keeping its old file.
+- Found: Skwir dropped a copy without asking its close, and `syncfs` is
+  not passed to FUSE: decision 1, `sys::close` through `builtin::finish`,
+  the time and the mode given after by the name, the time first. The
+  GVfs connector was unavailable until its bridge was mounted though `gio
+  mount` starts it: decision 2.
+- Built the `kio` connector (SMB, WebDAV, WebDAVS, FTP) over zbus,
+  `reach`'s bridges two deep for kio-fuse, `Known::forget` with
+  `App::read_again` for F5, the window's return and a transfer beside a
+  mount, Small files for Automatic where kio-fuse reads whole, no Eject,
+  `sshfs kio gvfs rclone fstab` on KDE's desktop.
+- The tests' own snags, each fixed where it was: an activated service is
+  not the bus's descendant (dbus-daemon's helper ends), so the harness
+  stops what it started by the runtime folder in its environment; rclone
+  served with `--dir-cache-time 0s` deadlocked under concurrent copies
+  (its VFS's cleanup and `ForgetAll` on one folder: the top still
+  answered, that folder not; seen in a goroutine dump), so the tests
+  change the server through WebDAV itself and keep rclone's cache; over
+  kio-fuse's WebDAV `chmod` and `utimensat` are refused `ENOTTY`
+  (`sys::mode_kept` takes it as a volume keeping no modes); the refusal
+  test passed without decision 1 at first (kio-fuse's own second try at
+  placing the copy failed it, 5.7 s later), so it copies first and checks
+  the copy is said refused as it was closed (`rclone serve --max-transfer
+  1M --cutoff-mode hard`: an empty `PUT` passes, 2 MiB refused): without
+  decision 1 it fails, with it it passes; kio-fuse calls that refusal
+  `ENOENT`, which had read as "it is not there any more".
+- Checked: `just remote-check` (53 passed, the NFS/AFP namespaces' test
+  too): kio-fuse mounting rclone's WebDAV and FTP each a folder of its
+  own, its lane apart, a folder listed, a file put on the server unseen
+  until kio-fuse is told to forget, copies up and down the same bytes
+  (no time kept over WebDAV); through the window an address opened, a
+  second folder of the server opened, F5 showing what the server gained,
+  Small files, no Eject; a copy refused as it was closed failed and said
+  so, a move kept its original; GVfs available on a bus where nothing
+  started it yet, then connected. `skwir-core` (421 passed), `just
+  lint-all` (clippy, `check-cross`), `just deny`, `just notices-check`,
+  the workspace's tests (1930 passed, 21 skipped, on the second run),
+  `just bench-check` (all budgets met), `just smoke`, `just a11y-check`.
+  Not rerun: the PDF and DjVu workers' checks and the release tools'
+  (nothing they build changed).
+- Seen once, in the first workspace run (stopped at its first failures,
+  205 of 1930): two sshfs tests listed "a folder" twice after rsync's
+  copies; alone three times and the `skwir` package twice under load,
+  they passed. Read since, not reproduced: a refresh removes only the
+  entries it noted when asked (`path_provider.rs`, `refresh` then
+  `list`), and a listing's id holds the file's number, which sshfs makes
+  anew once the kernel forgets it: an entry the watcher added meanwhile
+  under a number since changed would stay beside the new one. Left as
+  found.
+- Not tried: SMB (no server here yet), KDE's password dialog and
+  KWallet, a Plasma session's own kio-fuse, the order on KDE's desktop;
+  `kioclient copy` batches (not built: no measurement says where they
+  beat eight copies through the mount). A copy refused as it was closed
+  leaves its staging folder on the server (kio-fuse refuses to remove
+  what it means to send again).

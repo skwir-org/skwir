@@ -1221,17 +1221,41 @@ fn copy_file(
             m.len()
         );
     }
-    // Set attributes before restoring a read-only source's permissions.
+    // Whole once closing it says so: a FUSE remote sends there what it
+    // held, and says there what its server refused. Its mode and time are
+    // given after, by its name: kio-fuse sends a file up as it is closed,
+    // which would take a time given before.
+    finish(df, src)?;
+    // Set attributes and the time before restoring a read-only source's
+    // permissions (Windows opens the file to give it its time).
     if preserve_attributes {
         transfer_attributes(src, dst, ctx)?;
     }
+    let _ = sys::set_modified(dst, m.modified()?);
     // Made with them already (the usual 0644 and 022), they are not asked
     // for again: on a remote each change is a round trip to the server.
     if made.permissions() != m.permissions() {
-        sys::mode_kept(df.set_permissions(m.permissions()))?;
+        sys::mode_kept(std::fs::set_permissions(dst, m.permissions()))?;
     }
-    let _ = df.set_modified(m.modified()?);
     Ok(())
+}
+
+/// Close `df`, the copy of `src` just written (`sys::close`), saying what
+/// refused it in words that fit: what closing says is its drive's or
+/// server's answer to the whole file, and kio-fuse calls a server's
+/// refusal "no such file", which is no source gone.
+pub(super) fn finish(df: std::fs::File, src: &Path) -> anyhow::Result<()> {
+    sys::close(df).map_err(|error| {
+        let refused = format!(
+            "“{}” could not be copied: its drive or server refused it as it was closed",
+            display_name(src)
+        );
+        if error.kind() == std::io::ErrorKind::NotFound {
+            anyhow::anyhow!(refused)
+        } else {
+            anyhow::Error::new(error).context(refused)
+        }
+    })
 }
 
 /// The bytes of the copy `df` cut short it goes on from: up to the end of

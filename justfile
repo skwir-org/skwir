@@ -116,18 +116,20 @@ djvu-check:
     python3 tools/djvu/check.py --engine djvu-rs --worker target/debug/skwir-djvu-worker
 
 # Remote folders (ADR-077) against servers of rclone's on this machine,
-# mounted for real: rclone, sshfs and a GVfs of the test's own on a bus of
-# its own, taken from nixpkgs (never the session's GVfs); and OpenSSH's own
-# server run as the user, for copies through rsync (ADR-078). The tests
-# skip what is missing when run alone. Then GVfs's NFS and AFP, whose
-# servers run as root, in namespaces of their own (tools/test/gvfs-nfs-afp.sh).
+# mounted for real: rclone, sshfs, and a GVfs and a KIO (kio-fuse, ADR-081)
+# of the test's own, each on a bus of its own, taken from nixpkgs (never the
+# session's); and OpenSSH's own server run as the user, for copies through
+# rsync (ADR-078). The tests skip what is missing when run alone. Then
+# GVfs's NFS and AFP, whose servers run as root, in namespaces of their own
+# (tools/test/gvfs-nfs-afp.sh).
 remote-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    tools=$(nix build --no-link --print-out-paths nixpkgs#sshfs nixpkgs#gvfs nixpkgs#rclone 'nixpkgs#glib^bin' nixpkgs#openssh nixpkgs#rsync)
+    tools=$(nix build --no-link --print-out-paths nixpkgs#sshfs nixpkgs#gvfs nixpkgs#rclone 'nixpkgs#glib^bin' nixpkgs#openssh nixpkgs#rsync nixpkgs#kdePackages.kio-fuse nixpkgs#kdePackages.kio)
     out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(p[0-9]+)?(-bin)?$" <<< "$tools" | head -1; }
     export PATH="$(out sshfs-fuse)/bin:$(out rclone)/bin:$(out glib)/bin:$(out openssh)/bin:$(out rsync)/bin:$PATH"
     export SKWIR_TEST_GVFS="$(out gvfs)"
+    export SKWIR_TEST_KIO="$(out kio-fuse):$(out kio)"
     cargo nextest run -p skwir -p skwir-plugin-remote --no-fail-fast \
         -E 'binary(remote_folders) | package(skwir-plugin-remote)'
     binary=$(cargo nextest list -p skwir -p skwir-plugin-remote -E 'binary(remote_folders)' \

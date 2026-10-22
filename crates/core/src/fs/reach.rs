@@ -67,6 +67,28 @@ pub struct Known {
     /// What the user calls it: `me@example.com`, `photos on nas`.
     pub label: String,
     pub thumbnails: Thumbnails,
+    /// What its program is told before a folder of it is read again, where
+    /// it answers from what it read before (kio-fuse keeps a listing and a
+    /// file's attributes 30 seconds): `App::read_again`.
+    pub forget: Option<Forget>,
+}
+
+/// What a remote's program is told so that it reads its server again
+/// (`Known::forget`). Called in the remote's lane: it may wait on the
+/// program.
+#[derive(Clone)]
+pub struct Forget(pub Arc<dyn Fn() + Send + Sync>);
+
+impl std::fmt::Debug for Forget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Forget")
+    }
+}
+
+impl PartialEq for Forget {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 /// Which files of a remote show a thumbnail unasked, which reads them
@@ -186,13 +208,14 @@ pub(crate) fn pretend_made_up(device: u64, number: u64) {
     PRETENDED.with(|p| p.borrow_mut().push((device, number)));
 }
 
-/// Every network mount of the table, each GVfs mount apart (its bridge
-/// listed, read on the caller's thread: on a worker).
+/// Every network mount of the table, a bridge as one ([`bridged`] lists
+/// what it holds).
 pub fn all() -> Vec<Arc<Remote>> {
     table().remotes.clone()
 }
 
-/// The mount points of type `fstype` (GVfs's bridge, `fuse.gvfsd-fuse`).
+/// The mount points of type `fstype` (a bridge: GVfs's, `fuse.gvfsd-fuse`;
+/// kio-fuse's, `fuse.kio-fuse`).
 pub fn bridges(fstype: &str) -> Vec<PathBuf> {
     table()
         .remotes
@@ -250,15 +273,18 @@ impl Table {
             return Some(Arc::new(share));
         }
         let remote = self.remotes.iter().find(|r| path.starts_with(&r.point))?;
-        if remote.fstype == GVFS && remote.device.is_some() {
-            // The bridge: each folder of it is a mount of its own.
-            if let Some(first) = path
-                .strip_prefix(&remote.point)
-                .ok()
-                .and_then(|rest| rest.components().next())
-            {
+        if let Some(depth) = bridge_depth(remote)
+            && let Ok(rest) = path.strip_prefix(&remote.point)
+        {
+            // A bridge: each of its folders so deep is a mount of its own
+            // (a folder above one, kio-fuse's `smb`, is its own too).
+            let mut point = remote.point.clone();
+            for part in rest.components().take(depth) {
+                point.push(part);
+            }
+            if point != remote.point {
                 return Some(Arc::new(Remote {
-                    point: remote.point.join(first),
+                    point,
                     device: None,
                     ..Remote::clone(remote)
                 }));
@@ -268,8 +294,39 @@ impl Table {
     }
 }
 
-/// GVfs's FUSE bridge.
-const GVFS: &str = "fuse.gvfsd-fuse";
+/// The FUSE programs whose one mount holds many, each a folder so deep:
+/// GVfs's bridge (`sftp:host=h`), kio-fuse (`smb/nas`, `ftp/me@host:2121`).
+const BRIDGES: &[(&str, usize)] = &[("fuse.gvfsd-fuse", 1), ("fuse.kio-fuse", 2)];
+
+/// How deep the mounts the table's mount `remote` holds are, when it is a
+/// bridge ([`BRIDGES`]).
+fn bridge_depth(remote: &Remote) -> Option<usize> {
+    // A bridge is the table's own entry; a mount it holds is not one.
+    remote.device?;
+    BRIDGES
+        .iter()
+        .find(|(fstype, _)| *fstype == remote.fstype)
+        .map(|(_, depth)| *depth)
+}
+
+/// The mounts the bridge `remote` holds ([`BRIDGES`]), each a remote of
+/// its own; `remote` itself when it is no bridge. Lists the bridge's
+/// folders, which its program answers from what it holds, never from a
+/// server: on a worker.
+pub fn bridged(remote: &Arc<Remote>) -> Vec<Arc<Remote>> {
+    let Some(depth) = bridge_depth(remote) else {
+        return vec![Arc::clone(remote)];
+    };
+    let mut level = vec![remote.point.clone()];
+    for _ in 0..depth {
+        level = level
+            .iter()
+            .filter_map(|folder| std::fs::read_dir(folder).ok())
+            .flat_map(|folders| folders.flatten().map(|entry| entry.path()))
+            .collect();
+    }
+    level.iter().filter_map(|point| table().of(point)).collect()
+}
 
 /// The FUSE types that reach a network. A FUSE type not named here is a
 /// network's when what it mounted names a server (`host:/path`).
@@ -277,6 +334,7 @@ const FUSE_NETWORK: &[&str] = &[
     "sshfs",
     "rclone",
     "gvfsd-fuse",
+    "kio-fuse",
     "curlftpfs",
     "s3fs",
     "gcsfuse",
@@ -599,6 +657,36 @@ mod tests {
         assert!(nfs.by_kernel());
         assert!(table.of(Path::new("/home/me")).is_none());
         assert!(table.of(Path::new("/mnt/nasty")).is_none(), "by component");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn each_server_kio_fuse_holds_is_a_remote_of_its_own() {
+        let text = b"52 25 0:95 / /run/user/1000/kio-fuse-AbCdEf rw,nosuid,nodev shared:930 - fuse.kio-fuse kio-fuse rw,user_id=1000\n";
+        let table = Table {
+            remotes: imp::remotes(&crate::fs::volume::mountinfo(text))
+                .into_iter()
+                .map(Arc::new)
+                .collect(),
+            made_up: Vec::new(),
+        };
+        let root = Path::new("/run/user/1000/kio-fuse-AbCdEf");
+        let share = table.of(&root.join("smb/nas/photos/2024")).unwrap();
+        assert_eq!(
+            share.point,
+            root.join("smb/nas"),
+            "a server, its shares below"
+        );
+        assert!(!share.by_kernel());
+        let ftp = table.of(&root.join("ftp/me@host:2121/pub")).unwrap();
+        assert_eq!(ftp.point, root.join("ftp/me@host:2121"));
+        assert_ne!(
+            share.lane(),
+            ftp.lane(),
+            "a server that stops holds its own"
+        );
+        assert_eq!(table.of(&root.join("smb")).unwrap().point, root.join("smb"));
+        assert_eq!(table.of(root).unwrap().point, root);
     }
 
     #[cfg(target_os = "linux")]

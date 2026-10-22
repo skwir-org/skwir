@@ -168,7 +168,7 @@ fn dedup(paths: &mut Vec<PathBuf>) {
 }
 
 /// `$XDG_CURRENT_DESKTOP`, split: `GNOME`, `Hyprland`.
-fn current_desktops() -> Vec<String> {
+pub fn current_desktops() -> Vec<String> {
     std::env::var("XDG_CURRENT_DESKTOP")
         .unwrap_or_default()
         .split(':')

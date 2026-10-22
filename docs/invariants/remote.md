@@ -55,14 +55,19 @@ ADR-077 (which revises ADR-021).
 - **Thumbnails** follow the remote's rule (`Registry::remotes`,
   `App::shows_thumbnail`): Never, Small files (`Thumbnails::SMALL`),
   Always, or Automatic (Always on the local network, Never otherwise or
-  when unsure); Never where no plugin knows the remote. Ask it before
+  when unsure; Small files on the local network where its program reads
+  a file whole before any part of it, kio-fuse over WebDAV, FTP and NFS:
+  `Connector::reads_whole`); Never where no plugin knows the remote. Ask it before
   reading anything. A remote's thumbnails are made in its lane, one
   worker each (`thumbs.rs`); preview-ahead reads a remote's files only
   where its thumbnails are Always. A preview asked for reads anyway.
 - **Listings** are read again when the window comes back
   (`App::refresh_remote`, at most once in `REFRESHED_WITHIN`) and on F5:
   a server does not say what changed on it. What this machine changes
-  there is watched as anywhere.
+  there is watched as anywhere. A listing is read again through
+  `App::read_again`, never `OpenLocation::refresh` alone: a program that
+  keeps what it listed (kio-fuse, 30 s) is told to forget it first
+  (`Known::forget`), in the remote's lane.
 - **Walks** (searches, counts) never enter a network mount below their
   root (`reach::is_point`); Usage asks before measuring a remote.
 - **Delete** on a FUSE remote (sshfs, rclone, GVfs) is permanent and asked
@@ -206,7 +211,18 @@ ADR-077 (which revises ADR-021).
   (`Gvfs::bridge`), never another the mount table lists (another
   user's, or the user's own while a window runs with a runtime folder of
   its own); a mount of another bridge is neither recognised nor
-  connected through.
+  connected through. It is there where its daemon runs or the session
+  bus would start it (`org.gtk.vfs.Daemon`): `gio mount` starts it, which
+  mounts the bridge, waited for a moment.
+- KIO is the session's kio-fuse (ADR-081), asked over the session bus
+  (`Kio`, `mountUrl`), there where the bus has it or would start it; its
+  mount is a `kio-fuse-…` folder of the session's runtime folder alone.
+  Each server is a folder two below it (`webdav/nas:8080`), a remote of
+  its own (`reach`'s bridges: GVfs's one deep, kio-fuse's two), its
+  address read back from the two folders' names; what it holds of no
+  remote (an archive KIO reads) is not shown. It mounts what it is asked:
+  an address on a server it holds is asked for again
+  (`Connector::mounts_each_path`). It lets go of no server: no Eject.
 - Letting go of a mount (Eject) first leaves the folders shown there
   (`App::release`), then waits, ten seconds at most, until their
   listings let go of them (closed a moment later on a worker,
@@ -235,7 +251,9 @@ ADR-077 (which revises ADR-021).
   (`process::run_leaving`): cancelled, it and what it started are stopped;
   mounted, nothing it left running is touched.
 - A copy onto a remote is done when the server has it: rclone mounts with
-  `--vfs-cache-mode minimal` (a file written alone goes straight up).
+  `--vfs-cache-mode minimal` (a file written alone goes straight up), and
+  a copy is done once its close said so (operations.md): a FUSE program
+  sends there what it held and tells there what its server refused.
 - A question refused ends that attempt (`mounter::attempt`): ssh counts
   a refused password as a wrong one and asks again otherwise. What its
   asker stopped waiting for leaves the window (`App::withdraw`,
@@ -246,7 +264,9 @@ ADR-077 (which revises ADR-021).
   (`skwir_platform::askpass`); `gio mount`'s questions are read from its
   output (English, `LC_MESSAGES=C`) and answered on its input; a password
   is `App::ask_secret`, a server Skwir cannot vouch for `App::ask_as`
-  with `Asker::Connection`.
+  with `Asker::Connection`. KIO's are KDE's own (its password dialog,
+  KWallet), which Skwir never sees; what kio-fuse cannot ask (a host key,
+  a certificate) it refuses, and is accepted once in Dolphin.
 - Test a connector against a server on this machine (`rclone serve`
   with the fixture's XDG folders: it keeps host keys in its cache), never
   a real one. ssh takes its home from the user database, never `$HOME`:
@@ -256,7 +276,13 @@ ADR-077 (which revises ADR-021).
   after, or check through WebDAV and rclone); and never the session's GVfs: a GVfs of the test's own runs
   on a bus whose configuration lists GVfs's services alone, its runtime
   folder short enough for ssh's control socket
-  (`crates/skwir/tests/remote_folders.rs`, `just remote-check`).
+  (`crates/skwir/tests/remote_folders.rs`, `just remote-check`). A KIO
+  of the test's own likewise (`PrivateKio`), Qt drawing nothing; what
+  its bus started runs apart from it once the bus's helper ends, and is
+  known by the runtime folder it was given, never by name. A WebDAV
+  server of rclone's is changed through WebDAV, as another client would:
+  rclone keeps what it listed, and with no cache (`--dir-cache-time 0`)
+  its cleanups ran into each other and it stopped answering.
 - A server that runs as root (unfs3 with rpcbind for NFS, netatalk for
   AFP) runs in namespaces of its own, user (root mapped to the user,
   subordinate ids beside it), network, mount and pid, with a GVfs of its

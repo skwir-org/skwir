@@ -1314,8 +1314,27 @@ protocol is a scheme a connector maps, or a connector.
   whole and a batch cut short gone on in, what they finished kept, the
   file under way gone on from (by rsync in a batch; ADR-080, 6 to 8).
   Windows' restartable copy declined: slower for every copy, untestable
-  here.
+  here. Then (2026-10-22, ADR-081, after an exploration of KIO): a copy
+  is done once its close says so (a FUSE program tells there what its
+  server refused; a move kept its original only by chance before), its
+  time and mode given after; GVfs there where its daemon can be started,
+  not only once running; KDE's remotes through kio-fuse (SMB, WebDAV,
+  FTP; its SFTP, NFS and an iPhone's folders known), each server a
+  folder of its mount, its passwords KDE's, no Eject, told to forget
+  what it listed before a folder is read again, before GVfs on KDE's
+  desktop. Tested against rclone's WebDAV and FTP servers with a KIO of
+  the test's own.
 - **G. Left** (each its own step):
+  - KIO: batches by `kioclient copy` where measured faster than eight
+    copies at once through kio-fuse (its copy job takes one file after
+    another); SMB against a server on this machine; KDE's dialogs and
+    KWallet not tried; a copy refused as it was closed leaves its staging
+    folder there (kio-fuse refuses to remove it: noted, swept when it
+    lets it go, not seen); remote places of KDE (`user-places.xbel`)
+    as servers;
+  - a refresh racing the watcher where a FUSE program makes numbers
+    anew (sshfs) may list a name twice: seen once, under the whole
+    workspace's tests, not reproduced (STATUS-LOG, 2026-10-22);
   - an iPhone's (AFC) and a camera's (gPhoto2) GVfs mounts, not
     measured, at the bridge's pace;
   - Automatic's Small files where reads proved fast (only the local

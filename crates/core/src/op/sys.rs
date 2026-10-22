@@ -426,6 +426,38 @@ pub(super) fn remove_link(link: &Path) -> io::Result<()> {
     std::fs::remove_file(link)
 }
 
+/// Close `file`, a copy just written, and say what closing it said. A
+/// FUSE program sends there what it still held (sshfs its writes, rclone
+/// and kio-fuse the whole file) and tells there what the server refused,
+/// as NFS does: a file dropped never hears it, and `syncfs` is not passed
+/// to a FUSE program.
+pub(super) fn close(file: File) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::fd::IntoRawFd;
+        let fd = file.into_raw_fd();
+        // SAFETY: `fd` was the file's own, taken from it, and is not used
+        // again, whatever the call says.
+        #[allow(unsafe_code)]
+        let closed = unsafe { rustix::io::try_close(fd) };
+        closed.map_err(Into::into)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::IntoRawHandle;
+        let handle = file.into_raw_handle();
+        // SAFETY: `handle` was the file's own, taken from it, and is not
+        // used again, whatever the call says.
+        #[allow(unsafe_code)]
+        let closed = unsafe { windows_sys::Win32::Foundation::CloseHandle(handle) };
+        if closed == 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(())
+        }
+    }
+}
+
 /// Give the file at `path` (a link itself, never what it leads to) the
 /// modification time `when`, its access time left: by its path, opened
 /// on Windows alone.
@@ -553,12 +585,15 @@ pub(super) fn trash_item(path: &Path) -> Result<Option<std::path::PathBuf>, tras
 }
 
 /// What setting a copy's mode said, unless its volume keeps no modes: one
-/// that says so (`ENOTSUP`: GVfs's WebDAV and FTP through its bridge)
-/// keeps none of the copy's either, as of anything written there. Its
-/// times are set as they can be already.
+/// that says so (`ENOTSUP`: GVfs's WebDAV and FTP through its bridge;
+/// `ENOTTY`, kio-fuse's word for what its protocol does not do, which
+/// setting a mode says nowhere else) keeps none of the copy's either, as
+/// of anything written there. Its times are set as they can be already.
 pub(super) fn mode_kept(set: io::Result<()>) -> io::Result<()> {
     match set {
         Err(e) if e.kind() == io::ErrorKind::Unsupported => Ok(()),
+        #[cfg(unix)]
+        Err(e) if e.raw_os_error() == Some(rustix::io::Errno::NOTTY.raw_os_error()) => Ok(()),
         set => set,
     }
 }

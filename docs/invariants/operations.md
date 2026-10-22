@@ -175,6 +175,15 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   whose server stopped answering may answer an end of file, and then say
   the file is that short. A range of a large file read short ends what
   is written in order (`op::ranges`); what follows is read on in order.
+- A copy is written once closing it says so (`sys::close`, through
+  `builtin::finish`), never dropped: a FUSE program (sshfs, rclone,
+  kio-fuse) sends there what it held and tells there what its server
+  refused, and `syncfs` is not passed to it. Its time and mode are given
+  after, by its name (kio-fuse sends a file up as it is closed, which
+  would take a time given before), the time before the mode (Windows
+  opens the file to give it). A refusal there is said as one, never as a
+  source gone (kio-fuse calls it "no such file"). A volume that keeps no
+  modes says so with `ENOTSUP`, or kio-fuse's `ENOTTY` (`sys::mode_kept`).
 - **Batches (ADR-078).** Before a copy or a move to another device is
   checked, the run of such steps that follow into the same folder is
   looked at once (`op::transfer::batch_ahead`): where one end is a

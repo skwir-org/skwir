@@ -41,7 +41,11 @@
   within one server is made on the server, and many files are deleted
   there in one go. A phone plugged in over MTP takes and gives files two
   to three times faster than before. Undo of a copy works where a server keeps no trash:
-  what was made is removed, while it is unchanged.
+  what was made is removed, while it is unchanged. On KDE's desktop,
+  `smb://`, `dav://` and `ftp://` open through KIO (kio-fuse), with the
+  passwords KDE keeps; GVfs is used where it is installed, even before
+  anything started it. A copy a server refuses as it is finished is said
+  to have failed, and a move keeps its original.
 - **Actions at once**: a rename, a new folder or a tag no longer waits
   behind a long copy it shares nothing with, and copies between
   different disks or servers run together (four actions at most); two

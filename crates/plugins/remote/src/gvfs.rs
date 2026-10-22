@@ -24,6 +24,13 @@ pub const BRIDGE: &str = "fuse.gvfsd-fuse";
 /// does not answer.
 const PATIENCE: Duration = Duration::from_secs(60);
 
+/// GVfs's daemon on the session bus, which starts the bridge.
+#[cfg(target_os = "linux")]
+const DAEMON: &str = "org.gtk.vfs.Daemon";
+
+/// How long a daemon just started may take to mount its bridge.
+const BRIDGE_PATIENCE: Duration = Duration::from_secs(3);
+
 /// GVfs, as the plugin asks it.
 #[derive(Default)]
 pub struct Gvfs {
@@ -53,6 +60,20 @@ impl Gvfs {
     /// runtime folder of its own (a test's), whose GVfs it must not reach.
     pub fn bridge(&self) -> Option<PathBuf> {
         bridge_in(self.runtime.clone())
+    }
+
+    /// Whether GVfs's daemon runs on the session's bus (the test's), or
+    /// would be started there when asked.
+    fn can_start(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            crate::bus::can_start(DAEMON, &self.env)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = &self.env;
+            false
+        }
     }
 
     /// What copies in batches to and from its SFTP mounts.
@@ -112,8 +133,10 @@ impl Connector for Gvfs {
         if skwir_core::os_path::find_program("gio").is_none() {
             return Some("gio (GLib) is not installed".to_owned());
         }
-        if self.bridge().is_none() {
-            return Some("GVfs's FUSE bridge (gvfsd-fuse) is not running".to_owned());
+        // Its daemon need not run yet (a desktop other than GNOME's): `gio
+        // mount` starts it, and it starts its bridge.
+        if self.bridge().is_none() && !self.can_start() {
+            return Some("GVfs is not installed".to_owned());
         }
         None
     }
@@ -128,6 +151,18 @@ impl Connector for Gvfs {
         let gio = skwir_core::os_path::find_program("gio")
             .ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
         mount(self.gio(&gio), &top, ask, cancel)?;
+        // A daemon `gio` just started mounts its bridge as it starts: a
+        // moment, looked for again.
+        let since = Instant::now();
+        while self.bridge().is_none() && since.elapsed() < BRIDGE_PATIENCE {
+            std::thread::sleep(Duration::from_millis(50));
+            skwir_core::fs::reach::changed();
+        }
+        if self.bridge().is_none() {
+            anyhow::bail!(
+                "GVfs mounted {top} but its FUSE bridge is not running: is gvfsd-fuse installed?"
+            );
+        }
         skwir_core::fs::reach::changed();
         let point = self
             .find_mount(&top)

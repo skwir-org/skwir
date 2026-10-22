@@ -22,6 +22,7 @@ use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::Location;
 use skwir_plugin_remote::address::Address;
 use skwir_plugin_remote::connector::{Ask, Connector};
+use skwir_plugin_remote::kio::Kio;
 use skwir_plugin_remote::rclone::Rclone;
 use skwir_plugin_remote::sshfs::Sshfs;
 use skwir_plugin_remote::{RemotePlugin, Remotes};
@@ -64,7 +65,7 @@ impl Served {
             .arg("--config")
             .arg(root.with_extension("conf"))
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(std::fs::File::create(root.with_extension(format!("{kind}.log"))).unwrap())
             .spawn()
             .expect("start rclone serve");
         let deadline = Instant::now() + Duration::from_secs(20);
@@ -408,6 +409,29 @@ fn sshfs_asks_the_window_for_a_password_and_an_unknown_host_through_skwir() {
 }
 
 /// Send `signal` to each of `pids` at once (one `kill`).
+/// The processes `pid` started, theirs, and so on: read from the system's
+/// list of each one's children, never by name.
+fn descendants(pid: u32) -> Vec<u32> {
+    let mut pids = vec![pid];
+    let mut at = 0;
+    while at < pids.len() {
+        let tasks = std::fs::read_dir(format!("/proc/{}/task", pids[at]));
+        for task in tasks.into_iter().flatten().flatten() {
+            let children = std::fs::read_to_string(task.path().join("children"));
+            for child in children.unwrap_or_default().split_whitespace() {
+                if let Ok(pid) = child.parse::<u32>()
+                    && !pids.contains(&pid)
+                {
+                    pids.push(pid);
+                }
+            }
+        }
+        at += 1;
+    }
+    pids.remove(0);
+    pids
+}
+
 fn signal(signal: &str, pids: &[u32]) {
     if pids.is_empty() {
         return;
@@ -520,24 +544,7 @@ impl OwnSshd {
     /// from the kernel's lists of children (one read each, quick: a copy
     /// on this machine goes on meanwhile).
     fn descendants(&self) -> Vec<u32> {
-        let mut pids = vec![self.child.id()];
-        let mut at = 0;
-        while at < pids.len() {
-            let tasks = std::fs::read_dir(format!("/proc/{}/task", pids[at]));
-            for task in tasks.into_iter().flatten().flatten() {
-                let children = std::fs::read_to_string(task.path().join("children"));
-                for child in children.unwrap_or_default().split_whitespace() {
-                    if let Ok(pid) = child.parse::<u32>()
-                        && !pids.contains(&pid)
-                    {
-                        pids.push(pid);
-                    }
-                }
-            }
-            at += 1;
-        }
-        pids.remove(0);
-        pids
+        descendants(self.child.id())
     }
 
     /// Stop it, the sessions it serves included (its children, which its
@@ -2062,7 +2069,11 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
     });
     let ask: Arc<dyn Ask> = answers.clone();
     let address = Address::parse(&format!("sftp://tester@127.0.0.1:{}/", served.port)).unwrap();
-    // GVfs starts its bridge as its daemon starts: a moment after the bus.
+    // Nothing started GVfs on the test's bus yet, as on a desktop other
+    // than GNOME's: it can be connected through all the same, `gio mount`
+    // starting its daemon, which starts its bridge.
+    assert_eq!(gvfs.bridge(), None, "no GVfs runs on the test's bus yet");
+    assert_eq!(gvfs.unavailable(), None, "GVfs is there to be started");
     let connected = gvfs
         .connect(&address, &ask, &CancelToken::new())
         .expect("connect");
@@ -2205,6 +2216,486 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
 
     gvfs.disconnect(&remote, &recognised, &CancelToken::new())
         .expect("disconnect");
+    drop(private);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// KIO of the test's own (ADR-081): a session bus of its own, from which
+/// kio-fuse and KIO's daemon start, kio-fuse mounting in a runtime folder
+/// of the test's, Qt drawing nothing. `SKWIR_TEST_KIO` names the packages
+/// (kio-fuse's, KIO's: their `share` and Qt plugins), `:` between them;
+/// without it the test is skipped, and the session's KIO is never asked.
+struct PrivateKio {
+    bus: Child,
+    env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+    runtime: PathBuf,
+    /// Short, as a real one is: KIO's sockets live in it (108 bytes).
+    _runtime: tempfile::TempDir,
+}
+
+/// The KIO packages `SKWIR_TEST_KIO` names, if it does.
+fn kio_packages() -> Option<Vec<PathBuf>> {
+    let named = std::env::var_os("SKWIR_TEST_KIO")?;
+    Some(std::env::split_paths(&named).collect())
+}
+
+impl PrivateKio {
+    fn start(packages: &[PathBuf], base: &Path) -> PrivateKio {
+        use std::fmt::Write as _;
+        use std::io::BufRead;
+        let home = base.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let held = tempfile::Builder::new().prefix("k").tempdir().unwrap();
+        let runtime = held.path().to_path_buf();
+        std::fs::set_permissions(
+            &runtime,
+            std::os::unix::fs::PermissionsExt::from_mode(0o700),
+        )
+        .unwrap();
+        let joined =
+            |below: &str| std::env::join_paths(packages.iter().map(|p| p.join(below))).unwrap();
+        let mut env: Vec<(std::ffi::OsString, std::ffi::OsString)> = vec![
+            ("HOME".into(), home.into()),
+            ("XDG_RUNTIME_DIR".into(), runtime.clone().into()),
+            ("XDG_DATA_DIRS".into(), joined("share")),
+            ("QT_PLUGIN_PATH".into(), joined("lib/qt-6/plugins")),
+            ("QT_QPA_PLATFORM".into(), "offscreen".into()),
+        ];
+        // kio-fuse's own account of what it is asked, timed, in the bus's
+        // log, when asked for (`SKWIR_TEST_KIO_DEBUG`).
+        if std::env::var_os("SKWIR_TEST_KIO_DEBUG").is_some() {
+            env.extend([
+                ("QT_FORCE_STDERR_LOGGING".into(), "1".into()),
+                (
+                    "QT_LOGGING_RULES".into(),
+                    "org.kde.kio.fuse.debug=true".into(),
+                ),
+                (
+                    "QT_MESSAGE_PATTERN".into(),
+                    "%{time process} %{message}".into(),
+                ),
+            ]);
+        }
+        // A bus that starts KIO's services alone: nothing of the user's
+        // session (KWallet, the portals) is started on it.
+        let mut services = String::new();
+        for dir in packages.iter().map(|p| p.join("share/dbus-1/services")) {
+            if dir.is_dir() {
+                let _ = writeln!(services, "  <servicedir>{}</servicedir>", dir.display());
+            }
+        }
+        let config = base.join("bus.conf");
+        std::fs::write(
+            &config,
+            format!(
+                r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:dir={}</listen>
+{services}  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"#,
+                runtime.display(),
+            ),
+        )
+        .unwrap();
+        let mut bus = Command::new("dbus-daemon")
+            .arg(format!("--config-file={}", config.display()))
+            .args(["--nofork", "--print-address=1"])
+            .envs(env.iter().map(|(k, v)| (k, v)))
+            .stdout(Stdio::piped())
+            .stderr(std::fs::File::create(base.join("bus.log")).unwrap())
+            .spawn()
+            .expect("start a session bus");
+        let mut address = String::new();
+        std::io::BufReader::new(bus.stdout.take().unwrap())
+            .read_line(&mut address)
+            .unwrap();
+        env.push((
+            "DBUS_SESSION_BUS_ADDRESS".into(),
+            address.trim().to_owned().into(),
+        ));
+        PrivateKio {
+            bus,
+            env,
+            runtime,
+            _runtime: held,
+        }
+    }
+}
+
+impl Drop for PrivateKio {
+    fn drop(&mut self) {
+        // kio-fuse's mount let go of first (lazily: nothing waits on it),
+        // then what the bus started, by its pids, then the bus.
+        for root in std::fs::read_dir(&self.runtime)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            if root.file_name().to_string_lossy().starts_with("kio-fuse-") {
+                let _ = Command::new("fusermount3")
+                    .arg("-uz")
+                    .arg(root.path())
+                    .stderr(Stdio::null())
+                    .status();
+            }
+        }
+        // What the bus started runs apart from it (its helper ends, and
+        // what it started is the session manager's then): known by the
+        // runtime folder it was given, the test's own.
+        let started = with_runtime(&self.runtime);
+        signal("-TERM", &started);
+        let _ = self.bus.kill();
+        let _ = self.bus.wait();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while started
+            .iter()
+            .any(|pid| Path::new(&format!("/proc/{pid}")).exists())
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        signal("-KILL", &started);
+    }
+}
+
+/// This user's processes started with `runtime` as their runtime folder.
+fn with_runtime(runtime: &Path) -> Vec<u32> {
+    let mut wanted = b"XDG_RUNTIME_DIR=".to_vec();
+    wanted.extend_from_slice(runtime.as_os_str().as_encoded_bytes());
+    std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|&pid| pid != std::process::id())
+        .filter(|pid| {
+            std::fs::read(format!("/proc/{pid}/environ"))
+                .is_ok_and(|environ| environ.split(|b| *b == 0).any(|v| v == wanted))
+        })
+        .collect()
+}
+
+/// Put `body` at `path` (escaped) on the WebDAV server on `port`, as
+/// another of its clients would: rclone keeps what it listed (its own
+/// cache), and a file written in its folder behind it is not its until
+/// then (with no cache, its cleanups ran into each other and it stopped
+/// answering).
+fn put_over_webdav(port: u16, path: &str, body: &[u8]) {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        stream,
+        "PUT {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .unwrap();
+    stream.write_all(body).unwrap();
+    let mut answer = String::new();
+    let _ = stream.read_to_string(&mut answer);
+    assert!(
+        answer.starts_with("HTTP/1.1 201") || answer.starts_with("HTTP/1.1 204"),
+        "{answer}"
+    );
+}
+
+/// The names in `folder`, sorted.
+fn names_in(folder: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(folder)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn kio_fuse_mounts_each_server_a_folder_of_its_own_read_again_when_told() {
+    let Some(packages) = kio_packages() else {
+        eprintln!("skipped: SKWIR_TEST_KIO names no KIO packages");
+        return;
+    };
+    if let Some(why) = Rclone.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("kio");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(served_root.join("sub folder")).unwrap();
+    std::fs::write(served_root.join("sub folder/hello.txt"), "hello").unwrap();
+    let served = Served::start("webdav", &served_root, &[]);
+    let private = PrivateKio::start(&packages, &base);
+    let kio = Kio {
+        env: private.env.clone(),
+        runtime: Some(private.runtime.clone()),
+    };
+    // Nothing started kio-fuse on the test's bus yet: it is there to be.
+    assert_eq!(kio.unavailable(), None, "kio-fuse is there to be started");
+    let ask: Arc<dyn Ask> = Arc::new(Answers::default());
+    let address = Address::parse(&format!("dav://127.0.0.1:{}/sub folder", served.port)).unwrap();
+    let connected = kio
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect");
+    assert!(
+        connected.point.starts_with(&private.runtime)
+            && connected
+                .point
+                .ends_with(format!("webdav/127.0.0.1:{}", served.port)),
+        "{}",
+        connected.point.display()
+    );
+    assert_eq!(
+        connected.address,
+        Address::parse(&format!("dav://127.0.0.1:{}/", served.port)).unwrap(),
+        "a server's folder holds all of it"
+    );
+    let folder = connected.point.join("sub folder");
+    assert_eq!(names_in(&folder), ["hello.txt"]);
+    let remote = skwir_core::fs::reach::of(&folder).unwrap();
+    assert_eq!(
+        remote.point, connected.point,
+        "a server is a remote of its own"
+    );
+    let recognised = kio.recognises(&remote).expect("KIO's");
+    assert_eq!(recognised.address, Some(connected.address.clone()));
+    assert!(kio.reads_whole(&remote), "kio-fuse reads WebDAV whole");
+
+    // What the server gains is not listed while kio-fuse keeps what it
+    // listed (30 seconds), until it is told to forget.
+    put_over_webdav(served.port, "/sub%20folder/later.txt", b"later");
+    assert_eq!(names_in(&folder), ["hello.txt"], "what kio-fuse listed");
+    (kio.forget(&remote).expect("told").0)();
+    assert_eq!(names_in(&folder), ["hello.txt", "later.txt"]);
+
+    // Copies through the mount, up and down: the same bytes. Over KIO's
+    // WebDAV a file keeps no time and no mode (setting them is refused,
+    // which a copy takes as a volume keeping none).
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let entries = small_files(&base.join("local"));
+    let into = connected.point.join("it's a folder");
+    std::fs::create_dir(&into).unwrap();
+    let up = app
+        .executor
+        .execute_blocking(&copies(&entries, &into), app.lifetime());
+    assert!(up.error.is_none(), "{:?}", up.error);
+    for e in &entries {
+        same_bytes(
+            e,
+            &served_root
+                .join("it's a folder")
+                .join(e.file_name().unwrap()),
+        );
+    }
+    let kept = |path: &Path| std::fs::metadata(path).unwrap().modified().unwrap();
+    assert_ne!(
+        kept(&entries[0]),
+        kept(
+            &served_root
+                .join("it's a folder")
+                .join(entries[0].file_name().unwrap())
+        ),
+        "KIO's WebDAV keeps no time: once it does, say so in ADR-081"
+    );
+    let down = base.join("down");
+    std::fs::create_dir(&down).unwrap();
+    let there: Vec<PathBuf> = entries
+        .iter()
+        .map(|e| into.join(e.file_name().unwrap()))
+        .collect();
+    let back = app
+        .executor
+        .execute_blocking(&copies(&there, &down), app.lifetime());
+    assert!(back.error.is_none(), "{:?}", back.error);
+    for e in &entries {
+        same_bytes(e, &down.join(e.file_name().unwrap()));
+    }
+    drop(app);
+
+    // An FTP server beside it: a folder of its own.
+    let ftp_root = base.join("ftp");
+    std::fs::create_dir_all(&ftp_root).unwrap();
+    std::fs::write(ftp_root.join("over ftp.txt"), "ftp").unwrap();
+    let ftp = Served::start("ftp", &ftp_root, &[]);
+    let address = Address::parse(&format!("ftp://127.0.0.1:{}/", ftp.port)).unwrap();
+    let by_ftp = kio
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect over FTP");
+    assert!(
+        by_ftp
+            .point
+            .ends_with(format!("ftp/127.0.0.1:{}", ftp.port)),
+        "{}",
+        by_ftp.point.display()
+    );
+    assert_eq!(names_in(&by_ftp.point), ["over ftp.txt"]);
+    assert_ne!(
+        skwir_core::fs::reach::of(&by_ftp.point).unwrap().lane(),
+        remote.lane(),
+        "a server that stops holds its own"
+    );
+    assert!(
+        kio.disconnect(&remote, &recognised, &CancelToken::new())
+            .is_err(),
+        "kio-fuse lets go of no server"
+    );
+    drop(private);
+    drop(ftp);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[test]
+fn kio_folders_open_from_their_address_and_f5_reads_the_server_again() {
+    let Some(packages) = kio_packages() else {
+        eprintln!("skipped: SKWIR_TEST_KIO names no KIO packages");
+        return;
+    };
+    if let Some(why) = Rclone.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("kio-window");
+    let served_root = base.join("served");
+    for (folder, file) in [("sub folder", "hello.txt"), ("other", "there.txt")] {
+        std::fs::create_dir_all(served_root.join(folder)).unwrap();
+        std::fs::write(served_root.join(folder).join(file), file).unwrap();
+    }
+    let served = Served::start("webdav", &served_root, &[]);
+    let private = PrivateKio::start(&packages, &base);
+    let kio = Kio {
+        env: private.env.clone(),
+        runtime: Some(private.runtime.clone()),
+    };
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    // KIO alone: never the session's.
+    let remotes = Remotes::with(vec![Arc::new(kio)]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let pane = app.workspace.read().active_id();
+    let open = |folder: &str, expected: &[&str]| {
+        let address = format!("dav://127.0.0.1:{}/{folder}", served.port);
+        app.navigate(pane, &Location::parse(&address)).unwrap();
+        until(&app, 60, "the address led to its folder", || {
+            app.pane_location(pane)
+                .and_then(|l| l.path())
+                .is_some_and(|p| p.ends_with(folder))
+        });
+        let expected: Vec<String> = expected.iter().map(|&n| n.to_owned()).collect();
+        until_shown(&app, pane, 20, &expected, "the folder is listed");
+        app.pane_location(pane).unwrap().path().unwrap()
+    };
+    let folder = open("sub folder", &["hello.txt"]);
+    // Another folder of the server kio-fuse holds, not asked of it yet.
+    let other = open("other", &["there.txt"]);
+    assert_eq!(
+        skwir_core::fs::reach::of(&other).unwrap().point,
+        skwir_core::fs::reach::of(&folder).unwrap().point,
+        "one server, one folder of kio-fuse's"
+    );
+    // F5 reads the server again: kio-fuse is told to forget first.
+    put_over_webdav(served.port, "/other/later.txt", b"later");
+    app.dispatch(&Invocation::new("refresh")).unwrap();
+    until_shown(
+        &app,
+        pane,
+        10,
+        &["later.txt".to_owned(), "there.txt".to_owned()],
+        "F5 shows what the server gained",
+    );
+    // Near, but read whole by kio-fuse: small files' thumbnails alone.
+    until(&app, 20, "the remote is known", || {
+        app.remote(&other).is_some_and(|(_, known)| known.is_some())
+    });
+    let (_, known) = app.remote(&other).unwrap();
+    assert_eq!(
+        known.unwrap().thumbnails,
+        skwir_core::fs::reach::Thumbnails::Small
+    );
+    let place = app
+        .registry
+        .places
+        .find(|p| p.location.path().is_some_and(|p| other.starts_with(&p)))
+        .expect("the server in the sidebar");
+    assert!(place.eject.is_none(), "kio-fuse lets go of no server");
+    drop(app);
+    drop(private);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[test]
+fn a_copy_its_server_refuses_as_it_is_closed_is_told_so_a_move_keeps_its_original() {
+    let Some(packages) = kio_packages() else {
+        eprintln!("skipped: SKWIR_TEST_KIO names no KIO packages");
+        return;
+    };
+    if let Some(why) = Rclone.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("kio-refused");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(served_root.join("into")).unwrap();
+    // A server that makes a file but takes no more than a MiB in all:
+    // over WebDAV, kio-fuse makes the file as it is opened and sends it up
+    // as it is closed, where the server refuses it.
+    let served = Served::start(
+        "webdav",
+        &served_root,
+        &["--max-transfer", "1M", "--cutoff-mode", "hard"],
+    );
+    let private = PrivateKio::start(&packages, &base);
+    let kio = Kio {
+        env: private.env.clone(),
+        runtime: Some(private.runtime.clone()),
+    };
+    let ask: Arc<dyn Ask> = Arc::new(Answers::default());
+    let address = Address::parse(&format!("dav://127.0.0.1:{}/into", served.port)).unwrap();
+    let connected = kio
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect");
+    let into = connected.point.join("into");
+    let local = base.join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    let original = local.join("two MiB.bin");
+    let bytes: Vec<u8> = (0..2u32 << 20).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&original, &bytes).unwrap();
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let copied = app.executor.execute_blocking(
+        &copies(std::slice::from_ref(&original), &into),
+        app.lifetime(),
+    );
+    // Told as its close said, never as a source gone.
+    let said = copied.error.unwrap_or_default();
+    assert!(
+        said.contains("refused it as it was closed") && !said.contains("not there any more"),
+        "its server refused it: the copy is not done ({said})"
+    );
+    assert!(
+        !served_root.join("into/two MiB.bin").exists(),
+        "nothing placed on the server"
+    );
+    let moved = app.executor.execute_blocking(
+        &moves(std::slice::from_ref(&original), &into),
+        app.lifetime(),
+    );
+    assert!(moved.error.is_some(), "nor the move's");
+    assert_eq!(
+        std::fs::read(&original).unwrap(),
+        bytes,
+        "the original is kept"
+    );
+    assert!(
+        !served_root.join("into/two MiB.bin").exists(),
+        "nothing placed on the server"
+    );
+    drop(app);
     drop(private);
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();

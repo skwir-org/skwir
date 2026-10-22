@@ -1481,11 +1481,15 @@ fn copy_one(src: &Path, dst: &Path, wrote: &dyn Fn(u64)) -> anyhow::Result<()> {
         src.display(),
         meta.len()
     );
+    // Whole once closing it says so (`sys::close`); its time and mode
+    // given after, by its name, the time first (Windows opens the file
+    // to give it).
+    super::builtin::finish(df, src)?;
     let meta = sf.metadata()?;
+    let _ = super::sys::set_modified(dst, meta.modified()?);
     if made.permissions() != meta.permissions() {
-        super::sys::mode_kept(df.set_permissions(meta.permissions()))?;
+        super::sys::mode_kept(std::fs::set_permissions(dst, meta.permissions()))?;
     }
-    let _ = df.set_modified(meta.modified()?);
     Ok(())
 }
 
