@@ -501,16 +501,15 @@ pub fn bookmarks() -> Vec<Bookmark> {
 
 /// Parse `file:///path%20x Label` lines. Non-`file://` entries are skipped.
 pub fn parse_bookmarks(text: &str) -> Vec<Bookmark> {
-    lines_of(text)
-        .into_iter()
-        .filter_map(|line| line.mark)
-        .map(|(path, _, label)| {
-            let title = label
-                .or_else(|| path.file_name().map(|n| n.to_string_lossy().into_owned()))
-                .unwrap_or_else(|| path.display().to_string());
-            Bookmark { title, path }
-        })
-        .collect()
+    lines_of(text).iter().filter_map(folder_bookmark).collect()
+}
+
+fn folder_bookmark(line: &Line) -> Option<Bookmark> {
+    let (path, _, label) = line.mark.clone()?;
+    let title = label
+        .or_else(|| path.file_name().map(|n| n.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| path.display().to_string());
+    Some(Bookmark { title, path })
 }
 
 /// A bookmark of a remote folder: its address as written
@@ -534,33 +533,84 @@ pub fn remote_bookmarks() -> Vec<RemoteBookmark> {
 /// The lines of `text` that bookmark an address of another scheme than
 /// `file://` (`sftp://host/path Label`).
 pub fn parse_remote_bookmarks(text: &str) -> Vec<RemoteBookmark> {
+    lines_of(text).iter().filter_map(remote_bookmark).collect()
+}
+
+fn remote_bookmark(line: &Line) -> Option<RemoteBookmark> {
+    if line.mark.is_some() {
+        return None;
+    }
+    let (address, label) = address_and_label(line);
+    let (scheme, rest) = address.split_once("://")?;
+    if scheme.is_empty() || scheme.eq_ignore_ascii_case("file") || rest.is_empty() {
+        return None;
+    }
+    let title = label.map_or_else(|| address_name(address), str::to_owned);
+    Some(RemoteBookmark {
+        title,
+        address: address.to_owned(),
+    })
+}
+
+/// The name an address shows without a label: its last part, decoded.
+pub fn address_name(address: &str) -> String {
+    let rest = address.split_once("://").map_or(address, |(_, rest)| rest);
+    let named = rest.trim_end_matches('/');
+    let last = named.rsplit('/').next().unwrap_or(named);
+    String::from_utf8_lossy(&crate::uri::percent_decode(last)).into_owned()
+}
+
+/// A bookmark of either kind, as the file orders them: what the sidebar
+/// lists, a folder's and an address's side by side.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Bookmarked {
+    Folder(Bookmark),
+    Address(RemoteBookmark),
+}
+
+/// Every GTK bookmark, folders and addresses, in the file's order.
+pub fn every_bookmark() -> Vec<Bookmarked> {
+    let Some(file) = bookmarks_file() else {
+        return Vec::new();
+    };
+    parse_every_bookmark(&std::fs::read_to_string(file).unwrap_or_default())
+}
+
+/// The bookmarks of `text`, folders and addresses, in its order.
+pub fn parse_every_bookmark(text: &str) -> Vec<Bookmarked> {
     lines_of(text)
-        .into_iter()
-        .filter(|line| line.mark.is_none())
+        .iter()
         .filter_map(|line| {
-            let trimmed = line.raw.trim();
-            let (address, label) = match trimmed.split_once(' ') {
-                Some((address, label)) => (address, Some(label.trim()).filter(|l| !l.is_empty())),
-                None => (trimmed, None),
-            };
-            let (scheme, rest) = address.split_once("://")?;
-            if scheme.is_empty() || scheme.eq_ignore_ascii_case("file") || rest.is_empty() {
-                return None;
-            }
-            let title = label.map_or_else(
-                || {
-                    let named = rest.trim_end_matches('/');
-                    let last = named.rsplit('/').next().unwrap_or(named);
-                    String::from_utf8_lossy(&crate::uri::percent_decode(last)).into_owned()
-                },
-                str::to_owned,
-            );
-            Some(RemoteBookmark {
-                title,
-                address: address.to_owned(),
-            })
+            folder_bookmark(line)
+                .map(Bookmarked::Folder)
+                .or_else(|| remote_bookmark(line).map(Bookmarked::Address))
         })
         .collect()
+}
+
+/// What a bookmark keeps: a folder, or a remote folder by its address
+/// (`sftp://me@host/docs`, as the file writes it). Edits name either, so
+/// the two kinds share one order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Marked {
+    Folder(PathBuf),
+    Address(String),
+}
+
+impl Marked {
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Folder(path) => Some(path),
+            Self::Address(_) => None,
+        }
+    }
+
+    pub fn address(&self) -> Option<&str> {
+        match self {
+            Self::Folder(_) => None,
+            Self::Address(address) => Some(address),
+        }
+    }
 }
 
 /// A change to the bookmarks file, as data: what a command applies, and
@@ -573,28 +623,31 @@ pub enum BookmarkEdit {
     Add {
         path: PathBuf,
         title: Option<String>,
-        before: Option<PathBuf>,
+        before: Option<Marked>,
     },
     Remove {
         path: PathBuf,
     },
-    /// Label `path`'s bookmark `title`; `None` is the folder's own name.
+    /// Label a bookmark `title`; `None` is the folder's own name (an
+    /// address's last part).
     Rename {
-        path: PathBuf,
+        mark: Marked,
         title: Option<String>,
     },
-    /// Put `path`'s bookmark before `before`'s, last when `None`.
+    /// Put a bookmark before `before`'s, last when `None`: folders and
+    /// addresses in one order.
     Move {
-        path: PathBuf,
-        before: Option<PathBuf>,
+        mark: Marked,
+        before: Option<Marked>,
     },
     /// Bookmark a remote folder by its address (`sftp://me@host/docs`, as
-    /// `uri::address_uri` writes it), labelled `title`, last: what other
-    /// file managers write, and what opens it again once its mount is gone
-    /// (ADR-077).
+    /// `uri::address_uri` writes it), labelled `title`, before `before`'s
+    /// bookmark (last when `None`): what other file managers write, and
+    /// what opens it again once its mount is gone (ADR-077).
     AddAddress {
         address: String,
         title: Option<String>,
+        before: Option<Marked>,
     },
     /// Remove the bookmark of `address`.
     RemoveAddress {
@@ -606,11 +659,18 @@ impl BookmarkEdit {
     /// The folder the edit is about; `None` for an address's.
     pub fn path(&self) -> Option<&Path> {
         match self {
-            Self::Add { path, .. }
-            | Self::Remove { path }
-            | Self::Rename { path, .. }
-            | Self::Move { path, .. } => Some(path),
+            Self::Add { path, .. } | Self::Remove { path } => Some(path),
+            Self::Rename { mark, .. } | Self::Move { mark, .. } => mark.path(),
             Self::AddAddress { .. } | Self::RemoveAddress { .. } => None,
+        }
+    }
+
+    /// The address the edit is about; `None` for a folder's.
+    pub fn address(&self) -> Option<&str> {
+        match self {
+            Self::AddAddress { address, .. } | Self::RemoveAddress { address } => Some(address),
+            Self::Rename { mark, .. } | Self::Move { mark, .. } => mark.address(),
+            Self::Add { .. } | Self::Remove { .. } => None,
         }
     }
 }
@@ -622,6 +682,30 @@ fn address_of(line: &Line) -> Option<&str> {
     }
     let address = line.raw.trim().split(' ').next()?;
     address.contains("://").then_some(address)
+}
+
+/// An address line's address and its label, when it has one.
+fn address_and_label(line: &Line) -> (&str, Option<&str>) {
+    let trimmed = line.raw.trim();
+    match trimmed.split_once(' ') {
+        Some((address, label)) => (address, Some(label.trim()).filter(|l| !l.is_empty())),
+        None => (trimmed, None),
+    }
+}
+
+/// What a line bookmarks, when it bookmarks something.
+fn marked(line: &Line) -> Option<Marked> {
+    match &line.mark {
+        Some((path, ..)) => Some(Marked::Folder(path.clone())),
+        None => address_of(line).map(|address| Marked::Address(address.to_owned())),
+    }
+}
+
+fn is(line: &Line, mark: &Marked) -> bool {
+    match mark {
+        Marked::Folder(path) => line.mark.as_ref().is_some_and(|(p, ..)| p == path),
+        Marked::Address(address) => address_of(line) == Some(address.as_str()),
+    }
 }
 
 /// A line of the bookmarks file. Lines that are not folders (`sftp://`
@@ -675,24 +759,36 @@ fn label_for(path: &Path, title: Option<&str>) -> Option<String> {
     (!title.is_empty() && own.as_deref() != Some(title.as_str())).then_some(title)
 }
 
-fn position(lines: &[Line], path: &Path) -> Option<usize> {
-    lines
-        .iter()
-        .position(|l| l.mark.as_ref().is_some_and(|(p, ..)| p == path))
+/// An address's label as the file stores it: one line, none when empty.
+/// Kept as given otherwise: an address has no name of its own to follow.
+fn address_label(title: Option<&str>) -> Option<String> {
+    title
+        .map(|t| {
+            t.split(['\n', '\r'])
+                .collect::<Vec<_>>()
+                .join(" ")
+                .trim()
+                .to_owned()
+        })
+        .filter(|t| !t.is_empty())
 }
 
-/// The folder bookmarked after line `index`, other than `path` itself.
-fn next_after(lines: &[Line], index: usize, path: &Path) -> Option<PathBuf> {
+fn position(lines: &[Line], mark: &Marked) -> Option<usize> {
+    lines.iter().position(|l| is(l, mark))
+}
+
+/// The bookmark after line `index`, folder or address, other than `mark`
+/// itself.
+fn next_after(lines: &[Line], index: usize, mark: &Marked) -> Option<Marked> {
     lines[index + 1..]
         .iter()
-        .filter_map(|l| l.mark.as_ref().map(|(p, ..)| p))
-        .find(|p| *p != path)
-        .cloned()
+        .filter(|l| !is(l, mark))
+        .find_map(marked)
 }
 
 /// Where a line goes to stand before `before`'s bookmark: at its line, or
 /// at the end.
-fn insertion(lines: &[Line], before: Option<&Path>) -> usize {
+fn insertion(lines: &[Line], before: Option<&Marked>) -> usize {
     before
         .and_then(|before| position(lines, before))
         .unwrap_or(lines.len())
@@ -710,12 +806,12 @@ pub fn edit_text(text: &str, edit: &BookmarkEdit) -> Option<(String, BookmarkEdi
             title,
             before,
         } => {
-            if position(&lines, path).is_some() {
+            if position(&lines, &Marked::Folder(path.clone())).is_some() {
                 return None;
             }
             let uri = crate::uri::file_uri(path);
             let label = label_for(path, title.as_deref());
-            let at = insertion(&lines, before.as_deref());
+            let at = insertion(&lines, before.as_ref());
             lines.insert(
                 at,
                 Line {
@@ -726,78 +822,90 @@ pub fn edit_text(text: &str, edit: &BookmarkEdit) -> Option<(String, BookmarkEdi
             BookmarkEdit::Remove { path: path.clone() }
         }
         BookmarkEdit::Remove { path } => {
-            let first = position(&lines, path)?;
-            let before = next_after(&lines, first, path);
+            let mark = Marked::Folder(path.clone());
+            let first = position(&lines, &mark)?;
+            let before = next_after(&lines, first, &mark);
             let title = lines[first].mark.as_ref().and_then(|(.., l)| l.clone());
-            lines.retain(|l| l.mark.as_ref().is_none_or(|(p, ..)| p != path));
+            lines.retain(|l| !is(l, &mark));
             BookmarkEdit::Add {
                 path: path.clone(),
                 title,
                 before,
             }
         }
-        BookmarkEdit::Rename { path, title } => {
-            let at = position(&lines, path)?;
-            let label = label_for(path, title.as_deref());
+        BookmarkEdit::Rename { mark, title } => {
+            let at = position(&lines, mark)?;
             let line = &mut lines[at];
-            let (_, uri, old) = line.mark.as_mut()?;
-            if *old == label {
-                return None;
-            }
-            line.raw = mark_line(uri, label.as_deref());
-            let old = std::mem::replace(old, label);
+            let old = match mark {
+                Marked::Folder(path) => {
+                    let label = label_for(path, title.as_deref());
+                    let (_, uri, old) = line.mark.as_mut()?;
+                    if *old == label {
+                        return None;
+                    }
+                    line.raw = mark_line(uri, label.as_deref());
+                    std::mem::replace(old, label)
+                }
+                Marked::Address(_) => {
+                    let label = address_label(title.as_deref());
+                    let (address, old) = address_and_label(line);
+                    if old == label.as_deref() {
+                        return None;
+                    }
+                    let (address, old) = (address.to_owned(), old.map(str::to_owned));
+                    line.raw = mark_line(&address, label.as_deref());
+                    old
+                }
+            };
             BookmarkEdit::Rename {
-                path: path.clone(),
+                mark: mark.clone(),
                 title: old,
             }
         }
-        BookmarkEdit::AddAddress { address, title } => {
-            if lines.iter().any(|l| address_of(l) == Some(address)) {
+        BookmarkEdit::AddAddress {
+            address,
+            title,
+            before,
+        } => {
+            if position(&lines, &Marked::Address(address.clone())).is_some() {
                 return None;
             }
-            let label = title
-                .as_deref()
-                .map(|t| {
-                    t.split(['\n', '\r'])
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                        .trim()
-                        .to_owned()
-                })
-                .filter(|t| !t.is_empty());
-            lines.push(Line {
-                raw: mark_line(address, label.as_deref()),
-                mark: None,
-            });
+            let label = address_label(title.as_deref());
+            let at = insertion(&lines, before.as_ref());
+            lines.insert(
+                at,
+                Line {
+                    raw: mark_line(address, label.as_deref()),
+                    mark: None,
+                },
+            );
             BookmarkEdit::RemoveAddress {
                 address: address.clone(),
             }
         }
         BookmarkEdit::RemoveAddress { address } => {
-            let at = lines.iter().position(|l| address_of(l) == Some(address))?;
-            let title = lines[at]
-                .raw
-                .trim()
-                .split_once(' ')
-                .map(|(_, label)| label.trim().to_owned())
-                .filter(|l| !l.is_empty());
-            lines.retain(|l| address_of(l) != Some(address));
+            let mark = Marked::Address(address.clone());
+            let at = position(&lines, &mark)?;
+            let before = next_after(&lines, at, &mark);
+            let title = address_and_label(&lines[at]).1.map(str::to_owned);
+            lines.retain(|l| !is(l, &mark));
             BookmarkEdit::AddAddress {
                 address: address.clone(),
                 title,
+                before,
             }
         }
-        BookmarkEdit::Move { path, before } => {
-            let from = position(&lines, path)?;
-            let was = next_after(&lines, from, path);
-            if before.as_deref() == Some(path.as_path()) || was == *before {
+        BookmarkEdit::Move { mark, before } => {
+            let from = position(&lines, mark)?;
+            let was = next_after(&lines, from, mark);
+            if before.as_ref() == Some(mark) || was == *before {
                 return None;
             }
             let line = lines.remove(from);
-            let at = insertion(&lines, before.as_deref());
+            let at = insertion(&lines, before.as_ref());
             lines.insert(at, line);
             BookmarkEdit::Move {
-                path: path.clone(),
+                mark: mark.clone(),
                 before: was,
             }
         }
@@ -1171,6 +1279,7 @@ mod tests {
     #[test]
     fn bookmark_edits_are_undone_by_their_inverse() {
         use super::BookmarkEdit::{Add, Move, Remove, Rename};
+        use super::Marked::Folder;
         let text = "file:///example/a%20b A label\nsftp://host/x Remote\nfile:///example/it%27s\n\nfile:///example/c\n";
         let a = PathBuf::from("/example/a b");
         let its = PathBuf::from("/example/it's");
@@ -1180,29 +1289,29 @@ mod tests {
             Remove { path: a.clone() },
             Remove { path: its.clone() },
             Rename {
-                path: its.clone(),
+                mark: Folder(its.clone()),
                 title: Some("Reports".into()),
             },
             Rename {
-                path: a.clone(),
+                mark: Folder(a.clone()),
                 title: None,
             },
             Move {
-                path: c.clone(),
-                before: Some(a.clone()),
+                mark: Folder(c.clone()),
+                before: Some(Folder(a.clone())),
             },
             Move {
-                path: a.clone(),
+                mark: Folder(a.clone()),
                 before: None,
             },
             Move {
-                path: a.clone(),
-                before: Some(c.clone()),
+                mark: Folder(a.clone()),
+                before: Some(Folder(c.clone())),
             },
             Add {
                 path: d.clone(),
                 title: Some("Dee".into()),
-                before: Some(its.clone()),
+                before: Some(Folder(its.clone())),
             },
         ];
         for edit in edits {
@@ -1233,6 +1342,7 @@ mod tests {
     #[test]
     fn bookmark_edits_that_change_nothing_say_so() {
         use super::BookmarkEdit::{Move, Remove, Rename};
+        use super::Marked::Folder;
         let text = "file:///example/a\nfile:///example/b Bee\n";
         let a = PathBuf::from("/example/a");
         let b = PathBuf::from("/example/b");
@@ -1242,24 +1352,24 @@ mod tests {
             },
             // Already where it is asked to go.
             Move {
-                path: a.clone(),
-                before: Some(b.clone()),
+                mark: Folder(a.clone()),
+                before: Some(Folder(b.clone())),
             },
             Move {
-                path: b.clone(),
+                mark: Folder(b.clone()),
                 before: None,
             },
             Move {
-                path: a.clone(),
-                before: Some(a.clone()),
+                mark: Folder(a.clone()),
+                before: Some(Folder(a.clone())),
             },
             Rename {
-                path: b.clone(),
+                mark: Folder(b.clone()),
                 title: Some("Bee".into()),
             },
             // The folder's own name is no label at all.
             Rename {
-                path: a.clone(),
+                mark: Folder(a.clone()),
                 title: Some(" a ".into()),
             },
         ] {
@@ -1268,7 +1378,7 @@ mod tests {
         let (renamed, _) = super::edit_text(
             text,
             &Rename {
-                path: b,
+                mark: Folder(b),
                 title: Some("two\nlines ".into()),
             },
         )
@@ -1277,7 +1387,7 @@ mod tests {
         let (moved, _) = super::edit_text(
             text,
             &Move {
-                path: a,
+                mark: Folder(a),
                 before: None,
             },
         )
@@ -1306,6 +1416,7 @@ mod tests {
             &BookmarkEdit::AddAddress {
                 address: address.clone(),
                 title: Some("Work".into()),
+                before: None,
             },
         )
         .unwrap();
@@ -1321,7 +1432,8 @@ mod tests {
                 &added,
                 &BookmarkEdit::AddAddress {
                     address: address.clone(),
-                    title: None
+                    title: None,
+                    before: None,
                 }
             )
             .is_none(),
@@ -1333,9 +1445,118 @@ mod tests {
             back,
             BookmarkEdit::AddAddress {
                 address,
-                title: Some("Work".into())
+                title: Some("Work".into()),
+                before: None,
             }
         );
+    }
+
+    /// Folders and addresses are one list in the file's order: an address
+    /// is renamed and moved among folders as a folder is, before one or
+    /// after, and every edit's inverse gives the file back as it was, an
+    /// address removed coming back where it stood.
+    #[test]
+    fn addresses_and_folders_share_one_order() {
+        let text = "file:///example/a\nsftp://me@example.com/docs Docs\nfile:///example/c See\nsmb://nas/photos%20x\n";
+        let a = Marked::Folder("/example/a".into());
+        let docs = Marked::Address("sftp://me@example.com/docs".into());
+        let c = Marked::Folder("/example/c".into());
+        let photos = Marked::Address("smb://nas/photos%20x".into());
+        let order = |text: &str| -> Vec<String> {
+            parse_every_bookmark(text)
+                .into_iter()
+                .map(|b| match b {
+                    Bookmarked::Folder(b) => b.title,
+                    Bookmarked::Address(b) => b.title,
+                })
+                .collect()
+        };
+        assert_eq!(order(text), ["a", "Docs", "See", "photos x"]);
+        let edits = [
+            BookmarkEdit::Move {
+                mark: docs.clone(),
+                before: Some(a.clone()),
+            },
+            BookmarkEdit::Move {
+                mark: a.clone(),
+                before: Some(photos.clone()),
+            },
+            BookmarkEdit::Move {
+                mark: photos.clone(),
+                before: Some(docs.clone()),
+            },
+            BookmarkEdit::Move {
+                mark: docs.clone(),
+                before: None,
+            },
+            BookmarkEdit::Rename {
+                mark: docs.clone(),
+                title: Some("Work\nfiles ".into()),
+            },
+            BookmarkEdit::Rename {
+                mark: docs.clone(),
+                title: None,
+            },
+            BookmarkEdit::Rename {
+                mark: photos.clone(),
+                title: Some("Photos".into()),
+            },
+            BookmarkEdit::RemoveAddress {
+                address: "sftp://me@example.com/docs".into(),
+            },
+            BookmarkEdit::Remove {
+                path: "/example/c".into(),
+            },
+            BookmarkEdit::AddAddress {
+                address: "dav://nas/share".into(),
+                title: None,
+                before: Some(c.clone()),
+            },
+        ];
+        for edit in edits {
+            let (changed, inverse) =
+                edit_text(text, &edit).unwrap_or_else(|| panic!("{edit:?} changes something"));
+            let (back, _) = edit_text(&changed, &inverse)
+                .unwrap_or_else(|| panic!("{inverse:?} reverts {edit:?}"));
+            assert_eq!(back, text, "{edit:?} then {inverse:?}");
+        }
+        let moved = |edit| edit_text(text, &edit).unwrap().0;
+        assert_eq!(
+            order(&moved(BookmarkEdit::Move {
+                mark: docs.clone(),
+                before: Some(a.clone()),
+            })),
+            ["Docs", "a", "See", "photos x"]
+        );
+        assert_eq!(
+            order(&moved(BookmarkEdit::Move {
+                mark: a,
+                before: Some(photos),
+            })),
+            ["Docs", "See", "a", "photos x"]
+        );
+        let (renamed, _) = edit_text(
+            text,
+            &BookmarkEdit::Rename {
+                mark: docs.clone(),
+                title: Some("Work\nfiles ".into()),
+            },
+        )
+        .unwrap();
+        assert!(renamed.contains("sftp://me@example.com/docs Work files\n"));
+        // Where it already is, as it is already called: nothing to do.
+        for edit in [
+            BookmarkEdit::Move {
+                mark: docs.clone(),
+                before: Some(c),
+            },
+            BookmarkEdit::Rename {
+                mark: docs,
+                title: Some(" Docs ".into()),
+            },
+        ] {
+            assert_eq!(edit_text(text, &edit), None, "{edit:?}");
+        }
     }
 
     /// The bookmarks another file manager made of remote folders are

@@ -218,7 +218,10 @@ ADR-077 (which revises ADR-021).
   never a remote's.
 - A remote folder bookmarked is kept by its address in the desktop's
   shared bookmarks (`BookmarkEdit::AddAddress`, `uri::address_uri`), as
-  other file managers keep theirs, never by its mount's path.
+  other file managers keep theirs, never by its mount's path. It is one
+  of the bookmarks: renamed and moved among the folders' by the same
+  commands (`places.rename_bookmark`, `places.move_bookmark`), named by
+  `Marked::Address`, in the file's order.
 - An agent's call connects only once the user allowed it.
 - The address field completes the server being typed (`sftp://me@ho`)
   with those known: mounted, the tools', the remote bookmarks, and for

@@ -235,11 +235,15 @@ pub struct Arranged {
 /// offered places in the user's order among the slots they hold.
 pub fn arrange(mut places: Vec<Place>, sections: &Sections) -> Vec<Arranged> {
     // By name too, so that two groups the sidebar does not know never mix.
+    // What is no folder comes after the folders (the servers the tools
+    // know, after the mounts), unless it moves: what the user orders keeps
+    // its owner's order (a remote bookmark among the folders').
+    let after = |p: &Place| !p.location.is_path() && p.reorder.is_none();
     places.sort_by(|a, b| {
-        (sections.rank(&a.group), &a.group, !a.location.is_path()).cmp(&(
+        (sections.rank(&a.group), &a.group, after(a)).cmp(&(
             sections.rank(&b.group),
             &b.group,
-            !b.location.is_path(),
+            after(b),
         ))
     });
     let mut slots: HashMap<String, Vec<usize>> = HashMap::new();
@@ -2111,6 +2115,39 @@ mod tests {
             .filter(|a| a.shown)
             .map(|a| a.place.title.clone())
             .collect()
+    }
+
+    /// What is no folder comes after the folders of its group unless it
+    /// moves: a remote bookmark stays where its owner keeps it, among the
+    /// folders', and a server the tools know goes after the mounts.
+    #[test]
+    fn a_place_that_moves_keeps_its_owners_order() {
+        let moving = |location: &str| {
+            let mut p = place("bookmarks", location);
+            p.forget = Some(skwir_core::command::Invocation::new("places.unbookmark"));
+            p.reorder = Some(skwir_core::registry::Reorder {
+                command: skwir_core::command::Invocation::new("places.move_bookmark"),
+                before: serde_json::json!(location),
+            });
+            p
+        };
+        let all = vec![
+            moving("/a"),
+            moving("sftp://me@example.com/docs"),
+            moving("/c"),
+            place("network", "sftp://server.example.com"),
+            place("network", "/run/user/1000/gvfs/sftp:host=nas"),
+        ];
+        assert_eq!(
+            titles(&arrange(all, &Sections::default())),
+            [
+                "a",
+                "sftp://me@example.com/docs",
+                "c",
+                "run/user/1000/gvfs/sftp:host=nas",
+                "sftp://server.example.com",
+            ]
+        );
     }
 
     /// The places offered are the user's to put in order, rename and hide;

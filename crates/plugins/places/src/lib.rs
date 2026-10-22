@@ -15,7 +15,7 @@ use skwir_core::plugin::Plugin;
 use skwir_core::registry::{Keeper, MenuItem, Place, Reorder};
 use skwir_core::scheduler::Priority;
 use skwir_core::workspace::PaneId;
-use skwir_platform::places::BookmarkEdit;
+use skwir_platform::places::{BookmarkEdit, Bookmarked, Marked, address_name};
 
 const ID: &str = "places";
 /// A disk brings several partitions: events this close together are one change.
@@ -248,20 +248,34 @@ fn folder_menu(path: &Path) -> Vec<MenuItem> {
     )]
 }
 
-/// Asking for a bookmark's new name: its menu's Rename…, and F2.
-fn bookmark_rename(bookmark: &skwir_platform::places::Bookmark) -> Invocation {
+/// Asking for a bookmark's new name: its menu's Rename…, and F2. `which`
+/// names it as the command takes it (`path` or `address`).
+fn bookmark_rename(title: &str, which: &serde_json::Value, own: &str) -> Invocation {
     Invocation::with_args(
         "ui.ask",
         &serde_json::json!({
             "title": "Rename bookmark",
             "accept": "Rename",
-            "placeholder": "Name (empty: the folder's own)",
-            "text": bookmark.title,
+            "placeholder": format!("Name (empty: {own})"),
+            "text": title,
             "command": "places.rename_bookmark",
-            "args": { "path": PathArg::from(bookmark.path.as_path()) },
+            "args": which,
             "field": "title",
         }),
     )
+}
+
+/// What moves a bookmark: one command for folders and addresses, so they
+/// move among each other (`sidebar::mover`).
+fn bookmark_reorder(mark: &Marked) -> Reorder {
+    let which = match mark {
+        Marked::Folder(path) => serde_json::json!({ "path": PathArg::from(path.as_path()) }),
+        Marked::Address(address) => serde_json::json!({ "address": address }),
+    };
+    Reorder {
+        command: Invocation::with_args("places.move_bookmark", &which),
+        before: mark_json(mark),
+    }
 }
 
 /// Scan the environment and return every place, in sidebar order.
@@ -277,43 +291,45 @@ pub fn scan() -> Vec<Place> {
     for d in skwir_platform::places::user_dirs() {
         out.push(folder(d.name, d.path, icon_for_user_dir(&d.kind), "places"));
     }
-    for b in skwir_platform::places::bookmarks() {
-        let path = serde_json::json!(PathArg::from(b.path.as_path()));
-        // Rename… and the item that removes it are the sidebar's, from
-        // `rename` and `forget`.
-        out.push(Place {
-            menu: Vec::new(),
-            rename: Some(bookmark_rename(&b)),
-            forget: Some(Invocation::with_args(
-                "places.unbookmark",
-                &serde_json::json!({ "path": path }),
-            )),
-            reorder: Some(Reorder {
-                command: Invocation::with_args(
-                    "places.move_bookmark",
-                    &serde_json::json!({ "path": path }),
-                ),
-                before: path,
-            }),
-            ..folder(b.title, b.path, "folder", "bookmarks")
-        });
-    }
-    // A remote folder another file manager bookmarked opens by its address
-    // (ADR-077), when a plugin opens its scheme.
-    for b in skwir_platform::places::remote_bookmarks() {
-        let forget = Invocation::with_args(
-            "places.unbookmark_address",
-            &serde_json::json!({ "address": b.address }),
-        );
-        out.push(Place {
-            forget: Some(forget),
-            ..Place::new(
-                "bookmarks",
-                b.title,
-                "folder-remote",
-                Location::parse(&b.address),
-            )
-        });
+    // In the file's order, a remote folder's beside a folder's.
+    for b in skwir_platform::places::every_bookmark() {
+        match b {
+            Bookmarked::Folder(b) => {
+                let path = serde_json::json!(PathArg::from(b.path.as_path()));
+                // Rename… and the item that removes it are the sidebar's,
+                // from `rename` and `forget`.
+                out.push(Place {
+                    menu: Vec::new(),
+                    rename: Some(bookmark_rename(
+                        &b.title,
+                        &serde_json::json!({ "path": path }),
+                        "the folder's own",
+                    )),
+                    forget: Some(Invocation::with_args(
+                        "places.unbookmark",
+                        &serde_json::json!({ "path": path }),
+                    )),
+                    reorder: Some(bookmark_reorder(&Marked::Folder(b.path.clone()))),
+                    ..folder(b.title, b.path, "folder", "bookmarks")
+                });
+            }
+            // A remote folder another file manager bookmarked opens by its
+            // address (ADR-077), when a plugin opens its scheme.
+            Bookmarked::Address(b) => {
+                let which = serde_json::json!({ "address": b.address });
+                out.push(Place {
+                    rename: Some(bookmark_rename(&b.title, &which, "its address's last part")),
+                    forget: Some(Invocation::with_args("places.unbookmark_address", &which)),
+                    reorder: Some(bookmark_reorder(&Marked::Address(b.address.clone()))),
+                    ..Place::new(
+                        "bookmarks",
+                        b.title,
+                        "folder-remote",
+                        Location::parse(&b.address),
+                    )
+                });
+            }
+        }
     }
     for m in skwir_platform::places::mounts() {
         // A network's mount is the Network section's (the remote plugin).
@@ -688,7 +704,7 @@ struct BookmarkArgs {
     title: Option<String>,
     /// The bookmark it goes before; last when omitted.
     #[serde(default)]
-    before: Option<PathArg>,
+    before: Option<MarkArg>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -699,8 +715,46 @@ struct AddressArgs {
     /// Its label; its last part when omitted.
     #[serde(default)]
     title: Option<String>,
+    /// The bookmark it goes before; last when omitted.
+    #[serde(default)]
+    before: Option<MarkArg>,
     #[serde(default)]
     undo: bool,
+}
+
+/// A bookmark named in a command's arguments: a folder's path, or
+/// `{"address": "sftp://…"}` for a remote folder's.
+#[derive(Clone, Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+enum MarkArg {
+    Address { address: String },
+    Folder(PathArg),
+}
+
+impl MarkArg {
+    fn into_marked(self) -> Marked {
+        match self {
+            Self::Address { address } => Marked::Address(address),
+            Self::Folder(path) => Marked::Folder(path.into_inner()),
+        }
+    }
+}
+
+/// `mark` as a command's argument names it ([`MarkArg`]).
+fn mark_json(mark: &Marked) -> serde_json::Value {
+    match mark {
+        Marked::Folder(path) => serde_json::json!(PathArg::from(path.as_path())),
+        Marked::Address(address) => serde_json::json!({ "address": address }),
+    }
+}
+
+/// The bookmark a rename or a move is about: `path`'s, else `address`'s.
+fn named(path: Option<PathArg>, address: Option<String>) -> anyhow::Result<Marked> {
+    match (path, address) {
+        (Some(path), _) => Ok(Marked::Folder(path.into_inner())),
+        (None, Some(address)) => Ok(Marked::Address(address)),
+        (None, None) => anyhow::bail!("which bookmark? pass its path or its address"),
+    }
 }
 
 /// `address` as the bookmarks file writes it: a URI, escaped.
@@ -714,7 +768,11 @@ fn address_uri(address: &Location) -> String {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct RenameArgs {
     /// The bookmarked folder.
-    path: PathArg,
+    #[serde(default)]
+    path: Option<PathArg>,
+    /// The bookmarked address, for a remote folder's bookmark.
+    #[serde(default)]
+    address: Option<String>,
     /// Its new label; empty for the folder's own name.
     title: String,
     #[serde(default)]
@@ -724,10 +782,15 @@ struct RenameArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct MoveArgs {
     /// The bookmarked folder.
-    path: PathArg,
-    /// The bookmark it goes before; last when omitted.
     #[serde(default)]
-    before: Option<PathArg>,
+    path: Option<PathArg>,
+    /// The bookmarked address, for a remote folder's bookmark.
+    #[serde(default)]
+    address: Option<String>,
+    /// The bookmark it goes before (a folder's path, or
+    /// `{"address": …}`); last when omitted.
+    #[serde(default)]
+    before: Option<MarkArg>,
     #[serde(default)]
     undo: bool,
 }
@@ -763,7 +826,12 @@ fn name_of(path: &Path) -> String {
 /// The command that applies `edit`, from a toast's button.
 fn invocation(edit: &BookmarkEdit, undo: bool) -> Invocation {
     let arg = |path: &Path| PathArg::from(path);
-    let before = |before: &Option<PathBuf>| before.as_deref().map(arg);
+    let before = |before: &Option<Marked>| before.as_ref().map(mark_json);
+    // A rename's or a move's bookmark, as its command names it.
+    let which = |mark: &Marked| match mark {
+        Marked::Folder(path) => serde_json::json!({ "path": arg(path) }),
+        Marked::Address(address) => serde_json::json!({ "address": address }),
+    };
     let (name, args) = match edit {
         BookmarkEdit::Add {
             path,
@@ -777,17 +845,23 @@ fn invocation(edit: &BookmarkEdit, undo: bool) -> Invocation {
             "places.unbookmark",
             serde_json::json!({ "path": arg(path) }),
         ),
-        BookmarkEdit::Rename { path, title } => (
-            "places.rename_bookmark",
-            serde_json::json!({ "path": arg(path), "title": title.clone().unwrap_or_default() }),
-        ),
-        BookmarkEdit::Move { path, before: b } => (
-            "places.move_bookmark",
-            serde_json::json!({ "path": arg(path), "before": before(b) }),
-        ),
-        BookmarkEdit::AddAddress { address, title } => (
+        BookmarkEdit::Rename { mark, title } => {
+            let mut args = which(mark);
+            args["title"] = serde_json::json!(title.clone().unwrap_or_default());
+            ("places.rename_bookmark", args)
+        }
+        BookmarkEdit::Move { mark, before: b } => {
+            let mut args = which(mark);
+            args["before"] = serde_json::json!(before(b));
+            ("places.move_bookmark", args)
+        }
+        BookmarkEdit::AddAddress {
+            address,
+            title,
+            before: b,
+        } => (
             "places.bookmark_address",
-            serde_json::json!({ "address": address, "title": title }),
+            serde_json::json!({ "address": address, "title": title, "before": before(b) }),
         ),
         BookmarkEdit::RemoveAddress { address } => (
             "places.unbookmark_address",
@@ -799,25 +873,28 @@ fn invocation(edit: &BookmarkEdit, undo: bool) -> Invocation {
     Invocation::with_args(name, &args)
 }
 
-/// The name of the folder an address bookmark is of: its last part.
-fn address_name(edit: &BookmarkEdit) -> String {
-    let (BookmarkEdit::AddAddress { address, .. } | BookmarkEdit::RemoveAddress { address }) = edit
-    else {
-        return String::new();
-    };
-    let named = address.trim_end_matches('/');
-    let last = named.rsplit('/').next().unwrap_or(named);
-    String::from_utf8_lossy(&skwir_platform::uri::percent_decode(last)).into_owned()
+/// A name as the bookmarks file keeps it: one line, none when empty.
+fn one_line(title: Option<&str>) -> Option<String> {
+    let title = title?.split(['\n', '\r']).collect::<Vec<_>>().join(" ");
+    Some(title.trim().to_owned()).filter(|t| !t.is_empty())
 }
 
 /// What an edit did, in a sentence, or what it found when it did nothing.
 /// `shown` is the bookmark's label before the edit, when it had one.
 fn describe(edit: &BookmarkEdit, shown: Option<&str>, done: bool) -> Option<String> {
-    let own = || edit.path().map_or_else(|| address_name(edit), name_of);
+    let own = || {
+        edit.path().map_or_else(
+            || edit.address().map(address_name).unwrap_or_default(),
+            name_of,
+        )
+    };
     let before = || shown.map_or_else(own, str::to_owned);
     Some(match (edit, done) {
         (BookmarkEdit::Add { title, .. } | BookmarkEdit::AddAddress { title, .. }, true) => {
-            format!("Bookmarked “{}”", title.clone().unwrap_or_else(own))
+            format!(
+                "Bookmarked “{}”",
+                one_line(title.as_deref()).unwrap_or_else(own)
+            )
         }
         (BookmarkEdit::Add { .. } | BookmarkEdit::AddAddress { .. }, false) => {
             format!("“{}” is already bookmarked", before())
@@ -831,11 +908,7 @@ fn describe(edit: &BookmarkEdit, shown: Option<&str>, done: bool) -> Option<Stri
         (BookmarkEdit::Rename { title, .. }, true) => format!(
             "Renamed bookmark “{}” to “{}”",
             before(),
-            title
-                .as_deref()
-                .map(str::trim)
-                .filter(|t| !t.is_empty())
-                .map_or_else(own, str::to_owned)
+            one_line(title.as_deref()).unwrap_or_else(own)
         ),
         (BookmarkEdit::Move { .. }, true) => format!("Moved bookmark “{}”", before()),
         // Renamed to its own name, dropped where it was: nothing to say.
@@ -864,15 +937,12 @@ impl Places {
                 );
                 return;
             }
-            let shown = match &edit {
-                BookmarkEdit::AddAddress { address, .. }
-                | BookmarkEdit::RemoveAddress { address } => {
-                    skwir_platform::places::remote_bookmarks()
-                        .into_iter()
-                        .find(|b| b.address == *address)
-                        .map(|b| b.title)
-                }
-                _ => skwir_platform::places::bookmarks()
+            let shown = match edit.address() {
+                Some(address) => skwir_platform::places::remote_bookmarks()
+                    .into_iter()
+                    .find(|b| b.address == address)
+                    .map(|b| b.title),
+                None => skwir_platform::places::bookmarks()
                     .into_iter()
                     .find(|b| Some(b.path.as_path()) == edit.path())
                     .map(|b| b.title),
@@ -973,6 +1043,7 @@ impl Plugin for PlacesPlugin {
                     let edit = BookmarkEdit::AddAddress {
                         address: address_uri(&address),
                         title: args.title,
+                        before: args.before.map(MarkArg::into_marked),
                     };
                     places.edit(app, edit, undo, watcher.clone());
                     return Ok(Outcome::Done);
@@ -988,7 +1059,7 @@ impl Plugin for PlacesPlugin {
                 let edit = BookmarkEdit::Add {
                     path,
                     title: args.title,
-                    before: args.before.map(PathArg::into_inner),
+                    before: args.before.map(MarkArg::into_marked),
                 };
                 places.edit(app, edit, undo, watcher.clone());
                 Ok(Outcome::Done)
@@ -1017,6 +1088,7 @@ impl Plugin for PlacesPlugin {
                 let edit = BookmarkEdit::AddAddress {
                     address: args.address,
                     title: args.title,
+                    before: args.before.map(MarkArg::into_marked),
                 };
                 places.edit(app, edit, args.undo, watcher.clone());
                 Ok(Outcome::Done)
@@ -1041,10 +1113,10 @@ impl Plugin for PlacesPlugin {
             ID,
             "places.rename_bookmark",
             "Rename bookmark",
-            "Change the name a bookmark shows in the sidebar; the folder keeps its own",
+            "Change the name a bookmark shows in the sidebar (a folder's, or a remote folder's by its address); the folder keeps its own",
             move |args, app| {
                 let edit = BookmarkEdit::Rename {
-                    path: args.path.into_inner(),
+                    mark: named(args.path, args.address)?,
                     title: Some(args.title),
                 };
                 places.edit(app, edit, args.undo, watcher.clone());
@@ -1056,11 +1128,11 @@ impl Plugin for PlacesPlugin {
             ID,
             "places.move_bookmark",
             "Move bookmark",
-            "Put a bookmark before another in the sidebar, or last",
+            "Put a bookmark (a folder's, or a remote folder's by its address) before another in the sidebar, or last",
             move |args, app| {
                 let edit = BookmarkEdit::Move {
-                    path: args.path.into_inner(),
-                    before: args.before.map(PathArg::into_inner),
+                    mark: named(args.path, args.address)?,
+                    before: args.before.map(MarkArg::into_marked),
                 };
                 places.edit(app, edit, args.undo, watcher.clone());
                 Ok(Outcome::Done)
@@ -1623,6 +1695,80 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(bookmarks(&app)[1].unavailable.is_none());
+    }
+
+    /// A remote folder's bookmark is renamed, moved among the folders'
+    /// and taken out as theirs are, by its address, each edit undone: the
+    /// sidebar shows the file's order, and the file keeps it.
+    #[test]
+    #[allow(unsafe_code)]
+    fn a_remote_bookmark_is_renamed_and_moved_among_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        // SAFETY: one test per process under nextest, set before the app
+        // starts any thread; the bookmarks file is then this test's own.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.path().join("config")) };
+        let a = tmp.path().join("a");
+        std::fs::create_dir(&a).unwrap();
+        let address = "sftp://me@example.com/home/me/Two%20Words";
+        let file = tmp.path().join("config/gtk-3.0/bookmarks");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let first = format!("{}\n{address}\n", skwir_platform::uri::file_uri(&a));
+        std::fs::write(&file, &first).unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(PlacesPlugin::default()), &app);
+        let run = |name: &str, args: serde_json::Value| {
+            app.dispatch(&Invocation::with_args(name, &args)).unwrap();
+            next_notice(&app)
+        };
+        let undo = |notice: &skwir_core::app::Notification| {
+            let action = notice.action.as_ref().expect("a way back");
+            app.dispatch(&action.command).unwrap();
+            next_notice(&app)
+        };
+        assert_eq!(titles(&app), ["a", "Two Words"]);
+        let remote = bookmarks(&app)[1].clone();
+        assert_eq!(remote.location, Location::parse(address));
+
+        // F2: the question asks the rename command with the address.
+        let ask = remote.rename.clone().expect("renamed in the sidebar");
+        assert_eq!(ask.args["command"], "places.rename_bookmark");
+        let mut args = ask.args["args"].clone();
+        args["title"] = serde_json::json!("Work\nfiles");
+        let renamed = run("places.rename_bookmark", args);
+        assert_eq!(renamed.text, "Renamed bookmark “Two Words” to “Work files”");
+        assert_eq!(titles(&app), ["a", "Work files"]);
+        undo(&renamed);
+        assert_eq!(titles(&app), ["a", "Two Words"]);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), first);
+
+        // Dragged before the folder's, as the sidebar does; then back.
+        let folder = bookmarks(&app)[0].clone();
+        let mut drag = remote
+            .reorder
+            .clone()
+            .expect("moved in the sidebar")
+            .command;
+        assert_eq!(drag.name, folder.reorder.clone().unwrap().command.name);
+        drag.args["before"] = folder.reorder.unwrap().before;
+        let moved = run(&drag.name, drag.args);
+        assert_eq!(moved.text, "Moved bookmark “Two Words”");
+        assert_eq!(titles(&app), ["Two Words", "a"]);
+        undo(&moved);
+        assert_eq!(titles(&app), ["a", "Two Words"]);
+
+        // Taken out and put back where it stood, before a later folder.
+        let b = tmp.path().join("b");
+        std::fs::create_dir(&b).unwrap();
+        run(
+            "places.bookmark",
+            serde_json::json!({ "path": PathArg::from(b.as_path()) }),
+        );
+        assert_eq!(titles(&app), ["a", "Two Words", "b"]);
+        let forget = bookmarks(&app)[1].forget.clone().unwrap();
+        let removed = run(&forget.name, forget.args);
+        assert_eq!(titles(&app), ["a", "b"]);
+        undo(&removed);
+        assert_eq!(titles(&app), ["a", "Two Words", "b"], "back in its place");
     }
 
     #[cfg(unix)]

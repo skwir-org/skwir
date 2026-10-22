@@ -3452,3 +3452,35 @@ and fix bug or problems you encounter on the way". This is the first.
   core and the plugin API) green; 20 core suites, two at once, 436 of
   436 each; `just test`, 1932 of 1932. Not run: `lint-all`'s Windows and
   macOS builds (core only changed, nothing system-specific).
+
+## Remote folders, the night's list (2026-10-23)
+
+The user validated eight items before the night (decisions in each entry
+below), worked through in order, each committed after its checks.
+
+### A remote folder's bookmark renamed and moved
+
+- `BookmarkEdit` names a bookmark by `Marked` (a folder's path, or an
+  address as the file writes it): Rename and Move take either, and
+  every `before` (Add's, AddAddress's, Move's) names either, so the two
+  kinds share the file's one order. An address removed and put back
+  (Undo) stands where it stood, before the next bookmark of either kind;
+  it went last before. An address's label is kept as given, on one line.
+- The places plugin lists bookmarks in the file's order
+  (`places::every_bookmark`); a remote one has Rename (F2, its menu) and
+  the move command folders have (`places.move_bookmark`, the address as
+  `{"address": …}`), so it moves among them (Alt+arrows, Move Up and
+  Down, drags). The sidebar puts what is no folder after the folders of
+  its group only when it does not move: the Network section's known
+  servers still come after its mounts.
+- Tested: every edit undone back to the very text, folders and addresses
+  moved before each other (`addresses_and_folders_share_one_order`);
+  through the commands, an address renamed, dragged before a folder,
+  removed and put back between two folders, each undone
+  (`a_remote_bookmark_is_renamed_and_moved_among_folders`); the sidebar's
+  order (`a_place_that_moves_keeps_its_owners_order`). A window on Xvfb
+  with a folder, an `sftp://` address and a folder bookmarked: shown in
+  that order; Move Up on the address (its menu offered Rename…, Move Up
+  and Move Down, Move Down alone once first) and Rename… wrote the file;
+  a folder dragged above the address went before it. A toast now says a
+  name as the file keeps it, on one line.

@@ -35,7 +35,9 @@
   installed for it (sshfs, GVfs, rclone, or your fstab's line), then
   shows its folder; a password or a server it does not know is asked in
   the window and never kept. They sit in the sidebar's Network section,
-  are bookmarked by their address, and Eject lets go of them. Copies to
+  are bookmarked by their address (renamed and moved among your other
+  bookmarks, in the order other file managers show), and Eject lets go
+  of them. Copies to
   and from a server go in batches through rsync, sftp or gio where those
   are faster, a large file comes down in several parts at once, a copy
   within one server is made on the server, and many files are deleted

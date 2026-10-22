@@ -395,7 +395,11 @@ of bars, split or not.
   Trash, volumes) are moved, renamed and hidden in the sidebar only
   (`ui.sidebar_place`, `Sections::places` by `Place::key`), never in the
   owner's files. A place moves only among those the same command moves
-  (`sidebar::mover`); `arrange` is the one reading of all this.
+  (`sidebar::mover`); `arrange` is the one reading of all this. Within a
+  group, what is no folder comes after the folders (a server the tools
+  know after the mounts) unless it moves: what moves keeps its owner's
+  order (a remote folder's bookmark among the folders', as the file has
+  them).
 - A group with every place hidden keeps its header, whose menu lists
   them; places offered hidden (`Place::hidden`) appear there unchecked.
 - Rename… (`Place::rename`, F2) and Remove From Sidebar

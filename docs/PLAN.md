@@ -1336,15 +1336,16 @@ protocol is a scheme a connector maps, or a connector.
   kio-fuse asks nothing (found in a window): KDE is let ask where it
   fails (`kioclient --interactive ls`), first over HTTPS (on a
   certificate not trusted kio-fuse waits for good); a mount's `Known`
-  published before its folder is shown (an F5 there was flaky).
+  published before its folder is shown (an F5 there was flaky). Then
+  (2026-10-23, the list the user validated for the night): a remote
+  folder's bookmark renamed and moved among the folders', in the file's
+  order.
 - **G. Left** (each its own step):
   - an iPhone's (AFC) ways chosen by requests counted against a
     stand-in, an iPhone's own pace not timed (no iPhone at hand);
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);
-  - rename and reorder of a remote GTK bookmark (Forget and Add to
-    Bookmarks keep it by its address);
   - Windows' shares (`smb://` as `\\server\share`) and macOS's own
     mounts as connectors; SFTP there through rclone with WinFsp or
     macFUSE; all compiled only until Phase 5b;
