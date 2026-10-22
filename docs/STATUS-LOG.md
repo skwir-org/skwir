@@ -3306,3 +3306,17 @@ and fix bug or problems you encounter on the way". This is the first.
   port 80 over WebDAV), which the password question and GVfs's folders
   share. Tested in `address.rs`; the remote folders' tests expecting the
   bare host now expect the port (21 of 21 pass).
+- A camera's GVfs mount without a camera, tried: in user, mount and pid
+  namespaces of its own, a tmpfs holding `DCIM` (which libgphoto2's disk
+  port lists as a camera, `disk:<mount>`), a private bus and GVfs.
+  `gio mount "gphoto2://[disk:%2Fmnt%2Fcam]/"` reached GVfs's gphoto2
+  backend (unescaped, the host's slashes made it no GVfs address), which
+  refused it: "Couldn't find matching udev device". It mounts only a USB
+  camera udev knows; making one needs the kernel's USB gadget modules,
+  as root. So gPhoto2's and AFC's ways stay unmeasured until a camera and
+  an iPhone are at hand.
+- A Plasma session's own kio-fuse: Plasma's bus hands its activation to
+  `systemd --user` (`SystemdService=kio-fuse.service`). The trials ran
+  the same kio-fuse activated by a private bus; a session apart from the
+  user's cannot reach their `systemd --user`, and theirs would mount in
+  the session's runtime folder, where the user's Skwir would show it.
