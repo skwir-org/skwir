@@ -936,7 +936,7 @@ pub(super) fn same_tree(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::R
         return Ok(std::fs::read_link(src)? == std::fs::read_link(copy)?);
     }
     if !a.is_dir() {
-        return Ok(a.len() == b.len() && a.modified().ok() == b.modified().ok());
+        return Ok(finished_as(&b, &a));
     }
     // A companion holding its sibling's attributes may have become them.
     let names = |dir: &Path| -> std::io::Result<Vec<OsString>> {
@@ -1025,7 +1025,7 @@ fn copy_staged(
         Some(super::transfer::Batched::Made(made)) => (made, true),
         // Cut short by the run this one retries: it goes on from there.
         _ => (
-            ctx.partial_of(src, dest_dir)
+            ctx.go_on_from(src, dest_dir)
                 .unwrap_or_else(|| staging.path().join(&name)),
             false,
         ),
@@ -1036,7 +1036,9 @@ fn copy_staged(
     let copied = if made {
         Ok(())
     } else {
-        copy_recursive_with_attributes(src, &staged, preserve_attributes, pace, ctx)
+        let copied = copy_recursive_with_attributes(src, &staged, preserve_attributes, pace, ctx);
+        ctx.gone_on();
+        copied
     };
     let result = copied.and_then(|()| {
         let mut beside = along(ctx, &staged, target);
@@ -1069,7 +1071,7 @@ fn copy_staged(
         // other copies, and goes with the plan. A large file a failure
         // cut short (not Cancel: a server gone, a drive pulled out) stays
         // for Retry to go on from, and the folder with it.
-        let kept = !error.is::<super::Cancelled>() && ctx.keep_partial(dest_dir, &staged);
+        let kept = !error.is::<super::Cancelled>() && ctx.keep_partial(src, dest_dir, &staged);
         let made = along(ctx, &staged, target)
             .into_iter()
             .map(|a| a.from)
@@ -1205,9 +1207,19 @@ fn copy_file(
     } else {
         ctx.advance(from);
         // Should it fail partway, what it wrote may be gone on from.
-        ctx.copying(src, dst, &m);
-        copy_contents(&sf, &df, (&m, devices), from, pace, ctx)
+        ctx.copying(dst, &m);
+        let end = copy_contents(&sf, &df, (&m, devices), from, pace, ctx)
             .with_context(|| format!("“{}” could not be copied", display_name(src)))?;
+        // A mount may answer the end of a file its server stopped serving,
+        // and then say the file is that short: short of the source as it
+        // was, the copy was cut (or the source changed), not done. Retry
+        // goes on, or starts again on a source changed.
+        anyhow::ensure!(
+            end >= m.len(),
+            "“{}” could not be copied: {end} of its {} bytes could be read",
+            display_name(src),
+            m.len()
+        );
     }
     // Set attributes before restoring a read-only source's permissions.
     if preserve_attributes {
@@ -1222,11 +1234,13 @@ fn copy_file(
     Ok(())
 }
 
-/// The bytes of the copy `df` cut short it goes on from: all it holds
-/// when its last part (up to [`CHECKED_TAIL`]) reads as the source's
-/// there, none otherwise (not this source's start, or a server that wrote
-/// it out of order). A copy cut short is read back where the system says
-/// what it wrote (Unix); elsewhere it starts again.
+/// The bytes of the copy `df` cut short it goes on from: up to the end of
+/// its last part (of [`CHECKED_TAIL`]) that reads as the source's there,
+/// trying [`TAIL_TRIES`] back from its end (a mount cut short may leave
+/// the last bytes it was asked for zeroed), none otherwise (not this
+/// source's start, or a server that wrote it out of order). A copy cut
+/// short is read back where the system says what it wrote (Unix);
+/// elsewhere it starts again.
 fn goes_on_from(sf: &std::fs::File, df: &std::fs::File, len: u64) -> std::io::Result<u64> {
     let have = df.metadata()?.len();
     if have == 0 || have > len {
@@ -1235,12 +1249,22 @@ fn goes_on_from(sf: &std::fs::File, df: &std::fs::File, len: u64) -> std::io::Re
     #[cfg(unix)]
     {
         use std::os::unix::fs::FileExt;
-        let check = usize::try_from(have.min(CHECKED_TAIL)).unwrap_or(0);
-        let at = have - check as u64;
-        let (mut theirs, mut ours) = (vec![0; check], vec![0; check]);
-        sf.read_exact_at(&mut theirs, at)?;
-        df.read_exact_at(&mut ours, at)?;
-        Ok(if theirs == ours { have } else { 0 })
+        let mut end = have;
+        for _ in 0..TAIL_TRIES {
+            let check = usize::try_from(end.min(CHECKED_TAIL)).unwrap_or(0);
+            let at = end - check as u64;
+            let (mut theirs, mut ours) = (vec![0; check], vec![0; check]);
+            sf.read_exact_at(&mut theirs, at)?;
+            df.read_exact_at(&mut ours, at)?;
+            if theirs == ours {
+                return Ok(end);
+            }
+            if at == 0 {
+                break;
+            }
+            end = at;
+        }
+        Ok(0)
     }
     #[cfg(not(unix))]
     {
@@ -1253,12 +1277,18 @@ fn goes_on_from(sf: &std::fs::File, df: &std::fs::File, len: u64) -> std::io::Re
 #[cfg(unix)]
 const CHECKED_TAIL: u64 = 1 << 20;
 
+/// How many parts of [`CHECKED_TAIL`] back from a copy cut short's end
+/// are read for one that is the source's.
+#[cfg(unix)]
+const TAIL_TRIES: usize = 4;
+
 /// Copy the bytes in chunks from `from` (the start, or where a copy cut
 /// short went to), checking for Cancel and reporting progress between
 /// them (as `pace` counts it): in the kernel where it can
 /// (`copy_file_range`), through a buffer where it cannot. A file with
 /// holes keeps them, where the copy is left to the system: a disk image
-/// of 100 GB holding 5 copied 100.
+/// of 100 GB holding 5 copied 100. The copy's length at its end: where
+/// the source's reading ended.
 fn copy_contents(
     mut sf: &std::fs::File,
     mut df: &std::fs::File,
@@ -1266,9 +1296,10 @@ fn copy_contents(
     from: u64,
     pace: &Pace,
     ctx: &StepContext,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<u64> {
     if pace.is_at_once() && sys::is_sparse(meta) {
-        return copy_sparse(sf, df, (from, meta.len()), devices, ctx);
+        copy_sparse(sf, df, (from, meta.len()), devices, ctx)?;
+        return Ok(meta.len());
     }
     if from > 0 {
         use std::io::Seek;
@@ -1289,7 +1320,7 @@ fn copy_contents(
     while !ctx.kernel_refuses(devices, Kernel::Range) {
         ctx.check_cancelled()?;
         match sys::copy_range(sf, df, COPY_CHUNK)? {
-            Some(0) if copied > 0 => return writing.close(ctx),
+            Some(0) if copied > 0 => return writing.close(ctx).map(|()| from + copied),
             Some(n @ 1..) => {
                 copied += n as u64;
                 writing.wrote(n as u64, ctx)?;
@@ -1309,12 +1340,13 @@ fn copy_contents(
     loop {
         ctx.check_cancelled()?;
         let n = match sf.read(&mut buf) {
-            Ok(0) => return writing.close(ctx),
+            Ok(0) => return writing.close(ctx).map(|()| from + copied),
             Ok(n) => n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e.into()),
         };
         df.write_all(&buf[..n])?;
+        copied += n as u64;
         writing.wrote(n as u64, ctx)?;
     }
 }
@@ -1381,6 +1413,19 @@ fn copy_sparse(
     Ok(())
 }
 
+/// Whether the copy `there` of a file now `source` was finished: its
+/// length, and its time (given last, to the second: SFTP keeps no more).
+pub(super) fn finished_as(there: &std::fs::Metadata, source: &std::fs::Metadata) -> bool {
+    let secs = |meta: &std::fs::Metadata| {
+        meta.modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()
+            .map(|d| d.as_secs())
+    };
+    there.len() == source.len() && secs(there).is_some() && secs(there) == secs(source)
+}
+
 fn copy_recursive_with_attributes(
     src: &Path,
     dst: &Path,
@@ -1391,11 +1436,42 @@ fn copy_recursive_with_attributes(
     ctx.check_cancelled()?;
     let m = std::fs::symlink_metadata(src)?;
     let kind = m.file_type();
+    // Going on in what a run cut short made: what is there is that run's.
+    let there = if ctx.going_on_in(dst) {
+        std::fs::symlink_metadata(dst).ok()
+    } else {
+        None
+    };
+    if let Some(there) = &there
+        && !(kind.is_dir() && there.is_dir())
+    {
+        if kind.is_file() && there.is_file() && finished_as(there, &m) {
+            // Copied whole by that run: counted, and known for a later
+            // name of the same file.
+            ctx.advance(m.len());
+            ctx.copied(&m, dst);
+            return Ok(());
+        }
+        // The file it was writing goes on (`copy_file`); anything else
+        // that run made is made again.
+        if !(kind.is_file() && there.is_file() && ctx.is_cut(dst)) {
+            super::staging::remove_tree(dst)?;
+        }
+    }
     if kind.is_symlink() {
         let target = std::fs::read_link(src)?;
         sys::symlink_like(&target, dst, kind)?;
     } else if kind.is_dir() {
-        std::fs::create_dir(dst)?;
+        match &there {
+            // Made by that run, its mode maybe given already.
+            Some(there) if there.is_dir() => {
+                let mode = there.permissions();
+                if !sys::open_to_owner(&mode) {
+                    sys::mode_kept(std::fs::set_permissions(dst, sys::opened_to_owner(&mode)))?;
+                }
+            }
+            _ => std::fs::create_dir(dst)?,
+        }
         for e in std::fs::read_dir(src)? {
             let e = e?;
             // A companion holding its sibling's attributes goes with them.

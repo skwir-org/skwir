@@ -25,7 +25,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use parking_lot::Mutex;
-use skwir_core::op::transfer::{Control, NotServed, Told, Transfer};
+use skwir_core::op::transfer::{Aside, Control, NotServed, Told, Transfer};
 
 use crate::ssh_mount::Mount;
 
@@ -276,11 +276,11 @@ impl Transfer for Rsync {
         from: &Path,
         names: &[OsString],
         into: &Path,
-        temp: Option<&Path>,
+        aside: &Aside<'_>,
         told: &Told<'_>,
         control: &Control,
     ) -> anyhow::Result<()> {
-        let (copied, placed) = (told.copied, told.placed);
+        let (copied, placed, temp) = (told.copied, told.placed, aside.temp);
         let rsync = program().ok_or_else(|| anyhow::anyhow!("rsync is not installed"))?;
         let (remote_side, local_side, upward) = match (self.mount_of(from), self.mount_of(into)) {
             (None, Some(mount)) => (mount, from, true),
@@ -320,22 +320,33 @@ impl Transfer for Rsync {
                 "-e",
             ])
             .arg(self.ssh(&mount));
+        // A folder of the staging folder, as the receiving side names it.
+        let receiving = |path: &Path| -> anyhow::Result<String> {
+            let said = if upward {
+                mount.on_server(path)
+            } else {
+                path.to_str().map(str::to_owned)
+            };
+            said.ok_or_else(|| {
+                anyhow::anyhow!("“{}” has a name rsync cannot be given", path.display())
+            })
+        };
+        // A file it was writing when cut short is kept there, and gone on
+        // from by its retry (ADR-080): the basis of its delta copy, whose
+        // checksums say what is the same, the file made checked whole.
+        // Absolute only: rsync takes a relative one as a folder in each
+        // file's own (a server's path below its login's home is one).
+        let partial = receiving(aside.partial)?;
+        if partial.starts_with('/') {
+            command.arg(format!("--partial-dir={partial}"));
+        }
         // Beside what is there: nothing replaced, a file written in the
         // staging folder until whole (on the destination's side).
         if let Some(temp) = temp {
-            let temp = if upward {
-                mount.on_server(temp).ok_or_else(|| {
-                    anyhow::anyhow!("“{}” has a name rsync cannot be given", temp.display())
-                })?
-            } else {
-                temp.to_str()
-                    .ok_or_else(|| anyhow::anyhow!("“{}” is no text", temp.display()))?
-                    .to_owned()
-            };
             // Each file it makes said on a line of its own: those placed.
             command
                 .arg("--ignore-existing")
-                .arg(format!("--temp-dir={temp}"))
+                .arg(format!("--temp-dir={}", receiving(temp)?))
                 .arg(format!("--out-format={PLACED}%n"));
         }
         if upward {

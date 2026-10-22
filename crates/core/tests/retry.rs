@@ -169,16 +169,16 @@ fn a_large_copy_cut_short_goes_on_from_where_it_stopped() {
     assert!(!dest.join("it's big.bin").exists());
 }
 
-/// What a copy cut short holds is gone on from only while its last part
-/// reads as the source's, and the source is as it was: else it starts
-/// again.
+/// What a copy cut short holds is gone on from only while one of its
+/// last four MiB reads as the source's, and the source is as it was: else
+/// it starts again.
 #[test]
 fn a_copy_cut_short_that_does_not_match_starts_again() {
     let (_src_dir, src, bytes) = source();
     let tmp = home_tempdir();
     let executor = Executor::new(Scheduler::new(2));
 
-    // Its last part is not the source's.
+    // None of its last four MiB is the source's.
     let dest = tmp.path().join("tail");
     std::fs::create_dir(&dest).expect("dest");
     let (plan, partial) = cut_short(&executor, &src, &dest);
@@ -188,7 +188,10 @@ fn a_copy_cut_short_that_does_not_match_starts_again() {
         .expect("partial");
     let len = file.metadata().expect("len").len();
     file.write_all_at(b"X", 0).expect("marked");
-    file.write_all_at(b"?", len - 1).expect("changed");
+    for back in 0..4 {
+        file.write_all_at(b"?", len - 1 - back * MIB)
+            .expect("changed");
+    }
     drop(file);
     let r = executor
         .retry_blocking(plan.id, &CancelToken::new())
@@ -259,4 +262,119 @@ fn a_copy_with_holes_cut_short_goes_on_from_where_it_stopped() {
     if has_holes(&probe) {
         assert!(has_holes(&copy), "its hole kept");
     }
+}
+
+/// A folder copied whole, cut short in its last file: Retry keeps what
+/// that run finished (a byte changed since, its time given back, stays:
+/// nothing reads it again), goes on from the file it was writing, and
+/// makes the rest.
+#[test]
+fn a_folder_cut_short_goes_on_from_where_it_stopped() {
+    use std::os::unix::fs::MetadataExt;
+    let (_src_dir, big, bytes) = source();
+    // tmpfs lists the newest first: the large file, made first, is
+    // copied last.
+    let tree = big.parent().unwrap().join("it's a folder");
+    std::fs::create_dir(&tree).expect("tree");
+    std::fs::rename(&big, tree.join("z big.bin")).expect("big");
+    let first: Vec<u8> = bytes[..(5 * MIB) as usize].to_vec();
+    std::fs::write(tree.join("a.bin"), &first).expect("a");
+    std::fs::create_dir(tree.join("sub")).expect("sub");
+    std::fs::write(tree.join("sub/b.bin"), &first[1..]).expect("b");
+    std::fs::write(tree.join("sub/c.txt"), "c").expect("c");
+    std::os::unix::fs::symlink("a.bin", tree.join("to a")).expect("link");
+    let tmp = home_tempdir();
+    let dest = tmp.path().join("dest");
+    std::fs::create_dir(&dest).expect("dest");
+    let executor = Executor::new(Scheduler::new(2));
+
+    let plan = copy_plan(&tree, &dest);
+    file_size_limit(Some(12 * MIB));
+    let r = executor.execute_blocking(&plan, &CancelToken::new());
+    file_size_limit(None);
+    assert_eq!(r.applied, 0);
+    assert!(r.error.is_some(), "it failed partway");
+    assert!(executor.can_retry(plan.id));
+    let staged = partial_in(&dest);
+    assert!(staged.is_dir(), "the tree kept");
+    let finished = staged.join("a.bin");
+    let source_a = std::fs::metadata(tree.join("a.bin")).expect("a");
+    assert_eq!(
+        std::fs::metadata(&finished).expect("finished").len(),
+        source_a.len(),
+        "finished before the cut"
+    );
+    let cut = staged.join("z big.bin");
+    let kept = std::fs::metadata(&cut).expect("cut short").len();
+    assert!((8 * MIB..=12 * MIB).contains(&kept), "{kept} bytes kept");
+    for path in [&finished, &cut] {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .expect("there");
+        file.write_all_at(b"X", 0).expect("marked");
+        if path == &finished {
+            file.set_modified(source_a.modified().unwrap())
+                .expect("its time given back");
+        }
+    }
+
+    let r = executor
+        .retry_blocking(plan.id, &CancelToken::new())
+        .expect("retried");
+    assert_eq!((r.applied, r.error), (1, None));
+    let copy = dest.join("it's a folder");
+    let a = std::fs::read(copy.join("a.bin")).expect("a");
+    assert_eq!((a[0], &a[1..]), (b'X', &first[1..]), "finished, kept");
+    let z = std::fs::read(copy.join("z big.bin")).expect("z");
+    assert_eq!((z[0], &z[1..]), (b'X', &bytes[1..]), "gone on from");
+    assert_eq!(
+        std::fs::read(copy.join("sub/b.bin")).expect("b"),
+        first[1..]
+    );
+    assert_eq!(std::fs::read(copy.join("sub/c.txt")).expect("c"), b"c");
+    assert_eq!(
+        std::fs::read_link(copy.join("to a")).expect("link"),
+        Path::new("a.bin")
+    );
+    assert_eq!(
+        std::fs::metadata(copy.join("sub/b.bin")).unwrap().mtime(),
+        std::fs::metadata(tree.join("sub/b.bin")).unwrap().mtime()
+    );
+    assert_eq!(
+        std::fs::read_dir(&dest).expect("dest").count(),
+        1,
+        "nothing staged left"
+    );
+    executor.undo_blocking(&CancelToken::new()).expect("undone");
+    assert!(!copy.exists());
+}
+
+/// A copy cut short whose last bytes are not the source's (a mount cut
+/// short may leave what it was asked for last zeroed) goes on from the
+/// end of the last MiB before them that is.
+#[test]
+fn a_copy_cut_short_with_a_spoiled_end_goes_on_from_before_it() {
+    let (_src_dir, src, bytes) = source();
+    let tmp = home_tempdir();
+    let dest = tmp.path().join("dest");
+    std::fs::create_dir(&dest).expect("dest");
+    let executor = Executor::new(Scheduler::new(2));
+    let (plan, partial) = cut_short(&executor, &src, &dest);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&partial)
+        .expect("partial");
+    let len = file.metadata().expect("len").len();
+    file.write_all_at(b"X", 0).expect("marked");
+    file.write_all_at(&[0; 100], len - 100).expect("zeroed");
+    drop(file);
+
+    let r = executor
+        .retry_blocking(plan.id, &CancelToken::new())
+        .expect("retried");
+    assert_eq!((r.applied, r.error), (1, None));
+    let copied = std::fs::read(dest.join("it's big.bin")).expect("copied");
+    assert_eq!(copied[0], b'X', "gone on from what it had");
+    assert_eq!(copied[1..], bytes[1..]);
 }

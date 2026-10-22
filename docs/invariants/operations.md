@@ -138,15 +138,25 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   lane). A run's start never looks at a remote.
 - **A large file cut short (ADR-080).** A copy step that fails partway
   through a file it copies byte by byte from its start
-  (`StepContext::copying`; not a tree or a batch's tool; a file with
-  holes, written in order, too), having moved `KEEP_FROM` bytes, keeps it
-  (`StepContext::keep_partial`): the plan's staging folder there leaves
+  (`StepContext::copying`; a file with holes, written in order, too),
+  alone or in a folder copied whole, having moved `KEEP_FROM` bytes,
+  keeps what it staged (`StepContext::keep_partial`, told by the file it
+  was writing, never by looking): the plan's staging folder there leaves
   its context with its lock and notes (`staging::Partial`, held by the
   stopped plan), so no sweep takes it, and is removed with it when let
   go. The retry's context takes it back (`StepContext::with_partial`):
   its copy of that source goes on from the partial when the source's
   length and time are unchanged and the partial's last MiB reads as the
-  source's (`builtin::goes_on_from`), else starts again. A byte copy
+  source's (`builtin::goes_on_from`; else one of the three MiB before,
+  the partial cut there), else starts again; in a folder, a
+  file of its source's length and time to the second was finished and
+  stays (`builtin::finished_as`), anything else is made again
+  (`StepContext::go_on_from`, `going_on_in`). A batch that failed after
+  moving `KEEP_FROM` bytes keeps its folder and the folder its tool kept
+  a file in (`Aside::partial`, rsync's `--partial-dir`), should its
+  steps fail after it (`StepContext::keep_batch`); its retry goes on in
+  them (`transfer::keep_finished`, `Layout::made` taking what is there).
+  A byte copy
   that may be gone on from never trusts the kernel's first 0, and its
   pace counts from where it went on (`Pace::writing(file, from)`).
 
@@ -159,6 +169,11 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   copy only after its metadata succeeded.
 - Copies keep the hard links among what they carry (ADR-049). Notes and
   companions: [notes.md](notes.md).
+- A copy is whole only when it read as many bytes as its source held
+  when it began (`builtin::copy_file`, `transfer::copy_one`): a mount
+  whose server stopped answering may answer an end of file, and then say
+  the file is that short. A range of a large file read short ends what
+  is written in order (`op::ranges`); what follows is read on in order.
 - **Batches (ADR-078).** Before a copy or a move to another device is
   checked, the run of such steps that follow into the same folder is
   looked at once (`op::transfer::batch_ahead`): where one end is a
@@ -257,7 +272,8 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 - Never asked: a copy or a link into its own folder and two items of one
   name keep both (`clash::copy_name`, GNOME's `name (copy).ext`; a link's
   `name (link).ext`, `clash::kept_name`); an item there whole
-  (`same_tree`) is skipped by a copy and put in the trash by a move, a
+  (`same_tree`: a file of the same length and time to the second, as
+  SFTP keeps them) is skipped by a copy and put in the trash by a move, a
   link already saying the same path is done; a folder into itself is
   refused. A link, even to a folder, is never merged: it takes a file's
   choices. A move out of the trash keeps a restore's rules.

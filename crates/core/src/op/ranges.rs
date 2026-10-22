@@ -44,8 +44,10 @@ struct Window {
 
 /// Copy the bytes of `sf` from `from` up to `len` to `df` (at its offset,
 /// written in order), reading [`AT_ONCE`] ranges at a time; the bytes
-/// copied, fewer where the file shrank meanwhile. `sf`'s offset is left
-/// alone.
+/// copied, fewer where a range came short (the file shrank meanwhile, or
+/// its read was cut): what follows it is not written, so the copy holds
+/// the source's start, and the caller reads on from there in order.
+/// `sf`'s offset is left alone.
 ///
 /// # Errors
 /// When a range cannot be read or written, the drive refuses the pace, or
@@ -101,6 +103,7 @@ pub(super) fn copy(
                 arrived.insert(i, read);
                 while let Some(read) = arrived.remove(&next) {
                     let bytes = read?;
+                    let want = RANGE.min(len - (from + next * RANGE));
                     df.write_all(&bytes)?;
                     copied += bytes.len() as u64;
                     writing.wrote(bytes.len() as u64, ctx)?;
@@ -108,6 +111,10 @@ pub(super) fn copy(
                     window.lock().written = next;
                     turn.notify_all();
                     ctx.check_cancelled()?;
+                    // Short: the ranges after it would land too soon.
+                    if (bytes.len() as u64) < want {
+                        return Ok(copied);
+                    }
                 }
             }
             // Cut short: cancelled, or the readers gone without a word.

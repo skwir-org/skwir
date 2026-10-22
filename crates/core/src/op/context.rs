@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender};
 use parking_lot::Mutex;
 
+use super::staging::{Cut, Kept, KeptBatch};
 use crate::cancel::CancelToken;
 use crate::location::Waker;
 
@@ -179,10 +180,13 @@ pub struct StepContext {
     staged: std::cell::Cell<u64>,
     /// The file the step under way copies byte by byte, from its start,
     /// into its staging folder: what [`Self::keep_partial`] may keep.
-    copying: RefCell<Option<Copying>>,
+    copying: RefCell<Option<Cut>>,
     /// What a copy cut short left, kept for Retry ([`Self::keep_partial`]),
     /// or handed to this run to go on from ([`Self::with_partial`]).
     partial: RefCell<Option<KeptPartial>>,
+    /// What the copy under way goes on in, taken from [`Self::partial`]
+    /// ([`Self::go_on_from`]).
+    going_on: RefCell<Option<GoingOn>>,
     /// The devices the kernel would not clone or copy between, by the
     /// pair: not asked again for each file (copied onto a stick, every
     /// file is refused both).
@@ -305,23 +309,19 @@ struct Copied {
     left: u64,
 }
 
-/// A file a step copies byte by byte into its staging folder
-/// (`StepContext::copying`), and its source as it was.
-struct Copying {
-    src: PathBuf,
-    at: PathBuf,
-    len: u64,
-    modified: Option<std::time::SystemTime>,
-}
-
-/// What a copy cut short left (`StepContext::keep_partial`): where, and
-/// the source it is the start of, as it was.
+/// What a copy cut short left in its staging folder in `dest_dir`
+/// (`StepContext::keep_partial`, `StepContext::keep_batch`).
 struct KeptPartial {
     dest_dir: PathBuf,
-    at: PathBuf,
-    src: PathBuf,
-    len: u64,
-    modified: Option<std::time::SystemTime>,
+    kept: Kept,
+}
+
+/// A copy going on in what a run cut short left (`StepContext::go_on_from`):
+/// what is under `root` may be that run's, and `cut` the file it was
+/// writing.
+struct GoingOn {
+    root: PathBuf,
+    cut: Option<Cut>,
 }
 
 /// The bytes a copy cut short must have moved to be kept for Retry: below
@@ -380,6 +380,7 @@ impl StepContext {
             staged: std::cell::Cell::new(0),
             copying: RefCell::default(),
             partial: RefCell::default(),
+            going_on: RefCell::default(),
             refused: RefCell::default(),
             buffer: RefCell::default(),
             #[cfg(target_os = "linux")]
@@ -498,57 +499,118 @@ impl StepContext {
             staging,
             mark,
             dest_dir,
-            at,
-            src,
-            len,
-            modified,
+            kept,
         } = partial;
-        // Names staged next come after its own.
-        let after = at
+        // Names staged next come after its own (`n`, `batch-n`, `partial-n`).
+        let staged = match &kept {
+            Kept::Copy { at, .. } => at,
+            Kept::Batch(batch) => &batch.partial,
+        };
+        let after = staged
             .file_name()
-            .and_then(|n| n.to_str()?.parse::<u64>().ok())
+            .and_then(|n| n.to_str()?.rsplit('-').next()?.parse::<u64>().ok())
             .map_or(0, |n| n + 1);
         self.staged.set(self.staged.get().max(after));
         self.stagings
             .borrow_mut()
             .insert(dest_dir.clone(), Rc::new(staging));
         self.staged_in.borrow_mut().insert(dest_dir.clone(), mark);
-        *self.partial.borrow_mut() = Some(KeptPartial {
-            dest_dir,
-            at,
-            src,
-            len,
-            modified,
-        });
+        *self.partial.borrow_mut() = Some(KeptPartial { dest_dir, kept });
         self
     }
 
     /// Where the copy of `src` into `dest_dir` goes on from, what a run
     /// cut short left (`with_partial`): its path in the staging folder.
-    pub(super) fn partial_of(&self, src: &Path, dest_dir: &Path) -> Option<PathBuf> {
-        let partial = self.partial.borrow();
-        let kept = partial.as_ref()?;
-        (kept.src == src && kept.dest_dir == dest_dir).then(|| kept.at.clone())
+    /// Taken: the copy goes on in it ([`Self::going_on_in`],
+    /// [`Self::partial_at`]) until it ends ([`Self::gone_on`]).
+    pub(super) fn go_on_from(&self, src: &Path, dest_dir: &Path) -> Option<PathBuf> {
+        let mut partial = self.partial.borrow_mut();
+        let its = partial.as_ref().is_some_and(|kept| {
+            kept.dest_dir == dest_dir && matches!(&kept.kept, Kept::Copy { src: s, .. } if s == src)
+        });
+        if !its {
+            return None;
+        }
+        let Kept::Copy { at, cut, .. } = partial.take()?.kept else {
+            return None;
+        };
+        *self.going_on.borrow_mut() = Some(GoingOn {
+            root: at.clone(),
+            cut,
+        });
+        Some(at)
+    }
+
+    /// What a batch of copies from `from` into `dest_dir` that a run cut
+    /// short made, which this run's goes on in (`with_partial`): taken.
+    pub(super) fn kept_batch(&self, from: &Path, dest_dir: &Path) -> Option<KeptBatch> {
+        let mut partial = self.partial.borrow_mut();
+        let its = partial.as_ref().is_some_and(|kept| {
+            kept.dest_dir == dest_dir && matches!(&kept.kept, Kept::Batch(b) if b.from == from)
+        });
+        if !its {
+            return None;
+        }
+        match partial.take()?.kept {
+            Kept::Batch(batch) => Some(batch),
+            Kept::Copy { .. } => None,
+        }
+    }
+
+    /// Keep what a batch of copies into `dest_dir` that failed made, for
+    /// Retry to go on in, should the plan stop (it stops at the first step
+    /// whose own copy fails then: its server gone, say). What this plan's
+    /// copy that fails later keeps takes its place.
+    pub(super) fn keep_batch(&self, dest_dir: &Path, batch: KeptBatch) {
+        *self.partial.borrow_mut() = Some(KeptPartial {
+            dest_dir: dest_dir.to_path_buf(),
+            kept: Kept::Batch(batch),
+        });
+    }
+
+    /// The copy that went on in what a run cut short left ended: placed,
+    /// or failed (and kept again, maybe: [`Self::keep_partial`]).
+    pub(super) fn gone_on(&self) {
+        self.going_on.borrow_mut().take();
+    }
+
+    /// Whether `dst` is in what the copy under way goes on in: what is
+    /// there may be the copy a run cut short made.
+    pub(super) fn going_on_in(&self, dst: &Path) -> bool {
+        self.going_on
+            .borrow()
+            .as_ref()
+            .is_some_and(|going_on| dst.starts_with(&going_on.root))
+    }
+
+    /// Whether `dst` is the file a run cut short was writing, which the
+    /// copy under way goes on from ([`Self::partial_at`]).
+    pub(super) fn is_cut(&self, dst: &Path) -> bool {
+        self.going_on
+            .borrow()
+            .as_ref()
+            .and_then(|going_on| going_on.cut.as_ref())
+            .is_some_and(|cut| cut.at == dst)
     }
 
     /// The copy at `dst` of a source now `meta`, cut short earlier: how
     /// far it went if it is the start of that source as it is (its length
     /// and time unchanged); taken, so a copy goes on from it once.
     pub(super) fn partial_at(&self, dst: &Path, meta: &std::fs::Metadata) -> Option<bool> {
-        let mut partial = self.partial.borrow_mut();
-        if partial.as_ref().is_none_or(|kept| kept.at != dst) {
+        let mut going_on = self.going_on.borrow_mut();
+        let going_on = going_on.as_mut()?;
+        if going_on.cut.as_ref().is_none_or(|cut| cut.at != dst) {
             return None;
         }
-        let kept = partial.take()?;
-        Some(kept.len == meta.len() && kept.modified == meta.modified().ok())
+        let cut = going_on.cut.take()?;
+        Some(cut.len == meta.len() && cut.modified == meta.modified().ok())
     }
 
-    /// The step under way copies `src`, now `meta`, byte by byte into
+    /// The step under way copies a source now `meta` byte by byte into
     /// `dst`, from its start or from what it holds: kept should it fail
     /// partway ([`Self::keep_partial`]).
-    pub(super) fn copying(&self, src: &Path, dst: &Path, meta: &std::fs::Metadata) {
-        *self.copying.borrow_mut() = Some(Copying {
-            src: src.to_path_buf(),
+    pub(super) fn copying(&self, dst: &Path, meta: &std::fs::Metadata) {
+        *self.copying.borrow_mut() = Some(Cut {
             at: dst.to_path_buf(),
             len: meta.len(),
             modified: meta.modified().ok(),
@@ -561,12 +623,15 @@ impl StepContext {
         self.copying.borrow_mut().take();
     }
 
-    /// Whether what a copy that failed staged at `staged` in `dest_dir` is
-    /// kept for Retry to go on from: a file copied byte by byte from its
-    /// start, of [`KEEP_FROM`] bytes at least by what this step counted
-    /// (a server gone may not say what it holds). Kept, it stays in the
-    /// staging folder, which the plan's end leaves.
-    pub(super) fn keep_partial(&self, dest_dir: &Path, staged: &Path) -> bool {
+    /// Whether what the copy of `src` that failed staged at `staged` in
+    /// `dest_dir` is kept for Retry to go on from: a file copied byte by
+    /// byte from its start, or a folder's tree whose files were (the file
+    /// it was writing, the last, gone on from), of [`KEEP_FROM`] bytes at
+    /// least by what this step counted (a server gone may not say what it
+    /// holds). Told by what it was copying, never by looking: the server
+    /// may not answer. Kept, it stays in the staging folder, which the
+    /// plan's end leaves.
+    pub(super) fn keep_partial(&self, src: &Path, dest_dir: &Path, staged: &Path) -> bool {
         let moved = {
             let steps = self.meter.steps.lock();
             self.meter
@@ -577,15 +642,16 @@ impl StepContext {
         let Some(copying) = self.copying.borrow_mut().take() else {
             return false;
         };
-        if copying.at != staged || moved < KEEP_FROM {
+        if !copying.at.starts_with(staged) || moved < KEEP_FROM {
             return false;
         }
         *self.partial.borrow_mut() = Some(KeptPartial {
             dest_dir: dest_dir.to_path_buf(),
-            at: copying.at,
-            src: copying.src,
-            len: copying.len,
-            modified: copying.modified,
+            kept: Kept::Copy {
+                at: staged.to_path_buf(),
+                src: src.to_path_buf(),
+                cut: Some(copying),
+            },
         });
         true
     }
@@ -615,10 +681,7 @@ impl StepContext {
             staging,
             mark,
             dest_dir: kept.dest_dir,
-            at: kept.at,
-            src: kept.src,
-            len: kept.len,
-            modified: kept.modified,
+            kept: kept.kept,
         })
     }
 

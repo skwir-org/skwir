@@ -407,6 +407,18 @@ fn sshfs_asks_the_window_for_a_password_and_an_unknown_host_through_skwir() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// Send `signal` to each of `pids` at once (one `kill`).
+fn signal(signal: &str, pids: &[u32]) {
+    if pids.is_empty() {
+        return;
+    }
+    let _ = Command::new("kill")
+        .arg(signal)
+        .args(pids.iter().map(u32::to_string))
+        .stderr(Stdio::null())
+        .status();
+}
+
 /// OpenSSH's own server, run as this user on a port of its own, with keys
 /// and known hosts of the test's: rsync on its far end (`rclone serve
 /// sftp` runs no command). Stopped when dropped.
@@ -504,32 +516,57 @@ impl OwnSshd {
         child
     }
 
-    /// Stop it, the sessions it serves included (its children, which its
-    /// own end leaves running): a server gone away.
-    fn stop(&mut self) {
+    /// The processes it started: its sessions and what runs in them, read
+    /// from the kernel's lists of children (one read each, quick: a copy
+    /// on this machine goes on meanwhile).
+    fn descendants(&self) -> Vec<u32> {
         let mut pids = vec![self.child.id()];
         let mut at = 0;
         while at < pids.len() {
-            let parent = pids[at];
-            for entry in std::fs::read_dir("/proc").unwrap().flatten() {
-                let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
-                    continue;
-                };
-                // The field after the command's name, in parentheses.
-                let stat = std::fs::read_to_string(entry.path().join("stat")).unwrap_or_default();
-                let its_parent = stat
-                    .rsplit_once(") ")
-                    .and_then(|(_, rest)| rest.split(' ').nth(1)?.parse::<u32>().ok());
-                if its_parent == Some(parent) && !pids.contains(&pid) {
-                    pids.push(pid);
+            let tasks = std::fs::read_dir(format!("/proc/{}/task", pids[at]));
+            for task in tasks.into_iter().flatten().flatten() {
+                let children = std::fs::read_to_string(task.path().join("children"));
+                for child in children.unwrap_or_default().split_whitespace() {
+                    if let Ok(pid) = child.parse::<u32>()
+                        && !pids.contains(&pid)
+                    {
+                        pids.push(pid);
+                    }
                 }
             }
             at += 1;
         }
-        for pid in pids.iter().skip(1) {
-            let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
-        }
+        pids.remove(0);
+        pids
+    }
+
+    /// Stop it, the sessions it serves included (its children, which its
+    /// own end leaves running): a server gone away. No new connection
+    /// first: sshfs would reconnect at once, its session not among those
+    /// found.
+    fn stop(&mut self) {
+        let sessions = self.descendants();
         let _ = self.child.kill();
+        signal("-9", &sessions);
+        let _ = self.child.wait();
+    }
+
+    /// Stop it as a connection lost stops what runs for it: its sessions'
+    /// processes hung up (rsync then keeps the file it was writing), then
+    /// what is left ended.
+    fn stop_gently(&mut self) {
+        let sessions = self.descendants();
+        let _ = self.child.kill();
+        signal("-HUP", &sessions);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while sessions
+            .iter()
+            .any(|pid| Path::new(&format!("/proc/{pid}")).exists())
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        signal("-9", &sessions);
         let _ = self.child.wait();
     }
 
@@ -1123,10 +1160,15 @@ fn an_upload_cut_short_by_its_server_goes_on_from_where_it_stopped() {
     drop((sent, copied));
 
     // Down: kept on this machine, its last part read back from the
-    // server.
+    // server. A file the server has that this machine never sent: what
+    // went up through the mount may still be in its cache here, read
+    // whole whatever the server.
+    let there = served.join("there").join("it's big.bin");
+    std::fs::create_dir(served.join("there")).unwrap();
+    std::fs::copy(&copy, &there).unwrap();
     let down = base.join("down");
     std::fs::create_dir(&down).unwrap();
-    let plan = copies(&[up.join("it's big.bin")], &down);
+    let plan = copies(&[mounted.join("there").join("it's big.bin")], &down);
     app.executor.execute(plan.clone(), app.lifetime().child());
     let staged = || {
         std::fs::read_dir(&down)
@@ -1167,12 +1209,187 @@ fn an_upload_cut_short_by_its_server_goes_on_from_where_it_stopped() {
         .expect("retried");
     assert!(retried.error.is_none(), "{:?}", retried.error);
     let (there, came) = (
-        std::fs::read(&copy).unwrap(),
+        std::fs::read(&there).unwrap(),
         std::fs::read(down.join("it's big.bin")).unwrap(),
     );
     assert_eq!(came.len(), there.len());
     assert_eq!(came[0], b'Y', "gone on from what had come");
     assert!(came[1..] == there[1..], "the rest as it is there");
+    assert_eq!(std::fs::read_dir(&down).unwrap().count(), 1);
+
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    until(&app, 30, "it was let go of", || {
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point)
+    });
+    drop(left);
+    drop(sshd);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// A file under `root` whose name begins so, and its length.
+fn found(root: &Path, begins: &str) -> Option<(PathBuf, u64)> {
+    for entry in std::fs::read_dir(root).ok()?.flatten() {
+        let path = entry.path();
+        let meta = std::fs::symlink_metadata(&path).ok()?;
+        if entry.file_name().to_string_lossy().starts_with(begins) && meta.is_file() {
+            return Some((path, meta.len()));
+        }
+        if meta.is_dir()
+            && let Some(found) = found(&path, begins)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+/// A folder copied up by rsync, its server gone partway through its
+/// second file, keeps what the batch made in its staging folder there,
+/// and rsync the file it was writing; Retry, the server back, goes on in
+/// it: the file finished stays (a byte marked since, its time given back,
+/// is still there: rsync passes it over), the one cut short is the basis
+/// rsync goes on from, gone after. Down the same, kept on this machine.
+#[test]
+fn a_folder_cut_short_by_its_server_goes_on_by_rsync() {
+    let sshfs = Sshfs::default();
+    if let Some(why) = sshfs.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    if skwir_core::os_path::find_program("rsync").is_none() {
+        eprintln!("skipped: rsync is not installed");
+        return;
+    }
+    let base = fixture("resumed-folder");
+    let Some(mut sshd) = OwnSshd::start(&base) else {
+        std::fs::remove_dir_all(&base).unwrap();
+        return;
+    };
+    let served = base.join("served");
+    std::fs::create_dir_all(served.join("up")).unwrap();
+    let sshfs = Arc::new(Sshfs {
+        ssh_options: sshd.options.clone(),
+        ssh_config: Some(PathBuf::from("/dev/null")),
+        ..sshfs
+    });
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![sshfs.clone() as Arc<dyn Connector>]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let pane = app.workspace.read().active_id();
+    let user = std::env::var("USER").expect("the user's name");
+    let address = format!("sftp://{user}@127.0.0.1:{}{}", sshd.port, served.display());
+    app.navigate(pane, &Location::parse(&address)).unwrap();
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    let mounted = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&mounted).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+    let up = mounted.join("up");
+
+    // 16 and 160 MiB that differ along their length, rsync's order.
+    let folder = base.join("local").join("it's a folder");
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut x = 0x2545_f491_4f6c_dd1d_u64;
+    for (name, mib) in [("a first.bin", 16u64), ("z second.bin", 160)] {
+        let bytes: Vec<u8> = (0..mib << 20)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x as u8
+            })
+            .collect();
+        std::fs::write(folder.join(name), &bytes).unwrap();
+    }
+    // The finished file in the batch's folder, marked, its time given back.
+    let mark = |staging_in: &Path, byte: u8| {
+        let (finished, _) = found(staging_in, "a first.bin").expect("finished, kept");
+        let when = std::fs::metadata(&finished).unwrap().modified().unwrap();
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&finished)
+            .unwrap();
+        std::os::unix::fs::FileExt::write_all_at(&file, &[byte], 0).unwrap();
+        file.set_modified(when).unwrap();
+    };
+    let partial = |staging_in: &Path| {
+        std::fs::read_dir(staging_in)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with(".skwir-copy-"))
+            .flat_map(|e| std::fs::read_dir(e.path()).unwrap().flatten())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("partial-"))
+            .find_map(|e| found(&e.path(), "z second.bin"))
+    };
+    let underway = |staging_in: &Path| {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while found(staging_in, ".z second.bin.").is_none_or(|(_, len)| len < 24 << 20) {
+            assert!(Instant::now() < deadline, "the copy never began");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+
+    let plan = copies(std::slice::from_ref(&folder), &up);
+    app.executor.execute(plan.clone(), app.lifetime().child());
+    underway(&served.join("up"));
+    sshd.stop_gently();
+    until(&app, 120, "the upload stopped", || !app.executor.is_busy());
+    assert!(app.executor.can_retry(plan.id), "it failed, to be retried");
+    let (_, kept) = partial(&served.join("up")).expect("rsync kept what it wrote");
+    assert!((8 << 20..160 << 20).contains(&kept), "{kept} bytes kept");
+    mark(&served.join("up"), b'X');
+    sshd.start_again();
+    let retried = app
+        .executor
+        .retry_blocking(plan.id, app.lifetime())
+        .expect("retried");
+    assert!(retried.error.is_none(), "{:?}", retried.error);
+    let copy = served.join("up").join("it's a folder");
+    let first = std::fs::read(copy.join("a first.bin")).unwrap();
+    let sent = std::fs::read(folder.join("a first.bin")).unwrap();
+    assert_eq!(
+        (first[0], &first[1..]),
+        (b'X', &sent[1..]),
+        "finished, kept"
+    );
+    same_bytes(&folder.join("z second.bin"), &copy.join("z second.bin"));
+    assert_eq!(
+        std::fs::read_dir(served.join("up")).unwrap().count(),
+        1,
+        "nothing staged left there"
+    );
+
+    // Down: kept on this machine.
+    let down = base.join("down");
+    std::fs::create_dir(&down).unwrap();
+    let plan = copies(&[up.join("it's a folder")], &down);
+    app.executor.execute(plan.clone(), app.lifetime().child());
+    underway(&down);
+    sshd.stop();
+    until(&app, 120, "the download stopped", || {
+        !app.executor.is_busy()
+    });
+    assert!(app.executor.can_retry(plan.id), "it failed, to be retried");
+    let (_, kept) = partial(&down).expect("rsync kept what came");
+    assert!((8 << 20..160 << 20).contains(&kept), "{kept} bytes kept");
+    mark(&down, b'Y');
+    sshd.start_again();
+    let retried = app
+        .executor
+        .retry_blocking(plan.id, app.lifetime())
+        .expect("retried");
+    assert!(retried.error.is_none(), "{:?}", retried.error);
+    let came = std::fs::read(down.join("it's a folder").join("a first.bin")).unwrap();
+    assert_eq!((came[0], &came[1..]), (b'Y', &first[1..]), "finished, kept");
+    same_bytes(
+        &folder.join("z second.bin"),
+        &down.join("it's a folder").join("z second.bin"),
+    );
     assert_eq!(std::fs::read_dir(&down).unwrap().count(), 1);
 
     app.dispatch(&Invocation::with_args(

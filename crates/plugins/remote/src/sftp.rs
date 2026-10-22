@@ -46,7 +46,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use parking_lot::Mutex;
-use skwir_core::op::transfer::{Control, Layout, NotServed, Told, Transfer};
+use skwir_core::op::transfer::{Aside, Control, Layout, NotServed, Told, Transfer};
 
 use crate::ssh_mount::Mount;
 
@@ -405,10 +405,13 @@ impl Transfer for Sftp {
         from: &Path,
         names: &[OsString],
         into: &Path,
-        temp: Option<&Path>,
+        aside: &Aside<'_>,
         told: &Told<'_>,
         control: &Control,
     ) -> anyhow::Result<()> {
+        // A file cut short starts again (no `put -a`: what it appends to is
+        // never read back); what a run cut short finished stays (`Layout`).
+        let temp = aside.temp;
         let sftp = program().ok_or_else(|| anyhow::anyhow!("sftp is not installed"))?;
         let Some(mount) = self.mount_of(into) else {
             anyhow::bail!("sftp copies onto a server");

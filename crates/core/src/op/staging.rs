@@ -125,19 +125,47 @@ impl Staging {
     }
 }
 
-/// What a copy cut short left of a large file in its staging folder, kept
-/// for Retry (`Executor::retry`) to go on from: the folder, its lock held
-/// and its notes kept, so no sweep takes it; removed with what it holds
-/// when let go, as any staging folder.
+/// What a copy cut short left in its staging folder, kept for Retry
+/// (`Executor::retry`) to go on from: the folder, its lock held and its
+/// notes kept, so no sweep takes it; removed with what it holds when let
+/// go, as any staging folder.
 pub struct Partial {
     pub(super) staging: Staging,
     /// The destination's note as under way, on this machine's volumes.
     pub(super) mark: Option<Mark>,
     pub(super) dest_dir: PathBuf,
-    /// The file, in the staging folder, and the source it is the start
-    /// of, as it was then: its length and when it was modified.
+    pub(super) kept: Kept,
+}
+
+/// What of a copy cut short is kept in its staging folder.
+#[derive(Debug)]
+pub(super) enum Kept {
+    /// A step's copy, a large file or a folder's tree, of `src`.
+    Copy {
+        at: PathBuf,
+        src: PathBuf,
+        /// The file it was writing, the start of its source.
+        cut: Option<Cut>,
+    },
+    /// A batch's (`transfer::batch`) of entries of the folder `from`.
+    Batch(KeptBatch),
+}
+
+/// What a batch cut short made (`transfer::batch`): the folder it copied
+/// into, where it did, and the folder a tool keeps a file it was writing
+/// in (rsync's `--partial-dir`), maybe never made.
+#[derive(Debug, Clone)]
+pub(super) struct KeptBatch {
+    pub(super) from: PathBuf,
+    pub(super) into: Option<PathBuf>,
+    pub(super) partial: PathBuf,
+}
+
+/// A file a copy writes byte by byte from its start: where, and its
+/// source as it was then, its length and when it was modified.
+#[derive(Debug)]
+pub(super) struct Cut {
     pub(super) at: PathBuf,
-    pub(super) src: PathBuf,
     pub(super) len: u64,
     pub(super) modified: Option<std::time::SystemTime>,
 }
@@ -145,9 +173,8 @@ pub struct Partial {
 impl std::fmt::Debug for Partial {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Partial")
-            .field("at", &self.at)
-            .field("src", &self.src)
-            .field("len", &self.len)
+            .field("dest_dir", &self.dest_dir)
+            .field("kept", &self.kept)
             .finish_non_exhaustive()
     }
 }

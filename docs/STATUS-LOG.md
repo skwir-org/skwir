@@ -2941,3 +2941,57 @@ and fix bug or problems you encounter on the way". This is the first.
   phone's folders removed after each run. Between runs the phone left
   file transfer (USB showed debugging alone): the user set it again.
 
+### A folder and a batch cut short gone on in (ADR-080, 6 to 8; 2026-10-22)
+
+- Built: what a step staged and cut short is kept as a file or a
+  folder's tree (`staging::Kept::Copy`, the file it was writing its
+  `Cut`), told by what it was copying, never by looking. Its retry goes
+  on in it (`StepContext::go_on_from`, `going_on_in`, `is_cut`): a file
+  of its source's length and time to the second stays
+  (`builtin::finished_as`), the cut file goes on as before, anything
+  else is made again, folders taken as they are. A batch that failed
+  after 8 MiB keeps its folder and the folder rsync keeps a file in
+  (`staging::KeptBatch`, `StepContext::keep_batch`, `kept_batch`): a
+  transfer is handed `Aside { temp, partial }`; rsync gets
+  `--partial-dir`, absolute on the receiving side (a relative one would
+  be a folder in each file's own: none then); the retry's batch keeps
+  what was finished (`transfer::keep_finished`) and `Layout::made` takes
+  what is there (one listing of the folder tells a fresh one). A copy's
+  check now calls a target its source to the second (`same_tree`): a
+  batch's copy on a server keeping seconds was "already there".
+- Found: rsync keeps its partial on a lost connection or a hangup, not
+  when its process is killed outright (the test's server stop): the test
+  hangs the sessions up after ending the listener (`OwnSshd::stop_gently`;
+  ended first, sshfs reconnected within the wait and the plan finished).
+  tmpfs lists a folder's newest name first.
+- Checked: rsync over the test's own OpenSSH, a folder of 16 and 160 MiB
+  up then down, the server stopped once 24 MiB of the second were
+  across: the partial kept (8 to 160 MiB), the first file marked and its
+  time given back still marked after Retry (passed over), the second
+  the source's bytes, nothing staged left; `rsync --no-whole-file
+  --partial-dir=<absolute> --stats` against a 16 MiB partial of a 32 MiB
+  file: 16 MiB matched, 16 literal, the partial gone. Core tests: a
+  folder cut short in its last file (a finished file marked stays, the
+  cut one gone on from, the rest made, Undo whole), a batch by a fake
+  tool failing once (its finished half untouched on Retry). The remote
+  tests (48) pass.
+- Found while repeating the tests (the single-file one failed 4 times
+  in 8 once the listener was ended first): a copy from a server stopped
+  midway was placed whole at 33.5 of 192 MiB: sshfs answered an end of
+  file, the kernel then said the file was that short, and the byte copy
+  (and a batch's, `copy_one`) took it as the end. A copy now fails when
+  it read fewer bytes than its source held when it began. A range read
+  short was written where it fell and the next ones after it, the copy
+  shifted (Retry's check read it and started again): a short range now
+  ends what is written in order. A partial whose last bytes the mount
+  zeroed started again: the check tries the three MiB before its last
+  (`TAIL_TRIES`). The test server's stop read all of `/proc` once per
+  process before ending any: it now reads the kernel's lists of
+  children, ends the listener first, signals the rest in one `kill`;
+  and the single-file test downloads a file the mount never sent (what
+  went up may be served from the page cache whatever the server).
+  After: both cut-short tests 14 runs out of 14, the rsync one 12 of 12
+  before (7 of 12 with the old stop).
+- Declined: Windows' `COPY_FILE_RESTARTABLE` flushes the file it makes
+  as it goes, slower for every copy, and neither this machine nor Wine
+  can measure it.

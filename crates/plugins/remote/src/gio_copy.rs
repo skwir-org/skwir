@@ -49,7 +49,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use skwir_core::op::transfer::{Control, Layout, NotServed, Told, Transfer};
+use skwir_core::op::transfer::{Aside, Control, Layout, NotServed, Told, Transfer};
 
 use crate::gvfs_spec::Spec;
 
@@ -345,11 +345,11 @@ impl Transfer for GioCopy {
         from: &Path,
         names: &[OsString],
         into: &Path,
-        temp: Option<&Path>,
+        aside: &Aside<'_>,
         told: &Told<'_>,
         control: &Control,
     ) -> anyhow::Result<()> {
-        let (copied, placed) = (told.copied, told.placed);
+        let (copied, placed, temp) = (told.copied, told.placed, aside.temp);
         let layout = match temp {
             Some(_) => Layout::files(from, names, into),
             None => Layout::made(from, names, into)?,

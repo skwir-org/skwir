@@ -1310,7 +1310,11 @@ protocol is a scheme a connector maps, or a connector.
   every way, measured on a phone (`just mtp-check`); a file alone by
   `gio` where it is faster than the bridge (down from NFS and AFP, both
   ways on MTP: ADR-078, 16), a large file down from NFS measured against
-  NFS-Ganesha; a file with holes gone on from as any.
+  NFS-Ganesha; a file with holes gone on from as any; a folder copied
+  whole and a batch cut short gone on in, what they finished kept, the
+  file under way gone on from (by rsync in a batch; ADR-080, 6 to 8).
+  Windows' restartable copy declined: slower for every copy, untestable
+  here.
 - **G. Left** (each its own step):
   - an iPhone's (AFC) and a camera's (gPhoto2) GVfs mounts, not
     measured, at the bridge's pace;

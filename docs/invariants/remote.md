@@ -139,7 +139,10 @@ ADR-077 (which revises ADR-021).
   mount; by `gio copy` within a GVfs mount (its daemon copies). A lone
   file within one remote goes in a batch where a transfer serves it,
   which its step would bring here and send back. A server a tool does
-  not reach is remembered for its mount.
+  not reach is remembered for its mount. rsync keeps a file it was
+  writing when cut short in the staging folder (`--partial-dir`, an
+  absolute path on the receiving side, else none), which its retry goes
+  on from (ADR-080, 7).
   A connector offers transfers for its mounts (`Connector::transfers`).
   A copy made with its source's mode is not given it again.
 - The originals of moves from GVfs are removed together by `gio remove`
@@ -263,6 +266,14 @@ ADR-077 (which revises ADR-021).
   reply over 64 KiB into fragments, which GVfs's NFS client never reads:
   a large file down from NFS is timed against NFS-Ganesha's in-memory
   backend (it keeps a file's first 2 MiB), not tested.
+- A test that stops its own OpenSSH server mid-copy ends its listener
+  before its sessions (sshfs reconnects at once, its new session not
+  among those found), finds them in the kernel's lists of children (one
+  pass over `/proc` per process let a loopback copy finish meanwhile),
+  and hangs them up where rsync must keep its partial
+  (`OwnSshd::stop_gently`). A file it reads back down was never sent
+  through the mount: what went up may be in its cache, read whole
+  whatever the server.
 - A phone is written to only when someone runs `just mtp-check` with it
   plugged in (`tools/test/gvfs-mtp.sh`): a GVfs of its own in user, mount
   and pid namespaces, a folder of its own on the phone, removed after;

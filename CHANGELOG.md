@@ -51,7 +51,9 @@
 - **Retry**: an action an error stopped (a server gone, a disk full, a
   drive pulled out) is retried from where it stopped, from its message
   or `skwir cmd retry`. A large file goes on from what got across once
-  its last part is checked, and Undo takes the whole action back.
+  its last part is checked; a folder keeps the files it had finished,
+  and rsync goes on from the file it was sending. Undo takes the whole
+  action back.
 
 ## 0.2.0 (2026-10-20)
 
