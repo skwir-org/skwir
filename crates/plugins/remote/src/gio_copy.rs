@@ -46,6 +46,18 @@
 //! within (an upload too); down as fast either way: a batch by `gio`, a
 //! file alone by its step.
 //!
+//! An iPhone (AFC), counted rather than timed (2026-10-22): GVfs's AFC
+//! backend sends one request at a time over its one connection, each a
+//! round trip over USB on a device, so the way that asks fewer requests
+//! for the same bytes is the faster on any iPhone. Against a stand-in
+//! device on this machine (`tools/test/afc-standin.py`), 100 files of
+//! 16 KiB: up 706 requests through the bridge (four file infos a file),
+//! 308 by eight `gio`; down 702, 902 (`gio` reads each file again for its
+//! end); within 1403, 1210; removed 204, 202; 32 MiB down 264, 137 (`gio`
+//! reads 256 KiB at a time, the bridge 128), up 134, 132. Its bridge's
+//! `close` comes after the file is written. So `gio` up, within and
+//! removed, and a file alone down; down in batches through the bridge.
+//!
 //! `gio` maps a path of the bridge to its mount's address itself. With
 //! `-i` and nothing on its input it never replaces a file: without it,
 //! `gio copy` and `gio move` do. Folders, which `gio copy` does not copy,
@@ -85,7 +97,8 @@ fn ways_of(kind: &str) -> Option<Ways> {
             alone_down: true,
             ..all
         }),
-        "afp-volume" => Some(Ways {
+        // AFP's down was slower by `gio`; AFC's asks the device more requests.
+        "afp-volume" | "afc" => Some(Ways {
             down: false,
             alone_down: true,
             ..all
@@ -460,12 +473,13 @@ mod tests {
     fn nfs_is_served_every_way_afp_but_down_and_a_file_alone_where_faster() {
         let (nfs, afp, mtp) = (ways_of("nfs"), ways_of("afp-volume"), ways_of("mtp"));
         let camera = ways_of("gphoto2");
-        assert_eq!(ways_of("afc"), None, "an iPhone keeps the bridge");
+        let phone = ways_of("afc");
         // Up, down, within.
         assert!(takes(None, nfs) && takes(nfs, None) && takes(nfs, nfs));
         assert!(takes(None, afp) && !takes(afp, None) && takes(afp, afp));
         assert!(takes(None, mtp) && takes(mtp, None) && takes(mtp, mtp));
         assert!(takes(None, camera) && takes(camera, None) && takes(camera, camera));
+        assert!(takes(None, phone) && !takes(phone, None) && takes(phone, phone));
         assert!(!takes(None, None));
         // A file alone: up, down; within as a batch.
         assert!(!takes_alone(None, nfs) && takes_alone(nfs, None));
@@ -473,6 +487,8 @@ mod tests {
         assert!(takes_alone(None, mtp) && takes_alone(mtp, None));
         // A camera's bridge sends a file after its close: up by `gio`.
         assert!(takes_alone(None, camera) && !takes_alone(camera, None));
+        // An iPhone: fewer requests down for a file alone by `gio`.
+        assert!(!takes_alone(None, phone) && takes_alone(phone, None));
         assert!(!takes_alone(mtp, mtp) && !takes_alone(None, None));
     }
 

@@ -1896,6 +1896,24 @@ fn gvfs_gphoto2_takes_by_gio_up_and_within() {
     takes_by_gio("gvfs-gphoto2", &[(PathBuf::from(camera), ways)]);
 }
 
+/// GVfs's AFC mount (an iPhone's) against a stand-in device on this
+/// machine, by `tools/test/gvfs-afc.sh`: `gio` up, within, removed and for
+/// a file alone down; down in batches through the bridge, which asks the
+/// device fewer requests (ADR-078).
+#[test]
+fn gvfs_afc_takes_by_gio_what_it_does_better() {
+    let Some(phone) = std::env::var_os("SKWIR_TEST_GVFS_AFC") else {
+        eprintln!("skipped: no iPhone (AFC) mounted through GVfs by a script");
+        return;
+    };
+    let ways = ByGio {
+        down: false,
+        alone_up: false,
+        alone_down: true,
+    };
+    takes_by_gio("gvfs-afc", &[(PathBuf::from(phone), ways)]);
+}
+
 /// Copies up, down and within each of `mounts` (folders in GVfs's bridge,
 /// whose runtime folder is this process's `XDG_RUNTIME_DIR`), files in
 /// batches and a file alone, then removals: by `gio` where its ways say,

@@ -214,7 +214,14 @@ mounted the folder.
     down 1.13, 1.04. Up through its bridge a copy's `close` returns before
     the file is sent (the backend sends it as the file is released): none
     of 32 MiB there as `cp` returned, all a second later, a refusal never
-    told. So `gio` takes every copy up there, a file alone too.
+    told. So `gio` takes every copy up there, a file alone too. And an
+    iPhone's AFC, against a stand-in device (no iPhone at hand), counted:
+    GVfs's AFC backend sends one request at a time over its one
+    connection, a USB round trip each on an iPhone, so fewer requests for
+    the same bytes are faster on any. 100 files of 16 KiB up 706 requests
+    through the bridge, 308 by eight `gio`; down 702, 902; within 1403,
+    1210; removed 204, 202; 32 MiB down 264, 137, up 134, 132. So `gio`
+    serves AFC as AFP: all but copies down, and a file alone down.
 
 ## Consequences
 
@@ -267,8 +274,8 @@ mounted the folder.
   (2.77–3.03), a folder of 100 0.90–0.92 s (2.66–2.72); from an
   SFTP-only server 1.84–1.87 s (2.98–3.00) and 2.00–2.04 s (2.97–2.99).
 - A file alone that `gio` takes (16) is not gone on from when cut short
-  (ADR-080): it starts again. An iPhone's (AFC) GVfs mount keeps the
-  bridge, not measured (no iPhone at hand). rclone's mounts keep their
+  (ADR-080): it starts again. An iPhone's (AFC) ways rest on requests
+  counted against a stand-in; an iPhone's own pace was not measured. rclone's mounts keep their
   own pace. Without a tool, a name made in a
   folder through FUSE costs a round trip or two under its lock, whatever
   the way. An SFTP-only server's downloads go through sshfs, sixteen

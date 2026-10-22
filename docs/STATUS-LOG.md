@@ -3347,3 +3347,27 @@ and fix bug or problems you encounter on the way". This is the first.
   in batches (as fast), a file alone by its step. `just mtp-check` runs
   the same phone as a camera after MTP
   (`gvfs_gphoto2_takes_by_gio_up_and_within`); not run yet.
+- An iPhone's (AFC) GVfs mount, without an iPhone (none plugged in;
+  nixpkgs has no device to stand in: `idb-companion` drives Xcode's
+  simulators, `usbfluxd` forwards to real devices). Built one:
+  `tools/test/afc-standin.py` answers usbmuxd's socket (libusbmuxd takes
+  `USBMUXD_SOCKET_ADDRESS`), lockdownd (QueryType, GetValue,
+  StartSession asking no TLS, StartService) and AFC over a folder, and
+  logs each AFC request. GVfs mounted it (`afc://<udid>/`) and copied
+  through it, the same bytes every way. Its first answers put a whole
+  128 KiB read in the packet's first part, which libimobiledevice reads
+  in one receive: a short receive broke the stream ("unhandled Apple
+  File Control error (2)"); a device sends a bare header first, as the
+  stand-in now does.
+- Counted, as an iPhone's pace is no stand-in's: GVfs sends AFC one
+  request at a time on one connection. 100 files of 16 KiB up 706
+  requests through the bridge (four file infos a file), 308 by eight
+  `gio`; down 702, 902 (`gio` reads each file again for its end); within
+  1403, 1210; removed 204, 202; 32 MiB down 264, 137 (reads of 128 KiB
+  against 256), up 134, 132 (two rounds alike). `close` through its
+  bridge came after the file was written (unlike the camera's). So
+  `gio_copy` serves AFC as AFP: up, within, removed, a file alone down;
+  down in batches through the bridge. `just remote-check` runs
+  `gvfs_afc_takes_by_gio_what_it_does_better` against the stand-in
+  (`tools/test/gvfs-afc.sh`); with AFC's ways taken out it fails ("up by
+  gio").

@@ -144,12 +144,16 @@ ADR-077 (which revises ADR-021).
   camera's gPhoto2, by
   eight `gio copy` at once (`gio_copy`: `-i`, nothing on its input, so
   nothing is replaced), what a server refused at once copied again by
-  one; of AFP the same up, within and removed, but down through its
-  bridge, sixteen files at once, which was faster (`gio_copy::Ways`).
+  one; of AFP and an iPhone's AFC the same up, within and removed, but
+  down through its bridge, sixteen files at once, which was faster (AFP)
+  or asked the device fewer requests (AFC: GVfs sends them one at a
+  time, a USB round trip each on an iPhone; counted, not timed)
+  (`gio_copy::Ways`).
   A file alone goes by `gio` where it was measured faster than the
   bridge, which reads 128 KiB at a time (down from NFS and AFP, both
-  ways on MTP), and up to a camera, whose bridge sends a file after its
-  `close` returned (a refusal there never told); by its step elsewhere. For a server of kio-fuse's of
+  ways on MTP, down from AFC in fewer requests), and up to a camera,
+  whose bridge sends a file after its `close` returned (a refusal there
+  never told); by its step elsewhere. For a server of kio-fuse's of
   WebDAV, SMB or FTP, by eight `kioclient copy` at once (`kio_copy`:
   each its own KIO workers; addresses read from the mount's folders;
   never over anything without `--overwrite`), up, down and within one
@@ -342,6 +346,13 @@ ADR-077 (which revises ADR-021).
   in rclone's folder until it reads the folder again: a test that waits
   for what a refused copy left to be swept gives rclone a short
   `--dir-cache-time` (15 s), never 0.
+- GVfs's AFC (an iPhone's) is tested against a stand-in device
+  (`tools/test/afc-standin.py`, run by `tools/test/gvfs-afc.sh`): it
+  answers usbmuxd's socket (`USBMUXD_SOCKET_ADDRESS`), lockdownd without
+  TLS (its `StartSession` asks none), and AFC over a folder, logging each
+  request. It sends what an answer carries after a bare header, as a
+  device does: libimobiledevice reads the first part in one receive. Its
+  pace is no iPhone's: ways are chosen there by the requests counted.
 - kio-fuse as Plasma starts it (its bus hands the activation to
   `systemd --user`, `SystemdService=kio-fuse.service`) is tried with a
   manager of the trial's own: `systemd --user --unit=<an empty target>`

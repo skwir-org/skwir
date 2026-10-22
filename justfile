@@ -121,8 +121,9 @@ djvu-check:
 # session's); OpenSSH's own server and Samba run as the user, for copies
 # through rsync (ADR-078) and SMB. The tests skip what is missing when run
 # alone. Then GVfs's NFS and AFP, whose servers run as root, in namespaces
-# of their own (tools/test/gvfs-nfs-afp.sh); and passwords in a keyring of
-# the tests' own (ADR-082).
+# of their own (tools/test/gvfs-nfs-afp.sh); GVfs's AFC against a stand-in
+# iPhone (tools/test/gvfs-afc.sh); and passwords in a keyring of the tests'
+# own (ADR-082).
 remote-check:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -138,6 +139,7 @@ remote-check:
     binary=$(cargo nextest list -p skwir -p skwir-plugin-remote -E 'binary(remote_folders)' \
         --message-format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["rust-suites"]["skwir::remote_folders"]["binary-path"])')
     tools/test/gvfs-nfs-afp.sh "$binary"
+    tools/test/gvfs-afc.sh "$binary"
     # Servers' passwords in a keyring of the tests' own (ADR-082).
     keyring=$(nix build --no-link --print-out-paths nixpkgs#gnome-keyring)
     PATH="$keyring/bin:$PATH" tools/test/private-keyring.sh cargo nextest run \
