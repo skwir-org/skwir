@@ -245,7 +245,10 @@ ADR-077 (which revises ADR-021).
   listings let go of them (closed a moment later on a worker,
   `fs::wait_let_go`) and the remote's lane runs nothing: until then the
   system refuses the unmount as busy, and Eject said another program
-  used it.
+  used it. GVfs refuses too while its backend is at work (a read through
+  its bridge, a folder just listed through it, closed after the bridge's
+  release returned): `Gvfs::disconnect` asks again while the mount is
+  still there, five seconds at most (`BUSY_PATIENCE`).
 - The system refuses to unmount a folder watched as one used (GVfs's
   trash puts a watch on the top of every mount, inotify). Refused as
   busy, `mounter::unmount` asks what uses the mount

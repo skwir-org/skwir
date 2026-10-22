@@ -3252,3 +3252,13 @@ and fix bug or problems you encounter on the way". This is the first.
   poppler, mupdf and djvu checks, bench-check and release-tools-check
   passed; remote-check stopped at that failure (67 of 68), before its NFS,
   AFP and keyring parts.
+- The remote-check run after that fix failed once elsewhere:
+  `gvfs_opens_an_smb_share_its_password_kept` (8 of 8 alone, 0.5 s
+  each; 4.8 s and a failure in the full run): `gio mount -u` refused as
+  busy right after the test listed the share through GVfs's bridge. Not
+  an open file (GVfs let go in 19 ms with one held), but its backend at
+  work: a disconnect asked while a 300 MiB file was read through the
+  bridge was refused every time (2 of 2, in 14–18 ms). `Gvfs::disconnect`
+  now asks again while the mount is still there, five seconds at most,
+  and a mount gone counts as let go of. The test reads that file while
+  letting go (4 of 4 pass; 2 of 2 fail without the change).

@@ -31,6 +31,11 @@ const DAEMON: &str = "org.gtk.vfs.Daemon";
 /// How long a daemon just started may take to mount its bridge.
 const BRIDGE_PATIENCE: Duration = Duration::from_secs(3);
 
+/// How long letting go of a mount GVfs still says busy is asked again: it
+/// closes what its bridge held (a folder just listed through it) only
+/// after the bridge's release returned.
+const BUSY_PATIENCE: Duration = Duration::from_secs(5);
+
 /// GVfs, as the plugin asks it.
 #[derive(Default)]
 pub struct Gvfs {
@@ -191,7 +196,7 @@ impl Connector for Gvfs {
 
     fn disconnect(
         &self,
-        _remote: &Remote,
+        remote: &Remote,
         recognised: &Recognised,
         cancel: &CancelToken,
     ) -> anyhow::Result<()> {
@@ -201,20 +206,37 @@ impl Connector for Gvfs {
             .ok_or_else(|| anyhow::anyhow!("GVfs says no address for this mount"))?;
         let gio = skwir_core::os_path::find_program("gio")
             .ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
-        let mut command = self.gio(&gio);
-        command.arg("mount").arg("-u").arg(address.uri());
-        let finished = skwir_platform::process::run_to_exit(&mut command, None, cancel, PATIENCE)?;
-        skwir_core::fs::reach::changed();
-        if finished.status.success() {
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("{}", said(&finished.stderr)))
+        // Refused while GVfs still holds the mount (busy: what its bridge
+        // held, closed a moment after), asked again; gone, it is let go of.
+        let until = Instant::now() + BUSY_PATIENCE;
+        loop {
+            let mut command = self.gio(&gio);
+            command.arg("mount").arg("-u").arg(address.uri());
+            let finished =
+                skwir_platform::process::run_to_exit(&mut command, None, cancel, PATIENCE)?;
+            skwir_core::fs::reach::changed();
+            if finished.status.success() || !still_bridged(&remote.point) {
+                return Ok(());
+            }
+            if Instant::now() >= until || cancel.is_cancelled() {
+                anyhow::bail!("{}", said(&finished.stderr));
+            }
+            std::thread::sleep(Duration::from_millis(200));
         }
     }
 
     fn transfers(&self) -> Vec<Arc<dyn skwir_core::op::transfer::Transfer>> {
         vec![self.gio_copy()]
     }
+}
+
+/// Whether a GVfs bridge still holds a mount at `point`.
+fn still_bridged(point: &Path) -> bool {
+    skwir_core::fs::reach::all()
+        .iter()
+        .filter(|remote| remote.fstype == BRIDGE)
+        .flat_map(skwir_core::fs::reach::bridged)
+        .any(|remote| remote.point == point)
 }
 
 /// The bridge of the runtime folder `runtime` (the user's when `None`),

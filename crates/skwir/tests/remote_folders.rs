@@ -3320,8 +3320,25 @@ fn gvfs_opens_an_smb_share_its_password_kept() {
     );
     let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
     let recognised = gvfs.recognises(&remote).expect("GVfs's");
+    // GVfs refuses to let go as busy while its backend is at work (a read
+    // through its bridge; under load, a folder just listed): asked again
+    // until it lets go, the read whole.
+    let size = 300 << 20;
+    std::fs::write(base.join("share/large.bin"), vec![7u8; size]).unwrap();
+    let large = connected.point.join("large.bin");
+    let (opened, reading) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        use std::io::Read;
+        let mut file = std::fs::File::open(&large).unwrap();
+        opened.send(()).unwrap();
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes).map(|_| bytes.len())
+    });
+    reading.recv().unwrap();
+    std::thread::sleep(Duration::from_millis(50));
     gvfs.disconnect(&remote, &recognised, &CancelToken::new())
-        .expect("disconnect");
+        .expect("disconnect, once GVfs let go");
+    assert_eq!(reader.join().unwrap().unwrap(), size, "read whole first");
     // Again: the keyring answers `gio mount`.
     let quiet = Arc::new(Answers::default());
     let ask: Arc<dyn Ask> = Arc::new(Keyed::new(quiet.clone(), keyring, address.top()));
