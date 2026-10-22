@@ -3329,3 +3329,21 @@ and fix bug or problems you encounter on the way". This is the first.
   at F5 (kio-fuse told to forget). Torn down: the manager, its scope and
   everything with its runtime folder gone (systemd's `inaccessible`
   placeholders need write permission back before removal).
+- A camera's (gPhoto2) GVfs mount measured on a real device after all:
+  the phone plugged in, mounted through GVfs's gphoto2 backend
+  (`gphoto2://[usb:BBB,DDD]/`, PTP; one timeout on the first try, then
+  mounted), in namespaces with a GVfs of its own, a folder of its own on
+  the phone removed after each run (three runs). Run by hand, not by
+  `just mtp-check`: remote.md says a phone is written to only when
+  someone runs that recipe with it, which these runs did not respect.
+  100 files of 16 KiB up 18.1 s through the bridge (eight at a time),
+  11.6 by eight `gio` (19 and 12 in a first run); down 0.96, 0.88 (the
+  phone mounted again first, so nothing was cached); within 18.7, 16.5;
+  removed 43.0, 42.2; 32 MiB down 1.13, 1.04. Up through the bridge,
+  `cp` of 32 MiB returned in 0.14 s with nothing on the phone, all of it
+  a second later: the backend sends a file as it is released, after
+  `close` returned, so a refusal is never told. `gio_copy` now takes
+  every copy up to a camera, a file alone too, and within; down by `gio`
+  in batches (as fast), a file alone by its step. `just mtp-check` runs
+  the same phone as a camera after MTP
+  (`gvfs_gphoto2_takes_by_gio_up_and_within`); not run yet.

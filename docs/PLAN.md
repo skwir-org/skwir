@@ -1338,10 +1338,10 @@ protocol is a scheme a connector maps, or a connector.
   certificate not trusted kio-fuse waits for good); a mount's `Known`
   published before its folder is shown (an F5 there was flaky).
 - **G. Left** (each its own step):
-  - an iPhone's (AFC) and a camera's (gPhoto2) GVfs mounts, not
-    measured, at the bridge's pace: each needs its device. GVfs's gphoto2
-    backend mounts only a USB camera udev knows (a card on libgphoto2's
-    disk port refused, 2026-10-22); AFC needs an iPhone through usbmuxd;
+  - an iPhone's (AFC) GVfs mount, not measured, at the bridge's pace: it
+    needs an iPhone (through usbmuxd). A camera's (gPhoto2) measured on
+    the phone as a PTP camera, `gio` taking every copy up (its bridge
+    sends after `close`); `just mtp-check` runs it, not yet run so;
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);

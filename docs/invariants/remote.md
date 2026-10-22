@@ -140,14 +140,16 @@ ADR-077 (which revises ADR-021).
   ten requests at once (libfuse's default, which it offers no option to
   change), a file down through it two round trips, where an `sftp`
   session gets one file after another, four each. For a mount of the
-  session's GVfs of SFTP, FTP, WebDAV, SMB, NFS or a phone's MTP, by
+  session's GVfs of SFTP, FTP, WebDAV, SMB, NFS, a phone's MTP or a
+  camera's gPhoto2, by
   eight `gio copy` at once (`gio_copy`: `-i`, nothing on its input, so
   nothing is replaced), what a server refused at once copied again by
   one; of AFP the same up, within and removed, but down through its
   bridge, sixteen files at once, which was faster (`gio_copy::Ways`).
   A file alone goes by `gio` where it was measured faster than the
   bridge, which reads 128 KiB at a time (down from NFS and AFP, both
-  ways on MTP), by its step elsewhere. For a server of kio-fuse's of
+  ways on MTP), and up to a camera, whose bridge sends a file after its
+  `close` returned (a refusal there never told); by its step elsewhere. For a server of kio-fuse's of
   WebDAV, SMB or FTP, by eight `kioclient copy` at once (`kio_copy`:
   each its own KIO workers; addresses read from the mount's folders;
   never over anything without `--overwrite`), up, down and within one
@@ -367,7 +369,8 @@ ADR-077 (which revises ADR-021).
   through the mount: what went up may be in its cache, read whole
   whatever the server.
 - A phone is written to only when someone runs `just mtp-check` with it
-  plugged in (`tools/test/gvfs-mtp.sh`): a GVfs of its own in user, mount
+  plugged in (`tools/test/gvfs-mtp.sh`, over MTP, then as a camera over
+  gPhoto2): a GVfs of its own in user, mount
   and pid namespaces, a folder of its own on the phone, removed after;
   never on a phone plugged in that no one offered, and never through the
   session's GVfs, which may hold it (one program at a time).

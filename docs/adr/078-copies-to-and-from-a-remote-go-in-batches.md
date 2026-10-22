@@ -208,6 +208,13 @@ mounted the folder.
     MTP every way, a file alone too, and a file alone down from NFS and
     AFP. A phone's bridge refuses any mode change: a staging folder
     there is removed without one (it failed to before, and stayed).
+    Amended 2026-10-22: the same phone as a camera, through GVfs's
+    gphoto2 backend, once: up 18.1 s through the bridge, 11.6 by eight
+    `gio`; down 0.96, 0.88; within 18.7, 16.5; removed 43.0, 42.2; 32 MiB
+    down 1.13, 1.04. Up through its bridge a copy's `close` returns before
+    the file is sent (the backend sends it as the file is released): none
+    of 32 MiB there as `cp` returned, all a second later, a refusal never
+    told. So `gio` takes every copy up there, a file alone too.
 
 ## Consequences
 
@@ -260,8 +267,8 @@ mounted the folder.
   (2.77–3.03), a folder of 100 0.90–0.92 s (2.66–2.72); from an
   SFTP-only server 1.84–1.87 s (2.98–3.00) and 2.00–2.04 s (2.97–2.99).
 - A file alone that `gio` takes (16) is not gone on from when cut short
-  (ADR-080): it starts again. An iPhone's (AFC) and a camera's (gPhoto2)
-  GVfs mounts keep the bridge, not measured. rclone's mounts keep their
+  (ADR-080): it starts again. An iPhone's (AFC) GVfs mount keeps the
+  bridge, not measured (no iPhone at hand). rclone's mounts keep their
   own pace. Without a tool, a name made in a
   folder through FUSE costs a round trip or two under its lock, whatever
   the way. An SFTP-only server's downloads go through sshfs, sixteen

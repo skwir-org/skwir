@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # A phone over MTP through GVfs (ADR-078, 16), for `remote_folders`'s
-# gvfs_mtp_takes_by_gio_every_way:
+# gvfs_mtp_takes_by_gio_every_way, then the same phone as a camera
+# through GVfs's gphoto2 backend (PTP), for
+# gvfs_gphoto2_takes_by_gio_up_and_within:
 #   tools/test/gvfs-mtp.sh <remote_folders test binary>
 # Run on purpose alone (`just mtp-check`): it writes to the phone plugged
 # in, in a folder of its own on its first storage (`skwir-test-…`), which
@@ -19,6 +21,8 @@ if [ "${1:-}" != --inside ]; then
         said=$(udevadm info -q property -p "$device" 2>/dev/null || true)
         if grep -qx ID_MTP_DEVICE=1 <<< "$said"; then
             serial=$(sed -n 's/^ID_SERIAL=//p' <<< "$said")
+            # Its USB port, as libgphoto2 names it: `usb:BBB,DDD`.
+            port=$(printf '%03d,%03d' "$(cat "$device/busnum")" "$(cat "$device/devnum")")
             break
         fi
     done
@@ -35,7 +39,7 @@ if [ "${1:-}" != --inside ]; then
     done
     scratch=$(mktemp -d "${TMPDIR:-/tmp}/skwir-mtp-XXXXXX")
     status=0
-    env PATH="${path}$PATH" GVFS="$(out gvfs)" PHONE="$serial" RUNTIME="$scratch" \
+    env PATH="${path}$PATH" GVFS="$(out gvfs)" PHONE="$serial" PORT="$port" RUNTIME="$scratch" \
         TEST_BINARY="$tested" \
         timeout 900 unshare -r -m -p --fork --propagation private "$0" --inside \
         || status=$?
@@ -84,4 +88,28 @@ XDG_CONFIG_HOME="$RUNTIME/xdg/config" XDG_CACHE_HOME="$RUNTIME/xdg/cache" \
     "$TEST_BINARY" --exact gvfs_mtp_takes_by_gio_every_way --nocapture || status=$?
 rm -r -- "$folder"
 gio mount -u "mtp://$PHONE/" < /dev/null || true
+
+# The same phone as a camera (one program holds it at a time): its
+# storage is the camera's top, a folder of its own there.
+camera="gphoto2://[usb:$PORT]/"
+mounted=no
+for try in 1 2 3; do
+    if gio mount "$camera" < /dev/null; then
+        mounted=yes
+        break
+    fi
+    sleep 2
+done
+if [ "$mounted" = no ]; then
+    echo "the phone could not be mounted as a camera (gPhoto2)" >&2
+    exit 1
+fi
+top=$(ls -d "$rt"/gvfs/gphoto2*)
+folder="$top/skwir-test-$(date +%s%N)"
+mkdir "$folder"
+XDG_CONFIG_HOME="$RUNTIME/xdg/config" XDG_CACHE_HOME="$RUNTIME/xdg/cache" \
+    XDG_DATA_HOME="$RUNTIME/xdg/data" SKWIR_TEST_GVFS_GPHOTO2="$folder" \
+    "$TEST_BINARY" --exact gvfs_gphoto2_takes_by_gio_up_and_within --nocapture || status=$?
+rm -r -- "$folder"
+gio mount -u "$camera" < /dev/null || true
 exit "$status"

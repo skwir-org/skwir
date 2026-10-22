@@ -144,9 +144,10 @@ remote-check:
         -p skwir-platform -p skwir-plugin-remote --run-ignored only \
         -E 'test(secret) | test(password)'
 
-# A phone over MTP through a GVfs of the test's own (tools/test/gvfs-mtp.sh):
-# run on purpose alone, it writes to the phone plugged in (unlocked, in file
-# transfer mode), in a folder of its own that it removes after.
+# A phone over MTP, then as a camera over gPhoto2, through a GVfs of the
+# test's own (tools/test/gvfs-mtp.sh): run on purpose alone, it writes to the
+# phone plugged in (unlocked, in file transfer mode), in a folder of its own
+# that it removes after, each way.
 mtp-check:
     #!/usr/bin/env bash
     set -euo pipefail

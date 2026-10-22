@@ -1881,6 +1881,21 @@ fn gvfs_mtp_takes_by_gio_every_way() {
     takes_by_gio("gvfs-mtp", &[(PathBuf::from(phone), ways)]);
 }
 
+#[test]
+fn gvfs_gphoto2_takes_by_gio_up_and_within() {
+    let Some(camera) = std::env::var_os("SKWIR_TEST_GVFS_GPHOTO2") else {
+        eprintln!("skipped: no camera mounted over gPhoto2 through GVfs by a script");
+        return;
+    };
+    // Its bridge sends a file after its close: every copy up by `gio`.
+    let ways = ByGio {
+        down: true,
+        alone_up: true,
+        alone_down: false,
+    };
+    takes_by_gio("gvfs-gphoto2", &[(PathBuf::from(camera), ways)]);
+}
+
 /// Copies up, down and within each of `mounts` (folders in GVfs's bridge,
 /// whose runtime folder is this process's `XDG_RUNTIME_DIR`), files in
 /// batches and a file alone, then removals: by `gio` where its ways say,

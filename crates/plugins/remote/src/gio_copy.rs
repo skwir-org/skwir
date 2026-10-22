@@ -35,6 +35,17 @@
 //! `gio` serves it every way, a file alone too. Its bridge keeps no modes
 //! (`chmod` is refused).
 //!
+//! The same phone as a camera, through GVfs's gphoto2 backend (PTP;
+//! 2026-10-22, the same way, once): up 18.1 s through the bridge, 11.6 by
+//! eight `gio`; down 0.96, 0.88; within the phone 18.7, 16.5; removed
+//! 43.0, 42.2; a file of 32 MiB down 1.13, 1.04. And up through the
+//! bridge, `cp` returned before the phone held the file: the backend sends
+//! a file as it is released, after `close` returned (32 MiB: none of it
+//! there as `cp` returned, all of it a second later), so a refusal there
+//! is never told. `gio` takes every copy up, a file alone too, and
+//! within (an upload too); down as fast either way: a batch by `gio`, a
+//! file alone by its step.
+//!
 //! `gio` maps a path of the bridge to its mount's address itself. With
 //! `-i` and nothing on its input it never replaces a file: without it,
 //! `gio copy` and `gio move` do. Folders, which `gio copy` does not copy,
@@ -82,6 +93,10 @@ fn ways_of(kind: &str) -> Option<Ways> {
         "mtp" => Some(Ways {
             alone_up: true,
             alone_down: true,
+            ..all
+        }),
+        "gphoto2" => Some(Ways {
+            alone_up: true,
             ..all
         }),
         _ => None,
@@ -444,16 +459,20 @@ mod tests {
     #[test]
     fn nfs_is_served_every_way_afp_but_down_and_a_file_alone_where_faster() {
         let (nfs, afp, mtp) = (ways_of("nfs"), ways_of("afp-volume"), ways_of("mtp"));
+        let camera = ways_of("gphoto2");
         assert_eq!(ways_of("afc"), None, "an iPhone keeps the bridge");
         // Up, down, within.
         assert!(takes(None, nfs) && takes(nfs, None) && takes(nfs, nfs));
         assert!(takes(None, afp) && !takes(afp, None) && takes(afp, afp));
         assert!(takes(None, mtp) && takes(mtp, None) && takes(mtp, mtp));
+        assert!(takes(None, camera) && takes(camera, None) && takes(camera, camera));
         assert!(!takes(None, None));
         // A file alone: up, down; within as a batch.
         assert!(!takes_alone(None, nfs) && takes_alone(nfs, None));
         assert!(!takes_alone(None, afp) && takes_alone(afp, None));
         assert!(takes_alone(None, mtp) && takes_alone(mtp, None));
+        // A camera's bridge sends a file after its close: up by `gio`.
+        assert!(takes_alone(None, camera) && !takes_alone(camera, None));
         assert!(!takes_alone(mtp, mtp) && !takes_alone(None, None));
     }
 
