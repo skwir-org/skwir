@@ -46,7 +46,9 @@
   passwords KDE keeps, KDE's own dialogs asking a password or about a
   certificate; GVfs is used where it is installed, even before
   anything started it. A copy a server refuses as it is finished is said
-  to have failed, and a move keeps its original. A server's password can
+  to have failed, and a move keeps its original. Copying onto a camera (or a
+  phone in its photos mode) through GVfs works: the copy is written in place,
+  as the camera moves nothing between its folders. A server's password can
   be remembered in your desktop's keyring (Remember in the password
   question), and passwords Nautilus remembered are used too: a
   password-protected SMB, WebDAV or FTP server now opens through rclone.

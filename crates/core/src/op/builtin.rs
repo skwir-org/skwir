@@ -1022,6 +1022,24 @@ fn copy_staged(
     if batched.is_none() {
         ctx.add_total(tree_size(src, ctx)?);
     }
+    // A destination that moves nothing between its folders (a camera)
+    // takes the copy in place, never staged and moved (ADR-083).
+    if crate::fs::reach::writes_in_place(dest_dir) {
+        if let Some(super::transfer::Batched::Placed(at, _)) = &batched
+            && at == target
+        {
+            return Ok(());
+        }
+        return copy_in_place(
+            src,
+            target,
+            dest_dir,
+            preserve_attributes,
+            along_src,
+            pace,
+            ctx,
+        );
+    }
     // The plan's staging folder there, shared by its copies, each under a
     // name of its own.
     let (staging, name) = ctx.staging_for(dest_dir)?;
@@ -1085,6 +1103,72 @@ fn copy_staged(
             .chain((!kept).then_some(staged))
             .chain(staged_along);
         for path in made {
+            if std::fs::symlink_metadata(&path).is_err() {
+                continue;
+            }
+            if let Err(cleanup) = super::staging::remove_tree(&path) {
+                return Err(error.context(format!(
+                    "a part of the copy is left in “{}” ({})",
+                    path.display(),
+                    super::io_words(&cleanup)
+                )));
+            }
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// [`copy_staged`] where `dest_dir` moves nothing between its folders (a
+/// camera, ADR-083): the copy written at `target` itself, never over what
+/// is there (each file and folder made new), its companions beside it,
+/// all taken back where it fails: a retry makes it again.
+fn copy_in_place(
+    src: &Path,
+    target: &Path,
+    dest_dir: &Path,
+    preserve_attributes: bool,
+    along_src: &[Along],
+    pace: &Pace,
+    ctx: &StepContext,
+) -> anyhow::Result<()> {
+    let placed_in = || {
+        format!(
+            "“{}” could not be placed in “{}”",
+            display_name(target),
+            display_name(dest_dir)
+        )
+    };
+    if std::fs::symlink_metadata(target).is_ok() {
+        return Err(
+            anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::AlreadyExists))
+                .context(placed_in()),
+        );
+    }
+    ctx.copy_begins();
+    let mut made = vec![target.to_path_buf()];
+    let result = copy_recursive_with_attributes(src, target, preserve_attributes, pace, ctx)
+        .and_then(|()| {
+            for a in along_src.iter().filter(|a| !a.attributes) {
+                anyhow::ensure!(
+                    std::fs::symlink_metadata(&a.to).is_err(),
+                    "“{}” is already there",
+                    display_name(&a.to)
+                );
+                made.push(a.to.clone());
+                copy_recursive_with_attributes(&a.from, &a.to, true, pace, ctx)?;
+            }
+            Ok(())
+        });
+    if let Err(error) = result {
+        // What it made goes, the companion that holds the attributes it
+        // wrote beside it (on a volume that keeps none) too.
+        let beside = ctx
+            .companions()
+            .existing_as(target, &|at| std::fs::symlink_metadata(at).is_ok())
+            .into_iter()
+            .map(|found| found.path);
+        for path in made.into_iter().chain(beside) {
             if std::fs::symlink_metadata(&path).is_err() {
                 continue;
             }

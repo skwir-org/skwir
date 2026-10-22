@@ -1338,10 +1338,8 @@ protocol is a scheme a connector maps, or a connector.
   certificate not trusted kio-fuse waits for good); a mount's `Known`
   published before its folder is shown (an F5 there was flaky).
 - **G. Left** (each its own step):
-  - a camera's (gPhoto2) ways measured on the phone as a PTP camera,
-    `gio` taking every copy up (its bridge sends after `close`): `just
-    mtp-check` runs them, not yet run so; an iPhone's (AFC) chosen by
-    requests counted against a stand-in, an iPhone's own pace not timed;
+  - an iPhone's (AFC) ways chosen by requests counted against a
+    stand-in, an iPhone's own pace not timed (no iPhone at hand);
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);

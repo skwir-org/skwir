@@ -860,8 +860,18 @@ impl StepContext {
     /// run should this one end mid-way, as a copy's is.
     ///
     /// # Errors
-    /// When the folder cannot be made in `dest_dir`.
+    /// When the folder cannot be made in `dest_dir`, or `dest_dir` moves
+    /// nothing between its folders (`fs::reach::writes_in_place`: a
+    /// camera, where only copies go, written in place).
     pub fn stage(&self, dest_dir: &Path) -> std::io::Result<super::staging::Staging> {
+        // What is staged is moved into place, which a camera does not do
+        // between its folders: only copies go there, in place (ADR-083).
+        if crate::fs::reach::writes_in_place(dest_dir) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "it moves nothing between its folders (a camera): only copies are made there",
+            ));
+        }
         self.staging_in(dest_dir);
         super::staging::Staging::new(dest_dir, self.under_way.as_ref())
     }

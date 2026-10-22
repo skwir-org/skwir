@@ -123,7 +123,13 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 
 - A step that makes something in a destination stages it
   (`StepContext::stage`, then `Staging::place`): copies, extracted
-  archives.
+  archives. Except where the destination moves nothing between its
+  folders (`fs::reach::writes_in_place`: a camera through GVfs's
+  gPhoto2, ADR-083): a copy there is written in place under its name,
+  never over what is there, and taken back whole when it fails
+  (`builtin::copy_in_place`); a batch there writes in place too, by a
+  transfer that does (`Transfer::writes_in_place`) or Skwir's own
+  (`transfer::batch_in_place`); anything else staged is refused there.
 - A copy holds a lock on its staging folder while it runs. Unlocked
   staging folders are leftovers of a crash or kill: swept by a later copy
   into that destination, and at start for the destinations an earlier run

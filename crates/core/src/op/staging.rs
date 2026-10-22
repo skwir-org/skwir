@@ -44,6 +44,10 @@ const PREFIX: &str = ".skwir-copy-";
 /// The file a staging folder's copy keeps locked.
 const LOCK: &str = "lock";
 
+/// The staging folders this test's process made.
+#[cfg(test)]
+pub(super) static MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// A staging folder in a destination, removed when dropped, its lock held
 /// until then: what a step makes there is made in it and put in place
 /// whole ([`Staging::place`]). It holds its lock, named `lock`: make what
@@ -63,6 +67,8 @@ impl Staging {
     /// A new one in `dest_dir`, noted in `under_way` where that is a
     /// remote's folder.
     pub(super) fn new(dest_dir: &Path, under_way: Option<&UnderWay>) -> io::Result<Self> {
+        #[cfg(test)]
+        MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut builder = tempfile::Builder::new();
         builder.prefix(PREFIX);
         if let Some(private) = sys::owner_only() {

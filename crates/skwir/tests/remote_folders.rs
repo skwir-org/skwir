@@ -1893,7 +1893,46 @@ fn gvfs_gphoto2_takes_by_gio_up_and_within() {
         alone_up: true,
         alone_down: false,
     };
-    takes_by_gio("gvfs-gphoto2", &[(PathBuf::from(camera), ways)]);
+    let camera = PathBuf::from(camera);
+    takes_by_gio("gvfs-gphoto2", &[(camera.clone(), ways)]);
+    // It moves nothing between its folders: without `gio` too, a copy is
+    // written in place (ADR-083), Skwir's own batch and a file alone.
+    let base = fixture("gvfs-gphoto2-own");
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let entries = small_files(&base.join("local"));
+    let into = camera.join(format!("own-{}", std::process::id()));
+    std::fs::create_dir(&into).unwrap();
+    let file = entries.iter().find(|e| e.is_file()).unwrap();
+    let (batch, alone): (Vec<PathBuf>, Vec<PathBuf>) =
+        entries.iter().cloned().partition(|e| e != file);
+    for run in [batch, alone] {
+        let r = app
+            .executor
+            .execute_blocking(&copies(&run, &into), app.lifetime());
+        assert!(r.error.is_none(), "{:?}", r.error);
+    }
+    for e in &entries {
+        same_bytes(e, &into.join(e.file_name().unwrap()));
+    }
+    let mut there: Vec<_> = std::fs::read_dir(&into)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    there.sort();
+    let mut names: Vec<_> = entries
+        .iter()
+        .map(|e| e.file_name().unwrap().to_owned())
+        .collect();
+    names.sort();
+    assert_eq!(there, names, "the copies alone, nothing staged beside them");
+    for _ in 0..2 {
+        let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
+        assert!(undone.error.is_none(), "{:?}", undone.error);
+    }
+    assert_eq!(std::fs::read_dir(&into).unwrap().count(), 0, "undone");
+    std::fs::remove_dir(&into).unwrap();
+    drop(app);
+    std::fs::remove_dir_all(&base).unwrap();
 }
 
 /// GVfs's AFC mount (an iPhone's) against a stand-in device on this

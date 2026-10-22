@@ -113,6 +113,16 @@ pub trait Transfer: Send + Sync {
         control: &Control,
     ) -> anyhow::Result<()>;
 
+    /// Whether, without `aside.temp`, it may be given as `into` the
+    /// destination itself, which moves nothing between its folders (a
+    /// camera, ADR-083: `fs::reach::writes_in_place`): it makes there only
+    /// the trees of the names it is given, under those names, never over
+    /// what is there. Asked as [`Transfer::serves`] is.
+    fn writes_in_place(&self, into: &Path) -> bool {
+        let _ = into;
+        false
+    }
+
     /// Whether it removes entries of `folder` ([`Transfer::remove`]) so
     /// that the mount holding it sees them gone at once: GVfs's daemon
     /// serves its bridge and `gio remove` alike. Not sshfs's: its own
@@ -652,8 +662,13 @@ struct Taken {
 /// more), or a link's target: what a copy a batch placed has of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Stamp {
-    File { len: u64, modified: u64 },
+    File {
+        len: u64,
+        modified: u64,
+    },
     Link(PathBuf),
+    /// A folder a batch made in place (ADR-083).
+    Folder,
 }
 
 impl Stamp {
@@ -803,6 +818,12 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
             ctx.batched_state(&t.src, *state);
         }
     };
+    // A destination that moves nothing between its folders (a camera,
+    // ADR-083): what is free there is copied in place, by a transfer that
+    // writes so or Skwir's own; a name taken is left to its step.
+    if crate::fs::reach::writes_in_place(dest) {
+        return batch_in_place(from, dest, taken, ctx, &made_by_batch);
+    }
     // What the destination holds now: a name free there may be placed.
     let held: std::collections::HashSet<OsString> = if taken.iter().any(|t| !t.folder) {
         match std::fs::read_dir(dest) {
@@ -936,6 +957,83 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
     }
 }
 
+/// [`batch`] into `dest`, which moves nothing between its folders (a
+/// camera, ADR-083): the copies `taken` whose names are free there made in
+/// place, each step told its copy is placed. Failed, what it made goes
+/// (the names were free), and each step copies its own, in place too.
+fn batch_in_place(
+    from: &Path,
+    dest: &Path,
+    taken: &[Taken],
+    ctx: &StepContext,
+    made_by_batch: &dyn Fn(&Taken, Batched),
+) -> Result<(), Cancelled> {
+    let Ok(listed) = std::fs::read_dir(dest) else {
+        return Ok(());
+    };
+    let held: std::collections::HashSet<OsString> =
+        listed.flatten().map(|e| e.file_name()).collect();
+    let here: Vec<&Taken> = taken
+        .iter()
+        .filter(|t| !t.renamed && !held.contains(&t.name))
+        .collect();
+    if here.is_empty() {
+        return Ok(());
+    }
+    let advance = ctx.progress();
+    let told = AtomicU64::new(0);
+    let copied = |so_far: u64| {
+        let before = told.fetch_max(so_far, Ordering::Relaxed);
+        if so_far > before {
+            advance(so_far - before);
+        }
+    };
+    // No transfer that writes in place keeps a file it was cut short in.
+    let aside = Aside {
+        temp: None,
+        partial: dest,
+    };
+    let ran = run(
+        from,
+        (&here, is_alone(taken)),
+        dest,
+        &aside,
+        &copied,
+        &|_| {},
+        ctx,
+    );
+    let cancelled = ctx.cancel_token().is_cancelled();
+    if ran.is_ok() && !cancelled {
+        for t in &here {
+            let target = dest.join(&t.name);
+            let stamp = if t.folder {
+                Some(Stamp::Folder)
+            } else {
+                Stamp::of(&target)
+            };
+            if let Some(stamp) = stamp {
+                made_by_batch(t, Batched::Placed(target, stamp));
+            }
+        }
+        return Ok(());
+    }
+    for t in &here {
+        let target = dest.join(&t.name);
+        if std::fs::symlink_metadata(&target).is_ok()
+            && let Err(error) = super::staging::remove_tree(&target)
+        {
+            tracing::warn!("what a batch of copies made in place stays: {error}");
+        }
+    }
+    if cancelled {
+        return Err(Cancelled);
+    }
+    if let Err(error) = ran {
+        tracing::warn!("a batch of copies failed, the rest copied one by one: {error:#}");
+    }
+    Ok(())
+}
+
 /// Of what a batch a run cut short made in `into` (`Transfer::copy`) for
 /// `taken` of `from`, keep what it finished, which its retry goes on
 /// beside: a file of its source's size and time (given last, as a copy's
@@ -1016,11 +1114,15 @@ fn looked_at<T: Sync>(items: &[T], path_of: impl Fn(&T) -> PathBuf + Sync) -> Ve
 pub(super) fn take_back_unclaimed(ctx: &StepContext) {
     for (_, what) in ctx.unclaimed() {
         // Still what it placed.
-        if let Batched::Placed(at, stamp) = what
-            && Stamp::of(&at) == Some(stamp)
-        {
-            tracing::debug!(at = %at.display(), "a placed copy whose step never ran taken back");
-            let _ = std::fs::remove_file(&at);
+        if let Batched::Placed(at, stamp) = what {
+            let still = match &stamp {
+                Stamp::Folder => std::fs::symlink_metadata(&at).is_ok_and(|m| m.is_dir()),
+                _ => Stamp::of(&at).as_ref() == Some(&stamp),
+            };
+            if still {
+                tracing::debug!(at = %at.display(), "a placed copy whose step never ran taken back");
+                let _ = super::staging::remove_tree(&at);
+            }
         }
     }
 }
@@ -1154,10 +1256,16 @@ fn run(
     let within = crate::fs::reach::of(from)
         .zip(crate::fs::reach::of(into))
         .is_some_and(|(a, b)| a.point == b.point);
-    let serving = ctx
+    // Into a destination that moves nothing between its folders, only a
+    // transfer that writes in place (ADR-083).
+    let in_place = crate::fs::reach::writes_in_place(into);
+    let serving: Vec<Arc<dyn Transfer>> = ctx
         .transfers()
         .map(|t| t.serving(from, into, alone && !within))
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|t| !in_place || t.writes_in_place(into))
+        .collect();
     for transfer in serving {
         tracing::debug!(
             copies = names.len(),
@@ -1602,6 +1710,189 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    /// A camera's folder as GVfs names it, which moves nothing between its
+    /// folders (ADR-083).
+    fn camera(root: &Path) -> PathBuf {
+        let dest = root.join("gphoto2:host=test");
+        std::fs::create_dir(&dest).unwrap();
+        crate::fs::reach::pretend_camera(&dest);
+        dest
+    }
+
+    fn staged() -> usize {
+        super::super::staging::MADE.load(Ordering::Relaxed)
+    }
+
+    #[test]
+    fn copies_onto_a_camera_are_made_in_place_never_staged() {
+        let tmp = home_tempdir();
+        let entries = served(tmp.path());
+        let dest = camera(tmp.path());
+        let before = staged();
+        let executor = Executor::new(Scheduler::new(2));
+        // A batch, Skwir's own; then a file alone, by its step.
+        let r = executor.execute_blocking(&copies(&entries, &dest), &CancelToken::new());
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert_eq!(BATCHES.load(Ordering::Relaxed), 1);
+        let alone = tmp.path().join("alone.txt");
+        file(&alone, "alone", 0o644);
+        let r = executor.execute_blocking(
+            &copies(std::slice::from_ref(&alone), &dest),
+            &CancelToken::new(),
+        );
+        assert!(r.error.is_none(), "{:?}", r.error);
+        for e in entries.iter().chain([&alone]) {
+            same(e, &dest.join(e.file_name().unwrap()));
+        }
+        assert_eq!(staged(), before, "no staging folder made");
+        assert_eq!(
+            names(&dest),
+            [
+                "alone.txt",
+                "it's a.txt",
+                "kept.txt",
+                "run.sh",
+                "sub folder",
+                "to a"
+            ]
+        );
+        for _ in 0..2 {
+            let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
+            assert!(undone.error.is_none(), "{:?}", undone.error);
+        }
+        assert!(names(&dest).is_empty(), "each step's undo takes its copy");
+    }
+
+    #[test]
+    fn a_copy_onto_a_camera_that_fails_leaves_nothing_there() {
+        let tmp = home_tempdir();
+        let folder = tmp.path().join("from/a folder");
+        std::fs::create_dir_all(&folder).unwrap();
+        file(&folder.join("read.txt"), "read", 0o644);
+        file(&folder.join("unreadable.txt"), "no", 0o000);
+        let dest = camera(tmp.path());
+        let executor = Executor::new(Scheduler::new(2));
+        // Its batch fails, then its step: each takes back what it made.
+        let r = executor.execute_blocking(
+            &copies(std::slice::from_ref(&folder), &dest),
+            &CancelToken::new(),
+        );
+        assert!(r.error.is_some(), "an unreadable file fails the copy");
+        assert!(names(&dest).is_empty(), "nothing made in place stays");
+        // A file alone cut short so too.
+        let unreadable = folder.join("unreadable.txt");
+        let r = executor.execute_blocking(
+            &copies(std::slice::from_ref(&unreadable), &dest),
+            &CancelToken::new(),
+        );
+        assert!(r.error.is_some());
+        assert!(names(&dest).is_empty());
+    }
+
+    #[test]
+    fn nothing_is_staged_on_a_camera_its_reason_told() {
+        let tmp = home_tempdir();
+        let dest = camera(tmp.path());
+        let ctx = StepContext::detached();
+        let refused = ctx.stage(&dest).map(|_| ()).unwrap_err();
+        assert_eq!(refused.kind(), std::io::ErrorKind::Unsupported);
+        assert!(
+            refused
+                .to_string()
+                .contains("moves nothing between its folders")
+        );
+        assert!(names(&dest).is_empty());
+        let other = tmp.path().join("elsewhere");
+        std::fs::create_dir(&other).unwrap();
+        assert!(ctx.stage(&other).is_ok(), "elsewhere as before");
+    }
+
+    /// A transfer that writes in place, copying as Skwir's own does, and
+    /// the folders it was given.
+    struct InPlace {
+        into: Arc<Mutex<Vec<PathBuf>>>,
+    }
+
+    impl Transfer for InPlace {
+        fn name(&self) -> &'static str {
+            "in place"
+        }
+        fn serves(&self, _: &Path, _: &Path) -> bool {
+            true
+        }
+        fn writes_in_place(&self, _: &Path) -> bool {
+            true
+        }
+        fn copy(
+            &self,
+            from: &Path,
+            names: &[OsString],
+            into: &Path,
+            aside: &Aside<'_>,
+            told: &Told<'_>,
+            control: &Control,
+        ) -> anyhow::Result<()> {
+            self.into.lock().push(into.to_path_buf());
+            copy_at_once(
+                from,
+                names,
+                into,
+                aside.temp,
+                told.copied,
+                told.placed,
+                control,
+            )
+        }
+    }
+
+    #[test]
+    fn onto_a_camera_only_a_transfer_that_writes_in_place_copies() {
+        let tmp = home_tempdir();
+        let entries = served(tmp.path());
+        let dest = camera(tmp.path());
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let into = Arc::new(Mutex::new(Vec::new()));
+        let transfers = Arc::new(Transfers::default());
+        // One that stages, asked first, then one that writes in place.
+        transfers.register(
+            "test",
+            Arc::new(Fake {
+                calls: Arc::clone(&calls),
+                fails: false,
+                cancels: None,
+                cancels_after: None,
+                touches: Mutex::default(),
+                removals: None,
+                alone: false,
+                breaks: Mutex::default(),
+            }),
+        );
+        transfers.register(
+            "test",
+            Arc::new(InPlace {
+                into: Arc::clone(&into),
+            }),
+        );
+        let executor = Executor::new(Scheduler::new(2));
+        executor.set_transfers(transfers);
+        let before = staged();
+        let r = executor.execute_blocking(&copies(&entries, &dest), &CancelToken::new());
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert!(
+            calls.lock().is_empty(),
+            "a transfer that stages is not asked"
+        );
+        assert_eq!(
+            *into.lock(),
+            std::slice::from_ref(&dest),
+            "given the camera's folder itself"
+        );
+        for e in &entries {
+            same(e, &dest.join(e.file_name().unwrap()));
+        }
+        assert_eq!(staged(), before, "no staging folder made");
     }
 
     #[test]

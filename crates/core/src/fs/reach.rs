@@ -60,6 +60,26 @@ impl Remote {
     pub fn makes_up_change_times(&self) -> bool {
         self.fstype == "fuse.kio-fuse"
     }
+
+    /// Whether its program moves an entry from one of its folders to
+    /// another: not GVfs's for a camera (gPhoto2, its bridge's folder
+    /// `gphoto2:…`), which renames within a folder alone. What is made
+    /// there is written in place, never staged and moved (ADR-083).
+    pub fn moves_between_folders(&self) -> bool {
+        !(self.fstype == "fuse.gvfsd-fuse"
+            && self
+                .point
+                .file_name()
+                .is_some_and(|name| name.as_encoded_bytes().starts_with(b"gphoto2:")))
+    }
+}
+
+/// Whether what is made in the folder `dest` is written in place there,
+/// its remote moving nothing between its folders
+/// ([`Remote::moves_between_folders`], ADR-083). Asked of the table in
+/// memory.
+pub fn writes_in_place(dest: &Path) -> bool {
+    of(dest).is_some_and(|remote| !remote.moves_between_folders())
 }
 
 /// What a plugin knows of a remote that the mount table does not say
@@ -132,14 +152,14 @@ impl Thumbnails {
 /// opened ([`of_device`]).
 pub fn of(path: &Path) -> Option<Arc<Remote>> {
     #[cfg(test)]
-    if let Some(point) = PRETENDED_REMOTES
+    if let Some((point, fstype)) = PRETENDED_REMOTES
         .lock()
         .iter()
-        .find(|point| path.starts_with(point))
+        .find(|(point, _)| path.starts_with(point))
     {
         return Some(Arc::new(Remote {
             point: point.clone(),
-            fstype: "fuse.sshfs".to_owned(),
+            fstype: (*fstype).to_owned(),
             source: "me@example.com:/".into(),
             device: None,
         }));
@@ -147,16 +167,34 @@ pub fn of(path: &Path) -> Option<Arc<Remote>> {
     table().of(path)
 }
 
-/// The folders a test says remotes are mounted at ([`pretend_remote`]).
+/// The folders a test says remotes are mounted at, and their types
+/// ([`pretend_remote`]).
 #[cfg(test)]
-static PRETENDED_REMOTES: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+static PRETENDED_REMOTES: Mutex<Vec<(PathBuf, &str)>> = Mutex::new(Vec::new());
 
 /// Say, for this test's process (nextest runs each in one of its own),
 /// that an sshfs remote is mounted at `point`: [`of`] says so of every
 /// path below it.
 #[cfg(all(test, target_os = "linux"))]
 pub(crate) fn pretend_remote(point: &Path) {
-    PRETENDED_REMOTES.lock().push(point.to_path_buf());
+    PRETENDED_REMOTES
+        .lock()
+        .push((point.to_path_buf(), "fuse.sshfs"));
+}
+
+/// Say, for this test's process, that a camera GVfs mounted is at
+/// `point`, a folder named as GVfs's are (`gphoto2:…`): what is made below
+/// it is written in place ([`writes_in_place`]).
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn pretend_camera(point: &Path) {
+    debug_assert!(
+        point
+            .file_name()
+            .is_some_and(|n| n.as_encoded_bytes().starts_with(b"gphoto2:"))
+    );
+    PRETENDED_REMOTES
+        .lock()
+        .push((point.to_path_buf(), "fuse.gvfsd-fuse"));
 }
 
 /// The remote whose files are on `device` (a stat's), if one is.
@@ -695,6 +733,33 @@ mod tests {
         );
         assert_eq!(table.of(&root.join("smb")).unwrap().point, root.join("smb"));
         assert_eq!(table.of(root).unwrap().point, root);
+    }
+
+    #[test]
+    fn a_camera_moves_nothing_between_its_folders() {
+        let remote = |point: &str, fstype: &str| Remote {
+            point: PathBuf::from(point),
+            fstype: fstype.to_owned(),
+            source: OsString::new(),
+            device: None,
+        };
+        let gvfs = "/run/user/1000/gvfs";
+        let camera = remote(
+            &format!("{gvfs}/gphoto2:host=%5Busb%3A001%2C004%5D"),
+            "fuse.gvfsd-fuse",
+        );
+        assert!(
+            !camera.moves_between_folders(),
+            "GVfs's gPhoto2 renames within a folder"
+        );
+        for (point, fstype) in [
+            (format!("{gvfs}/mtp:host=Phone"), "fuse.gvfsd-fuse"),
+            (format!("{gvfs}/sftp:host=nas"), "fuse.gvfsd-fuse"),
+            ("/home/me/srv/gphoto2:x".to_owned(), "fuse.sshfs"),
+            ("/mnt/nas".to_owned(), "nfs4"),
+        ] {
+            assert!(remote(&point, fstype).moves_between_folders(), "{point}");
+        }
     }
 
     #[cfg(target_os = "linux")]

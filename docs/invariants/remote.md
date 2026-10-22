@@ -122,7 +122,9 @@ ADR-077 (which revises ADR-021).
   never followed to another name by number.
 - **Devices GVfs reads** (a phone over MTP or AFC, a camera over
   gPhoto2: `Recognised::device`) are near, whatever their address, and
-  listed among the sidebar's devices; they keep a lane of their own.
+  listed among the sidebar's devices; they keep a lane of their own. A
+  camera moves nothing between its folders: copies there are written in
+  place, never staged (ADR-083, operations.md).
 - **Staging** on a remote is swept only where this machine noted it
   (operations.md, "Staging"): a folder its copy could not remove as its
   server stopped answering goes once that remote answers again.

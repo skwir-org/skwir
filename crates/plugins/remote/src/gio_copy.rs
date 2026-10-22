@@ -361,6 +361,13 @@ impl Transfer for GioCopy {
         }
     }
 
+    /// Without `temp` it makes the folders in `into` and copies each file
+    /// under its name there, `-i` replacing nothing: given a camera's
+    /// folder itself, it writes in place (ADR-083).
+    fn writes_in_place(&self, into: &Path) -> bool {
+        self.on_served(into)
+    }
+
     fn serves_alone(&self, from: &Path, into: &Path) -> bool {
         program().is_some() && {
             let (ways_from, ways_into) = (self.served(from), self.served(into));

@@ -3371,3 +3371,33 @@ and fix bug or problems you encounter on the way". This is the first.
   `gvfs_afc_takes_by_gio_what_it_does_better` against the stand-in
   (`tools/test/gvfs-afc.sh`); with AFC's ways taken out it fails ("up by
   gio").
+
+## A copy onto a camera is written in place (2026-10-22, ADR-083)
+
+- `just mtp-check` (the phone offered by the user, unlocked, in file
+  transfer) ran its new camera part for the first time: MTP passed, the
+  camera failed at its first batch up ("“a folder” could not be placed
+  …: Invalid cross-device link"). GVfs's gphoto2 backend moves an entry
+  only within one folder (its source: "Not supported (not same
+  directory)"), and every copy is staged and moved into place: no copy
+  onto a camera could be placed, with or without `gio`.
+- The user chose writing in place (asked: in place, refuse copies onto
+  a camera, or only record it). Built: `Remote::moves_between_folders`
+  (false for GVfs's `gphoto2:…` mounts) and `fs::reach::writes_in_place`;
+  a step's copy there made under its name, never over what is there, and
+  taken back when it fails (`builtin::copy_in_place`); a batch there by a
+  transfer that writes in place (`Transfer::writes_in_place`: `gio_copy`)
+  or Skwir's own, given the destination itself, each step told its copy
+  is placed (`Stamp::Folder` for a folder), what a failed batch made
+  removed; `StepContext::stage` refusing such a destination with its
+  reason. operations.md's staging rule amended.
+- Tested in core against a camera pretended at a folder named as GVfs's
+  (`reach::pretend_camera`): copies (a batch, then a file alone) in place
+  with no staging folder made (a count kept for tests), undone; a copy
+  that fails leaves nothing; only a transfer that writes in place asked,
+  given the camera's folder itself; staging refused with its reason. With
+  `writes_in_place` answering false, two of them fail. 507 tests of core,
+  the remote and archives plugins pass.
+- `just mtp-check` again on the phone: MTP and the camera both pass, the
+  camera's test now also copying without `gio` (Skwir's own batch, a file
+  alone by its step), undone, its folders removed.
