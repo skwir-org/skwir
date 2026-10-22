@@ -1304,9 +1304,13 @@ protocol is a scheme a connector maps, or a connector.
   shares nothing with, the history kept in the order asked; step 2:
   heavy actions on different disks or servers at once, one at a time on
   each. A plan an error stopped is retried, one action in the history,
-  a large file going on from what got across (ADR-080).
+  a large file going on from what got across (ADR-080). GVfs's NFS
+  mounts go through `gio` every way, AFP's but down (measured).
 - **G. Left** (each its own step):
-  - GVfs's NFS, AFP and device mounts not measured, at the bridge's pace;
+  - GVfs's device mounts (MTP) not measured, at the bridge's pace; a
+    large file down from NFS not measured (the test server fails it); a
+    lone large file down from AFP by `gio`, twice as fast as its bridge
+    (ADR-078, 15);
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);

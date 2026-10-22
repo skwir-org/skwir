@@ -125,9 +125,11 @@ ADR-077 (which revises ADR-021).
   ten requests at once (libfuse's default, which it offers no option to
   change), a file down through it two round trips, where an `sftp`
   session gets one file after another, four each. For a mount of the
-  session's GVfs of SFTP, FTP, WebDAV or SMB, by eight `gio copy` at
-  once (`gio_copy`: `-i`, nothing on its input, so nothing is
-  replaced), what a server refused at once copied again by one. Else
+  session's GVfs of SFTP, FTP, WebDAV, SMB or NFS, by eight `gio copy`
+  at once (`gio_copy`: `-i`, nothing on its input, so nothing is
+  replaced), what a server refused at once copied again by one; of AFP
+  the same up, within and removed, but down through its bridge, sixteen
+  files at once, which was faster (`gio_copy::Ways`). Else
   through the mount, eight files at a time, sixteen down. Within one
   mount: by `sftp`'s `cp` on an sshfs mount's server (the copy-data
   extension, asked once), each file then given its time through the
@@ -249,3 +251,9 @@ ADR-077 (which revises ADR-021).
   on a bus whose configuration lists GVfs's services alone, its runtime
   folder short enough for ssh's control socket
   (`crates/skwir/tests/remote_folders.rs`, `just remote-check`).
+- A server that runs as root (unfs3 with rpcbind for NFS, netatalk for
+  AFP) runs in namespaces of its own, user (root mapped to the user,
+  subordinate ids beside it), network, mount and pid, with a GVfs of its
+  own: every process ends with them (`tools/test/gvfs-nfs-afp.sh`, which
+  `just remote-check` runs). A copy of `/etc` there drops ownership: kept,
+  it lands on a subordinate id the user cannot remove.

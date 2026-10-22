@@ -173,6 +173,22 @@ mounted the folder.
     both be remote, and a command run on the server goes through a shell
     whose quoting Skwir cannot know.
 
+15. **NFS and AFP through gio, measured** (2026-10-22, the user's
+    "tackle all the points"). Against unfs3 and netatalk run on this
+    machine in namespaces of their own, mounted through a GVfs of its
+    own, 20 ms, two rounds each, 100 files of 16 KiB: NFS up 23.7–23.8 s
+    through the bridge eight at a time, 11.6 by eight `gio`; down 9.2
+    sixteen at a time, 3.7; within the mount 23.9–24.0, 10.3; removed
+    23.0 one by one, 0.74–0.77. AFP up 15.5, 4.1; within 15.5, 1.0 (its
+    server copies); removed 4.3, 0.45–0.50; down 0.98 through the
+    bridge, 1.87 by `gio`. A 64 MiB file went up alike either way (NFS
+    6.3 and 6.1–6.2 s, AFP 5.85 and 5.83); down from AFP 11.5 s through
+    the bridge, 11.3–13.1 read in eight ranges at once (its backend
+    serves one read at a time), 5.6 by `gio`. So `gio` serves NFS every
+    way and AFP all but copies down. Not measured: a large file down
+    from NFS (unfs3 fails to send large replies to libnfs, GVfs's NFS
+    client, which then hangs), a phone's MTP.
+
 ## Consequences
 
 - Measured after, the same way (20 ms; load 8 to 61): a 256 MiB file
@@ -223,7 +239,9 @@ mounted the folder.
   mount): 100 files of 16 KiB moved down from Skwir's mount 1.09–1.22 s
   (2.77–3.03), a folder of 100 0.90–0.92 s (2.66–2.72); from an
   SFTP-only server 1.84–1.87 s (2.98–3.00) and 2.00–2.04 s (2.97–2.99).
-- Not yet: GVfs's NFS, AFP and devices (a phone's MTP), not measured;
+- Not yet: GVfs's devices (a phone's MTP), not measured, nor a large
+  file down from NFS; a lone large file down from AFP goes by its step
+  through the bridge, where `gio` took half the time (15);
   rclone's mounts keep their own pace. Without a tool, a name made in a
   folder through FUSE costs a round trip or two under its lock, whatever
   the way. An SFTP-only server's downloads go through sshfs, sixteen

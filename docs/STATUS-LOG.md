@@ -2843,3 +2843,32 @@ and fix bug or problems you encounter on the way". This is the first.
 - Found on the way: `copy_contents` trusts the kernel's 0 only after it
   copied something itself, so a copy gone on from never ends early on a
   file system that says 0 before the end.
+
+### GVfs's NFS and AFP measured, gio where it helps (2026-10-22)
+
+- Servers without root: unfs3 and rpcbind for NFS, netatalk for AFP
+  (a guest share), in user, network, mount and pid namespaces of their
+  own (root mapped to this user, subordinate ids beside it so rpcbind
+  may drop its groups; a fresh tmpfs on `/run` and `/var/lib`; a copy
+  of `/etc` with a `netconfig` and rpcbind's user), loopback delayed
+  10 ms each way by netem, a private bus and GVfs mounting both; every
+  process ends with the namespace. Timings in ADR-078, 15: `gio` beat
+  the bridge for NFS every way (2 to 30 times), for AFP up, within and
+  removals (4 to 15 times), not down (the bridge sixteen at once, 0.98
+  s against 1.87).
+- Built: the gio transfer serves NFS every way and AFP all but copies
+  down (`gio_copy::Ways`, `ways_of`, `takes`).
+- Found: unfs3 fails to send large READ replies to libnfs ("Unable to
+  send RPC reply"), and GVfs's NFS backend then answers nothing; a
+  large download from NFS is not measured. AFP's bridge sets no times
+  (`cp --preserve` fails at the end; Skwir's copy goes on without).
+  Reading a large file over AFP in eight ranges at once is no faster
+  (its backend serves one read at a time).
+- Checked: a unit test of the ways; `remote_folders`'s new
+  `gvfs_nfs_and_afp_take_by_gio_what_it_does_better`, run inside those
+  namespaces against both servers (copies up, down, within, deletions,
+  which by `gio` and the bytes), skipped elsewhere; the namespaces made
+  by `tools/test/gvfs-nfs-afp.sh`, which `just remote-check` runs after
+  its tests (46 passed, then this one). Found on the way: a copy of
+  `/etc` keeping its owners lands on a subordinate id the user cannot
+  remove; the script copies it without them.

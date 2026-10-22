@@ -475,7 +475,7 @@ just bench-check           generate bench-data/ on demand and enforce budgets
 just idle-pss              idle memory and first frame on this display (ADR-033)
 just smoke                 the release window on an X display of its own (CI)
 just a11y-check            what a screen reader hears of it, read over AT-SPI
-just remote-check          remote folders against servers on this machine (sshfs, GVfs, rclone from nixpkgs)
+just remote-check          remote folders against servers on this machine (sshfs, GVfs, rclone from nixpkgs; NFS and AFP in namespaces)
 just screenshots           the README's screenshots, made again (docs/images)
 just deny / notices        dependency licences and advisories; the packages' notices
 just plugins               build the plugins from outside as modules (target/plugins)

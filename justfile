@@ -119,7 +119,8 @@ djvu-check:
 # mounted for real: rclone, sshfs and a GVfs of the test's own on a bus of
 # its own, taken from nixpkgs (never the session's GVfs); and OpenSSH's own
 # server run as the user, for copies through rsync (ADR-078). The tests
-# skip what is missing when run alone.
+# skip what is missing when run alone. Then GVfs's NFS and AFP, whose
+# servers run as root, in namespaces of their own (tools/test/gvfs-nfs-afp.sh).
 remote-check:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -129,6 +130,9 @@ remote-check:
     export SKWIR_TEST_GVFS="$(out gvfs)"
     cargo nextest run -p skwir -p skwir-plugin-remote --no-fail-fast \
         -E 'binary(remote_folders) | package(skwir-plugin-remote)'
+    binary=$(cargo nextest list -p skwir -p skwir-plugin-remote -E 'binary(remote_folders)' \
+        --message-format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["rust-suites"]["skwir::remote_folders"]["binary-path"])')
+    tools/test/gvfs-nfs-afp.sh "$binary"
 
 # Exercise GStreamer playback using a synthetic two-track video and subtitles.
 media-check:

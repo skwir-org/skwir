@@ -9,9 +9,17 @@
 //! way): WebDAV 25.6–26.1 s through the bridge, 1.5 by eight `gio`; FTP
 //! 139.8 s, 9.2–9.4; SMB (Samba) 28.1–28.2 s, 15.4: its backend takes a
 //! request at a time, the bridge's own cost is spared still. FTPS and
-//! WebDAV over TLS are the same backends. Others (NFS, AFP; a phone's MTP,
-//! whose one session takes a file at a time) keep the bridge, not
-//! measured.
+//! WebDAV over TLS are the same backends.
+//!
+//! NFS and AFP (2026-10-22, the same way, against unfs3 and netatalk on
+//! this machine, each run twice): NFS up 23.7–23.8 s through the bridge,
+//! 11.6 by eight `gio`; down 9.2 (sixteen at once), 3.7; within the
+//! mount 23.9–24.0, 10.3; removed 23.0 one by one, 0.74–0.77. AFP up
+//! 15.5, 4.1; within 15.5, 1.0 (its server copies); removed 4.3, 0.45–
+//! 0.50; but down 0.98 through the bridge, sixteen at once, against 1.87:
+//! AFP is not served down. A file of 64 MiB went up as fast either way.
+//! A phone's MTP, whose one session takes a file at a time, keeps the
+//! bridge, not measured.
 //!
 //! `gio` maps a path of the bridge to its mount's address itself. With
 //! `-i` and nothing on its input it never replaces a file: without it,
@@ -37,6 +45,37 @@ const AT_ONCE: usize = 8;
 
 /// The most names one `gio` is given.
 const MOST: usize = 64;
+
+/// What `gio` serves of a GVfs mount of kind `kind` (module
+/// documentation).
+fn ways_of(kind: &str) -> Option<Ways> {
+    match kind {
+        "sftp" | "ftp" | "ftps" | "dav" | "smb-share" | "nfs" => Some(Ways::All),
+        "afp-volume" => Some(Ways::NotDown),
+        _ => None,
+    }
+}
+
+/// Whether a copy from a mount `gio` serves `from` into one it serves
+/// `into` (`None`: no mount of the bridge's, or a kind not served) is its,
+/// by the ways alone.
+fn takes(from: Option<Ways>, into: Option<Ways>) -> bool {
+    match (from, into) {
+        (Some(ways), None) => ways == Ways::All,
+        (None | Some(_), Some(_)) => true,
+        (None, None) => false,
+    }
+}
+
+/// What `gio` serves of a GVfs mount's kind.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Ways {
+    /// Copies up, down and within it, removals in it.
+    All,
+    /// All but copies down onto this machine: its bridge, sixteen files
+    /// at once, was faster (AFP).
+    NotDown,
+}
 
 /// `gio copy` and `gio move` through this session's GVfs.
 #[derive(Default)]
@@ -71,23 +110,20 @@ impl GioCopy {
         self.made.load(Ordering::Relaxed)
     }
 
-    /// Whether `path` is in a mount of this session's GVfs bridge of a kind
-    /// served (SFTP, FTP, WebDAV, SMB): read from the bridge folder's name,
-    /// never from a server.
-    fn on_sftp(&self, path: &Path) -> bool {
-        let Some(bridge) = crate::gvfs::bridge_in(self.runtime.clone()) else {
-            return false;
-        };
-        path.strip_prefix(&bridge)
-            .ok()
-            .and_then(|below| below.components().next())
-            .and_then(|mount| mount.as_os_str().to_str().and_then(Spec::parse))
-            .is_some_and(|spec| {
-                matches!(
-                    spec.kind.as_str(),
-                    "sftp" | "ftp" | "ftps" | "dav" | "smb-share"
-                )
-            })
+    /// How `gio` serves the mount of this session's GVfs bridge holding
+    /// `path`, by its kind (module documentation), read from the bridge
+    /// folder's name, never from a server; `None` for a kind it does not
+    /// serve, or a path of no mount of its.
+    fn served(&self, path: &Path) -> Option<Ways> {
+        let bridge = crate::gvfs::bridge_in(self.runtime.clone())?;
+        let mount = path.strip_prefix(&bridge).ok()?.components().next()?;
+        let spec = mount.as_os_str().to_str().and_then(Spec::parse)?;
+        ways_of(&spec.kind)
+    }
+
+    /// Whether `path` is in a mount `gio` serves (module documentation).
+    fn on_served(&self, path: &Path) -> bool {
+        self.served(path).is_some()
     }
 
     /// The folder of the bridge the GVfs mount holding `path` is.
@@ -189,11 +225,11 @@ impl Transfer for GioCopy {
     /// Its daemon serves the bridge too: what `gio remove` removes, the
     /// bridge says gone at once.
     fn removes(&self, folder: &Path) -> bool {
-        program().is_some() && self.on_sftp(folder)
+        program().is_some() && self.on_served(folder)
     }
 
     fn remove(&self, folder: &Path, names: &[OsString], control: &Control) -> anyhow::Result<()> {
-        let Some(gio) = program().filter(|_| self.on_sftp(folder)) else {
+        let Some(gio) = program().filter(|_| self.on_served(folder)) else {
             return Err(NotServed.into());
         };
         let (mut files, mut folders) = (Vec::new(), Vec::new());
@@ -225,17 +261,19 @@ impl Transfer for GioCopy {
     }
 
     fn serves(&self, from: &Path, into: &Path) -> bool {
-        program().is_some()
-            && match (self.on_sftp(from), self.on_sftp(into)) {
-                (true, false) => skwir_core::fs::reach::of(into).is_none(),
-                (false, true) => skwir_core::fs::reach::of(from).is_none(),
-                // Within one mount: its daemon copies there, the bytes
-                // never through the bridge.
-                (true, true) => self
-                    .mount_of(from)
-                    .is_some_and(|m| Some(m) == self.mount_of(into)),
-                (false, false) => false,
-            }
+        program().is_some() && {
+            let (ways_from, ways_into) = (self.served(from), self.served(into));
+            takes(ways_from, ways_into)
+                && match (ways_from, ways_into) {
+                    (Some(_), None) => skwir_core::fs::reach::of(into).is_none(),
+                    (None, Some(_)) => skwir_core::fs::reach::of(from).is_none(),
+                    // Within one mount: its daemon copies there, the
+                    // bytes never through the bridge.
+                    _ => self
+                        .mount_of(from)
+                        .is_some_and(|m| Some(m) == self.mount_of(into)),
+                }
+        }
     }
 
     fn copy(
@@ -298,7 +336,7 @@ impl Transfer for GioCopy {
                 .iter()
                 .filter_map(|(_, dst)| Some((temp.join(dst.file_name()?), dst.clone())))
                 .collect();
-            if self.on_sftp(into) {
+            if self.on_served(into) {
                 // Moved on the server, never over what is there: a name
                 // taken meanwhile is left to its step.
                 let moves = made
@@ -338,6 +376,17 @@ mod tests {
     use std::ffi::OsStr;
 
     use super::*;
+
+    #[test]
+    fn nfs_is_served_every_way_and_afp_but_down() {
+        let (nfs, afp) = (ways_of("nfs"), ways_of("afp-volume"));
+        assert_eq!((nfs, afp), (Some(Ways::All), Some(Ways::NotDown)));
+        assert_eq!(ways_of("mtp"), None, "a phone keeps the bridge");
+        // Up, down, within.
+        assert!(takes(None, nfs) && takes(nfs, None) && takes(nfs, nfs));
+        assert!(takes(None, afp) && !takes(afp, None) && takes(afp, afp));
+        assert!(!takes(None, None));
+    }
 
     #[test]
     fn files_go_in_runs_by_folder_about_eight_in_all() {
