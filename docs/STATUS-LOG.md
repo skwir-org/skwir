@@ -3183,3 +3183,47 @@ and fix bug or problems you encounter on the way". This is the first.
   folder staged, the files placed, the same bytes, the pane showing them),
   moved down with the originals removed together; a file alone onto
   rclone's FTP by `kioclient`, whole.
+
+## KDE's dialogs for kio-fuse; a mount's `Known` published before its folder (2026-10-22, ADR-081)
+
+- Tried in a window on a display of its own (Xvfb, a private session bus
+  with KIO's services alone, rclone's WebDAV with a password): kio-fuse
+  asked nothing. Its jobs have no window, so KIO tells its workers not to
+  ask (`no-auth-prompt`, KIO's `simplejob.cpp`), and the mount failed as
+  "No such file or directory". Built: where kio-fuse fails, `kioclient
+  --interactive ls` lets KDE ask, then kio-fuse is asked again and finds
+  what KDE's dialog kept for the session. Checked in the window: the
+  address typed, KDE's dialog (in the user's language), the password
+  typed, the folder listed; cancelled, Skwir said kio-fuse's reason
+  once; Try again asked again and opened it.
+- `ls`, not `stat`: `kioclient --interactive stat` shows a progress
+  window, and on failing (the dialog cancelled) an error box that waits
+  to be dismissed, after which the window told the failure again. Its
+  `ls` hides progress (`HideProgressInfo`) and ends without a word.
+- Found over HTTPS (rclone with self-signed certificates): on a
+  certificate not trusted kio-fuse never answers `mountUrl` (no reply in
+  190 s). So over HTTPS KDE asks first, unless kio-fuse holds the server
+  already. In the job a certificate was accepted in, KIO's WebDAV took
+  the server's refusal of a login as "does not exist" without asking the
+  password (its error box said so); the next job asked it. So a first
+  failure there is asked again once. Checked in the window: a
+  certificate alone (accepted for the session, opened), a certificate
+  and a password (both asked in one opening), a certificate refused
+  (asked twice, then "KIO could not open it", nothing left waiting).
+- Once kio-fuse holds a server it gives any path there without looking
+  ("Already mounted", its `mountUrl`): a folder the server lacks fails as
+  it is listed. The test of a missing folder asks it on a server not yet
+  held (FTP), where kio-fuse's reason is told.
+- Flaky, then fixed: `kio_folders_open_from_their_address_and_f5_reads_
+  the_server_again` failed 2 times in 6 (F5 never showed the file the
+  server gained). The plugin published `Known` (which carries kio-fuse's
+  forget) from a background refresh after the folder was shown, and any
+  publish took the mount list its caller had read, so an older one could
+  land last. Made reproducible by delaying the refresh 2 s (the old code
+  failed every time). Now the newest list is kept in the plugin's state,
+  each publish shows the state as it then is, one at a time, a
+  connection publishes before its folder is shown, and nothing is
+  published once the plugin is disabled. With the refresh delayed, the
+  four KIO tests pass; 8 runs of them pass undelayed.
+- Not tried: KWallet (kwalletd is not on the private bus), a Plasma
+  session's own kio-fuse.

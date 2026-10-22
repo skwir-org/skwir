@@ -214,6 +214,8 @@ impl KioCopy {
     /// Tell kio-fuse to read its servers again: what `kioclient` wrote
     /// beside it.
     fn forget(&self) {
+        #[cfg(not(target_os = "linux"))]
+        let _ = &self.env;
         #[cfg(target_os = "linux")]
         if let Err(error) = crate::bus::call::<_, ()>(
             &self.env,

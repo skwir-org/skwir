@@ -1333,10 +1333,15 @@ protocol is a scheme a connector maps, or a connector.
   `kioclient` (measured faster every way, FTP's writes through kio-fuse
   failing), a move's check leaving kio-fuse's made-up change times out,
   kio-fuse told to forget before what a cut-short copy left is swept.
+  kio-fuse asks nothing (found in a window): KDE is let ask where it
+  fails (`kioclient --interactive ls`), first over HTTPS (on a
+  certificate not trusted kio-fuse waits for good); a mount's `Known`
+  published before its folder is shown (an F5 there was flaky).
 - **G. Left** (each its own step):
-  - KIO: KDE's dialogs and KWallet not tried; a copy refused at close
-    leaves its staging folder where the server keeps an entry of the
-    refused upload (rclone's did): not seen swept;
+  - KIO: KWallet and a Plasma session's own kio-fuse not tried (KDE's
+    dialogs tried in a window: passwords, certificates); a copy refused
+    at close leaves its staging folder where the server keeps an entry
+    of the refused upload (rclone's did): not seen swept;
   - a refresh racing the watcher where a FUSE program makes numbers
     anew (sshfs) listed a name twice once: the listing now removes what
     a name held before (one name, one row); the race itself not

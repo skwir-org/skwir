@@ -43,7 +43,8 @@
   to three times faster than before. Undo of a copy works where a server keeps no trash:
   what was made is removed, while it is unchanged. On KDE's desktop,
   `smb://`, `dav://` and `ftp://` open through KIO (kio-fuse), with the
-  passwords KDE keeps; GVfs is used where it is installed, even before
+  passwords KDE keeps, KDE's own dialogs asking a password or about a
+  certificate; GVfs is used where it is installed, even before
   anything started it. A copy a server refuses as it is finished is said
   to have failed, and a move keeps its original. A server's password can
   be remembered in your desktop's keyring (Remember in the password

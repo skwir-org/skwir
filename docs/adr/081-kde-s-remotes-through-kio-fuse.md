@@ -40,10 +40,22 @@ seventh decision for KIO alone.
   - It keeps a listing and a file's attributes 30 seconds: a file made on
     the server is not listed until then, or until it is told to forget
     (`org.kde.KIOFuse.Private.forceNodeTimeout`).
-  - It asks nothing but what KDE's password dialog asks (kpasswdserver,
-    KWallet): a host key never seen and a certificate not trusted are
-    refused, as "Input/output error". It refuses `mtp:` and lets go of no
-    server: its folders stay until it ends with the session.
+  - It asks nothing: its KIO jobs have no window, so KIO tells its
+    workers not to ask (`no-auth-prompt`). A server that wants a
+    password it has not been given (KWallet, this session's cache of
+    KDE's dialog) fails, as "No such file or directory" over WebDAV; on a
+    certificate not trusted it waits for good (no answer in three
+    minutes). Once it holds a server, it gives any path there without
+    looking. It refuses `mtp:` and lets go of no server: its folders stay
+    until it ends with the session.
+  - `kioclient --interactive` gives its job a window: KDE asks (the
+    password in kpasswdserver's dialog, a certificate in kioclient's),
+    the answers kept for the session, where kio-fuse finds them. Its
+    `stat` shows a progress window, and on failing an error box that
+    waits to be dismissed; its `ls` hides progress and ends without a
+    word. In the job a certificate was accepted in, KIO's WebDAV takes
+    the server's refusal of a login as "does not exist" rather than ask
+    the password; the next job asks it.
   - Over WebDAV it keeps no mode and no time: setting either is refused
     (`ENOTTY`, its word for what a protocol does not do).
 - Skwir's copies dropped the copy written without asking its close
@@ -80,10 +92,15 @@ seventh decision for KIO alone.
    same, mounted by KDE's programs; an archive it reads is no remote.
    KDE's remote places (`user-places.xbel`, Dolphin's sidebar) are its
    servers, listed in the Network section as rclone's remotes are.
-4. **Its questions are KDE's.** A password is asked in KDE's own dialog
-   and kept in KWallet if the user says so; Skwir never sees it (ADR-077's
-   seventh decision, for KIO). What KIO cannot ask through kio-fuse (a
-   host key, a certificate) is accepted once in Dolphin.
+4. **Its questions are KDE's.** Where kio-fuse fails to mount, KDE is
+   let ask (`kioclient --interactive ls`): its own dialogs, in the user's
+   language, the password kept in KWallet if the user says so; Skwir
+   never sees it (ADR-077's seventh decision, for KIO). kio-fuse is then
+   asked again, and finds what KDE kept. Where KDE could not list it
+   either, kio-fuse's reason is told. Over HTTPS, KDE asks first, unless
+   kio-fuse holds the server (on a certificate not trusted kio-fuse
+   would wait for good), and a second time where the first failed (the
+   password, after a certificate accepted).
 5. **What differs.** No Eject: kio-fuse lets go of no server. A server
    kio-fuse holds is asked again for each address opened on it (it mounts
    what it is asked). Before a folder there is read again (F5, the window
@@ -118,5 +135,8 @@ seventh decision for KIO alone.
   attributes): a move's check of its original leaves it out there.
 - Tested against servers on this machine (`just remote-check`): WebDAV
   and FTP by rclone, SMB by Samba (a share a guest opens), on a session
-  bus of the test's own with KIO's services alone; KDE's dialogs not by
-  the tests.
+  bus of the test's own with KIO's services alone. KDE's dialogs were
+  tried in a window on a display of its own, not by the tests: a
+  password over WebDAV (asked, cancelled, asked again), a certificate not
+  trusted over HTTPS with and without a password, accepted and refused.
+  KWallet was not tried.

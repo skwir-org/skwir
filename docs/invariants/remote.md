@@ -256,6 +256,13 @@ ADR-077 (which revises ADR-021).
   holds for good. A refresh publishes what is mounted at once, read from
   memory, and the servers the tools know after (`rclone listremotes`, a
   name to resolve): the mounts never wait on them.
+- What is mounted is kept in the plugin's state, the newest read, and
+  every publish shows the state as it then is, one at a time: a publish
+  never brings back an older list (a slow refresh's, a liveness
+  answer's), which took a new mount's `Known` away. A connection made
+  publishes before its folder is shown (`Remotes::publish_mounted`), so
+  F5 there finds what its program is told (`Known::forget`). Nothing is
+  published once the plugin is disabled.
 - A mount Skwir makes is under `$XDG_RUNTIME_DIR/skwir/remote/`, named by
   `connector::point_name` so its address reads back from it: nothing else
   is kept. It outlives Skwir, as GVfs's do.
@@ -290,8 +297,11 @@ ADR-077 (which revises ADR-021).
   output (English, `LC_MESSAGES=C`) and answered on its input; a password
   is `App::ask_secret`, a server Skwir cannot vouch for `App::ask_as`
   with `Asker::Connection`. KIO's are KDE's own (its password dialog,
-  KWallet), which Skwir never sees; what kio-fuse cannot ask (a host key,
-  a certificate) it refuses, and is accepted once in Dolphin.
+  KWallet), which Skwir never sees: kio-fuse asks nothing, so where it
+  fails `kioclient --interactive ls` lets KDE ask, then kio-fuse is asked
+  again; over HTTPS KDE asks first (on a certificate not trusted kio-fuse
+  waits for good), twice where the first failed. Never `stat`: its error
+  box waits to be dismissed, then the window says it again.
 - Test a connector against a server on this machine (`rclone serve`
   with the fixture's XDG folders: it keeps host keys in its cache), never
   a real one. ssh takes its home from the user database, never `$HOME`:

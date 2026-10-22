@@ -7,9 +7,24 @@
 //!
 //! What kio-fuse does not do, read in its source (5.1.1) and tried against
 //! servers on this machine (2026-10-22):
-//! - It asks nothing it cannot hand to the password dialog: a host key
-//!   never seen (SFTP) or a certificate not trusted is refused, as
-//!   "Input/output error"; it is accepted once in Dolphin.
+//! - It asks nothing: its KIO jobs have no window, so KIO tells its
+//!   workers not to ask (`no-auth-prompt`), and a server that wants a
+//!   password fails, as "No such file or directory", unless KDE holds it
+//!   already (`KWallet`, or this session's cache). So where kio-fuse fails,
+//!   `kioclient --interactive ls` lets KDE ask, its own dialog keeping the
+//!   answer for the session (and in `KWallet` if the user says so), and
+//!   kio-fuse is asked again. Where it still fails (no such folder, the
+//!   dialog cancelled), `kioclient` ends without a word or a window, and
+//!   kio-fuse's reason is told (KIO's own word for a WebDAV login refused
+//!   is "does not exist").
+//! - On a certificate not trusted it waits for good (an answer no one is
+//!   asked; three minutes tried): over HTTPS, KDE is let ask first, its
+//!   answer kept for the session, unless kio-fuse holds the server. KIO
+//!   ends the job a certificate was accepted in at the server's password
+//!   (as "does not exist"), so a failure there is asked again once: the
+//!   password then, or the certificate again where it was refused.
+//! - Once a server is mounted it gives any path on it without looking: a
+//!   folder the server lacks fails as it is listed.
 //! - It refuses `mtp:` and lets go of no server: its folders stay until it
 //!   ends with the session.
 //! - It keeps a listing and a file's attributes 30 seconds: before a folder
@@ -121,6 +136,48 @@ impl Kio {
                 }
             }
         }
+    }
+}
+
+impl Kio {
+    /// Let KDE ask what kio-fuse cannot (a password, a certificate):
+    /// `kioclient --interactive ls`, its job let ask, KDE's own dialog (in
+    /// `kiod`) on the desktop, in the user's language, keeping the answer
+    /// for the session. Whether it could then list `url`. `ls`, not `stat`:
+    /// its job shows no progress window, so `kioclient` ends at once where
+    /// it fails, showing no error box of its own (one would wait to be
+    /// dismissed, then Skwir tell the failure again): kio-fuse's reason is
+    /// the one told. `None` where no `kioclient` is installed. Waits for
+    /// the user: on a worker.
+    #[cfg(target_os = "linux")]
+    fn asked_by_kde(&self, url: &str, cancel: &CancelToken) -> Option<bool> {
+        let kioclient = ["kioclient", "kioclient6"]
+            .into_iter()
+            .find_map(skwir_core::os_path::find_program)?;
+        let mut command = std::process::Command::new(kioclient);
+        command
+            .envs(self.env.iter().map(|(k, v)| (k, v)))
+            .args(["--interactive", "ls", url])
+            .stdout(std::process::Stdio::null());
+        Some(
+            skwir_platform::process::run_to_exit(&mut command, None, cancel, PATIENCE)
+                .is_ok_and(|finished| finished.status.success()),
+        )
+    }
+
+    /// Whether this session's kio-fuse holds `address`'s server already (a
+    /// folder of its mount): what was to be asked there was.
+    #[cfg(target_os = "linux")]
+    fn holds(&self, address: &Address) -> bool {
+        let server = server(address);
+        skwir_core::fs::reach::all()
+            .iter()
+            .filter(|remote| remote.fstype == BRIDGE)
+            .flat_map(skwir_core::fs::reach::bridged)
+            .any(|remote| {
+                self.recognises(&remote)
+                    .is_some_and(|known| known.address.as_ref() == Some(&server))
+            })
     }
 }
 
@@ -237,7 +294,32 @@ impl Connector for Kio {
             let url = kio_url(address).ok_or_else(|| {
                 anyhow::anyhow!("KIO opens no {} address", address.scheme.title())
             })?;
-            let local = self.mount_url(&url, cancel)?;
+            // kio-fuse asks nothing: KDE asks (module documentation), then
+            // kio-fuse finds what it kept. Over TLS, KDE first: on a
+            // certificate not trusted kio-fuse would wait for good. KIO
+            // ends the job a certificate was accepted in at the server's
+            // password ("does not exist"): a second job asks it.
+            let local = if address.scheme == Scheme::Davs && !self.holds(address) {
+                let asked = match self.asked_by_kde(&url, cancel) {
+                    Some(false) if !cancel.is_cancelled() => self.asked_by_kde(&url, cancel),
+                    asked => asked,
+                };
+                anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+                anyhow::ensure!(asked != Some(false), "KIO could not open it");
+                self.mount_url(&url, cancel)?
+            } else {
+                match self.mount_url(&url, cancel) {
+                    Ok(local) => local,
+                    Err(first) => {
+                        let asked = self.asked_by_kde(&url, cancel);
+                        anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+                        if asked != Some(true) {
+                            return Err(first);
+                        }
+                        self.mount_url(&url, cancel)?
+                    }
+                }
+            };
             skwir_core::fs::reach::changed();
             let remote = skwir_core::fs::reach::of(&local)
                 .filter(|remote| remote.fstype == BRIDGE)

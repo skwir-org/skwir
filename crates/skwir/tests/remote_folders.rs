@@ -2368,6 +2368,8 @@ impl PrivateKio {
             ("XDG_DATA_DIRS".into(), joined("share")),
             ("QT_PLUGIN_PATH".into(), joined("lib/qt-6/plugins")),
             ("QT_QPA_PLATFORM".into(), "offscreen".into()),
+            // KIO's words and kio-fuse's (`strerror`) in English.
+            ("LC_MESSAGES".into(), "C".into()),
         ];
         // kio-fuse's own account of what it is asked, timed, in the bus's
         // log, when asked for (`SKWIR_TEST_KIO_DEBUG`).
@@ -2631,6 +2633,21 @@ fn kio_fuse_mounts_each_server_a_folder_of_its_own_read_again_when_told() {
     std::fs::create_dir_all(&ftp_root).unwrap();
     std::fs::write(ftp_root.join("over ftp.txt"), "ftp").unwrap();
     let ftp = Served::start("ftp", &ftp_root, &[]);
+    // First, a folder it has not: kio-fuse fails, KDE is let ask (nothing
+    // to ask here, so it says nothing), and kio-fuse's reason is told.
+    // (Once a server is mounted, kio-fuse gives any path on it unlooked:
+    // the folder's listing fails.)
+    if skwir_core::os_path::find_program("kioclient").is_some() {
+        let missing = Address::parse(&format!("ftp://127.0.0.1:{}/not there", ftp.port)).unwrap();
+        let said = kio
+            .connect(&missing, &ask, &CancelToken::new())
+            .map(|_| ())
+            .expect_err("no such folder");
+        assert_eq!(
+            said.to_string(),
+            "KIO could not open it: No such file or directory"
+        );
+    }
     let address = Address::parse(&format!("ftp://127.0.0.1:{}/", ftp.port)).unwrap();
     let by_ftp = kio
         .connect(&address, &ask, &CancelToken::new())

@@ -117,10 +117,29 @@ struct State {
     space: HashMap<PathBuf, (u64, u64)>,
     /// Bumped by each refresh, so a slower one never wins.
     generation: u64,
+    /// The mounts as last read (`Remotes::mounted`): what every publish
+    /// shows, whoever asks for it.
+    mounted: Arc<Vec<Mounted>>,
     /// Mounts whose program is being asked whether it still answers: one
     /// question at a time each, never another queued behind one a server
     /// gone holds for good.
     asking: std::collections::HashSet<PathBuf>,
+}
+
+impl State {
+    /// Whether each mount's server is near, where its name says so (an
+    /// address, `nas.local`); a name to resolve is found out after.
+    fn note_said(&mut self) {
+        let mounted = Arc::clone(&self.mounted);
+        for m in mounted.iter() {
+            if let Some(address) = &m.recognised.address
+                && !self.local.contains_key(&address.host)
+                && let Some(near) = lan::said(&address.host)
+            {
+                self.local.insert(address.host.clone(), Some(near));
+            }
+        }
+    }
 }
 
 /// What the plugin keeps: its connectors and what it found.
@@ -134,6 +153,9 @@ pub struct Remotes {
     connecting: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
     /// Where servers' passwords are kept, when asked (ADR-082).
     keyring: Arc<dyn passwords::Keyring>,
+    /// One publish at a time, each of the state as it then is: the last
+    /// to run shows the newest mounts.
+    publishing: Arc<Mutex<()>>,
 }
 
 impl Default for Remotes {
@@ -156,6 +178,7 @@ impl Remotes {
             state: Arc::default(),
             connecting: Arc::default(),
             keyring: Arc::new(passwords::Desktop),
+            publishing: Arc::default(),
         }
     }
 
@@ -328,6 +351,7 @@ impl Remotes {
             }
             let connected = self.connect_keyed(app, &connector, address, ask, cancel)?;
             reach::changed();
+            self.publish_mounted(app);
             let below = connected.address.below(address).unwrap_or_default();
             let path = join(&connected.point, below);
             self.refresh(app);
@@ -364,23 +388,15 @@ impl Remotes {
             "remote-refresh",
             lifetime.clone(),
             move || {
-                let mounted = this.mounted();
+                let mounted = Arc::new(this.mounted());
                 let current = |state: &State| state.generation == generation;
                 {
                     let mut state = this.state.lock();
                     if !current(&state) {
                         return;
                     }
-                    // Whether a server is near where its name says so (an
-                    // address, `nas.local`); a name to resolve, after.
-                    for m in &mounted {
-                        if let Some(address) = &m.recognised.address
-                            && !state.local.contains_key(&address.host)
-                            && let Some(near) = lan::said(&address.host)
-                        {
-                            state.local.insert(address.host.clone(), Some(near));
-                        }
-                    }
+                    state.mounted = Arc::clone(&mounted);
+                    state.note_said();
                     state
                         .lost
                         .retain(|point| mounted.iter().any(|m| m.remote.point == *point));
@@ -391,8 +407,7 @@ impl Remotes {
                 let Some(app) = weak.upgrade() else {
                     return;
                 };
-                this.publish(&app, &mounted);
-                let mounted = Arc::new(mounted);
+                this.publish(&app);
                 this.ask_alive(&app, &mounted, &lifetime);
                 drop(app);
                 let mut servers = Vec::new();
@@ -421,7 +436,7 @@ impl Remotes {
                     state.local = local;
                 }
                 if let Some(app) = weak.upgrade() {
-                    this.publish(&app, &mounted);
+                    this.publish(&app);
                 }
             },
         );
@@ -447,7 +462,7 @@ impl Remotes {
                 continue;
             }
             let asking = Asking(Arc::clone(&self.state), point.clone());
-            let (this, weak, all) = (self.clone(), weak.clone(), Arc::clone(mounted));
+            let (this, weak) = (self.clone(), weak.clone());
             app.scheduler.spawn_in(
                 m.remote.lane(),
                 Priority::Background,
@@ -481,17 +496,39 @@ impl Remotes {
                         lost || measured
                     };
                     if changed && let Some(app) = weak.upgrade() {
-                        this.publish(&app, &all);
+                        this.publish(&app);
                     }
                 },
             );
         }
     }
 
+    /// Read what is mounted and publish it at once, on this thread: a
+    /// connection was just made, its folder is shown next, and F5 there
+    /// must find what its program is told (`Known::forget`). A refresh
+    /// that began before stores nothing older.
+    fn publish_mounted(&self, app: &App) {
+        let mounted = Arc::new(self.mounted());
+        {
+            let mut state = self.state.lock();
+            state.generation += 1;
+            state.mounted = mounted;
+            state.note_said();
+        }
+        self.publish(app);
+    }
+
     /// Put the mounts and the servers in the sidebar, and what is known of
-    /// each mount where the core asks (`Registry::remotes`).
-    fn publish(&self, app: &App, mounted: &[Mounted]) {
+    /// each mount where the core asks (`Registry::remotes`): the state's
+    /// as it is now. Nothing once the plugin is disabled (a task still
+    /// running then).
+    fn publish(&self, app: &App) {
+        let _publishing = self.publishing.lock();
         let state = self.state.lock();
+        if state.lifetime.is_none() {
+            return;
+        }
+        let mounted = Arc::clone(&state.mounted);
         let chosen: HashMap<String, String> = app.settings.get(CHOSEN).unwrap_or_default();
         let remembered: Vec<String> = app.settings.get(REMEMBERED).unwrap_or_default();
         let default: String = app
@@ -500,7 +537,7 @@ impl Remotes {
             .unwrap_or_else(|| "automatic".to_owned());
         let mut places = Vec::new();
         let mut known = Vec::new();
-        for m in mounted {
+        for m in mounted.iter() {
             let point = &m.remote.point;
             let address = m.recognised.address.as_ref();
             let key = address.map_or_else(|| point.display().to_string(), ToString::to_string);
