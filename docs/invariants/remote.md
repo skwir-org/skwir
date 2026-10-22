@@ -142,7 +142,14 @@ ADR-077 (which revises ADR-021).
   bridge, sixteen files at once, which was faster (`gio_copy::Ways`).
   A file alone goes by `gio` where it was measured faster than the
   bridge, which reads 128 KiB at a time (down from NFS and AFP, both
-  ways on MTP), by its step elsewhere. Else
+  ways on MTP), by its step elsewhere. For a server of kio-fuse's of
+  WebDAV, SMB or FTP, by eight `kioclient copy` at once (`kio_copy`:
+  each its own KIO workers; addresses read from the mount's folders;
+  never over anything without `--overwrite`), up, down and within one
+  server, measured faster every way; over FTP a file alone too, kio-fuse
+  writing no new file there (KIO's FTP worker reads back no empty one).
+  kio-fuse is told to forget what it listed after each, the originals of
+  moves removed by `kioclient remove`. Else
   through the mount, eight files at a time, sixteen down. Within one
   mount: by `sftp`'s `cp` on an sshfs mount's server (the copy-data
   extension, asked once), each file then given its time through the

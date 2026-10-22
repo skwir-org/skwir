@@ -2542,6 +2542,7 @@ fn kio_fuse_mounts_each_server_a_folder_of_its_own_read_again_when_told() {
     let kio = Kio {
         env: private.env.clone(),
         runtime: Some(private.runtime.clone()),
+        ..Kio::default()
     };
     // Nothing started kio-fuse on the test's bus yet: it is there to be.
     assert_eq!(kio.unavailable(), None, "kio-fuse is there to be started");
@@ -2679,6 +2680,7 @@ fn kio_folders_open_from_their_address_and_f5_reads_the_server_again() {
     let kio = Kio {
         env: private.env.clone(),
         runtime: Some(private.runtime.clone()),
+        ..Kio::default()
     };
     let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
     // KIO alone: never the session's.
@@ -2761,6 +2763,7 @@ fn a_copy_its_server_refuses_as_it_is_closed_is_told_so_a_move_keeps_its_origina
     let kio = Kio {
         env: private.env.clone(),
         runtime: Some(private.runtime.clone()),
+        ..Kio::default()
     };
     let ask: Arc<dyn Ask> = Arc::new(Answers::default());
     let address = Address::parse(&format!("dav://127.0.0.1:{}/into", served.port)).unwrap();
@@ -2802,6 +2805,10 @@ fn a_copy_its_server_refuses_as_it_is_closed_is_told_so_a_move_keeps_its_origina
         !served_root.join("into/two MiB.bin").exists(),
         "nothing placed on the server"
     );
+    // What the refused copies left is not swept here: rclone's server keeps
+    // an entry of the upload it cut off that is no folder and holds the
+    // folder (`App::sweep_left_on` tells kio-fuse to forget first, which a
+    // server without such an entry needs).
     drop(app);
     drop(private);
     drop(served);
@@ -3192,6 +3199,7 @@ fn kio_opens_an_smb_share() {
     let kio = Kio {
         env: private.env.clone(),
         runtime: Some(private.runtime.clone()),
+        ..Kio::default()
     };
     let ask: Arc<dyn Ask> = Arc::new(Answers::default());
     // A share a guest may open: KIO's password dialog no test answers.
@@ -3318,5 +3326,137 @@ fn gvfs_opens_an_smb_share_its_password_kept() {
         .expect("disconnect");
     drop(private);
     drop(samba);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[test]
+fn kioclient_copies_to_and_from_kio_s_servers_in_batches() {
+    let Some(packages) = kio_packages() else {
+        eprintln!("skipped: SKWIR_TEST_KIO names no KIO packages");
+        return;
+    };
+    if let Some(why) = Rclone.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    if skwir_core::os_path::find_program("kioclient").is_none() {
+        eprintln!("skipped: kioclient (KDE) is not on PATH");
+        return;
+    }
+    let base = fixture("kioclient");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    let served = Served::start("webdav", &served_root, &[]);
+    let private = PrivateKio::start(&packages, &base.join("kio"));
+    let kio = Kio {
+        env: private.env.clone(),
+        runtime: Some(private.runtime.clone()),
+        ..Kio::default()
+    };
+    let ask: Arc<dyn Ask> = Arc::new(Answers::default());
+    let address = Address::parse(&format!("dav://127.0.0.1:{}/", served.port)).unwrap();
+    let connected = kio
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect");
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    app.transfers.register("test", kio.kio_copy());
+    let entries = small_files(&base.join("local"));
+    let into = connected.point.join("it's a folder");
+    std::fs::create_dir(&into).unwrap();
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&into)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(20)));
+
+    // Up: the folder staged, the files placed beside, by `kioclient`.
+    let up = app
+        .executor
+        .execute_blocking(&copies(&entries, &into), app.lifetime());
+    assert!(up.error.is_none(), "{:?}", up.error);
+    assert_eq!(
+        kio.kio_copy().made(),
+        2,
+        "the folder staged, the files placed"
+    );
+    for e in &entries {
+        same_bytes(
+            e,
+            &served_root
+                .join("it's a folder")
+                .join(e.file_name().unwrap()),
+        );
+    }
+    // Copied beside kio-fuse, which is told to forget: the pane shows them.
+    until_shown(
+        &app,
+        pane,
+        10,
+        &names_of(&entries),
+        "the pane shows what kioclient copied",
+    );
+
+    // Down, then moved down: the originals removed together by
+    // `kioclient`, which kio-fuse sees at once.
+    let there: Vec<PathBuf> = entries
+        .iter()
+        .map(|e| into.join(e.file_name().unwrap()))
+        .collect();
+    let down = base.join("down");
+    std::fs::create_dir(&down).unwrap();
+    let back = app
+        .executor
+        .execute_blocking(&copies(&there, &down), app.lifetime());
+    assert!(back.error.is_none(), "{:?}", back.error);
+    assert_eq!(kio.kio_copy().made(), 4);
+    for e in &entries {
+        same_bytes(e, &down.join(e.file_name().unwrap()));
+    }
+    let moved = base.join("moved down");
+    std::fs::create_dir(&moved).unwrap();
+    let gone = app
+        .executor
+        .execute_blocking(&moves(&there, &moved), app.lifetime());
+    assert!(gone.error.is_none(), "{:?}", gone.error);
+    assert_eq!(
+        kio.kio_copy().removed(),
+        1,
+        "the originals removed together"
+    );
+    assert_eq!(
+        std::fs::read_dir(&into).unwrap().count(),
+        0,
+        "gone, as kio-fuse says"
+    );
+    for e in &entries {
+        same_bytes(e, &moved.join(e.file_name().unwrap()));
+    }
+    until_shown(&app, pane, 10, &[], "the pane shows the originals gone");
+    drop(app);
+
+    // FTP: a file alone goes up by `kioclient` too, which kio-fuse cannot
+    // write there (KIO's FTP worker reads back no empty file).
+    let ftp_root = base.join("ftp");
+    std::fs::create_dir_all(&ftp_root).unwrap();
+    let ftp = Served::start("ftp", &ftp_root, &[]);
+    let address = Address::parse(&format!("ftp://127.0.0.1:{}/", ftp.port)).unwrap();
+    let by_ftp = kio
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect over FTP");
+    let app = App::new(AppConfig::ephemeral(base.join("app2"))).unwrap();
+    app.transfers.register("test", kio.kio_copy());
+    let alone = base.join("alone.bin");
+    let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 253) as u8).collect();
+    std::fs::write(&alone, &bytes).unwrap();
+    let made = kio.kio_copy().made();
+    let up = app.executor.execute_blocking(
+        &copies(std::slice::from_ref(&alone), &by_ftp.point),
+        app.lifetime(),
+    );
+    assert!(up.error.is_none(), "{:?}", up.error);
+    assert_eq!(kio.kio_copy().made(), made + 1, "by kioclient");
+    assert_eq!(std::fs::read(ftp_root.join("alone.bin")).unwrap(), bytes);
+    drop(app);
+    drop(private);
+    drop(ftp);
+    drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }

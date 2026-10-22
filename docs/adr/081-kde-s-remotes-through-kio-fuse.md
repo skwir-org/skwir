@@ -106,10 +106,16 @@ seventh decision for KIO alone.
 - A copy refused as it was closed leaves its staging folder on the
   server (kio-fuse will not remove what it still means to send): noted,
   and swept once removable (ADR-078), which was not seen.
-- Copies to and from KIO's remotes go through the mount, eight files at
-  a time; `kioclient copy` (which takes many sources, and refuses a name
-  taken unless told to replace it) is not used yet: no measurement says
-  where it is faster.
+- Copies to and from KIO's remotes go in batches by eight `kioclient
+  copy` at once (ADR-078), measured against copies through the mount
+  (2026-10-22, 100 files of 16 KiB, a server 20 ms away): WebDAV up 11.2 s
+  through kio-fuse, 0.8–1.1 by `kioclient`, down 2.4 and 0.9, within 11.3
+  and 1.2; SMB up 17.0, 5.6, down 6.6, 3.5, within 17.4, 6.2; FTP up 46,
+  3.2, down 8.6, 2.6–5.6. Over FTP kio-fuse writes no new file (it makes
+  it empty, then reads it back before the first write, which KIO's FTP
+  worker fails): every copy up goes by `kioclient`, a file alone too.
+- kio-fuse makes a file's change time up (the moment it read its
+  attributes): a move's check of its original leaves it out there.
 - Tested against servers on this machine (`just remote-check`): WebDAV
   and FTP by rclone, SMB by Samba (a share a guest opens), on a session
   bus of the test's own with KIO's services alone; KDE's dialogs not by

@@ -18,6 +18,7 @@ pub mod gio_copy;
 pub mod gvfs;
 mod gvfs_spec;
 pub mod kio;
+pub mod kio_copy;
 mod known;
 pub mod lan;
 mod mounter;

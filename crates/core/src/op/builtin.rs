@@ -580,8 +580,10 @@ pub(super) fn changed_since(path: &Path, dest_dir: &Path) -> anyhow::Error {
 /// kind, size, change and modification times, folded into one digest, so
 /// a move can tell whether anything of what it copied changed before it
 /// removes it. Compared with itself, never with the clock: a card's files
-/// can be dated by a camera's. `None` where something of it cannot be
-/// read, or it is gone.
+/// can be dated by a camera's. A mount that makes change times up gives
+/// none (`Remote::makes_up_change_times`): kio-fuse's would say every file
+/// changed each time it read them again. `None` where something of it
+/// cannot be read, or it is gone.
 pub(super) fn state_of(path: &Path) -> Option<blake3::Hash> {
     fn time(t: Option<std::time::SystemTime>) -> [u8; 17] {
         let (after, d) = match t.map(|t| t.duration_since(std::time::UNIX_EPOCH)) {
@@ -593,12 +595,15 @@ pub(super) fn state_of(path: &Path) -> Option<blake3::Hash> {
         bytes[1..].copy_from_slice(&d.as_nanos().to_le_bytes());
         bytes
     }
-    fn fold(path: &Path, digest: &mut blake3::Hasher) -> Option<()> {
+    fn fold(path: &Path, real_changes: bool, digest: &mut blake3::Hasher) -> Option<()> {
         let meta = std::fs::symlink_metadata(path).ok()?;
         let kind = u8::from(meta.is_dir()) | u8::from(meta.is_symlink()) << 1;
         digest.update(&[kind]);
         digest.update(&meta.len().to_le_bytes());
-        digest.update(&time(crate::fs::stat::changed(path, &meta)));
+        let changed = real_changes
+            .then(|| crate::fs::stat::changed(path, &meta))
+            .flatten();
+        digest.update(&time(changed));
         digest.update(&time(meta.modified().ok()));
         if meta.is_dir() {
             let mut names = std::fs::read_dir(path)
@@ -610,13 +615,15 @@ pub(super) fn state_of(path: &Path) -> Option<blake3::Hash> {
             for name in names {
                 digest.update(name.as_encoded_bytes());
                 digest.update(&[0]);
-                fold(&path.join(name), digest)?;
+                fold(&path.join(name), real_changes, digest)?;
             }
         }
         Some(())
     }
+    let real_changes =
+        crate::fs::reach::of(path).is_none_or(|remote| !remote.makes_up_change_times());
     let mut digest = blake3::Hasher::new();
-    fold(path, &mut digest)?;
+    fold(path, real_changes, &mut digest)?;
     Some(digest.finalize())
 }
 

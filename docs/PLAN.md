@@ -1329,13 +1329,14 @@ protocol is a scheme a connector maps, or a connector.
   kept passwords read, rclone given one obscured in its environment after
   a refused login, Forget Password. SMB tested against Samba run as the
   user (KIO, rclone with a password, GVfs), KDE's remote places listed as
-  servers, the order on KDE's desktop tested.
+  servers, the order on KDE's desktop tested. KIO's copies in batches by
+  `kioclient` (measured faster every way, FTP's writes through kio-fuse
+  failing), a move's check leaving kio-fuse's made-up change times out,
+  kio-fuse told to forget before what a cut-short copy left is swept.
 - **G. Left** (each its own step):
-  - KIO: batches by `kioclient copy` where measured faster than eight
-    copies at once through kio-fuse (its copy job takes one file after
-    another); KDE's dialogs and KWallet not tried; a copy refused as it
-    was closed leaves its staging folder there (kio-fuse refuses to
-    remove it: noted, swept when it lets it go, not seen);
+  - KIO: KDE's dialogs and KWallet not tried; a copy refused at close
+    leaves its staging folder where the server keeps an entry of the
+    refused upload (rclone's did): not seen swept;
   - a refresh racing the watcher where a FUSE program makes numbers
     anew (sshfs) listed a name twice once: the listing now removes what
     a name held before (one name, one row); the race itself not

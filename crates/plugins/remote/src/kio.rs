@@ -54,6 +54,20 @@ pub struct Kio {
     /// The runtime folder kio-fuse mounts in, when not the user's (a
     /// test's).
     pub runtime: Option<PathBuf>,
+    /// Its copies in batches (ADR-078).
+    pub kio_copy: std::sync::OnceLock<Arc<crate::kio_copy::KioCopy>>,
+}
+
+impl Kio {
+    /// What copies in batches to and from its servers (`kioclient`).
+    pub fn kio_copy(&self) -> Arc<crate::kio_copy::KioCopy> {
+        Arc::clone(self.kio_copy.get_or_init(|| {
+            Arc::new(crate::kio_copy::KioCopy::new(
+                self.env.clone(),
+                self.runtime.clone(),
+            ))
+        }))
+    }
 }
 
 impl Kio {
@@ -282,6 +296,10 @@ impl Connector for Kio {
 
     fn mounts_each_path(&self) -> bool {
         true
+    }
+
+    fn transfers(&self) -> Vec<Arc<dyn skwir_core::op::transfer::Transfer>> {
+        vec![self.kio_copy()]
     }
 
     fn forget(&self, remote: &Remote) -> Option<Forget> {

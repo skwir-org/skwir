@@ -52,6 +52,14 @@ impl Remote {
     pub fn lane(&self) -> Lane {
         Lane::keyed(key_of(&self.point))
     }
+
+    /// Whether its program makes a file's change time up: kio-fuse gives
+    /// the moment it read the file's attributes, anew each time (after 30
+    /// seconds, or told to forget), never the server's. What compares a
+    /// file with itself over time leaves it out there.
+    pub fn makes_up_change_times(&self) -> bool {
+        self.fstype == "fuse.kio-fuse"
+    }
 }
 
 /// What a plugin knows of a remote that the mount table does not say

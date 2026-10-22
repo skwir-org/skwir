@@ -3148,3 +3148,38 @@ and fix bug or problems you encounter on the way". This is the first.
   and the local, trash and other KIO places left out (tested on a file
   as Dolphin writes it). The order on KDE's desktop tested by the
   desktops it is given (`order_on`).
+
+## KIO's copies by kioclient; made-up change times; a refused copy's folder swept (2026-10-22)
+
+- Measured (a namespace of the bench's own: its loopback delayed 10 ms
+  each way by netem, rclone's WebDAV and FTP, pyftpdlib's FTP and Samba's
+  SMB beside a private bus with kio-fuse; 100 files of 16 KiB, each
+  twice): through kio-fuse eight at a time (sixteen down) against eight
+  `kioclient copy` at once. WebDAV up 11.1–11.3 s and 0.78–1.06, down
+  2.3–2.4 and 0.85–0.87, within 11.3 and 1.16; SMB up 16.9–17.3 and 5.6,
+  down 6.5–6.6 and 3.5, within 17.4 and 6.2; FTP up 45.6–47.2 and
+  3.1–3.3, down 8.6–8.7 and 2.6–5.6. Built `kio_copy` for those ways.
+- Found: every file written through kio-fuse over FTP failed (both FTP
+  servers): kio-fuse makes the file empty, reads it back whole before the
+  first write, and KIO's FTP worker fails on the empty file (the server's
+  log: `STOR` of 0 bytes, then a `RETR` of 0, then the error). So over FTP
+  a file alone goes up by `kioclient` too. A server's top may read as an
+  owner a user namespace does not map, which the kernel refuses to write
+  into (the bench works in a folder KIO made).
+- Found: a move down from kio-fuse kept its originals as "changed":
+  kio-fuse gives a file's change time as the moment it read its
+  attributes, anew each time it is told to forget or after 30 s, and a
+  move compares change times. `state_of` leaves them out where the mount
+  makes them up (`Remote::makes_up_change_times`), so a move longer than
+  30 s from KIO would not have kept them either.
+- What a copy refused at close left: `App::sweep_left_on` now tells the
+  mount to forget first (`Known::forget`), as a folder kio-fuse still
+  holds is not the server's. Not seen working: against rclone's WebDAV
+  cut off by `--max-transfer`, the server itself keeps an entry for the
+  refused upload (listed as a file `0` in the staging folder, absent from
+  its disk), which no client removes (not a folder, the folder never
+  empty); stepped through by hand in the test, then left out of it.
+- Checked: `kioclient` batches up and down against rclone's WebDAV (the
+  folder staged, the files placed, the same bytes, the pane showing them),
+  moved down with the originals removed together; a file alone onto
+  rclone's FTP by `kioclient`, whole.

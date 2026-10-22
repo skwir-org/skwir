@@ -175,6 +175,12 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   whose server stopped answering may answer an end of file, and then say
   the file is that short. A range of a large file read short ends what
   is written in order (`op::ranges`); what follows is read on in order.
+- What a move compares of its original before removing it
+  (`builtin::state_of`: names, kinds, sizes, change and modification
+  times) leaves the change time out where the mount makes it up
+  (`Remote::makes_up_change_times`: kio-fuse gives the moment it read the
+  attributes, anew after 30 s or told to forget), or every original read
+  again would stay as "changed".
 - A copy is written once closing it says so (`sys::close`, through
   `builtin::finish`), never dropped: a FUSE program (sshfs, rclone,
   kio-fuse) sends there what it held and tells there what its server

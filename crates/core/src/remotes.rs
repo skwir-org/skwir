@@ -57,6 +57,12 @@ impl App {
         if let Some(under_way) = self.executor.under_way()
             && under_way.notes_under(point)
         {
+            // A program that answers from what it read before is told to
+            // forget it first: kio-fuse still holds a file its server
+            // refused, which keeps its folder from going.
+            if let Some(forget) = self.remote(point).and_then(|(_, known)| known?.forget) {
+                (forget.0)();
+            }
             under_way.sweep_noted(point);
         }
     }
