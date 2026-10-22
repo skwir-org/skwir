@@ -1338,10 +1338,6 @@ protocol is a scheme a connector maps, or a connector.
   certificate not trusted kio-fuse waits for good); a mount's `Known`
   published before its folder is shown (an F5 there was flaky).
 - **G. Left** (each its own step):
-  - KIO: a Plasma session's own kio-fuse not tried (KDE's dialogs and
-    KWallet tried in a window, the same kio-fuse on a bus of its own):
-    there `systemd --user` starts it (`kio-fuse.service`), which needs a
-    Plasma session of the user's;
   - an iPhone's (AFC) and a camera's (gPhoto2) GVfs mounts, not
     measured, at the bridge's pace: each needs its device. GVfs's gphoto2
     backend mounts only a USB camera udev knows (a card on libgphoto2's

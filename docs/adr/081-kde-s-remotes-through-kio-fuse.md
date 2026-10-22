@@ -147,4 +147,7 @@ seventh decision for KIO alone.
   against KWallet's Secret Service. Its wallet `kdewallet` was made
   first, as a Plasma login does: on a profile without one, KWallet
   asked to make a wallet with no name, and KDE's password server then
-  hung (a matter of KWallet's, not Skwir's).
+  hung (a matter of KWallet's, not Skwir's). kio-fuse started as Plasma
+  starts it was tried too: its bus handing the activation to a `systemd
+  --user` of the trial's own (`kio-fuse.service`), Skwir opened a folder
+  there and F5 read it again.

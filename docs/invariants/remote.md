@@ -340,6 +340,15 @@ ADR-077 (which revises ADR-021).
   in rclone's folder until it reads the folder again: a test that waits
   for what a refused copy left to be swept gives rclone a short
   `--dir-cache-time` (15 s), never 0.
+- kio-fuse as Plasma starts it (its bus hands the activation to
+  `systemd --user`, `SystemdService=kio-fuse.service`) is tried with a
+  manager of the trial's own: `systemd --user --unit=<an empty target>`
+  in a scope given its cgroup (`systemd-run --user --scope -p
+  Delegate=yes`), every XDG folder and the runtime folder its own, its
+  bus its own `dbus.service` (`<listen>systemd:</listen>`,
+  `--address=systemd: --systemd-activation`; a manager joins only a bus
+  it runs). Every `systemctl --user` there runs with the trial's runtime
+  folder alone (`env -i`), or it reaches the user's manager.
 - A server that runs as root (unfs3 with rpcbind for NFS, netatalk for
   AFP) runs in namespaces of its own, user (root mapped to the user,
   subordinate ids beside it), network, mount and pid, with a GVfs of its

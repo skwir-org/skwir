@@ -3316,7 +3316,16 @@ and fix bug or problems you encounter on the way". This is the first.
   as root. So gPhoto2's and AFC's ways stay unmeasured until a camera and
   an iPhone are at hand.
 - A Plasma session's own kio-fuse: Plasma's bus hands its activation to
-  `systemd --user` (`SystemdService=kio-fuse.service`). The trials ran
-  the same kio-fuse activated by a private bus; a session apart from the
-  user's cannot reach their `systemd --user`, and theirs would mount in
-  the session's runtime folder, where the user's Skwir would show it.
+  `systemd --user` (`SystemdService=kio-fuse.service`). Tried with a
+  manager of the trial's own (not the user's, which would mount in the
+  session's runtime folder): `systemd --user` started on an empty target
+  in a scope given its cgroup, its runtime and XDG folders its own, its
+  bus its own `dbus.service` with systemd activation (a manager joins
+  only a bus it runs: one started beside it was never joined). kio-fuse
+  was inactive; `mountUrl` over that bus had the manager start
+  `kio-fuse.service`, which mounted the folder. Skwir on Xvfb, on that
+  bus, opened `dav://` there (kio-fuse started again by the manager), the
+  sidebar naming it `127.0.0.1:<port>`; a file put on the server showed
+  at F5 (kio-fuse told to forget). Torn down: the manager, its scope and
+  everything with its runtime folder gone (systemd's `inaccessible`
+  placeholders need write permission back before removal).
