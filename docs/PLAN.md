@@ -1327,15 +1327,15 @@ protocol is a scheme a connector maps, or a connector.
   points"): a server's password kept in the desktop's keyring when the
   user asks (the prompt's Remember), the keyring answering first, GVfs's
   kept passwords read, rclone given one obscured in its environment after
-  a refused login, Forget Password.
+  a refused login, Forget Password. SMB tested against Samba run as the
+  user (KIO, rclone with a password, GVfs), KDE's remote places listed as
+  servers, the order on KDE's desktop tested.
 - **G. Left** (each its own step):
   - KIO: batches by `kioclient copy` where measured faster than eight
     copies at once through kio-fuse (its copy job takes one file after
-    another); SMB against a server on this machine; KDE's dialogs and
-    KWallet not tried; a copy refused as it was closed leaves its staging
-    folder there (kio-fuse refuses to remove it: noted, swept when it
-    lets it go, not seen); remote places of KDE (`user-places.xbel`)
-    as servers;
+    another); KDE's dialogs and KWallet not tried; a copy refused as it
+    was closed leaves its staging folder there (kio-fuse refuses to
+    remove it: noted, swept when it lets it go, not seen);
   - a refresh racing the watcher where a FUSE program makes numbers
     anew (sshfs) listed a name twice once: the listing now removes what
     a name held before (one name, one row); the race itself not

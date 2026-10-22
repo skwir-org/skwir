@@ -3130,3 +3130,21 @@ and fix bug or problems you encounter on the way". This is the first.
   name. Tested by a unit test of the decision (the race needs the watcher
   and sshfs's renumbering at once, which no test here forces); the
   sshfs tests pass.
+
+## SMB against Samba; KDE's places (2026-10-22)
+
+- Samba as the user (`OwnSamba`, `SKWIR_TEST_SAMBA` from `just
+  remote-check`): `smbd --foreground` under `uid_wrapper` (it believes it
+  is root) and `nss_wrapper` (`tester` is the user, `nobody` its guest:
+  without one it stopped, "Unable to locate guest account"), `pdbedit -a
+  -t` for the password, a high port. Checked: KIO opens the guest share,
+  copies up and down the same bytes (SMB read in place, not whole);
+  rclone opens the password share through the window, asking once
+  (Remember kept it), a file written through the mount on the server,
+  reopened unasked (its refusal reads "The attempted logon is invalid",
+  now told as one); GVfs the same through `gio mount`, the keyring
+  answering the second time.
+- KIO's servers: KDE's remote places (`user-places.xbel`), hidden ones
+  and the local, trash and other KIO places left out (tested on a file
+  as Dolphin writes it). The order on KDE's desktop tested by the
+  desktops it is given (`order_on`).

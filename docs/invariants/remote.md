@@ -300,7 +300,11 @@ ADR-077 (which revises ADR-021).
   known by the runtime folder it was given, never by name. A WebDAV
   server of rclone's is changed through WebDAV, as another client would:
   rclone keeps what it listed, and with no cache (`--dir-cache-time 0`)
-  its cleanups ran into each other and it stopped answering.
+  its cleanups ran into each other and it stopped answering. Samba runs
+  as the user (`OwnSamba`): `smbd` believes it is root (`uid_wrapper`),
+  its user `tester` is the user and `nobody` its guest (`nss_wrapper`),
+  on a port of its own; a share asking `tester`'s password, one a guest
+  opens (KIO's password dialog no test answers).
 - A server that runs as root (unfs3 with rpcbind for NFS, netatalk for
   AFP) runs in namespaces of its own, user (root mapped to the user,
   subordinate ids beside it), network, mount and pid, with a GVfs of its

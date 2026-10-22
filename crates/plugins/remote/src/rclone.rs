@@ -367,6 +367,7 @@ fn refused(said: &str) -> bool {
         "LOGON_FAILURE",
         "logon failure",
         "is it obscured",
+        "attempted logon is invalid",
     ]
     .iter()
     .any(|sign| said.contains(sign))
@@ -479,6 +480,9 @@ mod tests {
         ));
         assert!(refused(
             "NewFS decrypt password: input too short when revealing password - is it obscured?"
+        ));
+        assert!(refused(
+            "couldn't connect SMB: response error: The attempted logon is invalid. This is either due to a bad username or authentication information."
         ));
         assert!(!refused(
             "dial tcp 127.0.0.1:1: connect: connection refused"

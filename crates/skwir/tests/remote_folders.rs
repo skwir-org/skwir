@@ -2964,3 +2964,359 @@ fn rclone_asks_a_server_s_password_once_and_keeps_it_when_told() {
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// Samba's server of the test's own, run as the user: it believes it is
+/// root (`uid_wrapper`), and its user `tester` is the user (`nss_wrapper`).
+/// `share` asks `tester`'s password ("a test password"); `public` lets a
+/// guest in. `SKWIR_TEST_SAMBA` names Samba's, `uid_wrapper`'s and
+/// `nss_wrapper`'s packages, `:` between them (`just remote-check`); without
+/// it the test is skipped. Stopped when dropped, its sessions with it.
+struct OwnSamba {
+    child: Child,
+    port: u16,
+    smbclient: PathBuf,
+    config: PathBuf,
+}
+
+impl OwnSamba {
+    fn start(base: &Path) -> Option<OwnSamba> {
+        let packages: Vec<PathBuf> =
+            std::env::split_paths(&std::env::var_os("SKWIR_TEST_SAMBA")?).collect();
+        let [samba, uid_wrapper, nss_wrapper] = packages.as_slice() else {
+            panic!("SKWIR_TEST_SAMBA names Samba's, uid_wrapper's and nss_wrapper's packages");
+        };
+        for folder in [
+            "share", "public", "private", "lock", "state", "cache", "pid", "ncalrpc", "log",
+        ] {
+            std::fs::create_dir_all(base.join(folder)).unwrap();
+        }
+        let (uid, gid) = {
+            use std::os::unix::fs::MetadataExt;
+            let meta = std::fs::metadata(base).unwrap();
+            (meta.uid(), meta.gid())
+        };
+        std::fs::write(
+            base.join("passwd"),
+            format!(
+                "root:x:0:0:root:/root:/bin/sh\ntester:x:{uid}:{gid}:tester:{}:/bin/sh\n\
+                 nobody:x:65534:65534:nobody:/:/bin/false\n",
+                base.display()
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            base.join("group"),
+            format!("root:x:0:\ntester:x:{gid}:\nnogroup:x:65534:\n"),
+        )
+        .unwrap();
+        let port = free_port();
+        let dir = |name: &str| base.join(name).display().to_string();
+        let config = base.join("smb.conf");
+        std::fs::write(
+            &config,
+            format!(
+                "[global]\n  netbios name = SKWIRTEST\n  workgroup = WORKGROUP\n\
+                 server role = standalone server\n  smb ports = {port}\n\
+                 interfaces = 127.0.0.1\n  bind interfaces only = yes\n\
+                 private dir = {}\n  lock directory = {}\n  state directory = {}\n\
+                 cache directory = {}\n  pid directory = {}\n  ncalrpc dir = {}\n\
+                 log file = {}/smbd.log\n  passdb backend = tdbsam:{}/passdb.tdb\n\
+                 load printers = no\n  disable spoolss = yes\n\
+                 server min protocol = SMB2\n  map to guest = Bad User\n\
+                 [share]\n  path = {}\n  read only = no\n  valid users = tester\n\
+                 [public]\n  path = {}\n  read only = no\n  guest ok = yes\n\
+                 force user = tester\n",
+                dir("private"),
+                dir("lock"),
+                dir("state"),
+                dir("cache"),
+                dir("pid"),
+                dir("ncalrpc"),
+                dir("log"),
+                dir("private"),
+                dir("share"),
+                dir("public"),
+            ),
+        )
+        .unwrap();
+        let wrapped = |program: &Path| {
+            let mut command = Command::new(program);
+            command
+                .env(
+                    "LD_PRELOAD",
+                    format!(
+                        "{}:{}",
+                        uid_wrapper.join("lib/libuid_wrapper.so").display(),
+                        nss_wrapper.join("lib/libnss_wrapper.so").display()
+                    ),
+                )
+                .env("UID_WRAPPER", "1")
+                .env("UID_WRAPPER_ROOT", "1")
+                .env("NSS_WRAPPER_PASSWD", base.join("passwd"))
+                .env("NSS_WRAPPER_GROUP", base.join("group"));
+            command
+        };
+        let mut pdbedit = wrapped(&samba.join("bin/pdbedit"));
+        pdbedit
+            .arg("-s")
+            .arg(&config)
+            .args(["-a", "-u", "tester", "-t"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut adding = pdbedit.spawn().expect("run pdbedit");
+        {
+            use std::io::Write;
+            adding
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"a test password\na test password\n")
+                .unwrap();
+        }
+        assert!(adding.wait().unwrap().success(), "tester added");
+        let child = wrapped(&samba.join("bin/smbd"))
+            .arg("-s")
+            .arg(&config)
+            .args(["--foreground", "--no-process-group", "--debug-stdout"])
+            .stdout(std::fs::File::create(base.join("smbd.out")).unwrap())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("start smbd");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            assert!(Instant::now() < deadline, "smbd never listened");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        Some(OwnSamba {
+            child,
+            port,
+            smbclient: samba.join("bin/smbclient"),
+            config,
+        })
+    }
+
+    /// What `share` holds, listed by Samba's own client.
+    fn listed(&self, share: &str) -> String {
+        let out = Command::new(&self.smbclient)
+            .arg("-s")
+            .arg(&self.config)
+            .args(["-p", &self.port.to_string()])
+            .arg(format!("//127.0.0.1/{share}"))
+            .args(["-U", "tester%a test password", "-c", "ls"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+}
+
+impl Drop for OwnSamba {
+    fn drop(&mut self) {
+        let sessions = descendants(self.child.id());
+        let _ = self.child.kill();
+        signal("-9", &sessions);
+        let _ = self.child.wait();
+    }
+}
+
+#[test]
+fn rclone_opens_an_smb_share_its_password_asked_and_kept() {
+    if let Some(why) = Rclone.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("smb-rclone");
+    let Some(samba) = OwnSamba::start(&base) else {
+        eprintln!("skipped: SKWIR_TEST_SAMBA names no Samba");
+        return;
+    };
+    std::fs::write(base.join("share/over smb.txt"), "hi").unwrap();
+    assert!(
+        samba.listed("share").contains("over smb.txt"),
+        "Samba serves it"
+    );
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    app.set_window_shown();
+    let keyring = Arc::new(TestKeyring::default());
+    let remotes = Remotes::with(vec![Arc::new(Rclone)]).with_keyring(keyring.clone());
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let pane = app.workspace.read().active_id();
+    let address = format!("smb://tester@127.0.0.1:{}/share", samba.port);
+    app.navigate(pane, &Location::parse(&address)).unwrap();
+    let question = secret_asked(&app);
+    assert!(question.remember);
+    app.answer_secret(
+        question.id,
+        Some(skwir_core::app::SecretAnswer {
+            text: "a test password".to_owned(),
+            remember: true,
+        }),
+    );
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    until_shown(&app, pane, 20, &["over smb.txt".to_owned()], "listed");
+    let folder = app.pane_location(pane).unwrap().path().unwrap();
+    let _left = Unmounted(skwir_core::fs::reach::of(&folder).unwrap().point.clone());
+    let key = format!("smb://tester@127.0.0.1:{}", samba.port);
+    assert_eq!(
+        keyring.own.lock().unwrap().get(&key).map(String::as_str),
+        Some("a test password")
+    );
+    // Written through the mount: on the server.
+    std::fs::write(folder.join("from skwir.txt"), "written").unwrap();
+    until(&app, 20, "on the server", || {
+        std::fs::read_to_string(base.join("share/from skwir.txt")).is_ok_and(|t| t == "written")
+    });
+    disconnected(&app, pane);
+    opened_unasked(&app, pane, &address, &["from skwir.txt", "over smb.txt"]);
+    disconnected(&app, pane);
+    drop(app);
+    drop(samba);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[test]
+fn kio_opens_an_smb_share() {
+    let Some(packages) = kio_packages() else {
+        eprintln!("skipped: SKWIR_TEST_KIO names no KIO packages");
+        return;
+    };
+    let base = fixture("smb-kio");
+    let Some(samba) = OwnSamba::start(&base) else {
+        eprintln!("skipped: SKWIR_TEST_SAMBA names no Samba");
+        return;
+    };
+    std::fs::write(base.join("public/over smb.txt"), "hi").unwrap();
+    let private = PrivateKio::start(&packages, &base.join("kio"));
+    let kio = Kio {
+        env: private.env.clone(),
+        runtime: Some(private.runtime.clone()),
+    };
+    let ask: Arc<dyn Ask> = Arc::new(Answers::default());
+    // A share a guest may open: KIO's password dialog no test answers.
+    let address = Address::parse(&format!("smb://127.0.0.1:{}/public", samba.port)).unwrap();
+    let connected = kio
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect over SMB");
+    assert!(
+        connected
+            .point
+            .ends_with(format!("smb/127.0.0.1:{}", samba.port)),
+        "{}",
+        connected.point.display()
+    );
+    let folder = connected.point.join("public");
+    assert_eq!(names_in(&folder), ["over smb.txt"]);
+    let remote = skwir_core::fs::reach::of(&folder).unwrap();
+    assert!(!kio.reads_whole(&remote), "SMB is read in place");
+    // Copies through the mount, up and down: the same bytes.
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let entries = small_files(&base.join("local"));
+    let into = folder.join("it's a folder");
+    std::fs::create_dir(&into).unwrap();
+    let up = app
+        .executor
+        .execute_blocking(&copies(&entries, &into), app.lifetime());
+    assert!(up.error.is_none(), "{:?}", up.error);
+    for e in &entries {
+        same_bytes(
+            e,
+            &base
+                .join("public/it's a folder")
+                .join(e.file_name().unwrap()),
+        );
+    }
+    let down = base.join("down");
+    std::fs::create_dir(&down).unwrap();
+    let there: Vec<PathBuf> = entries
+        .iter()
+        .map(|e| into.join(e.file_name().unwrap()))
+        .collect();
+    let back = app
+        .executor
+        .execute_blocking(&copies(&there, &down), app.lifetime());
+    assert!(back.error.is_none(), "{:?}", back.error);
+    for e in &entries {
+        same_bytes(e, &down.join(e.file_name().unwrap()));
+    }
+    drop(app);
+    drop(private);
+    drop(samba);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+#[test]
+fn gvfs_opens_an_smb_share_its_password_kept() {
+    let Some(package) = std::env::var_os("SKWIR_TEST_GVFS").map(PathBuf::from) else {
+        eprintln!("skipped: SKWIR_TEST_GVFS names no GVfs package");
+        return;
+    };
+    let base = fixture("smb-gvfs");
+    let Some(samba) = OwnSamba::start(&base) else {
+        eprintln!("skipped: SKWIR_TEST_SAMBA names no Samba");
+        return;
+    };
+    std::fs::write(base.join("share/over smb.txt"), "hi").unwrap();
+    let private = PrivateGvfs::start(&package, &base.join("gvfs"));
+    let gvfs = skwir_plugin_remote::gvfs::Gvfs {
+        env: private.env.clone(),
+        runtime: Some(private.runtime.clone()),
+        ..Default::default()
+    };
+    let address = Address::parse(&format!("smb://tester@127.0.0.1:{}/share", samba.port)).unwrap();
+    let answers = Arc::new(Answers {
+        password: "a test password".to_owned(),
+        remember: true,
+        ..Answers::default()
+    });
+    let keyring = Arc::new(TestKeyring::default());
+    let keyed = Arc::new(Keyed::new(answers.clone(), keyring.clone(), address.top()));
+    let ask: Arc<dyn Ask> = keyed.clone();
+    let connected = gvfs
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect over SMB");
+    assert!(
+        answers
+            .asked
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|q| q.starts_with("password:")),
+        "its password was asked for, as a server's"
+    );
+    assert_eq!(names_in(&connected.point), ["over smb.txt"]);
+    assert_eq!(
+        keyed.served(),
+        Some(Noted::Kept(format!(
+            "smb://tester@127.0.0.1:{}",
+            samba.port
+        )))
+    );
+    let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
+    let recognised = gvfs.recognises(&remote).expect("GVfs's");
+    gvfs.disconnect(&remote, &recognised, &CancelToken::new())
+        .expect("disconnect");
+    // Again: the keyring answers `gio mount`.
+    let quiet = Arc::new(Answers::default());
+    let ask: Arc<dyn Ask> = Arc::new(Keyed::new(quiet.clone(), keyring, address.top()));
+    let again = gvfs
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect with the kept password");
+    assert!(
+        !quiet
+            .asked
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|q| q.starts_with("password:")),
+        "the keyring answered"
+    );
+    let remote = skwir_core::fs::reach::of(&again.point).unwrap();
+    let recognised = gvfs.recognises(&remote).expect("GVfs's");
+    gvfs.disconnect(&remote, &recognised, &CancelToken::new())
+        .expect("disconnect");
+    drop(private);
+    drop(samba);
+    std::fs::remove_dir_all(&base).unwrap();
+}

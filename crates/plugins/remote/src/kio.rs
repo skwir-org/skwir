@@ -29,7 +29,7 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach::{Forget, Remote};
 
 use crate::address::{Address, Scheme};
-use crate::connector::{Ask, Connected, Connector, Device, Recognised};
+use crate::connector::{Ask, Connected, Connector, Device, Recognised, Server};
 
 /// kio-fuse's type in the mount table.
 pub const BRIDGE: &str = "fuse.kio-fuse";
@@ -309,6 +309,14 @@ impl Connector for Kio {
         }
     }
 
+    fn servers(&self, _cancel: &CancelToken) -> Vec<Server> {
+        // KDE's places (Dolphin's sidebar), the remote ones.
+        skwir_core::xdg::data_home()
+            .and_then(|data| std::fs::read_to_string(data.join("user-places.xbel")).ok())
+            .map(|xml| kde_places(&xml))
+            .unwrap_or_default()
+    }
+
     fn reads_whole(&self, remote: &Remote) -> bool {
         self.below_mount(&remote.point)
             .and_then(|below| below.first().copied())
@@ -316,9 +324,74 @@ impl Connector for Kio {
     }
 }
 
+/// The remote places of KDE's `user-places.xbel` (Dolphin's sidebar):
+/// those of a protocol Skwir opens, not hidden, named by their title.
+fn kde_places(xml: &str) -> Vec<Server> {
+    // Nested no deeper than the parser's recursion can go.
+    if skwir_platform::inspection::xml_depth(xml.as_bytes()).is_err() {
+        return Vec::new();
+    }
+    let Ok(doc) = roxmltree::Document::parse(xml) else {
+        return Vec::new();
+    };
+    doc.descendants()
+        .filter(|node| node.has_tag_name("bookmark"))
+        .filter(|node| {
+            !node
+                .descendants()
+                .any(|n| n.has_tag_name("IsHidden") && n.text() == Some("true"))
+        })
+        .filter_map(|node| {
+            let address = Address::parse(node.attribute("href")?).ok()?;
+            let label = node
+                .children()
+                .find(|n| n.has_tag_name("title"))
+                .and_then(|n| n.text())
+                .map_or_else(|| address.label(), str::to_owned);
+            Some(Server { address, label })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn kde_s_remote_places_are_servers() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xbel xmlns:bookmark="http://www.freedesktop.org/standards/desktop-bookmarks">
+ <bookmark href="file:///home/me"><title>Home</title></bookmark>
+ <bookmark href="smb://nas/photos"><title>Photos</title>
+  <info><metadata owner="http://www.kde.org"><IsHidden>false</IsHidden></metadata></info>
+ </bookmark>
+ <bookmark href="webdavs://cloud.example.com/remote.php/dav"><title>Cloud</title></bookmark>
+ <bookmark href="sftp://me@box/srv"><title>Box</title>
+  <info><metadata owner="http://www.kde.org"><IsHidden>true</IsHidden></metadata></info>
+ </bookmark>
+ <bookmark href="trash:/"><title>Trash</title></bookmark>
+ <bookmark href="ftp://mirror.example.org/pub"/>
+</xbel>"#;
+        let places: Vec<(String, String)> = kde_places(xml)
+            .into_iter()
+            .map(|s| (s.label, s.address.to_string()))
+            .collect();
+        assert_eq!(
+            places,
+            [
+                ("Photos".to_owned(), "smb://nas/photos".to_owned()),
+                (
+                    "Cloud".to_owned(),
+                    "davs://cloud.example.com/remote.php/dav".to_owned()
+                ),
+                (
+                    "mirror.example.org".to_owned(),
+                    "ftp://mirror.example.org/pub".to_owned()
+                ),
+            ],
+            "not a local folder, the trash, nor a hidden place"
+        );
+    }
 
     fn kio() -> Kio {
         Kio {

@@ -76,7 +76,12 @@ const ORDER_ON_KDE: &str = "sshfs kio gvfs rclone fstab";
 
 /// The tools' order where the user chose none: the desktop's own first.
 fn default_order() -> &'static str {
-    if skwir_platform::apps::current_desktops()
+    order_on(&skwir_platform::apps::current_desktops())
+}
+
+/// [`default_order`] on the desktops `XDG_CURRENT_DESKTOP` lists.
+fn order_on(desktops: &[String]) -> &'static str {
+    if desktops
         .iter()
         .any(|desktop| desktop.eq_ignore_ascii_case("KDE"))
     {
@@ -1154,6 +1159,18 @@ impl WindowAsk {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn kde_s_desktop_tries_kio_before_gvfs() {
+        let on = |desktops: &[&str]| {
+            super::order_on(&desktops.iter().map(|d| (*d).to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(on(&["KDE"]), "sshfs kio gvfs rclone fstab");
+        assert_eq!(on(&["X-Generic", "kde"]), "sshfs kio gvfs rclone fstab");
+        assert_eq!(on(&["GNOME"]), "sshfs gvfs kio rclone fstab");
+        assert_eq!(on(&["Hyprland"]), "sshfs gvfs kio rclone fstab");
+        assert_eq!(on(&[]), "sshfs gvfs kio rclone fstab");
+    }
 
     use super::*;
     use crate::connector::Connected;

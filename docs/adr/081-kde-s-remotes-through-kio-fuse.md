@@ -78,6 +78,8 @@ seventh decision for KIO alone.
    GVfs's one deep); its SMB shares are folders below it. What kio-fuse
    holds of SFTP, NFS and an iPhone (AFC: a device) is known all the
    same, mounted by KDE's programs; an archive it reads is no remote.
+   KDE's remote places (`user-places.xbel`, Dolphin's sidebar) are its
+   servers, listed in the Network section as rclone's remotes are.
 4. **Its questions are KDE's.** A password is asked in KDE's own dialog
    and kept in KWallet if the user says so; Skwir never sees it (ADR-077's
    seventh decision, for KIO). What KIO cannot ask through kio-fuse (a
@@ -109,5 +111,6 @@ seventh decision for KIO alone.
   taken unless told to replace it) is not used yet: no measurement says
   where it is faster.
 - Tested against servers on this machine (`just remote-check`): WebDAV
-  and FTP by rclone, on a session bus of the test's own with KIO's
-  services alone; SMB and KDE's dialogs not.
+  and FTP by rclone, SMB by Samba (a share a guest opens), on a session
+  bus of the test's own with KIO's services alone; KDE's dialogs not by
+  the tests.

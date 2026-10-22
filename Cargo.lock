@@ -8182,6 +8182,7 @@ dependencies = [
  "crossbeam-channel",
  "dirs 7.0.0",
  "parking_lot",
+ "roxmltree 0.21.1",
  "schemars",
  "serde",
  "serde_json",

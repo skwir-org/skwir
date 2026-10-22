@@ -118,18 +118,21 @@ djvu-check:
 # Remote folders (ADR-077) against servers of rclone's on this machine,
 # mounted for real: rclone, sshfs, and a GVfs and a KIO (kio-fuse, ADR-081)
 # of the test's own, each on a bus of its own, taken from nixpkgs (never the
-# session's); and OpenSSH's own server run as the user, for copies through
-# rsync (ADR-078). The tests skip what is missing when run alone. Then
-# GVfs's NFS and AFP, whose servers run as root, in namespaces of their own
-# (tools/test/gvfs-nfs-afp.sh).
+# session's); OpenSSH's own server and Samba run as the user, for copies
+# through rsync (ADR-078) and SMB. The tests skip what is missing when run
+# alone. Then GVfs's NFS and AFP, whose servers run as root, in namespaces
+# of their own (tools/test/gvfs-nfs-afp.sh); and passwords in a keyring of
+# the tests' own (ADR-082).
 remote-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    tools=$(nix build --no-link --print-out-paths nixpkgs#sshfs nixpkgs#gvfs nixpkgs#rclone 'nixpkgs#glib^bin' nixpkgs#openssh nixpkgs#rsync nixpkgs#kdePackages.kio-fuse nixpkgs#kdePackages.kio)
+    tools=$(nix build --no-link --print-out-paths nixpkgs#sshfs nixpkgs#gvfs nixpkgs#rclone 'nixpkgs#glib^bin' nixpkgs#openssh nixpkgs#rsync nixpkgs#kdePackages.kio-fuse nixpkgs#kdePackages.kio nixpkgs#kdePackages.kio-extras nixpkgs#samba nixpkgs#uid_wrapper nixpkgs#nss_wrapper)
     out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(p[0-9]+)?(-bin)?$" <<< "$tools" | head -1; }
     export PATH="$(out sshfs-fuse)/bin:$(out rclone)/bin:$(out glib)/bin:$(out openssh)/bin:$(out rsync)/bin:$PATH"
     export SKWIR_TEST_GVFS="$(out gvfs)"
-    export SKWIR_TEST_KIO="$(out kio-fuse):$(out kio)"
+    export SKWIR_TEST_KIO="$(out kio-fuse):$(out kio):$(out kio-extras)"
+    # Samba run as the user, believing it is root (ADR-082's SMB tests).
+    export SKWIR_TEST_SAMBA="$(out samba):$(out uid_wrapper):$(out nss_wrapper)"
     cargo nextest run -p skwir -p skwir-plugin-remote --no-fail-fast \
         -E 'binary(remote_folders) | package(skwir-plugin-remote)'
     binary=$(cargo nextest list -p skwir -p skwir-plugin-remote -E 'binary(remote_folders)' \
