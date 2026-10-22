@@ -3522,3 +3522,40 @@ below), worked through in order, each committed after its checks.
   test claimed the read whole, which GVfs never promised: it now takes
   the read whole or cut so, the disconnect having waited its refusals
   out (what it checks); remote.md says so.
+
+### A plan a server stopped goes on by itself (ADR-080, 9)
+
+- The user chose "Retry by itself" (over offering it, or leaving it to
+  Retry), for stops caused by a server, while Skwir runs. Which stops
+  are a server's is asked of the server, not read from the error: a
+  check's conflict keeps only words, `said` drops the error's number,
+  and the system's message may be translated. When a step that reaches
+  a remote (its footprint's paths in the mount table) stops a plan, its
+  mount is noted with it (`Stop::server`, `Stopped::waits`) and asked at
+  once, then every 15 s (`Executor::look_for`, a thread per mount), in
+  the mount's lane, one question at a time: `fs::reach::answers` (still
+  mounted, `statvfs`, its top read). Answered at once: stopped by
+  something else, Retry alone. Not answered, or after 2 s: it waits
+  (`ExecEvent::WaitsForServer`: its toast, if shown, adds that it goes
+  on by itself); answered then: retried as Retry does
+  (`ExecEvent::GoesOn`, its card saying "going on, …"), three times at
+  most a server. ADR-080 gains point 9; AGENTS.md's and operations.md's
+  rule of what a background task applies says this is the user's action
+  going on.
+- Tested in core: a plan making folders on a remote pretended at a
+  folder made unreadable stops, waits for its server, and once the
+  folder is readable again goes on by itself, one action undone at
+  once; a plan stopped by a file in the way, on a server that answers,
+  never waits (`a_plan_its_server_stopped_goes_on_once_the_server_answers`).
+  Against OpenSSH's server of the test's own: a folder of 16 and 160 MiB
+  copied up by rsync, the server stopped mid-file: the plan waits for
+  it; started again, the copy goes on and ends whole, nothing staged
+  left, no Retry asked
+  (`a_copy_its_server_stopped_goes_on_by_itself_once_it_answers`).
+- Found on the way: the SFTP-only test's download, right after its
+  upload's retry, noted its source at the length its upload had been cut
+  to and so started over (3 of 3 runs, once the look made the timing
+  so): sshfs kept that length from the retry's read-back through the
+  mount, `reput` appended beside it, and placing the folder carried it.
+  sftp now gives each file it went on from its time through the mount,
+  which makes sshfs let go; 3 of 3 pass, with the other cut-short tests.

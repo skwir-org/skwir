@@ -70,7 +70,9 @@
   its last part is checked; a folder keeps the files it had finished,
   and the file it was sending goes on too (by rsync, sftp or Skwir's own
   copy; `gio` and KIO's copies start it again). Undo takes the whole
-  action back.
+  action back. An action a server stopped goes on by itself once the
+  server answers again: its message says it waits, and its bar says it
+  goes on.
 
 ## 0.2.0 (2026-10-20)
 

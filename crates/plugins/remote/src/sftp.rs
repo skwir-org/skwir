@@ -457,6 +457,9 @@ impl Transfer for Sftp {
         // Each file's lines, kept together in one session: what was placed
         // beside is known by its size and time, which `put -p` keeps.
         let mut files: Vec<(Vec<String>, u64)> = Vec::new();
+        // Gone on from: what sshfs read of each as it was cut short (its
+        // length) stays with it until it is changed through the mount.
+        let mut went_on: Vec<(PathBuf, PathBuf)> = Vec::new();
         for (src, dst) in &layout.files {
             let meta = std::fs::symlink_metadata(src)?;
             if meta.is_symlink() {
@@ -467,7 +470,10 @@ impl Transfer for Sftp {
             }
             let Some(temp) = temp else {
                 let (put, left) = match aside.goes_on.from(dst) {
-                    Some(held) => ("reput", meta.len().saturating_sub(held)),
+                    Some(held) => {
+                        went_on.push((src.clone(), dst.clone()));
+                        ("reput", meta.len().saturating_sub(held))
+                    }
                     None => ("put", meta.len()),
                 };
                 files.push((
@@ -503,6 +509,8 @@ impl Transfer for Sftp {
             }
             return Err(error);
         }
+        // Its time given through the mount: sshfs lets go of what it read.
+        skwir_core::op::transfer::give_times(&went_on)?;
         layout.finish()?;
         self.made.fetch_add(1, Ordering::Relaxed);
         Ok(())

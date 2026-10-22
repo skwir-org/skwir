@@ -95,6 +95,18 @@ pub enum ExecEvent {
         cancelled: bool,
         undoable: bool,
     },
+    /// The server the plan `plan` stopped on does not answer: it goes on
+    /// by itself once it does (ADR-080, 9).
+    WaitsForServer {
+        plan: PlanId,
+    },
+    /// The server the plan `plan` stopped on answers again: what it had
+    /// left goes on by itself, as the run `next` (its `Started` follows).
+    GoesOn {
+        plan: PlanId,
+        next: PlanId,
+        title: String,
+    },
 }
 
 /// What became of a plan proposed for review (`App::propose_awaiting`):
@@ -288,6 +300,7 @@ enum Work {
 struct Continues {
     seq: u64,
     partial: Option<super::staging::Partial>,
+    waits: Waits,
 }
 
 /// A plan a step's error stopped, what Retry runs of it.
@@ -301,14 +314,47 @@ struct Stopped {
     /// What it left of a large file cut short, kept until it is retried
     /// or let go.
     partial: Option<super::staging::Partial>,
+    /// The server it waits for, to go on by itself (ADR-080, 9).
+    waits: Waits,
+}
+
+impl Stopped {
+    /// Whether it waits for the server whose mount is at `point`.
+    fn waits_for(&self, point: &Path) -> bool {
+        self.waits.server.as_deref() == Some(point) && self.waits.tries < ON_ITS_OWN
+    }
+}
+
+/// What a stopped plan waits for to go on by itself (ADR-080, 9): the
+/// mount of the server its failing step reached, whether that server was
+/// seen not answering since, and how often it went on so already.
+#[derive(Clone, Debug, Default)]
+struct Waits {
+    server: Option<PathBuf>,
+    down: bool,
+    tries: u32,
 }
 
 /// Where a step's error stopped a plan (`Executor::apply_plan`): its index,
-/// and what a copy it cut short left.
+/// what a copy it cut short left, and the mount of the server the step
+/// reached, if it reached one.
 struct Stop {
     at: usize,
     partial: Option<super::staging::Partial>,
+    server: Option<PathBuf>,
 }
+
+/// How often the server a stopped plan waits for is asked whether it
+/// answers again ([`Executor::set_server_look`] for a test's).
+const LOOK_EVERY: Duration = Duration::from_secs(15);
+
+/// An answer slower than this says the server did not answer when asked:
+/// it came once the server was reached again.
+const PROMPT: Duration = Duration::from_secs(2);
+
+/// How often a plan goes on by itself when its server answers again,
+/// before it waits for Retry alone.
+const ON_ITS_OWN: u32 = 3;
 
 /// The stopped plans kept for Retry, the latest: older ones are let go.
 const STOPPED_KEPT: usize = 8;
@@ -442,6 +488,11 @@ pub struct Executor {
     clash_asker: Mutex<Option<ClashAsker>>,
     /// The plans a step's error stopped, oldest first, for Retry.
     stopped: Mutex<VecDeque<Stopped>>,
+    /// The mounts of the servers stopped plans wait for, each asked by a
+    /// thread of its own whether it answers again (`look_for`).
+    looking: Mutex<std::collections::HashSet<PathBuf>>,
+    /// How often they are asked ([`LOOK_EVERY`]).
+    look_every: Mutex<Duration>,
 }
 
 /// What a volume has free, by a folder on it.
@@ -553,7 +604,15 @@ impl Executor {
             secret_asker: Mutex::new(None),
             clash_asker: Mutex::new(None),
             stopped: Mutex::default(),
+            looking: Mutex::default(),
+            look_every: Mutex::new(LOOK_EVERY),
         })
+    }
+
+    /// Ask the server a stopped plan waits for whether it answers again
+    /// every `every` ([`LOOK_EVERY`]): a test's, which cannot wait so long.
+    pub fn set_server_look(&self, every: Duration) {
+        *self.look_every.lock() = every;
     }
 
     /// Ask the user, through `asker`, whether a plan short of room where it
@@ -960,18 +1019,149 @@ impl Executor {
         self.submit_blocking(work, cancel)
     }
 
-    /// The work that retries `plan`, taken out of the stopped plans.
+    /// The work that retries `plan`, taken out of the stopped plans: asked
+    /// for, its server's count of going on by itself starts again.
     fn retrying(&self, plan: PlanId) -> Option<Work> {
+        self.taken_to_retry(plan, |waits| Waits {
+            server: waits.server,
+            ..Waits::default()
+        })
+    }
+
+    /// The work that retries `plan`, taken out of the stopped plans, what it
+    /// waits for made `waits`.
+    fn taken_to_retry(&self, plan: PlanId, waits: impl FnOnce(Waits) -> Waits) -> Option<Work> {
         let mut stopped = self.stopped.lock();
         let at = stopped.iter().position(|s| s.plan == plan)?;
         let Stopped {
-            seq, rest, partial, ..
+            seq,
+            rest,
+            partial,
+            waits: was,
+            ..
         } = stopped.remove(at)?;
         Some(Work::Execute {
             plan: Arc::new(rest),
             whole: true,
-            continues: Some(Box::new(Continues { seq, partial })),
+            continues: Some(Box::new(Continues {
+                seq,
+                partial,
+                waits: waits(was),
+            })),
         })
+    }
+
+    /// Whether the plan `plan`, which a step's error stopped, waits for its
+    /// server to answer again, to go on by itself (ADR-080, 9).
+    pub fn waits_for_server(&self, plan: PlanId) -> bool {
+        self.stopped
+            .lock()
+            .iter()
+            .find(|s| s.plan == plan)
+            .is_some_and(|s| s.waits.down && s.waits.tries < ON_ITS_OWN)
+    }
+
+    /// While a plan its server stopped waits (`Stopped::waits`), ask that
+    /// server whether it answers, in its lane, one question at a time: at
+    /// once, then every [`LOOK_EVERY`] (`answered`). Ends once nothing
+    /// waits for it, no more is taken, or the executor is gone.
+    fn look_for(&self, point: &Path) {
+        if !self.looking.lock().insert(point.to_path_buf()) {
+            return;
+        }
+        let me = self.me.clone();
+        let looked = point.to_path_buf();
+        let started = std::thread::Builder::new()
+            .name("skwir-plans-look".into())
+            .spawn(move || {
+                let point = looked;
+                let mut first = true;
+                loop {
+                    let Some(this) = me.upgrade() else { return };
+                    if !first {
+                        let every = *this.look_every.lock();
+                        drop(this);
+                        std::thread::sleep(every);
+                    }
+                    first = false;
+                    let Some(this) = me.upgrade() else { return };
+                    let closed = this.lane.lock().closed;
+                    {
+                        // Under the lock a stopped plan is kept by: one kept
+                        // after finds the looking ended, and starts it again.
+                        let stopped = this.stopped.lock();
+                        if closed || !stopped.iter().any(|s| s.waits_for(&point)) {
+                            this.looking.lock().remove(&point);
+                            return;
+                        }
+                    }
+                    let (tx, rx) = bounded(1);
+                    let asked = point.clone();
+                    this.scheduler.spawn_in(
+                        crate::fs::reach::lane(&point),
+                        Priority::Background,
+                        "op.answers",
+                        CancelToken::new(),
+                        move || {
+                            let began = Instant::now();
+                            let answers = crate::fs::reach::answers(&asked);
+                            let _ = tx.send((answers, began.elapsed()));
+                        },
+                    );
+                    drop(this);
+                    // Held by its server, the question waits: the only one.
+                    let Ok((answers, took)) = rx.recv() else {
+                        if let Some(this) = me.upgrade() {
+                            this.looking.lock().remove(&point);
+                        }
+                        return;
+                    };
+                    let Some(this) = me.upgrade() else { return };
+                    this.answered(&point, answers, took >= PROMPT);
+                }
+            });
+        if started.is_err() {
+            self.looking.lock().remove(point);
+        }
+    }
+
+    /// What the server at `point` answered: nothing, or only `slow`ly, the
+    /// plans that wait for it saw it gone; answering, those go on by
+    /// themselves, and those that never saw it gone, answered at once,
+    /// were stopped by something else: they wait for Retry alone.
+    fn answered(&self, point: &Path, answers: bool, slow: bool) {
+        let (mut down, mut going) = (Vec::new(), Vec::new());
+        {
+            let mut stopped = self.stopped.lock();
+            for s in stopped.iter_mut().filter(|s| s.waits_for(point)) {
+                if (!answers || slow) && !s.waits.down {
+                    s.waits.down = true;
+                    down.push(s.plan);
+                }
+                if answers {
+                    if s.waits.down {
+                        going.push((s.plan, s.rest.id, s.rest.title.clone()));
+                    } else {
+                        s.waits.server = None;
+                    }
+                }
+            }
+        }
+        for plan in down {
+            self.emit(ExecEvent::WaitsForServer { plan });
+        }
+        for (plan, next, title) in going {
+            let Some(work) = self.taken_to_retry(plan, |waits| Waits {
+                down: false,
+                tries: waits.tries + 1,
+                ..waits
+            }) else {
+                continue;
+            };
+            tracing::info!(%title, "its server answers again: it goes on");
+            self.emit(ExecEvent::GoesOn { plan, next, title });
+            self.submit(work, CancelToken::new());
+        }
     }
 
     /// Undo the last plan asked (ADR-079): once it ends where it runs,
@@ -1424,7 +1614,9 @@ impl Executor {
         seq: u64,
     ) -> ExecResult {
         let whole = whole && !cancel.is_cancelled();
-        let (first, partial) = continues.map_or((None, None), |c| (Some(c.seq), c.partial));
+        let (first, partial, waits) = continues.map_or((None, None, Waits::default()), |c| {
+            (Some(c.seq), c.partial, c.waits)
+        });
         let companions = Arc::clone(&self.companions.lock());
         // Each step as it will be done, before anything is settled or
         // checked.
@@ -1449,7 +1641,7 @@ impl Executor {
         // the id it is told by now, with what it would go on from.
         let kept = |plan: &Plan, partial| {
             if let Some(first) = first {
-                self.stash(plan.id, first, plan.clone(), partial);
+                self.stash(plan.id, first, plan.clone(), partial, waits.clone());
             }
         };
         match settled {
@@ -1483,7 +1675,7 @@ impl Executor {
                         kept(&plan, partial);
                         self.refuse(&plan, reason)
                     }
-                    None => self.run_execute(&plan, cancel, seq, first, partial),
+                    None => self.run_execute(&plan, cancel, seq, first, partial, &waits),
                 }
             }
         }
@@ -1547,6 +1739,7 @@ impl Executor {
         seq: u64,
         first: Option<u64>,
         partial: Option<super::staging::Partial>,
+        waits: &Waits,
     ) -> ExecResult {
         self.apply_plan(plan, cancel, RunKind::Apply, partial, |r, inverse, stop| {
             let mut j = self.journal.lock();
@@ -1592,11 +1785,27 @@ impl Executor {
             drop(j);
             // Stopped by a step's error, what it had left waits for Retry;
             // what stopped it otherwise (Cancel, a write-out) is not.
-            if let Some(Stop { at, partial }) = stop {
+            if let Some(Stop {
+                at,
+                partial,
+                server,
+            }) = stop
+            {
                 let mut rest = Plan::with_steps(plan.title.clone(), plan.steps[at..].to_vec());
                 rest.on_conflict = plan.on_conflict;
                 rest.items.clone_from(&plan.items);
-                self.stash(plan.id, place, rest, partial);
+                // Stopped on the same server again, it counts on.
+                let tries = if server.is_some() && server == waits.server {
+                    waits.tries
+                } else {
+                    0
+                };
+                let waits = Waits {
+                    server,
+                    down: false,
+                    tries,
+                };
+                self.stash(plan.id, place, rest, partial, waits);
             }
         })
     }
@@ -1604,7 +1813,17 @@ impl Executor {
     /// Keep `rest`, what the plan `plan` had left when it stopped, for
     /// Retry, its entry at `seq`, with what it left of a file cut short;
     /// the oldest let go past [`STOPPED_KEPT`] (what it left removed).
-    fn stash(&self, plan: PlanId, seq: u64, rest: Plan, partial: Option<super::staging::Partial>) {
+    /// Waiting for its server (`waits`), it is asked whether it answers
+    /// again (`look_for`).
+    fn stash(
+        &self,
+        plan: PlanId,
+        seq: u64,
+        rest: Plan,
+        partial: Option<super::staging::Partial>,
+        waits: Waits,
+    ) {
+        let server = waits.server.clone().filter(|_| waits.tries < ON_ITS_OWN);
         let let_go = {
             let mut stopped = self.stopped.lock();
             stopped.push_back(Stopped {
@@ -1612,12 +1831,16 @@ impl Executor {
                 seq,
                 rest,
                 partial,
+                waits,
             });
             let over = stopped.len().saturating_sub(STOPPED_KEPT);
             stopped.drain(..over).collect::<Vec<_>>()
         };
         // Removed out of the lock: on a remote, a removal may wait.
         drop(let_go);
+        if let Some(server) = server {
+            self.look_for(&server);
+        }
     }
 
     /// Take back the top entry of one stack and journal what takes that
@@ -1904,6 +2127,7 @@ impl Executor {
             (Some(at), Some(_), false) => Some(Stop {
                 at,
                 partial: ctx.take_partial(),
+                server: server_of(plan.steps[at].as_ref()),
             }),
             _ => None,
         };
@@ -1926,6 +2150,15 @@ impl Executor {
         }
         result
     }
+}
+
+/// The mount of the server `step` reaches, if it reaches one: the first
+/// path it touches on a remote, told from the mount table in memory.
+fn server_of(step: &dyn Operation) -> Option<PathBuf> {
+    let footprint = step.footprint(&super::footprint::Volumes::now())?;
+    footprint
+        .paths()
+        .find_map(|path| crate::fs::reach::of(path).map(|remote| remote.point.clone()))
 }
 
 /// The reason the first conflicting step gives, after a dry run of every
@@ -2577,6 +2810,99 @@ mod tests {
         );
         assert_eq!(applied.load(Ordering::SeqCst), 0, "not even the first step");
         assert!(!executor.can_undo());
+    }
+
+    /// The executor's events until one `last` accepts, ten seconds at most.
+    fn events_until(executor: &Executor, last: impl Fn(&ExecEvent) -> bool) -> Vec<ExecEvent> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut seen = Vec::new();
+        loop {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let event = executor
+                .events()
+                .recv_timeout(left)
+                .unwrap_or_else(|_| panic!("no such event in {seen:?}"));
+            let done = last(&event);
+            seen.push(event);
+            if done {
+                return seen;
+            }
+        }
+    }
+
+    /// A plan stopped on a server that does not answer goes on by itself
+    /// once it answers again, one action in the history (ADR-080, 9); one
+    /// stopped by something else on a server that answers at once waits
+    /// for Retry alone.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_plan_its_server_stopped_goes_on_once_the_server_answers() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("t-")
+            .tempdir_in(base)
+            .unwrap();
+        let served = tmp.path().join("served");
+        std::fs::create_dir(&served).unwrap();
+        crate::fs::reach::pretend_remote(&served);
+        let executor = Executor::new(Scheduler::new(2));
+        executor.set_server_look(Duration::from_millis(100));
+        let mkdir = |name: &str| {
+            Box::new(super::super::Mkdir {
+                path: served.join(name),
+            }) as Box<dyn Operation>
+        };
+        let mode = |mode: u32| {
+            std::fs::set_permissions(&served, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        // The server gone: its top read by no one.
+        mode(0o000);
+        let plan = Plan::with_steps("make folders", vec![mkdir("a"), mkdir("b")]);
+        let r = executor.execute_blocking(&plan, &CancelToken::new());
+        assert!(r.error.is_some() && r.applied == 0, "{r:?}");
+        events_until(
+            &executor,
+            |e| matches!(e, ExecEvent::WaitsForServer { plan: p } if *p == plan.id),
+        );
+        assert!(executor.waits_for_server(plan.id));
+        // Back: it goes on by itself.
+        mode(0o755);
+        let seen = events_until(&executor, |e| matches!(e, ExecEvent::Finished { .. }));
+        let next = seen
+            .iter()
+            .find_map(|e| match e {
+                ExecEvent::GoesOn { plan: p, next, .. } if *p == plan.id => Some(*next),
+                _ => None,
+            })
+            .expect("it went on by itself");
+        assert!(matches!(
+            seen.last(),
+            Some(ExecEvent::Finished { plan: p, applied: 2, error: None, .. }) if *p == next
+        ));
+        assert!(served.join("a").is_dir() && served.join("b").is_dir());
+        assert!(!executor.can_retry(plan.id) && !executor.can_retry(next));
+        let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
+        assert_eq!(undone.applied, 2, "one action");
+
+        // In the way, on a server that answers: Retry alone.
+        std::fs::write(served.join("a file"), "x").unwrap();
+        let blocked = Box::new(super::super::Mkdir {
+            path: served.join("a file").join("below"),
+        }) as Box<dyn Operation>;
+        let plan = Plan::with_steps("make below", vec![blocked]);
+        let r = executor.execute_blocking(&plan, &CancelToken::new());
+        assert!(r.error.is_some(), "{r:?}");
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(executor.can_retry(plan.id) && !executor.waits_for_server(plan.id));
+        assert!(
+            executor.events().try_iter().all(|e| !matches!(
+                e,
+                ExecEvent::GoesOn { .. } | ExecEvent::WaitsForServer { .. }
+            )),
+            "never waited for its server"
+        );
     }
 
     #[test]

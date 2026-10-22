@@ -7,7 +7,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 
 - Commands that change files return a `Plan`; the caller applies it. A
   user's single action applies at once, undoable; batches and anything
-  from a background task or an agent go through `App::propose`.
+  from a background task or an agent go through `App::propose`. A
+  stopped action going on by itself once its server answers again is
+  that action, asked already, going on (ADR-080, 9), not a new one.
 - Every operation has an inverse, a dry-run `check`, and is idempotent.
 - Steps reference entries by `EntryRef` (`AGENTS.md`, "Files and
   entries").
@@ -112,6 +114,17 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   entry, its inverses first, unless an entry asked since sits after
   that one: then it has its own. Cancel and a failed write-out are not
   retried.
+- **Going on by itself (ADR-080, 9).** A plan stopped by a step that
+  reaches a remote (its footprint's paths, `fs::reach`) notes the
+  server's mount; that mount is asked whether it answers
+  (`fs::reach::answers`: still mounted, how full, its top read), in its
+  lane, one question at a time, at once and then every 15 s
+  (`Executor::look_for`). Answered at once, the plan was stopped by
+  something else: Retry alone. Not answered, or slowly, it waits
+  (`ExecEvent::WaitsForServer`, said in its toast); once answered, it is
+  retried as Retry would (`ExecEvent::GoesOn`, its card says "going
+  on"), three times at most a server. Nothing is read to classify an
+  error: its words are the system's, translated.
 - The bar counts items, the current item's bytes moving it between two
   counts; a one-item plan counts bytes (`toast::bar`).
 - **Quit** asks while a plan runs (its key or the window's close button,

@@ -206,6 +206,22 @@ pub fn of_device(device: u64) -> Option<Arc<Remote>> {
         .cloned()
 }
 
+/// Whether the mount at `point` answers: still mounted there (the table in
+/// memory), how full it is asked of it and its top read, which a FUSE
+/// program asks its server for (sshfs, GVfs) and the kernel's shares
+/// theirs. Blocking while a server holds it: in its lane, one question at a
+/// time.
+pub fn answers(point: &Path) -> bool {
+    if of(point).is_none_or(|remote| remote.point != point) {
+        return false;
+    }
+    #[cfg(unix)]
+    if rustix::fs::statvfs(point).is_err() {
+        return false;
+    }
+    std::fs::read_dir(point).is_ok_and(|mut listed| listed.next().is_none_or(|e| e.is_ok()))
+}
+
 /// The lane of work on `path`: its remote's, the shared one elsewhere.
 pub fn lane(path: &Path) -> Lane {
     of(path).map_or(Lane::SHARED, |remote| remote.lane())

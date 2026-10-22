@@ -1492,6 +1492,98 @@ fn a_folder_cut_short_by_its_server_goes_on_by_rsync() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A folder copied up, its server gone partway (ADR-080, 9): the plan
+/// stops, waits for its server, and once the server answers again goes on
+/// by itself, no Retry asked; the copy whole, nothing staged left.
+#[test]
+fn a_copy_its_server_stopped_goes_on_by_itself_once_it_answers() {
+    let sshfs = Sshfs::default();
+    if let Some(why) = sshfs.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("goes-on");
+    let Some(mut sshd) = OwnSshd::start(&base) else {
+        std::fs::remove_dir_all(&base).unwrap();
+        return;
+    };
+    let served = base.join("served");
+    std::fs::create_dir_all(served.join("up")).unwrap();
+    let sshfs = Arc::new(Sshfs {
+        ssh_options: sshd.options.clone(),
+        ssh_config: Some(PathBuf::from("/dev/null")),
+        ..sshfs
+    });
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    app.executor.set_server_look(Duration::from_millis(300));
+    let remotes = Remotes::with(vec![sshfs.clone() as Arc<dyn Connector>]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let pane = app.workspace.read().active_id();
+    let user = std::env::var("USER").expect("the user's name");
+    let address = format!("sftp://{user}@127.0.0.1:{}{}", sshd.port, served.display());
+    app.navigate(pane, &Location::parse(&address)).unwrap();
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    let mounted = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&mounted).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+
+    let folder = base.join("local").join("it's a folder");
+    std::fs::create_dir_all(&folder).unwrap();
+    let mut x = 0x2545_f491_4f6c_dd1d_u64;
+    for (name, mib) in [("a first.bin", 16u64), ("z second.bin", 160)] {
+        let bytes: Vec<u8> = (0..mib << 20)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x as u8
+            })
+            .collect();
+        std::fs::write(folder.join(name), &bytes).unwrap();
+    }
+    let plan = copies(std::slice::from_ref(&folder), &mounted.join("up"));
+    app.executor.execute(plan.clone(), app.lifetime().child());
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while found(&served.join("up"), "z second.bin")
+        .or_else(|| found(&served.join("up"), ".z second.bin."))
+        .is_none_or(|(_, len)| len < 24 << 20)
+    {
+        assert!(Instant::now() < deadline, "the copy never began");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    sshd.stop();
+    until(&app, 120, "it stopped, waiting for its server", || {
+        app.executor.waits_for_server(plan.id)
+    });
+    assert!(app.executor.can_retry(plan.id));
+    sshd.start_again();
+    until(&app, 120, "it went on by itself, through", || {
+        !app.executor.can_retry(plan.id) && !app.executor.is_busy()
+    });
+    let copy = served.join("up").join("it's a folder");
+    same_bytes(&folder.join("a first.bin"), &copy.join("a first.bin"));
+    same_bytes(&folder.join("z second.bin"), &copy.join("z second.bin"));
+    assert_eq!(
+        std::fs::read_dir(served.join("up")).unwrap().count(),
+        1,
+        "nothing staged left there"
+    );
+
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    until(&app, 30, "it was let go of", || {
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point)
+    });
+    drop(left);
+    drop(sshd);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// A folder copied up to an SFTP-only server (no rsync) by sftp sessions,
 /// the server gone partway through its second file: the batch keeps what
 /// it made, the file it was writing too; Retry, the server back, goes on

@@ -176,7 +176,15 @@ ADR-077 (which revises ADR-021).
   they were writing (`Transfer::goes_on`, `Aside::goes_on`, sftp's
   `reput`): its source noted as the batch laid it out (`Layout::made`),
   still so, and its last part read back as the source's; a transfer that
-  makes each file anew finds none there.
+  makes each file anew finds none there. sshfs keeps what it read of a
+  file cut short (its length, read back and cut through the mount) after
+  `reput` appended beside it, and carries it to the name its folder is
+  placed at: sftp gives each such file its time through the mount after,
+  which makes sshfs let go (`give_times`); read before, a later copy of
+  it noted its source at the length cut short.
+- A plan a server stopped goes on by itself once that server answers
+  again (ADR-080, 9; operations.md): its mount asked in its lane, one
+  question at a time (`fs::reach::answers`), never read from the error.
   A connector offers transfers for its mounts (`Connector::transfers`).
   A copy made with its source's mode is not given it again.
 - The originals of moves from GVfs are removed together by `gio remove`

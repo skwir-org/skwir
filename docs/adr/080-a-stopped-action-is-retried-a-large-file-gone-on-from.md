@@ -105,6 +105,22 @@ asked).
    makes and start again from it (`COPY_FILE_RESTARTABLE`), but flushes
    that file as it goes, slower for every copy, and cannot be measured
    here nor tried under Wine: a copy cut short there starts again.
+9. **Going on by itself** (2026-10-23, the user's choice for the night:
+   "Retry by itself", over offering it or leaving it to Retry). A plan
+   stopped by a step that reaches a server goes on by itself once that
+   server answers again, while Skwir runs: the action the user asked,
+   going on, not a new one (amends the rule that what a background task
+   does is proposed, AGENTS.md and operations.md). Which stops are the
+   server's is asked of the server, never read in the error's words
+   (the system's, translated): its mount is asked at once whether it
+   answers (still mounted, how full, its top read; in its lane, one
+   question at a time); answered at once, the plan was stopped by
+   something else and waits for Retry alone. Not answered, or only
+   slowly, it waits, its toast saying so, and the mount is asked again
+   every 15 s; once it answers, the plan is retried as Retry does (one
+   action in the history, a file cut short gone on from), its card
+   saying "going on", Cancel there. Three times at most a server: one
+   that seems to answer and stops each time leaves it to Retry.
 
 ## Consequences
 
@@ -133,8 +149,11 @@ asked).
   or one placed beside what is there (made in a folder of its own each
   run); a file
   alone that `gio` takes (ADR-078, 16); a copy by Windows' system copy
-  (8); a folder whose tool kept nothing, killed outright. No retry happens by itself when a server is back:
-  the user, or an agent, asks.
+  (8); a folder whose tool kept nothing, killed outright. A retry
+  happens by itself once a server answers again (9); a server whose
+  program answers from what it keeps (rclone's listings, five minutes)
+  may seem to answer while gone: its plan goes on and stops again,
+  three times at most.
 
 ## Built
 

@@ -114,7 +114,9 @@ working in an area, also read that area's rules (see
   MCP and agents. Commands that change files return a `Plan`; the caller
   decides to apply it. A user's single action applies at once and is
   undoable; batch results and anything from a background task or an agent
-  go through `App::propose` for review (`docs/invariants/commands.md`).
+  go through `App::propose` for review (`docs/invariants/commands.md`). A
+  stopped action going on by itself once its server answers again is the
+  user's action continuing (ADR-080, 9), not a new one.
 - **Operations have inverses**, a dry-run `check`, and idempotent
   semantics (`docs/invariants/operations.md`).
 - **Provenance.** Metadata fields record where they came from

@@ -79,6 +79,16 @@ pub const TRASH: &str = "trash";
 pub const NOTES: &str = "notes";
 
 impl Footprint {
+    /// The trees it reads, writes or names in; none when it touches
+    /// everything.
+    pub fn paths(&self) -> impl Iterator<Item = &Path> {
+        self.reads
+            .iter()
+            .chain(&self.writes)
+            .chain(&self.names)
+            .map(PathBuf::as_path)
+    }
+
     /// Touching everything: what a step that cannot say touches.
     pub fn every() -> Self {
         Footprint {

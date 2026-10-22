@@ -63,6 +63,9 @@ pub struct Running {
     /// Waiting where it would answer Cancel, until resumed.
     paused: bool,
     cancelling: bool,
+    /// What a plan its server stopped had left, going on by itself once
+    /// the server answered again (ADR-080, 9).
+    going_on: bool,
 }
 
 #[derive(Default)]
@@ -72,6 +75,8 @@ pub struct ToastState {
     /// plan, and each is matched to its own: a second plan starting never
     /// takes over the first one's bar or result.
     pub running: Vec<Running>,
+    /// The runs about to start that go on by themselves (`ExecEvent::GoesOn`).
+    going_on: std::collections::HashSet<PlanId>,
     generation: u64,
     close: Option<gpui::FocusHandle>,
     /// Kept across frames, so Tab can reach the toast's buttons.
@@ -362,7 +367,24 @@ impl Shell {
                         items,
                         paused: false,
                         cancelling: false,
+                        going_on: self.toasts.going_on.remove(&plan),
                     });
+                }
+                ExecEvent::GoesOn { next, .. } => {
+                    self.toasts.going_on.insert(next);
+                }
+                // Its toast says it goes on by itself, while it is the
+                // one shown (its Retry names the plan).
+                ExecEvent::WaitsForServer { plan } => {
+                    let said = WAITS_FOR_SERVER;
+                    if let Some(toast) = self.toasts.current.as_mut()
+                        && toast.actions.iter().any(|a| {
+                            a.command == "retry" && a.args["plan"] == serde_json::json!(plan)
+                        })
+                        && !toast.text.ends_with(said)
+                    {
+                        toast.text.push_str(said);
+                    }
                 }
                 ExecEvent::Paused { plan } | ExecEvent::Resumed { plan } => {
                     let paused = matches!(event, ExecEvent::Paused { .. });
@@ -499,6 +521,10 @@ fn waiting_lines(waiting: &[skwir_core::op::Waiting]) -> Vec<String> {
     lines
 }
 
+/// What a stopped plan's toast adds once its server is found not
+/// answering (`ExecEvent::WaitsForServer`).
+const WAITS_FOR_SERVER: &str = ". It goes on by itself once the server answers again";
+
 /// The card of the running plan `running`, the `n`th: its title, how far
 /// it is, what waits (`waiting`), and its Pause and Cancel buttons, which
 /// `focus` holds.
@@ -517,7 +543,11 @@ fn progress_card(
     let (fraction, amount) = bar(running.total, transfer);
     let plan = running.plan;
     let paused = running.paused;
-    let state = if paused { "paused at " } else { "" };
+    let state = match (paused, running.going_on) {
+        (true, _) => "paused at ",
+        (false, true) => "going on, ",
+        (false, false) => "",
+    };
     // What runs, said by its title; how far, as a value, said when asked,
     // never at each step.
     card.role(gpui::Role::ProgressIndicator)
