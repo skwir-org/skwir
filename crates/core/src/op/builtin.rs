@@ -1414,16 +1414,23 @@ fn copy_sparse(
 }
 
 /// Whether the copy `there` of a file now `source` was finished: its
-/// length, and its time (given last, to the second: SFTP keeps no more).
+/// length, and its time (given last), to the second where either keeps
+/// no more (SFTP's), else exactly: two files of one length changed in
+/// one second are told apart where both volumes can.
 pub(super) fn finished_as(there: &std::fs::Metadata, source: &std::fs::Metadata) -> bool {
-    let secs = |meta: &std::fs::Metadata| {
+    let since = |meta: &std::fs::Metadata| {
         meta.modified()
             .ok()?
             .duration_since(std::time::UNIX_EPOCH)
             .ok()
-            .map(|d| d.as_secs())
     };
-    there.len() == source.len() && secs(there).is_some() && secs(there) == secs(source)
+    let (Some(copy), Some(original)) = (since(there), since(source)) else {
+        return false;
+    };
+    there.len() == source.len()
+        && (copy == original
+            || ((copy.subsec_nanos() == 0 || original.subsec_nanos() == 0)
+                && copy.as_secs() == original.as_secs()))
 }
 
 fn copy_recursive_with_attributes(
@@ -3404,6 +3411,36 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
+
+    /// A copy of a file is finished when it has its length and time:
+    /// exactly, or to the second where the copy keeps no more (SFTP's).
+    #[test]
+    fn a_copy_is_finished_by_its_length_and_time_as_its_volume_keeps_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let at = |name: &str, nanos: u32| {
+            let path = tmp.path().join(name);
+            std::fs::write(&path, b"same length").unwrap();
+            let when = std::time::UNIX_EPOCH + std::time::Duration::new(1_700_000_000, nanos);
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(when)
+                .unwrap();
+            std::fs::metadata(&path).unwrap()
+        };
+        let source = at("source", 250_000_000);
+        assert!(finished_as(&at("exact", 250_000_000), &source));
+        assert!(finished_as(&at("seconds kept", 0), &source));
+        assert!(
+            finished_as(&source, &at("source of seconds", 0)),
+            "a source read through a server keeping seconds"
+        );
+        assert!(
+            !finished_as(&at("another", 750_000_000), &source),
+            "another file of that second"
+        );
+    }
 
     /// What is, or holds, where something is mounted is never removed or
     /// trashed whole: a removal would reach into a drive's files or a

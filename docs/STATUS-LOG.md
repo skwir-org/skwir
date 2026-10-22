@@ -2957,8 +2957,13 @@ and fix bug or problems you encounter on the way". This is the first.
   be a folder in each file's own: none then); the retry's batch keeps
   what was finished (`transfer::keep_finished`) and `Layout::made` takes
   what is there (one listing of the folder tells a fresh one). A copy's
-  check now calls a target its source to the second (`same_tree`): a
-  batch's copy on a server keeping seconds was "already there".
+  check now calls a target its source to the second where either keeps
+  no more (`same_tree`): a batch's copy on a server keeping seconds was
+  "already there"; exactly elsewhere (made so after the gate below, which
+  ran on the version comparing seconds everywhere; a first try comparing
+  seconds only where the copy kept no more re-made a file rsync brought
+  down with the server's nanoseconds, its source read in seconds through
+  the mount).
 - Found: rsync keeps its partial on a lost connection or a hangup, not
   when its process is killed outright (the test's server stop): the test
   hangs the sessions up after ending the listener (`OwnSshd::stop_gently`;
@@ -2995,3 +3000,9 @@ and fix bug or problems you encounter on the way". This is the first.
 - Declined: Windows' `COPY_FILE_RESTARTABLE` flushes the file it makes
   as it goes, slower for every copy, and neither this machine nor Wine
   can measure it.
+- Checked: `just release-check`'s recipes run one by one on e267ac43
+  (stale test executables and incremental sessions pruned first: 8.9 to
+  27 GB free): lint-all, deny, notices-check, test-all (1923 passed, 21
+  skipped), smoke, a11y-check, poppler-check, mupdf-check, djvu-check,
+  bench-check (all budgets met) and release-tools-check (27) passed.
+

@@ -1352,9 +1352,8 @@ fn a_folder_cut_short_by_its_server_goes_on_by_rsync() {
     let copy = served.join("up").join("it's a folder");
     let first = std::fs::read(copy.join("a first.bin")).unwrap();
     let sent = std::fs::read(folder.join("a first.bin")).unwrap();
-    assert_eq!(
-        (first[0], &first[1..]),
-        (b'X', &sent[1..]),
+    assert!(
+        first[0] == b'X' && first[1..] == sent[1..],
         "finished, kept"
     );
     same_bytes(&folder.join("z second.bin"), &copy.join("z second.bin"));
@@ -1385,7 +1384,7 @@ fn a_folder_cut_short_by_its_server_goes_on_by_rsync() {
         .expect("retried");
     assert!(retried.error.is_none(), "{:?}", retried.error);
     let came = std::fs::read(down.join("it's a folder").join("a first.bin")).unwrap();
-    assert_eq!((came[0], &came[1..]), (b'Y', &first[1..]), "finished, kept");
+    assert!(came[0] == b'Y' && came[1..] == first[1..], "finished, kept");
     same_bytes(
         &folder.join("z second.bin"),
         &down.join("it's a folder").join("z second.bin"),

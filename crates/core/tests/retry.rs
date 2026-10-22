@@ -158,7 +158,7 @@ fn a_large_copy_cut_short_goes_on_from_where_it_stopped() {
     let copied = std::fs::read(dest.join("it's big.bin")).expect("copied");
     assert_eq!(copied.len(), bytes.len());
     assert_eq!(copied[0], b'X', "gone on from what it had");
-    assert_eq!(copied[1..], bytes[1..]);
+    assert!(copied[1..] == bytes[1..], "the rest as the source");
     assert_eq!(
         std::fs::read_dir(&dest).expect("dest").count(),
         1,
@@ -254,7 +254,7 @@ fn a_copy_with_holes_cut_short_goes_on_from_where_it_stopped() {
     let copy = dest.join("it's big.bin");
     let copied = std::fs::read(&copy).expect("copied");
     assert_eq!(copied[0], b'X', "gone on from what it had");
-    assert_eq!(copied[1..], bytes[1..]);
+    assert!(copied[1..] == bytes[1..], "the rest as the source");
     // Where the destination's volume keeps holes.
     let probe = tmp.path().join("probe");
     let file = std::fs::File::create(&probe).expect("probe");
@@ -325,9 +325,9 @@ fn a_folder_cut_short_goes_on_from_where_it_stopped() {
     assert_eq!((r.applied, r.error), (1, None));
     let copy = dest.join("it's a folder");
     let a = std::fs::read(copy.join("a.bin")).expect("a");
-    assert_eq!((a[0], &a[1..]), (b'X', &first[1..]), "finished, kept");
+    assert!(a[0] == b'X' && a[1..] == first[1..], "finished, kept");
     let z = std::fs::read(copy.join("z big.bin")).expect("z");
-    assert_eq!((z[0], &z[1..]), (b'X', &bytes[1..]), "gone on from");
+    assert!(z[0] == b'X' && z[1..] == bytes[1..], "gone on from");
     assert_eq!(
         std::fs::read(copy.join("sub/b.bin")).expect("b"),
         first[1..]
@@ -376,5 +376,5 @@ fn a_copy_cut_short_with_a_spoiled_end_goes_on_from_before_it() {
     assert_eq!((r.applied, r.error), (1, None));
     let copied = std::fs::read(dest.join("it's big.bin")).expect("copied");
     assert_eq!(copied[0], b'X', "gone on from what it had");
-    assert_eq!(copied[1..], bytes[1..]);
+    assert!(copied[1..] == bytes[1..], "the rest as the source");
 }

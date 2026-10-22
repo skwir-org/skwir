@@ -68,8 +68,10 @@ asked).
    through one of its files, having moved 8 MiB, is kept whole as a
    large file is (4), told by the file it was writing, never by looking
    at a server that may not answer. The retry's copy goes on in it: a
-   file of its source's length and time (to the second: SFTP keeps no
-   more; given last, after its bytes and attributes) was finished and
+   file of its source's length and time (to the second where either
+   keeps no more, as SFTP's; given last, after its bytes and attributes;
+   exactly elsewhere, so two files of one length changed in one second
+   are told apart) was finished and
    stays; the file it was writing goes on as a large file does (5);
    anything else there is made again; its folders are taken as they
    are, opened to their owner where their mode was given already.
@@ -87,8 +89,8 @@ asked).
    and `gio` make the file they were writing again: `sftp`'s `put -a`
    appends to what is there without reading it, and `gio` has no way
    on. A copy's check calls a target already done when it is its
-   source to the second (`same_tree`), as a batch placed it on a server
-   keeping seconds.
+   source to the second where either keeps no more (`same_tree`),
+   as a batch placed it on a server keeping seconds.
 8. **Not Windows' restartable copy.** Windows' own copy, which keeps
    what a byte copy loses there, can track its progress in the file it
    makes and start again from it (`COPY_FILE_RESTARTABLE`), but flushes

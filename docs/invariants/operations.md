@@ -149,8 +149,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   length and time are unchanged and the partial's last MiB reads as the
   source's (`builtin::goes_on_from`; else one of the three MiB before,
   the partial cut there), else starts again; in a folder, a
-  file of its source's length and time to the second was finished and
-  stays (`builtin::finished_as`), anything else is made again
+  file of its source's length and time (to the second where either
+  keeps no more) was finished and stays (`builtin::finished_as`),
+  anything else is made again
   (`StepContext::go_on_from`, `going_on_in`). A batch that failed after
   moving `KEEP_FROM` bytes keeps its folder and the folder its tool kept
   a file in (`Aside::partial`, rsync's `--partial-dir`), should its
@@ -272,8 +273,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 - Never asked: a copy or a link into its own folder and two items of one
   name keep both (`clash::copy_name`, GNOME's `name (copy).ext`; a link's
   `name (link).ext`, `clash::kept_name`); an item there whole
-  (`same_tree`: a file of the same length and time to the second, as
-  SFTP keeps them) is skipped by a copy and put in the trash by a move, a
+  (`same_tree`: a file of the same length and time, to the second where
+  either keeps no more, as SFTP's) is skipped by a copy and put in the
+  trash by a move, a
   link already saying the same path is done; a folder into itself is
   refused. A link, even to a folder, is never merged: it takes a file's
   choices. A move out of the trash keeps a restore's rules.
