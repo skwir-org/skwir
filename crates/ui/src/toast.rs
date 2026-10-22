@@ -466,6 +466,39 @@ impl Shell {
     }
 }
 
+/// What waits its turn, a line each under the cards of what runs (ADR-079,
+/// 12): "Rename to b.txt — waits for copy to /media/stick". The first
+/// few, then how many more.
+fn waiting_lines(waiting: &[skwir_core::op::Waiting]) -> Vec<String> {
+    use skwir_core::op::WaitsFor;
+    const SHOWN: usize = 3;
+    let mut lines: Vec<String> = waiting
+        .iter()
+        .take(SHOWN)
+        .map(|w| {
+            let what = match &w.waits_for {
+                WaitsFor::Action(named) => format!("waits for {named}"),
+                WaitsFor::Disk => "waits for the disk".to_owned(),
+                WaitsFor::Server => "waits for the server".to_owned(),
+                WaitsFor::Room => format!(
+                    "waits for one of the {} running to end",
+                    skwir_core::op::ACTIONS_AT_ONCE
+                ),
+                WaitsFor::Everything => "waits for what was asked before it".to_owned(),
+                WaitsFor::Starting => "starts".to_owned(),
+            };
+            format!("{} — {what}", capitalized(&w.named))
+        })
+        .collect();
+    if waiting.len() > SHOWN {
+        lines.push(format!(
+            "and {} waiting",
+            format::count(waiting.len() - SHOWN, "more action")
+        ));
+    }
+    lines
+}
+
 /// The card of the running plan `running`, the `n`th: its title, how far
 /// it is, what waits (`waiting`), and its Pause and Cancel buttons, which
 /// `focus` holds.
@@ -475,7 +508,6 @@ fn progress_card(
     n: usize,
     running: &Running,
     transfer: &skwir_core::op::Transfer,
-    waiting: &str,
     focus: (&gpui::FocusHandle, &gpui::FocusHandle),
     a11y: bool,
     theme: &Theme,
@@ -503,10 +535,7 @@ fn progress_card(
                 .flex()
                 .flex_col()
                 .gap_1()
-                .child(format!(
-                    "{} — {state}{amount}{waiting}",
-                    capitalized(&running.title)
-                ))
+                .child(format!("{} — {state}{amount}", capitalized(&running.title)))
                 .child(
                     div()
                         .h(px(4.))
@@ -672,11 +701,9 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         )
     } else {
         // What the user did meanwhile waits behind what it meets, and
-        // paused, for as long as it stays paused: said on the first card.
-        let waiting = match shell.app.executor.queued() {
-            0 => String::new(),
-            n => format!(" · {} waiting", format::count(n, "action")),
-        };
+        // paused, for as long as it stays paused: said under the cards,
+        // each with what it waits for.
+        let waiting = waiting_lines(&shell.app.executor.waiting());
         let mut cards = div()
             .id(("toast-cards", generation))
             .flex()
@@ -702,18 +729,36 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 }
                 shell.toasts.card_focus[n - 1].clone()
             };
-            let waiting = if n == 0 { waiting.as_str() } else { "" };
             cards = cards.child(progress_card(
                 card(Tone::Info, n as u64),
                 n,
                 &running,
                 &transfer,
-                waiting,
                 (&pause_focus, &focus),
                 a11y,
                 &theme,
                 cx,
             ));
+        }
+        if !waiting.is_empty() {
+            cards = cards.child(
+                // The last of a generation's eight: the cards are the first
+                // four.
+                card(Tone::Info, 7)
+                    .role(gpui::Role::Status)
+                    .when(a11y, |d| d.aria_label(waiting.join(". ")))
+                    .py_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .text_color(theme.text_muted)
+                            .children(waiting),
+                    ),
+            );
         }
         cards
     };
@@ -736,9 +781,37 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 
 #[cfg(test)]
 mod tests {
-    use super::{bar, describe, failure, quit_question};
+    use super::{bar, describe, failure, quit_question, waiting_lines};
     use skwir_core::op::{Change, RunKind, Transfer};
     use std::path::PathBuf;
+
+    #[test]
+    fn what_waits_is_said_under_the_cards_the_first_three() {
+        use skwir_core::op::{Waiting, WaitsFor};
+        let waiting = |named: &str, waits_for| Waiting {
+            named: named.into(),
+            waits_for,
+        };
+        let lines = waiting_lines(&[
+            waiting(
+                "rename to b.txt",
+                WaitsFor::Action("copy to /media/stick".into()),
+            ),
+            waiting("copy to /media/stick/more", WaitsFor::Disk),
+            waiting("copy to /mnt/server", WaitsFor::Server),
+            waiting("undo copy to /tmp", WaitsFor::Room),
+            waiting("tag", WaitsFor::Everything),
+        ]);
+        assert_eq!(
+            lines,
+            [
+                "Rename to b.txt — waits for copy to /media/stick",
+                "Copy to /media/stick/more — waits for the disk",
+                "Copy to /mnt/server — waits for the server",
+                "and 2 more actions waiting",
+            ]
+        );
+    }
 
     #[test]
     fn quitting_while_a_plan_runs_says_what_stops_and_what_stays() {

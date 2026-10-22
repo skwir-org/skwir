@@ -2872,3 +2872,24 @@ and fix bug or problems you encounter on the way". This is the first.
   its tests (46 passed, then this one). Found on the way: a copy of
   `/etc` keeping its owners lands on a subordinate id the user cannot
   remove; the script copies it without them.
+
+### What waits says what for (ADR-079, 12; 2026-10-22)
+
+- Found: ADR-079 decided that the actions waiting are listed under the
+  running cards, each saying what it waits for; step 1 showed only
+  "· N waiting" on the first card, and its record did not say so.
+- Built: `Executor::waiting` (each waiting action's title, an undo's or
+  a redo's "undo …"/"redo …", and `WaitsFor`: an action asked before it
+  that it meets, by its title; the disk; the server; one of the four to
+  end; what was asked before it, for a step that cannot say what it
+  touches), worked out as `admit` would; the toast lists the first three
+  under the cards ("and N more actions waiting").
+- Checked: an executor test (a plan in a running upload's tree names
+  it; a heavy one on the same server says the server); a toast test of
+  the wording; in a window on Xvfb, a 1 GiB folder copy to the USB disk
+  set aside for timings, a second copy into another folder there
+  ("waits for the disk") and a rename inside the folder being copied
+  ("waits for copy to …"), the lines wrapped inside their card; a first
+  try, both copies into one folder, said the second waits for the first
+  (they make names in one folder), and showed a line running past the
+  card, fixed.

@@ -341,6 +341,8 @@ struct Begun {
     seq: u64,
     /// A plan's title, which Undo names while it runs.
     title: Option<String>,
+    /// What it is called, an undo's or a redo's too (`Executor::waiting`).
+    named: String,
     footprint: Arc<Footprint>,
     adds: Direction,
     /// Its entry, an undo's or a redo's: no other takes it.
@@ -368,6 +370,31 @@ struct Lane {
 
 /// Plans run at once at most (ADR-079).
 pub const AT_ONCE: usize = 4;
+
+/// An action waiting its turn, and what for (ADR-079, 12).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Waiting {
+    /// Its title: a plan's, or "undo …" and "redo …".
+    pub named: String,
+    pub waits_for: WaitsFor,
+}
+
+/// What an action waiting its turn waits for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WaitsFor {
+    /// An action asked before it that touches what it does, by its title.
+    Action(String),
+    /// A heavy action on one of its disks.
+    Disk,
+    /// A heavy action on its server.
+    Server,
+    /// One of the [`AT_ONCE`] running to end.
+    Room,
+    /// It cannot say what it touches: every action asked before it.
+    Everything,
+    /// Nothing more: what it touches is being worked out, or it starts.
+    Starting,
+}
 
 /// How often steps' events may wake the window: as often as bytes do.
 const STEP_WAKE: Duration = Duration::from_millis(100);
@@ -1037,6 +1064,91 @@ impl Executor {
             .collect()
     }
 
+    /// The actions waiting their turn, in the order asked, each with what
+    /// it waits for (ADR-079, 12), as `admit` would find it now.
+    pub fn waiting(&self) -> Vec<Waiting> {
+        let lane = self.lane.lock();
+        let mut out = Vec::new();
+        for (i, job) in lane.queue.iter().enumerate() {
+            let waits_for = match job.footprint.as_deref() {
+                _ if job.cancel.is_cancelled() => WaitsFor::Starting,
+                None => match &job.work {
+                    // An undo or a redo waits for the plan asked before it
+                    // that may put its entry there.
+                    Work::Replay(_) => lane
+                        .queue
+                        .iter()
+                        .take(i)
+                        .map(|j| (j.seq, self.named(j)))
+                        .chain(lane.started.iter().map(|b| (b.seq, b.named.clone())))
+                        .max_by_key(|(seq, _)| *seq)
+                        .map_or(WaitsFor::Starting, |(_, named)| WaitsFor::Action(named)),
+                    Work::Execute { .. } => WaitsFor::Starting,
+                },
+                Some(footprint) if footprint.is_every() => WaitsFor::Everything,
+                Some(footprint) => {
+                    // The earliest asked it meets, running or waiting.
+                    let met = lane
+                        .started
+                        .iter()
+                        .map(|b| (b.seq, Some(&*b.footprint), b.named.clone()))
+                        .chain(
+                            lane.queue
+                                .iter()
+                                .take(i)
+                                .map(|j| (j.seq, j.footprint.as_deref(), self.named(j))),
+                        )
+                        .filter(|(_, other, _)| other.is_none_or(|o| o.conflicts(footprint)))
+                        .min_by_key(|(seq, _, _)| *seq);
+                    let heavy = footprint.is_heavy().then(|| {
+                        lane.started
+                            .iter()
+                            .map(|b| &*b.footprint)
+                            .chain(
+                                lane.queue
+                                    .iter()
+                                    .take(i)
+                                    .filter_map(|j| j.footprint.as_deref()),
+                            )
+                            .find(|o| o.is_heavy() && o.shares_channel(footprint))
+                    });
+                    match (met, heavy.flatten()) {
+                        (Some((_, _, named)), _) => WaitsFor::Action(named),
+                        (None, Some(other)) if other.shares_a_server(footprint) => WaitsFor::Server,
+                        (None, Some(_)) => WaitsFor::Disk,
+                        (None, None) if lane.started.len() >= AT_ONCE => WaitsFor::Room,
+                        (None, None) => WaitsFor::Starting,
+                    }
+                }
+            };
+            out.push(Waiting {
+                named: self.named(job),
+                waits_for,
+            });
+        }
+        out
+    }
+
+    /// What `job` is called: its plan's title, or "undo …" and "redo …"
+    /// with its entry's, once known.
+    fn named(&self, job: &Job) -> String {
+        let direction = match &job.work {
+            Work::Execute { plan, .. } => return plan.title.clone(),
+            Work::Replay(direction) => *direction,
+        };
+        let verb = match direction {
+            Direction::Undo => "undo",
+            Direction::Redo => "redo",
+        };
+        let entry = job.target.and_then(|stacked| {
+            let mut journal = self.journal.lock();
+            let stack = journal.stack(direction);
+            let entry = stack.iter().find(|e| e.stacked == stacked)?;
+            Some(entry.title.clone())
+        });
+        entry.map_or_else(|| verb.to_owned(), |title| format!("{verb} {title}"))
+    }
+
     /// Whether a plan, an undo or a redo runs or waits its turn.
     pub fn is_busy(&self) -> bool {
         let lane = self.lane.lock();
@@ -1236,9 +1348,11 @@ impl Executor {
                 Work::Replay(direction) => (Some(*direction), None),
                 Work::Execute { plan, .. } => (None, Some(plan.title.clone())),
             };
+            let named = self.named(&job);
             lane.started.push(Begun {
                 seq: job.seq,
                 title,
+                named,
                 footprint: job.footprint.clone().unwrap_or_default(),
                 adds: job.work.adds(),
                 target: direction.zip(job.target),
@@ -2199,6 +2313,48 @@ mod tests {
         assert!(!log.lock().iter().any(|l| l == "began /servers/one/videos"));
         up.opened();
         assert!(logged(&log, "ended /servers/one/videos"));
+    }
+
+    /// What waits says what for: one that meets a running plan names it;
+    /// a heavy one on the same server says the server (ADR-079, 12).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn what_waits_says_what_it_waits_for() {
+        crate::fs::reach::pretend_remote(Path::new("/servers/one"));
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let up = Gate::new("/servers/one/a/photos", true, false, &log);
+        executor.execute(up.plan(), CancelToken::new());
+        assert!(logged(&log, "began /servers/one/a/photos"));
+        let inside = Gate::new("/servers/one/a/photos/it's 1.jpg", false, true, &log);
+        executor.execute(inside.plan(), CancelToken::new());
+        let other = Gate::new("/servers/one/b/videos", true, true, &log);
+        executor.execute(other.plan(), CancelToken::new());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let waiting = loop {
+            let waiting = executor.waiting();
+            if waiting.iter().all(|w| w.waits_for != WaitsFor::Starting)
+                || Instant::now() > deadline
+            {
+                break waiting;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(
+            waiting,
+            [
+                Waiting {
+                    named: "/servers/one/a/photos/it's 1.jpg".into(),
+                    waits_for: WaitsFor::Action("/servers/one/a/photos".into()),
+                },
+                Waiting {
+                    named: "/servers/one/b/videos".into(),
+                    waits_for: WaitsFor::Server,
+                },
+            ]
+        );
+        up.opened();
+        assert!(logged(&log, "ended /servers/one/b/videos"));
     }
 
     /// Undo takes the last plan asked: one ended, beside a heavy plan it

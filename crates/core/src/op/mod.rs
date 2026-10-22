@@ -45,9 +45,11 @@ pub use builtin::{
 };
 pub use context::{Cancelled, StepContext, Unanswered};
 pub use entry_ref::{EntryArg, EntryRef, ResolveError};
+/// The plans, undos and redos that run at once at most (ADR-079).
+pub use executor::AT_ONCE as ACTIONS_AT_ONCE;
 pub use executor::{
     ChangeObserver, ExecEvent, ExecResult, Executor, JournalEntry, Progress, RunKind, SecretAsker,
-    Transfer, Verdict,
+    Transfer, Verdict, Waiting, WaitsFor,
 };
 pub use order::{RenameOrderError, RenameRequest, order_renames};
 pub use staging::Staging;

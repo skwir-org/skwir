@@ -95,8 +95,10 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   a partition its disk), a remote by its mount, a volume kept in memory
   by its own; a volume whose disks cannot be told (all of them on macOS
   and Windows, a ZFS pool) meets every disk. Two plans making names
-  in one folder meet. What waits says so on the first bar, each running
-  plan has its own; a paused plan keeps what it holds. The journal keeps
+  in one folder meet. Each running plan has its bar; what waits is
+  listed under them, each saying what it waits for (`Executor::waiting`:
+  an action asked before it that it meets, by its title; the disk; the
+  server; one of the four to end); a paused plan keeps what it holds. The journal keeps
   the order asked (`JournalEntry::seq`): Undo takes the last plan asked,
   waiting while it runs (`Executor::undo_target`, which the status bar
   names), and a plan asked after an undo drops its redo. A step's

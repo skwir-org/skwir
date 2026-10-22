@@ -184,7 +184,9 @@ one lane (`op::executor`) and operations.md's "Running".
    run alone. Footprints are worked out on a thread of their own, never
    the window's. Deviation: questions from plans running at once are
    asked one at a time in the order they come, not the order the plans
-   were asked.
+   were asked. What waits was a count on the first bar until 2026-10-22,
+   when the actions waiting were listed under the cards, each with what
+   it waits for (12), as decided.
 2. Channels: heavy actions on different disks and servers at once.
    **Built** 2026-10-22 (STATUS-LOG). On Linux a volume's disks come
    from sysfs (its device, or for btrfs the device mounted); a volume

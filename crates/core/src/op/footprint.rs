@@ -214,6 +214,15 @@ impl Footprint {
                 .any(|mine| other.channels.iter().any(|theirs| mine.meets(theirs)))
     }
 
+    /// Whether the channel two heavy ones share is a server's (else a
+    /// disk of this machine's, or one not told): what a waiting one says
+    /// it waits for.
+    pub fn shares_a_server(&self, other: &Footprint) -> bool {
+        self.channels.iter().any(|mine| {
+            matches!(mine, Channel::Remote(_)) && other.channels.iter().any(|t| mine.meets(t))
+        })
+    }
+
     /// What `self` and `other` touch together.
     pub fn merge(&mut self, other: Footprint) {
         self.reads.extend(other.reads);
