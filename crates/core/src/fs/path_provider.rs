@@ -179,6 +179,62 @@ fn gone_after(
     (kept, gone)
 }
 
+/// `event` as `names` holds it now: an entry no longer the one its name
+/// holds is not added (nor updated), an id that is again is not removed,
+/// and a rename whose ends changed since is what is left of it. Sent under
+/// the names' lock (`Shared::send_as_now`), each worker's events leave in
+/// the order of what it did to the names, whatever order the workers end
+/// in.
+fn as_now(names: &Names, event: ListingEvent) -> Vec<ListingEvent> {
+    let current = |id: &EntryId| names.by_id.contains_key(id);
+    let some = |event: ListingEvent, empty: bool| if empty { None } else { Some(event) };
+    match event {
+        ListingEvent::Added(mut batch) => {
+            batch.retain(|e| current(&e.id));
+            let empty = batch.is_empty();
+            some(ListingEvent::Added(batch), empty)
+                .into_iter()
+                .collect()
+        }
+        ListingEvent::Updated(mut batch) => {
+            batch.retain(|e| current(&e.id));
+            let empty = batch.is_empty();
+            some(ListingEvent::Updated(batch), empty)
+                .into_iter()
+                .collect()
+        }
+        ListingEvent::Removed(mut ids) => {
+            ids.retain(|id| !current(id));
+            let empty = ids.is_empty();
+            some(ListingEvent::Removed(ids), empty)
+                .into_iter()
+                .collect()
+        }
+        ListingEvent::Renamed(pairs) => {
+            let (mut renamed, mut added, mut removed) = (Vec::new(), Vec::new(), Vec::new());
+            for (old, new) in pairs {
+                match (current(&old), current(&new.id)) {
+                    (false, true) => renamed.push((old, new)),
+                    (true, true) => added.push(new),
+                    (false, false) => removed.push(old),
+                    (true, false) => {}
+                }
+            }
+            let (no_removed, no_renamed, no_added) =
+                (removed.is_empty(), renamed.is_empty(), added.is_empty());
+            [
+                some(ListingEvent::Removed(removed), no_removed),
+                some(ListingEvent::Renamed(renamed), no_renamed),
+                some(ListingEvent::Added(added), no_added),
+            ]
+            .into_iter()
+            .flatten()
+            .collect()
+        }
+        other => vec![other],
+    }
+}
+
 /// An open directory.
 pub struct PathLocation {
     location: Location,
@@ -346,6 +402,20 @@ pub fn wait_let_go(path: &Path, at_most: Duration) -> bool {
 }
 
 impl Shared {
+    /// Send what an entry event says, as the names hold it now, under
+    /// their lock (`as_now`). The listing, the watcher's changes and
+    /// hydration run at once (two at a time in a remote's lane): each
+    /// changes the names under the lock and sends after, so without it one
+    /// worker's events could reach the pane after another's that changed
+    /// the names later, and a name keep two rows where a FUSE program
+    /// numbers its file anew (sshfs). False when no one listens.
+    fn send_as_now(&self, event: ListingEvent) -> bool {
+        let names = self.names.lock();
+        as_now(&names, event)
+            .into_iter()
+            .all(|event| self.tx.send(event))
+    }
+
     fn dir(&self) -> PathBuf {
         self.dir.read().clone()
     }
@@ -405,7 +475,7 @@ impl Shared {
             batch.push(entry);
             if batch.len() >= self.ctx.batch_size {
                 let full = std::mem::replace(&mut batch, Vec::with_capacity(self.ctx.batch_size));
-                if !self.tx.send(ListingEvent::Added(full)) {
+                if !self.send_as_now(ListingEvent::Added(full)) {
                     return;
                 }
             }
@@ -413,7 +483,7 @@ impl Shared {
         if cancel.is_cancelled() {
             return;
         }
-        if !batch.is_empty() && !self.tx.send(ListingEvent::Added(batch)) {
+        if !batch.is_empty() && !self.send_as_now(ListingEvent::Added(batch)) {
             return;
         }
         let (kept, gone) = gone_after(previous, &seen, replaced);
@@ -431,7 +501,7 @@ impl Shared {
                 names.remove_id(*id);
             }
             drop(names);
-            self.tx.send(ListingEvent::Removed(gone));
+            self.send_as_now(ListingEvent::Removed(gone));
         }
         self.listed
             .store(true, std::sync::atomic::Ordering::Release);
@@ -505,15 +575,15 @@ impl Shared {
         let dir = self.dir();
         if !updated.is_empty() {
             self.fill(&dir, &mut updated);
-            self.tx.send(ListingEvent::Updated(updated));
+            self.send_as_now(ListingEvent::Updated(updated));
         }
         gone.extend(stale);
         if !gone.is_empty() {
-            self.tx.send(ListingEvent::Removed(gone));
+            self.send_as_now(ListingEvent::Removed(gone));
         }
         if !rekeyed.is_empty() {
             self.fill(&dir, &mut rekeyed);
-            self.tx.send(ListingEvent::Added(rekeyed));
+            self.send_as_now(ListingEvent::Added(rekeyed));
         }
     }
 
@@ -538,7 +608,7 @@ impl Shared {
     fn lose_self(&self) {
         let ids = std::mem::take(&mut *self.names.lock()).ids();
         if !ids.is_empty() {
-            self.tx.send(ListingEvent::Removed(ids));
+            self.send_as_now(ListingEvent::Removed(ids));
         }
         self.tx.send(ListingEvent::Error(
             "This folder was deleted or is no longer available.".into(),
@@ -626,19 +696,18 @@ impl Shared {
         // its selection.
         let mut renamed = renames(&mut removed, &mut added);
         if !removed.is_empty() {
-            self.tx.send(ListingEvent::Removed(removed));
+            self.send_as_now(ListingEvent::Removed(removed));
         }
         // Changed entries arrive stat-ed; give providers their turn so
         // fields such as tags survive the update.
         if !renamed.is_empty() {
             let (olds, mut news): (Vec<EntryId>, Vec<Entry>) = renamed.drain(..).unzip();
             self.fill(&self.dir(), &mut news);
-            self.tx
-                .send(ListingEvent::Renamed(olds.into_iter().zip(news).collect()));
+            self.send_as_now(ListingEvent::Renamed(olds.into_iter().zip(news).collect()));
         }
         if !added.is_empty() {
             self.fill(&self.dir(), &mut added);
-            self.tx.send(ListingEvent::Added(added));
+            self.send_as_now(ListingEvent::Added(added));
         }
     }
 }
@@ -775,5 +844,70 @@ mod tests {
         // An id seen under another name stays.
         let (_, gone) = gone_after(Some(vec![]), &[added_since], vec![added_since]);
         assert!(gone.is_empty());
+    }
+
+    /// The pane's rows after `events`, from `rows`.
+    fn shown(mut rows: Vec<EntryId>, events: Vec<ListingEvent>) -> Vec<EntryId> {
+        for event in events {
+            match event {
+                ListingEvent::Added(batch) => {
+                    for e in batch {
+                        if !rows.contains(&e.id) {
+                            rows.push(e.id);
+                        }
+                    }
+                }
+                ListingEvent::Removed(ids) => rows.retain(|id| !ids.contains(id)),
+                ListingEvent::Renamed(pairs) => {
+                    for (old, new) in pairs {
+                        rows.retain(|id| *id != old);
+                        rows.push(new.id);
+                    }
+                }
+                _ => {}
+            }
+        }
+        rows
+    }
+
+    #[test]
+    fn workers_ending_out_of_order_leave_a_name_one_row() {
+        let folder = FileId::new(1, 2);
+        let name = OsStr::new("a folder");
+        let id = |ino| EntryId::in_folder(FileId::new(1, ino), folder, name);
+        let entry = |id| Entry::new(id, name, EntryKind::Directory);
+        let (shown_first, by_watcher, by_listing) = (id(20), id(21), id(22));
+        let mut names = Names::default();
+        names.insert(shown_first, name.into());
+        // The watcher stats it anew (sshfs numbered it 21) and notes so;
+        // before it sends, a refresh's listing finds it as 22, sends that
+        // and what the name held before; then the watcher sends.
+        let stale = names.insert(by_watcher, name.into());
+        assert_eq!(stale, Some(shown_first));
+        let replaced = names.insert(by_listing, name.into());
+        assert_eq!(replaced, Some(by_watcher));
+        let mut events = as_now(&names, ListingEvent::Added(vec![entry(by_listing)]));
+        events.extend(as_now(&names, ListingEvent::Removed(vec![by_watcher])));
+        events.extend(as_now(&names, ListingEvent::Removed(vec![shown_first])));
+        events.extend(as_now(&names, ListingEvent::Added(vec![entry(by_watcher)])));
+        assert_eq!(
+            shown(vec![shown_first], events),
+            [by_listing],
+            "one name, one row"
+        );
+
+        // A rename whose new end went since is its old end's removal; one
+        // whose old end came back is the new end's arrival.
+        let (old, new) = (id(30), id(31));
+        let pairs = || ListingEvent::Renamed(vec![(old, entry(new))]);
+        let events = as_now(&names, pairs());
+        assert!(matches!(&events[..], [ListingEvent::Removed(ids)] if *ids == [old]));
+        names.insert(old, "old".into());
+        names.insert(new, "new".into());
+        let events = as_now(&names, pairs());
+        assert!(matches!(&events[..], [ListingEvent::Added(batch)] if batch[0].id == new));
+        names.remove_id(old);
+        let events = as_now(&names, pairs());
+        assert!(matches!(&events[..], [ListingEvent::Renamed(pairs)] if pairs[0].0 == old));
     }
 }

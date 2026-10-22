@@ -107,7 +107,12 @@ ADR-077 (which revises ADR-021).
   to before (`path_provider::gone_after`), not only those its refresh
   noted when asked; a file the watcher added meanwhile, numbered anew by
   its FUSE program since (sshfs, once the kernel forgot it), would
-  otherwise stay beside the new one.
+  otherwise stay beside the new one. And a folder's workers (its listing,
+  the watcher's changes, hydration: two at once in a remote's lane) send
+  what they did to its names under the names' lock, as the names hold it
+  then (`Shared::send_as_now`): sent after the lock, one worker's events
+  reached the pane after another's that changed the names later, and a
+  name kept two rows.
 - What is kept beyond the mount (the cache: fields, positions, converted
   previews) never knows a file by a made-up identity: by its path
   (`FileId::kept_as`, where `FileId::lasts` says no), as thumbnails are;

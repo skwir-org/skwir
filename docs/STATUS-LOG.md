@@ -3227,3 +3227,28 @@ and fix bug or problems you encounter on the way". This is the first.
   four KIO tests pass; 8 runs of them pass undelayed.
 - Not tried: KWallet (kwalletd is not on the private bus), a Plasma
   session's own kio-fuse.
+
+## One name, one row: a folder's events in the order of its names (2026-10-22)
+
+- The full gate's remote-check failed once on
+  `copies_on_a_server_are_undone_and_deleted_together`: over sshfs the
+  pane listed "a folder" twice for 10 s, after "one name, one row"
+  (f2efde4c) was meant to make that impossible. A second sighting: the
+  invariant was broken elsewhere. A folder's listing, the watcher's
+  changes and hydration change its names under a lock and sent their
+  events after it, and a remote's lane runs two of them at once: the
+  watcher noted the folder anew (sshfs numbered it 21), a refresh's
+  listing then found it as 22 and sent 22 and the removal of 21, and the
+  watcher's late sends removed the first id and added 21 again.
+- Now each entry event is sent under the names' lock, as they hold it
+  then (`as_now`: what is no longer a name's is not added, what is again
+  is not removed, a rename whose ends changed is what is left of it), so
+  the pane follows the names in the order they changed. Tested by
+  replaying that interleaving against a model of the pane's rows (it
+  fails with the events passed through unchanged); the race itself was
+  not reproduced on demand.
+- The rest of the gate, the same run: lint-all (check-cross included),
+  deny, notices-check, the whole workspace's 1946 tests, smoke, a11y-check,
+  poppler, mupdf and djvu checks, bench-check and release-tools-check
+  passed; remote-check stopped at that failure (67 of 68), before its NFS,
+  AFP and keyring parts.

@@ -1342,10 +1342,6 @@ protocol is a scheme a connector maps, or a connector.
     dialogs tried in a window: passwords, certificates); a copy refused
     at close leaves its staging folder where the server keeps an entry
     of the refused upload (rclone's did): not seen swept;
-  - a refresh racing the watcher where a FUSE program makes numbers
-    anew (sshfs) listed a name twice once: the listing now removes what
-    a name held before (one name, one row); the race itself not
-    reproduced;
   - an iPhone's (AFC) and a camera's (gPhoto2) GVfs mounts, not
     measured, at the bridge's pace;
   - Automatic's Small files where reads proved fast (only the local
