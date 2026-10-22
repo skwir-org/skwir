@@ -125,11 +125,14 @@ ADR-077 (which revises ADR-021).
   ten requests at once (libfuse's default, which it offers no option to
   change), a file down through it two round trips, where an `sftp`
   session gets one file after another, four each. For a mount of the
-  session's GVfs of SFTP, FTP, WebDAV, SMB or NFS, by eight `gio copy`
-  at once (`gio_copy`: `-i`, nothing on its input, so nothing is
-  replaced), what a server refused at once copied again by one; of AFP
-  the same up, within and removed, but down through its bridge, sixteen
-  files at once, which was faster (`gio_copy::Ways`). Else
+  session's GVfs of SFTP, FTP, WebDAV, SMB, NFS or a phone's MTP, by
+  eight `gio copy` at once (`gio_copy`: `-i`, nothing on its input, so
+  nothing is replaced), what a server refused at once copied again by
+  one; of AFP the same up, within and removed, but down through its
+  bridge, sixteen files at once, which was faster (`gio_copy::Ways`).
+  A file alone goes by `gio` where it was measured faster than the
+  bridge, which reads 128 KiB at a time (down from NFS and AFP, both
+  ways on MTP), by its step elsewhere. Else
   through the mount, eight files at a time, sixteen down. Within one
   mount: by `sftp`'s `cp` on an sshfs mount's server (the copy-data
   extension, asked once), each file then given its time through the
@@ -256,4 +259,12 @@ ADR-077 (which revises ADR-021).
   subordinate ids beside it), network, mount and pid, with a GVfs of its
   own: every process ends with them (`tools/test/gvfs-nfs-afp.sh`, which
   `just remote-check` runs). A copy of `/etc` there drops ownership: kept,
-  it lands on a subordinate id the user cannot remove.
+  it lands on a subordinate id the user cannot remove. unfs3 splits a
+  reply over 64 KiB into fragments, which GVfs's NFS client never reads:
+  a large file down from NFS is timed against NFS-Ganesha's in-memory
+  backend (it keeps a file's first 2 MiB), not tested.
+- A phone is written to only when someone runs `just mtp-check` with it
+  plugged in (`tools/test/gvfs-mtp.sh`): a GVfs of its own in user, mount
+  and pid namespaces, a folder of its own on the phone, removed after;
+  never on a phone plugged in that no one offered, and never through the
+  session's GVfs, which may hold it (one program at a time).

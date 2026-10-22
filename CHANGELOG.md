@@ -39,7 +39,8 @@
   and from a server go in batches through rsync, sftp or gio where those
   are faster, a large file comes down in several parts at once, a copy
   within one server is made on the server, and many files are deleted
-  there in one go. Undo of a copy works where a server keeps no trash:
+  there in one go. A phone plugged in over MTP takes and gives files two
+  to three times faster than before. Undo of a copy works where a server keeps no trash:
   what was made is removed, while it is unchanged.
 - **Actions at once**: a rename, a new folder or a tag no longer waits
   behind a long copy it shares nothing with, and copies between

@@ -138,8 +138,8 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   lane). A run's start never looks at a remote.
 - **A large file cut short (ADR-080).** A copy step that fails partway
   through a file it copies byte by byte from its start
-  (`StepContext::copying`; not a tree, a batch's tool or a file with
-  holes), having moved `KEEP_FROM` bytes, keeps it
+  (`StepContext::copying`; not a tree or a batch's tool; a file with
+  holes, written in order, too), having moved `KEEP_FROM` bytes, keeps it
   (`StepContext::keep_partial`): the plan's staging folder there leaves
   its context with its lock and notes (`staging::Partial`, held by the
   stopped plan), so no sweep takes it, and is removed with it when let
@@ -170,7 +170,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   folder's; sshfs serves ten requests at once). One file alone is left
   to its step, unless both folders are on one remote and a transfer
   serves them: it may copy there, where the step would bring the bytes
-  here and send them back. A batch takes only what
+  here and send them back; or a transfer takes a file alone faster than
+  the mount does (`Transfer::serves_alone`, measured: ADR-078, 16). A
+  batch takes only what
   its step would copy alike: a name of its own in the batch, no
   companion beside it, a tree of files of one name, folders
   and links, no kept attribute; never a move out of the trash or into
@@ -226,8 +228,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   (`StepContext::listing_remotes`) and find its sources ahead, eight at
   a time (`transfer::resolve_ahead`): a look at each would be a round
   trip to the server.
-- A mode a volume keeps none of (`ENOTSUP`: GVfs's WebDAV, FTP and SMB
-  through its bridge) is no failure of a copy (`sys::mode_kept`); its
+- A mode a volume keeps none of (`ENOTSUP`: GVfs's WebDAV, FTP, SMB and
+  MTP through its bridge) is no failure of a copy (`sys::mode_kept`), nor
+  of a staging folder's removal, which changes no mode it need not; its
   times are set as they can be. A volume of no size at all says nothing
   of its room (`fs::volume::free`), and room is asked only of a window
   shown: with none, nothing is copied.

@@ -88,6 +88,33 @@ fn partial_in(dest: &Path) -> PathBuf {
         .path()
 }
 
+/// 24 MiB as `source` has them, with a hole of 4 MiB from 10 MiB: a file
+/// copied stretch by stretch, its holes kept.
+fn source_with_a_hole() -> (tempfile::TempDir, PathBuf, Vec<u8>) {
+    let (dir, path, mut bytes) = source();
+    let hole = (10 * MIB) as usize..(14 * MIB) as usize;
+    bytes[hole.clone()].fill(0);
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .expect("source");
+    rustix::fs::fallocate(
+        &file,
+        rustix::fs::FallocateFlags::PUNCH_HOLE | rustix::fs::FallocateFlags::KEEP_SIZE,
+        hole.start as u64,
+        hole.len() as u64,
+    )
+    .expect("a hole");
+    (dir, path, bytes)
+}
+
+/// Whether the file at `path` has holes.
+fn has_holes(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::metadata(path).expect("there");
+    meta.blocks() * 512 < meta.len()
+}
+
 /// A copy cut short at 12 MiB, and what it left.
 fn cut_short(executor: &Executor, src: &Path, dest: &Path) -> (Plan, PathBuf) {
     let plan = copy_plan(src, dest);
@@ -197,4 +224,39 @@ fn a_copy_cut_short_that_does_not_match_starts_again() {
         std::fs::read(dest.join("it's big.bin")).expect("copied"),
         bytes
     );
+}
+
+/// A file with holes goes on as any: written in order, what it holds is
+/// the source's start, and its holes stay holes.
+#[test]
+fn a_copy_with_holes_cut_short_goes_on_from_where_it_stopped() {
+    let (_src_dir, src, bytes) = source_with_a_hole();
+    assert!(has_holes(&src));
+    let tmp = home_tempdir();
+    let dest = tmp.path().join("dest");
+    std::fs::create_dir(&dest).expect("dest");
+    let executor = Executor::new(Scheduler::new(2));
+    let (plan, partial) = cut_short(&executor, &src, &dest);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&partial)
+        .expect("partial")
+        .write_all_at(b"X", 0)
+        .expect("marked");
+
+    let r = executor
+        .retry_blocking(plan.id, &CancelToken::new())
+        .expect("retried");
+    assert_eq!((r.applied, r.error), (1, None));
+    let copy = dest.join("it's big.bin");
+    let copied = std::fs::read(&copy).expect("copied");
+    assert_eq!(copied[0], b'X', "gone on from what it had");
+    assert_eq!(copied[1..], bytes[1..]);
+    // Where the destination's volume keeps holes.
+    let probe = tmp.path().join("probe");
+    let file = std::fs::File::create(&probe).expect("probe");
+    file.set_len(MIB).expect("a hole");
+    if has_holes(&probe) {
+        assert!(has_holes(&copy), "its hole kept");
+    }
 }

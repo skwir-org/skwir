@@ -134,6 +134,17 @@ remote-check:
         --message-format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["rust-suites"]["skwir::remote_folders"]["binary-path"])')
     tools/test/gvfs-nfs-afp.sh "$binary"
 
+# A phone over MTP through a GVfs of the test's own (tools/test/gvfs-mtp.sh):
+# run on purpose alone, it writes to the phone plugged in (unlocked, in file
+# transfer mode), in a folder of its own that it removes after.
+mtp-check:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo nextest list -p skwir -E 'binary(remote_folders)' > /dev/null
+    binary=$(cargo nextest list -p skwir -E 'binary(remote_folders)' \
+        --message-format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["rust-suites"]["skwir::remote_folders"]["binary-path"])')
+    tools/test/gvfs-mtp.sh "$binary"
+
 # Exercise GStreamer playback using a synthetic two-track video and subtitles.
 media-check:
     cargo build -p skwir-media-worker

@@ -1305,12 +1305,15 @@ protocol is a scheme a connector maps, or a connector.
   heavy actions on different disks or servers at once, one at a time on
   each. A plan an error stopped is retried, one action in the history,
   a large file going on from what got across (ADR-080). GVfs's NFS
-  mounts go through `gio` every way, AFP's but down (measured).
+  mounts go through `gio` every way, AFP's but down (measured). Then
+  (the user's "tackle the not done points"): a phone's MTP through `gio`
+  every way, measured on a phone (`just mtp-check`); a file alone by
+  `gio` where it is faster than the bridge (down from NFS and AFP, both
+  ways on MTP: ADR-078, 16), a large file down from NFS measured against
+  NFS-Ganesha; a file with holes gone on from as any.
 - **G. Left** (each its own step):
-  - GVfs's device mounts (MTP) not measured, at the bridge's pace; a
-    large file down from NFS not measured (the test server fails it); a
-    lone large file down from AFP by `gio`, twice as fast as its bridge
-    (ADR-078, 15);
+  - an iPhone's (AFC) and a camera's (gPhoto2) GVfs mounts, not
+    measured, at the bridge's pace;
   - Automatic's Small files where reads proved fast (only the local
     network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);

@@ -1267,10 +1267,8 @@ fn copy_contents(
     pace: &Pace,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
-    if from == 0 && pace.is_at_once() && sys::is_sparse(meta) {
-        // Copied stretch by stretch, never gone on from.
-        ctx.not_copying();
-        return copy_sparse(sf, df, meta.len(), devices, ctx);
+    if pace.is_at_once() && sys::is_sparse(meta) {
+        return copy_sparse(sf, df, (from, meta.len()), devices, ctx);
     }
     if from > 0 {
         use std::io::Seek;
@@ -1321,18 +1319,20 @@ fn copy_contents(
     }
 }
 
-/// Copy a file's stretches of data, leaving its holes holes, then give
-/// the copy its length: its holes count as done.
+/// Copy a file's stretches of data from `start` (0, or where a
+/// copy cut short went to: written in order, it holds the source's start,
+/// its holes read as the source's), leaving its holes holes, then give
+/// the copy its length `len`: its holes count as done.
 fn copy_sparse(
     sf: &std::fs::File,
     df: &std::fs::File,
-    len: u64,
+    (start, len): (u64, u64),
     devices: Option<(u64, u64)>,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     #[cfg(unix)]
     use std::os::unix::fs::FileExt;
-    let mut at = 0;
+    let mut at = start;
     while let Some((data, hole)) = sys::next_data(sf, at)? {
         ctx.advance(data.saturating_sub(at));
         let mut from = data;

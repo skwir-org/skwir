@@ -175,11 +175,15 @@ fn hold(dir: &Path) -> Option<File> {
 
 /// Remove a staging tree. Its folders may already have a copy's read-only
 /// permissions: they are opened to their owner first, which is safe only
-/// in a tree of our own making.
+/// in a tree of our own making; one open already is left as it is, on a
+/// volume that keeps no modes (a phone's MTP through GVfs refuses any).
 pub(super) fn remove_tree(path: &Path) -> io::Result<()> {
     let metadata = std::fs::symlink_metadata(path)?;
     if metadata.is_dir() {
-        std::fs::set_permissions(path, sys::opened_to_owner(&metadata.permissions()))?;
+        let mode = metadata.permissions();
+        if !sys::open_to_owner(&mode) {
+            sys::mode_kept(std::fs::set_permissions(path, sys::opened_to_owner(&mode)))?;
+        }
         for entry in std::fs::read_dir(path)? {
             remove_tree(&entry?.path())?;
         }

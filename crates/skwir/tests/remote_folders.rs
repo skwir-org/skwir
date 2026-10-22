@@ -1512,39 +1512,104 @@ fn same_bytes(src: &Path, copy: &Path) {
     }
 }
 
+/// What a GVfs mount's kind takes by `gio` (`gio_copy::ways_of`) beside
+/// batches up, within and removals: batches down, a file alone up and
+/// down.
+#[derive(Clone, Copy)]
+struct ByGio {
+    down: bool,
+    alone_up: bool,
+    alone_down: bool,
+}
+
 /// GVfs's NFS and AFP mounts take by `gio` what it does better
-/// (2026-10-22): copies up, within a mount and removals, and copies down
-/// from NFS; down from AFP its bridge, sixteen files at once, was faster.
-/// Their servers (unfs3, netatalk) run as root: only in namespaces of
-/// their own, which a script makes and mounts through a GVfs of its own,
-/// naming the mounts' bridge folders in `SKWIR_TEST_GVFS_NFS` and
-/// `SKWIR_TEST_GVFS_AFP`; its runtime folder and bus are this process's
-/// (`XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`). Skipped elsewhere.
+/// (2026-10-22): copies up, within a mount and removals, copies down from
+/// NFS, and a file alone down from either; down from AFP its bridge,
+/// sixteen files at once, was faster. Their servers (unfs3, netatalk) run as root:
+/// only in namespaces of their own, which a script makes and mounts
+/// through a GVfs of its own, naming the mounts' bridge folders in
+/// `SKWIR_TEST_GVFS_NFS` and `SKWIR_TEST_GVFS_AFP`; its runtime folder
+/// and bus are this process's (`XDG_RUNTIME_DIR`,
+/// `DBUS_SESSION_BUS_ADDRESS`). Skipped elsewhere.
 #[test]
 fn gvfs_nfs_and_afp_take_by_gio_what_it_does_better() {
-    let (Some(nfs), Some(afp), Some(runtime)) = (
+    let (Some(nfs), Some(afp)) = (
         std::env::var_os("SKWIR_TEST_GVFS_NFS"),
         std::env::var_os("SKWIR_TEST_GVFS_AFP"),
-        std::env::var_os("XDG_RUNTIME_DIR"),
     ) else {
         eprintln!("skipped: no NFS and AFP mounted through GVfs by a script");
         return;
     };
+    let nfs_ways = ByGio {
+        down: true,
+        alone_up: false,
+        alone_down: true,
+    };
+    let afp_ways = ByGio {
+        down: false,
+        ..nfs_ways
+    };
+    takes_by_gio(
+        "gvfs-nfs-afp",
+        &[
+            (PathBuf::from(nfs), nfs_ways),
+            (PathBuf::from(afp), afp_ways),
+        ],
+    );
+}
+
+/// A phone's MTP takes by `gio` every way, a file alone too (2026-10-22,
+/// a phone on USB 2). Only where a script mounted a phone through a GVfs
+/// of its own and named a folder of its on the phone, which it removes
+/// after, in `SKWIR_TEST_GVFS_MTP` (`just mtp-check`): never a phone
+/// plugged in that no one offered. Skipped elsewhere.
+#[test]
+fn gvfs_mtp_takes_by_gio_every_way() {
+    let Some(phone) = std::env::var_os("SKWIR_TEST_GVFS_MTP") else {
+        eprintln!("skipped: no phone mounted over MTP through GVfs by a script");
+        return;
+    };
+    let ways = ByGio {
+        down: true,
+        alone_up: true,
+        alone_down: true,
+    };
+    takes_by_gio("gvfs-mtp", &[(PathBuf::from(phone), ways)]);
+}
+
+/// Copies up, down and within each of `mounts` (folders in GVfs's bridge,
+/// whose runtime folder is this process's `XDG_RUNTIME_DIR`), files in
+/// batches and a file alone, then removals: by `gio` where its ways say,
+/// through the bridge otherwise, the same bytes either way.
+fn takes_by_gio(name: &str, mounts: &[(PathBuf, ByGio)]) {
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").expect("the bridge's runtime folder");
     let gvfs = skwir_plugin_remote::gvfs::Gvfs {
         runtime: Some(PathBuf::from(runtime)),
         ..Default::default()
     };
     let gio = gvfs.gio_copy();
-    let base = fixture("gvfs-nfs-afp");
+    let base = fixture(name);
     let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
     app.transfers.register("test", gio.clone());
     let entries = small_files(&base.join("local"));
+    let file = entries.iter().find(|e| e.is_file()).unwrap().clone();
+    let mut names: Vec<_> = entries.iter().map(|e| e.file_name().unwrap()).collect();
+    names.sort();
+    // The copies alone: no staging folder left beside them.
+    let holds_the_copies = |folder: &Path| {
+        let mut there: Vec<_> = std::fs::read_dir(folder)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        there.sort();
+        assert_eq!(there, names, "{}", folder.display());
+    };
     // The script's servers outlive a run, its process numbers do not.
     let run = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    for (mount, down_by_gio) in [(PathBuf::from(nfs), true), (PathBuf::from(afp), false)] {
+    for (mount, ways) in mounts {
         let what = mount.display().to_string();
         let up = mount.join(format!("up-{run}"));
         std::fs::create_dir(&up).unwrap();
@@ -1555,6 +1620,7 @@ fn gvfs_nfs_and_afp_take_by_gio_what_it_does_better() {
         assert!(r.error.is_none(), "{what} up: {:?}", r.error);
         // In batches: the folder staged, the files placed.
         assert!(gio.made() > made, "{what}: up by gio");
+        holds_the_copies(&up);
         for e in &entries {
             same_bytes(e, &up.join(e.file_name().unwrap()));
         }
@@ -1570,14 +1636,48 @@ fn gvfs_nfs_and_afp_take_by_gio_what_it_does_better() {
             .executor
             .execute_blocking(&copies(&there, &down), app.lifetime());
         assert!(r.error.is_none(), "{what} down: {:?}", r.error);
-        assert_eq!(
-            gio.made() > before,
-            down_by_gio,
-            "{what}: down by gio or not"
-        );
+        assert_eq!(gio.made() > before, ways.down, "{what}: down by gio or not");
+        holds_the_copies(&down);
         for e in &entries {
             same_bytes(e, &down.join(e.file_name().unwrap()));
         }
+
+        // A file alone, up and down.
+        let one = mount.join(format!("one-{run}"));
+        std::fs::create_dir(&one).unwrap();
+        let before = gio.made();
+        let r = app
+            .executor
+            .execute_blocking(&copies(std::slice::from_ref(&file), &one), app.lifetime());
+        assert!(r.error.is_none(), "{what} one up: {:?}", r.error);
+        assert_eq!(
+            gio.made() > before,
+            ways.alone_up,
+            "{what}: one up by gio or not"
+        );
+        let sent = one.join(file.file_name().unwrap());
+        same_bytes(&file, &sent);
+        let one_down = base.join(format!("one-down-{}", gio.made()));
+        std::fs::create_dir(&one_down).unwrap();
+        let before = gio.made();
+        let r = app.executor.execute_blocking(
+            &copies(std::slice::from_ref(&sent), &one_down),
+            app.lifetime(),
+        );
+        assert!(r.error.is_none(), "{what} one down: {:?}", r.error);
+        assert_eq!(
+            gio.made() > before,
+            ways.alone_down,
+            "{what}: one down by gio or not"
+        );
+        same_bytes(&file, &one_down.join(file.file_name().unwrap()));
+        std::fs::remove_file(&sent).unwrap();
+        let left: Vec<_> = std::fs::read_dir(&one)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert!(left.is_empty(), "{what}: left beside the copy: {left:?}");
+        std::fs::remove_dir(&one).unwrap();
 
         let within = mount.join(format!("within-{run}"));
         std::fs::create_dir(&within).unwrap();
@@ -1587,6 +1687,7 @@ fn gvfs_nfs_and_afp_take_by_gio_what_it_does_better() {
             .execute_blocking(&copies(&there, &within), app.lifetime());
         assert!(r.error.is_none(), "{what} within: {:?}", r.error);
         assert!(gio.made() > before, "{what}: within by gio");
+        holds_the_copies(&within);
         for e in &entries {
             same_bytes(e, &within.join(e.file_name().unwrap()));
         }

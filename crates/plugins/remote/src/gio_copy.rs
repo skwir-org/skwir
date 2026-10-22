@@ -18,8 +18,22 @@
 //! 15.5, 4.1; within 15.5, 1.0 (its server copies); removed 4.3, 0.45–
 //! 0.50; but down 0.98 through the bridge, sixteen at once, against 1.87:
 //! AFP is not served down. A file of 64 MiB went up as fast either way.
-//! A phone's MTP, whose one session takes a file at a time, keeps the
-//! bridge, not measured.
+//!
+//! A file alone (2026-10-22): its step's own copy through the bridge
+//! (which would go on from a copy cut short, ADR-080) costs a batch of one
+//! as many round trips, but the bridge reads 128 KiB at a time, and AFP's
+//! and NFS's daemons serve a read at a time, so eight ranges at once are
+//! no faster. 64 MiB down from AFP: 11.5 s through the bridge, 11.3 in
+//! eight ranges, 5.6 by `gio`; from NFS (NFS-Ganesha in memory: unfs3
+//! splits a reply over 64 KiB, which GVfs's NFS client never reads), 11.5,
+//! 11.6–12.3, 5.6. Up, as fast either way: the step's own copy keeps it.
+//!
+//! A phone over MTP (a Pixel 5 on USB 2, twice): up 204–209 s through the
+//! bridge, 84–90 by eight `gio`; down 1.9–2.1, 0.84–0.90; within the
+//! phone 154–174, 58–60; removed 8.3–9.6, 5.4–7.2; a file of 64 MiB up
+//! 4.2–4.8, 2.5–2.7, down 6.8–8.2 (6.2–8.4 in eight ranges), 2.3–2.5:
+//! `gio` serves it every way, a file alone too. Its bridge keeps no modes
+//! (`chmod` is refused).
 //!
 //! `gio` maps a path of the bridge to its mount's address itself. With
 //! `-i` and nothing on its input it never replaces a file: without it,
@@ -49,32 +63,65 @@ const MOST: usize = 64;
 /// What `gio` serves of a GVfs mount of kind `kind` (module
 /// documentation).
 fn ways_of(kind: &str) -> Option<Ways> {
+    let all = Ways {
+        down: true,
+        alone_up: false,
+        alone_down: false,
+    };
     match kind {
-        "sftp" | "ftp" | "ftps" | "dav" | "smb-share" | "nfs" => Some(Ways::All),
-        "afp-volume" => Some(Ways::NotDown),
+        "sftp" | "ftp" | "ftps" | "dav" | "smb-share" => Some(all),
+        "nfs" => Some(Ways {
+            alone_down: true,
+            ..all
+        }),
+        "afp-volume" => Some(Ways {
+            down: false,
+            alone_down: true,
+            ..all
+        }),
+        "mtp" => Some(Ways {
+            alone_up: true,
+            alone_down: true,
+            ..all
+        }),
         _ => None,
     }
 }
 
-/// Whether a copy from a mount `gio` serves `from` into one it serves
-/// `into` (`None`: no mount of the bridge's, or a kind not served) is its,
-/// by the ways alone.
+/// Whether a batch of copies from a mount `gio` serves `from` into one
+/// it serves `into` (`None`: no mount of the bridge's, or a kind not
+/// served) is its, by the ways alone.
 fn takes(from: Option<Ways>, into: Option<Ways>) -> bool {
     match (from, into) {
-        (Some(ways), None) => ways == Ways::All,
+        (Some(ways), None) => ways.down,
         (None | Some(_), Some(_)) => true,
         (None, None) => false,
     }
 }
 
-/// What `gio` serves of a GVfs mount's kind.
+/// Whether a file alone, copied from a mount `gio` serves `from` onto
+/// this machine or up into one it serves `into`, is its. Within a mount,
+/// a file alone goes as a batch does (`takes`).
+fn takes_alone(from: Option<Ways>, into: Option<Ways>) -> bool {
+    match (from, into) {
+        (Some(ways), None) => ways.alone_down,
+        (None, Some(ways)) => ways.alone_up,
+        _ => false,
+    }
+}
+
+/// What `gio` serves of a GVfs mount's kind: copies up and within it and
+/// removals in it always.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Ways {
-    /// Copies up, down and within it, removals in it.
-    All,
-    /// All but copies down onto this machine: its bridge, sixteen files
-    /// at once, was faster (AFP).
-    NotDown,
+struct Ways {
+    /// Copies down onto this machine: not AFP's, whose bridge, sixteen
+    /// files at once, was faster.
+    down: bool,
+    /// A file alone up, faster than Skwir's own copy through the bridge
+    /// (MTP).
+    alone_up: bool,
+    /// A file alone down (NFS, AFP, MTP).
+    alone_down: bool,
 }
 
 /// `gio copy` and `gio move` through this session's GVfs.
@@ -124,6 +171,25 @@ impl GioCopy {
     /// Whether `path` is in a mount `gio` serves (module documentation).
     fn on_served(&self, path: &Path) -> bool {
         self.served(path).is_some()
+    }
+
+    /// Whether `gio` copies between `from` and `into`, served so: this
+    /// machine's own folders and a mount, or two folders of one mount,
+    /// whose daemon copies there, the bytes never through the bridge.
+    fn between(
+        &self,
+        from: &Path,
+        into: &Path,
+        ways_from: Option<Ways>,
+        ways_into: Option<Ways>,
+    ) -> bool {
+        match (ways_from, ways_into) {
+            (Some(_), None) => skwir_core::fs::reach::of(into).is_none(),
+            (None, Some(_)) => skwir_core::fs::reach::of(from).is_none(),
+            _ => self
+                .mount_of(from)
+                .is_some_and(|m| Some(m) == self.mount_of(into)),
+        }
     }
 
     /// The folder of the bridge the GVfs mount holding `path` is.
@@ -263,16 +329,14 @@ impl Transfer for GioCopy {
     fn serves(&self, from: &Path, into: &Path) -> bool {
         program().is_some() && {
             let (ways_from, ways_into) = (self.served(from), self.served(into));
-            takes(ways_from, ways_into)
-                && match (ways_from, ways_into) {
-                    (Some(_), None) => skwir_core::fs::reach::of(into).is_none(),
-                    (None, Some(_)) => skwir_core::fs::reach::of(from).is_none(),
-                    // Within one mount: its daemon copies there, the
-                    // bytes never through the bridge.
-                    _ => self
-                        .mount_of(from)
-                        .is_some_and(|m| Some(m) == self.mount_of(into)),
-                }
+            takes(ways_from, ways_into) && self.between(from, into, ways_from, ways_into)
+        }
+    }
+
+    fn serves_alone(&self, from: &Path, into: &Path) -> bool {
+        program().is_some() && {
+            let (ways_from, ways_into) = (self.served(from), self.served(into));
+            takes_alone(ways_from, ways_into) && self.between(from, into, ways_from, ways_into)
         }
     }
 
@@ -378,14 +442,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn nfs_is_served_every_way_and_afp_but_down() {
-        let (nfs, afp) = (ways_of("nfs"), ways_of("afp-volume"));
-        assert_eq!((nfs, afp), (Some(Ways::All), Some(Ways::NotDown)));
-        assert_eq!(ways_of("mtp"), None, "a phone keeps the bridge");
+    fn nfs_is_served_every_way_afp_but_down_and_a_file_alone_where_faster() {
+        let (nfs, afp, mtp) = (ways_of("nfs"), ways_of("afp-volume"), ways_of("mtp"));
+        assert_eq!(ways_of("afc"), None, "an iPhone keeps the bridge");
         // Up, down, within.
         assert!(takes(None, nfs) && takes(nfs, None) && takes(nfs, nfs));
         assert!(takes(None, afp) && !takes(afp, None) && takes(afp, afp));
+        assert!(takes(None, mtp) && takes(mtp, None) && takes(mtp, mtp));
         assert!(!takes(None, None));
+        // A file alone: up, down; within as a batch.
+        assert!(!takes_alone(None, nfs) && takes_alone(nfs, None));
+        assert!(!takes_alone(None, afp) && takes_alone(afp, None));
+        assert!(takes_alone(None, mtp) && takes_alone(mtp, None));
+        assert!(!takes_alone(mtp, mtp) && !takes_alone(None, None));
     }
 
     #[test]

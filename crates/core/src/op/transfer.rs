@@ -12,7 +12,11 @@
 //! connection sshfs holds), else by Skwir's own copy, eight files at a
 //! time ([`copy_at_once`]). Each step then runs as any: its check, its
 //! apply placing the copy made (`builtin::copy_staged`), its undo. A copy
-//! the batch did not take or finish is made by its step.
+//! the batch did not take or finish is made by its step. A file alone
+//! costs a batch as many round trips as its step: it goes in one within a
+//! remote, where a transfer copies it on the server, or by a transfer
+//! that takes a file alone faster than the mount
+//! ([`Transfer::serves_alone`]).
 //!
 //! A file or a link copied under its own name, which the destination's
 //! listing shows free, the batch places itself ([`Batched::Placed`]),
@@ -64,6 +68,17 @@ pub trait Transfer: Send + Sync {
     /// Asked of what is in memory (the mount table, what the plugin
     /// connected), never by reading a remote: on the plan's thread.
     fn serves(&self, from: &Path, into: &Path) -> bool;
+
+    /// Whether it copies a file alone from `from` into `into` faster than
+    /// Skwir's own copy through the mount, where a batch of one costs as
+    /// many round trips as its step: a mount whose bridge reads and writes
+    /// a little at a time (GVfs's AFP and MTP). Measured, never assumed.
+    /// Its step would go on from a copy cut short (ADR-080); a tool's
+    /// starts again. Asked as [`Transfer::serves`] is.
+    fn serves_alone(&self, from: &Path, into: &Path) -> bool {
+        let _ = (from, into);
+        false
+    }
 
     /// Copy the entries `names` of the folder `from` into the folder
     /// `into`, under the same names: folders whole, links as links, files'
@@ -205,12 +220,19 @@ impl Transfers {
         self.list.read().iter().map(|(_, t)| t.name()).collect()
     }
 
-    /// Those that serve the pair of folders, in the order registered.
-    fn serving(&self, from: &Path, into: &Path) -> Vec<Arc<dyn Transfer>> {
+    /// Those that serve the pair of folders, in the order registered: for
+    /// a file `alone`, those that take one ([`Transfer::serves_alone`]).
+    fn serving(&self, from: &Path, into: &Path, alone: bool) -> Vec<Arc<dyn Transfer>> {
         self.list
             .read()
             .iter()
-            .filter(|(_, t)| t.serves(from, into))
+            .filter(|(_, t)| {
+                if alone {
+                    t.serves_alone(from, into)
+                } else {
+                    t.serves(from, into)
+                }
+            })
             .map(|(_, t)| Arc::clone(t))
             .collect()
     }
@@ -316,20 +338,31 @@ pub(super) fn batch_ahead(
         let taken = takes(&from, &sources, ctx);
         // One file alone: as many round trips in a batch as by its step;
         // but within one remote, a transfer may copy it there, where its
-        // step would bring its bytes here and send them back.
+        // step would bring its bytes here and send them back; and one may
+        // take a file alone faster than a mount does.
+        let alone = is_alone(&taken);
         let within = crate::fs::reach::of(&from)
             .zip(crate::fs::reach::of(&dest))
             .is_some_and(|(a, b)| a.point == b.point)
             && ctx
                 .transfers()
-                .is_some_and(|t| !t.serving(&from, &dest).is_empty());
-        let worth = taken.len() > 1 || taken.iter().any(|t| t.folder) || within;
+                .is_some_and(|t| !t.serving(&from, &dest, false).is_empty());
+        let faster = alone
+            && ctx
+                .transfers()
+                .is_some_and(|t| !t.serving(&from, &dest, true).is_empty());
+        let worth = !alone || within || faster;
         if taken.is_empty() || !worth {
             continue;
         }
         batch(&from, &dest, &taken, ctx)?;
     }
     Ok(())
+}
+
+/// Whether a batch takes a file (or a link) alone: no folder, one entry.
+fn is_alone(taken: &[Taken]) -> bool {
+    matches!(taken, [one] if !one.folder)
 }
 
 /// Resolve ahead, [`AT_ONCE`] at a time, the sources of `steps` (copies
@@ -764,6 +797,8 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
     let (placed, staged): (Vec<&Taken>, Vec<&Taken>) = taken
         .iter()
         .partition(|t| t.stamp.is_some() && !t.renamed && !held.contains(&t.name));
+    // A file alone goes by a transfer that takes one (`batch_ahead`).
+    let alone = is_alone(taken);
     let advance = ctx.progress();
     let told = AtomicU64::new(0);
     let copied = |so_far: u64| {
@@ -777,7 +812,7 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
         if !staged.is_empty() {
             let into = staging.path().join(format!("batch-{name}"));
             std::fs::create_dir(&into)?;
-            run(from, &staged, &into, None, &copied, &|_| {}, ctx)?;
+            run(from, (&staged, alone), &into, None, &copied, &|_| {}, ctx)?;
             for t in &staged {
                 made_by_batch(t, Batched::Made(into.join(&t.name)));
             }
@@ -788,7 +823,7 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
             let said: Mutex<std::collections::HashSet<OsString>> = Mutex::default();
             let ran = run(
                 from,
-                &placed,
+                (&placed, alone),
                 dest,
                 Some(&temp),
                 &copied,
@@ -989,11 +1024,11 @@ pub(super) fn remove_deferred(ctx: &StepContext) -> anyhow::Result<()> {
 }
 
 /// Copy `taken` of `from` into `into` (with `temp`, beside what it
-/// holds) by a plugin's transfer that serves the two folders, else by
-/// Skwir's own.
+/// holds) by a plugin's transfer that serves the two folders (`alone`, a
+/// file alone: one that takes it), else by Skwir's own.
 fn run(
     from: &Path,
-    taken: &[&Taken],
+    (taken, alone): (&[&Taken], bool),
     into: &Path,
     temp: Option<&Path>,
     copied: &(dyn Fn(u64) + Sync),
@@ -1003,9 +1038,13 @@ fn run(
     let names: Vec<OsString> = taken.iter().map(|t| t.name.clone()).collect();
     let control = ctx.control();
     control.wait_while_paused();
+    // A file alone within one remote goes as a batch does.
+    let within = crate::fs::reach::of(from)
+        .zip(crate::fs::reach::of(into))
+        .is_some_and(|(a, b)| a.point == b.point);
     let serving = ctx
         .transfers()
-        .map(|t| t.serving(from, into))
+        .map(|t| t.serving(from, into, alone && !within))
         .unwrap_or_default();
     for transfer in serving {
         tracing::debug!(
@@ -1469,6 +1508,8 @@ mod tests {
         /// Removes moved originals ([`Transfer::removes`]), each batch's
         /// names said here.
         removals: Option<Arc<Mutex<Vec<Vec<OsString>>>>>,
+        /// Takes a file alone ([`Transfer::serves_alone`]).
+        alone: bool,
     }
 
     impl Transfer for Fake {
@@ -1477,6 +1518,9 @@ mod tests {
         }
         fn serves(&self, _: &Path, _: &Path) -> bool {
             true
+        }
+        fn serves_alone(&self, _: &Path, _: &Path) -> bool {
+            self.alone
         }
         fn removes(&self, _: &Path) -> bool {
             self.removals.is_some()
@@ -1558,6 +1602,7 @@ mod tests {
             cancels_after,
             touches: Mutex::default(),
             removals: None,
+            alone: false,
         });
         (executor, calls)
     }
@@ -1631,6 +1676,7 @@ mod tests {
             cancels_after: None,
             touches: Mutex::default(),
             removals: Some(Arc::clone(&removals)),
+            alone: false,
         });
         let r = executor.execute_blocking(&moves(&entries, &dest), &CancelToken::new());
         assert!(r.error.is_none(), "{:?}", r.error);
@@ -1676,6 +1722,7 @@ mod tests {
             cancels_after: None,
             touches: Mutex::default(),
             removals: Some(Arc::clone(removals)),
+            alone: false,
         })
     }
 
@@ -1776,6 +1823,7 @@ mod tests {
             cancels_after: None,
             touches: Mutex::new(Some(from.join("run.sh"))),
             removals: None,
+            alone: false,
         });
         let r = executor.execute_blocking(&moves(&entries, &dest), &CancelToken::new());
         let error = r.error.expect("the changed one stops the plan");
@@ -1885,6 +1933,39 @@ mod tests {
             same(e, &dest.join(e.file_name().unwrap()));
         }
         assert_eq!(names(&dest).len(), entries.len(), "nothing staged left");
+    }
+
+    /// A file alone goes by its step, its bytes through the mount; but by
+    /// a transfer that takes a file alone faster than the mount does.
+    #[test]
+    fn a_file_alone_goes_by_a_transfer_that_takes_one() {
+        let tmp = home_tempdir();
+        let entries = served(tmp.path());
+        let file = entries
+            .iter()
+            .find(|e| e.file_name().is_some_and(|n| n == "kept.txt"))
+            .unwrap();
+        crate::fs::reach::pretend_remote(&tmp.path().join("served"));
+        for alone in [false, true] {
+            let dest = tmp.path().join(format!("here {alone}"));
+            std::fs::create_dir(&dest).unwrap();
+            let calls = Arc::new(Mutex::new(Vec::new()));
+            let executor = executor_with(Fake {
+                calls: Arc::clone(&calls),
+                fails: false,
+                cancels: None,
+                cancels_after: None,
+                touches: Mutex::default(),
+                removals: None,
+                alone,
+            });
+            let plan = copies(std::slice::from_ref(file), &dest);
+            let r = executor.execute_blocking(&plan, &CancelToken::new());
+            assert!(r.error.is_none(), "{:?}", r.error);
+            assert_eq!(calls.lock().len(), usize::from(alone));
+            same(file, &dest.join("kept.txt"));
+            assert_eq!(names(&dest), ["kept.txt"], "nothing staged left");
+        }
     }
 
     #[test]

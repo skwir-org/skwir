@@ -48,8 +48,9 @@ asked).
    puts back each state.
 4. **A large file cut short is kept.** When a step fails partway
    through a file it copies byte by byte from its start into its
-   staging folder (a file alone, not one of a folder copied whole, a
-   tool's batch, or a file with holes), having moved at least 8 MiB
+   staging folder (a file alone, not one of a folder copied whole or a
+   tool's batch; a file with holes too, its stretches written in order,
+   its holes read back as the source's), having moved at least 8 MiB
    (`KEEP_FROM`: below, starting again costs little), what it wrote
    stays: the staging folder keeps its lock held and its notes, so no
    sweep takes it, and goes with the stopped plan, removed once the
@@ -73,8 +74,8 @@ asked).
   writes in the order asked.
 - Not gone on from: a file of a folder copied whole (its tree is staged
   together), a file a tool's batch was making (rsync, sftp, gio: it
-  starts again), a file with holes, Windows' system copy (it keeps no
-  partial of ours). No retry happens by itself when a server is back:
+  starts again; `gio` takes a file alone where faster, ADR-078, 16),
+  Windows' system copy (it keeps no partial of ours). No retry happens by itself when a server is back:
   the user, or an agent, asks.
 
 ## Built
@@ -82,4 +83,4 @@ asked).
 2026-10-22 (STATUS-LOG): Retry in the executor, the toast and the
 `retry` command; the partial kept and gone on from in Skwir's own copy.
 Checked against OpenSSH's server on this machine, stopped mid-file both
-ways.
+ways. Later that day, a file with holes too.

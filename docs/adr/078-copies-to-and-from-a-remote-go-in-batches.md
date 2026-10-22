@@ -189,6 +189,26 @@ mounted the folder.
     from NFS (unfs3 fails to send large replies to libnfs, GVfs's NFS
     client, which then hangs), a phone's MTP.
 
+16. **A file alone by gio where faster; a phone's MTP** (2026-10-22,
+    the user's "tackle the not done points", a Pixel 5 plugged in for
+    it). A file alone goes by its step, its bytes through the mount (and
+    on from a copy cut short, ADR-080), unless a transfer takes one
+    faster than the mount does (`Transfer::serves_alone`), measured, never
+    assumed: GVfs's bridge reads 128 KiB at a time, and AFP's and NFS's
+    daemons serve a read at a time, so eight ranges at once do not help.
+    64 MiB down, 20 ms, two rounds: AFP 11.5 s through the bridge, 5.6
+    by `gio` (15); NFS, against NFS-Ganesha's in-memory backend (unfs3
+    splits a reply over 64 KiB into fragments, which libnfs never reads),
+    11.5, 11.6–12.3 in ranges, 5.6. Up, alike either way (5.7–5.8 s):
+    the step's copy keeps it. A phone over MTP (USB 2, through a GVfs of
+    the test's own, two rounds): 100 files of 16 KiB up 204–209 s
+    through the bridge, 84–90 by eight `gio`; down 1.9–2.1, 0.84–0.90;
+    within the phone 154–174, 58–60; removed 8.3–9.6, 5.4–7.2; a 64 MiB
+    file up 4.2–4.8, 2.5–2.7, down 6.8–8.2, 2.3–2.5. So `gio` serves
+    MTP every way, a file alone too, and a file alone down from NFS and
+    AFP. A phone's bridge refuses any mode change: a staging folder
+    there is removed without one (it failed to before, and stayed).
+
 ## Consequences
 
 - Measured after, the same way (20 ms; load 8 to 61): a 256 MiB file
@@ -239,10 +259,10 @@ mounted the folder.
   mount): 100 files of 16 KiB moved down from Skwir's mount 1.09–1.22 s
   (2.77–3.03), a folder of 100 0.90–0.92 s (2.66–2.72); from an
   SFTP-only server 1.84–1.87 s (2.98–3.00) and 2.00–2.04 s (2.97–2.99).
-- Not yet: GVfs's devices (a phone's MTP), not measured, nor a large
-  file down from NFS; a lone large file down from AFP goes by its step
-  through the bridge, where `gio` took half the time (15);
-  rclone's mounts keep their own pace. Without a tool, a name made in a
+- A file alone that `gio` takes (16) is not gone on from when cut short
+  (ADR-080): it starts again. An iPhone's (AFC) and a camera's (gPhoto2)
+  GVfs mounts keep the bridge, not measured. rclone's mounts keep their
+  own pace. Without a tool, a name made in a
   folder through FUSE costs a round trip or two under its lock, whatever
   the way. An SFTP-only server's downloads go through sshfs, sixteen
   files at once from 2026-10-21 (eight before): sshfs serves ten

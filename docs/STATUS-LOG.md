@@ -2893,3 +2893,51 @@ and fix bug or problems you encounter on the way". This is the first.
   try, both copies into one folder, said the second waits for the first
   (they make names in one folder), and showed a line running past the
   card, fixed.
+
+### A phone's MTP and a file alone by gio; holes gone on from (ADR-078, 16; 2026-10-22)
+
+- The user plugged in a Pixel 5 for MTP and asked to tackle what was
+  left. Measured through a GVfs of this session's own (its bus and
+  runtime folder; never the session's, which had not mounted it), USB 2,
+  two rounds, 100 files of 16 KiB and one of 64 MiB, Skwir's way through
+  the bridge (eight at a time up and within, sixteen down, removed one
+  by one, a large file also in eight ranges) against eight `gio`: up
+  204.3/209.0 s and 84.1/90.4; down 1.92/2.06 and 0.84/0.90; within
+  153.9/173.9 and 58.2/60.3; removed 8.3/9.6 and 5.4/7.2; 64 MiB up
+  4.8/4.2 and 2.5/2.7, down 8.2/6.8 (ranges 8.4/6.2) and 2.5/2.3. The
+  same bytes each time. Round 2 was cut by the script's timeout after
+  its copies down and its rest run alone after (its bridge copy within
+  into a folder the cut run had begun).
+- A large file down from NFS: unfs3 rebuilt to offer 64 KiB reads hung
+  GVfs's NFS at 64 KiB as at 512 (60 KiB passed): a reply over 64 KiB is
+  sent in fragments (libtirpc's limit), which libnfs never reads. Against
+  NFS-Ganesha 15.7's in-memory backend in the same namespaces
+  (`allow_set_io_flusher_fail`, no bind address: the namespace resolves
+  no name), 20 ms, 64 MiB: up 5.76/5.73 s through the bridge, 5.77/5.77
+  by `gio`; down 11.50/11.46, in eight ranges 11.57/12.32, by `gio`
+  5.60/5.61. Ganesha keeps a file's first 2 MiB (more is not kept):
+  those came back the same, the sizes too.
+- Built: `Transfer::serves_alone` (a transfer that takes a file alone
+  faster than the mount: batched as one, else its step's copy, which a
+  retry goes on from); `gio_copy::Ways` with `alone_up`/`alone_down`:
+  MTP every way and a file alone both ways, a file alone down from NFS
+  and AFP. A file with holes cut short is kept and gone on from
+  (`builtin::copy_sparse` from where it stopped); `StepContext::not_copying`
+  went.
+- Found on the phone: a staging folder stayed beside every copy made
+  there: its removal opened each folder to its owner first, and the
+  bridge refuses any mode (`ENOTSUP`). It now changes a mode only where
+  it must, and a volume keeping none is no failure (`staging::remove_tree`).
+  The earlier NFS/AFP test removed the leftover with its folder; the
+  test now checks each destination holds the copies alone.
+- Checked: `just mtp-check` (new: `tools/test/gvfs-mtp.sh`, a GVfs of
+  its own in user, mount and pid namespaces, a folder of its own on the
+  phone, removed after) passed `gvfs_mtp_takes_by_gio_every_way` (copies
+  up, down, within, a file alone up and down, deletions; which by `gio`;
+  the bytes; nothing left beside the copies); the NFS/AFP namespace test
+  with a file alone each way; a core test of a file alone by a transfer
+  that takes one, and not by one that does not; a retry test of a file
+  with holes cut short at 12 MiB (gone on from, its hole kept); the
+  phone's folders removed after each run. Between runs the phone left
+  file transfer (USB showed debugging alone): the user set it again.
+

@@ -555,12 +555,6 @@ impl StepContext {
         });
     }
 
-    /// What a byte copy into `dst` may not be gone on from (a file with
-    /// holes, copied stretch by stretch).
-    pub(super) fn not_copying(&self) {
-        self.copying.borrow_mut().take();
-    }
-
     /// Before a step copies into its staging folder: nothing of an
     /// earlier step's is kept for it.
     pub(super) fn copy_begins(&self) {
