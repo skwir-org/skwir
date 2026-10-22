@@ -291,22 +291,26 @@ impl Address {
         self.port.filter(|p| Some(*p) != usual)
     }
 
-    /// What the user calls it: `me@host`, `photos on nas`, `gdrive`.
+    /// What the user calls it: `me@host`, `photos on nas`, `gdrive`; a
+    /// port not its scheme's usual one is said (`nas:8080`), so two
+    /// servers of one host are told apart.
     pub fn label(&self) -> String {
         let share = String::from_utf8_lossy(self.first_part()).into_owned();
+        let server = match self.effective_port() {
+            Some(port) => format!("{}:{port}", self.host),
+            None => self.host.clone(),
+        };
         match self.scheme {
-            Scheme::Smb | Scheme::Afp if !share.is_empty() => {
-                format!("{share} on {}", self.host)
-            }
+            Scheme::Smb | Scheme::Afp if !share.is_empty() => format!("{share} on {server}"),
             Scheme::Nfs if self.path != b"/" => {
                 let path = String::from_utf8_lossy(&self.path);
                 let name = path.trim_end_matches('/').rsplit('/').next().unwrap_or("");
-                format!("{name} on {}", self.host)
+                format!("{name} on {server}")
             }
             Scheme::Rclone => self.host.clone(),
             _ => match &self.user {
-                Some(user) => format!("{user}@{}", self.host),
-                None => self.host.clone(),
+                Some(user) => format!("{user}@{server}"),
+                None => server,
             },
         }
     }
@@ -523,6 +527,12 @@ mod tests {
         assert_eq!(a.first_part(), b"photos");
         assert_eq!(a.top().path, b"/photos/");
         assert_eq!(a.label(), "photos on nas");
+        // A port not the usual one is said; the usual one is not.
+        let label = |text: &str| Address::parse(text).unwrap().label();
+        assert_eq!(label("dav://127.0.0.1:8080/"), "127.0.0.1:8080");
+        assert_eq!(label("dav://127.0.0.1:80/"), "127.0.0.1");
+        assert_eq!(label("smb://nas:4450/photos"), "photos on nas:4450");
+        assert_eq!(label("sftp://me@[fe80::1]:2200/srv"), "me@[fe80::1]:2200");
         assert_eq!(a.to_string(), "smb://WORK;me@nas/photos/2024");
     }
 

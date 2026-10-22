@@ -3299,3 +3299,10 @@ and fix bug or problems you encounter on the way". This is the first.
   a sweep runs when the plugin asks its mounts whether they answer: as
   Skwir starts, after a connection is made or let go of, and on Refresh
   remote folders.
+- Two servers of one host (in the window trials, rclone's on two ports
+  of 127.0.0.1) were both "127.0.0.1" in the sidebar. A server's name
+  now says its port where it is not its scheme's usual one
+  (`Address::label`: `127.0.0.1:8080`, `photos on nas:4450`; `nas` for
+  port 80 over WebDAV), which the password question and GVfs's folders
+  share. Tested in `address.rs`; the remote folders' tests expecting the
+  bare host now expect the port (21 of 21 pass).

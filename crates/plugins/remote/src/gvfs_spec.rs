@@ -152,7 +152,11 @@ mod tests {
             spec.address().unwrap().to_string(),
             "sftp://me@example.com:2222/"
         );
-        assert_eq!(spec.label(), "me@example.com");
+        assert_eq!(
+            spec.label(),
+            "me@example.com:2222",
+            "its port not the usual one"
+        );
 
         let share = Spec::parse("smb-share:domain=WORK,server=nas,share=photos,user=me").unwrap();
         assert_eq!(

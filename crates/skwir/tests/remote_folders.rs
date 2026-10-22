@@ -163,7 +163,11 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
         .places
         .find(|p| p.group == "network" && p.location == Location::from_path(&remote.point))
         .expect("a Network place");
-    assert_eq!(place.title, "127.0.0.1", "named by its server");
+    assert_eq!(
+        place.title,
+        format!("127.0.0.1:{}", served.port),
+        "named by its server, its port not the usual one"
+    );
     assert!(place.eject.is_some());
 
     // Bookmarked, it is kept by its address, in the desktop's shared
@@ -2180,7 +2184,10 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
     );
     let recognised = gvfs.recognises(&remote).expect("GVfs's");
     assert_eq!(recognised.address, Some(address.top()));
-    assert_eq!(recognised.label, "tester@127.0.0.1");
+    assert_eq!(
+        recognised.label,
+        format!("tester@127.0.0.1:{}", served.port)
+    );
 
     // Copies to and from it in batches by `gio` (ADR-078): the folder
     // staged, the files placed beside; up, then down.
