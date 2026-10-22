@@ -299,21 +299,21 @@ fn the_items_are_read_whole_only_while_a_listing_shows_them() {
     let plugin = Arc::new(TrashPlugin::with_trashes(vec![trash.clone()]));
     app.plugins.add(plugin.clone(), &app);
     let state = Arc::clone(&plugin.trashes.state);
-    eventually("what it holds is read", || {
+    // The place is published after what it holds is noted (`publish`).
+    eventually("what it holds is read, and the place says so", || {
         state
             .lock()
             .held
             .as_ref()
             .is_some_and(|held| held.len() == 2)
+            && app
+                .registry
+                .places
+                .find(|p| p.title == "Trash")
+                .and_then(|p| p.icon)
+                == Some("user-trash-full".into())
     });
     assert!(state.lock().items.is_empty(), "no listing: no record read");
-    assert_eq!(
-        app.registry
-            .places
-            .find(|p| p.title == "Trash")
-            .and_then(|p| p.icon),
-        Some("user-trash-full".into())
-    );
     assert_eq!(plan(&app, "trash.empty", &serde_json::json!({})).len(), 2);
 
     let pane = app.workspace.read().active_id();

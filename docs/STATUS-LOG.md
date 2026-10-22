@@ -3262,3 +3262,10 @@ and fix bug or problems you encounter on the way". This is the first.
   now asks again while the mount is still there, five seconds at most,
   and a mount gone counts as let go of. The test reads that file while
   letting go (4 of 4 pass; 2 of 2 fail without the change).
+- The rerun after it: lint-all (check-cross included) and remote-check
+  whole (68 tests, NFS and AFP, the keyring's) passed; the workspace's
+  suite had one failure, 1946 of 1947: the trash plugin's
+  `the_items_are_read_whole_only_while_a_listing_shows_them` waited
+  until the plugin noted what the trash holds, then read the place's
+  icon at once, which `publish` replaces after letting go of its lock
+  (watches set up between). The test now waits for the icon too.
