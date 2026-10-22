@@ -21,6 +21,7 @@ pub mod kio;
 mod known;
 pub mod lan;
 mod mounter;
+pub mod passwords;
 mod provider;
 pub mod rclone;
 pub mod rsync;
@@ -47,7 +48,7 @@ use skwir_core::scheduler::Priority;
 use skwir_core::settings::SettingSpec;
 
 use crate::address::{Address, Scheme};
-use crate::connector::{Ask, Connector, Recognised, Server};
+use crate::connector::{Ask, Connector, Password, Recognised, Server};
 
 pub const ID: &str = "remote";
 
@@ -61,6 +62,9 @@ const DEVICES: &str = "devices";
 const CONNECTORS: &str = "remote.connectors";
 const THUMBNAILS: &str = "remote.thumbnails";
 const CHOSEN: &str = "remote.chosen";
+/// The servers whose password Skwir keeps in the keyring, by their key
+/// (`passwords::key`): never a password (ADR-082).
+const REMEMBERED: &str = "remote.remembered";
 
 /// The tools, in the order the user chose by default (2026-10-20: sshfs
 /// first for SFTP, then GVfs, rclone, the system's mounts), KIO after GVfs
@@ -122,6 +126,8 @@ pub struct Remotes {
     /// tabs restored on one server) waits for the first, then finds its
     /// mount, rather than asking the password twice and mounting twice.
     connecting: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    /// Where servers' passwords are kept, when asked (ADR-082).
+    keyring: Arc<dyn passwords::Keyring>,
 }
 
 impl Default for Remotes {
@@ -143,7 +149,41 @@ impl Remotes {
             connectors: Arc::new(connectors),
             state: Arc::default(),
             connecting: Arc::default(),
+            keyring: Arc::new(passwords::Desktop),
         }
+    }
+
+    /// The plugin keeping servers' passwords in `keyring` (a test's).
+    #[must_use]
+    pub fn with_keyring(mut self, keyring: Arc<dyn passwords::Keyring>) -> Self {
+        self.keyring = keyring;
+        self
+    }
+
+    /// Connect `address` through `connector`, its server's password
+    /// answered from the keyring first, what the user asked to remember
+    /// kept once it served (ADR-082).
+    fn connect_keyed(
+        &self,
+        app: &App,
+        connector: &Arc<dyn Connector>,
+        address: &Address,
+        ask: &Arc<dyn Ask>,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<connector::Connected> {
+        let keyed = Arc::new(passwords::Keyed::new(
+            Arc::clone(ask),
+            Arc::clone(&self.keyring),
+            address.top(),
+        ));
+        let asked: Arc<dyn Ask> = keyed.clone();
+        let connected = connector
+            .connect(address, &asked, cancel)
+            .map_err(|error| anyhow::anyhow!("{error:#}"))?;
+        if let Some(noted) = keyed.served() {
+            note_remembered(app, &noted);
+        }
+        Ok(connected)
     }
 
     fn lifetime(&self) -> Option<CancelToken> {
@@ -263,9 +303,7 @@ impl Remotes {
                     // A server kio-fuse holds, but maybe not this folder of
                     // it yet: asked for it.
                     Some(connector) if connector.mounts_each_path() => {
-                        let connected = connector
-                            .connect(address, ask, cancel)
-                            .map_err(|error| anyhow::anyhow!("{error:#}"))?;
+                        let connected = self.connect_keyed(app, connector, address, ask, cancel)?;
                         let below = connected.address.below(address).unwrap_or_default();
                         return Ok(join(&connected.point, below));
                     }
@@ -282,9 +320,7 @@ impl Remotes {
                 why_not.push(reason);
                 continue;
             }
-            let connected = connector
-                .connect(address, ask, cancel)
-                .map_err(|error| anyhow::anyhow!("{error:#}"))?;
+            let connected = self.connect_keyed(app, &connector, address, ask, cancel)?;
             reach::changed();
             let below = connected.address.below(address).unwrap_or_default();
             let path = join(&connected.point, below);
@@ -451,6 +487,7 @@ impl Remotes {
     fn publish(&self, app: &App, mounted: &[Mounted]) {
         let state = self.state.lock();
         let chosen: HashMap<String, String> = app.settings.get(CHOSEN).unwrap_or_default();
+        let remembered: Vec<String> = app.settings.get(REMEMBERED).unwrap_or_default();
         let default: String = app
             .settings
             .get(THUMBNAILS)
@@ -515,6 +552,9 @@ impl Remotes {
                 .map(|s| (*s).to_owned());
             place.space = state.space.get(point).copied();
             place.menu = thumbnail_items(&key, rule);
+            place
+                .menu
+                .extend(address.and_then(|a| forget_item(a, &remembered)));
             places.push(place);
         }
         for server in &state.servers {
@@ -534,6 +574,7 @@ impl Remotes {
                 .busy
                 .get(&server.address.to_string())
                 .map(|s| (*s).to_owned());
+            place.menu.extend(forget_item(&server.address, &remembered));
             places.push(place);
         }
         drop(state);
@@ -601,6 +642,46 @@ fn thumbnail_items(key: &str, rule: &str) -> Vec<skwir_core::registry::MenuItem>
     .collect()
 }
 
+/// The menu item that forgets the password Skwir keeps for `address`'s
+/// server, where it keeps one (`remembered`, ADR-082).
+fn forget_item(address: &Address, remembered: &[String]) -> Option<skwir_core::registry::MenuItem> {
+    let key = passwords::key(address, passwords::user_of(address).as_deref());
+    remembered.contains(&key).then(|| {
+        skwir_core::registry::MenuItem::new(
+            "place",
+            "Forget Password",
+            "",
+            530,
+            Invocation::new("remote.forget_password").with("server", key),
+        )
+    })
+}
+
+/// Note in the plugin's data that the server keyed in `noted` has a
+/// password of Skwir's kept, or no longer (ADR-082): its key alone.
+fn note_remembered(app: &App, noted: &passwords::Noted) {
+    let mut remembered: Vec<String> = app.settings.get(REMEMBERED).unwrap_or_default();
+    match noted {
+        passwords::Noted::Kept(key) if !remembered.contains(key) => remembered.push(key.clone()),
+        passwords::Noted::Forgot(key) => remembered.retain(|k| k != key),
+        passwords::Noted::Kept(_) => return,
+        passwords::Noted::NotKept(why) => {
+            app.notify(
+                NotifyLevel::Warning,
+                format!("The password was not remembered: {why}"),
+            );
+            return;
+        }
+    }
+    app.settings.set(
+        REMEMBERED,
+        toml::Value::Array(remembered.into_iter().map(toml::Value::String).collect()),
+    );
+    if let Err(error) = app.settings.save() {
+        tracing::warn!("which servers have a kept password was not saved: {error:#}");
+    }
+}
+
 /// Whether `error` says a FUSE program is gone (`ENOTCONN`).
 fn lost(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotConnected
@@ -646,6 +727,12 @@ struct DisconnectArgs {
     /// answer (what still uses it sees it gone).
     #[serde(default)]
     force: bool,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ForgetPasswordArgs {
+    /// The server, by its key (`smb://WORK;me@nas`), as its menu names it.
+    server: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -740,6 +827,11 @@ impl Plugin for RemotePlugin {
             "The thumbnails chosen for each remote, by its address",
             toml::Value::Table(toml::map::Map::new()),
         ));
+        app.settings.declare(SettingSpec::data(
+            REMEMBERED,
+            "The servers whose password is kept in the keyring, by their address",
+            toml::Value::Array(Vec::new()),
+        ));
         for scheme in Scheme::ALL {
             app.register_provider(
                 ID,
@@ -825,6 +917,43 @@ impl Plugin for RemotePlugin {
             },
         );
         let remotes = self.remotes.clone();
+        app.commands.register::<ForgetPasswordArgs, _>(
+            ID,
+            "remote.forget_password",
+            "Forget password",
+            "Remove from the keyring the password Skwir keeps for a server (never one another program kept)",
+            move |args, app| {
+                let remembered: Vec<String> = app.settings.get(REMEMBERED).unwrap_or_default();
+                anyhow::ensure!(
+                    remembered.contains(&args.server),
+                    "Skwir keeps no password for {}",
+                    args.server
+                );
+                let (remotes, weak) = (remotes.clone(), app.weak());
+                // The keyring may wait on its own window: on a worker.
+                app.scheduler.spawn(
+                    skwir_core::scheduler::Priority::Normal,
+                    "remote.forget_password",
+                    app.lifetime().child(),
+                    move || {
+                        let Some(app) = weak.upgrade() else { return };
+                        match remotes.keyring.forget(&args.server) {
+                            Ok(()) => {
+                                note_remembered(&app, &passwords::Noted::Forgot(args.server));
+                                app.notify(NotifyLevel::Info, "The password is forgotten");
+                            }
+                            Err(error) => app.notify(
+                                NotifyLevel::Error,
+                                format!("The password was not forgotten: {error:#}"),
+                            ),
+                        }
+                        remotes.refresh(&app);
+                    },
+                );
+                Ok(Outcome::Done)
+            },
+        );
+        let remotes = self.remotes.clone();
         app.commands
             .register::<skwir_core::command::NoArgs, _>(
                 ID,
@@ -842,7 +971,10 @@ impl Plugin for RemotePlugin {
     }
 
     fn on_settings_changed(&self, app: &App, keys: &[String]) {
-        if keys.iter().any(|k| k == THUMBNAILS || k == CHOSEN) {
+        if keys
+            .iter()
+            .any(|k| k == THUMBNAILS || k == CHOSEN || k == REMEMBERED)
+        {
             self.remotes.refresh(app);
         }
     }
@@ -943,11 +1075,41 @@ pub struct WindowAsk {
 
 impl Ask for WindowAsk {
     fn secret(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<String> {
+        self.asked(title, accept, false, cancel)
+            .map(|answer| answer.text)
+    }
+
+    fn password(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<Password> {
+        self.asked(title, accept, true, cancel)
+            .map(|answer| Password {
+                text: answer.text,
+                remember: answer.remember,
+            })
+    }
+
+    fn confirm(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool {
+        self.confirmed(title, detail, cancel)
+    }
+}
+
+impl WindowAsk {
+    /// Ask the window's masked prompt, offering Remember where `password`.
+    fn asked(
+        &self,
+        title: &str,
+        accept: &str,
+        password: bool,
+        cancel: &CancelToken,
+    ) -> Option<skwir_core::app::SecretAnswer> {
         let app = self.app.upgrade()?;
         if !app.window_shown() {
             return None;
         }
-        let (id, answer) = app.ask_secret(title, accept);
+        let (id, answer) = if password {
+            app.ask_password(title, accept)
+        } else {
+            app.ask_secret(title, accept)
+        };
         drop(app);
         loop {
             match answer.recv_timeout(LOOK) {
@@ -964,7 +1126,7 @@ impl Ask for WindowAsk {
         }
     }
 
-    fn confirm(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool {
+    fn confirmed(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool {
         let Some(app) = self.app.upgrade() else {
             return false;
         };

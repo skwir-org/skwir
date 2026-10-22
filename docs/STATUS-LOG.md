@@ -3078,3 +3078,43 @@ and fix bug or problems you encounter on the way". This is the first.
   beat eight copies through the mount). A copy refused as it was closed
   leaves its staging folder on the server (kio-fuse refuses to remove
   what it means to send again).
+
+## A server's password in the desktop's keyring (2026-10-22, ADR-082)
+
+- Built: the window's password question offers Remember for a server's
+  password (`App::ask_password`, a switch under the field, in the Tab
+  walk, Space turning it); a connection's password questions answered
+  from the keyring first (`passwords::Keyed`): Skwir's own record
+  (`skwir_platform::secrets`, `remote.passwords`), then GVfs's under
+  libsecret's network schema (`secrets::lookup_network`, read only, the
+  least specific first); kept once the connection served, Skwir's own
+  forgotten when refused and answered otherwise; the servers noted in
+  `remote.remembered`, Forget Password in their menus. A server's password
+  is told from a key's passphrase, a code and rclone's configuration's
+  (ssh's prompt names the login; GVfs's says no passphrase). rclone lists
+  an SMB, WebDAV or FTP server's top before mounting (its WebDAV mount
+  checks nothing: mounted without a password, a listing failed later),
+  given the keyring's password first, asked on a refusal (`401
+  Unauthorized`, FTP's `530`, `is it obscured` for FTP's empty one), the
+  password obscured by `rclone obscure -` through a pipe (the process
+  helper's input is a file), in `RCLONE_WEBDAV_PASS` and its kind's.
+- Found on the way: the private keyring is shared by every test of a
+  run (each names a server of its own), and a keyring item written with
+  replace removes those with more attributes (`create_item` matches as a
+  search does): GVfs's port-specific items stay.
+- Checked: core, UI, archives, platform and the remote plugin's tests
+  (1104 passed); in a private GNOME Keyring (`private-keyring.sh`, now in
+  `just remote-check`), Skwir's record in and out, GVfs's found by its
+  server, least specific first, another user's not; against servers on
+  this machine, rclone's WebDAV asking once through the window with
+  Remember offered, kept, connected again unasked, Forget Password, then
+  GVfs's kept password given unasked and never copied; sshfs's password
+  kept and the next connection answered by the keyring; GVfs's `gio
+  mount` the same. A window on a display of its own (Xvfb, the window's
+  connectors limited to rclone, no session bus): the prompt with its
+  switch, Tab then Space turning it on (a first try toggled nothing: the
+  click was the row's, not the switch's), Connect listing the folder, and
+  no keyring answering told in the log; the window now says it too.
+- Not tried: a keyring that asks to be unlocked (its own prompt), KWallet's
+  and KeePassXC's Secret Service, the Keychain and the Credential Manager
+  (compiled only), SMB through rclone (no Samba server here yet).

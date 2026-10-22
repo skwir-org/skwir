@@ -1,10 +1,17 @@
 //! rclone (ADR-077): the remotes of its configuration (`rclone://gdrive/`,
-//! seventy kinds of storage), and SFTP, SMB, WebDAV and FTP addresses it
-//! can open without a password of Skwir's (SFTP through the user's own
-//! ssh). Mounted so that a file written is on the server once closed
-//! (`--vfs-cache-mode minimal`: a file opened to write only goes straight
-//! up; one opened to read and write, as an editor does, is kept on the
-//! disk and sent after).
+//! seventy kinds of storage), and SFTP, SMB, WebDAV and FTP addresses
+//! (SFTP through the user's own ssh). Mounted so that a file written is on
+//! the server once closed (`--vfs-cache-mode minimal`: a file opened to
+//! write only goes straight up; one opened to read and write, as an editor
+//! does, is kept on the disk and sent after).
+//!
+//! A server's password (ADR-082): rclone cannot ask, and a WebDAV mount
+//! checks nothing until it is read. So an SMB, WebDAV or FTP address is
+//! listed once before it is mounted: with the password the keyring keeps,
+//! else none, and a refused login asks (`Ask::password`: GVfs's kept one,
+//! then the window), three times at most. rclone takes the password
+//! obscured (`rclone obscure -`, given it through a pipe) in its
+//! environment alone (`RCLONE_SMB_PASS`…), never on a command line.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -72,9 +79,17 @@ impl Connector for Rclone {
         let rclone = skwir_core::os_path::find_program("rclone")
             .ok_or_else(|| anyhow::anyhow!("rclone is not installed"))?;
         let remote = remote_of(&top)?;
+        let password = match password_variable(top.scheme) {
+            Some(variable) => logged_in(&rclone, &remote, &top, variable, ask, cancel)?
+                .map(|password| (variable, password)),
+            None => None,
+        };
         let point = mounter::point_for(self.id(), &top)?;
         let mut command = Command::new(rclone);
         command.args(mount_arguments(&remote, &point));
+        if let Some((variable, password)) = &password {
+            command.env(variable, password);
+        }
         if top.scheme == Scheme::Sftp {
             // A word each, split at spaces by rclone: names checked so.
             top.ssh_user()?;
@@ -237,6 +252,126 @@ fn remote_of(top: &Address) -> anyhow::Result<String> {
     Ok(format!("{remote}:{path}"))
 }
 
+/// The variable rclone reads the password of an address of `scheme` from,
+/// obscured: `None` where it takes none (SFTP's is ssh's; a remote of its
+/// configuration keeps its own).
+fn password_variable(scheme: Scheme) -> Option<&'static str> {
+    match scheme {
+        Scheme::Smb => Some("RCLONE_SMB_PASS"),
+        Scheme::Dav | Scheme::Davs => Some("RCLONE_WEBDAV_PASS"),
+        Scheme::Ftp | Scheme::Ftps => Some("RCLONE_FTP_PASS"),
+        Scheme::Sftp | Scheme::Nfs | Scheme::Afp | Scheme::Rclone => None,
+    }
+}
+
+/// How many times a refused login is asked again.
+const TRIES: usize = 3;
+
+/// Log in to `remote` (the address `top`'s), listing its top once: with
+/// the password the keyring keeps, else none, then each refusal asking
+/// (`Ask::password`), [`TRIES`] times at most. The password that served,
+/// obscured for `variable`; `None` where none was needed.
+fn logged_in(
+    rclone: &Path,
+    remote: &str,
+    top: &Address,
+    variable: &str,
+    ask: &Arc<dyn Ask>,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<String>> {
+    let title = format!("Password for {}", top.label());
+    let mut password = ask.kept_password();
+    let mut asked = 0;
+    loop {
+        let given = password
+            .as_deref()
+            .map(|password| obscured(rclone, password))
+            .transpose()?;
+        match listed(rclone, remote, variable, given.as_deref(), cancel) {
+            Ok(()) => return Ok(given),
+            Err(said) if refused(&said) && asked < TRIES => {
+                asked += 1;
+                let answer = ask
+                    .password(&title, "Connect", cancel)
+                    .ok_or_else(|| anyhow::anyhow!("you cancelled"))?;
+                password = Some(answer.text);
+            }
+            Err(said) if refused(&said) => {
+                anyhow::bail!("the server refused the login (wrong password?)")
+            }
+            Err(said) => anyhow::bail!("{}", words(&said)),
+        }
+    }
+}
+
+/// Whether rclone reaches `remote`, its top listed, given the obscured
+/// `password` in `variable`; else what it said.
+fn listed(
+    rclone: &Path,
+    remote: &str,
+    variable: &str,
+    password: Option<&str>,
+    cancel: &CancelToken,
+) -> Result<(), String> {
+    let mut command = Command::new(rclone);
+    command
+        .args([
+            "lsf",
+            "--max-depth",
+            "1",
+            "--dirs-only",
+            "--ask-password=false",
+        ])
+        .arg(remote)
+        .env_remove(variable);
+    if let Some(password) = password {
+        command.env(variable, password);
+    }
+    match skwir_platform::process::run_to_exit(&mut command, None, cancel, PATIENCE) {
+        Ok(finished) if finished.status.success() => Ok(()),
+        Ok(finished) => Err(finished.stderr),
+        Err(error) => Err(format!("{error:#}")),
+    }
+}
+
+/// `password` obscured as rclone reads it (`rclone obscure -`), given it
+/// through a pipe: never a command line, never a file.
+fn obscured(rclone: &Path, password: &str) -> anyhow::Result<String> {
+    use std::io::Write as _;
+    use std::process::Stdio;
+    let mut child = Command::new(rclone)
+        .args(["obscure", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    // A password fits a pipe's buffer: written whole before it is read.
+    if let Some(mut input) = child.stdin.take() {
+        input.write_all(password.as_bytes())?;
+        input.write_all(b"\n")?;
+    }
+    let out = child.wait_with_output()?;
+    anyhow::ensure!(out.status.success(), "rclone did not obscure the password");
+    let text = String::from_utf8(out.stdout)?;
+    Ok(text.trim().to_owned())
+}
+
+/// Whether what rclone said is the server refusing the login, or its
+/// wanting a password it was not given.
+fn refused(said: &str) -> bool {
+    [
+        "401 Unauthorized",
+        "530 ",
+        "not logged in",
+        "Login incorrect",
+        "LOGON_FAILURE",
+        "logon failure",
+        "is it obscured",
+    ]
+    .iter()
+    .any(|sign| said.contains(sign))
+}
+
 /// The ssh rclone runs for an SFTP address: the user's own, its
 /// configuration and agent, a server gone told within a minute.
 fn ssh_command(top: &Address) -> String {
@@ -332,6 +467,24 @@ mod tests {
             ":ftp,host='h',user='o''brien':",
             "a quote doubled"
         );
+    }
+
+    #[test]
+    fn a_refused_login_is_told_from_another_failure() {
+        assert!(refused(
+            "couldn't list files: 401 Unauthorized: 401 Unauthorized"
+        ));
+        assert!(refused(
+            "failed to make FTP connection to \"h:21\": 530 \"Incorrect password, not logged in\""
+        ));
+        assert!(refused(
+            "NewFS decrypt password: input too short when revealing password - is it obscured?"
+        ));
+        assert!(!refused(
+            "dial tcp 127.0.0.1:1: connect: connection refused"
+        ));
+        assert_eq!(password_variable(Scheme::Davs), Some("RCLONE_WEBDAV_PASS"));
+        assert_eq!(password_variable(Scheme::Sftp), None, "ssh's");
     }
 
     #[test]

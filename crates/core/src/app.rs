@@ -78,6 +78,33 @@ pub struct SecretQuestion {
     pub title: String,
     /// The verb on its button: "Extract".
     pub accept: String,
+    /// Whether the window offers to keep the answer in the desktop's
+    /// keyring (a server's password, ADR-082): the asker keeps it.
+    pub remember: bool,
+}
+
+/// What the user answered a [`SecretQuestion`]. No `Debug`: it holds the
+/// secret.
+pub struct SecretAnswer {
+    pub text: String,
+    /// The user asked for it to be kept (offered alone).
+    pub remember: bool,
+}
+
+/// An answer not to be kept: what a script or a test answers.
+impl From<String> for SecretAnswer {
+    fn from(text: String) -> Self {
+        SecretAnswer {
+            text,
+            remember: false,
+        }
+    }
+}
+
+impl From<&str> for SecretAnswer {
+    fn from(text: &str) -> Self {
+        SecretAnswer::from(text.to_owned())
+    }
 }
 
 /// A message from background work for the UI.
@@ -198,7 +225,8 @@ pub struct App {
     /// What steps ask that only the user knows, until the window takes
     /// them, and who waits for each answer.
     secrets: parking_lot::Mutex<Vec<SecretQuestion>>,
-    secret_replies: parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<Option<String>>>>,
+    secret_replies:
+        parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<Option<SecretAnswer>>>>,
     /// Messages from background work for the UI to show.
     notifications: parking_lot::Mutex<Vec<Notification>>,
     /// Commands the window carries out (`ui.*`), dispatched from elsewhere
@@ -358,7 +386,9 @@ impl App {
                     };
                     loop {
                         match answer.recv_timeout(std::time::Duration::from_millis(100)) {
-                            Ok(said) => return said.ok_or(op::Unanswered::Declined),
+                            Ok(said) => {
+                                return said.map(|a| a.text).ok_or(op::Unanswered::Declined);
+                            }
                             Err(RecvTimeoutError::Disconnected) => {
                                 return Err(op::Unanswered::Declined);
                             }
@@ -1165,15 +1195,36 @@ impl App {
         &self,
         title: impl Into<String>,
         accept: impl Into<String>,
-    ) -> (u64, crossbeam_channel::Receiver<Option<String>>) {
+    ) -> (u64, crossbeam_channel::Receiver<Option<SecretAnswer>>) {
+        self.ask_secret_as(title.into(), accept.into(), false)
+    }
+
+    /// [`App::ask_secret`] for a server's password, which the window offers
+    /// to keep in the desktop's keyring (ADR-082): the answer says whether
+    /// the user asked for it, and the asker keeps it once it served.
+    pub fn ask_password(
+        &self,
+        title: impl Into<String>,
+        accept: impl Into<String>,
+    ) -> (u64, crossbeam_channel::Receiver<Option<SecretAnswer>>) {
+        self.ask_secret_as(title.into(), accept.into(), true)
+    }
+
+    fn ask_secret_as(
+        &self,
+        title: String,
+        accept: String,
+        remember: bool,
+    ) -> (u64, crossbeam_channel::Receiver<Option<SecretAnswer>>) {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (reply, answer) = crossbeam_channel::bounded(1);
         self.secret_replies.lock().insert(id, reply);
         self.secrets.lock().push(SecretQuestion {
             id,
-            title: title.into(),
-            accept: accept.into(),
+            title,
+            accept,
+            remember,
         });
         self.wake();
         (id, answer)
@@ -1186,7 +1237,7 @@ impl App {
 
     /// The user answered the question `id`, `None` for Cancel: whether
     /// the step still waited.
-    pub fn answer_secret(&self, id: u64, answer: Option<String>) -> bool {
+    pub fn answer_secret(&self, id: u64, answer: Option<SecretAnswer>) -> bool {
         let reply = self.secret_replies.lock().remove(&id);
         reply.is_some_and(|reply| reply.send(answer).is_ok())
     }

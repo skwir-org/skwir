@@ -50,6 +50,8 @@ fn attributes<'a>(
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod backend {
+    use std::collections::HashMap;
+
     use super::{SecretRef, SecretText, attributes};
     use futures_lite::future::block_on;
 
@@ -99,6 +101,31 @@ mod backend {
             let keyring = keyring().await?;
             keyring.delete(&attributes(setting, record, field)).await?;
             Ok(())
+        })
+    }
+
+    pub fn lookup_network(named: &[(&str, &str)]) -> anyhow::Result<Option<SecretText>> {
+        block_on(async {
+            let keyring = keyring().await?;
+            let wanted: HashMap<&str, &str> = named.iter().copied().collect();
+            let mut found = Vec::new();
+            for item in keyring.search_items(&wanted).await? {
+                let count = item.attributes().await.map_or(usize::MAX, |a| a.len());
+                found.push((count, item));
+            }
+            // The least specific first, as GVfs takes it: `ftp://host`'s
+            // before `ftp://host:2121`'s for an address that names no port.
+            found.sort_by_key(|(count, _)| *count);
+            let Some((_, item)) = found.into_iter().next() else {
+                return Ok(None);
+            };
+            if item.is_locked().await? {
+                item.unlock().await?;
+            }
+            let secret = item.secret().await?;
+            let text = String::from_utf8(secret.to_vec())
+                .map_err(|_| anyhow::anyhow!("The keyring's secret is not text"))?;
+            Ok(Some(SecretText(text)))
         })
     }
 }
@@ -255,6 +282,24 @@ pub fn delete_record(setting: &str, record: &str) -> anyhow::Result<()> {
     backend::delete(setting, record, None)
 }
 
+/// A password the desktop keeps for a server under libsecret's network
+/// schema (`org.gnome.keyring.NetworkPassword`: what GVfs keeps when
+/// Nautilus is told to remember one), found by `named` (`protocol`,
+/// `server`, `user`, `domain`, `port`): the least specific of those that
+/// hold them all. Read only: Skwir never changes another program's.
+/// Linux and FreeBSD's Secret Service; elsewhere none.
+pub fn lookup_network(named: &[(&str, &str)]) -> anyhow::Result<Option<SecretText>> {
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        backend::lookup_network(named)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    {
+        let _ = named;
+        Ok(None)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -292,5 +337,55 @@ mod tests {
         assert_eq!(lookup(at).unwrap().unwrap().expose(), "replaced");
         delete_record("test.servers", "r1").unwrap();
         assert!(lookup(at).unwrap().is_none());
+    }
+
+    /// A password GVfs kept (libsecret's network schema) is found by its
+    /// server, the least specific first; written here as GVfs writes it.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    #[ignore = "needs a private Secret Service (tools/test/private-keyring.sh)"]
+    fn a_password_gvfs_kept_is_found_by_its_server() {
+        assert_eq!(
+            std::env::var("SKWIR_PRIVATE_KEYRING").as_deref(),
+            Ok("1"),
+            "refusing to touch a keyring that is not the test's own"
+        );
+        let keep = |named: &[(&str, &str)], secret: &str| {
+            futures_lite::future::block_on(async {
+                let keyring = oo7::Keyring::new().await.unwrap();
+                let mut all: HashMap<&str, &str> = named.iter().copied().collect();
+                all.insert("xdg:schema", "org.gnome.keyring.NetworkPassword");
+                // Not replacing: an item with more attributes matches the
+                // fewer, and would go.
+                keyring
+                    .create_item("me@nas", &all, secret.as_bytes(), false)
+                    .await
+                    .unwrap();
+            });
+        };
+        let nas = [("protocol", "smb"), ("server", "nas.test"), ("user", "me")];
+        keep(
+            &[nas.as_slice(), &[("port", "4450")]].concat(),
+            "on its port",
+        );
+        keep(&nas, "the server's");
+        assert_eq!(
+            lookup_network(&nas).unwrap().unwrap().expose(),
+            "the server's",
+            "the least specific"
+        );
+        assert_eq!(
+            lookup_network(&[nas.as_slice(), &[("port", "4450")]].concat())
+                .unwrap()
+                .unwrap()
+                .expose(),
+            "on its port"
+        );
+        assert!(
+            lookup_network(&[("protocol", "smb"), ("server", "nas.test"), ("user", "you")])
+                .unwrap()
+                .is_none(),
+            "another user's is not"
+        );
     }
 }

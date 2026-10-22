@@ -81,6 +81,15 @@ struct Prompted {
     ask: Option<Ask>,
     accept: Option<String>,
     note: Option<String>,
+    /// A server's password: offer to keep it in the keyring (ADR-082).
+    remember: bool,
+}
+
+/// The prompt's Remember switch (a server's password, ADR-082): whether it
+/// is on, and its focus.
+pub struct Remember {
+    pub on: bool,
+    focus: FocusHandle,
 }
 
 pub struct PromptState {
@@ -90,6 +99,8 @@ pub struct PromptState {
     ask: Option<Ask>,
     /// A line under the field, muted: what the answer may be.
     note: Option<String>,
+    /// Remember in the keyring, where offered.
+    pub remember: Option<Remember>,
     /// The answer's button: its verb and its focus, beside Cancel's.
     accept: String,
     accept_focus: FocusHandle,
@@ -146,14 +157,14 @@ fn asked_about(
 }
 
 impl PromptState {
-    /// What Tab walks: the field, Cancel, the answer (`Shell::walk_dialog`).
+    /// What Tab walks: the field, Remember where offered, Cancel, the
+    /// answer (`Shell::walk_dialog`).
     pub(crate) fn walk(&self, cx: &gpui::App) -> Vec<FocusHandle> {
         use gpui::Focusable as _;
-        vec![
-            self.input.read(cx).focus_handle(cx),
-            self.cancel_focus.clone(),
-            self.accept_focus.clone(),
-        ]
+        let mut walk = vec![self.input.read(cx).focus_handle(cx)];
+        walk.extend(self.remember.as_ref().map(|r| r.focus.clone()));
+        walk.extend([self.cancel_focus.clone(), self.accept_focus.clone()]);
+        walk
     }
 }
 
@@ -236,6 +247,7 @@ impl Shell {
                 ask: None,
                 accept: Some(question.accept),
                 note: None,
+                remember: question.remember,
             },
             window,
             cx,
@@ -303,6 +315,7 @@ impl Shell {
                 accept: ask.accept.clone(),
                 ask: Some(ask),
                 note: text("note").map(str::to_owned),
+                remember: false,
             },
             window,
             cx,
@@ -326,7 +339,12 @@ impl Shell {
             self.give_up_secret(old.kind);
         }
         let placeholder = placeholder.to_owned();
-        let Prompted { ask, accept, note } = prompted;
+        let Prompted {
+            ask,
+            accept,
+            note,
+            remember,
+        } = prompted;
         let accept = accept.unwrap_or_else(|| kind.accept().to_owned());
         let back = FocusReturn::capture(window, cx);
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
@@ -365,6 +383,10 @@ impl Shell {
             input,
             ask,
             note,
+            remember: remember.then(|| Remember {
+                on: false,
+                focus: cx.focus_handle(),
+            }),
             accept,
             accept_focus: cx.focus_handle(),
             cancel_focus: cx.focus_handle(),
@@ -380,6 +402,7 @@ impl Shell {
             return;
         };
         let (kind, ask) = (prompt.kind, prompt.ask.take());
+        let remember = prompt.remember.as_ref().is_some_and(|r| r.on);
         let text = prompt.input.read(cx).text();
         // Spaces can be part of a passphrase.
         let text = if kind.secret() {
@@ -389,7 +412,11 @@ impl Shell {
         };
         // Told before the prompt closes, which would tell it none.
         if let PromptKind::Secret { id } = kind {
-            self.app.answer_secret(id, Some(text.clone()));
+            let answer = skwir_core::app::SecretAnswer {
+                text: text.clone(),
+                remember,
+            };
+            self.app.answer_secret(id, Some(answer));
         }
         self.close_prompt(window, cx);
         if let Some(Ask { command, field, .. }) = ask {
@@ -400,6 +427,14 @@ impl Shell {
             self.prompt_submitted(kind, text, window, cx);
         }
         cx.notify();
+    }
+
+    /// Turn the prompt's Remember on or off: a click, or Space on it.
+    fn prompt_toggle_remember(&mut self, cx: &mut Context<Self>) {
+        if let Some(remember) = self.prompt.as_mut().and_then(|p| p.remember.as_mut()) {
+            remember.on = !remember.on;
+            cx.notify();
+        }
     }
 
     /// Close the prompt unanswered: Escape, Cancel, or a press outside.
@@ -545,6 +580,33 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
                 .clone()
                 .map(|note| div().text_xs().text_color(theme.text_muted).child(note)),
         )
+        .children(p.remember.as_ref().map(|remember| {
+            let label = "Remember in the keyring";
+            // Each its own click, the switch's answering Space and Enter
+            // where it has the focus.
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    controls::switch(
+                        "prompt-remember-switch",
+                        remember.on,
+                        &remember.focus,
+                        &theme,
+                    )
+                    .aria_label(label)
+                    .on_click(cx.listener(|this, _, _, cx| this.prompt_toggle_remember(cx))),
+                )
+                .child(
+                    div()
+                        .id("prompt-remember-label")
+                        .cursor_pointer()
+                        .text_color(theme.text_muted)
+                        .on_click(cx.listener(|this, _, _, cx| this.prompt_toggle_remember(cx)))
+                        .child(label),
+                )
+        }))
         .child(modal::footer(
             "Enter to confirm, Escape to cancel",
             [

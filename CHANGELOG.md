@@ -45,7 +45,11 @@
   `smb://`, `dav://` and `ftp://` open through KIO (kio-fuse), with the
   passwords KDE keeps; GVfs is used where it is installed, even before
   anything started it. A copy a server refuses as it is finished is said
-  to have failed, and a move keeps its original.
+  to have failed, and a move keeps its original. A server's password can
+  be remembered in your desktop's keyring (Remember in the password
+  question), and passwords Nautilus remembered are used too: a
+  password-protected SMB, WebDAV or FTP server now opens through rclone.
+  Forget Password in its menu removes it.
 - **Actions at once**: a rename, a new folder or a tag no longer waits
   behind a long copy it shares nothing with, and copies between
   different disks or servers run together (four actions at most); two

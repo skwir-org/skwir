@@ -21,8 +21,9 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::Location;
 use skwir_plugin_remote::address::Address;
-use skwir_plugin_remote::connector::{Ask, Connector};
+use skwir_plugin_remote::connector::{Ask, Connector, Password};
 use skwir_plugin_remote::kio::Kio;
+use skwir_plugin_remote::passwords::{Keyed, Keyring, Noted};
 use skwir_plugin_remote::rclone::Rclone;
 use skwir_plugin_remote::sshfs::Sshfs;
 use skwir_plugin_remote::{RemotePlugin, Remotes};
@@ -320,6 +321,8 @@ fn a_folder_mounted_again_holds_other_files_by_number_and_the_same_by_path() {
 #[derive(Default)]
 struct Answers {
     password: String,
+    /// A server's password answered with Remember on (ADR-082).
+    remember: bool,
     asked: Mutex<Vec<String>>,
 }
 
@@ -327,6 +330,16 @@ impl Ask for Answers {
     fn secret(&self, title: &str, _: &str, _: &CancelToken) -> Option<String> {
         self.asked.lock().unwrap().push(format!("secret: {title}"));
         Some(self.password.clone())
+    }
+    fn password(&self, title: &str, _: &str, _: &CancelToken) -> Option<Password> {
+        self.asked
+            .lock()
+            .unwrap()
+            .push(format!("password: {title}"));
+        Some(Password {
+            text: self.password.clone(),
+            remember: self.remember,
+        })
     }
     fn confirm(&self, title: &str, detail: &str, _: &CancelToken) -> bool {
         self.asked
@@ -370,10 +383,15 @@ fn sshfs_asks_the_window_for_a_password_and_an_unknown_host_through_skwir() {
     };
     let answers = Arc::new(Answers {
         password: "a test password".to_owned(),
+        remember: true,
         ..Answers::default()
     });
-    let ask: Arc<dyn Ask> = answers.clone();
     let address = Address::parse(&format!("sftp://tester@127.0.0.1:{}/", served.port)).unwrap();
+    // Its password asked through the keyring's layer (ADR-082), kept once
+    // the connection served.
+    let keyring = Arc::new(TestKeyring::default());
+    let keyed = Arc::new(Keyed::new(answers.clone(), keyring.clone(), address.top()));
+    let ask: Arc<dyn Ask> = keyed.clone();
     let connected = sshfs
         .connect(&address, &ask, &CancelToken::new())
         .expect("connect");
@@ -387,8 +405,14 @@ fn sshfs_asks_the_window_for_a_password_and_an_unknown_host_through_skwir() {
     assert!(
         asked
             .iter()
-            .any(|q| q.starts_with("secret:") && q.contains("password")),
-        "its password was asked for: {asked:?}"
+            .any(|q| q.starts_with("password:") && q.contains("password")),
+        "its password was asked for, as a server's: {asked:?}"
+    );
+    let key = format!("sftp://tester@127.0.0.1:{}", served.port);
+    assert_eq!(keyed.served(), Some(Noted::Kept(key.clone())));
+    assert_eq!(
+        keyring.own.lock().unwrap().get(&key).map(String::as_str),
+        Some("a test password")
     );
     let names: Vec<String> = std::fs::read_dir(&connected.point)
         .unwrap()
@@ -404,11 +428,63 @@ fn sshfs_asks_the_window_for_a_password_and_an_unknown_host_through_skwir() {
         .disconnect(&remote, &recognised, &CancelToken::new())
         .expect("disconnect");
     assert!(!connected.point.exists());
+
+    // Again: the keyring answers ssh's question, the window is asked
+    // nothing (the host is known by now).
+    let quiet = Arc::new(Answers::default());
+    let keyed = Arc::new(Keyed::new(quiet.clone(), keyring.clone(), address.top()));
+    let ask: Arc<dyn Ask> = keyed.clone();
+    let connected = sshfs
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect with the kept password");
+    assert_eq!(*quiet.asked.lock().unwrap(), Vec::<String>::new());
+    assert_eq!(keyed.served(), None);
+    let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
+    let recognised = sshfs.recognises(&remote).expect("its own");
+    sshfs
+        .disconnect(&remote, &recognised, &CancelToken::new())
+        .expect("disconnect");
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }
 
-/// Send `signal` to each of `pids` at once (one `kill`).
+/// A keyring in memory (ADR-082): Skwir's own passwords by key, the
+/// desktop's by their attributes (GVfs's).
+#[derive(Default)]
+struct TestKeyring {
+    own: Mutex<std::collections::HashMap<String, String>>,
+    desktop: Mutex<Vec<(Vec<(String, String)>, String)>>,
+}
+
+impl Keyring for TestKeyring {
+    fn own(&self, server: &str) -> Option<String> {
+        self.own.lock().unwrap().get(server).cloned()
+    }
+    fn desktop(&self, named: &[(&str, &str)]) -> Option<String> {
+        self.desktop
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(theirs, _)| {
+                named
+                    .iter()
+                    .all(|(k, v)| theirs.iter().any(|(tk, tv)| tk == k && tv == v))
+            })
+            .map(|(_, secret)| secret.clone())
+    }
+    fn keep(&self, server: &str, _: &str, password: &str) -> anyhow::Result<()> {
+        self.own
+            .lock()
+            .unwrap()
+            .insert(server.to_owned(), password.to_owned());
+        Ok(())
+    }
+    fn forget(&self, server: &str) -> anyhow::Result<()> {
+        self.own.lock().unwrap().remove(server);
+        Ok(())
+    }
+}
+
 /// The processes `pid` started, theirs, and so on: read from the system's
 /// list of each one's children, never by name.
 fn descendants(pid: u32) -> Vec<u32> {
@@ -432,6 +508,7 @@ fn descendants(pid: u32) -> Vec<u32> {
     pids
 }
 
+/// Send `signal` to each of `pids` at once (one `kill`).
 fn signal(signal: &str, pids: &[u32]) {
     if pids.is_empty() {
         return;
@@ -2065,10 +2142,14 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
     };
     let answers = Arc::new(Answers {
         password: "a test password".to_owned(),
+        remember: true,
         ..Answers::default()
     });
-    let ask: Arc<dyn Ask> = answers.clone();
     let address = Address::parse(&format!("sftp://tester@127.0.0.1:{}/", served.port)).unwrap();
+    // `gio mount`'s password asked through the keyring's layer (ADR-082).
+    let keyring = Arc::new(TestKeyring::default());
+    let keyed = Arc::new(Keyed::new(answers.clone(), keyring.clone(), address.top()));
+    let ask: Arc<dyn Ask> = keyed.clone();
     // Nothing started GVfs on the test's bus yet, as on a desktop other
     // than GNOME's: it can be connected through all the same, `gio mount`
     // starting its daemon, which starts its bridge.
@@ -2079,8 +2160,8 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
         .expect("connect");
     let asked = answers.asked.lock().unwrap().clone();
     assert!(
-        asked.iter().any(|q| q.starts_with("secret:")),
-        "its password was asked for: {asked:?}"
+        asked.iter().any(|q| q.starts_with("password:")),
+        "its password was asked for, as a server's: {asked:?}"
     );
     assert!(
         connected.point.starts_with(private.runtime.join("gvfs")),
@@ -2214,6 +2295,32 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
     until_shown(&app, pane, 10, &[], "the pane shows the originals gone");
     drop(app);
 
+    gvfs.disconnect(&remote, &recognised, &CancelToken::new())
+        .expect("disconnect");
+    // Kept once it served; mounted again, the keyring answers `gio mount`.
+    assert_eq!(
+        keyed.served(),
+        Some(Noted::Kept(format!(
+            "sftp://tester@127.0.0.1:{}",
+            served.port
+        )))
+    );
+    let quiet = Arc::new(Answers::default());
+    let ask: Arc<dyn Ask> = Arc::new(Keyed::new(quiet.clone(), keyring, address.top()));
+    let again = gvfs
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect with the kept password");
+    assert!(
+        !quiet
+            .asked
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|q| q.starts_with("password:")),
+        "the keyring answered"
+    );
+    let remote = skwir_core::fs::reach::of(&again.point).unwrap();
+    let recognised = gvfs.recognises(&remote).expect("GVfs's");
     gvfs.disconnect(&remote, &recognised, &CancelToken::new())
         .expect("disconnect");
     drop(private);
@@ -2697,6 +2804,163 @@ fn a_copy_its_server_refuses_as_it_is_closed_is_told_so_a_move_keeps_its_origina
     );
     drop(app);
     drop(private);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// The window's next password question, within ten seconds.
+fn secret_asked(app: &App) -> skwir_core::app::SecretQuestion {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        app.pump();
+        if let Some(question) = app.take_secret_questions().pop() {
+            return question;
+        }
+        assert!(Instant::now() < deadline, "never asked");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Open `address` in `pane` and wait for its folder listed as `names`,
+/// asked nothing (a question would hold it).
+fn opened_unasked(app: &App, pane: skwir_core::workspace::PaneId, address: &str, names: &[&str]) {
+    app.navigate(pane, &Location::parse(address)).unwrap();
+    let expected: Vec<String> = names.iter().map(|&n| n.to_owned()).collect();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        app.pump();
+        assert!(
+            app.take_secret_questions().is_empty(),
+            "nothing is asked: the keyring answers"
+        );
+        if app.pane_location(pane).is_some_and(|l| l.is_path())
+            && names_shown(app, pane) == expected
+        {
+            return;
+        }
+        assert!(Instant::now() < deadline, "{address} never listed");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Let go of the remote showing in `pane`, and wait until it is.
+fn disconnected(app: &App, pane: skwir_core::workspace::PaneId) {
+    let folder = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&folder).unwrap().point.clone();
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    until(app, 30, "it was let go of", || {
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point)
+    });
+}
+
+#[test]
+fn rclone_asks_a_server_s_password_once_and_keeps_it_when_told() {
+    if let Some(why) = Rclone.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("rclone-password");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    std::fs::write(served_root.join("locked.txt"), "hi").unwrap();
+    let served = Served::start(
+        "webdav",
+        &served_root,
+        &["--user", "tester", "--pass", "a test password"],
+    );
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    app.set_window_shown();
+    let keyring = Arc::new(TestKeyring::default());
+    let remotes = Remotes::with(vec![Arc::new(Rclone)]).with_keyring(keyring.clone());
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let pane = app.workspace.read().active_id();
+    let address = format!("dav://tester@127.0.0.1:{}/", served.port);
+    let key = format!("dav://tester@127.0.0.1:{}", served.port);
+
+    // rclone asks nothing itself: refused without one, the window is
+    // asked, offering to remember (ADR-082); kept once it served.
+    app.navigate(pane, &Location::parse(&address)).unwrap();
+    let question = secret_asked(&app);
+    assert!(question.remember, "a server's password may be kept");
+    assert!(
+        question.title.contains("tester@127.0.0.1"),
+        "{}",
+        question.title
+    );
+    app.answer_secret(
+        question.id,
+        Some(skwir_core::app::SecretAnswer {
+            text: "a test password".to_owned(),
+            remember: true,
+        }),
+    );
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    until_shown(&app, pane, 20, &["locked.txt".to_owned()], "listed");
+    let folder = app.pane_location(pane).unwrap().path().unwrap();
+    let _left = Unmounted(skwir_core::fs::reach::of(&folder).unwrap().point.clone());
+    assert_eq!(
+        keyring.own.lock().unwrap().get(&key).map(String::as_str),
+        Some("a test password")
+    );
+    let remembered: Vec<String> = app.settings.get("remote.remembered").unwrap_or_default();
+    assert_eq!(
+        remembered,
+        std::slice::from_ref(&key),
+        "the server noted, never its password"
+    );
+    until(&app, 20, "its place offers Forget Password", || {
+        app.registry
+            .places
+            .find(|p| {
+                p.group == "network" && p.menu.iter().any(|item| item.title == "Forget Password")
+            })
+            .is_some()
+    });
+
+    // Again: the keyring answers, the window is asked nothing.
+    disconnected(&app, pane);
+    opened_unasked(&app, pane, &address, &["locked.txt"]);
+
+    // Forget Password: gone from the keyring and from what is noted.
+    app.dispatch(&Invocation::with_args(
+        "remote.forget_password",
+        &serde_json::json!({ "server": key }),
+    ))
+    .unwrap();
+    until(&app, 10, "forgotten", || {
+        keyring.own.lock().unwrap().is_empty()
+            && app
+                .settings
+                .get::<Vec<String>>("remote.remembered")
+                .unwrap_or_default()
+                .is_empty()
+    });
+
+    // A password GVfs kept for it (Nautilus told to remember): given,
+    // read only, nothing asked.
+    keyring.desktop.lock().unwrap().push((
+        vec![
+            ("protocol".to_owned(), "http".to_owned()),
+            ("server".to_owned(), "127.0.0.1".to_owned()),
+            ("user".to_owned(), "tester".to_owned()),
+            ("object".to_owned(), "a realm".to_owned()),
+        ],
+        "a test password".to_owned(),
+    ));
+    disconnected(&app, pane);
+    opened_unasked(&app, pane, &address, &["locked.txt"]);
+    assert!(
+        keyring.own.lock().unwrap().is_empty(),
+        "GVfs's is not copied"
+    );
+    disconnected(&app, pane);
+    drop(app);
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }

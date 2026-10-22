@@ -1323,7 +1323,11 @@ protocol is a scheme a connector maps, or a connector.
   folder of its mount, its passwords KDE's, no Eject, told to forget
   what it listed before a folder is read again, before GVfs on KDE's
   desktop. Tested against rclone's WebDAV and FTP servers with a KIO of
-  the test's own.
+  the test's own. Then (ADR-082, the user's "implement the secrets related
+  points"): a server's password kept in the desktop's keyring when the
+  user asks (the prompt's Remember), the keyring answering first, GVfs's
+  kept passwords read, rclone given one obscured in its environment after
+  a refused login, Forget Password.
 - **G. Left** (each its own step):
   - KIO: batches by `kioclient copy` where measured faster than eight
     copies at once through kio-fuse (its copy job takes one file after
@@ -1346,7 +1350,7 @@ protocol is a scheme a connector maps, or a connector.
     mounts as connectors; SFTP there through rclone with WinFsp or
     macFUSE; all compiled only until Phase 5b;
   - a GVfs mount made by another program is used, but its questions are
-    the desktop's, and GVfs's "remember the password" is not offered;
+    the desktop's (Skwir's own connections offer Remember, ADR-082);
   - going on from a file of a folder copied whole, or one a tool's
     batch was making (rsync's `--partial-dir`, sftp's `reput`); a retry
     by itself once a server answers again (ADR-080);

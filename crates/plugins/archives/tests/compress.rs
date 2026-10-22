@@ -1252,7 +1252,7 @@ fn an_empty_password_is_asked_again() {
         ),
         |app| {
             let asked = secret_asked(app);
-            assert!(app.answer_secret(asked.id, Some(String::new())));
+            assert!(app.answer_secret(asked.id, Some(String::new().into())));
             let asked = secret_asked(app);
             assert!(
                 asked.title.ends_with("it cannot be empty"),

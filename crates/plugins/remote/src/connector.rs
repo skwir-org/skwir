@@ -21,6 +21,29 @@ pub trait Ask: Send + Sync {
     /// key never seen, a certificate not trusted): `detail` is what the
     /// tool said, fingerprint included.
     fn confirm(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool;
+    /// A server's password (ADR-082): the keyring's first where the
+    /// connection keeps one (`passwords::Keyed`), else asked as a secret
+    /// the window offers to remember. Never a key's passphrase, a code, a
+    /// configuration's password: those are `secret`.
+    fn password(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<Password> {
+        self.secret(title, accept, cancel).map(|text| Password {
+            text,
+            remember: false,
+        })
+    }
+    /// A server's password the keyring keeps, given once a connection, asked
+    /// of no one: for a tool that cannot ask (rclone), given before it
+    /// tries.
+    fn kept_password(&self) -> Option<String> {
+        None
+    }
+}
+
+/// A server's password as it was answered: whether the user asked for it
+/// to be kept (the window's Remember). No `Debug`: it holds the secret.
+pub struct Password {
+    pub text: String,
+    pub remember: bool,
 }
 
 /// A folder a connector mounted, or found mounted.

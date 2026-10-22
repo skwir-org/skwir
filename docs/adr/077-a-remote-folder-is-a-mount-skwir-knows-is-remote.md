@@ -154,7 +154,9 @@ Revises ADR-021: its direction kept, its steps decided.
    host `App::ask_as` with `Asker::Connection` (Connect, Cancel). A
    question refused ends that attempt: ssh would otherwise ask again,
    counting it as a wrong password. (Amended by ADR-081: KIO's questions
-   are asked in KDE's own dialog, which Skwir never sees.)
+   are asked in KDE's own dialog, which Skwir never sees; and by ADR-082:
+   a server's password the user asks to remember is kept in the desktop's
+   keyring.)
 
 8. **The way to Skwir speaking protocols, kept open.** The user may want
    it as an experiment, a fallback or a switch:

@@ -279,6 +279,11 @@ impl Askpass {
         let server = skwir_platform::askpass::Server::start(&folder, move |question| {
             let prompt = question.prompt.trim().trim_end_matches(':').trim();
             let answer = match question.kind {
+                // A server's password may be kept (ADR-082); a key's
+                // passphrase, a code, rclone's configuration's are not.
+                Kind::Secret if crate::passwords::is_server_password(prompt) => {
+                    ask.password(prompt, "Connect", &cancel).map(|p| p.text)
+                }
                 Kind::Secret => ask.secret(prompt, "Connect", &cancel),
                 Kind::Confirm => ask
                     .confirm("Connect to this server?", prompt, &cancel)

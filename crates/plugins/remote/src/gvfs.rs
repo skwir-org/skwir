@@ -444,7 +444,13 @@ fn answer(
             } else {
                 message.clone()
             };
-            ask.secret(&title, "Connect", cancel)
+            // A key's passphrase is asked each time; a server's password
+            // may be kept (ADR-082).
+            if message.to_lowercase().contains("passphrase") {
+                ask.secret(&title, "Connect", cancel)
+            } else {
+                ask.password(&title, "Connect", cancel).map(|p| p.text)
+            }
         }
         Asked::Choice { message, choices } => {
             // GVfs asks to go on where it cannot vouch for the server: its

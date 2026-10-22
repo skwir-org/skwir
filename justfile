@@ -135,6 +135,11 @@ remote-check:
     binary=$(cargo nextest list -p skwir -p skwir-plugin-remote -E 'binary(remote_folders)' \
         --message-format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["rust-suites"]["skwir::remote_folders"]["binary-path"])')
     tools/test/gvfs-nfs-afp.sh "$binary"
+    # Servers' passwords in a keyring of the tests' own (ADR-082).
+    keyring=$(nix build --no-link --print-out-paths nixpkgs#gnome-keyring)
+    PATH="$keyring/bin:$PATH" tools/test/private-keyring.sh cargo nextest run \
+        -p skwir-platform -p skwir-plugin-remote --run-ignored only \
+        -E 'test(secret) | test(password)'
 
 # A phone over MTP through a GVfs of the test's own (tools/test/gvfs-mtp.sh):
 # run on purpose alone, it writes to the phone plugged in (unlocked, in file

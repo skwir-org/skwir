@@ -258,8 +258,21 @@ ADR-077 (which revises ADR-021).
   a refused password as a wrong one and asks again otherwise. What its
   asker stopped waiting for leaves the window (`App::withdraw`,
   `withdraw_secret` wake it).
-- **Credentials**: never stored, logged, or put on a command line by
-  Skwir. ssh asks through `SSH_ASKPASS` = the `skwir` executable, which
+- **Credentials**: never stored by Skwir but in the desktop's keyring,
+  never logged or put on a command line. A server's password the user
+  asked to remember (the prompt's Remember, ADR-082) is kept there once
+  the connection served (`passwords::Keyed`), keyed by the server
+  (`passwords::key`), and the plugin's data notes which servers have one
+  (`remote.remembered`), never the password; Forget Password removes it.
+  A connection's password question is answered from the keyring first:
+  Skwir's own, then one GVfs kept (libsecret's network schema, read
+  only, never changed), the window asked once one is refused. A server's
+  password is `Ask::password`: GVfs's Password question, ssh's prompts
+  that name the login (`me@host's password:`); a key's passphrase, a
+  code, rclone's configuration's are `Ask::secret`, asked each time.
+  rclone takes a server's password obscured, in its environment alone
+  (`RCLONE_SMB_PASS`…), after listing the server's top tells whether it
+  needs one. ssh asks through `SSH_ASKPASS` = the `skwir` executable, which
   asks the window over the connection's own socket
   (`skwir_platform::askpass`); `gio mount`'s questions are read from its
   output (English, `LC_MESSAGES=C`) and answered on its input; a password
