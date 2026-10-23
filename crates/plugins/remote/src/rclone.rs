@@ -66,6 +66,13 @@ impl Connector for Rclone {
         {
             return Some("FUSE (fusermount3) is not installed".to_owned());
         }
+        #[cfg(target_os = "macos")]
+        if !crate::sshfs::fuse_on_macos() {
+            return Some("macFUSE or FUSE-T is not installed".to_owned());
+        }
+        #[cfg(windows)]
+        return Some("rclone's mounts are not built on Windows yet".to_owned());
+        #[cfg(not(windows))]
         None
     }
 

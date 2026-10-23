@@ -282,6 +282,14 @@ ADR-077 (which revises ADR-021).
   connected through. It is there where its daemon runs or the session
   bus would start it (`org.gtk.vfs.Daemon`): `gio mount` starts it, which
   mounts the bridge, waited for a moment.
+- The system's own shares, off Linux (`system_shares`, first in the
+  order there; `skwir_platform::shares`): Windows' SMB and WebDAV by
+  their UNC path (`\\server\share`, `\\server@SSL@port\DavWWWRoot`),
+  connected for the session with no drive letter; macOS's SMB, AFP, NFS
+  and WebDAV mounted by NetFS under `/Volumes`. A password is asked once
+  the server refused the login without one (Windows' saved
+  credentials, the Keychain, a guest), given in the call alone.
+  Compiled only.
 - KIO is the session's kio-fuse (ADR-081), asked over the session bus
   (`Kio`, `mountUrl`), there where the bus has it or would start it; its
   mount is a `kio-fuse-…` folder of the session's runtime folder alone.

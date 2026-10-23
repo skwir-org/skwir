@@ -77,6 +77,7 @@ pub use inspection::limits;
 
 pub mod rich_preview;
 pub mod secrets;
+pub mod shares;
 pub mod text_rows;
 
 pub mod apps;

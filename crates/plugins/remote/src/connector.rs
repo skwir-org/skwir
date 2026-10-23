@@ -168,7 +168,13 @@ pub trait Connector: Send + Sync {
 /// that the address can be read back from it after Skwir restarts
 /// (principle 3: nothing kept but the mount itself).
 pub fn mounts_folder() -> Option<PathBuf> {
-    #[cfg(unix)]
+    // macOS has no runtime folder: the user's own temporary one, which no
+    // other user enters.
+    #[cfg(target_os = "macos")]
+    {
+        Some(std::env::temp_dir().join("skwir").join("remote"))
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
     {
         skwir_core::xdg::runtime_dir().map(|dir| dir.join("skwir").join("remote"))
     }

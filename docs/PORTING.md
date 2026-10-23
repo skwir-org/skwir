@@ -235,10 +235,18 @@ Left:
 - `vim/lib.rs`, `jump/xbel.rs` **(c)**.
 - Remote folders (ADR-077): `fs::reach` reads `getfsstat`'s `MNT_LOCAL`
   on a Mac and a share's path or a mapped drive (`GetDriveTypeW`) on
-  Windows, compiled only. The connectors are Linux's: sshfs and rclone
-  need a FUSE there (macFUSE or FUSE-T, WinFsp), GVfs, KIO's kio-fuse
-  (ADR-081) and fstab are absent; the system's own shares (`\\server\share`, a Mac's
-  `/Volumes`) have no connector yet. The askpass socket is Unix's: on
+  Windows, compiled only. The system's own shares are a connector
+  (`remote::system_shares`, first off Linux; `skwir_platform::shares`):
+  Windows' SMB and WebDAV (through its WebClient) by their UNC path,
+  connected with `WNetAddConnection2W`; macOS's SMB, AFP, NFS and WebDAV
+  mounted by NetFS under `/Volumes`; their addresses' parsing tried under
+  Wine, the calls compiled only. sshfs and rclone need a FUSE: on macOS
+  macFUSE or FUSE-T (looked for; mount points in the user's own
+  temporary folder, macOS having no runtime folder); rclone's mounts are
+  not built on Windows (it runs in the foreground there, and a folder
+  WinFsp mounts is no remote `fs::reach` knows: a UNC name would be),
+  sshfs does not run there. GVfs, KIO's kio-fuse (ADR-081) and fstab are
+  Linux's. The askpass socket is Unix's: on
   Windows ssh's questions do not reach the window (a named pipe would).
   Eject asks what uses a mount of `/proc` on Linux, of `lsof` on a Mac
   (compiled only). A paused plan holds its tool: `SIGSTOP` to its group

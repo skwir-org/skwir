@@ -1352,9 +1352,11 @@ protocol is a scheme a connector maps, or a connector.
 - **G. Left** (each its own step):
   - an iPhone's (AFC) ways chosen by requests counted against a
     stand-in, an iPhone's own pace not timed (no iPhone at hand);
-  - Windows' shares (`smb://` as `\\server\share`) and macOS's own
-    mounts as connectors; SFTP there through rclone with WinFsp or
-    macFUSE; all compiled only until Phase 5b;
+  - on the machines (Phase 5b): Windows' and macOS's own shares (the
+    `system` connector, compiled only), sshfs and rclone over macFUSE or
+    FUSE-T; rclone on Windows (WinFsp, run in the foreground, mounted
+    under a UNC name `fs::reach` knows), not built; NFS through Windows'
+    own client, not built;
   - a GVfs mount made by another program is used, but its questions are
     the desktop's (Skwir's own connections offer Remember, ADR-082);
   - ADR-077's point 8, if asked: a helper of Skwir's serving SFTP

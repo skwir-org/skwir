@@ -33,6 +33,7 @@ mod runs;
 pub mod sftp;
 mod ssh_mount;
 pub mod sshfs;
+pub mod system_shares;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -78,6 +79,10 @@ const ORDER: &str = "sshfs gvfs kio rclone fstab";
 /// ...but before it on KDE's desktop, whose remotes and passwords are KIO's.
 const ORDER_ON_KDE: &str = "sshfs kio gvfs rclone fstab";
 
+/// Off Linux, the system's own shares first, then rclone and sshfs (over
+/// macFUSE).
+const ORDER_OFF_LINUX: &str = "system rclone sshfs fstab gvfs kio";
+
 /// The tools' order where the user chose none: the desktop's own first.
 fn default_order() -> &'static str {
     order_on(&skwir_platform::apps::current_desktops())
@@ -85,6 +90,9 @@ fn default_order() -> &'static str {
 
 /// [`default_order`] on the desktops `XDG_CURRENT_DESKTOP` lists.
 fn order_on(desktops: &[String]) -> &'static str {
+    if cfg!(any(windows, target_os = "macos")) {
+        return ORDER_OFF_LINUX;
+    }
     if desktops
         .iter()
         .any(|desktop| desktop.eq_ignore_ascii_case("KDE"))
@@ -173,6 +181,7 @@ impl Default for Remotes {
             Arc::new(kio::Kio::default()),
             Arc::new(rclone::Rclone),
             Arc::new(fstab::Fstab),
+            Arc::new(system_shares::SystemShares),
         ])
     }
 }

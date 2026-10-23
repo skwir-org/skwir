@@ -84,6 +84,10 @@ impl Connector for Sshfs {
         if cfg!(windows) {
             return Some("sshfs does not run on Windows".to_owned());
         }
+        #[cfg(target_os = "macos")]
+        if !fuse_on_macos() {
+            return Some("macFUSE or FUSE-T is not installed".to_owned());
+        }
         skwir_core::os_path::find_program("sshfs")
             .is_none()
             .then(|| "sshfs is not installed".to_owned())
@@ -235,6 +239,19 @@ fn words(said: &str) -> String {
     } else {
         said.lines().last().unwrap_or(said).to_owned()
     }
+}
+
+/// Whether macOS has a FUSE installed for sshfs and rclone to mount
+/// through: macFUSE's, or FUSE-T's. Compiled only.
+#[cfg(target_os = "macos")]
+pub(crate) fn fuse_on_macos() -> bool {
+    [
+        "/Library/Filesystems/macfuse.fs",
+        "/Library/Filesystems/fuse-t.fs",
+        "/usr/local/lib/libfuse-t.dylib",
+    ]
+    .iter()
+    .any(|p| std::path::Path::new(p).exists())
 }
 
 #[cfg(test)]

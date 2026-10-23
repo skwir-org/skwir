@@ -3691,3 +3691,30 @@ below), worked through in order, each committed after its checks.
   with the mount's rclone held to 32 MiB/s (`--bwlimit`, as a line of
   that speed), 23.8 s through the mount against 1.15 s on the server, 2
   runs each.
+
+### Windows' and macOS's own shares, compiled only
+
+- `skwir_platform::shares`: on Windows a share connected by its UNC path
+  (`WNetAddConnection2W`, `CONNECT_TEMPORARY`, no drive letter; a refused
+  login said apart: access denied, logon failure, invalid password) and
+  let go of (`WNetCancelConnection2W`); on macOS a URL mounted by NetFS
+  (`NetFSMountURLSync`, under /Volumes, its mount point read back from
+  the array it returns; `EAUTH` a refused login). A password goes in the
+  call alone. Elsewhere each says it is not that system's.
+- The `remote` plugin's `system` connector (`system_shares`): SMB and
+  WebDAV on Windows (WebDAV through the WebClient service's UNC form,
+  `\\server@SSL@port\DavWWWRoot\folder`), SMB, AFP, NFS and WebDAV on
+  macOS (WebDAV as `http(s)://`); first in the order off Linux,
+  unavailable on Linux. A password is asked only once the server refused
+  the login without one, three times at most. What the system mounted is
+  known by its address: a UNC path's server and share, or a Mac's mount
+  table's source (`//me@nas/photos`, `nas:/export`, `https://…`).
+- Also off Linux: on macOS, mount points in the user's own temporary
+  folder (no runtime folder there), and sshfs and rclone available only
+  where macFUSE or FUSE-T is installed. rclone's mounts on Windows are not
+  built and said so: it runs in the foreground there (no `--daemon`),
+  and a folder WinFsp mounts is no remote `fs::reach` knows (a UNC name,
+  `\\rclone\…`, would be one); sshfs does not run there.
+- Checked: `clippy -D warnings` for Linux, Windows and macOS (Apple's SDK
+  by xmac); the connector's parsing tests on Linux and under Wine (3 of
+  3). Not run: no share connected (Wine connects none; no Mac here).

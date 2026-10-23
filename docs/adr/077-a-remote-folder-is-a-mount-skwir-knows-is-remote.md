@@ -195,7 +195,7 @@ Revises ADR-021: its direction kept, its steps decided.
   network layer; `map-tiles` still makes its own requests (ADR-020).
 - What a hung NFS hard mount holds stays held: a plan reading it waits
   on its thread, as the kernel waits; lanes keep the rest going.
-- Not built yet: servers found on the local network (GVfs's
-  `network:///`); Windows' and macOS's own connectors. (Automatic's
-  Small files where reads proved fast, and renaming and moving a remote
-  bookmark: built 2026-10-23.)
+- Not built yet: rclone's mounts on Windows. (Built 2026-10-23:
+  Automatic's Small files where reads proved fast; renaming and moving a
+  remote bookmark; servers found on the local network, ADR-084;
+  Windows' and macOS's own shares as a connector, compiled only.)
