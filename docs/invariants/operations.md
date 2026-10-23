@@ -318,6 +318,23 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   link already saying the same path is done; a folder into itself is
   refused. A link, even to a folder, is never merged: it takes a file's
   choices. A move out of the trash keeps a restore's rules.
+- **Transfer locations are entries, not path spellings or file identities.**
+  Resolve parent folders through dot components and symlink aliases before
+  deciding that a transfer meets itself (`builtin::transfer_target`); keep
+  the leaf unfollowed, so a symlink stays an entry. Parent identity also
+  recognizes bind aliases; distinct hard-link names listed in one folder
+  stay distinct. An alternate-case spelling of the same file is self only
+  when the directory proves one matching entry; ambiguous hard-link
+  spellings are refused. Moving to the same entry is already done; copying
+  or linking beside it keeps both. Compare a directory's real location with
+  its destination before applying any collision policy: a copy or move
+  into its own descendant is refused, even through an alias. Ancestor
+  identity detects directory aliases too; on Linux the mount table's
+  device and filesystem-root paths detect bind mounts starting below the
+  source, outside its visible ancestry. Other systems use canonical paths
+  and ancestor identities. The same rule guards batches before they stage
+  and steps before they mutate, and dry runs resolve destinations made
+  earlier in the plan through their existing ancestors.
 - A step that makes something new under a name (an archive extracted
   or made, ADR-059) says so (`Operation::makes`, `made_as`) and is
   settled as a copy is, with a file's choices: kept beside under a number

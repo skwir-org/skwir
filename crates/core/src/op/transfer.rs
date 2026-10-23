@@ -414,7 +414,7 @@ pub(super) fn batch_ahead(
         if !dest_remote && crate::fs::reach::of(&from).is_none() {
             continue;
         }
-        let taken = takes(&from, &sources, ctx);
+        let taken = takes(&from, &dest, &sources, ctx);
         // One file alone: as many round trips in a batch as by its step;
         // but within one remote, a transfer may copy it there, where its
         // step would bring its bytes here and send them back; and one may
@@ -747,7 +747,7 @@ impl Stamp {
 /// (ADR-078, 2): a name no other of them has, no companion beside it, a
 /// tree of files, folders and links alone. Reads the folder's names once
 /// and walks each tree.
-fn takes(from: &Path, sources: &[Source], ctx: &StepContext) -> Vec<Taken> {
+fn takes(from: &Path, dest: &Path, sources: &[Source], ctx: &StepContext) -> Vec<Taken> {
     let rules = ctx.companions();
     let Ok(listed) = std::fs::read_dir(from) else {
         return Vec::new();
@@ -772,6 +772,15 @@ fn takes(from: &Path, sources: &[Source], ctx: &StepContext) -> Vec<Taken> {
         let Some(name) = src.file_name() else {
             continue;
         };
+        let target = dest.join(new_name.as_deref().unwrap_or(name));
+        if !matches!(
+            super::builtin::transfer_target(src, &target),
+            Ok(super::builtin::TransferTarget::Separate)
+        ) {
+            // A batch runs before the individual step's check. Leave aliases,
+            // recursive destinations and resolution errors for that check.
+            continue;
+        }
         let alone = names.get(name) == Some(&1)
             && rules.owner(name).is_none()
             && !listed
@@ -1901,6 +1910,34 @@ mod tests {
 
     fn staged() -> usize {
         super::super::staging::MADE.load(Ordering::Relaxed)
+    }
+
+    #[test]
+    fn a_batch_never_stages_inside_an_aliased_source() {
+        let tmp = home_tempdir();
+        let from = tmp.path().join("from");
+        let source = from.join("a folder");
+        let child = source.join("child");
+        std::fs::create_dir_all(&child).unwrap();
+        file(&source.join("kept.txt"), "keep", 0o644);
+        let alias = tmp.path().join("alias");
+        std::os::unix::fs::symlink(&child, &alias).unwrap();
+        crate::fs::reach::pretend_remote(&from);
+        let before = staged();
+        let executor = Executor::new(Scheduler::new(2));
+        let r = executor.execute_blocking(
+            &copies(std::slice::from_ref(&source), &alias),
+            &CancelToken::new(),
+        );
+        assert!(r.error.is_some(), "recursive destination refused");
+        assert_eq!(r.applied, 0);
+        assert_eq!(BATCHES.load(Ordering::Relaxed), 0);
+        assert_eq!(staged(), before, "no staging folder made inside the source");
+        assert!(names(&child).is_empty());
+        assert_eq!(
+            std::fs::read_to_string(source.join("kept.txt")).unwrap(),
+            "keep"
+        );
     }
 
     #[test]

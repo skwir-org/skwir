@@ -430,18 +430,29 @@ impl Walk<'_> {
             return self.keep(transfer, child);
         }
         let target = transfer.target(&src);
-        if let Transfer::Move(m) = &transfer
-            && m.in_place(&src)
-        {
+        let linking = transfer.act() == Act::Link;
+        let Ok(relation) = builtin::transfer_target(&src, &target) else {
+            // The step's check will explain what cannot be resolved.
+            return self.keep(transfer, child);
+        };
+        if relation == builtin::TransferTarget::SameEntry {
+            // Moving an entry to itself is already done, even through an
+            // alias. Copying or linking beside itself makes another entry.
+            if transfer.moving() {
+                self.keep(transfer, child);
+            } else {
+                self.keep_both(transfer, &src, &target);
+            }
+            return;
+        }
+        if !linking && relation == builtin::TransferTarget::InsideSource {
             return self.keep(transfer, child);
         }
-        let linking = transfer.act() == Act::Link;
-        // Onto itself (a copy or a link into its own folder), or onto what
-        // an earlier step puts there (two items of one name): both kept.
-        if target == src || self.ctx.made(&target) {
+        // Onto what an earlier step puts there (two items of one name).
+        if self.ctx.made(&target) {
             return self.keep_both(transfer, &src, &target);
         }
-        if !self.ctx.exists(&target) || !linking && src.is_dir() && target.starts_with(&src) {
+        if !self.ctx.exists(&target) {
             return self.keep(transfer, child);
         }
         // There already: the link made, or the item verified whole, including

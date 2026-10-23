@@ -138,6 +138,345 @@ fn a_copy_into_its_own_folder_keeps_both() {
     assert!(root.join("notes (copy).txt").exists());
 }
 
+/// Parent aliases name the same entry, not an unrelated equal copy that
+/// a move may trash. Copies still duplicate beside it.
+fn transfer_through_own_folder_alias(alias: impl FnOnce(&Path) -> PathBuf) {
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    write(&root.join("it's a.txt"), "keep the original");
+    write(&root.join("a folder/nested.txt"), "keep the tree");
+    let dest = alias(&root);
+    let before = snapshot(&root);
+    let app = app(tmp.path());
+    for name in ["it's a.txt", "a folder"] {
+        let source = root.join(name);
+        let moving = plan(
+            &app,
+            "move",
+            serde_json::json!({
+                "entries": [source], "dest": dest,
+                "on_conflict": { "files": "replace", "folders": "merge" },
+            }),
+        );
+        assert!(matches!(
+            moving.diff(&app.companions).steps[0].1,
+            StepStatus::AlreadyDone
+        ));
+        app.apply_whole(moving);
+        assert!(matches!(
+            finished(&app),
+            ExecEvent::Finished {
+                applied: 0,
+                skipped: 1,
+                error: None,
+                ..
+            }
+        ));
+        assert_eq!(
+            snapshot(&root),
+            before,
+            "same entry stays, including its tree"
+        );
+        let copying = transfer(&app, "copy", &[source], &dest);
+        assert!(matches!(
+            copying.diff(&app.companions).steps[0].1,
+            StepStatus::Conflict { .. }
+        ));
+        app.apply_whole(copying);
+        assert!(matches!(
+            finished(&app),
+            ExecEvent::Finished {
+                applied: 1,
+                error: None,
+                ..
+            }
+        ));
+        let copied = if name == "a folder" {
+            root.join("a folder (copy)/nested.txt")
+        } else {
+            root.join("it's a (copy).txt")
+        };
+        assert_eq!(
+            read(&copied),
+            read(&if name == "a folder" {
+                root.join(name).join("nested.txt")
+            } else {
+                root.join(name)
+            })
+        );
+        // Keep the next case's fixture exact without involving the trash.
+        if name == "a folder" {
+            std::fs::remove_dir_all(root.join("a folder (copy)")).unwrap();
+        } else {
+            std::fs::remove_file(copied).unwrap();
+        }
+    }
+}
+
+#[test]
+fn transfers_to_own_folder_through_dot_components_keep_the_source() {
+    transfer_through_own_folder_alias(|root| root.join("a folder/../."));
+}
+
+#[cfg(unix)]
+#[test]
+fn transfers_to_own_folder_through_a_symlink_keep_the_source() {
+    transfer_through_own_folder_alias(|root| {
+        let alias = root.with_file_name("alias");
+        std::os::unix::fs::symlink(root, &alias).unwrap();
+        alias
+    });
+}
+
+/// Recursive destinations are rejected before a conflict policy may merge
+/// an existing child or any staging directory is made below it.
+fn reject_aliased_descendant(alias: impl Fn(&Path, &Path) -> PathBuf) {
+    for verb in ["copy", "move"] {
+        for taken in [false, true] {
+            let tmp = Scratch::new();
+            let root = tmp.path().join("tree");
+            let src = root.join("a folder");
+            let child = src.join("child");
+            std::fs::create_dir_all(&child).unwrap();
+            write(&src.join("original.txt"), "keep");
+            if taken {
+                write(&child.join("a folder/kept.txt"), "also keep");
+            }
+            let dest = alias(&root, &child);
+            let before = snapshot(&root);
+            let app = app(tmp.path());
+            let transfer = plan(
+                &app,
+                verb,
+                serde_json::json!({
+                    "entries": [src], "dest": dest,
+                    "on_conflict": { "files": "replace", "folders": "merge" },
+                }),
+            );
+            assert!(matches!(
+                transfer.diff(&app.companions).steps[0].1,
+                StepStatus::Conflict { .. }
+            ));
+            app.apply_whole(transfer);
+            assert!(matches!(
+                finished(&app),
+                ExecEvent::Finished {
+                    applied: 0,
+                    error: Some(_),
+                    ..
+                }
+            ));
+            assert_eq!(
+                snapshot(&root),
+                before,
+                "{verb}, destination taken: {taken}"
+            );
+        }
+    }
+}
+
+#[test]
+fn folders_cannot_enter_descendants_through_dot_components() {
+    reject_aliased_descendant(|root, _| root.join("a folder/../a folder/child/."));
+}
+
+#[cfg(unix)]
+#[test]
+fn folders_cannot_enter_descendants_through_symlinked_parents() {
+    reject_aliased_descendant(|root, child| {
+        let alias = root.with_file_name("alias");
+        std::os::unix::fs::symlink(child, &alias).unwrap();
+        alias
+    });
+}
+
+/// Move's serialized surface can ask for another spelling. On a
+/// case-insensitive filesystem that still names the source entry, so
+/// collision handling must never trash it. The rename command can still
+/// explicitly change its spelling.
+#[test]
+fn moving_onto_another_case_of_the_same_entry_keeps_it() {
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    let source = root.join("Case.txt");
+    write(&source, "the sole entry");
+    let target = root.join("CASE.TXT");
+    if skwir_core::fs::stat::id_of(&target) != skwir_core::fs::stat::id_of(&source) {
+        eprintln!("case-sensitive filesystem: alternate-case lookup is not an alias here");
+        return;
+    }
+    let app = app(tmp.path());
+    let mut data = transfer(&app, "move", std::slice::from_ref(&source), &root).to_data();
+    data.steps[0].args["new_name"] = serde_json::json!("CASE.TXT");
+    let moving = plan(&app, "apply_plan", serde_json::json!({ "plan": data }));
+    assert!(matches!(
+        moving.diff(&app.companions).steps[0].1,
+        StepStatus::AlreadyDone
+    ));
+    app.apply_whole(moving);
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished {
+            applied: 0,
+            skipped: 1,
+            error: None,
+            ..
+        }
+    ));
+    assert_eq!(read(&source), "the sole entry");
+    app.apply_whole(plan(
+        &app,
+        "rename",
+        serde_json::json!({
+            "entries": [source], "new_name": "CASE.TXT",
+        }),
+    ));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished {
+            applied: 1,
+            error: None,
+            ..
+        }
+    ));
+    let names: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, [std::ffi::OsString::from("CASE.TXT")]);
+    assert_eq!(read(&target), "the sole entry");
+}
+
+#[test]
+fn moving_onto_another_hard_link_in_one_folder_keeps_entries_distinct() {
+    if under_wine("trashing through the shell") {
+        return;
+    }
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    let source = root.join("first.txt");
+    write(&source, "two entries");
+    let target = root.join("second.txt");
+    std::fs::hard_link(&source, &target).unwrap();
+    let app = app(tmp.path());
+    let mut data = transfer(&app, "move", std::slice::from_ref(&source), &root).to_data();
+    data.steps[0].args["new_name"] = serde_json::json!("second.txt");
+    app.apply_whole(plan(
+        &app,
+        "apply_plan",
+        serde_json::json!({ "plan": data }),
+    ));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished {
+            applied: 1,
+            error: None,
+            ..
+        }
+    ));
+    assert!(!source.exists());
+    assert_eq!(read(&target), "two entries");
+}
+
+/// The identity of a file shared by two names does not make them the same
+/// entry. Moving onto an equal hard link still removes the source name.
+#[test]
+fn hard_link_names_remain_distinct_transfer_entries() {
+    if under_wine("trashing through the shell") {
+        return;
+    }
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    write(&root.join("source/a.txt"), "same file, two entries");
+    std::fs::create_dir(root.join("dest")).unwrap();
+    std::fs::hard_link(root.join("source/a.txt"), root.join("dest/a.txt")).unwrap();
+    let app = app(root);
+    app.apply_whole(transfer(
+        &app,
+        "move",
+        &[root.join("source/a.txt")],
+        &root.join("dest"),
+    ));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished {
+            applied: 1,
+            error: None,
+            ..
+        }
+    ));
+    assert!(!root.join("source/a.txt").exists());
+    assert_eq!(read(&root.join("dest/a.txt")), "same file, two entries");
+}
+
+#[cfg(unix)]
+#[test]
+fn transfers_keep_a_symlink_as_an_entry_and_allow_links_inside_folders() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    let folder = root.join("folder");
+    write(&folder.join("child/kept.txt"), "keep");
+    let link = root.join("a link");
+    std::os::unix::fs::symlink(&folder, &link).unwrap();
+    let alias = root.join("alias");
+    std::os::unix::fs::symlink(&folder, &alias).unwrap();
+    let app = app(root);
+    // A leaf link can go inside the directory it points to: it is not a tree copy.
+    for verb in ["copy", "move"] {
+        let dest = if verb == "copy" {
+            alias.clone()
+        } else {
+            alias.join("child")
+        };
+        app.apply_whole(transfer(&app, verb, std::slice::from_ref(&link), &dest));
+        assert!(matches!(
+            finished(&app),
+            ExecEvent::Finished {
+                applied: 1,
+                error: None,
+                ..
+            }
+        ));
+        assert_eq!(std::fs::read_link(dest.join("a link")).unwrap(), folder);
+    }
+    // Creating a link inside its source folder is safe, including through an alias.
+    app.apply_whole(transfer(
+        &app,
+        "link",
+        std::slice::from_ref(&folder),
+        &alias,
+    ));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished {
+            applied: 1,
+            error: None,
+            ..
+        }
+    ));
+    assert_eq!(std::fs::read_link(folder.join("folder")).unwrap(), folder);
+    // Linking beside an entry through an alias keeps both, just like Link Here.
+    app.apply_whole(transfer(
+        &app,
+        "link",
+        &[folder.join("child/kept.txt")],
+        &alias.join("child"),
+    ));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished {
+            applied: 1,
+            error: None,
+            ..
+        }
+    ));
+    assert_eq!(
+        std::fs::read_link(folder.join("child/kept (link).txt")).unwrap(),
+        folder.join("child/kept.txt")
+    );
+    assert_eq!(read(&folder.join("child/kept.txt")), "keep");
+}
+
 /// Two items of one name going to one folder keep both, in order; the
 /// second is named after the first takes the name.
 #[test]

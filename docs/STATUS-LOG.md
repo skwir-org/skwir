@@ -3986,3 +3986,25 @@ below), worked through in order, each committed after its checks.
   all-crate lint/cross-compilation and tests (2014 passed, 25 skipped);
   formatting and diff whitespace; all benchmark budgets met on the quiet
   rerun. Final full release and real-window checks pending.
+
+### Review fix 2: transfers recognize aliased entries (2026-10-23)
+
+- Shared transfer checks resolve parent aliases while preserving the
+  leaf entry. Self-moves are already done; self-copies and links keep
+  both. Directory destinations inside the source are refused before
+  collision policies, batch staging and mutation, including destinations
+  foreseen by earlier plan steps.
+- Parent and file identities plus actual directory names distinguish
+  alternate-case aliases from distinct hard-link entries. Ambiguous
+  spellings are refused. Containment also checks ancestor identities and,
+  on Linux, mountinfo device/root-relative paths for bind roots below the
+  source. Other systems use canonical paths and ancestor identities.
+- Verified: Linux operation/clash/transfer and alias tests, 92 of 92; core
+  Clippy for all targets with warnings denied; formatting and diff checks.
+  The alternate-case public command test passed under Wine without its
+  conditional skip, including an explicit case-changing rename; nextest
+  marked the successful test leaky because Wine retained output handles.
+  Bind-root tests use synthetic mountinfo, not host mounts.
+- The latest benchmark binary met every budget with compilation finished;
+  an overlapping run had missed the two streaming-completion budgets. No
+  budgets changed. Final full release checks pending.

@@ -44,6 +44,175 @@ fn invalid_name(name: &OsStr) -> Option<StepStatus> {
     valid_file_name(name).err().map(|e| conflict(e.to_string()))
 }
 
+/// How the destination relates to the entry being transferred. A file's
+/// identity alone cannot answer: two hard-link names are distinct entries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TransferTarget {
+    SameEntry,
+    InsideSource,
+    Separate,
+}
+
+/// Resolve folder aliases, keeping the leaf itself unfollowed. In a dry
+/// run a destination folder can be made by an earlier step: resolve its
+/// existing ancestor, then retain the names the plan would make below it.
+fn canonical_entry(path: &Path) -> std::io::Result<PathBuf> {
+    fn folder(path: &Path) -> std::io::Result<PathBuf> {
+        match crate::os_path::canonical(path) {
+            Ok(path) => Ok(path),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+                    return Err(error);
+                };
+                Ok(folder(parent)?.join(name))
+            }
+            Err(error) => Err(error),
+        }
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => Ok(folder(parent)?.join(name)),
+        _ => crate::os_path::canonical(path),
+    }
+}
+
+/// The entry's identity, preserving errors so an unavailable identity can
+/// never turn an uncertain alias into an unrelated destination.
+fn entry_identity(path: &Path) -> std::io::Result<crate::entry::FileId> {
+    let meta = std::fs::symlink_metadata(path)?;
+    crate::fs::stat::identity(path, &meta)
+        .ok_or_else(|| std::io::Error::other("the entry's identity could not be read"))
+}
+
+/// Whether two spellings in one directory name one entry, given that both
+/// resolve to the same file. Two names actually listed are distinct hard
+/// links. An alternate spelling is proven only when that file has one
+/// listed name; otherwise the filesystem's case rules would have to guess
+/// which hard link it means, so leave the transfer refused.
+fn same_spelling(source: &OsStr, target: &OsStr, names: &[OsString]) -> std::io::Result<bool> {
+    if source == target {
+        return Ok(true);
+    }
+    if names.iter().any(|name| name == source) && names.iter().any(|name| name == target) {
+        return Ok(false);
+    }
+    if names.len() == 1 {
+        return Ok(true);
+    }
+    Err(std::io::Error::other(
+        "the spellings of this file's hard links could not be distinguished",
+    ))
+}
+
+fn same_entry(source: &Path, destination: &Path) -> std::io::Result<bool> {
+    if source == destination {
+        return Ok(true);
+    }
+    let (Some(from), Some(into), Some(source_name), Some(target_name)) = (
+        source.parent(),
+        destination.parent(),
+        source.file_name(),
+        destination.file_name(),
+    ) else {
+        return Ok(false);
+    };
+    // Directory identity also recognizes two paths through bind mounts.
+    if from != into {
+        let there = match entry_identity(into) {
+            Ok(id) => id,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        if entry_identity(from)? != there {
+            return Ok(false);
+        }
+    }
+    let there = match entry_identity(destination) {
+        Ok(id) => id,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let original = entry_identity(source)?;
+    if original != there {
+        return Ok(false);
+    }
+    if source_name == target_name {
+        return Ok(true);
+    }
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        if entry_identity(&entry.path())? == original {
+            names.push(entry.file_name());
+        }
+    }
+    same_spelling(source_name, target_name, &names)
+}
+
+/// What two paths name within their mounted filesystem. Bind mounts can
+/// start below the source, so walking the destination's ancestors alone
+/// need never meet the source directory's identity.
+#[cfg(target_os = "linux")]
+fn inside_mounts(source: &Path, destination: &Path, mounts: &[crate::fs::volume::Mounted]) -> bool {
+    let within = |path: &Path| {
+        let mount = mounts
+            .iter()
+            .filter(|mount| path.starts_with(&mount.point))
+            .max_by_key(|mount| mount.point.as_os_str().len())?;
+        Some((
+            mount.device?,
+            mount.root.join(path.strip_prefix(&mount.point).ok()?),
+        ))
+    };
+    matches!((within(source), within(destination)), (Some((a, source)), Some((b, destination)))
+        if a == b && destination.starts_with(&source))
+}
+
+fn inside_source(source: &Path, destination: &Path) -> std::io::Result<bool> {
+    if destination.starts_with(source) {
+        return Ok(true);
+    }
+    let source_id = entry_identity(source)?;
+    for ancestor in destination.parent().into_iter().flat_map(Path::ancestors) {
+        match entry_identity(ancestor) {
+            Ok(id) if id == source_id => return Ok(true),
+            Ok(_) => {}
+            // A folder foreseen by an earlier step does not exist yet.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let table = std::fs::read("/proc/self/mountinfo")?;
+        Ok(inside_mounts(
+            source,
+            destination,
+            &crate::fs::volume::mountinfo(&table),
+        ))
+    }
+    // Other systems resolve folder aliases canonically and by ancestor
+    // identity above; Linux's bind-root mapping is specific to mountinfo.
+    #[cfg(not(target_os = "linux"))]
+    Ok(false)
+}
+
+/// Compare entry locations after resolving parent aliases, never following
+/// a symlink at the leaf. A folder's destination is checked against its real
+/// location before collision policies, batches or staging can change anything.
+pub(super) fn transfer_target(src: &Path, target: &Path) -> std::io::Result<TransferTarget> {
+    let source = canonical_entry(src)?;
+    let destination = canonical_entry(target)?;
+    if same_entry(&source, &destination)? {
+        return Ok(TransferTarget::SameEntry);
+    }
+    if std::fs::symlink_metadata(src)?.is_dir()
+        && inside_source(&crate::os_path::canonical(src)?, &destination)?
+    {
+        return Ok(TransferTarget::InsideSource);
+    }
+    Ok(TransferTarget::Separate)
+}
+
 /// Whether `dir` lists an entry spelled exactly `name`. On a
 /// case-insensitive filesystem `a.txt` and `A.txt` stat the same file, and
 /// only the listing says which spelling is on disk.
@@ -345,15 +514,6 @@ impl Move {
                 .unwrap_or_else(|| trashed_name(src).unwrap_or_else(|| file_name(src))),
         )
     }
-
-    /// Whether `src` is where it would go.
-    pub(super) fn in_place(&self, src: &Path) -> bool {
-        src.parent() == Some(self.dest_dir.as_path())
-            && self
-                .new_name
-                .as_ref()
-                .is_none_or(|n| src.file_name() == Some(n))
-    }
 }
 
 impl super::Kind for Move {
@@ -415,19 +575,24 @@ impl super::Effect for Move {
             }
         }
         match ctx.resolve(&self.entry) {
-            Ok(src) if self.in_place(&src) => StepStatus::AlreadyDone,
-            // A batch placed its copy (ADR-078): its apply removes the
-            // original.
-            Ok(src) if ctx.placed_by_batch(&src, &self.target(&src)) => pending(true),
-            Ok(src) if ctx.exists(&self.target(&src)) => conflict(format!(
-                "“{}” is already there",
-                display_name(&self.target(&src))
-            )),
-            Ok(src) if self.dest_dir.starts_with(&src) && src.is_dir() => {
-                conflict("a folder cannot be moved into itself")
-            }
             Ok(src) => {
-                along_conflict(ctx, &along(ctx, &src, &self.target(&src))).unwrap_or(pending(true))
+                let target = self.target(&src);
+                match transfer_target(&src, &target) {
+                    Ok(TransferTarget::SameEntry) => return StepStatus::AlreadyDone,
+                    Ok(TransferTarget::InsideSource) => {
+                        return conflict("a folder cannot be moved into itself");
+                    }
+                    Err(error) => return conflict(error.to_string()),
+                    Ok(TransferTarget::Separate) => {}
+                }
+                // A batch placed its copy (ADR-078): apply removes the original.
+                if ctx.placed_by_batch(&src, &target) {
+                    return pending(true);
+                }
+                if ctx.exists(&target) {
+                    return conflict(format!("“{}” is already there", display_name(&target)));
+                }
+                along_conflict(ctx, &along(ctx, &src, &target)).unwrap_or(pending(true))
             }
             Err(_) if id_of(&self.target(&self.entry.path)) == Some(self.entry.id) => {
                 StepStatus::AlreadyDone
@@ -453,6 +618,11 @@ impl super::Effect for Move {
             return super::Effect::apply(&self.restoring(&src), ctx);
         }
         let target = self.target(&src);
+        match transfer_target(&src, &target)? {
+            TransferTarget::SameEntry => return Ok(None),
+            TransferTarget::InsideSource => anyhow::bail!("a folder cannot be moved into itself"),
+            TransferTarget::Separate => {}
+        }
         let origin = src.parent().unwrap_or(Path::new("/")).to_path_buf();
         let along = along(ctx, &src, &target);
         move_entry(ctx, &src, &target, &along)?;
@@ -742,12 +912,17 @@ impl super::Effect for Copy {
             Err(e) => return conflict(e.to_string()),
         };
         let target = self.target(&src);
+        match transfer_target(&src, &target) {
+            Ok(TransferTarget::SameEntry) => return conflict("it would be copied onto itself"),
+            Ok(TransferTarget::InsideSource) => {
+                return conflict("a folder cannot be copied into itself");
+            }
+            Err(error) => return conflict(error.to_string()),
+            Ok(TransferTarget::Separate) => {}
+        }
         // A batch placed it there, a moment ago, verified (ADR-078).
         if ctx.placed_by_batch(&src, &target) {
             return pending(true);
-        }
-        if target == src {
-            return conflict("it would be copied onto itself");
         }
         if ctx.made(&target) {
             return conflict(format!(
@@ -763,9 +938,6 @@ impl super::Effect for Copy {
                 Ok(false) => conflict(format!("“{}” is already there", display_name(&target))),
                 Err(e) => conflict(format!("{e:#}")),
             };
-        }
-        if target.starts_with(&src) && src.is_dir() {
-            return conflict("a folder cannot be copied into itself");
         }
         along_conflict(ctx, &along(ctx, &src, &target)).unwrap_or(pending(true))
     }
@@ -1079,6 +1251,11 @@ fn copy_entry(
     along: &[Along],
     ctx: &StepContext,
 ) -> anyhow::Result<bool> {
+    match transfer_target(src, target)? {
+        TransferTarget::SameEntry => anyhow::bail!("it would be copied onto itself"),
+        TransferTarget::InsideSource => anyhow::bail!("a folder cannot be copied into itself"),
+        TransferTarget::Separate => {}
+    }
     let through = crate::fs::volume::is_removable(dest_dir);
     let pace = if through {
         ctx.pace_through(dest_dir)?
@@ -3641,6 +3818,38 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
 
     use super::*;
+
+    #[test]
+    fn alternate_spellings_require_one_entry_not_just_one_file() {
+        let one = [OsString::from("Case.txt")];
+        assert!(same_spelling(OsStr::new("Case.txt"), OsStr::new("CASE.TXT"), &one).unwrap());
+        assert!(same_spelling(OsStr::new("case.txt"), OsStr::new("CASE.TXT"), &one).unwrap());
+        let two = [OsString::from("Case.txt"), OsString::from("Other.txt")];
+        assert!(!same_spelling(OsStr::new("Case.txt"), OsStr::new("Other.txt"), &two).unwrap());
+        assert!(same_spelling(OsStr::new("Case.txt"), OsStr::new("OTHER.TXT"), &two).is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn bind_mount_roots_reveal_descendants_outside_the_visible_source_path() {
+        let mounts = crate::fs::volume::mountinfo(
+            "\
+1 0 8:1 / / rw - ext4 /dev/test rw\n\
+2 1 8:1 /tree /alias rw - ext4 /dev/test rw\n\
+3 1 8:1 /tree/child /nested-alias rw - ext4 /dev/test rw\n\
+4 1 8:2 /tree/child /other-volume rw - ext4 /dev/other rw\n\
+5 1 8:1 /outside /tree/elsewhere rw - ext4 /dev/test rw\n",
+        );
+        let inside = |source: &str, target: &str| {
+            inside_mounts(Path::new(source), Path::new(target), &mounts)
+        };
+        assert!(inside("/tree", "/alias/new"));
+        assert!(inside("/tree", "/nested-alias/deeper/new"));
+        assert!(inside("/alias", "/tree/child/new"));
+        assert!(!inside("/tree", "/other-volume/new"));
+        assert!(!inside("/tree", "/tree/elsewhere/new"));
+        assert!(!inside("/tree/child", "/alias/sibling/new"));
+    }
 
     /// A copy of a file is finished when it has its length and time:
     /// exactly, or to the second where the copy keeps no more (SFTP's).

@@ -107,7 +107,7 @@ the completed set; targeted checks are recorded in `docs/STATUS-LOG.md`.
 | Issue | Work | State |
 | --- | --- | --- |
 | 1 | Content and metadata proof before skipping a copy or removing a moved source | fixed; targeted checks pass |
-| 2 | File-operation self checks through path aliases | pending |
+| 2 | File-operation self checks through path aliases | fixed; targeted checks pass |
 | 3 | Merged-move undo restores directory attributes | pending |
 | 4 | MCP authority belongs to its endpoint | fixed; targeted checks pass |
 | 5 | Privacy follows symlink targets | fixed; targeted checks pass |
