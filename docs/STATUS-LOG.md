@@ -3744,3 +3744,8 @@ below), worked through in order, each committed after its checks.
   Both right after a folder is made through GVfs's FUSE bridge, on the
   namespaces' servers (unfs3, netatalk), in steps tonight did not change;
   not fixed, left to look at (GVfs's bridge caching a new folder).
+- Again once the tests were fixed: `just remote-check` green (its 83
+  tests; GVfs's NFS and AFP, an iPhone's AFC against the stand-in,
+  Nearby on the test's network; the private keyring, KeePassXC and the
+  locked keyring, 5, 5 and 2); under Wine every default member but
+  `skwir` and `skwir-ui`, 1146 of 1146.
