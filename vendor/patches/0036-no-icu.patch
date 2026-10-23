@@ -1,0 +1,28 @@
+0036 no-icu: a jump list's removed entries are read without ICU's u_strlen, so gpui needs no icuuc.dll
+
+diff --git a/crates/gpui_windows/src/destination_list.rs b/crates/gpui_windows/src/destination_list.rs
+index d6967c0..54b61e6 100644
+--- a/crates/gpui_windows/src/destination_list.rs
++++ b/crates/gpui_windows/src/destination_list.rs
+@@ -5,7 +5,6 @@ use smallvec::SmallVec;
+ use windows::{
+     Win32::{
+         Foundation::PROPERTYKEY,
+-        Globalization::u_strlen,
+         System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance, StructuredStorage::PROPVARIANT},
+         UI::{
+             Controls::INFOTIPSIZE,
+@@ -100,8 +99,11 @@ fn create_destination_list() -> anyhow::Result<(ICustomDestinationList, Vec<Smal
+             // see https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ishelllinkw-getdescription
+             let mut buffer = [0u16; INFOTIPSIZE as usize];
+             unsafe { shell_link.GetDescription(&mut buffer)? };
+-            let len = unsafe { u_strlen(buffer.as_ptr()) };
+-            String::from_utf16_lossy(&buffer[..len as usize])
++            // The description ends at its NUL, looked for within the buffer
++            // rather than by ICU's `u_strlen`, which would make icuuc.dll a
++            // dependency (Windows 10 1703 and later have it, Wine does not).
++            let len = buffer.iter().position(|&c| c == 0).unwrap_or(buffer.len());
++            String::from_utf16_lossy(&buffer[..len])
+         };
+         let args = description.split('\n').map(PathBuf::from).collect();
+ 

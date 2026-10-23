@@ -65,6 +65,7 @@ at the vendored commit.
 | `0033-meshes` | A triangle mesh drawn in 3D (`Window::paint_mesh`), by wgpu, Direct3D 11 and Metal | — |
 | `0034-windows-shaders-at-start` | Built for Windows on another system, the shaders are compiled as the renderer starts | — |
 | `0035-apple-shaders-at-start` | Built for macOS on another system, the shader bindings are made and the shaders compiled as the renderer starts | — |
+| `0036-no-icu` | A jump list's removed entries are read without ICU's `u_strlen`, so gpui needs no icuuc.dll | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -531,6 +532,16 @@ and compiled as the renderer starts by macOS's own Metal compiler, the
 Like 0034, it acts only where gpui is built on another system: built on a
 Mac, the shaders are compiled ahead and the patch's code is not compiled.
 Kept for the macOS builds made on Linux (ADR-075).
+
+### 0036: No ICU
+
+gpui read the description of a jump list's entry the user removed up to its
+NUL with ICU's `u_strlen`, its one call into ICU: so every Windows program
+built on gpui imported icuuc.dll. Windows has it from Windows 10 1703 on;
+Wine has none, so no test program of Skwir's window started under Wine
+(exit 53 as nextest listed them). The NUL is now looked for in the buffer
+itself, which also never reads past it. Checked: `just test-windows` lists
+and runs the tests of `skwir` and `skwir-ui` under Wine.
 
 ## Adding or changing a patch
 
