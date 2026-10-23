@@ -9,6 +9,9 @@
 //! image, nor one called `x.xmp` a sidecar. [`read_regular`] also refuses
 //! a file larger than its caller expects, so one named like a small file
 //! is never read whole into memory.
+//!
+//! A file replaced whole (settings, the cache, a sidecar, a thumbnail) is
+//! written beside it, then put in its place by [`take_place`].
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -106,6 +109,47 @@ pub fn read_regular_text(path: &Path, limit: u64) -> io::Result<String> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
 }
 
+/// Put `staged` in `target`'s place, whole: a reader sees the old file or
+/// the new one. Windows refuses to replace a file that is open (another
+/// program reading it, a worker of Skwir's) as `tempfile`'s `persist` asks
+/// (`MoveFileExW`). `std::fs::rename` then asks again as Unix replaces,
+/// the reader keeping the old file (POSIX semantics, Windows 10 1709 on),
+/// which a reader that shares no deletion still refuses, and Wine always:
+/// there it is tried again while the reader lets go, for [`HELD_FOR`].
+/// Call from a worker.
+///
+/// # Errors
+/// When it cannot take the place: `staged` is removed then.
+pub fn take_place(staged: tempfile::NamedTempFile, target: &Path) -> io::Result<()> {
+    // Kept first: on Windows that takes off the temporary mark it was made
+    // with, which the file in place must not keep.
+    let staged = staged.into_temp_path().keep().map_err(|e| e.error)?;
+    let mut waited = std::time::Duration::ZERO;
+    let mut wait = std::time::Duration::from_millis(10);
+    loop {
+        match std::fs::rename(&staged, target) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if cfg!(windows)
+                    && error.kind() == io::ErrorKind::PermissionDenied
+                    && waited < HELD_FOR =>
+            {
+                std::thread::sleep(wait);
+                waited += wait;
+                wait *= 2;
+            }
+            Err(error) => {
+                let _ = std::fs::remove_file(&staged);
+                return Err(error);
+            }
+        }
+    }
+}
+
+/// How long [`take_place`] waits, on Windows, for the readers of a file to
+/// let go of it: a reader of a small file holds it a moment.
+pub const HELD_FOR: std::time::Duration = std::time::Duration::from_millis(600);
+
 fn ensure_regular(file: &File) -> io::Result<()> {
     if file.metadata()?.is_file() {
         Ok(())
@@ -120,6 +164,46 @@ fn ensure_regular(file: &File) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file open for reading a moment is replaced all the same: under
+    /// its reader where the system can (Unix, Windows' POSIX semantics), or
+    /// once the reader lets go (Wine, a reader that shares no deletion).
+    /// Nothing staged is left beside it.
+    #[test]
+    fn a_file_open_is_replaced_whole() {
+        use std::io::Write as _;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("it's the notes.txt");
+        std::fs::write(&target, b"old").unwrap();
+        let reader = File::open(&target).unwrap();
+        let reading = std::thread::spawn(move || {
+            std::thread::sleep(HELD_FOR / 6);
+            drop(reader);
+        });
+        let mut staged = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        staged.write_all(b"new").unwrap();
+        take_place(staged, &target).unwrap();
+        reading.join().unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    /// Unix replaces a file under its reader, who keeps the old bytes.
+    #[cfg(unix)]
+    #[test]
+    fn a_reader_keeps_the_file_it_opened() {
+        use std::io::Write as _;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("notes");
+        std::fs::write(&target, b"old").unwrap();
+        let mut reader = File::open(&target).unwrap();
+        let mut staged = tempfile::NamedTempFile::new_in(dir.path()).unwrap();
+        staged.write_all(b"new").unwrap();
+        take_place(staged, &target).unwrap();
+        let mut old = Vec::new();
+        reader.read_to_end(&mut old).unwrap();
+        assert_eq!(old, b"old");
+    }
 
     #[test]
     fn regular_files_open_and_directories_do_not() {

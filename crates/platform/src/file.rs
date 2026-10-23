@@ -14,7 +14,9 @@
 use std::io;
 use std::path::Path;
 
-pub use skwir_core::fs::file::{SIDE_FILE_LIMIT, open_regular, read_regular, read_regular_text};
+pub use skwir_core::fs::file::{
+    SIDE_FILE_LIMIT, open_regular, read_regular, read_regular_text, take_place,
+};
 
 /// Rewrite the text file at/// Rewrite the text file at `link` with `change`, which gets its current
 /// text (empty when there is no file) and answers the new text with a value
@@ -73,7 +75,7 @@ pub fn rewrite<T>(
     // a power cut could leave the desktop's bookmarks or its default
     // applications empty (XFS, ext4 without `auto_da_alloc`).
     staged.as_file().sync_all()?;
-    staged.persist(&file)?;
+    take_place(staged, &file)?;
     Ok(Some(value))
 }
 

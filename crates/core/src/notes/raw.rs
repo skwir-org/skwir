@@ -118,8 +118,7 @@ pub fn replace(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
     let mut staged = staged;
     staged.write_all(bytes)?;
-    staged.persist(target).map_err(|e| e.error)?;
-    Ok(())
+    crate::fs::file::take_place(staged, target)
 }
 
 /// The bytes at each of `keys` now, once each.

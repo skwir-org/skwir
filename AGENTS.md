@@ -227,6 +227,9 @@ working in an area, also read that area's rules (see
   keeps beside a file (a sidecar, a `.trashinfo`, a `._` file) is read
   whole with `read_regular`, which refuses one larger than expected
   rather than truncating it.
+  A file replaced whole is written beside it and put in its place with
+  `file::take_place`: Windows refuses a plain replace of a file anyone
+  has open.
 - **Entries arrive before metadata.** Treat missing fields as unknown,
   request hydration in batches, and react to `Updated` events; never stat
   rows while rendering. A fact too costly for every listing (a picture's

@@ -211,7 +211,7 @@ impl CacheSlot {
             .prefix(".tmp-")
             .tempfile_in(parent)?;
         tmp.write_all(value)?;
-        tmp.persist(path).map(drop).map_err(|e| e.error)
+        crate::fs::file::take_place(tmp, &path)
     }
 
     pub fn remove(&self, key: &[u8]) -> std::io::Result<()> {

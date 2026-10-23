@@ -332,8 +332,7 @@ pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
         std::fs::set_permissions(staged.path(), metadata.permissions())?;
     }
     staged.write_all(&bytes)?;
-    staged.persist(&aside).map_err(|e| e.error)?;
-    Ok(())
+    skwir_platform::file::take_place(staged, &aside)
 }
 
 /// The file a `._` name is the companion of: `x` for `._x`, kept by the

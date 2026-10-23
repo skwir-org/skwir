@@ -1793,7 +1793,7 @@ impl Settings {
             })?;
         file.write_all(toml::to_string_pretty(table)?.as_bytes())?;
         file.as_file().sync_all()?;
-        file.persist(&target)?;
+        crate::fs::file::take_place(file, &target)?;
         // The rename is durable only once the directory entry is
         // flushed, on Unix; Windows journals it, and opens no folder so.
         #[cfg(unix)]

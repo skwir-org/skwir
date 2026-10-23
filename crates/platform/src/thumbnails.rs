@@ -231,7 +231,7 @@ impl ThumbCache {
             writer.finish()?;
         }
         let dest = dir.join(format!("{key}.png"));
-        staged.persist(&dest).map_err(|e| e.error)?;
+        crate::file::take_place(staged, &dest)?;
         Ok(dest)
     }
 }
