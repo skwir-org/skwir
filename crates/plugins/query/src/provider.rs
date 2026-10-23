@@ -463,7 +463,7 @@ impl Shared {
                 let _walk = this.walk.lock();
                 if !cancel.is_cancelled() {
                     this.tx.send(ListingEvent::Error(format!(
-                        "cannot search {}: {error}",
+                        "query root {} is not a folder: {error}",
                         query.root.display()
                     )));
                 }
@@ -651,6 +651,21 @@ struct Reached {
     folders: HashMap<PathBuf, bool>,
 }
 
+/// Reject paths the walk cannot reach before any filesystem read: hidden
+/// names, excess depth, and a network mount anywhere below the root.
+fn in_walk<'a>(q: &Query, path: &'a Path) -> Option<&'a Path> {
+    let relative = path.strip_prefix(&q.root).ok()?;
+    if !crate::plocate::visible(relative, q.hidden, q.depth)
+        || path
+            .ancestors()
+            .take_while(|above| *above != q.root)
+            .any(reach::is_point)
+    {
+        return None;
+    }
+    Some(relative)
+}
+
 impl Reached {
     /// Whether `dir`, which is `relative` under the root, is the folder
     /// the walk would find there.
@@ -747,51 +762,65 @@ impl Shared {
             }
         } else {
             self.rests_on(cancel, None);
-            let mut builder = ignore::WalkBuilder::new(&q.root);
-            builder
-                .hidden(!q.hidden)
-                .git_ignore(false)
-                .git_global(false)
-                .git_exclude(false)
-                .ignore(false)
-                .parents(false)
-                .follow_links(false)
-                .max_depth(q.depth)
-                // A network mount below the folder searched is not entered:
-                // a search of one walks it from its own folder (ADR-077).
-                .filter_entry(|dent| {
-                    dent.depth() == 0 || !skwir_core::fs::reach::is_point(dent.path())
-                });
-            let (hinted, deferred) = (&hinted, &deferred);
-            builder.build_parallel().run(|| {
-                // The walking thread's stats, through the folder it is in.
-                let mut statter = Statter::default();
-                let batcher = &batcher;
-                Box::new(move |result| {
-                    if cancel.is_cancelled() {
-                        return ignore::WalkState::Quit;
-                    }
-                    let Ok(dent) = result else {
-                        return ignore::WalkState::Continue;
-                    };
-                    if dent.depth() == 0 {
-                        return ignore::WalkState::Continue;
-                    }
-                    let path = dent.path();
-                    let Some(name) = path.file_name() else {
-                        return ignore::WalkState::Continue;
-                    };
-                    if hinted.contains(path) {
-                        return ignore::WalkState::Continue;
-                    }
-                    let known = Known::Kind(kind_of(dent.file_type()));
-                    consider(q, path, (name, known), batcher, deferred, &mut statter);
-                    ignore::WalkState::Continue
-                })
-            });
+            Self::walk_below(q, &q.root, &hinted, &batcher, &deferred);
         }
         deferred.finish();
         batcher.finish();
+    }
+
+    /// Stream a subtree by the same rules as the initial walk. Depth is
+    /// always relative to the search root, even for an arriving folder.
+    fn walk_below(
+        q: &Query,
+        root: &Path,
+        checked: &HashSet<PathBuf>,
+        batcher: &Batcher<'_>,
+        deferred: &Deferred<'_>,
+    ) {
+        if batcher.cancel.is_cancelled() {
+            return;
+        }
+        let below = root.strip_prefix(&q.root).unwrap().components().count();
+        let search_root = q.root.clone();
+        let mut builder = ignore::WalkBuilder::new(root);
+        builder
+            .hidden(!q.hidden)
+            .git_ignore(false)
+            .git_global(false)
+            .git_exclude(false)
+            .ignore(false)
+            .parents(false)
+            .follow_links(false)
+            .max_depth(q.depth.map(|depth| depth.saturating_sub(below)))
+            // A network mount below the folder searched is not entered:
+            // a search of one walks it from its own folder (ADR-077).
+            .filter_entry(move |dent| dent.path() == search_root || !reach::is_point(dent.path()));
+        let cancel = batcher.cancel;
+        builder.build_parallel().run(|| {
+            // The walking thread's stats, through the folder it is in.
+            let mut statter = Statter::default();
+            Box::new(move |result| {
+                if cancel.is_cancelled() {
+                    return ignore::WalkState::Quit;
+                }
+                let Ok(dent) = result else {
+                    return ignore::WalkState::Continue;
+                };
+                if dent.depth() == 0 {
+                    return ignore::WalkState::Continue;
+                }
+                let path = dent.path();
+                let Some(name) = path.file_name() else {
+                    return ignore::WalkState::Continue;
+                };
+                if checked.contains(path) {
+                    return ignore::WalkState::Continue;
+                }
+                let known = Known::Kind(kind_of(dent.file_type()));
+                consider(q, path, (name, known), batcher, deferred, &mut statter);
+                ignore::WalkState::Continue
+            })
+        });
     }
 
     /// Consider the files the indexes name for the query's tag (ADR-026),
@@ -891,6 +920,7 @@ impl Shared {
             }
         }
         let mut seen: HashSet<PathBuf> = again.iter().map(|(p, _)| p.clone()).collect();
+        let mut arrived_folders = Vec::new();
         for change in changes {
             let arrived = match change {
                 Change::Metadata { path, .. }
@@ -904,6 +934,9 @@ impl Shared {
                 Change::Trash { .. } | Change::Delete { .. } | Change::Remove { .. } => Vec::new(),
             };
             for path in arrived {
+                if !matches!(change, Change::Metadata { .. }) {
+                    arrived_folders.push(path.clone());
+                }
                 if seen.insert(path.clone()) {
                     again.push((path, None));
                 }
@@ -967,6 +1000,65 @@ impl Shared {
             self.tx.send(ListingEvent::Renamed(pairs));
         }
         self.publish(cancel, found, false);
+        self.discover(&q, arrived_folders, &seen, cancel, &mut reached);
+    }
+
+    /// A directory arriving can contain results the search never knew.
+    /// Follow known rows first, then stream only the unexamined descendants
+    /// without resetting the listing or announcing another completion.
+    fn discover(
+        &self,
+        q: &Query,
+        mut arrivals: Vec<PathBuf>,
+        checked: &HashSet<PathBuf>,
+        cancel: &CancelToken,
+        reached: &mut Reached,
+    ) {
+        arrivals.sort();
+        arrivals.dedup();
+        let batcher = Batcher {
+            shared: self,
+            cancel,
+            pending: Mutex::new((Vec::new(), Instant::now())),
+            batch_size: self.ctx.batch_size.max(1),
+        };
+        let deferred = Deferred::new(self, q, &batcher);
+        let mut statter = Statter::default();
+        let mut previous: Option<PathBuf> = None;
+        for path in arrivals {
+            if cancel.is_cancelled() {
+                return;
+            }
+            if previous
+                .as_ref()
+                .is_some_and(|above| path.starts_with(above))
+            {
+                continue;
+            }
+            if path != q.root {
+                let Some(relative) = in_walk(q, &path) else {
+                    continue;
+                };
+                // Canonical parents reject traversal through symlinks;
+                // the final entry's kind below rejects a symlink root.
+                if !path
+                    .parent()
+                    .zip(relative.parent())
+                    .is_some_and(|(dir, rel)| reached.reaches(dir, rel))
+                {
+                    continue;
+                }
+            }
+            if !statter.stat(&path).is_some_and(|entry| {
+                entry.kind == EntryKind::Directory || (path == q.root && entry.is_dir())
+            }) {
+                continue;
+            }
+            Self::walk_below(q, &path, checked, &batcher, &deferred);
+            previous = Some(path);
+        }
+        deferred.finish();
+        batcher.flush();
     }
 
     /// `path` as a result of `q`, if it is one now and the walk would
@@ -980,11 +1072,7 @@ impl Shared {
         statter: &mut Statter,
         reached: &mut Reached,
     ) -> Option<Entry> {
-        let relative = path.strip_prefix(&q.root).ok()?;
-        if relative.as_os_str().is_empty() || !crate::plocate::visible(relative, q.hidden, q.depth)
-        {
-            return None;
-        }
+        let relative = in_walk(q, path)?;
         let dir = path.parent()?;
         if !reached.reaches(dir, relative.parent()?) {
             return None;
@@ -1174,16 +1262,16 @@ mod tests {
         let id = *open.shared.paths.lock().keys().next().unwrap();
         let release = block_remote(&open);
         open.hydrate(&[id], Priority::Visible);
-        let arrived = tmp.path().join("b.txt");
+        let folder = tmp.path().join("arrived");
+        std::fs::create_dir(&folder).unwrap();
+        let arrived = folder.join("b.txt");
         std::fs::write(&arrived, "y").unwrap();
         let searches = Searches::default();
         searches
             .0
             .lock()
             .push((location, Arc::downgrade(&open.shared)));
-        searches.changed(&[Change::Restore {
-            path: arrived.clone(),
-        }]);
+        searches.changed(&[Change::Restore { path: folder }]);
         local_work_completes(&open);
         assert!(open.rx.is_empty(), "remote reads must wait for their lane");
 

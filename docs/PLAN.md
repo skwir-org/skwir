@@ -115,7 +115,7 @@ the completed set; targeted checks are recorded in `docs/STATUS-LOG.md`.
 | 7 | Explicit open targets are read off the window thread | pending |
 | 8 | Remote search work uses its server lane | fixed; targeted checks pass |
 | 9 | Rclone tree copies honor pause and cancellation | pending |
-| 10 | Search updates discover arriving directory descendants | pending |
+| 10 | Search updates discover arriving directory descendants | fixed; targeted checks pass |
 | 11 | Replaced field providers cannot repopulate current memory | pending |
 | 12 | glTF buffers stay within the model directory | pending |
 | 13 | glTF buffer URIs are decoded as URIs | pending |

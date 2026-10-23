@@ -3899,3 +3899,20 @@ below), worked through in order, each committed after its checks.
   tests, 3 of 3; core and extend Clippy for all targets with warnings
   denied; formatting and diff whitespace; `just bench-check`, all budgets
   met. Final full release checks pending.
+
+### Review fix 10: discover descendants of arriving search folders (2026-10-23)
+
+- Copy, move, rename and restore notifications for a directory discover
+  matching descendants that the search did not previously know. Initial
+  and incremental scans share traversal rules, root-relative depth,
+  hidden-name behavior, symlink and remote-mount boundaries. Incremental
+  results stream without clearing the listing or sending Complete again.
+- Public-provider tests cover all four arrivals, overlapping roots, depth,
+  hidden files, ignore-file behavior, known renamed descendants, symlink
+  boundaries and cancellation. The remote-lane test now arrives a folder
+  containing a match.
+- Verified: full query nextest, 66 of 66; query Clippy for all targets
+  with warnings denied; formatting and diff whitespace;
+  `just bench-check`, all budgets met. Full query testing also caught and
+  restored the previous root-error wording changed by fix 8. Final full
+  release checks pending.

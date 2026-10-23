@@ -141,7 +141,11 @@ and `notes.agree` are core `notes.*` commands.
 - A search watches nothing, but sees Skwir's changes: after each plan the
   query plugin (`provider::Searches`, an executor observer) re-checks the
   touched files under each open search's root and updates rows without
-  listing again.
+  listing again. An arriving directory discovers previously unknown
+  descendants through the initial search's traversal rules and depth
+  measured from the search root; discoveries stream without clearing or
+  completing the listing again. Known descendants follow their renamed
+  parent without being published twice.
 - **Hints (ADR-026):** a search asks indexes first (`skwir_core::hints`:
   Baloo, the tags index), checks what they name, and still walks: the
   index hints, the walk answers.
