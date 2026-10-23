@@ -314,8 +314,10 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   files equal; unavailable evidence leaves the normal conflict policy in
   charge. Attribute containers and native attributes are compared through
   the same conversion rules as copies. The metadata-only `finished_as`
-  hint is reserved for resuming output owned by an interrupted plan. A
-  link already saying the same path is done; a folder into itself is
+  hint is reserved for resuming output owned by an interrupted plan.
+  Attribute-name equality uses native bytes, never display text; the legacy
+  text-only copy/companion interface refuses names it cannot preserve.
+  A link already saying the same path is done; a folder into itself is
   refused. A link, even to a folder, is never merged: it takes a file's
   choices. A move out of the trash keeps a restore's rules.
 - **Transfer locations are entries, not path spellings or file identities.**
@@ -335,6 +337,27 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   and ancestor identities. The same rule guards batches before they stage
   and steps before they mutate, and dry runs resolve destinations made
   earlier in the plan through their existing ancestors.
+- Removing an empty directory captures its permissions and kept user
+  attributes before removal (`Rmdir`); a failed metadata read leaves it
+  intact. Its serialized inverse, `restore_directory`, restores those
+  attributes before restricting permissions, publishing the new directory
+  only when complete. On Unix, stage the empty directory itself beside its
+  final name: a directory made read-only cannot be renamed between parents
+  because updating `..` requires write access. A mount that cannot rename
+  between folders restores in place and removes its own still-empty
+  directory on failure. Existing directories with different metadata
+  conflict rather than being changed.
+  Every redo removes through `Rmdir` again and captures a fresh inverse;
+  nested merge undo restores source directory metadata without changing
+  destination directory metadata. Ordinary `mkdir`/`rmdir` plan formats
+  keep their existing meanings; native permission snapshots name their
+  system explicitly. Native attribute names remain encoded bytes through
+  serialization, and saved names and values count toward the journal's
+  memory bound. A foreign-owned Unix folder whose owner bits would prevent
+  refilling it is refused before removal: recreating it under this user's
+  ownership would otherwise strand nested undo. A partial plan keeps that
+  original folder, so earlier child moves can still be undone through its
+  existing group or ACL access.
 - A step that makes something new under a name (an archive extracted
   or made, ADR-059) says so (`Operation::makes`, `made_as`) and is
   settled as a copy is, with a file's choices: kept beside under a number

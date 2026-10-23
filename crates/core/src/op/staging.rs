@@ -122,6 +122,31 @@ impl Staging {
         sys::rename_noreplace(made, target)
     }
 
+    /// Prepare this empty directory itself and publish it beside its
+    /// staging name. A read-only directory cannot move between parents on
+    /// Unix (updating `..` needs write access), but can be renamed within
+    /// its parent with its final permissions already in place.
+    #[cfg(unix)]
+    pub(super) fn place_empty_directory(
+        mut self,
+        target: &Path,
+        prepare: impl FnOnce(&Path) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        debug_assert_eq!(self.path().parent(), target.parent());
+        // Unlink while still holding the lock, including through publication:
+        // a sweep may already have opened it before its name disappears.
+        match std::fs::remove_file(self.path().join(LOCK)) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        prepare(self.path())?;
+        sys::rename_noreplace(self.path(), target)?;
+        self.dir = None;
+        drop(self.note.take());
+        Ok(())
+    }
+
     /// Remove the folder now, whatever its copy left in it.
     ///
     /// # Errors
@@ -455,6 +480,32 @@ mod tests {
         let path = running.path().to_path_buf();
         running.remove().unwrap();
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn a_directory_restore_keeps_its_lock_through_read_only_publication() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = scratch();
+        let staging = Staging::new(tmp.path(), None).unwrap();
+        // A sweep may have opened the marker just before it is unlinked.
+        let opened = crate::fs::file::open_regular(&staging.path().join(LOCK)).unwrap();
+        let target = tmp.path().join("restored");
+        staging
+            .place_empty_directory(&target, |path| {
+                assert!(opened.try_lock().is_err(), "the old marker stays locked");
+                assert!(!path.join(LOCK).exists());
+                sweep(tmp.path());
+                assert!(path.is_dir(), "a running publication is not swept");
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o500))?;
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o500
+        );
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
     }
 
     /// On a remote, a staging folder is noted itself: one its plan could

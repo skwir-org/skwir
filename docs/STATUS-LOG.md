@@ -4050,3 +4050,50 @@ below), worked through in order, each committed after its checks.
   passed again after making its floating-point assertion tolerant. macOS
   uses the same naming policy but was not run natively. Final full
   release checks pending.
+
+### Review fix 3: directory metadata survives merged-move undo (2026-10-23)
+
+- Removing an empty directory captures its permissions and kept native
+  attributes before removal. The additive `restore_directory` inverse
+  preserves them through serialization, partial execution, retry and
+  redo; existing `mkdir` and `rmdir` plan formats remain valid.
+- Unix restores prepare the directory beside its final name, so a
+  read-only directory need not move between parents. The unlinked staging
+  lock remains held through publication, including against a sweeper
+  that already opened it. Windows retains nested staging; mounts that
+  cannot rename restore in place and roll back their own empty directory
+  on failure.
+- Native attribute names remain bytes in snapshots and equality checks.
+  The legacy text-only copy interface refuses names it cannot preserve;
+  native-only parent restoration keeps them directly. A foreign-owned
+  Unix directory whose owner permissions would prevent refilling it is
+  refused before removal, preserving the original for partial-plan undo.
+- Verified: 77 focused operation tests, core all-target Clippy and a
+  further portable merged-move undo/redo test on Linux and Wine. The Wine
+  test's captured output confirms all assertions ran, without an internal
+  skip; nextest marked leaked output handles. The existing Windows ops
+  suite reported 25 passes, three leaky: four tests deliberately return
+  early for Wine's missing trash/alternate-stream behavior, so those
+  behaviors were not tested there. Formatting and diff checks passed.
+
+### Review follow-up complete: final validation (2026-10-23)
+
+- All fourteen reported issues are fixed, each in a local commit. Related
+  model-sandbox and native-attribute cases found during review are covered
+  too. No changes were pushed or published.
+- `just release-check` passed: workspace lint, Windows/macOS cross checks,
+  dependency advisories/licences and current notices; 2040 nextest tests
+  passed, 25 skipped; real-window smoke and accessibility; Poppler, MuPDF
+  and both DjVu readers; all 44 performance budgets; 27 release-tool tests.
+  No budgets were changed. Final `just lint-all`, scoped Clippy and
+  `just check-cross` runs also covered the last directory and test edits.
+- Additional remote checks passed: 88 server/plugin tests, isolated
+  NFS/AFP, AFC and nearby-discovery checks, five GNOME Keyring tests,
+  five KeePassXC tests and two locked-keyring tests. The initial
+  `remote-check` stopped at KeePassXC's single-instance collision; that
+  stage passed with a private temporary directory, and the remaining
+  locked-keyring stage passed separately.
+- Windows behavior was exercised under Wine as recorded above and for
+  alternate-case transfers, not on a native Windows machine. macOS was
+  compiled through the existing cross-check recipe, with its usual
+  exclusions; no native macOS execution is claimed.

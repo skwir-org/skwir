@@ -1832,6 +1832,117 @@ fn a_copy_keeps_the_mark_a_download_carries() {
     assert_eq!(std::fs::read_to_string(stream(&copied)).unwrap(), mark);
 }
 
+/// Removed directories carry metadata in a serializable inverse. A replay
+/// stopped on another name keeps its successful prefix undoable, and retry
+/// finishes with the same metadata instead of substituting Mkdir defaults.
+#[cfg(target_os = "linux")]
+#[test]
+fn removed_directory_inverses_round_trip_and_retry_after_partial_apply() {
+    use skwir_core::fs::xattr;
+    use skwir_core::op::Rmdir;
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    std::fs::create_dir(&root).unwrap();
+    let app = app(tmp.path());
+    let mut inverses = Vec::new();
+    for (name, mode, tag) in [("first", 0o750, Some("kept")), ("second", 0o710, None)] {
+        let path = root.join(name);
+        std::fs::create_dir(&path).unwrap();
+        if let Some(tag) = tag {
+            xattr::set(&path, "user.test", tag.as_bytes()).unwrap();
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        inverses.push(
+            Rmdir { path }
+                .apply(&StepContext::detached())
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    let restore = Plan::with_steps("restore removed folders", inverses);
+    let encoded = serde_json::to_string(&restore.to_data()).unwrap();
+    assert!(encoded.contains("restore_directory"));
+    let decoded = serde_json::from_str::<serde_json::Value>(&encoded).unwrap();
+    let restore = plan(&app, "apply_plan", serde_json::json!({ "plan": decoded }));
+    std::fs::write(root.join("second"), "do not replace").unwrap();
+    let result = app.executor.execute_blocking(&restore, app.lifetime());
+    assert_eq!(result.applied, 1);
+    assert!(result.error.is_some());
+    assert_eq!(
+        xattr::get(root.join("first"), "user.test").unwrap(),
+        Some(b"kept".to_vec())
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("second")).unwrap(),
+        "do not replace"
+    );
+    std::fs::remove_file(root.join("second")).unwrap();
+    let retried = app
+        .executor
+        .retry_blocking(restore.id, app.lifetime())
+        .unwrap();
+    assert!(retried.error.is_none(), "{:?}", retried.error);
+    let check = || {
+        assert_eq!(
+            std::fs::metadata(root.join("first"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o750
+        );
+        assert_eq!(
+            std::fs::metadata(root.join("second"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o710
+        );
+        assert_eq!(
+            xattr::get(root.join("first"), "user.test").unwrap(),
+            Some(b"kept".to_vec())
+        );
+        assert_eq!(xattr::get(root.join("second"), "user.test").unwrap(), None);
+    };
+    check();
+    let undone = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(undone.error.is_none(), "{:?}", undone.error);
+    assert!(!root.join("first").exists() && !root.join("second").exists());
+    let redone = app.executor.redo_blocking(app.lifetime()).unwrap();
+    assert!(redone.error.is_none(), "{:?}", redone.error);
+    check();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn removed_directory_attributes_keep_non_utf8_names_through_serialization() {
+    use skwir_core::fs::xattr;
+    use skwir_core::op::Rmdir;
+    use std::os::unix::ffi::OsStringExt;
+    let tmp = Scratch::new();
+    let path = tmp.path().join("removed");
+    std::fs::create_dir(&path).unwrap();
+    let name = OsString::from_vec(b"user.test-\xff".to_vec());
+    xattr::set(&path, &name, b"exact bytes").unwrap();
+    let inverse = Rmdir { path: path.clone() }
+        .apply(&StepContext::detached())
+        .unwrap()
+        .unwrap();
+    let saved = Plan::with_steps("restore bytes", vec![inverse]);
+    let encoded = serde_json::to_string(&saved.to_data()).unwrap();
+    let app = app(tmp.path());
+    let decoded: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    let saved = plan(&app, "apply_plan", serde_json::json!({ "plan": decoded }));
+    apply(&app, &saved);
+    assert_eq!(
+        xattr::get(&path, &name).unwrap(),
+        Some(b"exact bytes".to_vec())
+    );
+    assert_eq!(xattr::list(&path).unwrap(), [name]);
+}
+
 /// A plan that makes a folder and copies into it (a tag exported as a
 /// folder of its files) is checked as applying it will meet it: the folder
 /// its first step makes is there for the steps after.

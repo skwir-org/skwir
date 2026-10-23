@@ -1190,13 +1190,19 @@ fn same_node(
 /// An unreadable container is unknown, never evidence of an empty set.
 fn same_attributes(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::Result<bool> {
     let attributes = |path: &Path| -> anyhow::Result<Option<Vec<_>>> {
-        let mut all = user_attributes(path)?;
+        let mut all = kept_attributes(path)?;
         let rules = ctx.companions();
         if !rules.existing_holding_attributes(path).is_empty() {
             let Some(beside) = rules.attributes(path) else {
                 return Ok(None);
             };
-            all = merge_attributes(all, beside);
+            all = merge_attributes(
+                all,
+                beside
+                    .into_iter()
+                    .map(|(name, value)| (OsString::from(name), value))
+                    .collect(),
+            );
         }
         Ok(Some(all))
     };
@@ -1982,10 +1988,10 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
 
 /// Native attributes take precedence over a companion's, both when a
 /// copy carries them and when an existing destination is compared with it.
-fn merge_attributes(
-    mut own: Vec<(String, Vec<u8>)>,
-    beside: Vec<(String, Vec<u8>)>,
-) -> Vec<(String, Vec<u8>)> {
+fn merge_attributes<N: PartialEq>(
+    mut own: Vec<(N, Vec<u8>)>,
+    beside: Vec<(N, Vec<u8>)>,
+) -> Vec<(N, Vec<u8>)> {
     for (name, value) in beside {
         if !own.iter().any(|(n, _)| *n == name) {
             own.push((name, value));
@@ -2000,6 +2006,17 @@ fn merge_attributes(
 /// to anyone else (`com.apple.rootless`, `com.apple.provenance`), Finder's
 /// tags and info among those kept.
 pub(super) fn user_attributes(path: &Path) -> anyhow::Result<Vec<(String, Vec<u8>)>> {
+    kept_attributes(path)?.into_iter().map(|(name, value)| {
+        name.into_string().map(|name| (name, value)).map_err(|_| anyhow::anyhow!(
+            "an attribute of “{}” has a non-UTF-8 name, which the copy's attribute interface cannot preserve",
+            display_name(path)
+        ))
+    }).collect()
+}
+
+/// Kept attribute names are bytes. A directory removal's inverse retains
+/// them exactly even where a legacy companion interface uses text names.
+fn kept_attributes(path: &Path) -> anyhow::Result<Vec<(OsString, Vec<u8>)>> {
     let names = match crate::fs::xattr::list(path) {
         Ok(names) => names,
         Err(error) if crate::fs::xattr::refused(&error) => return Ok(Vec::new()),
@@ -2024,7 +2041,7 @@ pub(super) fn user_attributes(path: &Path) -> anyhow::Result<Vec<(String, Vec<u8
         else {
             continue;
         };
-        out.push((name.to_string_lossy().into_owned(), value));
+        out.push((name, value));
     }
     Ok(out)
 }
@@ -3077,7 +3094,7 @@ fn made_like(dir: &Path, like: &Path) {
     let Ok(meta) = std::fs::metadata(like) else {
         return;
     };
-    for (name, value) in user_attributes(like).unwrap_or_default() {
+    for (name, value) in kept_attributes(like).unwrap_or_default() {
         let _ = crate::fs::xattr::set(dir, name, &value);
     }
     if let (Ok(file), Ok(accessed), Ok(modified)) = (
@@ -3526,6 +3543,14 @@ impl super::Effect for Rmdir {
         }
     }
     fn check(&self, ctx: &StepContext) -> StepStatus {
+        if let Ok(meta) = std::fs::symlink_metadata(&self.path)
+            && meta.is_dir()
+            && !sys::directory_can_be_recreated(&meta)
+        {
+            return conflict(
+                "this folder belongs to another user and its permissions would prevent Undo from restoring its contents",
+            );
+        }
         // Emptied by the plan's earlier steps (a folder a merge moved
         // everything out of, ADR-054) is empty.
         match ctx.empty_after(&self.path) {
@@ -3536,13 +3561,196 @@ impl super::Effect for Rmdir {
         }
     }
     fn apply(&self, _ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        // Snapshot before removal: an unreadable attribute is not an absent
+        // attribute, and must leave the original available for Undo/retry.
+        let meta = std::fs::symlink_metadata(&self.path)?;
+        anyhow::ensure!(
+            meta.is_dir(),
+            "“{}” is not a folder",
+            display_name(&self.path)
+        );
+        anyhow::ensure!(
+            sys::directory_can_be_recreated(&meta),
+            "this folder belongs to another user and its permissions would prevent Undo from restoring its contents"
+        );
+        let inverse = RestoreDirectory {
+            path: self.path.clone(),
+            permissions: sys::DirectoryPermissions::read(&meta.permissions()),
+            attributes: DirectoryAttribute::read(&self.path)?,
+        };
         std::fs::remove_dir(&self.path).with_context(|| {
             format!(
                 "the folder “{}” could not be removed",
                 display_name(&self.path)
             )
         })?;
-        Ok(Some(Box::new(Mkdir {
+        Ok(Some(Box::new(inverse)))
+    }
+}
+
+/// A native attribute retained without converting its name to text.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+struct DirectoryAttribute {
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
+    name: OsString,
+    value: Vec<u8>,
+}
+
+impl DirectoryAttribute {
+    fn read(path: &Path) -> anyhow::Result<Vec<Self>> {
+        Ok(kept_attributes(path)?
+            .into_iter()
+            .map(|(name, value)| Self { name, value })
+            .collect())
+    }
+}
+
+/// The inverse of removing an empty directory. This is a separate operation
+/// so old `mkdir`/`rmdir` plans keep their schema and ordinary creation keeps
+/// the platform's defaults. Every successful redo captures a fresh inverse.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+struct RestoreDirectory {
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
+    path: PathBuf,
+    permissions: sys::DirectoryPermissions,
+    attributes: Vec<DirectoryAttribute>,
+}
+
+impl super::Kind for RestoreDirectory {
+    const KIND: &'static str = "restore_directory";
+}
+
+impl RestoreDirectory {
+    fn metadata(&self, path: &Path) -> anyhow::Result<()> {
+        // A newly created folder may inherit attributes. Restore absence too,
+        // keeping the exact user-attribute snapshot, before restricting access.
+        for (name, _) in kept_attributes(path)? {
+            if !self.attributes.iter().any(|saved| saved.name == name) {
+                match crate::fs::xattr::remove(path, &name) {
+                    Ok(()) => {}
+                    Err(error) if crate::fs::xattr::missing(&error) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+        }
+        for attribute in &self.attributes {
+            crate::fs::xattr::set(path, &attribute.name, &attribute.value).with_context(|| {
+                format!(
+                    "the folder's attribute “{}” could not be restored",
+                    attribute.name.display()
+                )
+            })?;
+        }
+        self.permissions.apply(path)?;
+        Ok(())
+    }
+
+    fn matches(&self, meta: &std::fs::Metadata) -> anyhow::Result<bool> {
+        if self.permissions != sys::DirectoryPermissions::read(&meta.permissions()) {
+            return Ok(false);
+        }
+        let attributes = DirectoryAttribute::read(&self.path)?;
+        Ok(attributes.len() == self.attributes.len()
+            && self
+                .attributes
+                .iter()
+                .all(|attribute| attributes.contains(attribute)))
+    }
+}
+
+impl super::Effect for RestoreDirectory {
+    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+        Some(super::footprint::Footprint::default().made(&self.path))
+    }
+    fn describe(&self) -> Change {
+        Change::Create {
+            path: self.path.clone(),
+            directory: true,
+            words: None,
+        }
+    }
+    fn held(&self) -> usize {
+        self.attributes
+            .iter()
+            .map(|attribute| attribute.name.as_encoded_bytes().len() + attribute.value.len())
+            .sum()
+    }
+    fn check(&self, ctx: &StepContext) -> StepStatus {
+        if let Some(refused) = refuse_new(&self.path) {
+            return refused;
+        }
+        match std::fs::symlink_metadata(&self.path) {
+            Ok(meta) if meta.is_dir() => match self.matches(&meta) {
+                Ok(true) => StepStatus::AlreadyDone,
+                Ok(false) => conflict(format!(
+                    "“{}” is there with different folder attributes",
+                    display_name(&self.path)
+                )),
+                Err(error) => conflict(error.to_string()),
+            },
+            Ok(_) => conflict(format!(
+                "“{}” is there, and is not a folder",
+                display_name(&self.path)
+            )),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if self
+                    .path
+                    .parent()
+                    .is_some_and(|parent| ctx.is_folder(parent))
+                {
+                    pending(true)
+                } else {
+                    conflict("the folder it goes in is not there")
+                }
+            }
+            Err(error) => conflict(error.to_string()),
+        }
+    }
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        let parent = self
+            .path
+            .parent()
+            .context("the folder it goes in is not there")?;
+        if crate::fs::reach::writes_in_place(parent) {
+            // Cameras cannot rename a staged directory. As with in-place
+            // copies, roll back only what this step created, while empty.
+            std::fs::create_dir(&self.path)?;
+            let made = id_of(&self.path);
+            if let Err(error) = self.metadata(&self.path) {
+                let removed = made.is_some()
+                    && id_of(&self.path) == made
+                    && std::fs::remove_dir(&self.path).is_ok();
+                return Err(if removed {
+                    error
+                } else {
+                    error.context(format!(
+                        "the partially restored folder remains at “{}”",
+                        self.path.display()
+                    ))
+                });
+            }
+        } else {
+            let staging = ctx.stage(parent)?;
+            #[cfg(unix)]
+            staging.place_empty_directory(&self.path, |made| {
+                self.metadata(made)?;
+                ctx.check_cancelled()?;
+                Ok(())
+            })?;
+            // Windows directory read-only attributes do not restrict moving
+            // between parents; keep the staging lock outside the new folder.
+            #[cfg(not(unix))]
+            {
+                let made = staging.path().join("folder");
+                std::fs::create_dir(&made)?;
+                self.metadata(&made)?;
+                ctx.check_cancelled()?;
+                staging.place(&made, &self.path)?;
+            }
+        }
+        Ok(Some(Box::new(Rmdir {
             path: self.path.clone(),
         })))
     }
@@ -3803,6 +4011,7 @@ pub fn register_builtin(reg: &OpRegistry) {
     reg.register::<Delete>("core");
     reg.register::<Mkdir>("core");
     reg.register::<Rmdir>("core");
+    reg.register::<RestoreDirectory>("core");
     reg.register::<NewFile>("core");
     reg.register::<RemoveEmptyFile>("core");
     reg.register::<Uncopy>("core");
@@ -3849,6 +4058,86 @@ mod tests {
         assert!(!inside("/tree", "/other-volume/new"));
         assert!(!inside("/tree", "/tree/elsewhere/new"));
         assert!(!inside("/tree/child", "/alias/sibling/new"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_directory_restore_parent_preserves_native_attribute_names() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let trash = tmp.path().join(".Trash-1000");
+        let item = trash.join("files/old");
+        std::fs::create_dir_all(&item).unwrap();
+        std::fs::create_dir_all(trash.join("info")).unwrap();
+        std::fs::write(item.join("a.txt"), "a").unwrap();
+        std::fs::write(
+            trash.join("info/old.trashinfo"),
+            "[Trash Info]\nPath=docs/old\n",
+        )
+        .unwrap();
+        let name = crate::os_path::from_bytes(b"user.test-\xff".to_vec());
+        for name in [name.as_os_str(), OsStr::new("user.test")] {
+            crate::fs::xattr::set(&item, name, b"kept").unwrap();
+        }
+        let docs = tmp.path().join("docs");
+        std::fs::create_dir(&docs).unwrap();
+        let part = RestorePart {
+            entry: EntryRef::from_path(item.join("a.txt")).unwrap(),
+            path: docs.join("old/a.txt"),
+        };
+        super::super::Effect::apply(&part, &StepContext::detached()).unwrap();
+        for name in [name.as_os_str(), OsStr::new("user.test")] {
+            assert_eq!(
+                crate::fs::xattr::get(docs.join("old"), name).unwrap(),
+                Some(b"kept".to_vec())
+            );
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_directory_restore_with_unwritable_attributes_leaves_no_partial_folder() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let restore = RestoreDirectory {
+            path: tmp.path().join("restore"),
+            permissions: sys::DirectoryPermissions::Unix { mode: 0o500 },
+            attributes: vec![DirectoryAttribute {
+                name: "invalid-attribute-namespace".into(),
+                value: b"value".to_vec(),
+            }],
+        };
+        assert!(super::super::Effect::apply(&restore, &StepContext::detached()).is_err());
+        assert!(!restore.path.exists());
+        assert_eq!(
+            std::fs::read_dir(tmp.path()).unwrap().count(),
+            0,
+            "staging removed too"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_camera_directory_restore_rolls_back_failed_metadata_in_place() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let camera = tmp.path().join("gphoto2:synthetic");
+        std::fs::create_dir(&camera).unwrap();
+        crate::fs::reach::pretend_camera(&camera);
+        let restore = RestoreDirectory {
+            path: camera.join("restore"),
+            permissions: sys::DirectoryPermissions::Unix { mode: 0o500 },
+            attributes: vec![DirectoryAttribute {
+                name: "invalid-attribute-namespace".into(),
+                value: b"value".to_vec(),
+            }],
+        };
+        assert!(super::super::Effect::apply(&restore, &StepContext::detached()).is_err());
+        assert!(!restore.path.exists());
+        assert_eq!(std::fs::read_dir(camera).unwrap().count(), 0);
     }
 
     /// A copy of a file is finished when it has its length and time:

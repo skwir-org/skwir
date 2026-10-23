@@ -655,6 +655,138 @@ fn a_move_merged_removes_the_folders_it_emptied() {
     assert_eq!(snapshot(&root), before);
 }
 
+/// Directory restoration must also run where shell trash is unavailable:
+/// merging distinct files needs no replacement or trash to undo and redo.
+#[test]
+fn merged_move_restores_directories_without_trash_through_undo_and_redo() {
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    write(&root.join("src/d/sub/ours.txt"), "ours");
+    write(&root.join("dest/d/sub/theirs.txt"), "theirs");
+    let before = snapshot(&root);
+    let app = app(tmp.path());
+    app.apply_whole(plan(
+        &app,
+        "move",
+        serde_json::json!({
+            "entries": [root.join("src/d")], "dest": root.join("dest"),
+            "on_conflict": { "files": "keep_both", "folders": "merge" },
+        }),
+    ));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished { error: None, .. }
+    ));
+    assert!(
+        !root.join("src/d").exists(),
+        "merged source directories removed"
+    );
+    assert_eq!(read(&root.join("dest/d/sub/ours.txt")), "ours");
+    assert_eq!(read(&root.join("dest/d/sub/theirs.txt")), "theirs");
+    let merged = snapshot(&root);
+
+    undo(&app);
+    assert_eq!(
+        snapshot(&root),
+        before,
+        "undo restores the source directories"
+    );
+    let result = app.executor.redo_blocking(app.lifetime()).unwrap();
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(snapshot(&root), merged, "redo merges the same tree again");
+    undo(&app);
+    assert_eq!(snapshot(&root), before);
+    eprintln!("merged directories restored through undo, redo and undo without trash");
+}
+
+/// Merging keeps the destination folders' metadata; removing the emptied
+/// source folders must retain their own metadata for every undo and redo.
+#[cfg(target_os = "linux")]
+#[test]
+fn merged_move_restores_nested_directory_metadata_through_undo_and_redo() {
+    use skwir_core::fs::xattr;
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    write(&root.join("src/d/sub/ours.txt"), "ours");
+    write(&root.join("dest/d/sub/theirs.txt"), "theirs");
+    std::fs::create_dir(root.join("src/d/sub/empty")).unwrap();
+    write(&root.join("dest/d/sub/empty/kept.txt"), "kept");
+    let metadata = [
+        ("src/d", 0o750, "source root"),
+        ("src/d/sub", 0o710, "source nested"),
+        ("src/d/sub/empty", 0o500, "source empty"),
+        ("dest/d", 0o755, "destination root"),
+        ("dest/d/sub", 0o770, "destination nested"),
+        ("dest/d/sub/empty", 0o700, "destination empty"),
+    ];
+    for (path, mode, tag) in metadata {
+        let path = root.join(path);
+        xattr::set(&path, "user.test", tag.as_bytes()).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+    let before = snapshot(&root);
+    let check = |source: bool| {
+        for (path, mode, tag) in metadata {
+            if path.starts_with("src/") && !source {
+                continue;
+            }
+            let path = root.join(path);
+            assert_eq!(
+                std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777,
+                mode
+            );
+            assert_eq!(
+                xattr::get(&path, "user.test").unwrap(),
+                Some(tag.as_bytes().to_vec())
+            );
+        }
+    };
+    let app = app(tmp.path());
+    let moving = plan(
+        &app,
+        "move",
+        serde_json::json!({
+            "entries": [root.join("src/d")], "dest": root.join("dest"),
+            "on_conflict": { "files": "keep_both", "folders": "merge" },
+        }),
+    );
+    // The plan travels through the public serialized surface before applying.
+    app.apply_whole(plan(
+        &app,
+        "apply_plan",
+        serde_json::json!({ "plan": moving.to_data() }),
+    ));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished { error: None, .. }
+    ));
+    assert!(!root.join("src/d").exists());
+    check(false);
+    for verb in ["undo", "redo", "undo"] {
+        let outcome = app
+            .dispatch(&skwir_core::command::Invocation::with_args(
+                verb,
+                &serde_json::json!({}),
+            ))
+            .unwrap();
+        let skwir_core::command::Outcome::Value(result) = outcome else {
+            panic!("{outcome:?}");
+        };
+        assert!(result["error"].is_null(), "{verb}: {result}");
+        assert!(matches!(
+            finished(&app),
+            ExecEvent::Finished { error: None, .. }
+        ));
+        check(verb == "undo");
+        if verb == "undo" {
+            assert_eq!(snapshot(&root), before);
+        } else {
+            assert!(!root.join("src/d").exists());
+        }
+    }
+}
+
 /// A folder a merge left something in stays where it was, with what was
 /// skipped.
 #[test]
@@ -980,6 +1112,72 @@ fn matching_content_does_not_discard_attributes() {
     assert_eq!(
         xattr::get(root.join("dest/a.txt"), "user.test").unwrap(),
         Some(b"your".to_vec())
+    );
+}
+
+/// Lossy display names are never equality evidence: different byte names
+/// with the same value must not let a move discard a unique attribute.
+#[cfg(target_os = "linux")]
+#[test]
+fn equal_attribute_display_names_do_not_discard_distinct_native_names() {
+    use skwir_core::fs::xattr;
+    use std::os::unix::ffi::OsStringExt;
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    let own = std::ffi::OsString::from_vec(b"user.note-\xff".to_vec());
+    let other = std::ffi::OsString::from_vec(b"user.note-\xfe".to_vec());
+    for file in ["a.txt", "dest/a.txt"] {
+        write(&root.join(file), "same");
+        dated(&root.join(file), 1000);
+    }
+    xattr::set(root.join("a.txt"), &own, b"same value").unwrap();
+    xattr::set(root.join("dest/a.txt"), &other, b"same value").unwrap();
+    let app = app(root);
+    let copying = transfer(&app, "copy", &[root.join("a.txt")], &root.join("dest"));
+    assert!(matches!(
+        copying.diff(&app.companions).steps[0].1,
+        StepStatus::Conflict { .. }
+    ));
+    app.apply_whole(plan(
+        &app,
+        "move",
+        serde_json::json!({
+            "entries": [root.join("a.txt")], "dest": root.join("dest"),
+            "on_conflict": { "files": "keep_both" },
+        }),
+    ));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished {
+            applied: 1,
+            error: None,
+            ..
+        }
+    ));
+    assert_eq!(xattr::list(root.join("dest/a (copy).txt")).unwrap(), [own]);
+    assert_eq!(xattr::list(root.join("dest/a.txt")).unwrap(), [other]);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn copies_refuse_attribute_names_the_text_interface_cannot_preserve() {
+    use skwir_core::fs::xattr;
+    use std::os::unix::ffi::OsStringExt;
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    write(&root.join("a.txt"), "keep");
+    std::fs::create_dir(root.join("dest")).unwrap();
+    let name = std::ffi::OsString::from_vec(b"user.note-\xff".to_vec());
+    xattr::set(root.join("a.txt"), &name, b"keep").unwrap();
+    let app = app(root);
+    let copying = transfer(&app, "copy", &[root.join("a.txt")], &root.join("dest"));
+    let result = app.executor.execute_blocking(&copying, app.lifetime());
+    assert_eq!(result.applied, 0);
+    assert!(result.error.is_some());
+    assert_eq!(std::fs::read_dir(root.join("dest")).unwrap().count(), 0);
+    assert_eq!(
+        xattr::get(root.join("a.txt"), &name).unwrap(),
+        Some(b"keep".to_vec())
     );
 }
 

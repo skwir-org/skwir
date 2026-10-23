@@ -511,6 +511,115 @@ pub(super) fn open_to_set_times(dir: &Path) -> io::Result<File> {
     }
 }
 
+/// Recreating a foreign-owned folder changes which mode class applies to
+/// this user. If its owner cannot refill it, keep the original directory
+/// so Undo can still use the group/ACL access that allowed the merge.
+pub(super) fn directory_can_be_recreated(meta: &Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        recreatable_as(meta.mode(), meta.uid(), rustix::process::geteuid().as_raw())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        true
+    }
+}
+
+#[cfg(unix)]
+fn recreatable_as(mode: u32, owner: u32, creator: u32) -> bool {
+    owner == creator || mode & 0o700 == 0o700
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn foreign_directory_permissions_must_allow_the_new_owner_to_refill_it() {
+    assert!(
+        !recreatable_as(0o570, 100, 200),
+        "group access would become owner access"
+    );
+    assert!(
+        !recreatable_as(0o370, 100, 200),
+        "the recreated owner must also list the folder"
+    );
+    assert!(recreatable_as(0o770, 100, 200));
+    assert!(
+        recreatable_as(0o500, 100, 100),
+        "an owned empty read-only directory stays representable"
+    );
+}
+
+/// Permissions retained by a removed directory's serialized inverse. Keep
+/// the system explicit: a Unix mode is never interpreted as Windows access.
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(tag = "system", rename_all = "snake_case")]
+pub(super) enum DirectoryPermissions {
+    Unix { mode: u32 },
+    Windows { read_only: bool },
+}
+
+impl DirectoryPermissions {
+    pub(super) fn read(permissions: &Permissions) -> Self {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            Self::Unix {
+                mode: permissions.mode() & 0o7777,
+            }
+        }
+        #[cfg(not(unix))]
+        Self::Windows {
+            read_only: permissions.readonly(),
+        }
+    }
+
+    pub(super) fn apply(&self, path: &Path) -> io::Result<()> {
+        match self {
+            Self::Unix { mode } => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    if mode & !0o7777 != 0 {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidInput,
+                            "invalid directory permissions",
+                        ));
+                    }
+                    mode_kept(std::fs::set_permissions(
+                        path,
+                        Permissions::from_mode(*mode),
+                    ))
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = (mode, path);
+                    Err(crate::system::not_yet(
+                        "Restoring Unix directory permissions",
+                    ))
+                }
+            }
+            Self::Windows { read_only } => {
+                #[cfg(windows)]
+                {
+                    let mut permissions = std::fs::metadata(path)?.permissions();
+                    permissions.set_readonly(*read_only);
+                    std::fs::set_permissions(path, permissions)
+                }
+                #[cfg(not(windows))]
+                {
+                    let _ = (read_only, path);
+                    Err(crate::system::not_yet(
+                        "Restoring Windows directory permissions",
+                    ))
+                }
+            }
+        }
+    }
+}
+
 /// Permissions only the owner has, for a private staging folder; `None`
 /// where a new folder's own are kept (Windows, whose folders inherit
 /// their parent's access).

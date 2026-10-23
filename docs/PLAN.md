@@ -100,26 +100,26 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 
 ## Review follow-up (2026-10-23)
 
-The project review's fourteen findings are being fixed separately, with
-regressions and local commits. The full release gate will run again on
-the completed set; targeted checks are recorded in `docs/STATUS-LOG.md`.
+The project review's fourteen findings are fixed in separate local
+commits. The completed set passes the full release gate; regressions,
+additional checks and platform limits are recorded in `docs/STATUS-LOG.md`.
 
 | Issue | Work | State |
 | --- | --- | --- |
-| 1 | Content and metadata proof before skipping a copy or removing a moved source | fixed; targeted checks pass |
-| 2 | File-operation self checks through path aliases | fixed; targeted checks pass |
-| 3 | Merged-move undo restores directory attributes | pending |
-| 4 | MCP authority belongs to its endpoint | fixed; targeted checks pass |
-| 5 | Privacy follows symlink targets | fixed; targeted checks pass |
-| 6 | Headless settings save completes before exit | fixed; targeted checks pass |
-| 7 | Explicit open targets are read off the window thread | fixed; targeted checks pass |
-| 8 | Remote search work uses its server lane | fixed; targeted checks pass |
-| 9 | Rclone tree copies honor pause and cancellation | fixed; targeted checks pass |
-| 10 | Search updates discover arriving directory descendants | fixed; targeted checks pass |
-| 11 | Replaced field providers cannot repopulate current memory | fixed; targeted checks pass |
-| 12 | glTF buffers stay within the model directory | fixed; targeted checks pass |
-| 13 | glTF buffer URIs are decoded as URIs | fixed; targeted checks pass |
-| 14 | Rsync arguments use its own grammar | fixed; targeted checks pass |
+| 1 | Content and metadata proof before skipping a copy or removing a moved source | fixed; full release gate passes |
+| 2 | File-operation self checks through path aliases | fixed; full release gate passes |
+| 3 | Merged-move undo restores directory attributes | fixed; full release gate passes |
+| 4 | MCP authority belongs to its endpoint | fixed; full release gate passes |
+| 5 | Privacy follows symlink targets | fixed; full release gate passes |
+| 6 | Headless settings save completes before exit | fixed; full release gate passes |
+| 7 | Explicit open targets are read off the window thread | fixed; full release gate passes |
+| 8 | Remote search work uses its server lane | fixed; full release gate passes |
+| 9 | Rclone tree copies honor pause and cancellation | fixed; full release gate passes |
+| 10 | Search updates discover arriving directory descendants | fixed; full release gate passes |
+| 11 | Replaced field providers cannot repopulate current memory | fixed; full release gate passes |
+| 12 | glTF buffers stay within the model directory | fixed; full release gate passes |
+| 13 | glTF buffer URIs are decoded as URIs | fixed; full release gate passes |
+| 14 | Rsync arguments use its own grammar | fixed; full release gate passes |
 
 ## What is left
 
@@ -133,9 +133,6 @@ closes an item removes its line; work that leaves one adds it here.
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
-
-The unfinished [review follow-up](#review-follow-up-2026-10-23), including
-its final full release gate, is also outstanding.
 
 **Gates not closed:**
 - Maps: idle CPU after panning on geotagged pictures (`images10k` has
