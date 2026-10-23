@@ -321,9 +321,11 @@ mod tests {
     #[test]
     #[ignore = "needs a private Secret Service (tools/test/private-keyring.sh)"]
     fn a_secret_goes_in_and_comes_out_of_a_keyring() {
-        assert_eq!(
-            std::env::var("SKWIR_PRIVATE_KEYRING").as_deref(),
-            Ok("1"),
+        // A keyring of the test's own: a private Secret Service, or the
+        // Credential Manager of Wine's scratch prefix (`just test-windows`).
+        assert!(
+            std::env::var("SKWIR_PRIVATE_KEYRING").as_deref() == Ok("1")
+                || (cfg!(windows) && std::env::var_os("SKWIR_TEST_UNDER_WINE").is_some()),
             "refusing to touch a keyring that is not the test's own"
         );
         let at = SecretRef {
@@ -337,6 +339,70 @@ mod tests {
         assert_eq!(lookup(at).unwrap().unwrap().expose(), "replaced");
         delete_record("test.servers", "r1").unwrap();
         assert!(lookup(at).unwrap().is_none());
+    }
+
+    /// A keyring locked since its secret went in asks to be unlocked
+    /// through its own prompt (GCR's, on a display of the test's own),
+    /// answered here as a user would: the secret comes out once it is.
+    /// Run by `tools/test/locked-keyring.sh`, which sets the guard.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    #[ignore = "needs a Secret Service that prompts (tools/test/locked-keyring.sh)"]
+    fn a_locked_keyring_is_unlocked_through_its_prompt() {
+        // The other keyrings' runs pick it by its name too: it needs one
+        // that prompts, and touches none other.
+        if std::env::var("SKWIR_LOCKED_KEYRING").as_deref() != Ok("1") {
+            eprintln!("skipped: run by tools/test/locked-keyring.sh");
+            return;
+        }
+        let xdotool = std::env::var("XDOTOOL").expect("xdotool, to answer the prompt");
+        let at = SecretRef {
+            setting: "test.servers",
+            record: "locked",
+            field: "key",
+        };
+        store(at, "skwir test", "behind a lock").unwrap();
+        futures_lite::future::block_on(async {
+            oo7::Keyring::new().await.unwrap().lock().await.unwrap();
+        });
+        // The prompt, answered with the keyring's password.
+        let answering = std::thread::spawn(move || answer_prompt(&xdotool, Some("test")));
+        assert_eq!(lookup(at).unwrap().unwrap().expose(), "behind a lock");
+        assert!(answering.join().unwrap(), "a prompt was answered");
+        delete_record("test.servers", "locked").unwrap();
+    }
+
+    /// Answer the keyring's prompt (GCR's, `gcr-prompter`) on the test's
+    /// display: type `password` and Enter, or Escape for none. Whether one
+    /// was there within 30 s.
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    pub(crate) fn answer_prompt(xdotool: &str, password: Option<&str>) -> bool {
+        let run = |args: &[&str]| {
+            std::process::Command::new(xdotool)
+                .args(args)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while std::time::Instant::now() < deadline {
+            if let Some(found) = run(&["search", "--onlyvisible", "--class", "prompter"])
+                && let Some(window) = found.lines().last()
+            {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                run(&["windowfocus", "--sync", window]);
+                if let Some(password) = password {
+                    run(&["type", "--delay", "50", password]);
+                    run(&["key", "Return"]);
+                } else {
+                    run(&["key", "Escape"]);
+                }
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        false
     }
 
     /// A password GVfs kept (libsecret's network schema) is found by its

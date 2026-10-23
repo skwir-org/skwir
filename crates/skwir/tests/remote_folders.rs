@@ -394,7 +394,12 @@ fn sshfs_asks_the_window_for_a_password_and_an_unknown_host_through_skwir() {
     // Its password asked through the keyring's layer (ADR-082), kept once
     // the connection served.
     let keyring = Arc::new(TestKeyring::default());
-    let keyed = Arc::new(Keyed::new(answers.clone(), keyring.clone(), address.top()));
+    let keyed = Arc::new(Keyed::new(
+        answers.clone(),
+        keyring.clone(),
+        address.top(),
+        CancelToken::new(),
+    ));
     let ask: Arc<dyn Ask> = keyed.clone();
     let connected = sshfs
         .connect(&address, &ask, &CancelToken::new())
@@ -436,7 +441,12 @@ fn sshfs_asks_the_window_for_a_password_and_an_unknown_host_through_skwir() {
     // Again: the keyring answers ssh's question, the window is asked
     // nothing (the host is known by now).
     let quiet = Arc::new(Answers::default());
-    let keyed = Arc::new(Keyed::new(quiet.clone(), keyring.clone(), address.top()));
+    let keyed = Arc::new(Keyed::new(
+        quiet.clone(),
+        keyring.clone(),
+        address.top(),
+        CancelToken::new(),
+    ));
     let ask: Arc<dyn Ask> = keyed.clone();
     let connected = sshfs
         .connect(&address, &ask, &CancelToken::new())
@@ -2596,7 +2606,12 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
     let address = Address::parse(&format!("sftp://tester@127.0.0.1:{}/", served.port)).unwrap();
     // `gio mount`'s password asked through the keyring's layer (ADR-082).
     let keyring = Arc::new(TestKeyring::default());
-    let keyed = Arc::new(Keyed::new(answers.clone(), keyring.clone(), address.top()));
+    let keyed = Arc::new(Keyed::new(
+        answers.clone(),
+        keyring.clone(),
+        address.top(),
+        CancelToken::new(),
+    ));
     let ask: Arc<dyn Ask> = keyed.clone();
     // Nothing started GVfs on the test's bus yet, as on a desktop other
     // than GNOME's: it can be connected through all the same, `gio mount`
@@ -2757,7 +2772,12 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
         )))
     );
     let quiet = Arc::new(Answers::default());
-    let ask: Arc<dyn Ask> = Arc::new(Keyed::new(quiet.clone(), keyring, address.top()));
+    let ask: Arc<dyn Ask> = Arc::new(Keyed::new(
+        quiet.clone(),
+        keyring,
+        address.top(),
+        CancelToken::new(),
+    ));
     let again = gvfs
         .connect(&address, &ask, &CancelToken::new())
         .expect("connect with the kept password");
@@ -3783,7 +3803,12 @@ fn gvfs_opens_an_smb_share_its_password_kept() {
         ..Answers::default()
     });
     let keyring = Arc::new(TestKeyring::default());
-    let keyed = Arc::new(Keyed::new(answers.clone(), keyring.clone(), address.top()));
+    let keyed = Arc::new(Keyed::new(
+        answers.clone(),
+        keyring.clone(),
+        address.top(),
+        CancelToken::new(),
+    ));
     let ask: Arc<dyn Ask> = keyed.clone();
     let connected = gvfs
         .connect(&address, &ask, &CancelToken::new())
@@ -3837,7 +3862,12 @@ fn gvfs_opens_an_smb_share_its_password_kept() {
     }
     // Again: the keyring answers `gio mount`.
     let quiet = Arc::new(Answers::default());
-    let ask: Arc<dyn Ask> = Arc::new(Keyed::new(quiet.clone(), keyring, address.top()));
+    let ask: Arc<dyn Ask> = Arc::new(Keyed::new(
+        quiet.clone(),
+        keyring,
+        address.top(),
+        CancelToken::new(),
+    ));
     let again = gvfs
         .connect(&address, &ask, &CancelToken::new())
         .expect("connect with the kept password");

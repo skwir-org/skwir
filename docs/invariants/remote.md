@@ -338,6 +338,14 @@ ADR-077 (which revises ADR-021).
   the connection served (`passwords::Keyed`), keyed by the server
   (`passwords::key`), and the plugin's data notes which servers have one
   (`remote.remembered`), never the password; Forget Password removes it.
+  Each keyring call is made on a thread of its own, the connection
+  waiting for its answer or its Cancel (`Keyed::heard`): a keyring that
+  asks to be unlocked waits for its own prompt, which the user may leave
+  open. Tested against GNOME Keyring unlocked and locked
+  (`tools/test/private-keyring.sh`, `locked-keyring.sh`: its prompt,
+  GCR's, answered by xdotool on a display of its own), KeePassXC
+  (`keepassxc-keyring.sh`: a database made from KeePass XML exposing its
+  root group) and Wine's Credential Manager (`just test-windows`).
   A connection's password question is answered from the keyring first:
   Skwir's own, then one GVfs kept (libsecret's network schema, read
   only, never changed), the window asked once one is refused. A server's

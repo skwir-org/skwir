@@ -123,8 +123,9 @@ djvu-check:
 # alone. Then GVfs's NFS and AFP, whose servers run as root, in namespaces
 # of their own (tools/test/gvfs-nfs-afp.sh); GVfs's AFC against a stand-in
 # iPhone (tools/test/gvfs-afc.sh); servers found nearby on a network of
-# the test's own (tools/test/nearby.sh, ADR-084); and passwords in a keyring
-# of the tests' own (ADR-082).
+# the test's own (tools/test/nearby.sh, ADR-084); and passwords in keyrings
+# of the tests' own (ADR-082): GNOME Keyring, unlocked and locked behind its
+# prompt, and KeePassXC.
 remote-check:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -148,6 +149,14 @@ remote-check:
     PATH="$keyring/bin:$PATH" tools/test/private-keyring.sh cargo nextest run \
         -p skwir-platform -p skwir-plugin-remote --run-ignored only \
         -E 'test(secret) | test(password)'
+    # The same against KeePassXC's Secret Service, and a keyring locked
+    # whose own prompt asks to unlock it, each on a display of its own.
+    tools/test/keepassxc-keyring.sh cargo nextest run \
+        -p skwir-platform -p skwir-plugin-remote --run-ignored only \
+        -E 'test(secret) | test(password)'
+    tools/test/locked-keyring.sh cargo nextest run \
+        -p skwir-platform -p skwir-plugin-remote --run-ignored only \
+        -E 'test(locked_keyring)' -j 1
 
 # A phone over MTP, then as a camera over gPhoto2, through a GVfs of the
 # test's own (tools/test/gvfs-mtp.sh): run on purpose alone, it writes to the

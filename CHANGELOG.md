@@ -58,7 +58,8 @@
   be remembered in your desktop's keyring (Remember in the password
   question), and passwords Nautilus remembered are used too: a
   password-protected SMB, WebDAV or FTP server now opens through rclone.
-  Forget Password in its menu removes it. Copies to and from KDE's
+  Forget Password in its menu removes it; a keyring waiting for you to
+  unlock it no longer holds a connection you cancel. Copies to and from KDE's
   remotes go several at once through KIO's own tool, three to fourteen
   times faster than through its folders, and copying onto an FTP server
   through KIO works.

@@ -209,6 +209,7 @@ impl Remotes {
             Arc::clone(ask),
             Arc::clone(&self.keyring),
             address.top(),
+            cancel.clone(),
         ));
         let asked: Arc<dyn Ask> = keyed.clone();
         let connected = connector

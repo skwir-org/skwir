@@ -3626,3 +3626,42 @@ below), worked through in order, each committed after its checks.
   of the Network section, its three servers listed as folders, the Type
   column saying "WebDAV server" and "SMB server". Not opened from there
   (none of them serves).
+
+### Keyring trials (ADR-082)
+
+- Found reading the code before the night: a keyring that asks to be
+  unlocked waits for its own prompt (oo7 waits on the prompt's signal,
+  no timeout), and the connection's thread waited with it, Cancel or
+  not. `Keyed` now takes the connection's token and makes each keyring
+  call (Skwir's own, GVfs's, keep, forget) on a thread of its own,
+  waiting for its answer or the Cancel (`heard`); cancelled, the window
+  is not asked either. `cancel_ends_a_wait_on_a_keyring_s_prompt` (a
+  keyring in memory that never answers).
+- GNOME Keyring locked (`tools/test/locked-keyring.sh`): Xvfb on a
+  display it chooses (`-displayfd`), a private session bus whose
+  services are GCR 3's prompter (`gcr-prompter`, GTK; GCR 4 carries
+  none), GNOME Keyring 50 made with the password `test`. A secret stored,
+  the keyring locked (oo7's `lock`), looked up: the prompt shown, typed
+  into by xdotool, the secret out
+  (`a_locked_keyring_is_unlocked_through_its_prompt`). The plugin's
+  connection on that keyring locked (Secret Service `Lock`), cancelled
+  after 2 s while the prompt was open: ended at once, the window not
+  asked, the prompt then dismissed (`cancel_ends_a_wait_on_a_locked_keyring`).
+- KeePassXC 2.7.12 (`tools/test/keepassxc-keyring.sh`): a database made
+  by `keepassxc-cli import` from KeePass XML whose meta names its root
+  group as exposed (`FDO_SECRETS_EXPOSED_GROUP`, the group's UUID in
+  braces), the integration on and asking nothing (`[FdoSecrets]` in a
+  configuration of its own), opened with `--pw-stdin` on its own display
+  and bus, HOME and XDG folders temporary. The platform's and the
+  plugin's keyring tests pass against it (store, replace, find, delete;
+  GVfs's schema found by its server). Not tried: KeePassXC locked (its
+  own unlock dialog).
+- The Credential Manager through Skwir's own calls under Wine: the two
+  keyring tests now take Wine's scratch prefix as a keyring of the
+  test's own (`SKWIR_TEST_UNDER_WINE`); both pass
+  (`tools/cross/test-windows.sh -p skwir-platform -p skwir-plugin-remote
+  keyring -- --ignored`; `just test-windows` cannot pass nextest's own
+  flags). The Keychain stays compiled only.
+- `just remote-check` runs the KeePassXC and locked-keyring harnesses
+  after the private keyring's. Tonight's locked-keyring tests skip,
+  saying why, where another harness picks them by their module's name.

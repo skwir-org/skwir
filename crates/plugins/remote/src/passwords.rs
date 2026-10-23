@@ -199,12 +199,20 @@ pub struct Keyed {
     address: Address,
     user: Option<String>,
     tried: Mutex<Tried>,
+    /// What cancels the connection: a keyring that asks to be unlocked
+    /// waits for its own prompt, which the user may leave unanswered.
+    cancel: CancelToken,
 }
 
 impl Keyed {
     /// Questions about connecting to `address` (its server's top), asked
-    /// of `inner` where the keyring answers none.
-    pub fn new(inner: Arc<dyn Ask>, keyring: Arc<dyn Keyring>, address: Address) -> Keyed {
+    /// of `inner` where the keyring answers none, until `cancel`.
+    pub fn new(
+        inner: Arc<dyn Ask>,
+        keyring: Arc<dyn Keyring>,
+        address: Address,
+        cancel: CancelToken,
+    ) -> Keyed {
         let user = user_of(&address);
         Keyed {
             inner,
@@ -212,6 +220,28 @@ impl Keyed {
             address,
             user,
             tried: Mutex::default(),
+            cancel,
+        }
+    }
+
+    /// What `ask` answers of the keyring, on a thread of its own, unless
+    /// the connection is cancelled first: then `None`, and the keyring's
+    /// prompt (an unlock it asked for) is left to the user, its answer to
+    /// no one.
+    fn heard<T: Send + 'static>(&self, ask: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let started = std::thread::Builder::new()
+            .name("skwir-keyring".into())
+            .spawn(move || {
+                let _ = tx.send(ask());
+            });
+        if started.is_err() {
+            return None;
+        }
+        let cancelled = self.cancel.subscribe();
+        crossbeam_channel::select! {
+            recv(rx) -> answer => answer.ok(),
+            recv(cancelled.receiver()) -> _ => None,
         }
     }
 
@@ -225,7 +255,8 @@ impl Keyed {
         let mut tried = self.tried.lock();
         if !tried.own {
             tried.own = true;
-            if let Some(own) = self.keyring.own(&self.key()) {
+            let (keyring, key) = (Arc::clone(&self.keyring), self.key());
+            if let Some(own) = self.heard(move || keyring.own(&key)).flatten() {
                 tried.own_found = true;
                 tried.given = Some(Given::Own);
                 return Some(own);
@@ -234,8 +265,13 @@ impl Keyed {
         if !tried.desktop {
             tried.desktop = true;
             let named = gvfs_named(&self.address, self.user.as_deref())?;
-            let named: Vec<(&str, &str)> = named.iter().map(|(k, v)| (*k, v.as_str())).collect();
-            if let Some(theirs) = self.keyring.desktop(&named) {
+            let keyring = Arc::clone(&self.keyring);
+            let theirs = self.heard(move || {
+                let named: Vec<(&str, &str)> =
+                    named.iter().map(|(k, v)| (*k, v.as_str())).collect();
+                keyring.desktop(&named)
+            });
+            if let Some(theirs) = theirs.flatten() {
                 tried.given = Some(Given::Desktop);
                 return Some(theirs);
             }
@@ -253,7 +289,9 @@ impl Keyed {
         match tried.given? {
             Given::Asked(answer) if answer.remember => {
                 let label = label(&self.address, self.user.as_deref());
-                match self.keyring.keep(&key, &label, &answer.text) {
+                let (keyring, kept) = (Arc::clone(&self.keyring), key.clone());
+                let keeping = self.heard(move || keyring.keep(&kept, &label, &answer.text));
+                match keeping.unwrap_or_else(|| Err(anyhow::anyhow!("Cancelled"))) {
                     Ok(()) => Some(Noted::Kept(key)),
                     Err(error) => {
                         tracing::warn!("the password was not kept: {error:#}");
@@ -265,13 +303,19 @@ impl Keyed {
                     }
                 }
             }
-            Given::Asked(_) if tried.own_found => match self.keyring.forget(&key) {
-                Ok(()) => Some(Noted::Forgot(key)),
-                Err(error) => {
-                    tracing::warn!("a refused password was not forgotten: {error:#}");
-                    None
+            Given::Asked(_) if tried.own_found => {
+                let (keyring, forgot) = (Arc::clone(&self.keyring), key.clone());
+                let forgotten = self
+                    .heard(move || keyring.forget(&forgot))
+                    .unwrap_or_else(|| Err(anyhow::anyhow!("Cancelled")));
+                match forgotten {
+                    Ok(()) => Some(Noted::Forgot(key)),
+                    Err(error) => {
+                        tracing::warn!("a refused password was not forgotten: {error:#}");
+                        None
+                    }
                 }
-            },
+            }
             _ => None,
         }
     }
@@ -292,6 +336,11 @@ impl Ask for Keyed {
                 text: kept,
                 remember: false,
             });
+        }
+        // Cancelled while the keyring waited for its prompt: nothing more
+        // is asked.
+        if cancel.is_cancelled() || self.cancel.is_cancelled() {
+            return None;
         }
         let answer = self.inner.password(title, accept, cancel)?;
         self.tried.lock().given = Some(Given::Asked(Password {
@@ -378,15 +427,135 @@ mod tests {
         })
     }
 
+    /// A keyring that asks to be unlocked waits for its own prompt, which
+    /// the user may leave open: the connection's Cancel ends the wait at
+    /// once, and the window is not asked.
+    #[test]
+    fn cancel_ends_a_wait_on_a_keyring_s_prompt() {
+        struct Prompting(crossbeam_channel::Receiver<()>);
+        impl Keyring for Prompting {
+            fn own(&self, _: &str) -> Option<String> {
+                let _ = self.0.recv();
+                None
+            }
+            fn desktop(&self, _: &[(&str, &str)]) -> Option<String> {
+                let _ = self.0.recv();
+                None
+            }
+            fn keep(&self, _: &str, _: &str, _: &str) -> anyhow::Result<()> {
+                let _ = self.0.recv();
+                Ok(())
+            }
+            fn forget(&self, _: &str) -> anyhow::Result<()> {
+                Ok(())
+            }
+        }
+        let (_never, waits) = crossbeam_channel::bounded(0);
+        let typed = window("typed", true);
+        let cancel = CancelToken::new();
+        let address = Address::parse("smb://me@nas/photos").unwrap();
+        let keyed = Keyed::new(
+            typed.clone(),
+            Arc::new(Prompting(waits)),
+            address,
+            cancel.clone(),
+        );
+        let began = std::time::Instant::now();
+        let cancelling = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            cancelling.cancel();
+        });
+        assert!(keyed.password("Password", "Connect", &cancel).is_none());
+        assert!(began.elapsed() < std::time::Duration::from_secs(2));
+        assert_eq!(*typed.asked.lock(), 0, "the window not asked");
+    }
+
+    /// A real keyring locked, its unlock prompt left open: the
+    /// connection's Cancel ends the wait, the window never asked; the
+    /// prompt is then dismissed. Run by `tools/test/locked-keyring.sh`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "needs a Secret Service that prompts (tools/test/locked-keyring.sh)"]
+    fn cancel_ends_a_wait_on_a_locked_keyring() {
+        // The other keyrings' runs pick it by its name too: it needs one
+        // that prompts, and touches none other.
+        if std::env::var("SKWIR_LOCKED_KEYRING").as_deref() != Ok("1") {
+            eprintln!("skipped: run by tools/test/locked-keyring.sh");
+            return;
+        }
+        let xdotool = std::env::var("XDOTOOL").expect("xdotool, to dismiss the prompt");
+        let address = Address::parse("smb://me@nas.test/photos").unwrap();
+        let server = key(&address, Some("me"));
+        Desktop.keep(&server, "skwir test", "kept").unwrap();
+        // Locked, as a session's keyring is after the screen was locked.
+        let bus = zbus::blocking::Connection::session().unwrap();
+        let default =
+            zbus::zvariant::ObjectPath::try_from("/org/freedesktop/secrets/aliases/default")
+                .unwrap();
+        bus.call_method(
+            Some("org.freedesktop.secrets"),
+            "/org/freedesktop/secrets",
+            Some("org.freedesktop.Secret.Service"),
+            "Lock",
+            &(vec![default],),
+        )
+        .unwrap();
+        let typed = window("typed", false);
+        let cancel = CancelToken::new();
+        let keyed = Keyed::new(typed.clone(), Arc::new(Desktop), address, cancel.clone());
+        let cancelling = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            cancelling.cancel();
+        });
+        let began = std::time::Instant::now();
+        assert!(keyed.password("Password", "Connect", &cancel).is_none());
+        assert!(began.elapsed() < std::time::Duration::from_secs(5));
+        assert_eq!(*typed.asked.lock(), 0, "the window not asked");
+        // Left open, the prompt is the keyring's: dismissed here.
+        assert!(
+            skwir_platform_answer_prompt(&xdotool),
+            "its prompt was there"
+        );
+    }
+
+    /// Escape on the keyring's prompt, as `skwir_platform`'s test answers it.
+    #[cfg(target_os = "linux")]
+    fn skwir_platform_answer_prompt(xdotool: &str) -> bool {
+        let run = |args: &[&str]| {
+            std::process::Command::new(xdotool)
+                .args(args)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while std::time::Instant::now() < deadline {
+            if let Some(found) = run(&["search", "--onlyvisible", "--class", "prompter"])
+                && let Some(window) = found.lines().last()
+            {
+                run(&["windowfocus", "--sync", window]);
+                run(&["key", "Escape"]);
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        false
+    }
+
     /// The desktop's keyring, never the user's: run only inside a private
     /// D-Bus session with a keyring of its own (`private-keyring.sh`, as
     /// `just remote-check` runs it), which sets the guard below.
     #[test]
     #[ignore = "needs a private Secret Service (tools/test/private-keyring.sh)"]
     fn a_server_s_password_goes_in_and_out_of_the_desktop_s_keyring() {
-        assert_eq!(
-            std::env::var("SKWIR_PRIVATE_KEYRING").as_deref(),
-            Ok("1"),
+        // A keyring of the test's own: a private Secret Service, or the
+        // Credential Manager of Wine's scratch prefix (`just test-windows`).
+        assert!(
+            std::env::var("SKWIR_PRIVATE_KEYRING").as_deref() == Ok("1")
+                || (cfg!(windows) && std::env::var_os("SKWIR_TEST_UNDER_WINE").is_some()),
             "refusing to touch a keyring that is not the test's own"
         );
         // A server no other test of the shared keyring names.
@@ -463,21 +632,36 @@ mod tests {
         let keyring = Arc::new(Memory::default());
         let address = Address::parse("smb://me@nas/photos").unwrap();
         let typed = window("typed", true);
-        let keyed = Keyed::new(typed.clone(), keyring.clone(), address.clone());
+        let keyed = Keyed::new(
+            typed.clone(),
+            keyring.clone(),
+            address.clone(),
+            CancelToken::new(),
+        );
         let cancel = CancelToken::new();
         // Nothing kept: asked, remembered once the connection served.
         assert_eq!(keyed.password("t", "a", &cancel).unwrap().text, "typed");
         assert_eq!(keyed.served(), Some(Noted::Kept("smb://me@nas".into())));
         assert_eq!(*typed.asked.lock(), 1);
         // Kept: given, nothing asked.
-        let keyed = Keyed::new(typed.clone(), keyring.clone(), address.clone());
+        let keyed = Keyed::new(
+            typed.clone(),
+            keyring.clone(),
+            address.clone(),
+            CancelToken::new(),
+        );
         assert_eq!(keyed.kept_password().as_deref(), Some("typed"));
         assert_eq!(keyed.served(), None);
         assert_eq!(*typed.asked.lock(), 1);
         // Refused (asked again): the window, and, answered without
         // Remember, the old one forgotten.
         let other = window("other", false);
-        let keyed = Keyed::new(other.clone(), keyring.clone(), address.clone());
+        let keyed = Keyed::new(
+            other.clone(),
+            keyring.clone(),
+            address.clone(),
+            CancelToken::new(),
+        );
         assert_eq!(keyed.password("t", "a", &cancel).unwrap().text, "typed");
         assert_eq!(keyed.password("t", "a", &cancel).unwrap().text, "other");
         assert_eq!(keyed.served(), Some(Noted::Forgot("smb://me@nas".into())));
@@ -497,7 +681,7 @@ mod tests {
         ));
         let typed = window("typed", false);
         let address = Address::parse("smb://me@nas/photos").unwrap();
-        let keyed = Keyed::new(typed.clone(), keyring.clone(), address);
+        let keyed = Keyed::new(typed.clone(), keyring.clone(), address, CancelToken::new());
         let cancel = CancelToken::new();
         assert_eq!(
             keyed.password("t", "a", &cancel).unwrap().text,
