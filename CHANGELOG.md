@@ -37,7 +37,8 @@
   the window and never kept. They sit in the sidebar's Network section,
   are bookmarked by their address (renamed and moved among your other
   bookmarks, in the order other file managers show), and Eject lets go
-  of them. Copies to
+  of them. A server's thumbnails show where it is on your network, and
+  for small files elsewhere once a copy from it proved it fast. Copies to
   and from a server go in batches through rsync, sftp or gio where those
   are faster, a large file comes down in several parts at once, a copy
   within one server is made on the server, and many files are deleted

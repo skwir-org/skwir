@@ -1492,6 +1492,69 @@ fn a_folder_cut_short_by_its_server_goes_on_by_rsync() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A file copied down from a server through its mount proves it fast
+/// (ADR-077: Automatic's Small files, where it is not known near), and
+/// the plugin words the mount again at the plan's end.
+#[test]
+fn a_copy_down_proves_its_server_fast() {
+    let sshfs = Sshfs::default();
+    if let Some(why) = sshfs.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("proved-fast");
+    let Some(sshd) = OwnSshd::start(&base) else {
+        std::fs::remove_dir_all(&base).unwrap();
+        return;
+    };
+    let served = base.join("served");
+    std::fs::create_dir_all(&served).unwrap();
+    std::fs::write(served.join("large.bin"), vec![7u8; 32 << 20]).unwrap();
+    let sshfs = Arc::new(Sshfs {
+        ssh_options: sshd.options.clone(),
+        ssh_config: Some(PathBuf::from("/dev/null")),
+        ..sshfs
+    });
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![sshfs.clone() as Arc<dyn Connector>]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let pane = app.workspace.read().active_id();
+    let user = std::env::var("USER").expect("the user's name");
+    let address = format!("sftp://{user}@127.0.0.1:{}{}", sshd.port, served.display());
+    app.navigate(pane, &Location::parse(&address)).unwrap();
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    let mounted = app.pane_location(pane).unwrap().path().unwrap();
+    let remote = skwir_core::fs::reach::of(&mounted).unwrap();
+    let left = Unmounted(remote.point.clone());
+    assert_eq!(skwir_core::fs::reach::proved_fast(&remote), None);
+    let down = base.join("down");
+    std::fs::create_dir(&down).unwrap();
+    let r = app
+        .executor
+        .execute_blocking(&copies(&[mounted.join("large.bin")], &down), app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    same_bytes(&served.join("large.bin"), &down.join("large.bin"));
+    assert_eq!(
+        skwir_core::fs::reach::proved_fast(&remote),
+        Some(true),
+        "32 MiB from this machine's own server"
+    );
+
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": remote.point }),
+    ))
+    .unwrap();
+    until(&app, 30, "it was let go of", || {
+        skwir_core::fs::reach::of(&remote.point).is_none_or(|r| r.point != remote.point)
+    });
+    drop(left);
+    drop(sshd);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// A folder copied up, its server gone partway (ADR-080, 9): the plan
 /// stops, waits for its server, and once the server answers again goes on
 /// by itself, no Retry asked; the copy whole, nothing staged left.

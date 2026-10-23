@@ -3559,3 +3559,30 @@ below), worked through in order, each committed after its checks.
   mount, `reput` appended beside it, and placing the folder carried it.
   sftp now gives each file it went on from its time through the mount,
   which makes sshfs let go; 3 of 3 pass, with the other cut-short tests.
+- Not checked in a window: the stopped toast's added words and the card's
+  "going on" (the events that carry them are tested in core).
+
+### Automatic's Small files where a copy proved the server fast
+
+- The user chose "≥10 MB/s, this session". `fs::reach::note_read` takes
+  what a file's step (`builtin::copy_file`, its bytes over their time)
+  and a batch (`transfer::run`, by any transfer, the bytes it moved over
+  its time) read from a remote onto this machine; 4 MiB or more at
+  10 MB/s or more prove the server fast, under 5 MB/s slow again,
+  between the two it stays as proved. Kept in memory by the mount
+  (point and its number, `mount_of`): a mount made again is unknown
+  again. A copy within a server, or onto another, says nothing of its
+  reads. Automatic (`remote` plugin, `thumbnails`) gives Small files to
+  a server not known near once proved fast; the plugin publishes again
+  at a plan's end when what was proved changed (an executor observer).
+- Deviation: previews are not counted (asked: "copies down, previews
+  opened"): a preview reads what it shows (a video's first frames, a
+  text's first page), so a file's size over its time would say a server
+  is faster than it is; nothing is read to find out.
+- Tested: the thresholds in core (`reads_onto_this_machine_prove_a_server_fast_or_slow`),
+  the rule in the plugin (`automatic_gives_small_files_where_reads_proved_a_server_fast`),
+  and a 32 MiB file copied down through sshfs from OpenSSH's server of
+  the test's own proving it fast (`a_copy_down_proves_its_server_fast`).
+  Not tested end to end: the Small files a far server then shows (the
+  test's servers are on this machine, near; naming one far would resolve
+  a name through the user's DNS).

@@ -112,6 +112,10 @@ struct State {
     busy: HashMap<String, &'static str>,
     /// Points whose program is gone (`ENOTCONN`): drawn unavailable.
     lost: std::collections::HashSet<PathBuf>,
+    /// What reads proved of the mounts when last published
+    /// (`fs::reach::proved_changed`): a plan's end that changed it
+    /// publishes again.
+    proved_seen: u64,
     /// Each mount's free and whole space, as its server says (measured
     /// in its lane).
     space: HashMap<PathBuf, (u64, u64)>,
@@ -524,11 +528,13 @@ impl Remotes {
     /// running then).
     fn publish(&self, app: &App) {
         let _publishing = self.publishing.lock();
-        let state = self.state.lock();
+        let mut state = self.state.lock();
         if state.lifetime.is_none() {
             return;
         }
         let mounted = Arc::clone(&state.mounted);
+        // Read before what it words: a change after it publishes again.
+        let proved = skwir_core::fs::reach::proved_changed();
         let chosen: HashMap<String, String> = app.settings.get(CHOSEN).unwrap_or_default();
         let remembered: Vec<String> = app.settings.get(REMEMBERED).unwrap_or_default();
         let default: String = app
@@ -551,11 +557,12 @@ impl Remotes {
                 .connector
                 .as_ref()
                 .is_some_and(|c| c.reads_whole(&m.remote));
+            let fast = skwir_core::fs::reach::proved_fast(&m.remote);
             known.push(Known {
                 point: point.clone(),
                 address: address.map(Address::location),
                 label: m.recognised.label.clone(),
-                thumbnails: thumbnails(rule, near, whole),
+                thumbnails: thumbnails(rule, near, whole, fast),
                 forget: m.connector.as_ref().and_then(|c| c.forget(&m.remote)),
             });
             let mut place = match m.recognised.device {
@@ -620,6 +627,7 @@ impl Remotes {
             place.menu.extend(forget_item(&server.address, &remembered));
             places.push(place);
         }
+        state.proved_seen = proved;
         drop(state);
         app.registry.places.replace_owner(ID, places);
         app.registry.remotes.replace_owner(ID, known);
@@ -641,15 +649,20 @@ fn can_disconnect(connector: &dyn Connector, remote: &Remote, recognised: &Recog
 /// What a remote's thumbnails follow: the rule chosen (`never`, `small`,
 /// `always`, `automatic`), Automatic being Always on the local network and
 /// Never where that is not known (ADR-077); Small files near where its
-/// program reads a file `whole` before any part of it (ADR-081).
-fn thumbnails(rule: &str, near: Option<bool>, whole: bool) -> Thumbnails {
+/// program reads a file `whole` before any part of it (ADR-081), and
+/// elsewhere once reads the user made proved it `fast` this session
+/// (`fs::reach::note_read`).
+fn thumbnails(rule: &str, near: Option<bool>, whole: bool, fast: Option<bool>) -> Thumbnails {
     match rule {
         "never" => Thumbnails::Never,
         "small" => Thumbnails::Small,
         "always" => Thumbnails::Always,
-        _ => match near {
-            Some(true) if whole => Thumbnails::Small,
-            Some(true) => Thumbnails::Always,
+        _ => match (near, fast) {
+            (Some(true), _) if whole => Thumbnails::Small,
+            (Some(true), _) => Thumbnails::Always,
+            // Farther, or not known to be near: Small files once reads
+            // the user made proved it fast this session.
+            (_, Some(true)) => Thumbnails::Small,
             _ => Thumbnails::Never,
         },
     }
@@ -830,6 +843,20 @@ impl Plugin for RemotePlugin {
         for transfer in self.remotes.connectors.iter().flat_map(|c| c.transfers()) {
             app.transfers.register(ID, transfer);
         }
+        // A copy down that proved a server fast, or slow again, changes
+        // its thumbnails' Automatic: published again at its plan's end.
+        let (remotes, weak) = (self.remotes.clone(), app.weak());
+        app.executor.observe(
+            ID,
+            Arc::new(move |_| {
+                let seen = remotes.state.lock().proved_seen;
+                if skwir_core::fs::reach::proved_changed() != seen
+                    && let Some(app) = weak.upgrade()
+                {
+                    remotes.publish(&app);
+                }
+            }),
+        );
         if let Some(previous) = self
             .remotes
             .state
@@ -1197,6 +1224,23 @@ impl WindowAsk {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Automatic: Always near, Small files near where the program reads a
+    /// file whole, and Small files elsewhere once reads proved the server
+    /// fast this session; Never otherwise. A rule chosen is the rule.
+    #[test]
+    fn automatic_gives_small_files_where_reads_proved_a_server_fast() {
+        use skwir_core::fs::reach::Thumbnails::{Always, Never, Small};
+        let auto = |near, whole, fast| super::thumbnails("automatic", near, whole, fast);
+        assert_eq!(auto(Some(true), false, None), Always);
+        assert_eq!(auto(Some(true), true, Some(true)), Small);
+        assert_eq!(auto(None, false, None), Never);
+        assert_eq!(auto(Some(false), false, Some(false)), Never);
+        assert_eq!(auto(None, false, Some(true)), Small);
+        assert_eq!(auto(Some(false), true, Some(true)), Small);
+        assert_eq!(super::thumbnails("never", None, false, Some(true)), Never);
+        assert_eq!(super::thumbnails("always", None, false, None), Always);
+    }
 
     #[test]
     fn kde_s_desktop_tries_kio_before_gvfs() {

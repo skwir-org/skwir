@@ -57,7 +57,11 @@ ADR-077 (which revises ADR-021).
   Always, or Automatic (Always on the local network, Never otherwise or
   when unsure; Small files on the local network where its program reads
   a file whole before any part of it, kio-fuse over WebDAV, FTP and NFS:
-  `Connector::reads_whole`); Never where no plugin knows the remote. Ask it before
+  `Connector::reads_whole`; Small files elsewhere once copies down this
+  session proved the server fast: `fs::reach::note_read`, 10 MB/s over
+  4 MiB or more, slow again under 5, by the mount, in memory; a preview
+  is not counted, as it reads what it shows, not the file);
+  Never where no plugin knows the remote. Ask it before
   reading anything. A remote's thumbnails are made in its lane, one
   worker each (`thumbs.rs`); preview-ahead reads a remote's files only
   where its thumbnails are Always. A preview asked for reads anyway.

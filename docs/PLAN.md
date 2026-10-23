@@ -1342,12 +1342,12 @@ protocol is a scheme a connector maps, or a connector.
   order; a batch cut short goes on from the file it was writing, by
   Skwir's own copy and sftp's `reput`, its source unchanged and its last
   part read back (`gio` and `kioclient` make it again); a plan a server
-  stopped goes on by itself once the server answers again (ADR-080, 9).
+  stopped goes on by itself once the server answers again (ADR-080, 9);
+  Automatic's Small files for a server off the local network once a
+  copy down proved it fast this session (10 MB/s).
 - **G. Left** (each its own step):
   - an iPhone's (AFC) ways chosen by requests counted against a
     stand-in, an iPhone's own pace not timed (no iPhone at hand);
-  - Automatic's Small files where reads proved fast (only the local
-    network is told now);
   - servers found on the local network (GVfs's `network:///`, Avahi);
   - Windows' shares (`smb://` as `\\server\share`) and macOS's own
     mounts as connectors; SFTP there through rclone with WinFsp or

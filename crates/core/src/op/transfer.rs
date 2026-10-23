@@ -47,6 +47,7 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::time::Instant;
 
 use anyhow::Context;
 use parking_lot::{Mutex, RwLock};
@@ -1365,6 +1366,20 @@ fn run(
     let control = ctx.control();
     control.wait_while_paused();
     let temp = aside.temp;
+    // From a server, how fast it reads (its thumbnails' Automatic): the
+    // bytes the batch moved, over its time.
+    let began = Instant::now();
+    let moved = AtomicU64::new(0);
+    let copied = &|so_far: u64| {
+        moved.fetch_max(so_far, Ordering::Relaxed);
+        copied(so_far);
+    };
+    let read = |ran: anyhow::Result<()>| {
+        if ran.is_ok() {
+            crate::fs::reach::note_read(from, into, moved.load(Ordering::Relaxed), began.elapsed());
+        }
+        ran
+    };
     // A file alone within one remote goes as a batch does.
     let within = crate::fs::reach::of(from)
         .zip(crate::fs::reach::of(into))
@@ -1406,7 +1421,7 @@ fn run(
                 if temp.is_some() && crate::fs::reach::of(into).is_some() {
                     ctx.changed_beside(into);
                 }
-                return ran.with_context(|| {
+                return read(ran).with_context(|| {
                     format!("{} copying {} entries", transfer.name(), names.len())
                 });
             }
@@ -1418,8 +1433,10 @@ fn run(
         by = "skwir",
         "a batch of copies"
     );
-    copy_at_once(from, &names, into, &aside, copied, placed, &control)
-        .with_context(|| format!("skwir copying {} entries", names.len()))
+    read(copy_at_once(
+        from, &names, into, &aside, copied, placed, &control,
+    ))
+    .with_context(|| format!("skwir copying {} entries", names.len()))
 }
 
 /// Skwir's own batch copy (the [`Transfer::copy`] it does where no

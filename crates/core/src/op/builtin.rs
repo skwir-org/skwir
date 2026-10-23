@@ -1299,8 +1299,11 @@ fn copy_file(
         ctx.advance(from);
         // Should it fail partway, what it wrote may be gone on from.
         ctx.copying(dst, &m);
+        let began = std::time::Instant::now();
         let end = copy_contents(&sf, &df, (&m, devices), from, pace, ctx)
             .with_context(|| format!("“{}” could not be copied", display_name(src)))?;
+        // From a server, how fast it reads (its thumbnails' Automatic).
+        crate::fs::reach::note_read(src, dst, end.saturating_sub(from), began.elapsed());
         // A mount may answer the end of a file its server stopped serving,
         // and then say the file is that short: short of the source as it
         // was, the copy was cut (or the source changed), not done. Retry

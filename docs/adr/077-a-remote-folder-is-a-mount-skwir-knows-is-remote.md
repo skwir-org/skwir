@@ -75,7 +75,13 @@ Revises ADR-021: its direction kept, its steps decided.
    - Thumbnails follow the remote's rule: Never, Small files (up to
      4 MB), Always, or Automatic, which is Always on the local network
      (a private, link-local or loopback address, a `.local` name) and
-     Never otherwise. Each remote's thumbnails are made in its own lane,
+     Never otherwise. (2026-10-23, the user's choice: "≥10 MB/s, this
+     session".) Elsewhere, Small files once a copy down this session
+     proved the server fast: 10 MB/s or more over 4 MiB or more, read by
+     a file's step or a batch onto this machine (`fs::reach::note_read`),
+     slow again under 5 MB/s; kept in memory for that mount alone.
+     Nothing is read to find out, and previews are not counted (they
+     read what they show, not the file). Each remote's thumbnails are made in its own lane,
      one worker each; a preview reads ahead there only where the rule is
      Always. A preview the user asks for is read whatever the rule.
    - A listing is read again when the window comes back (at most once in
@@ -186,6 +192,7 @@ Revises ADR-021: its direction kept, its steps decided.
   network layer; `map-tiles` still makes its own requests (ADR-020).
 - What a hung NFS hard mount holds stays held: a plan reading it waits
   on its thread, as the kernel waits; lanes keep the rest going.
-- Not built yet: Automatic's Small files where reads proved fast; servers
-  found on the local network (GVfs's `network:///`); renaming and moving
-  a remote bookmark; Windows' and macOS's own connectors.
+- Not built yet: servers found on the local network (GVfs's
+  `network:///`); Windows' and macOS's own connectors. (Automatic's
+  Small files where reads proved fast, and renaming and moving a remote
+  bookmark: built 2026-10-23.)

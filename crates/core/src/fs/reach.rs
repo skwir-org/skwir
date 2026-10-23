@@ -222,6 +222,72 @@ pub fn answers(point: &Path) -> bool {
     std::fs::read_dir(point).is_ok_and(|mut listed| listed.next().is_none_or(|e| e.is_ok()))
 }
 
+/// Reads of at least this many bytes say how fast a server is: a phone's
+/// photograph, what Small files shows ([`Thumbnails::SMALL`]).
+pub const PROVED_FROM: u64 = Thumbnails::SMALL;
+
+/// Read at least this fast (bytes a second), a server proved fast: a
+/// photograph of Small files in under half a second.
+pub const FAST: f64 = 10_000_000.;
+
+/// Read slower than this, a server proved fast proves slow again; between
+/// the two, it stays as it was proved.
+pub const SLOW: f64 = 5_000_000.;
+
+/// What reads proved of each mount this session, fast or not: by its
+/// point and its number (`mount_of`), so a mount made again is unknown
+/// again. Kept in memory alone, as the plugin's word on it is.
+static PROVED: Mutex<Option<std::collections::HashMap<(PathBuf, u64), bool>>> = Mutex::new(None);
+
+/// Told each time what reads proved of a mount changed ([`proved_fast`]).
+static PROVED_CHANGED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// `bytes` read from `src` onto `into` in `took`: from a remote onto this
+/// machine, it says how fast that server is (a copy within a server, or
+/// onto another, says nothing of its reads), once enough was read
+/// ([`PROVED_FROM`], [`FAST`], [`SLOW`]). What the user read anyway, never
+/// a read made to find out.
+pub fn note_read(src: &Path, into: &Path, bytes: u64, took: Duration) {
+    if bytes < PROVED_FROM || took.is_zero() || of(into).is_some() {
+        return;
+    }
+    let Some(remote) = of(src) else {
+        return;
+    };
+    #[allow(clippy::cast_precision_loss)] // A speed, not a count.
+    let speed = bytes as f64 / took.as_secs_f64();
+    let key = (remote.point.clone(), mount_of(remote.device.unwrap_or(0)));
+    let mut proved = PROVED.lock();
+    let proved = proved.get_or_insert_with(Default::default);
+    let was = proved.get(&key).copied();
+    let now = if speed >= FAST {
+        Some(true)
+    } else if speed < SLOW {
+        Some(false)
+    } else {
+        was
+    };
+    if let Some(now) = now
+        && was != Some(now)
+    {
+        proved.insert(key, now);
+        PROVED_CHANGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Whether reads of `remote` this session proved it fast ([`note_read`]);
+/// `None` before enough was read.
+pub fn proved_fast(remote: &Remote) -> Option<bool> {
+    let key = (remote.point.clone(), mount_of(remote.device.unwrap_or(0)));
+    PROVED.lock().as_ref()?.get(&key).copied()
+}
+
+/// How often what reads proved changed: a plugin that words a remote by it
+/// compares it with the count it last saw.
+pub fn proved_changed() -> u64 {
+    PROVED_CHANGED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The lane of work on `path`: its remote's, the shared one elsewhere.
 pub fn lane(path: &Path) -> Lane {
     of(path).map_or(Lane::SHARED, |remote| remote.lane())
@@ -670,6 +736,36 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Reads the user made from a server onto this machine prove it fast
+    /// (10 MB/s and more) or slow again (under 5), this session, by its
+    /// mount; a read too short, a copy within a server or onto another,
+    /// and what lies between say nothing.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reads_onto_this_machine_prove_a_server_fast_or_slow() {
+        let point = Path::new("/example/served by sshfs");
+        pretend_remote(point);
+        let file = point.join("a photo.jpg");
+        let here = Path::new("/example/here");
+        let remote = || of(point).unwrap();
+        let mib = |n: u64| n << 20;
+        let ms = Duration::from_millis;
+        assert_eq!(proved_fast(&remote()), None, "nothing read yet");
+        let changed = proved_changed();
+        note_read(&file, here, mib(2), ms(10));
+        note_read(&file, &point.join("elsewhere"), mib(64), ms(100));
+        assert_eq!(proved_fast(&remote()), None, "too short, or within it");
+        note_read(&file, here, mib(8), ms(400));
+        assert_eq!(proved_fast(&remote()), Some(true), "21 MB/s");
+        assert_eq!(proved_changed(), changed + 1);
+        note_read(&file, here, mib(8), ms(1200));
+        assert_eq!(proved_fast(&remote()), Some(true), "7 MB/s keeps it");
+        assert_eq!(proved_changed(), changed + 1, "nothing changed");
+        note_read(&file, here, mib(8), ms(4000));
+        assert_eq!(proved_fast(&remote()), Some(false), "2 MB/s");
+        assert_eq!(proved_changed(), changed + 2);
+    }
 
     #[test]
     fn network_mounts_are_told_by_their_type_and_source() {
