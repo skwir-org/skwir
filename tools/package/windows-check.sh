@@ -12,8 +12,7 @@
 # Wine is not Windows. It cannot draw skwir's window (its DirectWrite has
 # no font sets; Direct Manipulation and DirectComposition are missing), so
 # the window is for people to try (docs/HELP-WANTED.md). Its prefix is this
-# script's own; a stand-in for Windows' icuuc.dll goes in it
-# (windows/icuuc-for-wine.c).
+# script's own.
 #
 #     tools/package/windows-check.sh [version]
 set -eu
@@ -40,9 +39,6 @@ export WINEDLLOVERRIDES="mscoree,mshtml="
 unset SKWIR_PDFIUM_LIBRARY XDG_DATA_DIRS DISPLAY WAYLAND_DISPLAY
 trap 'wineserver -k 2>/dev/null || true' EXIT
 wineboot -i >/dev/null 2>&1 || true
-system32="$WINEPREFIX/drive_c/windows/system32"
-zig cc -target x86_64-windows-gnu -shared -O2 -o "$scratch/icuuc.dll" tools/package/windows/icuuc-for-wine.c
-cp "$scratch/icuuc.dll" "$system32/icuuc.dll"
 
 # Where a program is in the folder: beside skwir, but the media helper
 # among GStreamer's libraries (as windows.sh puts it).

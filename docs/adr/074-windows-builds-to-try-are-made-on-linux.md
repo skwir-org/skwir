@@ -32,7 +32,8 @@ written on Linux and never run.
     from Explorer or the Start menu.
 - **What Wine lacks** that a gpui window needs: DirectComposition (gpui
   goes without it where `GPUI_DISABLE_DIRECT_COMPOSITION` says so), Direct
-  Manipulation, DirectWrite's font sets, Windows' `icuuc.dll`; its HLSL
+  Manipulation, DirectWrite's font sets, Windows' `icuuc.dll` (until
+  gpui patch 0036, 2026-10-23: gpui calls ICU no more); its HLSL
   compiler, vkd3d's, stops on gpui's shadow shader. Windows 10 and 11 have
   them all.
 
@@ -75,7 +76,7 @@ written on Linux and never run.
 
    Neither is signed.
 6. **Checked under Wine** (`tools/package/windows-check.sh`, in its own
-   prefix with a stand-in for `icuuc.dll`):
+   prefix; with a stand-in for `icuuc.dll` until gpui patch 0036):
    - the zip unpacked into a folder whose name has a space and an
      apostrophe, every file it should hold there, every program answering
      (`skwir.exe --version`, each helper's `--probe`, PDFium loaded from
