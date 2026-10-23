@@ -3749,3 +3749,74 @@ below), worked through in order, each committed after its checks.
   Nearby on the test's network; the private keyring, KeePassXC and the
   locked keyring, 5, 5 and 2); under Wine every default member but
   `skwir` and `skwir-ui`, 1146 of 1146.
+
+### The window's tests under Wine, GVfs's AFP crash (2026-10-23, morning)
+
+- **The window's tests start under Wine.** The test programs of `skwir`
+  and `skwir-ui` exited 53 as nextest listed them: gpui_windows called
+  ICU's `u_strlen` once (a jump list's removed entries), so every gpui
+  program for Windows imported icuuc.dll, which Wine has not. gpui patch
+  0036 looks for the NUL in the buffer itself. Then `just test-windows`
+  ran every default member under Wine for the first time: 1517 of 1546.
+  The 29 failures were the tests' own:
+  - 22 kept tags in extended attributes, which Windows keeps none of:
+    `tags_location` and `notes_stores` whole, eight of `tags_everywhere`'s
+    nine, now Unix's;
+  - the thumbnail order: the system's own provider sits between the image
+    decoder and the thumbnailers where `system_thumbs::AVAILABLE`;
+  - the timeline test's names Windows refuses (quotes, backslashes,
+    control characters), now Unix's alone; dnd's fixture read `HOME` (the
+    profile too now); the fonts test passed over to Linux's family (the
+    system's own now); the links test's `file:` URL and Properties' sample
+    path are each system's; the folder menu's link exists on Unix alone.
+- **A file replaced whole while it is read, on Windows.** The next run:
+  1524 of 1525. The tags plugin's Mac notes test (it passed in both
+  earlier runs and alone) failed to replace a `._` file: access denied.
+  `tempfile`'s `persist` replaces with `MoveFileExW` alone, which Windows
+  refuses over a file that is open, and something read the file at that
+  moment, under the load of the whole suite. Every file replaced whole
+  (settings, the cache, notes' sidecars and AppleDouble files,
+  thumbnails, the desktop's shared files) now goes through
+  `fs::file::take_place`: `std::fs::rename`, which asks again with POSIX
+  semantics (the reader keeps the old file, Windows 10 1709 on), and on
+  Windows tries again for 600 ms while a reader lets go. Wine refuses
+  even the POSIX rename over an open file (checked: the new test failed
+  there before the retry). Tested with a reader holding the file 100 ms,
+  on Linux and under Wine; a reader keeping the old bytes, on Unix.
+- **remote-check's AFP failures were GVfs crashing.** The night's first
+  failure, put on NFS above, was AFP's: the `mkdir` of `within` was in
+  flight as gvfsd-afp died. `coredumpctl` held both (SIGSEGV in
+  `write_command_cb`, 04:38 and 04:40). A probe through the bridge (300
+  folders made, stat-ed and written to, on NFS then AFP) lost the AFP
+  mount in 5 of 8 runs on GVfs 1.60.3; NFS lost nothing in 40 runs.
+  GVfs's `gvfsafpconnection.c` (its main branch the same) has two bugs:
+  - a request is freed when its reply is handled while its last write's
+    callback is still to run (a write done within the pass that started
+    it returns through an idle; a server on loopback answers first);
+  - the worker thread never makes its context the thread-default, so its
+    read and write callbacks run in the main thread, which looks up and
+    removes requests in the hash without the lock the worker holds to
+    insert them (SIGABRT in `g_hash_table_remove`, found once the first
+    was fixed).
+
+  Counting a request's references alone lost AFP in 2 of 12 runs; with
+  the hash under the lock too, 20 of 20 were clean (6,000 folders) and
+  no core was dumped. `tools/test/gvfs-nfs-afp.sh` now builds GVfs with
+  `tools/test/gvfs-afp-request-lifetime.patch` (two minutes, once); the
+  NFS/AFP test through it passed 10 of 10. The patch is to be offered
+  upstream; it was not filed from here.
+- Then, from deae6f7c…ac6dcbf2: `just test-windows` with no arguments
+  green under Wine, 1526 of 1526; `just release-check` green (lint-all
+  with Windows' and macOS's builds, deny, notices, test-all 1977 of 1977,
+  smoke, a11y, the readers' checks, bench-check's budgets, release-tools'
+  27 tests); `just remote-check` green on its first run (its 83 tests;
+  GVfs's NFS and AFP through the GVfs built with the fix, an iPhone's AFC
+  against the stand-in, Nearby on the test's network; the private
+  keyring, KeePassXC and the locked keyring, 5, 5 and 2).
+- The package check's stand-in for icuuc.dll
+  (`tools/package/windows/icuuc-for-wine.c`, put in its Wine prefix for
+  gpui's `u_strlen`) is gone with patch 0036: `just package-windows` made
+  the zip and the installer again and tried them under Wine, the old
+  stand-in taken out of the check's prefix first. Every program answered,
+  the archive and media helpers worked, the installer put it in and left
+  nothing; skwir.exe imports no icuuc.dll (`objdump -p`).
