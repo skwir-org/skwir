@@ -3665,3 +3665,29 @@ below), worked through in order, each committed after its checks.
 - `just remote-check` runs the KeePassXC and locked-keyring harnesses
   after the private keyring's. Tonight's locked-keyring tests skip,
   saying why, where another harness picks them by their module's name.
+
+### Copies within one rclone mount, by rclone on the server
+
+- A mount Skwir makes with rclone serves its remote control on a socket
+  of the runtime folder (`--rc --rc-no-auth --rc-addr unix://…`, under
+  `skwir/rc`, named by the mount point; the folder the user's alone, so
+  it asks no login; never a TCP port). A transfer (`rclone_copy`) takes a
+  batch within one such mount: it asks the mount's remote (`vfs/list`)
+  and whether its backend copies on the server (`operations/fsinfo`,
+  `Copy`), once a mount; a file goes by `operations/copyfile`, a folder
+  is made by `operations/mkdir` and walked through the mount, then the
+  mount is told to read the folder again (`vfs/refresh`). HTTP/1.1 over
+  the socket, one call a connection. A mount the user made has no such
+  socket: its copies go as before.
+- Found on the way: rclone keeps a remote made of a connection string
+  by a name of its own (`:webdav{NfokB}:`), which `operations/copyfile`
+  takes as it is but `sync/copy` cannot read with a path after it
+  ("config name contains invalid characters"): folders are walked.
+- Tested against rclone's WebDAV server of the test's own (`COPY`): a
+  folder and a 32 MiB file copied within the mount, by rclone, whole on
+  the server, the mount showing them, nothing staged left
+  (`rclone_copies_within_its_mount_on_the_server`). Timed on this
+  machine, 256 MiB within a WebDAV mount: on loopback 1.1 s either way;
+  with the mount's rclone held to 32 MiB/s (`--bwlimit`, as a line of
+  that speed), 23.8 s through the mount against 1.15 s on the server, 2
+  runs each.

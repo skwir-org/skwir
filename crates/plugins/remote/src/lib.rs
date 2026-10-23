@@ -26,6 +26,8 @@ pub mod nearby;
 pub mod passwords;
 mod provider;
 pub mod rclone;
+#[cfg(unix)]
+pub mod rclone_copy;
 pub mod rsync;
 mod runs;
 pub mod sftp;

@@ -44,7 +44,8 @@
   you look at it. Copies to
   and from a server go in batches through rsync, sftp or gio where those
   are faster, a large file comes down in several parts at once, a copy
-  within one server is made on the server, and many files are deleted
+  within one server is made on the server (through rclone's own copy too,
+  where its storage copies on the server), and many files are deleted
   there in one go. A phone plugged in over MTP takes and gives files two
   to three times faster than before. Undo of a copy works where a server keeps no trash:
   what was made is removed, while it is unchanged. On KDE's desktop,

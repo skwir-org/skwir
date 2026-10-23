@@ -1502,6 +1502,80 @@ fn a_folder_cut_short_by_its_server_goes_on_by_rsync() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// Copies within one rclone mount Skwir made go by rclone itself, on the
+/// server (WebDAV's `COPY`), through the mount's remote control on its
+/// socket: a folder and a large file, whole there, the mount showing them.
+#[test]
+fn rclone_copies_within_its_mount_on_the_server() {
+    if let Some(why) = Rclone.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("rclone-within");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(served_root.join("a folder/inside")).unwrap();
+    std::fs::write(served_root.join("a folder/one.txt"), "one").unwrap();
+    std::fs::write(served_root.join("a folder/inside/two.txt"), "two").unwrap();
+    std::fs::write(served_root.join("large.bin"), vec![7u8; 32 << 20]).unwrap();
+    std::fs::create_dir(served_root.join("copies")).unwrap();
+    let served = Served::start("webdav", &served_root, &[]);
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![Arc::new(Rclone)]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let pane = app.workspace.read().active_id();
+    let address = Location::parse(&format!("dav://127.0.0.1:{}/", served.port));
+    app.navigate(pane, &address).unwrap();
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    let mounted = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&mounted).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+    let before = skwir_plugin_remote::rclone_copy::shared().made();
+    let r = app.executor.execute_blocking(
+        &copies(
+            &[mounted.join("a folder"), mounted.join("large.bin")],
+            &mounted.join("copies"),
+        ),
+        app.lifetime(),
+    );
+    assert!(r.error.is_none(), "{:?}", r.error);
+    assert!(
+        skwir_plugin_remote::rclone_copy::shared().made() > before,
+        "by rclone, on the server"
+    );
+    same_bytes(
+        &served_root.join("large.bin"),
+        &served_root.join("copies/large.bin"),
+    );
+    assert_eq!(
+        std::fs::read_to_string(served_root.join("copies/a folder/inside/two.txt")).unwrap(),
+        "two"
+    );
+    assert_eq!(
+        std::fs::read_to_string(mounted.join("copies/a folder/one.txt")).unwrap(),
+        "one",
+        "the mount shows them"
+    );
+    assert_eq!(
+        names_in(&served_root.join("copies")),
+        ["a folder", "large.bin"],
+        "nothing staged left"
+    );
+
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    until(&app, 30, "it was let go of", || {
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point)
+    });
+    drop(left);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// The Nearby place (ADR-084) lists what Avahi and wsdd find, each server
 /// once, leading to its address; let go of, the wsdd it started ends. Run
 /// by `tools/test/nearby.sh`, in namespaces of its own (`just

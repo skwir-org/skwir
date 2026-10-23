@@ -87,6 +87,18 @@ impl Connector for Rclone {
         let point = mounter::point_for(self.id(), &top)?;
         let mut command = Command::new(rclone);
         command.args(mount_arguments(&remote, &point));
+        // Its remote control, the user's alone, for copies made on the
+        // server (`rclone_copy`).
+        #[cfg(unix)]
+        if let Some(socket) = crate::rclone_copy::socket_for(&point)
+            && crate::rclone_copy::socket_folder().is_ok()
+        {
+            // One a mount gone left: rclone would not listen there.
+            let _ = std::fs::remove_file(&socket);
+            let mut at = std::ffi::OsString::from("unix://");
+            at.push(&socket);
+            command.args(["--rc", "--rc-no-auth", "--rc-addr"]).arg(at);
+        }
         if let Some((variable, password)) = &password {
             command.env(variable, password);
         }
@@ -146,6 +158,19 @@ impl Connector for Rclone {
         cancel: &CancelToken,
     ) -> anyhow::Result<()> {
         mounter::unmount(&remote.point, recognised.ours, cancel)
+    }
+
+    /// Copies within one mount Skwir made, by rclone on the server
+    /// (`rclone_copy`).
+    fn transfers(&self) -> Vec<Arc<dyn skwir_core::op::transfer::Transfer>> {
+        #[cfg(unix)]
+        {
+            vec![crate::rclone_copy::shared() as Arc<dyn skwir_core::op::transfer::Transfer>]
+        }
+        #[cfg(not(unix))]
+        {
+            Vec::new()
+        }
     }
 
     fn servers(&self, cancel: &CancelToken) -> Vec<Server> {

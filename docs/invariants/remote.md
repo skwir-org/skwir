@@ -170,7 +170,13 @@ ADR-077 (which revises ADR-021).
   through the mount, eight files at a time, sixteen down. Within one
   mount: by `sftp`'s `cp` on an sshfs mount's server (the copy-data
   extension, asked once), each file then given its time through the
-  mount; by `gio copy` within a GVfs mount (its daemon copies). A lone
+  mount; by `gio copy` within a GVfs mount (its daemon copies); by
+  rclone itself within one rclone mount Skwir made, where its backend
+  copies on the server (`rclone_copy`: the mount's remote control on a
+  socket of the runtime folder, `--rc-addr unix://…`, the user's alone; a
+  file by `operations/copyfile`, a folder by `sync/copy`, then
+  `vfs/refresh` so the mount shows them; whether it copies there asked
+  once a mount, by `operations/fsinfo`). A lone
   file within one remote goes in a batch where a transfer serves it,
   which its step would bring here and send back. A server a tool does
   not reach is remembered for its mount. rsync keeps a file it was

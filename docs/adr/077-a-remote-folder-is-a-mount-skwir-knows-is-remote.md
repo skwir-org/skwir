@@ -187,6 +187,9 @@ Revises ADR-021: its direction kept, its steps decided.
 - A copy within one remote is made by the server only where the kernel
   asks it to (`copy_file_range` on NFS 4.2 and SMB); elsewhere the bytes
   come here and go back. rclone's API (8, second step) would do better.
+  (Since: sftp's `cp`, `gio copy` within a GVfs mount, and, 2026-10-23,
+  rclone's remote control within one rclone mount Skwir made, where its
+  backend copies on the server: `rclone_copy`.)
 - The `remote` plugin uses the network, through the tools it starts: it
   declares `network` and `programs` (ADR-044). The core still has no
   network layer; `map-tiles` still makes its own requests (ADR-020).

@@ -1345,7 +1345,10 @@ protocol is a scheme a connector maps, or a connector.
   stopped goes on by itself once the server answers again (ADR-080, 9);
   Automatic's Small files for a server off the local network once a
   copy down proved it fast this session (10 MB/s); servers nearby, found
-  by Avahi and wsdd while the Nearby place is shown (ADR-084).
+  by Avahi and wsdd while the Nearby place is shown (ADR-084); keyrings
+  tried (locked, KeePassXC, Wine's Credential Manager), a connection no
+  longer held by a keyring's prompt; copies within one rclone mount Skwir
+  made, by rclone on the server through its remote control.
 - **G. Left** (each its own step):
   - an iPhone's (AFC) ways chosen by requests counted against a
     stand-in, an iPhone's own pace not timed (no iPhone at hand);
@@ -1355,8 +1358,7 @@ protocol is a scheme a connector maps, or a connector.
   - a GVfs mount made by another program is used, but its questions are
     the desktop's (Skwir's own connections offer Remember, ADR-082);
   - ADR-077's point 8, if asked: a helper of Skwir's serving SFTP
-    through OpenSSH as a connector, then rclone's API for server-side
-    copies.
+    through OpenSSH as a connector (the user did not ask, 2026-10-23).
 
 ---
 
