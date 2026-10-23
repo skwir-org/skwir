@@ -27,21 +27,24 @@ fn clients_one_after_another_reach_the_window_through_its_pipe() {
     app.commands
         .register::<NoArgs, _>("test", "test.answer", "Answer", "Answers 42", |_, _| {
             Ok(Outcome::Value(json!(42)))
-        });
+        })
+        .reads();
     let folders = tmp.path().to_owned();
-    app.commands.register::<Make, _>(
-        "test",
-        "test.make",
-        "Make a folder",
-        "Makes a folder of this name",
-        move |args, _| {
-            let mut plan = Plan::new("Make a folder");
-            plan.push(Mkdir {
-                path: folders.join(args.name),
-            });
-            Ok(Outcome::Plan(plan))
-        },
-    );
+    app.commands
+        .register::<Make, _>(
+            "test",
+            "test.make",
+            "Make a folder",
+            "Makes a folder of this name",
+            move |args, _| {
+                let mut plan = Plan::new("Make a folder");
+                plan.push(Mkdir {
+                    path: folders.join(args.name),
+                });
+                Ok(Outcome::Plan(plan))
+            },
+        )
+        .plans();
     let address = Address(format!(r"\\.\pipe\skwir-test-{}", std::process::id()).into());
     let call = |name: &str, args: serde_json::Value, mode| {
         let serde_json::Value::Object(args) = args else {

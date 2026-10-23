@@ -690,8 +690,9 @@ mod tests {
 
     /// A folder under the tests' own cache folder, on the home drive.
     fn fixture() -> tempfile::TempDir {
-        let base =
-            PathBuf::from(std::env::var_os("HOME").expect("a home")).join(".cache/skwir-tests");
+        // Windows' (and Wine's) home is its user's profile.
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+        let base = PathBuf::from(home.expect("a home")).join(".cache/skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         tempfile::tempdir_in(base).unwrap()
     }

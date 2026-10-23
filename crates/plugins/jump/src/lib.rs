@@ -581,8 +581,9 @@ mod tests {
         ];
         let mut scores = scores_in(Path::new("/w"), &dirs, &files);
         scores.sort_by(|a, b| a.path.cmp(&b.path));
-        let paths: Vec<_> = scores.iter().map(|s| s.path.to_str().unwrap()).collect();
-        assert_eq!(paths, ["/w/notes", "/w/proj", "/w/todo.txt"]);
+        // As paths: Windows joins a name with `\\`.
+        let paths: Vec<&Path> = scores.iter().map(|s| s.path.as_path()).collect();
+        assert_eq!(paths, ["/w/notes", "/w/proj", "/w/todo.txt"].map(Path::new));
         assert!((scores[1].score - 52.0).abs() < 1e-9, "its own and within");
         assert!((scores[2].score - 1.0).abs() < 0.01, "used just now");
     }

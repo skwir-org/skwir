@@ -1455,6 +1455,8 @@ mod tests {
     /// is renamed and moved among folders as a folder is, before one or
     /// after, and every edit's inverse gives the file back as it was, an
     /// address removed coming back where it stood.
+    // GTK's bookmarks (step F, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     fn addresses_and_folders_share_one_order() {
         let text = "file:///example/a\nsftp://me@example.com/docs Docs\nfile:///example/c See\nsmb://nas/photos%20x\n";

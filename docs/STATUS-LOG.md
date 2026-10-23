@@ -3718,3 +3718,29 @@ below), worked through in order, each committed after its checks.
 - Checked: `clippy -D warnings` for Linux, Windows and macOS (Apple's SDK
   by xmac); the connector's parsing tests on Linux and under Wine (3 of
   3). Not run: no share connected (Wine connects none; no Mac here).
+
+### The night's final checks (2026-10-23, morning)
+
+- `just release-check`: green (lint-all with Windows' and macOS's
+  builds, deny, notices, test-all 1975 of 1975, smoke, a11y, the PDF and
+  DjVu readers' checks, bench-check's budgets, release-tools' 27 tests).
+- `just test-windows` with no arguments cannot pass: the test programs
+  of `skwir` and `skwir-ui` (gpui) never start under Wine (exit 53 as
+  nextest lists them), as noted before for `skwir-ui`. Every other
+  default member, run under Wine (`tools/cross/test-windows.sh -p …`)
+  for the first time as a whole: 1138 of 1147, the 9 failures tests'
+  own, fixed: tonight's bookmark test and connector order test took
+  Linux's paths and order (now Linux's alone, and the order off Linux
+  said); checksums' fixture read `HOME`, which Wine does not hand on
+  (`USERPROFILE` too now); jump's test compared paths as text (Windows
+  joins with `\`); the control plugin's pipe test predated the
+  permission layer (its commands now say they read and plan, as the
+  socket test's do; it waited ten minutes for a question no one
+  answered). Those five crates again under Wine: 231 of 231.
+- `just remote-check`: its own 83 tests passed; GVfs's NFS and AFP in
+  namespaces failed once (`mkdir` through GVfs's bridge on NFS: an I/O
+  error). Run alone 11 times more: once on AFP (a folder just made
+  through the bridge said not to be one as a copy went in), 10 passing.
+  Both right after a folder is made through GVfs's FUSE bridge, on the
+  namespaces' servers (unfs3, netatalk), in steps tonight did not change;
+  not fixed, left to look at (GVfs's bridge caching a new folder).

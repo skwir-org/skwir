@@ -1269,6 +1269,11 @@ mod tests {
         let on = |desktops: &[&str]| {
             super::order_on(&desktops.iter().map(|d| (*d).to_owned()).collect::<Vec<_>>())
         };
+        // Off Linux, the system's own shares first, whatever the desktop.
+        if cfg!(any(windows, target_os = "macos")) {
+            assert_eq!(on(&["KDE"]), "system rclone sshfs fstab gvfs kio");
+            return;
+        }
         assert_eq!(on(&["KDE"]), "sshfs kio gvfs rclone fstab");
         assert_eq!(on(&["X-Generic", "kde"]), "sshfs kio gvfs rclone fstab");
         assert_eq!(on(&["GNOME"]), "sshfs gvfs kio rclone fstab");
