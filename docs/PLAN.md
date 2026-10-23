@@ -112,7 +112,7 @@ the completed set; targeted checks are recorded in `docs/STATUS-LOG.md`.
 | 4 | MCP authority belongs to its endpoint | fixed; targeted checks pass |
 | 5 | Privacy follows symlink targets | fixed; targeted checks pass |
 | 6 | Headless settings save completes before exit | fixed; targeted checks pass |
-| 7 | Explicit open targets are read off the window thread | pending |
+| 7 | Explicit open targets are read off the window thread | fixed; targeted checks pass |
 | 8 | Remote search work uses its server lane | fixed; targeted checks pass |
 | 9 | Rclone tree copies honor pause and cancellation | fixed; targeted checks pass |
 | 10 | Search updates discover arriving directory descendants | fixed; targeted checks pass |

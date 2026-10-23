@@ -23,11 +23,12 @@ use skwir_core::app::{App, NotifyLevel, PaneArg};
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::entry::{EntryId, EntryKind};
+use skwir_core::fs::reach;
 use skwir_core::location::Location;
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{KeyBinding, MenuItem, MenuSource};
-use skwir_core::scheduler::Priority;
+use skwir_core::scheduler::{Lane, Priority, on_window_thread};
 use skwir_core::workspace::PaneId;
 use skwir_platform::apps::{Application, AssociationEdit, Catalog, Stamp};
 use skwir_platform::mime::{self, Mime};
@@ -107,6 +108,15 @@ struct OpenArgs {
 
 fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(args.pane);
+    if on_window_thread() && !args.entries.is_empty() {
+        let lifetime = pane_lifetime(app, pane)?;
+        let cache = Arc::clone(cache);
+        let cancel = lifetime.clone();
+        resolve_named(app, args.entries, &lifetime, move |app, targets| {
+            open_targets(pane, targets, &[], cancel, &cache, app).map(|_| ())
+        })?;
+        return Ok(Outcome::Done);
+    }
     // Resolve the targets while holding the read lock, then release it;
     // files named by path are read without it.
     let (targets, places, lifetime): (Vec<Target>, Vec<Location>, _) = if args.entries.is_empty() {
@@ -133,6 +143,7 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
                     path,
                     kind: entry.kind,
                     entry: Some(entry.clone()),
+                    typed: None,
                 })
             })
             .collect();
@@ -144,8 +155,30 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
             app.lifetime().child(),
         )
     };
+    open_targets(pane, targets, &places, lifetime, cache, app)
+}
+
+fn pane_lifetime(app: &App, pane: PaneId) -> anyhow::Result<CancelToken> {
+    app.workspace
+        .read()
+        .pane(pane)
+        .map(skwir_core::workspace::Pane::location_lifetime)
+        .ok_or_else(|| anyhow::anyhow!("no such pane"))
+}
+
+fn open_targets(
+    pane: PaneId,
+    targets: Vec<Target>,
+    places: &[Location],
+    lifetime: CancelToken,
+    cache: &Cached,
+    app: &App,
+) -> anyhow::Result<Outcome> {
+    if lifetime.is_cancelled() {
+        return Ok(Outcome::Done);
+    }
     if targets.is_empty() {
-        let [place] = places.as_slice() else {
+        let [place] = places else {
             anyhow::bail!("nothing to open");
         };
         app.navigate(pane, place)?;
@@ -172,12 +205,17 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
                 ..
             },
         ] => {
+            let lane = targets[0].lane();
             let path = path.clone();
             let weak = app.weak();
             let cancel = lifetime.clone();
             let cache = Arc::clone(cache);
-            app.scheduler
-                .spawn(Priority::Normal, "open-with.resolve", lifetime, move || {
+            app.scheduler.spawn_in(
+                lane,
+                Priority::Normal,
+                "open-with.resolve",
+                lifetime,
+                move || {
                     let Some(app) = weak.upgrade() else { return };
                     if path.is_dir() {
                         if cancel.is_cancelled() {
@@ -188,9 +226,10 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
                             Err(e) => app.notify(NotifyLevel::Error, format!("{e:#}")),
                         }
                     } else {
-                        launch_defaults(&app, &cache, targets);
+                        launch_defaults(&app, &cache, targets, &cancel);
                     }
-                });
+                },
+            );
             return Ok(Outcome::Done);
         }
         _ => {}
@@ -198,9 +237,13 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     // Typing a file can read its head, and starting a program touches the
     // disk.
     let cache = Arc::clone(cache);
-    spawn(app, "open-with.open", move |app| {
-        launch_defaults(app, &cache, targets);
-    });
+    for (lane, targets) in by_lane(targets, Target::lane) {
+        let cache = Arc::clone(&cache);
+        let cancel = lifetime.clone();
+        spawn_in(app, lane, "open-with.open", cancel.clone(), move |app| {
+            launch_defaults(app, &cache, targets, &cancel);
+        });
+    }
     Ok(Outcome::Done)
 }
 
@@ -208,11 +251,14 @@ fn open(args: OpenArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
 /// (what the menu names), the files of one application in one run, as
 /// its command line takes them; what no application opens, with the
 /// desktop's opener. On a worker: reads the files' heads.
-fn launch_defaults(app: &App, cache: &Cached, targets: Vec<Target>) {
+fn launch_defaults(app: &App, cache: &Cached, targets: Vec<Target>, cancel: &CancelToken) {
     let catalog = catalog(cache);
     let mut runs: Vec<(&Application, Vec<PathBuf>)> = Vec::new();
     let mut rest: Vec<PathBuf> = Vec::new();
     for target in targets {
+        if cancel.is_cancelled() {
+            return;
+        }
         // A pipe, a socket or a device is never opened: a pipe would wait
         // for a writer, a device may act.
         if target
@@ -239,6 +285,9 @@ fn launch_defaults(app: &App, cache: &Cached, targets: Vec<Target>) {
             },
             None => rest.push(target.path),
         }
+    }
+    if cancel.is_cancelled() {
+        return;
     }
     let started = runs
         .iter()
@@ -443,6 +492,8 @@ struct Target {
     path: PathBuf,
     kind: EntryKind,
     entry: Option<skwir_core::Entry>,
+    /// A type read in the target's lane, for a choice spanning mounts.
+    typed: Option<Mime>,
 }
 
 /// The pane the targets are in, the entries named (for the command a
@@ -456,6 +507,7 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
             path,
             kind: EntryKind::Directory,
             entry: None,
+            typed: None,
         };
         return Ok((pane, Vec::new(), vec![target]));
     }
@@ -483,6 +535,7 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
             path,
             kind: entry.kind,
             entry: Some(entry.clone()),
+            typed: None,
         });
     }
     drop(ws);
@@ -490,9 +543,13 @@ fn targets(args: TargetArgs, app: &App) -> anyhow::Result<(PaneId, Vec<EntryId>,
     Ok((pane, named, targets))
 }
 
-/// Files named by path (a script's, an agent's), as a listing would show
-/// them: read now, on the thread of whoever named them.
+/// Files named by path as a listing would show them. Blocking: commands
+/// from the window hand these to `resolve_named` before calling this.
 fn named_targets(entries: Vec<skwir_core::op::EntryArg>) -> anyhow::Result<Vec<Target>> {
+    debug_assert!(
+        !on_window_thread(),
+        "explicit targets must be read on a worker"
+    );
     skwir_core::op::EntryArg::refs(entries)?
         .into_iter()
         .map(|r| {
@@ -502,15 +559,158 @@ fn named_targets(entries: Vec<skwir_core::op::EntryArg>) -> anyhow::Result<Vec<T
                 path: r.path,
                 kind: entry.kind,
                 entry: Some(entry),
+                typed: None,
             })
         })
         .collect()
 }
 
+fn by_lane<T>(
+    items: impl IntoIterator<Item = T>,
+    lane: impl Fn(&T) -> Lane,
+) -> Vec<(Lane, Vec<T>)> {
+    let mut groups: Vec<(Lane, Vec<T>)> = Vec::new();
+    for item in items {
+        let lane = lane(&item);
+        match groups.iter_mut().find(|(known, _)| *known == lane) {
+            Some((_, items)) => items.push(item),
+            None => groups.push((lane, vec![item])),
+        }
+    }
+    groups
+}
+
+/// Explicit targets are still only names on the window thread. Resolve
+/// each mount's names in its own lane, without blocking another lane to
+/// wait for them. Finish only once all succeeded, in the caller's order.
+fn resolve_named(
+    app: &App,
+    entries: Vec<skwir_core::op::EntryArg>,
+    cancel: &CancelToken,
+    done: impl FnOnce(&App, Vec<Target>) -> anyhow::Result<()> + Send + 'static,
+) -> anyhow::Result<()> {
+    fn path_of(entry: &skwir_core::op::EntryArg) -> &std::path::Path {
+        match entry {
+            skwir_core::op::EntryArg::Path(path) | skwir_core::op::EntryArg::Named { path, .. } => {
+                path.as_ref()
+            }
+        }
+    }
+    prepare_targets(
+        app,
+        entries,
+        path_of,
+        |entry| Ok(named_targets(vec![entry])?.pop().unwrap()),
+        cancel,
+        done,
+    )
+}
+
+fn prepare_targets<T: Send + 'static>(
+    app: &App,
+    entries: Vec<T>,
+    path_of: impl Fn(&T) -> &std::path::Path,
+    prepare: impl Fn(T) -> anyhow::Result<Target> + Send + Sync + 'static,
+    cancel: &CancelToken,
+    done: impl FnOnce(&App, Vec<Target>) -> anyhow::Result<()> + Send + 'static,
+) -> anyhow::Result<()> {
+    struct Pending<F> {
+        left: usize,
+        targets: Vec<(usize, Target)>,
+        error: Option<anyhow::Error>,
+        done: Option<F>,
+    }
+    // Invalid arguments remain immediate errors; validation does no I/O.
+    for entry in &entries {
+        skwir_core::os_path::absolute(path_of(entry))?;
+    }
+    let groups = by_lane(entries.into_iter().enumerate(), |(_, entry)| {
+        reach::lane(path_of(entry))
+    });
+    let pending = Arc::new(Mutex::new(Pending {
+        left: groups.len(),
+        targets: Vec::new(),
+        error: None,
+        done: Some(done),
+    }));
+    let prepare = Arc::new(prepare);
+    for (lane, entries) in groups {
+        let pending = Arc::clone(&pending);
+        let prepare = Arc::clone(&prepare);
+        let cancel = cancel.clone();
+        spawn_in(app, lane, "open-with.targets", cancel.clone(), move |app| {
+            let (positions, entries): (Vec<_>, Vec<_>) = entries.into_iter().unzip();
+            let resolved: anyhow::Result<Vec<_>> = entries
+                .into_iter()
+                .map(|entry| {
+                    anyhow::ensure!(!cancel.is_cancelled(), "opening cancelled");
+                    prepare(entry)
+                })
+                .collect();
+            if cancel.is_cancelled() {
+                return;
+            }
+            let completed = {
+                let mut pending = pending.lock();
+                match resolved {
+                    Ok(targets) => pending.targets.extend(positions.into_iter().zip(targets)),
+                    Err(error) => {
+                        pending.error.get_or_insert(error);
+                    }
+                }
+                pending.left -= 1;
+                if pending.left == 0 {
+                    Some((
+                        pending.done.take().unwrap(),
+                        pending.error.take(),
+                        std::mem::take(&mut pending.targets),
+                    ))
+                } else {
+                    None
+                }
+            };
+            if let Some((done, error, mut targets)) = completed {
+                let result = if let Some(error) = error {
+                    Err(error)
+                } else {
+                    targets.sort_by_key(|(position, _)| *position);
+                    done(app, targets.into_iter().map(|(_, target)| target).collect())
+                };
+                if let Err(error) = result {
+                    app.notify(NotifyLevel::Error, format!("{error:#}"));
+                }
+                app.wake();
+            }
+        });
+    }
+    Ok(())
+}
+
 impl Target {
+    fn read_path(&self) -> &std::path::Path {
+        self.entry
+            .as_ref()
+            .and_then(|entry| entry.target.as_ref())
+            .and_then(|target| target.path.as_deref())
+            .unwrap_or(&self.path)
+    }
+
+    fn lane(&self) -> Lane {
+        reach::lane(self.read_path())
+    }
+
+    fn read_type(mut self, read: bool) -> Self {
+        if read {
+            self.typed = Some(self.mime());
+        }
+        self
+    }
     /// What the entry is (a pipe is `inode/fifo`, never read), else what
     /// it opens says; reads the head of a file: call from a worker.
     fn mime(&self) -> Mime {
+        if let Some(mime) = &self.typed {
+            return mime.clone();
+        }
         match &self.entry {
             Some(entry) => skwir_platform::apps::type_of(entry, &self.path),
             None => Mime("inode/directory".into()),
@@ -761,13 +961,22 @@ fn default_choices(catalog: &Catalog, only: &Mime) -> serde_json::Value {
 }
 
 fn open_with(args: OpenWithArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
-    let (_, _, targets) = targets(args.target, app)?;
+    let pane = app.pane_or_active(args.target.pane);
+    let lifetime = if on_window_thread() {
+        pane_lifetime(app, pane)?
+    } else {
+        app.lifetime().child()
+    };
     let id = args.app;
     let set_default = args.set_default;
     // Reading the catalog, the types and the lists, and starting the
     // program, touch the disk.
     let cache = Arc::clone(cache);
-    spawn(app, "open-with.launch", move |app| {
+    let cancel = lifetime.clone();
+    let launch = move |app: &App, targets: Vec<Target>| {
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
         if set_default {
             let mut types = targets.iter().map(Target::mime);
             let first = types.next().expect("targets are never empty");
@@ -782,6 +991,9 @@ fn open_with(args: OpenWithArgs, cache: &Cached, app: &App) -> anyhow::Result<Ou
         }
         let paths: Vec<PathBuf> = targets.into_iter().map(|t| t.path).collect();
         let catalog = catalog(&cache);
+        if cancel.is_cancelled() {
+            return Ok(());
+        }
         let result = match catalog.get(&id) {
             Some(application) => application.launch(&paths),
             None => Err(anyhow::anyhow!("no application “{id}” is installed")),
@@ -789,23 +1001,47 @@ fn open_with(args: OpenWithArgs, cache: &Cached, app: &App) -> anyhow::Result<Ou
         if let Err(e) = result {
             app.notify(NotifyLevel::Error, format!("{e:#}"));
         }
-    });
+        Ok(())
+    };
+    let cancel = lifetime.clone();
+    let prepare = move |app: &App, targets| {
+        prepare_targets(
+            app,
+            targets,
+            Target::read_path,
+            move |target| Ok(target.read_type(set_default)),
+            &cancel,
+            launch,
+        )
+    };
+    if on_window_thread() && !args.target.here && !args.target.entries.is_empty() {
+        resolve_named(app, args.target.entries, &lifetime, prepare)?;
+    } else {
+        let (_, _, targets) = targets(args.target, app)?;
+        prepare(app, targets)?;
+    }
     Ok(Outcome::Done)
 }
 
 /// Run `work` on a worker for as long as the app lives.
 fn spawn(app: &App, label: &'static str, work: impl FnOnce(&App) + Send + 'static) {
+    spawn_in(app, Lane::SHARED, label, app.lifetime().child(), work);
+}
+
+fn spawn_in(
+    app: &App,
+    lane: Lane,
+    label: &'static str,
+    cancel: CancelToken,
+    work: impl FnOnce(&App) + Send + 'static,
+) {
     let weak = app.weak();
-    app.scheduler.spawn(
-        Priority::Visible,
-        label,
-        app.lifetime().child(),
-        move || {
+    app.scheduler
+        .spawn_in(lane, Priority::Visible, label, cancel, move || {
             if let Some(app) = weak.upgrade() {
                 work(&app);
             }
-        },
-    );
+        });
 }
 
 /// How a sentence names the files of `mime`: `folders`, `PNG image files`,
@@ -1100,6 +1336,132 @@ mod tests {
     use super::*;
     use skwir_core::app::AppConfig;
     use std::time::Duration;
+
+    struct BlockedWorkers(Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>);
+
+    impl Drop for BlockedWorkers {
+        fn drop(&mut self) {
+            *self.0.0.lock().unwrap() = true;
+            self.0.1.notify_all();
+        }
+    }
+
+    /// Occupy the pool and every bounded replacement worker before
+    /// returning. Later jobs cannot begin until the guard is released.
+    fn block_workers(app: &App) -> BlockedWorkers {
+        assert!(app.scheduler.wait_idle(Duration::from_secs(10)));
+        let guard = BlockedWorkers(Arc::new((
+            std::sync::Mutex::new(false),
+            std::sync::Condvar::new(),
+        )));
+        let (started, waiting) = std::sync::mpsc::channel();
+        for _ in 0..2 * app.scheduler.workers() {
+            let gate = Arc::clone(&guard.0);
+            let started = started.clone();
+            app.scheduler.spawn(
+                Priority::Visible,
+                "test.block",
+                CancelToken::new(),
+                move || {
+                    let _ = started.send(());
+                    let mut released = gate.0.lock().unwrap();
+                    while !*released {
+                        released = gate.1.wait(released).unwrap();
+                    }
+                },
+            );
+            // Submit the next blocker only once this one runs. After the
+            // normal pool fills, each submission requests the next bounded
+            // replacement; a single early burst can leave idle workers
+            // counted at submission time and schedule no replacement look.
+            waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+        }
+        guard
+    }
+
+    fn window_app(root: &std::path::Path) -> (Arc<App>, PaneId) {
+        let mut config = AppConfig::ephemeral(root);
+        config.workers = 2;
+        let app = App::new(config).unwrap();
+        app.plugins.add(Arc::new(OpenWithPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(root)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        (app, pane)
+    }
+
+    #[test]
+    fn explicit_open_reads_after_dispatch_and_keeps_the_original_pane() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (app, original) = window_app(tmp.path());
+        let other = app.workspace.write().add_pane();
+        app.navigate(other, &Location::from_path(tmp.path()))
+            .unwrap();
+        app.workspace.write().set_active(original);
+        let blocked = block_workers(&app);
+        skwir_core::scheduler::mark_window_thread(&app.scheduler);
+        let target = tmp.path().join("created after dispatch");
+        app.dispatch(&Invocation::with_args(
+            "open",
+            &serde_json::json!({"entries": [target]}),
+        ))
+        .unwrap();
+        // A synchronous stat would have failed: the target does not exist
+        // until the command has returned to the window.
+        std::fs::create_dir(&target).unwrap();
+        app.workspace.write().set_active(other);
+        drop(blocked);
+        assert!(app.scheduler.wait_idle(Duration::from_secs(10)));
+        assert_eq!(app.pane_dir(original).unwrap(), target);
+        assert_eq!(app.pane_dir(other).unwrap(), tmp.path());
+        assert_eq!(app.workspace.read().active_id(), other);
+    }
+
+    #[test]
+    fn navigating_away_cancels_explicit_open_before_it_resolves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (app, pane) = window_app(tmp.path());
+        let blocked = block_workers(&app);
+        skwir_core::scheduler::mark_window_thread(&app.scheduler);
+        let target = tmp.path().join("target");
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::create_dir(&elsewhere).unwrap();
+        app.dispatch(&Invocation::with_args(
+            "open",
+            &serde_json::json!({"entries": [target]}),
+        ))
+        .unwrap();
+        app.navigate(pane, &Location::from_path(&elsewhere))
+            .unwrap();
+        drop(blocked);
+        assert!(app.scheduler.wait_idle(Duration::from_secs(10)));
+        assert_eq!(app.pane_dir(pane).unwrap(), elsewhere);
+        assert!(app.take_notifications().is_empty());
+    }
+
+    #[test]
+    fn explicit_open_reports_worker_errors_and_keeps_script_errors_synchronous() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (app, _) = window_app(tmp.path());
+        let invocation = Invocation::with_args(
+            "open",
+            &serde_json::json!({"entries": [tmp.path().join("missing")]}),
+        );
+        assert!(
+            app.dispatch(&invocation).is_err(),
+            "a script still gets its error"
+        );
+        let blocked = block_workers(&app);
+        skwir_core::scheduler::mark_window_thread(&app.scheduler);
+        app.dispatch(&invocation).unwrap();
+        assert!(app.take_notifications().is_empty());
+        drop(blocked);
+        assert!(app.scheduler.wait_idle(Duration::from_secs(10)));
+        let messages = app.take_notifications();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].text.contains("does not exist"));
+    }
 
     #[test]
     fn terminal_targets_the_selected_folder_else_the_pane() {
@@ -1573,6 +1935,46 @@ mod tests {
             recorded(&out),
             want,
             "the catalog's default, once with every file of its type, not xdg-open"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_open_with_reads_and_types_its_targets_after_window_dispatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("out");
+        let record = recorder(tmp.path(), &out);
+        fake_catalog(tmp.path(), &record);
+        let mut config = AppConfig::ephemeral(tmp.path());
+        config.workers = 2;
+        let app = App::new(config).unwrap();
+        app.plugins.add(
+            Arc::new(OpenWithPlugin {
+                catalog: cached(tmp.path()),
+            }),
+            &app,
+        );
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(tmp.path()))
+            .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        let blocked = block_workers(&app);
+        skwir_core::scheduler::mark_window_thread(&app.scheduler);
+        let target = tmp.path().join("created after dispatch.png");
+        app.dispatch(&Invocation::with_args(
+            "open_with",
+            &serde_json::json!({
+                "app": "viewer.desktop", "set_default": true, "entries": [target],
+            }),
+        ))
+        .unwrap();
+        std::fs::write(&target, b"").unwrap();
+        drop(blocked);
+        assert_eq!(recorded(&out), [target.display().to_string()]);
+        assert!(app.scheduler.wait_idle(Duration::from_secs(10)));
+        assert_eq!(
+            next_notification(&app).text,
+            "Viewer now opens PNG image files"
         );
     }
 

@@ -3968,3 +3968,21 @@ below), worked through in order, each committed after its checks.
   Clippy; all-crate lint/cross-compilation and tests (2014 passed, 25
   skipped); formatting and diff whitespace; all benchmark budgets met on
   the quiet rerun. Final full release checks pending.
+
+### Review fix 7: explicit opening resolves on workers (2026-10-23)
+
+- Window calls of `open` and `open_with` no longer stat explicit paths
+  during dispatch. Resolution is grouped by filesystem lane, preserves
+  caller order and reports failure before opening any target. The original
+  pane and location lifetime are captured before queueing; later typing
+  and symlink resolution use the target's lane too.
+- Regressions occupy all normal and replacement workers, dispatch from a
+  marked window thread, and create the target only after dispatch returns.
+  They check original-pane ownership, navigation cancellation, asynchronous
+  window errors versus synchronous script errors, and chosen-application
+  opening with default-association typing.
+- Verified: open-with nextest, 18 of 18, and the four new regressions again
+  after making the test worker gate deterministic; targeted Clippy;
+  all-crate lint/cross-compilation and tests (2014 passed, 25 skipped);
+  formatting and diff whitespace; all benchmark budgets met on the quiet
+  rerun. Final full release and real-window checks pending.

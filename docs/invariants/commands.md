@@ -87,7 +87,11 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   shows) and reads them through `App::targets`, which falls back to the
   pane's selection when none is named. Scripts and agents name files,
   never select them: the selection is the user's and changes between two
-  calls.
+  calls. Explicit `open` and `open_with` targets remain names on the
+  window thread: workers resolve and type them in their filesystem lanes.
+  Capture the pane and its location lifetime before queueing; navigation
+  cancels pending opening, and worker failures become notifications. No
+  targets open until all named targets have resolved successfully.
 - A command that makes something somewhere takes the folder too (`mkdir`'s
   `in`).
 - A command whose plan copies, moves or links takes what becomes of a
