@@ -4008,3 +4008,26 @@ below), worked through in order, each committed after its checks.
 - The latest benchmark binary met every budget with compilation finished;
   an overlapping run had missed the two streaming-completion budgets. No
   budgets changed. Final full release checks pending.
+
+### Review fix 11: field answers belong to their provider generation (2026-10-23)
+
+- Provider selection and registry generation are captured under one
+  registry lock. Memory keys include that generation, provider id/version,
+  field and file identity; a late read cannot refill current memory.
+  Batched reads group by provider instance and captured stamp. No provider
+  read or disk-cache operation holds the registry lock.
+- Review found a related persistent negative-cache case: a stopped
+  provider could fail and have its error saved as no value. Errors now
+  remain retryable and are never cached; stale successful completions do
+  not start new cache writes. A cache-format epoch invalidates legacy
+  entries which cannot distinguish an error from a successful empty
+  answer. Stable provider id/version semantics still govern disk reuse.
+- Deterministic blocked-reader tests cover replacement before and after
+  its answer is warm, changed ids/versions and memory-only same-version
+  replacement. Other regressions cover two providers accepting different
+  hard-link names, errors with and without withdrawal, reopened disk
+  caches and legacy cached errors.
+- Verified: field nextest, 9 of 9; core Clippy for all targets with
+  warnings denied; formatting and diff checks. The broader all-crate run
+  passed before the final error-cache regressions were added; benchmark
+  budgets met on the quiet rerun. Final full release checks pending.

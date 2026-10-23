@@ -29,6 +29,9 @@ use crate::entry::Value;
 const REMEMBERED: usize = 100_000;
 /// What the answers kept on disk may take.
 const KEPT_BYTES: u64 = 16 << 20;
+/// Earlier entries could encode failed reads as null. A new format key
+/// prevents those legacy failures from remaining permanent negative answers.
+const CACHE_FORMAT: u8 = 2;
 
 /// Reads one or more fields of files, when asked.
 pub trait FieldProvider: Send + Sync {
@@ -55,7 +58,8 @@ pub trait FieldProvider: Send + Sync {
     /// `key`. Asked before anything is read.
     fn accepts(&self, key: &str, name: &OsStr) -> bool;
     /// What the file at `path` says of `key`, read now, on a worker.
-    /// `Ok(None)` when it says nothing; an error is kept as nothing too.
+    /// `Ok(None)` when it says nothing. An error is retryable, never kept
+    /// as evidence that the file has no value (a disabled helper may fail).
     fn read(&self, key: &str, path: &Path, cancel: &CancelToken) -> anyhow::Result<Option<Value>>;
     /// What the file says of each of `keys`, in their order: a provider
     /// whose keys come from one read of the file (a picture's position and
@@ -78,12 +82,18 @@ pub trait FieldProvider: Send + Sync {
 /// mount made up, by its path.
 pub type Identity = (crate::entry::FileId, u64, u64);
 
+/// Registry generation, provider id and cache version, captured before a read.
+type ProviderStamp = (u64, &'static str, u32);
+type MemoryKey = (ProviderStamp, Arc<str>, Identity);
+
 #[derive(Default)]
 pub struct Fields {
     providers: RwLock<Vec<(Arc<str>, Arc<dyn FieldProvider>)>>,
     /// `None` keeps answers in memory only (tests, tools).
     cache: Option<CacheSlot>,
-    remembered: Mutex<HashMap<(Arc<str>, Identity), Option<Value>>>,
+    /// The registry generation belongs to the answer too. An old read
+    /// must never fill the cache of a replacement provider for this key.
+    remembered: Mutex<HashMap<MemoryKey, Option<Value>>>,
     revision: AtomicU64,
 }
 
@@ -96,14 +106,16 @@ impl Fields {
     }
 
     pub fn register(&self, owner: &str, provider: Arc<dyn FieldProvider>) {
-        self.providers.write().push((owner.into(), provider));
+        let mut providers = self.providers.write();
+        providers.push((owner.into(), provider));
         self.changed();
     }
 
     pub fn unregister_owner(&self, owner: &str) {
-        let before = self.providers.read().len();
-        self.providers.write().retain(|(o, _)| &**o != owner);
-        if self.providers.read().len() != before {
+        let mut providers = self.providers.write();
+        let before = providers.len();
+        providers.retain(|(o, _)| &**o != owner);
+        if providers.len() != before {
             self.changed();
         }
     }
@@ -115,8 +127,11 @@ impl Fields {
     }
 
     fn changed(&self) {
-        self.remembered.lock().clear();
+        // The caller holds providers for writing. Keep the memory lock
+        // through the revision change, paired with remember's check.
+        let mut remembered = self.remembered.lock();
         self.revision.fetch_add(1, Ordering::AcqRel);
+        remembered.clear();
     }
 
     /// The ids of the providers, for a plugin's toggle to be checked.
@@ -151,7 +166,7 @@ impl Fields {
 
     /// Whom Properties credits for `key`, for a file named `name`. On a worker.
     pub fn credit(&self, key: &str, name: &OsStr) -> Option<String> {
-        self.provider(key, name)?.credit(key)
+        self.provider(key, name)?.1.credit(key)
     }
 
     /// The keys some provider may answer for a file named `name`, in the
@@ -168,12 +183,13 @@ impl Fields {
         keys
     }
 
-    fn provider(&self, key: &str, name: &OsStr) -> Option<Arc<dyn FieldProvider>> {
-        self.providers
-            .read()
+    fn provider(&self, key: &str, name: &OsStr) -> Option<(u64, Arc<dyn FieldProvider>)> {
+        // Snapshot the provider and its generation under the same lock.
+        let providers = self.providers.read();
+        providers
             .iter()
             .find(|(_, p)| p.keys().contains(&key) && p.accepts(key, name))
-            .map(|(_, p)| Arc::clone(p))
+            .map(|(_, p)| (self.revision(), Arc::clone(p)))
     }
 
     /// The value of `key` for the file at `path`: remembered, kept in the
@@ -213,12 +229,13 @@ impl Fields {
         };
         // Each key remembered, kept, or to read, with the others its
         // provider answers.
-        let mut asked: Vec<(Arc<dyn FieldProvider>, Vec<usize>)> = Vec::new();
+        let mut asked: Vec<(ProviderStamp, Arc<dyn FieldProvider>, Vec<usize>)> = Vec::new();
         for (i, key) in keys.iter().enumerate() {
-            let Some(provider) = self.provider(key, name) else {
+            let Some((generation, provider)) = self.provider(key, name) else {
                 continue;
             };
-            let memory_key: (Arc<str>, Identity) = ((*key).into(), identity);
+            let stamp = (generation, provider.id(), provider.version());
+            let memory_key = (stamp, (*key).into(), identity);
             if let Some(value) = self.remembered.lock().get(&memory_key) {
                 answers[i].clone_from(value);
                 continue;
@@ -226,19 +243,22 @@ impl Fields {
             let kept = self
                 .cache
                 .as_ref()
-                .and_then(|cache| cache.get(&disk_key(key, &*provider, identity, &content)))
+                .and_then(|cache| cache.get(&disk_key(key, (stamp.1, stamp.2), identity, &content)))
                 .and_then(|bytes| serde_json::from_slice::<Option<Value>>(&bytes).ok());
             if let Some(value) = kept {
                 self.remember(memory_key, value.clone());
                 answers[i] = value;
                 continue;
             }
-            match asked.iter_mut().find(|(p, _)| p.id() == provider.id()) {
-                Some((_, at)) => at.push(i),
-                None => asked.push((provider, vec![i])),
+            match asked
+                .iter_mut()
+                .find(|(g, p, _)| *g == stamp && Arc::ptr_eq(p, &provider))
+            {
+                Some((_, _, at)) => at.push(i),
+                None => asked.push((stamp, provider, vec![i])),
             }
         }
-        for (provider, at) in asked {
+        for (stamp, provider, at) in asked {
             let read: Vec<&str> = at.iter().map(|&i| keys[i]).collect();
             let values = provider.read_keys(&read, path, cancel);
             // A read cut short by a cancel says nothing of the file.
@@ -247,27 +267,39 @@ impl Fields {
             }
             for (&i, value) in at.iter().zip(values) {
                 let key = keys[i];
-                let value = value.unwrap_or_else(|error| {
-                    tracing::debug!(%error, key, "field not read");
-                    None
-                });
-                if let Some(cache) = &self.cache
+                let value = match value {
+                    Ok(value) => value,
+                    Err(error) => {
+                        tracing::debug!(%error, key, "field not read");
+                        continue;
+                    }
+                };
+                // A removed provider's completion is only for its original
+                // caller. Never start persisting it after its withdrawal.
+                if stamp.0 == self.revision()
+                    && let Some(cache) = &self.cache
                     && let Ok(bytes) = serde_json::to_vec(&value)
                 {
-                    match cache.put(&disk_key(key, &*provider, identity, &content), &bytes) {
+                    match cache.put(
+                        &disk_key(key, (stamp.1, stamp.2), identity, &content),
+                        &bytes,
+                    ) {
                         Ok(()) => cache.trim_soon(bytes.len() as u64, KEPT_BYTES),
                         Err(error) => tracing::debug!(%error, "field not kept"),
                     }
                 }
-                self.remember((key.into(), identity), value.clone());
+                self.remember((stamp, key.into(), identity), value.clone());
                 answers[i] = value;
             }
         }
         answers
     }
 
-    fn remember(&self, key: (Arc<str>, Identity), value: Option<Value>) {
+    fn remember(&self, key: MemoryKey, value: Option<Value>) {
         let mut remembered = self.remembered.lock();
+        if key.0.0 != self.revision() {
+            return;
+        }
         if remembered.len() >= REMEMBERED {
             remembered.clear();
         }
@@ -293,10 +325,10 @@ fn identity_of(path: &Path) -> Option<Identity> {
 
 /// Where the answer of `provider` for `key` of the file at `path` is kept
 /// on disk.
-fn disk_key(key: &str, provider: &dyn FieldProvider, identity: Identity, path: &Path) -> Vec<u8> {
+fn disk_key(key: &str, provider: (&str, u32), identity: Identity, path: &Path) -> Vec<u8> {
     let (file, len, modified) = identity;
     [
-        format!("{key}:{}:{}:", provider.id(), provider.version()).as_bytes(),
+        format!("{CACHE_FORMAT}:{key}:{}:{}:", provider.0, provider.1).as_bytes(),
         &file.kept_as(path),
         format!(":{len}:{modified}").as_bytes(),
     ]
@@ -307,6 +339,257 @@ fn disk_key(key: &str, provider: &dyn FieldProvider, identity: Identity, path: &
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    struct Answer {
+        id: &'static str,
+        version: u32,
+        value: u64,
+        reads: Arc<AtomicUsize>,
+        name: Option<&'static str>,
+        fail: bool,
+        wait: Option<(
+            crossbeam_channel::Sender<()>,
+            crossbeam_channel::Receiver<()>,
+        )>,
+    }
+
+    impl FieldProvider for Answer {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+        fn version(&self) -> u32 {
+            self.version
+        }
+        fn keys(&self) -> &'static [&'static str] {
+            &["test.answer"]
+        }
+        fn accepts(&self, _: &str, name: &OsStr) -> bool {
+            self.name.is_none_or(|accepted| name == accepted)
+        }
+        fn read(&self, _: &str, _: &Path, _: &CancelToken) -> anyhow::Result<Option<Value>> {
+            self.reads.fetch_add(1, Ordering::SeqCst);
+            if let Some((started, resume)) = &self.wait {
+                started.send(()).unwrap();
+                let _ = resume.recv_timeout(std::time::Duration::from_secs(10));
+            }
+            anyhow::ensure!(!self.fail, "the provider stopped");
+            Ok(Some(Value::UInt(self.value)))
+        }
+    }
+
+    #[test]
+    fn a_replaced_providers_late_read_cannot_fill_the_current_memory_cache() {
+        for (id, version, disk) in [
+            ("replacement", 1, true),
+            ("original", 2, true),
+            ("original", 1, false),
+        ] {
+            for warm in [false, true] {
+                let tmp = tempfile::tempdir().unwrap();
+                let note = tmp.path().join("it's an answer.txt");
+                std::fs::write(&note, "fixture").unwrap();
+                let fields = if disk {
+                    Fields::new(
+                        crate::cache::Cache::new(tmp.path().join("cache")).namespace("fields"),
+                    )
+                } else {
+                    Fields::default()
+                };
+                let (started, entered) = crossbeam_channel::bounded(1);
+                let (resume, waiting) = crossbeam_channel::bounded(0);
+                fields.register(
+                    "old",
+                    Arc::new(Answer {
+                        id: "original",
+                        version: 1,
+                        value: 1,
+                        reads: Arc::default(),
+                        name: None,
+                        fail: false,
+                        wait: Some((started, waiting)),
+                    }),
+                );
+                std::thread::scope(|scope| {
+                    let reading =
+                        scope.spawn(|| fields.get("test.answer", &note, &CancelToken::new()));
+                    // Drop resume on any assertion failure, so the old reader
+                    // cannot keep the scoped thread waiting indefinitely.
+                    let release = resume;
+                    entered
+                        .recv_timeout(std::time::Duration::from_secs(10))
+                        .unwrap();
+                    fields.unregister_owner("old");
+                    let reads = Arc::new(AtomicUsize::new(0));
+                    fields.register(
+                        "new",
+                        Arc::new(Answer {
+                            id,
+                            version,
+                            value: 2,
+                            reads: reads.clone(),
+                            name: None,
+                            fail: false,
+                            wait: None,
+                        }),
+                    );
+                    if warm {
+                        assert_eq!(
+                            fields.get("test.answer", &note, &CancelToken::new()),
+                            Some(Value::UInt(2))
+                        );
+                    }
+                    release.send(()).unwrap();
+                    assert_eq!(reading.join().unwrap(), Some(Value::UInt(1)));
+                    for _ in 0..2 {
+                        assert_eq!(
+                            fields.get("test.answer", &note, &CancelToken::new()),
+                            Some(Value::UInt(2))
+                        );
+                    }
+                    assert_eq!(
+                        reads.load(Ordering::SeqCst),
+                        1,
+                        "only the replacement's answer is remembered"
+                    );
+                });
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn memory_is_scoped_to_the_provider_selected_for_each_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let first = tmp.path().join("first.txt");
+        let second = tmp.path().join("second.txt");
+        std::fs::write(&first, "fixture").unwrap();
+        std::fs::hard_link(&first, &second).unwrap();
+        let fields = Fields::default();
+        for (id, name, value) in [("first", "first.txt", 1), ("second", "second.txt", 2)] {
+            fields.register(
+                "test",
+                Arc::new(Answer {
+                    id,
+                    version: 1,
+                    value,
+                    reads: Arc::default(),
+                    name: Some(name),
+                    fail: false,
+                    wait: None,
+                }),
+            );
+        }
+        let cancel = CancelToken::new();
+        // The file identity and field are the same, but a different
+        // provider accepts each name. Their answers cannot share memory.
+        assert_eq!(
+            fields.get("test.answer", &first, &cancel),
+            Some(Value::UInt(1))
+        );
+        assert_eq!(
+            fields.get("test.answer", &second, &cancel),
+            Some(Value::UInt(2))
+        );
+        assert_eq!(
+            fields.get("test.answer", &first, &cancel),
+            Some(Value::UInt(1))
+        );
+    }
+
+    #[test]
+    fn a_failed_read_never_becomes_persistent_absence_even_after_disable() {
+        for withdrawn in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let cache = crate::cache::Cache::new(tmp.path().join("cache"));
+            let fields = Fields::new(cache.namespace("fields"));
+            let note = tmp.path().join("note.txt");
+            std::fs::write(&note, "fixture").unwrap();
+            let reads = Arc::new(AtomicUsize::new(0));
+            let (started, entered) = crossbeam_channel::bounded(1);
+            let (resume, waiting) = crossbeam_channel::bounded(0);
+            fields.register(
+                "test",
+                Arc::new(Answer {
+                    id: "same",
+                    version: 1,
+                    value: 1,
+                    reads: reads.clone(),
+                    name: None,
+                    fail: true,
+                    wait: Some((started, waiting)),
+                }),
+            );
+            std::thread::scope(|scope| {
+                let reading = scope.spawn(|| fields.get("test.answer", &note, &CancelToken::new()));
+                let release = resume;
+                entered
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .unwrap();
+                if withdrawn {
+                    fields.unregister_owner("test");
+                }
+                release.send(()).unwrap();
+                assert_eq!(reading.join().unwrap(), None);
+            });
+            // Reopening the same cache is stronger than a warm memory hit:
+            // a stopped helper has not said anything about the file's value.
+            let again = Fields::new(cache.namespace("fields"));
+            again.register(
+                "test",
+                Arc::new(Answer {
+                    id: "same",
+                    version: 1,
+                    value: 2,
+                    reads: reads.clone(),
+                    name: None,
+                    fail: false,
+                    wait: None,
+                }),
+            );
+            assert_eq!(
+                again.get("test.answer", &note, &CancelToken::new()),
+                Some(Value::UInt(2))
+            );
+            assert_eq!(reads.load(Ordering::SeqCst), 2);
+        }
+    }
+
+    #[test]
+    fn an_error_cached_by_the_old_format_is_read_again() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = crate::cache::Cache::new(tmp.path().join("cache"));
+        let slot = cache.namespace("fields");
+        let note = tmp.path().join("note.txt");
+        std::fs::write(&note, "fixture").unwrap();
+        let (file, len, modified) = identity_of(&note).unwrap();
+        // The original on-disk key, before failed reads became retryable.
+        let old_key = [
+            b"test.answer:same:1:".as_slice(),
+            &file.kept_as(&note),
+            format!(":{len}:{modified}").as_bytes(),
+        ]
+        .concat();
+        slot.put(&old_key, b"null").unwrap();
+        let fields = Fields::new(slot);
+        let reads = Arc::new(AtomicUsize::new(0));
+        fields.register(
+            "test",
+            Arc::new(Answer {
+                id: "same",
+                version: 1,
+                value: 2,
+                reads: reads.clone(),
+                name: None,
+                fail: false,
+                wait: None,
+            }),
+        );
+        assert_eq!(
+            fields.get("test.answer", &note, &CancelToken::new()),
+            Some(Value::UInt(2))
+        );
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+    }
 
     /// Answers `size.words` with the file's text split in words, counting
     /// its reads.
@@ -463,24 +746,44 @@ mod tests {
         let path = Path::new("/srv/it's here.txt");
         let lasting = crate::entry::FileId::new(5, 7);
         assert_eq!(
-            disk_key("test.words", &words, (lasting, 3, 9), path),
-            format!("test.words:words:{}:5:7:3:9", words.version()).into_bytes(),
-            "as before mounts were told apart"
+            disk_key(
+                "test.words",
+                (words.id(), words.version()),
+                (lasting, 3, 9),
+                path
+            ),
+            format!("2:test.words:words:{}:5:7:3:9", words.version()).into_bytes(),
+            "cache format and provider version precede the stable file identity"
         );
         crate::fs::reach::pretend_made_up(6, 1 << 40);
         let made_up = crate::entry::FileId::new(6, 7);
         // The same file mounted again, numbered anew.
         let other = crate::entry::FileId::new(6, 99);
         assert_eq!(
-            disk_key("test.words", &words, (made_up, 3, 9), path),
-            disk_key("test.words", &words, (other, 3, 9), path),
+            disk_key(
+                "test.words",
+                (words.id(), words.version()),
+                (made_up, 3, 9),
+                path
+            ),
+            disk_key(
+                "test.words",
+                (words.id(), words.version()),
+                (other, 3, 9),
+                path
+            ),
             "a mount's number is no longer known once it is let go of"
         );
         assert_ne!(
-            disk_key("test.words", &words, (made_up, 3, 9), path),
             disk_key(
                 "test.words",
-                &words,
+                (words.id(), words.version()),
+                (made_up, 3, 9),
+                path
+            ),
+            disk_key(
+                "test.words",
+                (words.id(), words.version()),
                 (made_up, 3, 9),
                 Path::new("/srv/other")
             ),
