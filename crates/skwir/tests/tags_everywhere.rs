@@ -1,6 +1,8 @@
 //! A tag renamed or removed everywhere: the tags plugin finds the files
 //! with the query plugin's search, proposes a plan for review, and the
 //! sidebar's Tags follow what was applied.
+// Helpers of the tests that keep tags in extended attributes, Unix's.
+#![cfg_attr(not(unix), allow(dead_code, unused_imports))]
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -56,6 +58,8 @@ fn sidebar(app: &App) -> Vec<String> {
         .collect()
 }
 
+// Tags in extended attributes: Unix's.
+#[cfg(unix)]
 #[test]
 fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
     let tmp = home_tempdir();
@@ -191,6 +195,8 @@ fn pins(app: &App) -> Vec<(String, bool)> {
         .collect()
 }
 
+// Tags in extended attributes: Unix's.
+#[cfg(unix)]
 #[test]
 fn pinned_tags_replace_the_suggestions_in_the_order_put() {
     let tmp = home_tempdir();
@@ -311,6 +317,8 @@ fn show_tags_of(app: &App, pane: skwir_core::workspace::PaneId, root: &std::path
     assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
 }
 
+// Tags in extended attributes: Unix's.
+#[cfg(unix)]
 #[test]
 fn a_tag_location_counts_the_files_under_its_folder_and_what_is_applied() {
     let tmp = home_tempdir();
@@ -458,6 +466,8 @@ fn a_tags_pin_and_color_follow_it_renamed_everywhere_and_come_back_with_undo() {
     );
 }
 
+// Tags in extended attributes: Unix's.
+#[cfg(unix)]
 #[test]
 fn a_folder_counted_is_checked_after_a_restart_for_what_others_changed() {
     let tmp = home_tempdir();
@@ -506,6 +516,8 @@ fn a_folder_counted_is_checked_after_a_restart_for_what_others_changed() {
     });
 }
 
+// Tags in extended attributes: Unix's.
+#[cfg(unix)]
 #[test]
 fn without_the_search_a_tag_is_not_renamed_everywhere() {
     let tmp = home_tempdir();
@@ -575,6 +587,8 @@ impl Shown {
     }
 }
 
+// Tags in extended attributes: Unix's.
+#[cfg(unix)]
 #[test]
 fn an_open_search_sees_at_once_what_a_plan_changed() {
     let tmp = home_tempdir();
@@ -634,6 +648,8 @@ fn an_open_search_sees_at_once_what_a_plan_changed() {
 
 /// A category renamed takes the tags within it; tags moved into one keep
 /// their own names; their pins follow.
+// Tags in extended attributes: Unix's.
+#[cfg(unix)]
 #[test]
 fn a_category_carries_its_tags_and_tags_move_into_one() {
     let tmp = home_tempdir();
@@ -715,6 +731,8 @@ fn a_category_carries_its_tags_and_tags_move_into_one() {
 /// A category marked as holding one tag at a time is a field: a value
 /// given takes the place of the one there was, and the mark follows the
 /// category renamed.
+// Tags in extended attributes: Unix's.
+#[cfg(unix)]
 #[test]
 fn a_field_holds_one_value_and_follows_its_category() {
     let tmp = home_tempdir();

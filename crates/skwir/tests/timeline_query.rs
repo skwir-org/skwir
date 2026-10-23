@@ -25,16 +25,22 @@ fn timeline_selection_preserves_paths_and_filters_the_period() {
     let day = skwir_platform::calendar::days_from_civil(2026, 7, 1);
     let secs = |t: std::time::SystemTime| t.duration_since(UNIX_EPOCH).unwrap().as_secs();
     let (start, end) = (secs(cal.day_start(day)), secs(cal.day_start(day + 1)));
-    for dirname in [
+    let mut dirnames = vec![
         "2026-08 Trip d'Example - Summit",
         "d'Example",
         "two words",
         "trip (photos)",
-        "trip \"photos\"",
-        "trip \\photos\\",
-        "trip\tphotos",
-        "trip\nphotos",
-    ] {
+    ];
+    // Quotes, backslashes and control characters: names Windows refuses.
+    if cfg!(unix) {
+        dirnames.extend([
+            "trip \"photos\"",
+            "trip \\photos\\",
+            "trip\tphotos",
+            "trip\nphotos",
+        ]);
+    }
+    for dirname in dirnames {
         let root = tmp.path().join(dirname);
         std::fs::create_dir(&root).unwrap();
         for (name, modified) in [

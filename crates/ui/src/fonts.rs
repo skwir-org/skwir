@@ -241,13 +241,12 @@ mod tests {
         // interface's.
         let own = choose(&app.settings, &Desktop::default(), &all, none);
         assert_eq!(names(&own), ["Inter", "Inter", "JetBrains Mono"]);
-        // A family the desktop names that does not load is passed over.
-        let some = system(&["Noto Sans", "DejaVu Sans Mono"]);
+        // A family the desktop names that does not load is passed over,
+        // for the system's own.
+        let families = ["Noto Sans", CODE[1]];
+        let some = system(&families);
         let chosen = choose(&app.settings, &desktop(), some, none);
-        assert_eq!(
-            names(&chosen),
-            ["Noto Sans", "Noto Sans", "DejaVu Sans Mono"]
-        );
+        assert_eq!(names(&chosen), ["Noto Sans", "Noto Sans", CODE[1]]);
     }
 
     #[test]

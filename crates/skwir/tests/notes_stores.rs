@@ -2,6 +2,9 @@
 //! desktop's attributes (the tags plugin's) and an XMP sidecar (the xmp
 //! plugin's) read as one, edited together, and another application's later
 //! edit winning; the sidecar hidden beside its file (ADR-028).
+// Tags kept in the files' extended attributes: Unix's (Windows keeps
+// none, ADR-027).
+#![cfg(unix)]
 
 use std::path::Path;
 use std::sync::Arc;

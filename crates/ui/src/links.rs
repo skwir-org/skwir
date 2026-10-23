@@ -731,10 +731,13 @@ mod tests {
         assert_eq!(at("Day%20two.md"), Some(dir.join("Day two.md")));
         assert_eq!(at("photos/"), Some(dir.join("photos")));
         assert_eq!(at("notes.md#later"), Some(dir.join("notes.md")));
-        assert_eq!(
-            at("file:///etc/hostname"),
-            Some(std::path::PathBuf::from("/etc/hostname"))
-        );
+        // A file here, as the system writes it.
+        let (url, file) = if cfg!(windows) {
+            ("file:///C:/notes/a%20b.md", r"C:\notes\a b.md")
+        } else {
+            ("file:///etc/hostname", "/etc/hostname")
+        };
+        assert_eq!(at(url), Some(std::path::PathBuf::from(file)));
         assert_eq!(
             at("/srv/shared/plan.md"),
             Some("/srv/shared/plan.md".into())

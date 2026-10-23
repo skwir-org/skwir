@@ -2,6 +2,9 @@
 //! inside its tag as places and its own files, Up walks its trail back to
 //! the folder it is of, what narrows it stays while it is walked, files
 //! dropped on a tag are given it, and Delete takes it off them.
+// Tags kept in the files' extended attributes: Unix's (Windows keeps
+// none, ADR-027).
+#![cfg(unix)]
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

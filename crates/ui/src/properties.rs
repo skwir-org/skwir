@@ -1908,6 +1908,19 @@ mod tests {
     use super::*;
     use skwir_core::entry::{EntryId, EntryKind};
 
+    /// A file's whole path on this system (a drive's on Windows), and its
+    /// folder.
+    const FILE: &str = if cfg!(windows) {
+        r"C:\data\notes\it's a café.txt"
+    } else {
+        "/data/notes/it's a café.txt"
+    };
+    const FOLDER: &str = if cfg!(windows) {
+        r"C:\data\notes"
+    } else {
+        "/data/notes"
+    };
+
     /// A name that is not UTF-8 is said lossily, which names another
     /// file: such a row is not copied.
     #[cfg(unix)]
@@ -1958,7 +1971,7 @@ mod tests {
                 confidence: 0.82,
             },
         );
-        let path = std::path::Path::new("/data/notes/it's a café.txt");
+        let path = std::path::Path::new(FILE);
         let groups = entry_groups(&entry, path, Some(&[]), &User::default());
         let find = |title: &str, label: &str| {
             groups
@@ -1976,12 +1989,9 @@ mod tests {
             "the header shows them"
         );
         let whole = find("Location", "Path").unwrap();
-        assert_eq!(
-            whole.value, "/data/notes/it's a café.txt",
-            "copied as it is"
-        );
+        assert_eq!(whole.value, FILE, "copied as it is");
         assert!(whole.copies);
-        assert_eq!(find("Location", "Folder").unwrap().value, "/data/notes");
+        assert_eq!(find("Location", "Folder").unwrap().value, FOLDER);
         assert_eq!(
             find("Permissions", "Access").unwrap().value,
             "rw-r----- (640)"
@@ -2345,7 +2355,7 @@ mod tests {
                 confidence: 0.82,
             },
         );
-        let path = std::path::Path::new("/data/notes/it's a café.txt");
+        let path = std::path::Path::new(FILE);
         let groups = entry_groups(&file, path, Some(&[]), &User::default());
         let gist = |groups: &[Group], title: &str| {
             groups
@@ -2363,7 +2373,7 @@ mod tests {
         assert_eq!(gist(&groups, "Source"), said("example.org:8080"));
         assert_eq!(
             gist(&groups, "Location"),
-            Some(Gist::Path("/data/notes/it's a café.txt".into())),
+            Some(Gist::Path(FILE.into())),
             "the path, cut at its start: its end names the file"
         );
         assert_eq!(
@@ -2380,14 +2390,11 @@ mod tests {
         // A file of the trash says where it was.
         file.metadata.set(
             keys::TRASHED_FROM,
-            Value::Text("/data/notes".into()),
+            Value::Text(FOLDER.into()),
             Provenance::Filesystem,
         );
         let trashed = entry_groups(&file, path, None, &User::default());
-        assert_eq!(
-            gist(&trashed, "Location"),
-            Some(Gist::Path("/data/notes".into()))
-        );
+        assert_eq!(gist(&trashed, "Location"), Some(Gist::Path(FOLDER.into())));
 
         // A folder says its size once counted; the selection, how many
         // and what they weigh; what they share, unless it is mixed.
@@ -2450,7 +2457,7 @@ mod tests {
         );
         assert_eq!(
             mixed.gist(),
-            Some(Gist::Path("1 B · /data/notes/it's a café.txt".into()))
+            Some(Gist::Path(format!("1 B · {FILE}").into()))
         );
     }
 

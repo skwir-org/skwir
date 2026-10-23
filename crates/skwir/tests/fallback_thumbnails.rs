@@ -41,13 +41,21 @@ fn app(root: &Path) -> Arc<App> {
 #[track_caller]
 fn assert_order(app: &App, after: &str) {
     let ids = app.thumbnails.provider_ids();
-    assert_eq!(
-        ids[..3],
-        ["freedesktop-cache", "image-decoder", "thumbnailers"],
-        "{after}: {ids:?}"
-    );
+    // The system's own (the Windows shell, Quick Look) where a Linux
+    // desktop's thumbnailers are, before them (ADR-041).
+    let desktop: &[&str] = if skwir_platform::system_thumbs::AVAILABLE {
+        &[
+            "freedesktop-cache",
+            "image-decoder",
+            "system",
+            "thumbnailers",
+        ]
+    } else {
+        &["freedesktop-cache", "image-decoder", "thumbnailers"]
+    };
+    assert_eq!(ids[..desktop.len()], *desktop, "{after}: {ids:?}");
     assert_eq!(ids.last(), Some(&"imagemagick"), "{after}: {ids:?}");
-    let mut fallbacks = ids[3..ids.len() - 1].to_vec();
+    let mut fallbacks = ids[desktop.len()..ids.len() - 1].to_vec();
     fallbacks.sort_unstable();
     assert_eq!(
         fallbacks,

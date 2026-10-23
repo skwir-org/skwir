@@ -693,7 +693,11 @@ mod tests {
                 .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
                 .collect()
         };
-        assert_eq!(names(false), ["a 9", "a 10", "Été", "it's b", "link"]);
+        let mut folders = vec!["a 9", "a 10", "Été", "it's b"];
+        if cfg!(unix) {
+            folders.push("link");
+        }
+        assert_eq!(names(false), folders);
         assert_eq!(names(true)[0], ".hidden");
         assert!(subfolders(&tmp.path().join("missing"), false).is_err());
     }

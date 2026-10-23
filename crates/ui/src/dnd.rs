@@ -1044,7 +1044,9 @@ mod tests {
 
     /// A scratch tree under the user's cache, never `/tmp` (see AGENTS.md).
     fn scratch(name: &str) -> PathBuf {
-        let base = PathBuf::from(std::env::var_os("HOME").expect("home"))
+        // Windows' (and Wine's) home is its user's profile.
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+        let base = PathBuf::from(home.expect("home"))
             .join(".cache")
             .join("skwir-tests")
             .join(format!("dnd-{name}-{}", std::process::id()));
