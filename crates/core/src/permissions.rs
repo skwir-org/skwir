@@ -227,10 +227,11 @@ impl Privacy {
         Checker {
             privacy: self,
             marked: HashMap::new(),
+            resolved_folders: None,
         }
     }
 
-    /// Whether `path` is private. Reads the disk for markers: call it
+    /// Whether `path` is private. Resolves links and reads markers: call it
     /// where reading may wait (a worker, an agent's or a plugin's thread).
     pub fn holds(&self, path: &Path) -> bool {
         self.checker().holds(path)
@@ -253,11 +254,13 @@ fn expand(text: &str, home: Option<&Path>) -> Option<PathBuf> {
 pub struct Checker<'a> {
     privacy: &'a Privacy,
     marked: HashMap<PathBuf, bool>,
+    /// Resolve lazily: taking a Privacy snapshot itself never reads disk.
+    resolved_folders: Option<std::io::Result<Vec<PathBuf>>>,
 }
 
 impl Checker<'_> {
     /// Whether `path` is private: under a folder listed, or under one
-    /// holding a `.private` file.
+    /// holding a `.private` file, by its given name or its resolved target.
     pub fn holds(&mut self, path: &Path) -> bool {
         if self
             .privacy
@@ -267,6 +270,34 @@ impl Checker<'_> {
         {
             return true;
         }
+        if self.marked(path) {
+            return true;
+        }
+        if self.privacy.folders.is_empty() && !self.privacy.marker {
+            return false;
+        }
+        // A missing final name is normal for a proposed write. Resolve its
+        // existing parent too; other failures cannot establish a public path.
+        let Ok(resolved) = resolved_name(path) else {
+            return true;
+        };
+        let folders = self.resolved_folders.get_or_insert_with(|| {
+            self.privacy
+                .folders
+                .iter()
+                .map(|p| resolved_name(p))
+                .collect()
+        });
+        let Ok(folders) = folders else {
+            return true;
+        };
+        if folders.iter().any(|folder| resolved.starts_with(folder)) {
+            return true;
+        }
+        self.marked(&resolved)
+    }
+
+    fn marked(&mut self, path: &Path) -> bool {
         if !self.privacy.marker {
             return false;
         }
@@ -274,7 +305,13 @@ impl Checker<'_> {
             if let Some(known) = self.marked.get(folder) {
                 return *known;
             }
-            let marked = std::fs::symlink_metadata(folder.join(MARKER)).is_ok();
+            let marked = match std::fs::symlink_metadata(folder.join(MARKER)) {
+                Ok(_) => true,
+                Err(error) => !matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ),
+            };
             self.marked.insert(folder.to_owned(), marked);
             marked
         })
@@ -362,6 +399,40 @@ impl Checker<'_> {
             }
             Value::Object(object) => bytes_path(object).is_some_and(|path| self.holds(&path)),
             _ => false,
+        }
+    }
+}
+
+/// Resolve what exists without losing the name of a prospective file.
+/// Do not normalize `..` before resolving links: the kernel follows the
+/// link first. A dangling link or inaccessible ancestor is not proof that
+/// a path is public, so leave its error for the caller to withhold it.
+fn resolved_name(path: &Path) -> std::io::Result<PathBuf> {
+    let mut ancestor = path;
+    let mut missing = Vec::new();
+    loop {
+        match crate::os_path::canonical(ancestor) {
+            Ok(mut resolved) => {
+                for name in missing.iter().rev() {
+                    resolved.push(name);
+                }
+                return Ok(resolved);
+            }
+            Err(error) => {
+                if error.kind() != std::io::ErrorKind::NotFound
+                    || std::fs::symlink_metadata(ancestor).is_ok()
+                {
+                    return Err(error);
+                }
+                let Some(name) = ancestor.file_name() else {
+                    return Err(error);
+                };
+                missing.push(name);
+                let Some(parent) = ancestor.parent() else {
+                    return Err(error);
+                };
+                ancestor = parent;
+            }
         }
     }
 }
@@ -494,6 +565,79 @@ mod tests {
             ..privacy.clone()
         };
         assert!(!unmarked.holds(&marked.join("2026")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn aliases_keep_the_privacy_of_both_names_and_targets() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let keys = tmp.path().join("private keys");
+        let public = tmp.path().join("public");
+        std::fs::create_dir(&keys).unwrap();
+        std::fs::create_dir(&public).unwrap();
+        std::fs::write(keys.join("id"), "synthetic secret").unwrap();
+        std::fs::write(public.join("note"), "public").unwrap();
+        let alias = public.join("it's an alias");
+        symlink(&keys, &alias).unwrap();
+        let file_alias = public.join("note-link");
+        symlink(keys.join("id"), &file_alias).unwrap();
+        let outward = keys.join("public-link");
+        symlink(public.join("note"), &outward).unwrap();
+        let privacy = Privacy::folders([keys.clone()]);
+        let mut check = privacy.checker();
+        assert!(check.holds(&file_alias));
+        assert!(check.holds(&alias.join("id")));
+        assert!(check.holds(&alias.join("new folder/new file")));
+        assert!(check.holds(&outward), "a private name stays private");
+        assert!(!check.holds(&public.join("note")));
+        assert!(!check.holds(&public.join("new file")));
+        assert_eq!(
+            check.named_in(&json!({ "entries": [file_alias] })),
+            Some(file_alias.clone())
+        );
+        assert_eq!(
+            check.redact(json!([
+                {"path": file_alias, "name": "note-link"},
+                {"path": public.join("note"), "name": "note"}
+            ])),
+            json!([{"path": public.join("note"), "name": "note"}])
+        );
+        // The configured folder can itself be an alias too.
+        let by_alias = Privacy::folders([alias.clone()]);
+        assert!(by_alias.holds(&keys.join("id")));
+        assert!(by_alias.holds(&file_alias));
+        assert!(by_alias.holds(&keys.join("new")));
+        // Dot components are resolved after links, as the filesystem does.
+        assert!(privacy.holds(&alias.join("../private keys/id")));
+        assert!(!privacy.holds(&alias.join("../public/note")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn marked_targets_and_unresolvable_links_are_withheld() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let diary = tmp.path().join("diary");
+        std::fs::create_dir(&diary).unwrap();
+        std::fs::write(diary.join(MARKER), "").unwrap();
+        std::fs::write(diary.join("note"), "synthetic").unwrap();
+        let alias = tmp.path().join("note");
+        symlink(diary.join("note"), &alias).unwrap();
+        let privacy = Privacy {
+            folders: vec![],
+            marker: true,
+        };
+        assert!(privacy.holds(&alias));
+        let looped = tmp.path().join("loop");
+        symlink(&looped, &looped).unwrap();
+        assert!(privacy.holds(&looped));
+        let dangling = tmp.path().join("dangling");
+        symlink(diary.join("missing"), &dangling).unwrap();
+        assert!(privacy.holds(&dangling));
+        assert!(!privacy.holds(&tmp.path().join("public future file")));
     }
 
     // Its paths are Unix's, which Windows reads as relative: Windows' own

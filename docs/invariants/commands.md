@@ -135,7 +135,12 @@ control plugin's `run`:
 - Private folders (`permissions::Privacy`, the Privacy page: `~/.ssh` and
   its like, and any folder holding a `.private` file) never reach an agent
   or a plugin from outside. Check with `App::privacy()` wherever such code
-  is handed a file; it reads markers, so call it off the window's thread.
+  is handed a file; it resolves links and reads markers, so call it off
+  the window's thread. Check both the given name and its resolved target,
+  including aliases of configured private folders and marked ancestors.
+  For a new name resolve its existing parent; a dangling link or another
+  resolution failure is withheld, never treated as evidence of a public
+  path. Taking a `Privacy` snapshot itself does no filesystem work.
 - Only `map-tiles` makes requests of its own (`AGENTS.md`, "Engineering
   rules"); the `remote` plugin reaches servers through the tools it starts
   (ADR-077), and connects an address an agent opens only once the user

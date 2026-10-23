@@ -63,6 +63,25 @@ fn a_program_answers_a_field_and_a_command_reading_through_skwir() {
     };
     assert_eq!(value["total"], 3);
     assert_eq!(value["files"][0]["name"], "it's a note.txt");
+    // Even a plugin granted reads cannot receive private content through
+    // a public name. Exercise the command path with both forms of alias.
+    let keys = tmp.path().join("keys");
+    std::fs::create_dir(&keys).unwrap();
+    std::fs::write(keys.join(skwir_core::permissions::MARKER), "").unwrap();
+    std::fs::write(keys.join("id"), "synthetic private content").unwrap();
+    let file_alias = tmp.path().join("public note");
+    let dir_alias = tmp.path().join("public folder");
+    std::os::unix::fs::symlink(keys.join("id"), &file_alias).unwrap();
+    std::os::unix::fs::symlink(&keys, &dir_alias).unwrap();
+    for alias in [file_alias, dir_alias.join("id")] {
+        let error = app
+            .dispatch(&Invocation::with_args(
+                "word-count.count",
+                &serde_json::json!({ "entries": [alias] }),
+            ))
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("private"), "{error:#}");
+    }
     // Turned off, its program ends and its commands go.
     assert!(app.plugins.set_enabled("word-count", false, &app));
     assert!(app.commands.get("word-count.count").is_none());

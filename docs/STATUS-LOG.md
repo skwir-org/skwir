@@ -3882,3 +3882,20 @@ below), worked through in order, each committed after its checks.
   tests, 3 of 3; interrupted-copy tests, 5 of 5; core Clippy for all
   targets with warnings denied; formatting and diff whitespace;
   `just bench-check`, all budgets met. Final full release checks pending.
+
+### Review fix 5: privacy follows symlink targets (2026-10-23)
+
+- Privacy checks both a path's given name and its resolved target,
+  including configured private folders which are themselves aliases and
+  marked ancestors of the target. A proposed new file resolves through
+  its existing parent; unresolvable links and inaccessible paths are
+  withheld. Privacy snapshots still perform no filesystem work.
+- Regressions cover file and directory aliases, configured aliases, new
+  names under aliased folders, outward links from a private folder, dot
+  components, marked targets, dangling links, loops and redacted records.
+  The real external-program command path refuses public aliases of a
+  private file even for a plugin granted reads.
+- Verified: core privacy nextest, 6 of 6; external-program integration
+  tests, 3 of 3; core and extend Clippy for all targets with warnings
+  denied; formatting and diff whitespace; `just bench-check`, all budgets
+  met. Final full release checks pending.

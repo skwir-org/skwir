@@ -110,7 +110,7 @@ the completed set; targeted checks are recorded in `docs/STATUS-LOG.md`.
 | 2 | File-operation self checks through path aliases | pending |
 | 3 | Merged-move undo restores directory attributes | pending |
 | 4 | MCP authority belongs to its endpoint | fixed; targeted checks pass |
-| 5 | Privacy follows symlink targets | pending |
+| 5 | Privacy follows symlink targets | fixed; targeted checks pass |
 | 6 | Headless settings save completes before exit | pending |
 | 7 | Explicit open targets are read off the window thread | pending |
 | 8 | Remote search work uses its server lane | fixed; targeted checks pass |
