@@ -118,7 +118,7 @@ the completed set; targeted checks are recorded in `docs/STATUS-LOG.md`.
 | 10 | Search updates discover arriving directory descendants | fixed; targeted checks pass |
 | 11 | Replaced field providers cannot repopulate current memory | fixed; targeted checks pass |
 | 12 | glTF buffers stay within the model directory | fixed; targeted checks pass |
-| 13 | glTF buffer URIs are decoded as URIs | pending |
+| 13 | glTF buffer URIs are decoded as URIs | fixed; targeted checks pass |
 | 14 | Rsync arguments use its own grammar | fixed; targeted checks pass |
 
 ## What is left

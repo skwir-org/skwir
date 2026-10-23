@@ -116,7 +116,7 @@ fn needed() -> anyhow::Error {
     }
 }
 
-/// The name `input` has inside the sandbox: `document`, then its
+/// The default name `input` has inside the sandbox: `document`, then its
 /// extension kept to ASCII letters and digits, so no program reads a
 /// bracket, a percent sign or a colon of it as syntax.
 pub fn inside_name(input: &Path) -> String {
@@ -130,6 +130,27 @@ pub fn inside_name(input: &Path) -> String {
     } else {
         format!("/input/document.{extension}")
     }
+}
+
+/// A synthetic input name no companion can occupy, even as a directory.
+/// Reserve names case-insensitively too: macOS commonly folds case. The
+/// public default stays stable for callers without companion files.
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+fn inside_beside(input: &Path, beside: &[(PathBuf, PathBuf)]) -> String {
+    let occupied: std::collections::HashSet<_> = beside
+        .iter()
+        .filter_map(|(_, relative)| relative.components().next())
+        .map(|component| component.as_os_str().to_string_lossy().to_lowercase())
+        .collect();
+    let base = inside_name(input);
+    let suffix = base.trim_start_matches("/input/document");
+    let mut inside = base.clone();
+    let mut number = 0;
+    while occupied.contains(&inside["/input/".len()..].to_lowercase()) {
+        number += 1;
+        inside = format!("/input/document-{number}{suffix}");
+    }
+    inside
 }
 
 /// What becomes of a program run on a file nobody vouched for where the
@@ -194,7 +215,8 @@ pub fn untrusted_reading(
 /// model's buffers): each `(path, relative)` readable where the program
 /// reads the input, at `relative` from it, as it is from the input
 /// outside. The caller checks that each `relative` stays below the
-/// input's folder; one that does not exist is left out.
+/// input's folder; one that does not exist is left out. The input's
+/// synthetic basename is chosen free of every companion's path.
 pub fn untrusted_beside(
     program: &Path,
     input: &Path,
@@ -304,7 +326,9 @@ fn isolated(
             command.args(["--ro-bind", system, system]);
         }
     }
-    let inside = input.map(inside_name).unwrap_or_default();
+    let inside = input
+        .map(|input| inside_beside(input, beside))
+        .unwrap_or_default();
     command.args([
         "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/input",
     ]);
@@ -445,7 +469,7 @@ fn isolated(
         .to_owned();
     let inside = match &input {
         Some(input) => {
-            let inside = work.join(inside_name(input).trim_start_matches('/'));
+            let inside = work.join(inside_beside(input, beside).trim_start_matches('/'));
             std::fs::create_dir_all(work.join("input"))?;
             // A folder run in before keeps the link of that run.
             let _ = std::fs::remove_file(&inside);
@@ -679,6 +703,21 @@ fn plugin_isolated(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn companion_files_and_directories_cannot_occupy_the_input_name() {
+        let input = Path::new("a model.gltf");
+        assert_eq!(inside_beside(input, &[]), inside_name(input));
+        let beside: Vec<_> = [
+            "document.gltf",
+            "document-1.gltf/mesh.bin",
+            "DOCUMENT-2.GLTF",
+        ]
+        .into_iter()
+        .map(|relative| (PathBuf::from("source"), PathBuf::from(relative)))
+        .collect();
+        assert_eq!(inside_beside(input, &beside), "/input/document-3.gltf");
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

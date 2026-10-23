@@ -196,8 +196,13 @@ A name that says nothing is not a binary file.
   parent and each buffer, and allow only regular files still beneath that
   parent. A lexical relative name alone is insufficient. Internal file
   and directory links work; outside and dangling links grant no access.
-  Bind approved files under their original relative names, preserving the
-  sandbox's model and buffer aliases on macOS.
+  Decode buffer URIs once, as UTF-8 percent escapes (`+` stays literal),
+  before checking paths and links. Invalid escapes grant no access; a
+  decoded percent is never decoded again. Bind approved files under their
+  decoded relative names. Discover external buffers in JSON glTF and in
+  a GLB's bounded JSON chunk without reading its binary payload. The
+  sandbox chooses its model filename outside the companions' names and
+  directory prefixes, preserving both model and buffer aliases on macOS.
 - **A model of exact surfaces is meshed in the helper** (STEP and IGES,
   by ogeom, ADR-069):
   - each face keeps its own points: smooth shading averages normals at

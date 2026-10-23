@@ -107,12 +107,9 @@ pub const WORKER: crate::process::Worker = crate::process::Worker {
 /// path from the model's folder: those its JSON names by a plain relative
 /// path below that folder, resolving to files still below it, as the
 /// helper reads them (`gltf_mesh::buffer`). Read here only to say what
-/// the sandbox lets it read; bind resolved files under their URI's names.
+/// the sandbox lets it read; bind resolved files under their decoded names.
 fn gltf_buffers(path: &Path) -> Vec<(PathBuf, PathBuf)> {
-    let Ok(text) = crate::file::read_regular(path, limits::TEXT_INPUT as u64) else {
-        return Vec::new();
-    };
-    let Ok(json) = serde_json::from_slice::<serde_json::Value>(&text) else {
+    let Some(json) = gltf_json(path) else {
         return Vec::new();
     };
     let Some(folder) = buffer::Folder::of_model(path) else {
@@ -125,6 +122,49 @@ fn gltf_buffers(path: &Path) -> Vec<(PathBuf, PathBuf)> {
         .filter_map(|buffer| buffer.get("uri")?.as_str())
         .filter_map(|uri| folder.resolve(uri))
         .collect()
+}
+
+/// Read only the JSON describing buffers, including a GLB's first chunk.
+/// Its binary payload can be large; discovering sandbox inputs never reads
+/// it. Untrusted lengths must fit both the JSON bound and the actual file.
+fn gltf_json(path: &Path) -> Option<serde_json::Value> {
+    use std::io::Read;
+
+    let mut file = crate::file::open_regular(path).ok()?;
+    let length = file.metadata().ok()?.len();
+    let mut prefix = Vec::new();
+    (&mut file).take(12).read_to_end(&mut prefix).ok()?;
+    let mut json;
+    if prefix.starts_with(b"glTF") {
+        let word = |at| Some(u32::from_le_bytes(prefix.get(at..at + 4)?.try_into().ok()?));
+        if word(4)? != 2 || u64::from(word(8)?) != length {
+            return None;
+        }
+        let mut chunk = [0; 8];
+        file.read_exact(&mut chunk).ok()?;
+        let bytes = u32::from_le_bytes(chunk[..4].try_into().ok()?);
+        if &chunk[4..] != b"JSON"
+            || !bytes.is_multiple_of(4)
+            || u64::from(bytes) > limits::TEXT_INPUT as u64
+            || u64::from(bytes) + 20 > length
+        {
+            return None;
+        }
+        json = vec![0; usize::try_from(bytes).ok()?];
+        file.read_exact(&mut json).ok()?;
+    } else {
+        if length > limits::TEXT_INPUT as u64 {
+            return None;
+        }
+        json = prefix;
+        file.take(limits::TEXT_INPUT as u64 + 1 - json.len() as u64)
+            .read_to_end(&mut json)
+            .ok()?;
+        if json.len() > limits::TEXT_INPUT {
+            return None;
+        }
+    }
+    serde_json::from_slice(&json).ok()
 }
 
 /// Models drawn at once at most: a helper reading a large mesh holds most
@@ -330,6 +370,223 @@ fn mesh_from(
 mod tests {
     use super::*;
 
+    fn model_naming(folder: &Path, uris: &[&str]) -> PathBuf {
+        let path = folder.join("shape.gltf");
+        let buffers: Vec<_> = uris
+            .iter()
+            .map(|uri| serde_json::json!({ "uri": uri }))
+            .collect();
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({ "buffers": buffers })).unwrap(),
+        )
+        .unwrap();
+        path
+    }
+
+    /// A GLB's headers and JSON. A nonempty binary chunk follows these
+    /// bytes; tests can make that payload sparse instead of allocating it.
+    fn glb_json(json: &[u8], binary: u32) -> Vec<u8> {
+        let mut json = json.to_vec();
+        while !json.len().is_multiple_of(4) {
+            json.push(b' ');
+        }
+        let json_len = u32::try_from(json.len()).unwrap();
+        let total = 20 + json_len + if binary == 0 { 0 } else { 8 + binary };
+        let mut glb = b"glTF".to_vec();
+        glb.extend(2u32.to_le_bytes());
+        glb.extend(total.to_le_bytes());
+        glb.extend(json_len.to_le_bytes());
+        glb.extend(b"JSON");
+        glb.extend(json);
+        if binary != 0 {
+            glb.extend(binary.to_le_bytes());
+            glb.extend(b"BIN\0");
+        }
+        glb
+    }
+
+    #[test]
+    fn glb_discovers_external_buffers_without_reading_its_binary_payload() {
+        use std::io::Write;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let buffer = tmp.path().join("mesh data.bin");
+        std::fs::write(&buffer, b"buffer").unwrap();
+        let model = model_naming(tmp.path(), &["mesh%20data.bin"]);
+        let json = std::fs::read(model).unwrap();
+        let binary = u32::try_from(limits::TEXT_INPUT * 2).unwrap();
+        let prefix = glb_json(&json, binary);
+        let glb = tmp.path().join("shape.glb");
+        let mut file = std::fs::File::create(&glb).unwrap();
+        file.write_all(&prefix).unwrap();
+        file.set_len(prefix.len() as u64 + u64::from(binary))
+            .unwrap();
+        assert_eq!(
+            gltf_buffers(&glb),
+            [(
+                buffer.canonicalize().unwrap(),
+                PathBuf::from("mesh data.bin")
+            )]
+        );
+    }
+
+    #[test]
+    fn invalid_glb_headers_grant_no_buffer_access() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("mesh.bin"), b"buffer").unwrap();
+        let model = model_naming(tmp.path(), &["mesh.bin"]);
+        let original = glb_json(&std::fs::read(model).unwrap(), 0);
+        let glb = tmp.path().join("shape.glb");
+        for (offset, word) in [
+            (4, 1u32),                           // unsupported version
+            (8, 20),                             // length differs from the file
+            (12, u32::MAX),                      // JSON length cannot fit
+            (16, u32::from_le_bytes(*b"BIN\0")), // JSON must come first
+        ] {
+            let mut bytes = original.clone();
+            bytes[offset..offset + 4].copy_from_slice(&word.to_le_bytes());
+            std::fs::write(&glb, bytes).unwrap();
+            assert!(gltf_buffers(&glb).is_empty(), "header word at {offset}");
+        }
+        std::fs::write(&glb, &original[..18]).unwrap();
+        assert!(gltf_buffers(&glb).is_empty());
+    }
+
+    /// Exercise real namespace bindings and the actual helper when built.
+    /// A platform-only build may have no model worker; say so when skipped.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn sandboxed_models_keep_their_input_separate_from_external_buffers() {
+        let helper = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-model-worker")))
+            .filter(|path| path.is_file());
+        let Some(helper) = helper else {
+            eprintln!("skipped: needs skwir-model-worker built beside the tests");
+            return;
+        };
+        if !crate::sandbox::available() {
+            eprintln!("skipped: needs the system sandbox");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let positions = [0f32, 0., 0., 2., 0., 0., 0., 3., 0.];
+        let buffer: Vec<u8> = positions.into_iter().flat_map(f32::to_le_bytes).collect();
+        for (extension, uri, relative) in [
+            ("gltf", "document.gltf", "document.gltf"),
+            ("gltf", "document%2Egltf", "document.gltf"),
+            ("gltf", "document.gltf/mesh.bin", "document.gltf/mesh.bin"),
+            ("gltf", "DOCUMENT.GLTF", "DOCUMENT.GLTF"),
+            ("glb", "document.glb", "document.glb"),
+            ("glb", "document%2Eglb", "document.glb"),
+        ] {
+            let fixture = tempfile::tempdir_in(tmp.path()).unwrap();
+            let target = fixture.path().join(relative);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(&target, &buffer).unwrap();
+            let json = serde_json::to_vec(&serde_json::json!({
+                "asset": {"version": "2.0"},
+                "buffers": [{"uri": uri, "byteLength": buffer.len()}],
+                "bufferViews": [{"buffer": 0, "byteLength": buffer.len()}],
+                "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3,
+                    "type": "VEC3", "min": [0,0,0], "max": [2,3,0]}],
+                "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+                "nodes": [{"mesh": 0}], "scenes": [{"nodes": [0]}], "scene": 0
+            }))
+            .unwrap();
+            let bytes = if extension == "glb" {
+                glb_json(&json, 0)
+            } else {
+                json
+            };
+            let model = fixture.path().join(format!("shape.{extension}"));
+            std::fs::write(&model, bytes).unwrap();
+            let drawn = draw_with(
+                &helper,
+                &model,
+                MeshFormat::Gltf,
+                32,
+                Some(10),
+                &CancelToken::new(),
+            )
+            .unwrap_or_else(|error| panic!("{extension} {uri}: {error:#}"));
+            assert_eq!(drawn.measures.triangles, 1);
+            assert!(
+                drawn
+                    .measures
+                    .size
+                    .into_iter()
+                    .zip([2., 0., 3.])
+                    .all(|(actual, expected)| (actual - expected).abs() < 1e-6)
+            );
+            assert!(matches!(drawn.shown, Shown::Mesh(_)));
+        }
+    }
+
+    #[test]
+    fn gltf_sandbox_binds_decoded_names_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cases = [
+            ("it%27s%20a%20mesh.bin", "it's a mesh.bin"),
+            ("caf%C3%A9.bin", "café.bin"),
+            ("caf%c3%a9.bin", "café.bin"),
+            ("café.bin", "café.bin"),
+            ("mesh+part.bin", "mesh+part.bin"),
+            ("mesh%2Bpart.bin", "mesh+part.bin"),
+            ("mesh%25part.bin", "mesh%part.bin"),
+            ("mesh%2520part.bin", "mesh%20part.bin"),
+            ("buffers%2Fmesh%20part.bin", "buffers/mesh part.bin"),
+        ];
+        std::fs::create_dir(tmp.path().join("buffers")).unwrap();
+        for (uri, name) in cases {
+            std::fs::write(tmp.path().join(name), b"decoded buffer").unwrap();
+            // The encoded spelling is a different file, never a fallback.
+            if uri != name {
+                std::fs::write(tmp.path().join(uri), b"wrong buffer").unwrap();
+            }
+            let model = model_naming(tmp.path(), &[uri]);
+            assert_eq!(
+                gltf_buffers(&model),
+                [(
+                    tmp.path().join(name).canonicalize().unwrap(),
+                    PathBuf::from(name)
+                )],
+                "{uri}"
+            );
+        }
+    }
+
+    #[test]
+    fn gltf_sandbox_refuses_bad_encodings_and_decoded_escapes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join("model");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(tmp.path().join("outside.bin"), b"outside").unwrap();
+        std::fs::write(folder.join("mesh.bin"), b"inside").unwrap();
+        for uri in [
+            "mesh%",
+            "mesh%0",
+            "mesh%GG",
+            "mesh%+1",
+            "mesh%FF",
+            "mesh%C3%28",
+            "mesh%00.bin",
+            "%2e%2e/outside.bin",
+            "nested/%2E%2E/mesh.bin",
+            "%2Foutside.bin",
+            "C%3A%5Cmesh.bin",
+            "https%3A%2F%2Fexample.invalid%2Fmesh.bin",
+        ] {
+            // Even a file under the encoded spelling grants no access.
+            let raw = folder.join(uri);
+            std::fs::create_dir_all(raw.parent().unwrap()).unwrap();
+            std::fs::write(raw, b"encoded spelling").unwrap();
+            let model = model_naming(&folder, &[uri]);
+            assert!(gltf_buffers(&model).is_empty(), "{uri}");
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn gltf_sandbox_inputs_keep_only_resolved_files_inside_the_model_folder() {
@@ -359,6 +616,9 @@ mod tests {
             "buffers",
             "../model sibling/mesh.bin",
             "https://example.invalid/mesh.bin",
+            "outside%2Ebin",
+            "outside%20folder%2Fmesh.bin",
+            "dangling%2Ebin",
         ];
         let buffers: Vec<_> = uris
             .iter()
@@ -383,6 +643,13 @@ mod tests {
         let alias = staging.join("input.gltf");
         symlink(&model, &alias).unwrap();
         assert_eq!(gltf_buffers(&alias), expected);
+
+        // Decoding precedes link containment and preserves the decoded alias.
+        let model = model_naming(&folder, &["inside%20folder/mesh.bin"]);
+        assert_eq!(
+            gltf_buffers(&model),
+            [(resolved, PathBuf::from("inside folder/mesh.bin"))]
+        );
     }
 
     /// A mesh as `--mesh` writes it.

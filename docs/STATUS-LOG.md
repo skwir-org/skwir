@@ -4031,3 +4031,22 @@ below), worked through in order, each committed after its checks.
   warnings denied; formatting and diff checks. The broader all-crate run
   passed before the final error-cache regressions were added; benchmark
   budgets met on the quiet rerun. Final full release checks pending.
+
+### Review fix 13: decode glTF buffer URIs once (2026-10-23)
+
+- Host sandbox discovery and worker reads decode UTF-8 percent escapes
+  exactly once before path and symlink containment checks. Plus signs
+  stay literal; malformed escapes and decoded traversal grant no access.
+  Encoded filenames are not a fallback for missing decoded files.
+- Review exposed two related host/worker disagreements, fixed with this
+  work: external buffers in GLB files are discovered from the bounded
+  JSON chunk without loading the binary payload, and the sandbox chooses
+  a synthetic model filename that no companion file or directory prefix
+  occupies, including case variants.
+- Verified: platform/model/sandbox targeted nextest, 19 of 19; targeted
+  all-target Clippy; formatting and diff checks. Actual Linux sandbox
+  runs with the model worker checked geometry for six JSON/GLB and
+  plain/encoded collision cases without skipping; that integration test
+  passed again after making its floating-point assertion tolerant. macOS
+  uses the same naming policy but was not run natively. Final full
+  release checks pending.

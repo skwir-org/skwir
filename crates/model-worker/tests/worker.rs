@@ -274,7 +274,14 @@ fn gltf_buffer_links_must_resolve_inside_the_models_actual_folder() {
     symlink(outside.join("mesh.bin"), folder.join("outside.bin")).unwrap();
     symlink(&outside, folder.join("outside folder")).unwrap();
     symlink("missing.bin", folder.join("dangling.bin")).unwrap();
-    for uri in ["outside.bin", "outside folder/mesh.bin", "dangling.bin"] {
+    for uri in [
+        "outside.bin",
+        "outside folder/mesh.bin",
+        "dangling.bin",
+        "outside%2Ebin",
+        "outside%20folder%2Fmesh.bin",
+        "dangling%2Ebin",
+    ] {
         let model = write(
             &folder,
             "shape.gltf",
@@ -286,7 +293,11 @@ fn gltf_buffer_links_must_resolve_inside_the_models_actual_folder() {
             "{uri}: {reason}"
         );
     }
-    for uri in ["inside.bin", "inside folder/mesh.bin"] {
+    for uri in [
+        "inside.bin",
+        "inside folder/mesh.bin",
+        "inside%20folder%2Fmesh.bin",
+    ] {
         let model = write(
             &folder,
             "shape.gltf",
@@ -308,6 +319,78 @@ fn gltf_buffer_links_must_resolve_inside_the_models_actual_folder() {
     symlink(&model, &alias).unwrap();
     symlink(folder.join("buffers/mesh.bin"), staging.join("inside.bin")).unwrap();
     assert_eq!(run(&alias, "gltf", &[]).unwrap().facts["triangles"], 24);
+}
+
+#[test]
+fn gltf_buffer_names_are_percent_decoded_once_before_reading() {
+    let tmp = tempfile::tempdir().unwrap();
+    let buffer = gltf_buffer();
+    std::fs::create_dir(tmp.path().join("buffers")).unwrap();
+    for (uri, name) in [
+        ("it%27s%20a%20mesh.bin", "it's a mesh.bin"),
+        ("caf%C3%A9.bin", "café.bin"),
+        ("caf%c3%a9.bin", "café.bin"),
+        ("café.bin", "café.bin"),
+        ("mesh+part.bin", "mesh+part.bin"),
+        ("mesh%2Bpart.bin", "mesh+part.bin"),
+        ("mesh%25part.bin", "mesh%part.bin"),
+        ("mesh%2520part.bin", "mesh%20part.bin"),
+        ("buffers%2Fmesh%20part.bin", "buffers/mesh part.bin"),
+    ] {
+        std::fs::write(tmp.path().join(name), &buffer).unwrap();
+        if uri != name {
+            // A raw-name fallback must not accidentally read another file.
+            std::fs::write(tmp.path().join(uri), b"not a buffer").unwrap();
+        }
+        // Decoding the percent twice would choose this different file.
+        std::fs::write(tmp.path().join("mesh part.bin"), b"not a buffer").unwrap();
+        let model = write(
+            tmp.path(),
+            "shape.gltf",
+            gltf_json(uri, buffer.len()).as_bytes(),
+        );
+        let answer = run(&model, "gltf", &[]).unwrap();
+        assert_eq!(answer.facts["triangles"], 24, "{uri}");
+        assert_eq!(size(&answer), [1., 13., 2.], "{uri}");
+    }
+}
+
+#[test]
+fn gltf_refuses_malformed_encoding_and_encoded_path_escapes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("model");
+    std::fs::create_dir(&folder).unwrap();
+    let buffer = gltf_buffer();
+    std::fs::write(tmp.path().join("outside.bin"), &buffer).unwrap();
+    std::fs::write(folder.join("mesh.bin"), &buffer).unwrap();
+    for uri in [
+        "mesh%",
+        "mesh%0",
+        "mesh%GG",
+        "mesh%+1",
+        "mesh%FF",
+        "mesh%C3%28",
+        "mesh%00.bin",
+        "%2e%2e/outside.bin",
+        "nested/%2E%2E/mesh.bin",
+        "%2Foutside.bin",
+        "C%3A%5Cmesh.bin",
+        "https%3A%2F%2Fexample.invalid%2Fmesh.bin",
+    ] {
+        let raw = folder.join(uri);
+        std::fs::create_dir_all(raw.parent().unwrap()).unwrap();
+        std::fs::write(raw, &buffer).unwrap();
+        let model = write(
+            &folder,
+            "shape.gltf",
+            gltf_json(uri, buffer.len()).as_bytes(),
+        );
+        let reason = run(&model, "gltf", &[]).unwrap_err();
+        assert!(
+            reason.contains("not a file beside the model"),
+            "{uri}: {reason}"
+        );
+    }
 }
 
 #[test]
