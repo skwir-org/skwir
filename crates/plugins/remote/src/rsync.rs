@@ -105,7 +105,7 @@ impl Rsync {
         runs
     }
 
-    /// The ssh rsync runs, as one argument rsync splits as a shell does,
+    /// The ssh rsync runs, as one argument rsync splits with its own grammar,
     /// asking nothing: through the control socket of Skwir's mount, the
     /// user's own otherwise.
     fn ssh(&self, mount: &Mount) -> String {
@@ -152,9 +152,10 @@ impl Drop for Empty {
 /// What begins a line of rsync's naming a file it made (`--out-format`).
 const PLACED: &str = "skwir-placed:";
 
-/// `word` in single quotes, as rsync's own splitting of `-e` reads them.
+/// `word` in single quotes, as rsync's own splitting of `-e` reads them:
+/// a quote inside is doubled. Backslashes are literal, not shell escapes.
 fn quoted(word: &str) -> String {
-    format!("'{}'", word.replace('\'', r"'\''"))
+    format!("'{}'", word.replace('\'', "''"))
 }
 
 /// The local rsync, found once.
@@ -430,6 +431,80 @@ mod tests {
         assert!(ssh.contains("'ControlPath=/run/user/1000/skwir/ssh/0123'"));
         assert!(ssh.contains("'BatchMode=yes'"));
         assert!(ssh.ends_with("'-p' '2222'"));
-        assert_eq!(quoted("it's"), r"'it'\''s'");
+    }
+
+    /// Exercise rsync's parser, not another implementation of its grammar.
+    /// The transport only records arguments: no server is contacted.
+    #[cfg(unix)]
+    #[test]
+    fn rsync_passes_ssh_arguments_with_quotes_and_whitespace_unchanged() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let Some(rsync) = program() else {
+            eprintln!("rsync is not installed: its argument parser was not exercised");
+            return;
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let ssh = tmp.path().join("ssh");
+        std::fs::write(
+            &ssh,
+            "#!/bin/sh\nprintf '%s\\0' \"$@\" > \"$SKWIR_TEST_SSH_ARGS\"\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let captured = tmp.path().join("arguments");
+        let config = tmp.path().join("it's a café \"config\"\\file");
+        let control = tmp.path().join("it's a café \"socket\"\\file");
+        let ours = Mount {
+            point: tmp.path().join("mount"),
+            login: "example.test".to_owned(),
+            port: Some(2222),
+            root: "/".to_owned(),
+            control: Some(control.clone()),
+            links_shown: true,
+        };
+        let transfer = Rsync::with(Vec::new(), Some(config.clone()));
+        let mut paths = vec![tmp.path().to_owned()];
+        paths.extend(std::env::split_paths(
+            &std::env::var_os("PATH").unwrap_or_default(),
+        ));
+        let mut command = Command::new(rsync);
+        command
+            .env("PATH", std::env::join_paths(paths).unwrap())
+            .env("SKWIR_TEST_SSH_ARGS", &captured)
+            .arg("-e")
+            .arg(transfer.ssh(&ours))
+            .arg(tmp.path().join("source"))
+            .arg(ours.spec("/target"));
+        let finished = skwir_platform::process::run_to_exit(
+            &mut command,
+            None,
+            &skwir_core::CancelToken::new(),
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        assert!(!finished.status.success(), "the transport offers no server");
+        let received = std::fs::read(&captured)
+            .unwrap_or_else(|error| panic!("ssh was not invoked: {error}; {}", finished.stderr));
+        let received: Vec<&[u8]> = received
+            .strip_suffix(&[0])
+            .expect("the transport terminates each argument")
+            .split(|&b| b == 0)
+            .collect();
+        let expected = [
+            OsString::from("-F"),
+            config.into_os_string(),
+            OsString::from("-o"),
+            OsString::from(format!("ControlPath={}", control.display())),
+            OsString::from("-o"),
+            OsString::from("ControlMaster=no"),
+            OsString::from("-o"),
+            OsString::from("BatchMode=yes"),
+            OsString::from("-p"),
+            OsString::from("2222"),
+            OsString::from("example.test"),
+        ];
+        let expected: Vec<&[u8]> = expected.iter().map(|arg| arg.as_encoded_bytes()).collect();
+        assert!(received.starts_with(&expected), "{received:?}");
     }
 }

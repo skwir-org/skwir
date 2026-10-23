@@ -3820,3 +3820,16 @@ below), worked through in order, each committed after its checks.
   stand-in taken out of the check's prefix first. Every program answered,
   the archive and media helpers worked, the installer put it in and left
   nothing; skwir.exe imports no icuuc.dll (`objdump -p`).
+
+### Review fix 14: rsync argument quoting (2026-10-23)
+
+- Rsync's `-e` arguments now use its own grammar: embedded single
+  quotes are doubled, with backslashes kept literally. SSH configuration
+  and control-socket paths containing apostrophes reach SSH unchanged.
+- A regression runs rsync against a recording SSH stand-in, checking
+  apostrophes, spaces, Unicode, double quotes and backslashes without
+  contacting a server.
+- Verified: remote's rsync nextest tests, 3 of 3; remote Clippy for all
+  targets with warnings denied; formatting and diff whitespace;
+  `just bench-check`, all budgets met. The final full release gate for
+  the fourteen review fixes remains pending.

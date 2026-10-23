@@ -98,6 +98,29 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 
 ---
 
+## Review follow-up (2026-10-23)
+
+The project review's fourteen findings are being fixed separately, with
+regressions and local commits. The full release gate will run again on
+the completed set; targeted checks are recorded in `docs/STATUS-LOG.md`.
+
+| Issue | Work | State |
+| --- | --- | --- |
+| 1 | Content and metadata proof before skipping a copy or removing a moved source | pending |
+| 2 | File-operation self checks through path aliases | pending |
+| 3 | Merged-move undo restores directory attributes | pending |
+| 4 | MCP authority belongs to its endpoint | pending |
+| 5 | Privacy follows symlink targets | pending |
+| 6 | Headless settings save completes before exit | pending |
+| 7 | Explicit open targets are read off the window thread | pending |
+| 8 | Remote search work uses its server lane | pending |
+| 9 | Rclone tree copies honor pause and cancellation | pending |
+| 10 | Search updates discover arriving directory descendants | pending |
+| 11 | Replaced field providers cannot repopulate current memory | pending |
+| 12 | glTF buffers stay within the model directory | pending |
+| 13 | glTF buffer URIs are decoded as URIs | pending |
+| 14 | Rsync arguments use its own grammar | fixed; targeted checks pass |
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -110,6 +133,9 @@ closes an item removes its line; work that leaves one adds it here.
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
+
+The unfinished [review follow-up](#review-follow-up-2026-10-23), including
+its final full release gate, is also outstanding.
 
 **Gates not closed:**
 - Maps: idle CPU after panning on geotagged pictures (`images10k` has

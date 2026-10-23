@@ -52,6 +52,11 @@ ADR-077 (which revises ADR-021).
 
 ## What differs on a network
 
+- Tool arguments use the receiving program's grammar. Rsync's `-e`
+  command doubles an embedded matching quote and treats backslashes
+  literally; it is not shell quoting. Test serialization through rsync
+  with a recording SSH stand-in, without contacting a server.
+
 - **Thumbnails** follow the remote's rule (`Registry::remotes`,
   `App::shows_thumbnail`): Never, Small files (`Thumbnails::SMALL`),
   Always, or Automatic (Always on the local network, Never otherwise or
