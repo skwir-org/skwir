@@ -430,6 +430,220 @@ fn an_item_there_whole_is_never_asked_about() {
     assert_eq!(read(&root.join("a.txt")), "same", "back");
 }
 
+/// Equal size and time are not proof that an unrelated destination has
+/// the source's bytes. Exercise both the dry run and the command's policy,
+/// for whole folders as well as files, including a later comparison chunk.
+#[test]
+fn matching_metadata_does_not_discard_different_content() {
+    if under_wine("undoing a copy through the shell's trash") {
+        return;
+    }
+    for verb in ["copy", "move"] {
+        for folder in [false, true] {
+            let tmp = Scratch::new();
+            let root = tmp.path().join("tree");
+            let name = if folder {
+                "it's a tree"
+            } else {
+                "résumé.txt"
+            };
+            let source = root.join("src").join(name);
+            let destination = root.join("dest").join(name);
+            let child = "nested/data.txt";
+            let (a, b) = if folder {
+                (source.join(child), destination.join(child))
+            } else {
+                (source.clone(), destination.clone())
+            };
+            let prefix = "x".repeat(128 << 10);
+            let mine = format!("{prefix}mine");
+            let theirs = format!("{prefix}your");
+            write(&a, &mine);
+            write(&b, &theirs);
+            dated(&a, 1000);
+            dated(&b, 1000);
+            let before = snapshot(&root);
+            let app = app(tmp.path());
+            let dry = transfer(
+                &app,
+                "copy",
+                std::slice::from_ref(&source),
+                &root.join("dest"),
+            );
+            assert!(matches!(
+                dry.diff(&app.companions).steps[0].1,
+                StepStatus::Conflict { .. }
+            ));
+            let plan = plan(
+                &app,
+                verb,
+                serde_json::json!({
+                    "entries": [source],
+                    "dest": root.join("dest"),
+                    "on_conflict": { "files": "keep_both", "folders": "keep_both" },
+                }),
+            );
+            app.apply_whole(plan);
+            assert!(matches!(
+                finished(&app),
+                ExecEvent::Finished {
+                    applied: 1,
+                    error: None,
+                    ..
+                }
+            ));
+            let kept = root.join("dest").join(if folder {
+                "it's a tree (copy)"
+            } else {
+                "résumé (copy).txt"
+            });
+            assert_eq!(read(&b), theirs, "existing content stays");
+            assert_eq!(read(&if folder { kept.join(child) } else { kept }), mine);
+            assert_eq!(source.exists(), verb == "copy");
+            undo(&app);
+            assert_eq!(snapshot(&root), before, "{verb}, folder: {folder}");
+        }
+    }
+}
+
+/// A companion is part of the item: identical owner bytes do not permit
+/// a move to trash a different companion or a copy to skip a missing one.
+#[test]
+fn matching_owner_content_does_not_discard_companions() {
+    for verb in ["copy", "move"] {
+        for missing in [false, true] {
+            let tmp = Scratch::new();
+            let root = tmp.path();
+            write(&root.join("a.txt"), "same");
+            write(&root.join("dest/a.txt"), "same");
+            write(&root.join("._a.txt"), "mine");
+            if !missing {
+                write(&root.join("dest/._a.txt"), "your");
+                dated(&root.join("dest/._a.txt"), 1000);
+            }
+            for file in ["a.txt", "dest/a.txt", "._a.txt"] {
+                dated(&root.join(file), 1000);
+            }
+            let app = app(root);
+            app.companions.register("test", std::sync::Arc::new(Aside));
+            app.apply_whole(plan(
+                &app,
+                verb,
+                serde_json::json!({
+                    "entries": [root.join("a.txt")],
+                    "dest": root.join("dest"),
+                    "on_conflict": { "files": "keep_both" },
+                }),
+            ));
+            assert!(matches!(
+                finished(&app),
+                ExecEvent::Finished {
+                    applied: 1,
+                    error: None,
+                    ..
+                }
+            ));
+            assert_eq!(read(&root.join("dest/._a (copy).txt")), "mine");
+            assert_eq!(root.join("a.txt").exists(), verb == "copy");
+            if !missing {
+                assert_eq!(read(&root.join("dest/._a.txt")), "your");
+            }
+        }
+    }
+}
+
+/// Modes and the attributes promised by a copy must survive even when
+/// the bytes and timestamp are identical.
+#[cfg(unix)]
+#[test]
+fn matching_content_does_not_discard_permissions() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    for file in ["a.txt", "dest/a.txt"] {
+        write(&root.join(file), "same");
+        dated(&root.join(file), 1000);
+    }
+    std::fs::set_permissions(root.join("a.txt"), std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::fs::set_permissions(
+        root.join("dest/a.txt"),
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    let app = app(root);
+    app.apply_whole(plan(
+        &app,
+        "move",
+        serde_json::json!({
+            "entries": [root.join("a.txt")], "dest": root.join("dest"),
+            "on_conflict": { "files": "keep_both" },
+        }),
+    ));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished {
+            applied: 1,
+            error: None,
+            ..
+        }
+    ));
+    assert_eq!(
+        std::fs::metadata(root.join("dest/a (copy).txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o700
+    );
+    assert_eq!(
+        std::fs::metadata(root.join("dest/a.txt"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn matching_content_does_not_discard_attributes() {
+    use skwir_core::fs::xattr;
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    for file in ["a.txt", "dest/a.txt"] {
+        write(&root.join(file), "same");
+        dated(&root.join(file), 1000);
+    }
+    xattr::set(root.join("a.txt"), "user.test", b"mine").unwrap();
+    xattr::set(root.join("dest/a.txt"), "user.test", b"your").unwrap();
+    let app = app(root);
+    app.apply_whole(plan(
+        &app,
+        "move",
+        serde_json::json!({
+            "entries": [root.join("a.txt")], "dest": root.join("dest"),
+            "on_conflict": { "files": "keep_both" },
+        }),
+    ));
+    assert!(matches!(
+        finished(&app),
+        ExecEvent::Finished {
+            applied: 1,
+            error: None,
+            ..
+        }
+    ));
+    assert_eq!(
+        xattr::get(root.join("dest/a (copy).txt"), "user.test").unwrap(),
+        Some(b"mine".to_vec())
+    );
+    assert_eq!(
+        xattr::get(root.join("dest/a.txt"), "user.test").unwrap(),
+        Some(b"your".to_vec())
+    );
+}
+
 /// A plan's policy travels with it as data: an agent's `apply_plan`.
 #[test]
 fn a_plan_s_policy_travels_as_data() {

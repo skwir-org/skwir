@@ -1546,6 +1546,62 @@ fn a_new_file_never_replaces_what_is_there() {
     );
 }
 
+/// A completed copy can represent an attribute container as native attributes.
+/// Missing or changed attributes conflict only when the plan promises to keep
+/// them; an unreadable container never proves that nothing needs preserving.
+#[cfg(unix)]
+#[test]
+fn copy_equivalence_respects_attribute_preference_and_conversion() {
+    let tmp = Scratch::new();
+    let root = tmp.path();
+    let src = root.join("a.txt");
+    let dest = root.join("dest");
+    std::fs::create_dir(&dest).unwrap();
+    std::fs::write(&src, "same").unwrap();
+    std::fs::copy(&src, dest.join("a.txt")).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(dest.join("a.txt"))
+        .unwrap()
+        .set_modified(std::fs::metadata(&src).unwrap().modified().unwrap())
+        .unwrap();
+    let aside = root.join("._a.txt");
+    std::fs::write(&aside, "user.test=from beside\n").unwrap();
+    let app = app(root);
+    app.companions
+        .register("test", std::sync::Arc::new(Aside { holds: true }));
+    let status = |preserve_attributes| {
+        let copy = Copy {
+            entry: EntryRef::from_path(&src).unwrap(),
+            dest_dir: dest.clone(),
+            new_name: None,
+            preserve_attributes,
+        };
+        Plan::with_steps("copy", vec![Box::new(copy)])
+            .diff(&app.companions)
+            .steps
+            .remove(0)
+            .1
+    };
+    assert!(matches!(status(true), StepStatus::Conflict { .. }));
+    assert!(matches!(status(false), StepStatus::AlreadyDone));
+    skwir_core::fs::xattr::set(dest.join("a.txt"), "user.test", b"from beside").unwrap();
+    assert!(
+        matches!(status(true), StepStatus::AlreadyDone),
+        "container became native attributes"
+    );
+    skwir_core::fs::xattr::set(&src, "user.test", b"native takes precedence").unwrap();
+    assert!(matches!(status(true), StepStatus::Conflict { .. }));
+    skwir_core::fs::xattr::set(dest.join("a.txt"), "user.test", b"native takes precedence")
+        .unwrap();
+    assert!(matches!(status(true), StepStatus::AlreadyDone));
+    std::fs::write(&aside, [0xff]).unwrap();
+    assert!(
+        matches!(status(true), StepStatus::Conflict { .. }),
+        "unreadable container is unknown"
+    );
+}
+
 // Extended attributes: Unix's.
 
 // Extended attributes: Unix's.

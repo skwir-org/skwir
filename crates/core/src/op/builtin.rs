@@ -758,7 +758,7 @@ impl super::Effect for Copy {
         if ctx.exists(&target) {
             // Only a finished copy of this very source is "already done": an
             // unrelated folder that happens to share the name is a conflict.
-            return match same_tree(&src, &target, ctx) {
+            return match same_tree(&src, &target, self.preserve_attributes, ctx) {
                 Ok(true) => StepStatus::AlreadyDone,
                 Ok(false) => conflict(format!("“{}” is already there", display_name(&target))),
                 Err(e) => conflict(format!("{e:#}")),
@@ -927,10 +927,37 @@ impl super::Effect for Uncopy {
     }
 }
 
-/// Whether `copy` holds what copying `src` would produce: the same kinds,
-/// names, sizes and file times all the way down (a copy keeps file mtimes),
-/// and the same link targets. Stops at the first difference.
-pub(super) fn same_tree(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::Result<bool> {
+/// Whether an existing destination already holds the source, including
+/// what travels beside it. Size and time reject obvious differences; only
+/// reading the bytes proves content equality for unrelated files.
+pub(super) fn same_tree(
+    src: &Path,
+    copy: &Path,
+    preserve_attributes: bool,
+    ctx: &StepContext,
+) -> anyhow::Result<bool> {
+    if !same_node(src, copy, preserve_attributes, ctx)? {
+        return Ok(false);
+    }
+    for companion in along(ctx, src, copy) {
+        // Attribute containers are compared through their effective attributes,
+        // as a copy can turn a container into native attributes or vice versa.
+        if companion.attributes {
+            continue;
+        }
+        if !exists(&companion.to) || !same_node(&companion.from, &companion.to, true, ctx)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn same_node(
+    src: &Path,
+    copy: &Path,
+    preserve_attributes: bool,
+    ctx: &StepContext,
+) -> anyhow::Result<bool> {
     ctx.check_cancelled()?;
     let (a, b) = (
         std::fs::symlink_metadata(src)?,
@@ -942,14 +969,29 @@ pub(super) fn same_tree(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::R
     if a.is_symlink() {
         return Ok(std::fs::read_link(src)? == std::fs::read_link(copy)?);
     }
+    // A volume may not keep modes. Without proof that the difference is
+    // harmless, leave this to the normal conflict policy, never discard it.
+    if a.permissions() != b.permissions() {
+        return Ok(false);
+    }
+    if preserve_attributes && !same_attributes(src, copy, ctx)? {
+        return Ok(false);
+    }
+    if a.is_file() {
+        return Ok(finished_as(&b, &a) && same_bytes(src, copy, a.len(), ctx)?);
+    }
     if !a.is_dir() {
-        return Ok(finished_as(&b, &a));
+        // Never open a pipe, socket or device to compare it.
+        return Ok(false);
     }
     // A companion holding its sibling's attributes may have become them.
     let names = |dir: &Path| -> std::io::Result<Vec<OsString>> {
         let mut names = std::fs::read_dir(dir)?
             .map(|e| e.map(|e| e.file_name()))
-            .filter(|n| !n.as_ref().is_ok_and(|n| attributes_of_sibling(ctx, dir, n)))
+            .filter(|n| {
+                !preserve_attributes
+                    || !n.as_ref().is_ok_and(|n| attributes_of_sibling(ctx, dir, n))
+            })
             .collect::<std::io::Result<Vec<_>>>()?;
         names.sort_unstable();
         Ok(names)
@@ -959,11 +1001,67 @@ pub(super) fn same_tree(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::R
         return Ok(false);
     }
     for name in children {
-        if !same_tree(&src.join(&name), &copy.join(&name), ctx)? {
+        if !same_node(
+            &src.join(&name),
+            &copy.join(&name),
+            preserve_attributes,
+            ctx,
+        )? {
             return Ok(false);
         }
     }
     Ok(true)
+}
+
+/// Compare the attributes a copy transfers, through the same native and
+/// companion seams as `transfer_attributes`. Native attributes take precedence.
+/// An unreadable container is unknown, never evidence of an empty set.
+fn same_attributes(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::Result<bool> {
+    let attributes = |path: &Path| -> anyhow::Result<Option<Vec<_>>> {
+        let mut all = user_attributes(path)?;
+        let rules = ctx.companions();
+        if !rules.existing_holding_attributes(path).is_empty() {
+            let Some(beside) = rules.attributes(path) else {
+                return Ok(None);
+            };
+            all = merge_attributes(all, beside);
+        }
+        Ok(Some(all))
+    };
+    let (Some(source), Some(there)) = (attributes(src)?, attributes(copy)?) else {
+        return Ok(false);
+    };
+    Ok(source.iter().all(|attribute| there.contains(attribute)))
+}
+
+/// Read a bounded amount at a time, checking cancellation between reads.
+/// Reading exactly the expected length plus EOF also refuses truncated or
+/// growing files; a mount returning EOF early is not evidence of equality.
+fn same_bytes(src: &Path, copy: &Path, len: u64, ctx: &StepContext) -> anyhow::Result<bool> {
+    let before = (state_of(src), state_of(copy));
+    if before.0.is_none() || before.1.is_none() {
+        return Ok(false);
+    }
+    let mut a = crate::fs::file::open_regular_unfollowed(src)?;
+    let mut b = crate::fs::file::open_regular_unfollowed(copy)?;
+    let mut left = len;
+    let mut source = vec![0; 64 << 10];
+    let mut there = vec![0; source.len()];
+    while left > 0 {
+        ctx.check_cancelled()?;
+        let n = left.min(source.len() as u64) as usize;
+        a.read_exact(&mut source[..n])?;
+        ctx.check_cancelled()?;
+        b.read_exact(&mut there[..n])?;
+        if source[..n] != there[..n] {
+            return Ok(false);
+        }
+        left -= n as u64;
+    }
+    ctx.check_cancelled()?;
+    Ok(a.read(&mut source[..1])? == 0
+        && b.read(&mut there[..1])? == 0
+        && before == (state_of(src), state_of(copy)))
 }
 
 /// Copy `src` to `target`, and its companions (`along`) beside it. On a
@@ -1535,7 +1633,8 @@ fn copy_sparse(
     Ok(())
 }
 
-/// Whether the copy `there` of a file now `source` was finished: its
+/// Whether output owned by an interrupted copy looks finished. This is
+/// only a resume hint: unrelated files also need `same_bytes`. Its
 /// length, and its time (given last), to the second where either keeps
 /// no more (SFTP's), else exactly: two files of one length changed in
 /// one second are told apart where both volumes can.
@@ -1671,12 +1770,7 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
     } else {
         rules.attributes(src).unwrap_or_default()
     };
-    let mut all = own.clone();
-    for (name, value) in beside {
-        if !all.iter().any(|(n, _)| *n == name) {
-            all.push((name, value));
-        }
-    }
+    let all = merge_attributes(own.clone(), beside);
     let mut refused = false;
     for (name, value) in &all {
         match crate::fs::xattr::set(dst, name, value) {
@@ -1707,6 +1801,20 @@ fn transfer_attributes(src: &Path, dst: &Path, ctx: &StepContext) -> anyhow::Res
         );
     }
     Ok(())
+}
+
+/// Native attributes take precedence over a companion's, both when a
+/// copy carries them and when an existing destination is compared with it.
+fn merge_attributes(
+    mut own: Vec<(String, Vec<u8>)>,
+    beside: Vec<(String, Vec<u8>)>,
+) -> Vec<(String, Vec<u8>)> {
+    for (name, value) in beside {
+        if !own.iter().any(|(n, _)| *n == name) {
+            own.push((name, value));
+        }
+    }
+    own
 }
 
 /// The extended attributes of `path` a copy keeps, none on a volume that

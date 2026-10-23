@@ -341,6 +341,13 @@ impl Transfer {
         matches!(self, Transfer::Move(_))
     }
 
+    fn preserve_attributes(&self) -> bool {
+        match self {
+            Transfer::Copy(copy) => copy.preserve_attributes,
+            Transfer::Move(_) | Transfer::Link(_) => true,
+        }
+    }
+
     fn target(&self, src: &Path) -> PathBuf {
         match self {
             Transfer::Copy(c) => c.target(src),
@@ -437,13 +444,14 @@ impl Walk<'_> {
         if !self.ctx.exists(&target) || !linking && src.is_dir() && target.starts_with(&src) {
             return self.keep(transfer, child);
         }
-        // There already: the link made, or the item whole (the same kinds,
-        // sizes and times all the way down). A copy or a link has nothing
+        // There already: the link made, or the item verified whole, including
+        // its bytes, kept metadata and companions. A copy or a link has nothing
         // to do, and a move leaves what was moved in the trash.
         let there = if linking {
             std::fs::read_link(&target).is_ok_and(|says| says == src)
         } else {
-            builtin::same_tree(&src, &target, self.ctx).unwrap_or(false)
+            builtin::same_tree(&src, &target, transfer.preserve_attributes(), self.ctx)
+                .unwrap_or(false)
         };
         if there {
             if transfer.moving() {

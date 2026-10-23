@@ -3865,3 +3865,20 @@ below), worked through in order, each committed after its checks.
 - Verified: control nextest, 13 of 13; control Clippy for all targets
   with warnings denied; formatting and diff whitespace;
   `just bench-check`, all budgets met. Final full release checks pending.
+
+### Review fix 1: prove a destination holds the source (2026-10-23)
+
+- An unrelated existing destination is equivalent only after comparing
+  regular-file bytes in bounded, cancellable reads, as well as kept
+  permissions, requested attributes and companions. Matching size and
+  modification time alone cannot skip a copy or trash a move's source.
+  Attribute conversion uses the same precedence as the actual copy.
+- Regression tests cover copy and move with keep-both, whole trees, a
+  difference beyond the first read chunk, missing or different companions,
+  modes, attributes and attribute-container conversion. Undo restores the
+  tested tree. The metadata hint for owned interrupted-copy output is
+  unchanged.
+- Verified: core operations and clashes nextest, 59 of 59; resume unit
+  tests, 3 of 3; interrupted-copy tests, 5 of 5; core Clippy for all
+  targets with warnings denied; formatting and diff whitespace;
+  `just bench-check`, all budgets met. Final full release checks pending.
