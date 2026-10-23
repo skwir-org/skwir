@@ -1026,8 +1026,10 @@ impl StepContext {
         self.beside.take().into_iter().collect()
     }
 
-    /// The plan's cancel and pause, for a batch's transfer.
-    pub(super) fn control(&self) -> super::transfer::Control {
+    /// The plan's cancel and pause, for work delegated to a transfer.
+    /// Operations and transfers share this control so a delegated tree
+    /// obeys the executor's pause and cancellation between its children.
+    pub fn control(&self) -> super::transfer::Control {
         super::transfer::Control::new(self.cancel.clone(), Arc::clone(&self.pause))
     }
 

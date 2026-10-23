@@ -3916,3 +3916,20 @@ below), worked through in order, each committed after its checks.
   `just bench-check`, all budgets met. Full query testing also caught and
   restored the previous root-error wording changed by fix 8. Final full
   release checks pending.
+
+### Review fix 9: recursive rclone pause and cancellation (2026-10-23)
+
+- Recursive copies pause before each child; refresh and placement heed
+  the same control. Every synchronous RC request subscribes to plan
+  cancellation, which shuts down its socket instead of waiting for the
+  one-hour timeout. The scoped listener ends on every request exit.
+  Cancelled capability probes remain retryable.
+- `StepContext::control` exposes the executor's existing pause and cancel
+  to operations delegating to a transfer. Tests use this real control
+  with production recursion and a local RC stand-in: pause/resume without
+  repeating children, cancel while paused, cancel a stalled response,
+  completed-child byte counts, staging cleanup and capability retry.
+- Verified: targeted remote nextest, 5 of 5; remote Clippy for all
+  targets with warnings denied; formatting and diff whitespace;
+  `just bench-check`, all budgets met. The RC stand-in exercises client
+  behavior; the final full release gate and real-server checks are pending.

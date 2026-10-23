@@ -183,9 +183,14 @@ ADR-077 (which revises ADR-021).
   rclone itself within one rclone mount Skwir made, where its backend
   copies on the server (`rclone_copy`: the mount's remote control on a
   socket of the runtime folder, `--rc-addr unix://…`, the user's alone; a
-  file by `operations/copyfile`, a folder by `sync/copy`, then
-  `vfs/refresh` so the mount shows them; whether it copies there asked
-  once a mount, by `operations/fsinfo`). A lone
+  file by `operations/copyfile`, a folder by `operations/mkdir` and
+  per-file copies, then `vfs/refresh` so the mount shows them; whether it
+  copies there asked once a mount, by `operations/fsinfo`). Recursive
+  children, refresh and placement heed pause and cancellation. A
+  synchronous RC connection belongs to the plan's cancellation: cancel
+  shuts it down, interrupting a stalled response and the server's request
+  context. Only acknowledged copies report bytes. A cancelled capability
+  probe says nothing about backend support and remains retryable. A lone
   file within one remote goes in a batch where a transfer serves it,
   which its step would bring here and send back. A server a tool does
   not reach is remembered for its mount. rsync keeps a file it was
