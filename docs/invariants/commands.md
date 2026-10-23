@@ -121,6 +121,11 @@ control plugin's `run`:
   entries (how many, their tags, dates, places) leaves out
   `App::withheld(pane)`, asked before taking the workspace's lock.
 - A script (`skwir cmd`) is the user's own.
+- **The endpoint determines trust (ADR-085).** The agent endpoint always
+  proposes and enforces the permission layer, regardless of MCP metadata.
+  `skwir cmd` connects to the separate script endpoint; only there may
+  `skwir/plan` choose print or apply. Never infer caller authority from
+  payload fields, including `_meta`.
 
 ## What leaves this machine
 

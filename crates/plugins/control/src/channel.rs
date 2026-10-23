@@ -8,6 +8,16 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Address(pub PathBuf);
 
+impl Address {
+    /// The user's script endpoint beside the agent endpoint. The listener,
+    /// never MCP metadata, decides whether a call may act as the user.
+    pub fn scripts(&self) -> Self {
+        let mut path = self.0.as_os_str().to_owned();
+        path.push(".scripts");
+        Self(path.into())
+    }
+}
+
 /// Where the user's skwir listens: `$XDG_RUNTIME_DIR/skwir/control.sock`
 /// (Linux), the user's own `$TMPDIR` on macOS, else a folder of the user's
 /// in the temporary folder; `\\.\pipe\skwir-control-<user>` on Windows.

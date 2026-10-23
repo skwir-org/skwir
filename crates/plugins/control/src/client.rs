@@ -57,8 +57,23 @@ pub fn call(
     arguments: serde_json::Map<String, Value>,
     mode: PlanMode,
 ) -> anyhow::Result<Answer> {
+    let endpoint = match mode {
+        PlanMode::Propose => address.clone(),
+        PlanMode::Print | PlanMode::Apply => address.scripts(),
+    };
     runtime()?.block_on(async {
-        let stream = channel::connect(address).await?;
+        let stream = match channel::connect(&endpoint).await {
+            Ok(stream) => stream,
+            Err(error) => {
+                // An older window has no script endpoint. Do not silently
+                // execute in a separate app with a different undo history.
+                anyhow::ensure!(
+                    mode == PlanMode::Propose || channel::connect(address).await.is_err(),
+                    "the window has no script endpoint: restart skwir before running this command"
+                );
+                return Err(error.into());
+            }
+        };
         let client = ().serve(stream).await?;
         let mut meta = serde_json::Map::new();
         meta.insert(PLAN_META.into(), Value::String(mode.as_str().into()));

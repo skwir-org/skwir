@@ -31,8 +31,8 @@ use skwir_core::{App, Plan};
 
 pub const ID: &str = "control";
 
-/// The `_meta` key a call says what to do with a plan by: `propose` (an
-/// agent's, the default), `print` or `apply` (`skwir cmd`, the user's own).
+/// The script endpoint's `_meta` key for `print` or `apply`. Agent
+/// connections always propose, regardless of request metadata (ADR-085).
 pub const PLAN_META: &str = "skwir/plan";
 
 /// How long a tool waits for the user to review its plan before saying
@@ -231,8 +231,19 @@ async fn listen(
     mut stopped: tokio::sync::watch::Receiver<()>,
     shared: &Mutex<Status>,
 ) {
-    let mut listener = match channel::listen(&address) {
-        Ok(Some(listener)) => listener,
+    // Bind scripts first: once the agent address is visible both are ready.
+    // If either is taken or refused, drop the other listener too.
+    let listeners = || -> anyhow::Result<Option<_>> {
+        let Some(scripts) = channel::listen(&address.scripts())? else {
+            return Ok(None);
+        };
+        let Some(agents) = channel::listen(&address)? else {
+            return Ok(None);
+        };
+        Ok(Some((agents, scripts)))
+    };
+    let (mut agents, mut scripts) = match listeners() {
+        Ok(Some(listeners)) => listeners,
         Ok(None) => {
             tracing::info!("another skwir listens for agents and scripts");
             shared.lock().not = Some("another skwir window listens".into());
@@ -257,30 +268,35 @@ async fn listen(
         not: None,
     };
     loop {
-        tokio::select! {
+        let (accepted, script) = tokio::select! {
             _ = stopped.changed() => break,
-            accepted = listener.accept() => {
-                let stream = match accepted {
-                    Ok(stream) => stream,
-                    Err(error) => {
-                        tracing::warn!("agents and scripts: {error}");
-                        continue;
-                    }
-                };
-                let tools = Tools { app: app.clone() };
-                tokio::spawn(async move {
-                    if let Ok(service) = tools.serve(stream).await {
-                        let _ = service.waiting().await;
-                    }
-                });
+            accepted = agents.accept() => (accepted, false),
+            accepted = scripts.accept() => (accepted, true),
+        };
+        let stream = match accepted {
+            Ok(stream) => stream,
+            Err(error) => {
+                tracing::warn!("agents and scripts: {error}");
+                continue;
             }
-        }
+        };
+        let tools = Tools {
+            app: app.clone(),
+            script,
+        };
+        tokio::spawn(async move {
+            if let Ok(service) = tools.serve(stream).await {
+                let _ = service.waiting().await;
+            }
+        });
     }
 }
 
 /// The commands, as MCP tools.
 struct Tools {
     app: Weak<App>,
+    /// Fixed by the accepted endpoint, never by the caller's payload.
+    script: bool,
 }
 
 impl Tools {
@@ -355,7 +371,11 @@ impl ServerHandler for Tools {
             .and_then(|meta| meta.0.0.get(PLAN_META))
             .or_else(|| context.meta.0.0.get(PLAN_META))
             .cloned();
-        let mode = PlanMode::of(meta.as_ref());
+        let mode = if self.script {
+            PlanMode::of(meta.as_ref())
+        } else {
+            PlanMode::Propose
+        };
         let invocation = Invocation {
             name: command_name(&request.name).into(),
             args: request.arguments.map_or_else(|| json!({}), Value::Object),

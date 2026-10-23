@@ -3847,3 +3847,21 @@ below), worked through in order, each committed after its checks.
   targets with warnings denied; formatting and diff whitespace;
   `just bench-check`, all budgets met. The final full release gate is
   pending.
+
+### Review fix 4: MCP authority belongs to the endpoint (2026-10-23)
+
+- The agent connection always applies permissions, privacy and plan
+  review. Caller-controlled MCP metadata cannot turn it into a script
+  call. The user's CLI connects to a separate script endpoint for print
+  and apply; both listeners share lifetime and OS access restrictions
+  (ADR-085, amending ADR-043).
+- The CLI refuses an older window without a script endpoint with a
+  restart instruction, rather than silently falling back to a headless
+  app with separate undo state.
+- Actual transport tests forge both print and apply metadata and verify
+  user-only commands are refused, private answers are filtered and file
+  plans wait for review. Script tests still exercise print and apply;
+  disable removes both endpoints.
+- Verified: control nextest, 13 of 13; control Clippy for all targets
+  with warnings denied; formatting and diff whitespace;
+  `just bench-check`, all budgets met. Final full release checks pending.

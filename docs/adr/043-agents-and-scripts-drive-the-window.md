@@ -3,6 +3,8 @@
 Status: accepted, 2026-10-07, as the user chose (Phase 6, first step,
 begun before Phase 5b's gate, which needs a Mac and a Windows machine;
 PLAN.md records the deviation). Built (`control` plugin).
+Decision 5 amended by ADR-085 (2026-10-23): separate agent and script
+endpoints determine authority; request metadata never grants it.
 
 ## Context
 

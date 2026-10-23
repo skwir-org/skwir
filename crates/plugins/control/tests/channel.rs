@@ -120,6 +120,73 @@ fn listening(app: &Arc<App>, root: &Path) -> (skwir_plugin_control::Server, Addr
     (server, address)
 }
 
+/// A raw MCP caller may put anything in metadata. Unlike `client::call`,
+/// this always connects to the agent endpoint, as `skwir mcp` does.
+fn untrusted_call(address: &Address, name: &str, args: Value, mode: &str) -> (Value, bool) {
+    use rmcp::model::{CallToolRequestParams, MetaObject, RequestMetaObject};
+
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let stream = skwir_plugin_control::channel::connect(address)
+                .await
+                .unwrap();
+            let agent = ().serve(stream).await.unwrap();
+            let mut request = CallToolRequestParams::new(skwir_plugin_control::tool_name(name))
+                .with_arguments(arguments(args));
+            request.meta = Some(RequestMetaObject(MetaObject(arguments(json!({
+                "skwir/plan": mode,
+            })))));
+            let answer = agent.call_tool(request).await.unwrap();
+            let text: String = answer
+                .content
+                .iter()
+                .filter_map(|block| block.as_text().map(|text| text.text.as_str()))
+                .collect();
+            let _ = agent.cancel().await;
+            (
+                serde_json::from_str(&text).unwrap(),
+                answer.is_error.unwrap_or(false),
+            )
+        })
+}
+
+#[test]
+fn agent_metadata_never_grants_script_permissions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    keys_private(&app, tmp.path());
+    let (_server, address) = listening(&app, tmp.path());
+    for mode in ["print", "apply"] {
+        let (_, refused) = untrusted_call(&address, "test.answer_dialog", json!({}), mode);
+        assert!(refused, "metadata must not grant a user-only command");
+        let (seen, failed) = untrusted_call(&address, "test.paths", json!({}), mode);
+        assert!(!failed);
+        assert_eq!(seen["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(seen["entries"][0]["name"], "notes.txt");
+
+        let endpoint = address.clone();
+        let call = std::thread::spawn(move || {
+            untrusted_call(&endpoint, "test.make", json!({ "name": mode }), mode)
+        });
+        let mut proposed = Vec::new();
+        wait_until("the forged script call proposes", || {
+            proposed.extend(app.take_proposals());
+            !proposed.is_empty()
+        });
+        assert!(
+            !tmp.path().join(mode).exists(),
+            "never applied without review"
+        );
+        app.dismissed(proposed[0].id);
+        let (answer, failed) = call.join().unwrap();
+        assert!(!failed);
+        assert_eq!(answer["verdict"], "dismissed");
+    }
+}
+
 #[test]
 fn an_agent_lists_the_commands_and_reads_a_value() {
     let tmp = tempfile::tempdir().unwrap();

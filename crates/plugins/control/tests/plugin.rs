@@ -44,6 +44,10 @@ fn turned_on_the_window_listens_and_turned_off_it_leaves_nothing() {
         assert!(Instant::now() < deadline, "listening");
         std::thread::sleep(Duration::from_millis(10));
     }
+    assert!(
+        address.scripts().0.exists(),
+        "the script endpoint is ready too"
+    );
     let status = app
         .dispatch(&skwir_core::command::Invocation::new("control.status"))
         .unwrap();
@@ -63,6 +67,7 @@ fn turned_on_the_window_listens_and_turned_off_it_leaves_nothing() {
 
     assert!(app.plugins.set_enabled(ID, false, &app));
     assert!(!address.0.exists(), "the socket goes with the plugin");
+    assert!(!address.scripts().0.exists(), "the script socket goes too");
     let error = client::call(
         &address,
         "test.answer",
