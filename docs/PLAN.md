@@ -1360,7 +1360,13 @@ protocol is a scheme a connector maps, or a connector.
   - a GVfs mount made by another program is used, but its questions are
     the desktop's (Skwir's own connections offer Remember, ADR-082);
   - ADR-077's point 8, if asked: a helper of Skwir's serving SFTP
-    through OpenSSH as a connector (the user did not ask, 2026-10-23).
+    through OpenSSH as a connector (the user did not ask, 2026-10-23);
+  - GVfs's AFP backend dies now and then (a request freed before its
+    last write called back, its request hash changed from two threads):
+    the fix (`tools/test/gvfs-afp-request-lifetime.patch`) runs in the
+    tests' GVfs and is to be offered upstream. With a desktop's GVfs, a
+    copy over AFP may still meet it, and then says the folder it made is
+    not one (the mount gone), not that the connection was lost.
 
 ---
 

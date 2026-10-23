@@ -1,0 +1,177 @@
+afpconnection: keep a request until it is sent, and its hash under the lock
+
+GVfs's AFP backend (1.60.3, and its main branch on 2026-10-23) dies now
+and then (gvfsd-afp, SIGSEGV or SIGABRT), its mount gone, two ways:
+
+- A request is freed when its reply is handled (the request hash's
+  value-free function) while the callback of its last write may still
+  be to run: a write that completes within the main-loop pass that
+  started it returns through an idle, and a server that answers at once
+  (one on the same machine, a fast LAN) has its reply read first.
+  write_command_cb then reads the freed request. Fedora's retrace server
+  holds such crashes in write_command_cb.
+- The worker thread never makes its context the thread-default, so the
+  connection's read and write callbacks run in the main thread's, which
+  looks requests up in the hash and removes them without the lock the
+  worker holds to insert them: the hash breaks (g_hash_table_remove's
+  assertion that it holds nodes).
+
+A request is now counted: one reference while it is sent, one while it
+waits in the hash, which is read and changed under the connection's lock
+everywhere. A write that fails also stops freeing its request twice (the
+hash's remove, then free_request_data), and ends the request only if its
+reply has not.
+
+Applied by tools/test/gvfs-nfs-afp.sh to the GVfs it runs, until upstream
+has it. Diff against gvfs-1.60.3, daemon/gvfsafpconnection.c.
+
+--- a/daemon/gvfsafpconnection.c
++++ b/daemon/gvfsafpconnection.c
+@@ -716,6 +716,11 @@
+   GTask *task;
+ 
+   GVfsAfpConnection *conn;
++
++  /* One reference while the request is being sent, one while it waits in
++   * request_hash for its reply: the reply may be handled before the last
++   * write's callback runs. */
++  gint ref_count;
+ } RequestData;
+ 
+ typedef struct
+@@ -769,6 +774,9 @@
+ static void
+ free_request_data (RequestData *req_data)
+ {
++  if (!g_atomic_int_dec_and_test (&req_data->ref_count))
++    return;
++
+   if (req_data->command)
+     g_object_unref (req_data->command);
+   g_clear_error (&req_data->error);
+@@ -1078,6 +1086,7 @@
+       req_data = g_slice_new0 (RequestData);
+       req_data->type = REQUEST_TYPE_TICKLE;
+       req_data->conn = afp_connection;
++      req_data->ref_count = 1;
+ 
+       /* take lock */
+       g_mutex_lock (&priv->mutex);
+@@ -1106,10 +1115,17 @@
+     case DSI_WRITE:
+     {
+       RequestData *req_data;
+-      
++
++      /* The hash is filled by the worker thread too, under the lock. */
++      g_mutex_lock (&priv->mutex);
+       req_data = g_hash_table_lookup (priv->request_hash,
+                                       GUINT_TO_POINTER ((guint)dsi_header->requestID));
+       if (req_data)
++        g_hash_table_steal (priv->request_hash,
++                            GUINT_TO_POINTER ((guint)dsi_header->requestID));
++      g_mutex_unlock (&priv->mutex);
++
++      if (req_data)
+       {
+         if (req_data->error)
+         {
+@@ -1126,8 +1142,7 @@
+           g_task_return_pointer (req_data->task, reply, g_object_unref);
+         }
+ 
+-        g_hash_table_remove (priv->request_hash,
+-                             GUINT_TO_POINTER ((guint)dsi_header->requestID));
++        free_request_data (req_data);
+       }
+       break;
+     }
+@@ -1258,8 +1273,10 @@
+   {
+     RequestData *req_data;
+ 
++    g_mutex_lock (&priv->mutex);
+     req_data = g_hash_table_lookup (priv->request_hash,
+                                     GUINT_TO_POINTER ((guint)dsi_header->requestID));
++    g_mutex_unlock (&priv->mutex);
+     if (req_data && req_data->reply_buf)
+     {
+       if (dsi_header->totalDataLength > req_data->reply_buf_size)
+@@ -1412,13 +1429,24 @@
+  result = write_all_finish (output, res, NULL, &err); \
+  if (!result) \
+   { \
+-    if (req_data->task) \
++    gpointer id = GUINT_TO_POINTER ((guint)GUINT16_FROM_BE (priv->write_dsi_header.requestID)); \
++    gboolean waits; \
++\
++    g_mutex_lock (&priv->mutex); \
++    waits = req_data->task && priv->request_hash && \
++            g_hash_table_lookup (priv->request_hash, id) == req_data; \
++    if (waits) \
++      g_hash_table_steal (priv->request_hash, id); \
++    g_mutex_unlock (&priv->mutex); \
++\
++    if (waits) \
++    { \
+       g_task_return_error (req_data->task, err); \
++      free_request_data (req_data); \
++    } \
+     else \
+       g_error_free (err); \
+ \
+-    g_hash_table_remove (priv->request_hash, \
+-                         GUINT_TO_POINTER ((guint)GUINT16_FROM_BE (priv->write_dsi_header.requestID))); \
+     free_request_data (req_data); \
+ \
+     g_mutex_lock (&priv->mutex); \
+@@ -1438,6 +1466,8 @@
+   
+   HANDLE_RES ();
+ 
++  free_request_data (req_data);
++
+   g_mutex_lock (&priv->mutex);
+   send_request_unlocked (afp_conn);
+   g_mutex_unlock (&priv->mutex);
+@@ -1460,7 +1490,9 @@
+                      0, NULL, write_buf_cb, req_data);
+     return;
+   }
+-  
++
++  free_request_data (req_data);
++
+   g_mutex_lock (&priv->mutex);
+   send_request_unlocked (afp_conn);
+   g_mutex_unlock (&priv->mutex);
+@@ -1481,6 +1513,8 @@
+ 
+   if (req_data->type == REQUEST_TYPE_TICKLE)
+   {
++    free_request_data (req_data);
++
+     g_mutex_lock (&priv->mutex);
+     send_request_unlocked (afp_conn);
+     g_mutex_unlock (&priv->mutex);
+@@ -1565,9 +1599,12 @@
+   }
+ 
+   if (req_data->type != REQUEST_TYPE_TICKLE)
++  {
++    g_atomic_int_inc (&req_data->ref_count);
+     g_hash_table_insert (priv->request_hash,
+                          GUINT_TO_POINTER ((guint)GUINT16_FROM_BE (priv->write_dsi_header.requestID)),
+                          req_data);
++  }
+ 
+   write_all_async (g_io_stream_get_output_stream (priv->stream),
+                    &priv->write_dsi_header, sizeof (DSIHeader), 0,
+@@ -1624,6 +1661,7 @@
+   req_data->reply_buf_size = reply_buf_size;
+   req_data->conn = afp_connection;
+   req_data->task = task;
++  req_data->ref_count = 1;
+ 
+   /* Take lock */
+   g_mutex_lock (&priv->mutex);

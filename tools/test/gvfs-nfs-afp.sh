@@ -32,9 +32,18 @@ if [ "${1:-}" != --inside ]; then
         echo "skipped: no user namespace with subordinate ids (newuidmap, /etc/subuid)"
         exit 0
     fi
-    tools=$(nix build --no-link --print-out-paths nixpkgs#gvfs 'nixpkgs#glib^bin' nixpkgs#dbus \
+    tools=$(nix build --no-link --print-out-paths 'nixpkgs#glib^bin' nixpkgs#dbus \
         nixpkgs#unfs3 nixpkgs#rpcbind nixpkgs#netatalk nixpkgs#iproute2 nixpkgs#coreutils \
         nixpkgs#util-linux nixpkgs#gnused nixpkgs#gnugrep nixpkgs#findutils)
+    # GVfs's AFP backend dies now and then against this server, which
+    # answers at once: it frees a request whose reply came before its last
+    # write called back, and changes its request hash from two threads.
+    # Built with the fix, until upstream has it
+    # (gvfs-afp-request-lifetime.patch).
+    fix=$(realpath "$(dirname "$0")/gvfs-afp-request-lifetime.patch")
+    gvfs=$(nix build --impure --no-link --print-out-paths --expr "
+        let pkgs = (builtins.getFlake \"nixpkgs\").legacyPackages.\${builtins.currentSystem};
+        in pkgs.gvfs.overrideAttrs (o: { patches = (o.patches or [ ]) ++ [ (/. + \"$fix\") ]; })")
     out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(p[0-9]+)?(-bin)?$" <<< "$tools" | head -1; }
     path=""
     for p in glib coreutils util-linux iproute2 gnused gnugrep findutils dbus unfs3 rpcbind netatalk; do
@@ -44,7 +53,7 @@ if [ "${1:-}" != --inside ]; then
     mkdir -p "$base"
     scratch=$(mktemp -d "$base/nfs-afp-XXXXXX")
     status=0
-    env PATH="${path}$(out iproute2)/sbin:$(out netatalk)/sbin:$PATH" GVFS="$(out gvfs)" \
+    env PATH="${path}$(out iproute2)/sbin:$(out netatalk)/sbin:$PATH" GVFS="$gvfs" \
         NETATALK="$(out netatalk)" FIXTURE="$scratch" TEST_BINARY="$tested" \
         timeout 300 "${namespaces[@]}" -n -m -p --fork --propagation private "$0" --inside \
         || status=$?

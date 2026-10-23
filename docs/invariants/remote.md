@@ -440,6 +440,17 @@ ADR-077 (which revises ADR-021).
   reply over 64 KiB into fragments, which GVfs's NFS client never reads:
   a large file down from NFS is timed against NFS-Ganesha's in-memory
   backend (it keeps a file's first 2 MiB), not tested.
+- GVfs's AFP backend (1.60.3, and its main branch on 2026-10-23) dies
+  now and then. It frees a request whose reply was read before its last
+  write called back (SIGSEGV in `write_command_cb`), which a server on the
+  same machine answers fast enough to do. It also changes its request
+  hash from two threads, one without the lock (SIGABRT in
+  `g_hash_table_remove`). Its mount goes with it, so a copy in flight
+  fails with an I/O error, or says a folder it has just made is not one.
+  The harness runs GVfs built with the fix for both
+  (`tools/test/gvfs-afp-request-lifetime.patch`) until upstream has it.
+  When a test through GVfs's bridge fails, look first in `coredumpctl` for
+  a backend that died.
 - A test that stops its own OpenSSH server mid-copy ends its listener
   before its sessions (sshfs reconnects at once, its new session not
   among those found), finds them in the kernel's lists of children (one
