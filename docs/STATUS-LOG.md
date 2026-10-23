@@ -3950,3 +3950,21 @@ below), worked through in order, each committed after its checks.
   run overlapping compilation missed budgets; repeating the exact binary
   after the build finished met every budget. No budgets changed. Final
   full release checks on all fourteen fixes remain pending.
+
+### Review fix 6: headless settings saves finish before exit (2026-10-23)
+
+- Without a window, `settings.apply` completes its transaction and
+  callbacks before answering, and returns persistence failures to the
+  command caller. The window's asynchronous save protocol is unchanged.
+  A settings file that failed to load is distinguished from deliberately
+  in-memory settings: the headless command refuses to claim a save even
+  after startup consumed the warning.
+- Core tests check completion, persistence failure, rollback, retry and
+  failed startup. A real CLI subprocess writes two values in successive
+  processes and checks the file immediately on exit, then checks a failed
+  save's nonzero exit. That subprocess fixture is Linux-only because it
+  isolates configuration with XDG; core tests use explicit paths.
+- Verified: core settings nextest, 33 of 33; CLI nextest, 6 of 6; targeted
+  Clippy; all-crate lint/cross-compilation and tests (2014 passed, 25
+  skipped); formatting and diff whitespace; all benchmark budgets met on
+  the quiet rerun. Final full release checks pending.

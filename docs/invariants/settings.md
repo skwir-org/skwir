@@ -181,6 +181,12 @@ The key is the owner's; the page is the subject's (ADR-072).
   one save at a time, so the view queues later changes and sends them as
   one batch when the running save ends; it waits the same way for a save
   started elsewhere.
+- Without a window, `settings.apply` completes persistence and settings
+  callbacks before returning; a failure is a command error. A headless
+  caller must also refuse a save when startup fell back to memory after a
+  settings-file load failure, even after its warning was consumed. The
+  window keeps its asynchronous SaveState protocol, including calls over
+  its control connection: lifecycle callbacks can stop that connection.
 - A failed save restores the live value and shows the reason on the row.
   Invalid text never leaves its field.
 - The view reconciles against `Settings::revision` and

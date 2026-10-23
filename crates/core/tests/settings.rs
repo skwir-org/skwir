@@ -67,6 +67,8 @@ fn fixture(path: Option<std::path::PathBuf>) -> (tempfile::TempDir, Arc<App>, Ar
 }
 
 fn apply(app: &App, changes: &serde_json::Value) -> SaveState {
+    // This helper exercises the dialog's asynchronous save protocol.
+    skwir_core::scheduler::mark_window_thread(&app.scheduler);
     let (tx, rx) = std::sync::mpsc::channel();
     app.set_waker(Some(Arc::new(move || {
         let _ = tx.send(());
@@ -84,6 +86,76 @@ fn apply(app: &App, changes: &serde_json::Value) -> SaveState {
     let (finished, state) = app.settings.save_status();
     assert_eq!(Some(finished), id.as_u64());
     state
+}
+
+#[test]
+fn headless_save_finishes_before_returning_and_reports_persistence_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    let (_tmp, app, plugin) = fixture(Some(path.clone()));
+    let command = |value| {
+        Invocation::with_args(
+            "settings.apply",
+            &serde_json::json!({"changes":{"sample.engine":value}}),
+        )
+    };
+    let Outcome::Value(id) = app.dispatch(&command("second")).unwrap() else {
+        panic!("expected save id");
+    };
+    assert_eq!(
+        app.settings.save_status(),
+        (id.as_u64().unwrap(), SaveState::Saved)
+    );
+    assert_eq!(
+        Settings::load(&path)
+            .get::<String>("sample.engine")
+            .as_deref(),
+        Some("second")
+    );
+    assert_eq!(
+        plugin.0.load(Ordering::SeqCst),
+        1,
+        "callbacks completed too"
+    );
+
+    std::fs::remove_file(&path).unwrap();
+    std::fs::create_dir(&path).unwrap();
+    assert!(app.dispatch(&command("first")).is_err());
+    assert!(matches!(app.settings.save_status().1, SaveState::Failed(_)));
+    assert_eq!(
+        app.settings.get::<String>("sample.engine").as_deref(),
+        Some("second")
+    );
+    std::fs::remove_dir(&path).unwrap();
+    app.dispatch(&command("first")).unwrap();
+    assert_eq!(
+        Settings::load(&path)
+            .get::<String>("sample.engine")
+            .as_deref(),
+        Some("first")
+    );
+}
+
+#[test]
+fn headless_save_refuses_a_file_that_failed_to_load_even_after_its_warning_was_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.toml");
+    std::fs::create_dir(&path).unwrap();
+    let (_tmp, app, _) = fixture(Some(path.clone()));
+    // App startup may already have consumed this into a notification.
+    let _ = app.settings.take_problem();
+    let error = app
+        .dispatch(&Invocation::with_args(
+            "settings.apply",
+            &serde_json::json!({"changes":{"sample.engine":"second"}}),
+        ))
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("saves nothing"));
+    assert_eq!(
+        app.settings.get::<String>("sample.engine").as_deref(),
+        Some("first")
+    );
+    assert!(path.is_dir());
 }
 
 #[test]
@@ -213,6 +285,7 @@ fn queued_save_is_exclusive_and_revalidates_after_plugin_disable() {
     let mut config = AppConfig::ephemeral(tmp.path());
     config.workers = 1;
     let app = App::new(config).unwrap();
+    skwir_core::scheduler::mark_window_thread(&app.scheduler);
     let plugin = Arc::new(Preferences(AtomicUsize::new(0)));
     app.plugins.add(plugin.clone(), &app);
     let (started_tx, started_rx) = std::sync::mpsc::channel();

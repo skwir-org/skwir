@@ -117,6 +117,48 @@ fn skwir_says_its_version_and_how_to_use_it_without_opening_a_window() {
     );
 }
 
+/// The process cannot exit successfully before its settings reach disk.
+/// XDG redirects the actual config path on Linux; macOS uses its own
+/// application folders, so this subprocess fixture is Linux-only.
+#[cfg(target_os = "linux")]
+#[test]
+fn settings_are_saved_before_a_headless_command_exits() {
+    let tmp = home_tempdir();
+    let runtime = tempfile::tempdir().unwrap();
+    let config = tmp.path().join("config");
+    let file = config.join("skwir/settings.toml");
+    let save = |theme: &str| {
+        Command::new(env!("CARGO_BIN_EXE_skwir"))
+            .args(["cmd", "settings.apply"])
+            .arg(json!({"changes": {"ui.theme": theme}}).to_string())
+            .env("XDG_RUNTIME_DIR", runtime.path())
+            .env("XDG_CONFIG_HOME", &config)
+            .env("XDG_DATA_HOME", tmp.path().join("data"))
+            .env("XDG_CACHE_HOME", tmp.path().join("cache"))
+            .env("XDG_STATE_HOME", tmp.path().join("state"))
+            .output()
+            .unwrap()
+    };
+    for theme in ["dark", "light"] {
+        assert!(printed(&save(theme)).is_u64());
+        assert_eq!(
+            skwir_core::settings::Settings::load(&file)
+                .get::<String>("ui.theme")
+                .as_deref(),
+            Some(theme),
+            "success means the setting is already on disk"
+        );
+    }
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    let failed = save("dark");
+    assert!(
+        !said(&failed).is_empty(),
+        "persistence errors reach the script"
+    );
+    assert!(file.is_dir(), "the failed save overwrites nothing");
+}
+
 /// A settings file checked with no window open, as Home Manager's module
 /// checks the settings it declares: the window's own settings are known
 /// there too; a value a setting does not take fails, saying which; a key

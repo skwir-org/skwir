@@ -886,6 +886,13 @@ pub(crate) fn register(app: &crate::App) {
         "Save settings",
         "Change preferences, each key with the text its row in Settings takes; all of them are saved, or none",
         |args, app| {
+            if !crate::scheduler::has_window()
+                && let Some(reason) = &app.settings.saving_unavailable
+            {
+                // An interactive session can warn and keep temporary values.
+                // A headless command cannot claim it saved those values.
+                anyhow::bail!("{reason}");
+            }
             app.settings.validate(&args.changes)?;
             let mut status = app.settings.status.lock();
             anyhow::ensure!(
@@ -904,25 +911,35 @@ pub(crate) fn register(app: &crate::App) {
                 id,
                 state: None,
             };
-            app.scheduler.spawn(
-                crate::scheduler::Priority::Normal,
-                "settings-save",
-                app.lifetime().child(),
-                move || {
-                    let Some(app) = guard.weak.upgrade() else {
-                        return;
-                    };
-                    let result = app.settings.apply(&args.changes);
-                    guard.state = Some(match result {
-                        Ok(keys) => {
-                            changed(&app, &keys);
-                            SaveState::Saved
-                        }
-                        Err(error) => SaveState::Failed(format!("{error:#}")),
-                    });
-                    drop(guard);
-                },
-            );
+            let save = move || -> anyhow::Result<()> {
+                let app = guard.weak.upgrade()
+                    .ok_or_else(|| anyhow::anyhow!("settings save did not run"))?;
+                let result = app.settings.apply(&args.changes).map(|keys| {
+                    changed(&app, &keys);
+                });
+                guard.state = Some(match &result {
+                    Ok(()) => SaveState::Saved,
+                    Err(error) => SaveState::Failed(format!("{error:#}")),
+                });
+                drop(guard);
+                result
+            };
+            if crate::scheduler::has_window() {
+                // The window follows SaveState, including saves requested by
+                // its control connection. Plugin callbacks can stop that
+                // connection, so it must not wait for them on its own runtime.
+                app.scheduler.spawn(
+                    crate::scheduler::Priority::Normal,
+                    "settings-save",
+                    app.lifetime().child(),
+                    move || { let _ = save(); },
+                );
+            } else {
+                // A headless caller has no event loop to observe completion
+                // and may exit as soon as dispatch returns. Save before
+                // answering, and report persistence failures to that caller.
+                save()?;
+            }
             Ok(crate::command::Outcome::Value(serde_json::json!(id)))
         },
     );
@@ -1120,6 +1137,10 @@ pub struct Settings {
     /// Why the file could not be read, until the app says it
     /// (`take_problem`).
     problem: Mutex<Option<String>>,
+    /// A file-backed instance fell back to memory after a load failure.
+    /// Kept even after the startup warning is consumed; unlike an explicit
+    /// in-memory instance, headless preference changes cannot claim a save.
+    saving_unavailable: Option<String>,
 }
 
 /// A TOML error in a few words, with its line: "expected `=` on line 3".
@@ -1180,6 +1201,7 @@ impl Settings {
             status: Mutex::new((0, SaveState::Idle)),
             revision: std::sync::atomic::AtomicU64::new(0),
             problem: Mutex::new(None),
+            saving_unavailable: None,
         }
     }
 
@@ -1204,6 +1226,7 @@ impl Settings {
             followed: Mutex::new(Vec::new()),
             status: Mutex::new((0, SaveState::Idle)),
             revision: std::sync::atomic::AtomicU64::new(0),
+            saving_unavailable: (!saves).then(|| problem.clone()).flatten(),
             problem: Mutex::new(problem),
         }
     }
