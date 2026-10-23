@@ -13,13 +13,13 @@ use parking_lot::Mutex;
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::entry::{Entry, EntryId, EntryKind};
-use skwir_core::fs::Statter;
+use skwir_core::fs::{Dir, Statter, reach};
 use skwir_core::location::{
     AsOf, EmptyState, EventSink, ListingEvent, Location, LocationProvider, OpenContext,
     OpenLocation,
 };
 use skwir_core::op::Change;
-use skwir_core::scheduler::Priority;
+use skwir_core::scheduler::{Lane, Priority};
 
 use crate::lang::{self, Candidate, Late, Query, Verdict};
 
@@ -63,7 +63,8 @@ impl Searches {
             let changes = changes.to_vec();
             let cancel = shared.walk.lock().clone();
             let s = Arc::clone(&shared);
-            shared.ctx.scheduler.spawn(
+            shared.ctx.scheduler.spawn_in(
+                shared.lane(),
                 Priority::Normal,
                 "query.recheck",
                 cancel.clone(),
@@ -156,6 +157,10 @@ impl LocationProvider for QueryProvider {
 pub struct Shared {
     ctx: OpenContext,
     tx: EventSink,
+    root: PathBuf,
+    /// A remote reached through an alias is known by the opened folder's
+    /// device. Keep its lane for every later read, including hydration.
+    lane: Mutex<Lane>,
     paths: Mutex<HashMap<EntryId, PathBuf>>,
     /// The current walk's token. Results are published while holding it, so
     /// once a refresh has swapped it no batch of the old walk can land.
@@ -398,6 +403,8 @@ impl QueryLocation {
         let shared = Arc::new(Shared {
             ctx: ctx.clone(),
             tx,
+            root: query.root.clone(),
+            lane: Mutex::new(reach::lane(&query.root)),
             paths: Mutex::new(HashMap::new()),
             walk: Mutex::new(lifetime.child()),
             lifetime,
@@ -417,6 +424,16 @@ impl QueryLocation {
 const ROLLOVER_CHECK: Duration = Duration::from_secs(600);
 
 impl Shared {
+    /// Mount lookup is memory-only: callers may be on the window thread.
+    fn lane(&self) -> Lane {
+        let lane = reach::lane(&self.root);
+        if lane.is_shared() {
+            *self.lane.lock()
+        } else {
+            lane
+        }
+    }
+
     /// Walk for `query`, and list again when its periods move on
     /// (`modified:today` at midnight).
     fn start(this: &Arc<Self>, location: &Location, query: Query) {
@@ -425,11 +442,55 @@ impl Shared {
             Shared::roll_over_at(this, location, when, cancel.clone());
         }
         let s = Arc::clone(this);
-        this.ctx
-            .scheduler
-            .spawn(Priority::Normal, "query.walk", cancel.clone(), move || {
-                s.run(&query, &cancel);
-            });
+        let lane = this.lane();
+        this.ctx.scheduler.spawn_in(
+            lane,
+            Priority::Normal,
+            "query.walk",
+            cancel.clone(),
+            move || Shared::begin(&s, query, cancel, lane),
+        );
+    }
+
+    /// Opening the root can wait too. Start in its known lane; if its
+    /// device reveals a remote alias, move the walk into that lane before
+    /// reading any descendants. No filesystem call holds a shared lock.
+    fn begin(this: &Arc<Self>, query: Query, cancel: CancelToken, lane: Lane) {
+        let device = Dir::open(&query.root).and_then(|dir| dir.device());
+        let device = match device {
+            Ok(device) => device,
+            Err(error) => {
+                let _walk = this.walk.lock();
+                if !cancel.is_cancelled() {
+                    this.tx.send(ListingEvent::Error(format!(
+                        "cannot search {}: {error}",
+                        query.root.display()
+                    )));
+                }
+                return;
+            }
+        };
+        if cancel.is_cancelled() {
+            return;
+        }
+        let reached = if lane.is_shared() {
+            reach::of_device(device).map_or(lane, |remote| remote.lane())
+        } else {
+            lane
+        };
+        *this.lane.lock() = reached;
+        if reached == lane {
+            this.run(&query, &cancel);
+        } else {
+            let shared = Arc::clone(this);
+            this.ctx.scheduler.spawn_in(
+                reached,
+                Priority::Normal,
+                "query.walk",
+                cancel.clone(),
+                move || shared.run(&query, &cancel),
+            );
+        }
     }
 
     /// Walk again from scratch: parsed again, relative dates (`modified<7d`,
@@ -648,16 +709,6 @@ impl Shared {
     }
 
     fn run(&self, q: &Query, cancel: &CancelToken) {
-        if !q.root.is_dir() {
-            let _walk = self.walk.lock();
-            if !cancel.is_cancelled() {
-                self.tx.send(ListingEvent::Error(format!(
-                    "query root {} is not a folder",
-                    q.root.display()
-                )));
-            }
-            return;
-        }
         let batcher = Batcher {
             shared: self,
             cancel,
@@ -987,12 +1038,13 @@ impl OpenLocation for QueryLocation {
             let s = Arc::clone(&self.shared);
             let ids = ids.to_vec();
             let cancel = s.lifetime.child();
-            self.shared
-                .ctx
-                .scheduler
-                .spawn(priority, "query.stat", cancel.clone(), move || {
-                    s.hydrate(&ids, &cancel);
-                });
+            self.shared.ctx.scheduler.spawn_in(
+                self.shared.lane(),
+                priority,
+                "query.stat",
+                cancel.clone(),
+                move || s.hydrate(&ids, &cancel),
+            );
         }
     }
 
@@ -1053,6 +1105,107 @@ mod tests {
                 | ListingEvent::Redirect(_) => {}
             }
         }
+    }
+
+    /// Stand in for a root whose opened device identified a remote alias.
+    /// With two workers only one job may enter this lane; the sender keeps
+    /// that job blocked, and dropping it also releases a failing test.
+    fn block_remote(open: &QueryLocation) -> crossbeam_channel::Sender<()> {
+        let scheduler = &open.shared.ctx.scheduler;
+        assert!(scheduler.wait_idle(Duration::from_secs(10)));
+        let lane = Lane::keyed(1);
+        *open.shared.lane.lock() = lane;
+        let (started, running) = crossbeam_channel::bounded(1);
+        let (release, waiting) = crossbeam_channel::bounded(1);
+        scheduler.spawn_in(
+            lane,
+            Priority::Normal,
+            "test.remote",
+            CancelToken::new(),
+            move || {
+                started.send(()).unwrap();
+                let _ = waiting.recv();
+            },
+        );
+        running.recv_timeout(Duration::from_secs(10)).unwrap();
+        release
+    }
+
+    fn local_work_completes(open: &QueryLocation) {
+        let scheduler = &open.shared.ctx.scheduler;
+        let (sent, received) = crossbeam_channel::bounded(1);
+        scheduler.spawn(
+            Priority::Normal,
+            "test.local",
+            CancelToken::new(),
+            move || {
+                sent.send(()).unwrap();
+            },
+        );
+        received.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert!(scheduler.wait_idle_here(Duration::from_secs(10)));
+    }
+
+    #[test]
+    fn remote_refresh_waits_in_its_lane_and_superseded_walk_is_cancelled() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "x").unwrap();
+        let (open, _) = open(tmp.path());
+        assert_eq!(until_complete(&open), (1, 0));
+        let release = block_remote(&open);
+        open.refresh();
+        open.refresh();
+        local_work_completes(&open);
+        assert!(matches!(open.rx.try_recv(), Ok(ListingEvent::Removed(ids)) if ids.len() == 1));
+        assert!(open.rx.is_empty(), "a remote walk must wait for its lane");
+
+        release.send(()).unwrap();
+        assert_eq!(until_complete(&open), (1, 0));
+        assert!(open.shared.ctx.scheduler.wait_idle(Duration::from_secs(10)));
+        assert!(open.rx.is_empty(), "only the current walk publishes");
+    }
+
+    #[test]
+    fn remote_hydration_and_rechecks_wait_in_the_roots_lane() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "x").unwrap();
+        let (open, location) = open(tmp.path());
+        assert_eq!(until_complete(&open), (1, 0));
+        let id = *open.shared.paths.lock().keys().next().unwrap();
+        let release = block_remote(&open);
+        open.hydrate(&[id], Priority::Visible);
+        let arrived = tmp.path().join("b.txt");
+        std::fs::write(&arrived, "y").unwrap();
+        let searches = Searches::default();
+        searches
+            .0
+            .lock()
+            .push((location, Arc::downgrade(&open.shared)));
+        searches.changed(&[Change::Restore {
+            path: arrived.clone(),
+        }]);
+        local_work_completes(&open);
+        assert!(open.rx.is_empty(), "remote reads must wait for their lane");
+
+        release.send(()).unwrap();
+        assert!(open.shared.ctx.scheduler.wait_idle(Duration::from_secs(10)));
+        let mut updated = false;
+        let mut added = false;
+        for event in open.rx.try_iter() {
+            match event {
+                ListingEvent::Updated(entries) => {
+                    updated |= entries.iter().any(|entry| entry.id == id);
+                }
+                ListingEvent::Added(entries) => {
+                    added |= entries
+                        .iter()
+                        .any(|entry| open.path_of(entry.id) == Some(arrived.clone()));
+                }
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+        assert!(updated, "hydration resumes when the lane is free");
+        assert!(added, "the operation's new result is rechecked");
     }
 
     /// A search that finds nothing says what it looked for, not where:

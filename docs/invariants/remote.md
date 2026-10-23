@@ -52,6 +52,10 @@ ADR-077 (which revises ADR-021).
 
 ## What differs on a network
 
+- Search root opening, traversal, operation rechecks and hydration run in
+  the root's remote lane. Keep a lane learned from the opened root's
+  device for aliases, and move traversal there before reading descendants.
+
 - Tool arguments use the receiving program's grammar. Rsync's `-e`
   command doubles an embedded matching quote and treats backslashes
   literally; it is not shell quoting. Test serialization through rsync

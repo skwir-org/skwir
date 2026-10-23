@@ -3833,3 +3833,17 @@ below), worked through in order, each committed after its checks.
   targets with warnings denied; formatting and diff whitespace;
   `just bench-check`, all budgets met. The final full release gate for
   the fourteen review fixes remains pending.
+
+### Review fix 8: search work uses remote lanes (2026-10-23)
+
+- Search opening, walks, operation rechecks and hydration now use the
+  root's remote lane. Opening a root through an alias can identify its
+  remote by device; traversal moves to that lane before reading children,
+  and later reads retain it.
+- Tests hold a synthetic remote lane and prove that refresh, rechecks and
+  hydration wait there while local work completes. Superseded refreshes
+  do not publish results after release.
+- Verified: query provider nextest tests, 4 of 4; query Clippy for all
+  targets with warnings denied; formatting and diff whitespace;
+  `just bench-check`, all budgets met. The final full release gate is
+  pending.

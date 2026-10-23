@@ -113,7 +113,7 @@ the completed set; targeted checks are recorded in `docs/STATUS-LOG.md`.
 | 5 | Privacy follows symlink targets | pending |
 | 6 | Headless settings save completes before exit | pending |
 | 7 | Explicit open targets are read off the window thread | pending |
-| 8 | Remote search work uses its server lane | pending |
+| 8 | Remote search work uses its server lane | fixed; targeted checks pass |
 | 9 | Rclone tree copies honor pause and cancellation | pending |
 | 10 | Search updates discover arriving directory descendants | pending |
 | 11 | Replaced field providers cannot repopulate current memory | pending |
