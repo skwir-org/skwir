@@ -25,6 +25,11 @@ mod draw;
 mod exchange;
 mod gltf_mesh;
 mod mesh;
+// Share only the std-only buffer boundary with the host. Depending on
+// skwir-platform would pull its document decoders into this small helper.
+// The source path is part of the workspace in packaged source builds too.
+#[path = "../../platform/src/model/buffer.rs"]
+mod model_buffer;
 mod ply;
 mod rhino;
 mod threemf;

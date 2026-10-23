@@ -3933,3 +3933,20 @@ below), worked through in order, each committed after its checks.
   targets with warnings denied; formatting and diff whitespace;
   `just bench-check`, all budgets met. The RC stand-in exercises client
   behavior; the final full release gate and real-server checks are pending.
+
+### Review fix 12: resolved glTF buffer containment (2026-10-23)
+
+- Host sandbox inputs and worker reads share a small, std-only policy:
+  resolve the model's actual parent and each buffer target, then allow
+  only descendant regular files. Internal file and directory symlinks
+  still work; outside, prefix-sibling and dangling targets are refused.
+  The host binds approved files under their relative aliases.
+- Host tests inspect the sandbox input list; worker subprocess tests
+  independently check rejected and allowed links. The model/buffer
+  staging-link layout used on macOS was tested on Linux, not in Seatbelt.
+- Verified: platform/model targeted nextest, 5 of 5; targeted Clippy;
+  `just lint-all` including Windows and macOS compilation; `just test-all`,
+  2014 passed, 25 skipped; formatting and diff whitespace. A benchmark
+  run overlapping compilation missed budgets; repeating the exact binary
+  after the build finished met every budget. No budgets changed. Final
+  full release checks on all fourteen fixes remain pending.

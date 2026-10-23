@@ -117,7 +117,7 @@ the completed set; targeted checks are recorded in `docs/STATUS-LOG.md`.
 | 9 | Rclone tree copies honor pause and cancellation | fixed; targeted checks pass |
 | 10 | Search updates discover arriving directory descendants | fixed; targeted checks pass |
 | 11 | Replaced field providers cannot repopulate current memory | pending |
-| 12 | glTF buffers stay within the model directory | pending |
+| 12 | glTF buffers stay within the model directory | fixed; targeted checks pass |
 | 13 | glTF buffer URIs are decoded as URIs | pending |
 | 14 | Rsync arguments use its own grammar | fixed; targeted checks pass |
 

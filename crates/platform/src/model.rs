@@ -9,6 +9,8 @@ use skwir_core::{CancelToken, thumbs::Image};
 
 use crate::inspection::limits;
 
+mod buffer;
+
 /// Triangles drawn at most: a detailed print is a few million.
 pub const TRIANGLES: usize = 8_000_000;
 /// A model file read at most, and what a package's models unpack to.
@@ -103,8 +105,9 @@ pub const WORKER: crate::process::Worker = crate::process::Worker {
 
 /// The files a glTF model at `path` keeps its buffers in, each with its
 /// path from the model's folder: those its JSON names by a plain relative
-/// path below that folder, as the helper reads them (`gltf_mesh::buffer`),
-/// that are files. Read here only to say what the sandbox lets it read.
+/// path below that folder, resolving to files still below it, as the
+/// helper reads them (`gltf_mesh::buffer`). Read here only to say what
+/// the sandbox lets it read; bind resolved files under their URI's names.
 fn gltf_buffers(path: &Path) -> Vec<(PathBuf, PathBuf)> {
     let Ok(text) = crate::file::read_regular(path, limits::TEXT_INPUT as u64) else {
         return Vec::new();
@@ -112,21 +115,15 @@ fn gltf_buffers(path: &Path) -> Vec<(PathBuf, PathBuf)> {
     let Ok(json) = serde_json::from_slice::<serde_json::Value>(&text) else {
         return Vec::new();
     };
-    let dir = path.parent().unwrap_or(Path::new("."));
+    let Some(folder) = buffer::Folder::of_model(path) else {
+        return Vec::new();
+    };
     json.get("buffers")
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(|buffer| buffer.get("uri")?.as_str())
-        .filter(|uri| !uri.contains(':'))
-        .map(Path::new)
-        .filter(|relative| {
-            relative
-                .components()
-                .all(|c| matches!(c, std::path::Component::Normal(_)))
-        })
-        .filter(|relative| std::fs::metadata(dir.join(relative)).is_ok_and(|m| m.is_file()))
-        .map(|relative| (dir.join(relative), relative.to_owned()))
+        .filter_map(|uri| folder.resolve(uri))
         .collect()
 }
 
@@ -332,6 +329,61 @@ fn mesh_from(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn gltf_sandbox_inputs_keep_only_resolved_files_inside_the_model_folder() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join("model");
+        let outside = tmp.path().join("model sibling");
+        std::fs::create_dir_all(folder.join("buffers")).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(folder.join("buffers/mesh.bin"), b"inside").unwrap();
+        std::fs::write(outside.join("mesh.bin"), b"outside").unwrap();
+        symlink("buffers/mesh.bin", folder.join("inside.bin")).unwrap();
+        symlink("buffers", folder.join("inside folder")).unwrap();
+        symlink(outside.join("mesh.bin"), folder.join("outside.bin")).unwrap();
+        symlink(&outside, folder.join("outside folder")).unwrap();
+        symlink("missing.bin", folder.join("dangling.bin")).unwrap();
+
+        let model = folder.join("shape.gltf");
+        let uris = [
+            "buffers/mesh.bin",
+            "inside.bin",
+            "inside folder/mesh.bin",
+            "outside.bin",
+            "outside folder/mesh.bin",
+            "dangling.bin",
+            "buffers",
+            "../model sibling/mesh.bin",
+            "https://example.invalid/mesh.bin",
+        ];
+        let buffers: Vec<_> = uris
+            .iter()
+            .map(|uri| serde_json::json!({ "uri": uri }))
+            .collect();
+        std::fs::write(
+            &model,
+            serde_json::to_vec(&serde_json::json!({ "buffers": buffers })).unwrap(),
+        )
+        .unwrap();
+        let resolved = folder.join("buffers/mesh.bin").canonicalize().unwrap();
+        let expected: Vec<_> = uris[..3]
+            .iter()
+            .map(|uri| (resolved.clone(), PathBuf::from(uri)))
+            .collect();
+        assert_eq!(gltf_buffers(&model), expected);
+
+        // Seatbelt reaches the model through a staging link. Its buffers
+        // still belong to the actual model's folder, not the staging one.
+        let staging = tmp.path().join("staging");
+        std::fs::create_dir(&staging).unwrap();
+        let alias = staging.join("input.gltf");
+        symlink(&model, &alias).unwrap();
+        assert_eq!(gltf_buffers(&alias), expected);
+    }
 
     /// A mesh as `--mesh` writes it.
     fn written(positions: &[[f32; 3]], triangles: &[[u32; 3]]) -> Vec<u8> {

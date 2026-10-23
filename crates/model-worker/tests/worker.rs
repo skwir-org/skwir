@@ -256,6 +256,60 @@ fn gltf_places_its_nodes_and_reads_only_its_own_buffers() {
     assert_eq!(answer.facts["triangles"], 24);
 }
 
+#[cfg(unix)]
+#[test]
+fn gltf_buffer_links_must_resolve_inside_the_models_actual_folder() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let folder = tmp.path().join("model");
+    let outside = tmp.path().join("model sibling");
+    std::fs::create_dir_all(folder.join("buffers")).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    let buffer = gltf_buffer();
+    std::fs::write(folder.join("buffers/mesh.bin"), &buffer).unwrap();
+    std::fs::write(outside.join("mesh.bin"), &buffer).unwrap();
+    symlink("buffers/mesh.bin", folder.join("inside.bin")).unwrap();
+    symlink("buffers", folder.join("inside folder")).unwrap();
+    symlink(outside.join("mesh.bin"), folder.join("outside.bin")).unwrap();
+    symlink(&outside, folder.join("outside folder")).unwrap();
+    symlink("missing.bin", folder.join("dangling.bin")).unwrap();
+    for uri in ["outside.bin", "outside folder/mesh.bin", "dangling.bin"] {
+        let model = write(
+            &folder,
+            "shape.gltf",
+            gltf_json(uri, buffer.len()).as_bytes(),
+        );
+        let reason = run(&model, "gltf", &[]).unwrap_err();
+        assert!(
+            reason.contains("not a file beside the model"),
+            "{uri}: {reason}"
+        );
+    }
+    for uri in ["inside.bin", "inside folder/mesh.bin"] {
+        let model = write(
+            &folder,
+            "shape.gltf",
+            gltf_json(uri, buffer.len()).as_bytes(),
+        );
+        assert_eq!(run(&model, "gltf", &[]).unwrap().facts["triangles"], 24);
+    }
+
+    // The macOS sandbox supplies aliases for both the model and buffers.
+    // Read through that layout too: the actual model is the containment root.
+    let staging = tmp.path().join("staging");
+    std::fs::create_dir(&staging).unwrap();
+    let model = write(
+        &folder,
+        "shape.gltf",
+        gltf_json("inside.bin", buffer.len()).as_bytes(),
+    );
+    let alias = staging.join("input.gltf");
+    symlink(&model, &alias).unwrap();
+    symlink(folder.join("buffers/mesh.bin"), staging.join("inside.bin")).unwrap();
+    assert_eq!(run(&alias, "gltf", &[]).unwrap().facts["triangles"], 24);
+}
+
 #[test]
 fn a_3mf_builds_its_items_from_components_in_other_parts() {
     let dir = tempfile::tempdir().unwrap();

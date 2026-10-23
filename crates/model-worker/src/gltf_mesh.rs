@@ -13,7 +13,7 @@ use std::path::Path;
 const DEPTH: usize = 64;
 
 /// A buffer the model names by URI.
-fn buffer(uri: &str, dir: &Path, most: u64) -> Result<Vec<u8>, String> {
+fn buffer(uri: &str, folder: &crate::model_buffer::Folder, most: u64) -> Result<Vec<u8>, String> {
     if let Some(data) = uri.strip_prefix("data:") {
         let (_, encoded) = data
             .split_once(";base64,")
@@ -22,15 +22,10 @@ fn buffer(uri: &str, dir: &Path, most: u64) -> Result<Vec<u8>, String> {
             .decode(encoded)
             .map_err(|e| format!("a buffer's data URI: {e}"));
     }
-    // A file beside the model, by a relative path that stays below it.
-    let relative = Path::new(uri);
-    let plain = relative
-        .components()
-        .all(|c| matches!(c, std::path::Component::Normal(_)));
-    if uri.contains(':') || !plain {
-        return Err(format!("the buffer {uri} is not a file beside the model"));
-    }
-    crate::mesh::read_bounded(&dir.join(relative), most)
+    let (resolved, _) = folder
+        .resolve(uri)
+        .ok_or_else(|| format!("the buffer {uri} is not a file beside the model"))?;
+    crate::mesh::read_bounded(&resolved, most)
 }
 
 pub fn read(bytes: &[u8], path: &Path, most_bytes: u64, mesh: &mut Mesh) -> Result<(), String> {
@@ -40,13 +35,14 @@ pub fn read(bytes: &[u8], path: &Path, most_bytes: u64, mesh: &mut Mesh) -> Resu
             return Err(format!("meshes compressed with {required} are not read"));
         }
     }
-    let dir = path.parent().unwrap_or(Path::new("."));
+    let folder = crate::model_buffer::Folder::of_model(path)
+        .ok_or("the model's folder cannot be resolved")?;
     let mut buffers = Vec::new();
     let mut total = 0u64;
     for buffer_def in gltf.document.buffers() {
         let data = match buffer_def.source() {
             gltf::buffer::Source::Bin => gltf.blob.clone().ok_or("the GLB has no binary chunk")?,
-            gltf::buffer::Source::Uri(uri) => buffer(uri, dir, most_bytes)?,
+            gltf::buffer::Source::Uri(uri) => buffer(uri, &folder, most_bytes)?,
         };
         total += data.len() as u64;
         if total > most_bytes {

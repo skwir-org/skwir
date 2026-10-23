@@ -191,7 +191,13 @@ A name that says nothing is not a binary file.
   `model::BYTES` and `model::TRIANGLES`, follows glTF buffers only below
   the model's folder, and returns a line of measures and a PNG. Without
   the helper the plugin declines the mesh, leaving it to a desktop
-  thumbnailer.
+  thumbnailer. The sandbox inputs and helper reads share one glTF buffer
+  boundary (`platform/src/model/buffer.rs`): resolve the actual model's
+  parent and each buffer, and allow only regular files still beneath that
+  parent. A lexical relative name alone is insufficient. Internal file
+  and directory links work; outside and dangling links grant no access.
+  Bind approved files under their original relative names, preserving the
+  sandbox's model and buffer aliases on macOS.
 - **A model of exact surfaces is meshed in the helper** (STEP and IGES,
   by ogeom, ADR-069):
   - each face keeps its own points: smooth shading averages normals at
