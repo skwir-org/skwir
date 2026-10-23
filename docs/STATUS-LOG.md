@@ -3586,3 +3586,43 @@ below), worked through in order, each committed after its checks.
   Not tested end to end: the Small files a far server then shows (the
   test's servers are on this machine, near; naming one far would resolve
   a name through the user's DNS).
+
+### Servers nearby (ADR-084)
+
+- The user chose "a place, browsed while shown". Nearby ends the Network
+  section (Linux): `nearby:`, the `remote` plugin's, lists each server
+  found as a place leading to its address. Avahi over the system bus
+  (zbus, blocking): a browser per service type (Avahi 0.8's
+  `ServiceBrowserPrepare` then `Start`, listened to first; an older
+  one's `ServiceBrowserNew`), each item resolved (IPv4 first; an IPv6
+  address of the link alone dropped), `path=` from its TXT; let go of,
+  the browsers freed and the connection closed (which ends the wait on
+  its signals). wsdd: `/run/wsdd.socket` where the system runs it, else
+  `wsdd --no-host --discovery --listen` on a socket of the runtime
+  folder, killed with the place; `list` asked every 3 s. One row a
+  server, by its address. Complete once both said what they had, 3 s at
+  most.
+- Deviation: GVfs's `network:///` is not read for WS-Discovery, as the
+  plan said. Tried on the test's network: GVfs listed what Avahi
+  published, but its `wsdd:///` listed nothing while the wsdd it reads
+  (the system's socket, waited for) had found the PC. Read directly,
+  wsdd works without GVfs; its daemon is what GVfs reads anyway.
+- The test's network (`tools/test/nearby.sh`, in `just remote-check`):
+  user, network, mount and pid namespaces; a veth pair to a second
+  network namespace standing for a Windows PC, wsdd announcing it there
+  with a UUID of its own (wsdd takes the machine's otherwise, and two on
+  one interface never hear each other: it turns multicast loopback off);
+  a system bus at the usual path in a /run of its own, Avahi on it (its
+  runtime folder must be its user's: `avahi` mapped to root through a
+  passwd bound over the namespace's), `avahi-publish` announcing an SMB
+  and a WebDAV server. `nearby_lists_what_avahi_and_wsdd_find`: the three
+  listed ("Test Files (WebDAV)", "Test NAS (SMB)", "WINPC (SMB)"), each
+  a place leading to `dav://10.89.0.1:8080/dav`, `smb://10.89.0.1:445/`
+  and `smb://10.89.0.2/`; let go of (as the view's next sync does, which
+  a headless test does itself), the wsdd Skwir started ended. 2 of 2
+  pass. Not checked: that Avahi's browsers were freed (only that the
+  call is made and the connection closed).
+- A window on Xvfb, started inside the test's network: Nearby at the end
+  of the Network section, its three servers listed as folders, the Type
+  column saying "WebDAV server" and "SMB server". Not opened from there
+  (none of them serves).

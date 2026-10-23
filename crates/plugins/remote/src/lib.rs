@@ -22,6 +22,7 @@ pub mod kio_copy;
 mod known;
 pub mod lan;
 mod mounter;
+pub mod nearby;
 pub mod passwords;
 mod provider;
 pub mod rclone;
@@ -627,6 +628,13 @@ impl Remotes {
             place.menu.extend(forget_item(&server.address, &remembered));
             places.push(place);
         }
+        // The servers announced on the local network, found while it is
+        // shown (ADR-084): where Avahi and wsdd run.
+        if cfg!(target_os = "linux") {
+            let mut place = Place::new(GROUP, "Nearby", "network-workgroup", nearby::location());
+            place.key = Some("remote:nearby".into());
+            places.push(place);
+        }
         state.proved_seen = proved;
         drop(state);
         app.registry.places.replace_owner(ID, places);
@@ -918,6 +926,8 @@ impl Plugin for RemotePlugin {
                 Arc::new(provider::Provider::new(alias, self.remotes.clone(), app)),
             );
         }
+        // Servers found on the local network, while shown (ADR-084).
+        app.register_provider(ID, Arc::new(nearby::Provider));
         let remotes = self.remotes.clone();
         app.commands.register::<ConnectArgs, _>(
             ID,

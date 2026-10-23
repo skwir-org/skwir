@@ -244,6 +244,24 @@ ADR-077 (which revises ADR-021).
   SFTP the `Host` entries of the user's ssh configuration. A folder after
   the server is not completed: the server would be asked.
 
+## Servers nearby (ADR-084)
+
+- The Nearby place (`nearby:`, `remote::nearby`) lists the servers
+  announced on the local network while a pane shows it, and browses
+  nothing otherwise: let go of, Avahi's browsers are freed and its
+  connection closed, the wsdd Skwir started stopped. Through Avahi's
+  browsers on the system bus and wsdd (its daemon's `/run/wsdd.socket`,
+  else `wsdd --no-host --discovery` on a socket of the runtime folder);
+  never a discovery protocol of Skwir's own. Each server is a place
+  (`EntryId::place`) leading to its address, one row however often it is
+  seen.
+- Tested on a network of the test's own (`tools/test/nearby.sh`): user,
+  network, mount and pid namespaces, a veth pair to a namespace standing
+  for a PC, a system bus of its own with Avahi on it (its user mapped to
+  root through a passwd of the namespace's), wsdd announcing the PC with
+  a UUID of its own. Two wsdd on one interface never hear each other.
+  Never the user's Avahi, bus or network.
+
 ## Connectors
 
 - One trait (`remote::connector::Connector`): connect an address's top

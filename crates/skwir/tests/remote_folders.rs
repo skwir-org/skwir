@@ -1492,6 +1492,74 @@ fn a_folder_cut_short_by_its_server_goes_on_by_rsync() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// The Nearby place (ADR-084) lists what Avahi and wsdd find, each server
+/// once, leading to its address; let go of, the wsdd it started ends. Run
+/// by `tools/test/nearby.sh`, in namespaces of its own (`just
+/// remote-check`): an SMB and a WebDAV server announced by an Avahi of the
+/// test's own, a Windows PC by wsdd across a veth pair.
+#[test]
+fn nearby_lists_what_avahi_and_wsdd_find() {
+    if std::env::var_os("SKWIR_TEST_NEARBY").is_none() {
+        eprintln!("skipped: run by tools/test/nearby.sh");
+        return;
+    }
+    let base = fixture("nearby");
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    app.plugins.add(
+        Arc::new(RemotePlugin::with(Remotes::with(Vec::new()))),
+        &app,
+    );
+    let nearby = skwir_plugin_remote::nearby::location();
+    until(&app, 10, "the Network section offers it", || {
+        app.registry
+            .places
+            .find(|p| p.group == "network" && p.location == nearby)
+            .is_some()
+    });
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &nearby).unwrap();
+    let names = ["Test Files (WebDAV)", "Test NAS (SMB)", "WINPC (SMB)"].map(str::to_owned);
+    until_shown(&app, pane, 60, &names, "the servers announced");
+    let leads: Vec<(String, String)> = {
+        let ws = app.workspace.read();
+        let shown = ws.pane(pane).unwrap();
+        let open = shown.open.clone().expect("open");
+        let mut leads: Vec<(String, String)> = shown
+            .listing
+            .iter()
+            .map(|e| {
+                assert!(e.is_place(), "a place, no file");
+                let to = open.location_of(e.id).expect("leads somewhere");
+                (e.name.to_string_lossy().into_owned(), to.to_string())
+            })
+            .collect();
+        leads.sort();
+        leads
+    };
+    assert_eq!(
+        leads,
+        [
+            (names[0].clone(), "dav://10.89.0.1:8080/dav".to_owned()),
+            (names[1].clone(), "smb://10.89.0.1:445/".to_owned()),
+            (names[2].clone(), "smb://10.89.0.2/".to_owned()),
+        ]
+    );
+    // Let go of: nothing is asked of the network any more.
+    let discovering = || {
+        std::fs::read_dir("/proc").unwrap().flatten().any(|p| {
+            std::fs::read(p.path().join("cmdline"))
+                .is_ok_and(|c| c.windows(11).any(|w| w == b"--discovery"))
+        })
+    };
+    assert!(discovering(), "wsdd started to find PCs");
+    app.navigate(pane, &Location::from_path(&base)).unwrap();
+    // As the window's view does at its next draw: what it left is let go.
+    app.keep_locations(pane, &[]);
+    until(&app, 20, "the wsdd it started ended", || !discovering());
+    drop(app);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// A file copied down from a server through its mount proves it fast
 /// (ADR-077: Automatic's Small files, where it is not known near), and
 /// the plugin words the mount again at the plan's end.

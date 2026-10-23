@@ -138,8 +138,9 @@ working in an area, also read that area's rules (see
   file-system protocol: a remote folder is a mount an installed tool
   makes (sshfs, GVfs, KIO's kio-fuse, rclone, the system's), which the
   `remote` plugin starts when an address is opened, and Skwir holds no
-  credential (ADR-077, ADR-081, `docs/invariants/remote.md`). A new use
-  of the network needs an ADR of its own.
+  credential (ADR-077, ADR-081, `docs/invariants/remote.md`). Servers
+  nearby are found by Avahi and wsdd while the Nearby place is shown
+  (ADR-084). A new use of the network needs an ADR of its own.
 - **Every system (ADR-035).** Skwir is built for Linux, macOS and
   Windows; `just lint-all` compiles all three (`check-cross`).
   - Code only one system has sits behind `cfg` where it is used, with the
@@ -477,7 +478,7 @@ just bench-check           generate bench-data/ on demand and enforce budgets
 just idle-pss              idle memory and first frame on this display (ADR-033)
 just smoke                 the release window on an X display of its own (CI)
 just a11y-check            what a screen reader hears of it, read over AT-SPI
-just remote-check          remote folders against servers on this machine (sshfs, GVfs, KIO, rclone from nixpkgs; NFS and AFP in namespaces; AFC against a stand-in iPhone)
+just remote-check          remote folders against servers on this machine (sshfs, GVfs, KIO, rclone from nixpkgs; NFS and AFP in namespaces; AFC against a stand-in iPhone; servers found nearby on a network of its own)
 just mtp-check             a phone plugged in over MTP, through a GVfs of its own (writes a folder there, removed after)
 just screenshots           the README's screenshots, made again (docs/images)
 just deny / notices        dependency licences and advisories; the packages' notices

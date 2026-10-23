@@ -2813,6 +2813,7 @@ mod tests {
     }
 
     /// The executor's events until one `last` accepts, ten seconds at most.
+    #[cfg(target_os = "linux")]
     fn events_until(executor: &Executor, last: impl Fn(&ExecEvent) -> bool) -> Vec<ExecEvent> {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         let mut seen = Vec::new();
