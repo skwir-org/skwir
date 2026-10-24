@@ -127,7 +127,9 @@ arguments = { type = "object", properties = { minimum = { type = "integer" } } }
 Skwir refuses a manifest (and logs why) unless:
 
 - `id` is 2 to 64 characters: lowercase letters, digits and dashes,
-  starting with a letter;
+  starting with a letter, and none of the namespaces Skwir names its own
+  commands and settings under (`core`, `ui`, `settings`, `plugins`, `tab`…:
+  `skwir_plugin_api::manifest::RESERVED`);
 - every field `key` and command `name` is `<id>.<something>`;
 - `[run]` names exactly one of `module` and `program` (paths relative to
   the plugin's folder);

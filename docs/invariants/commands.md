@@ -168,6 +168,9 @@ control plugin's `run`:
 
 ## Plugins from outside (ADR-045, ADR-046, ADR-047)
 
+- A plugin from outside never takes one of skwir's own namespaces as its
+  id (`manifest::RESERVED`, kept whole by `crates/skwir/tests/outside_ids.rs`),
+  nor a command another owner registered (`register_dynamic`).
 - A bundled helper's sandbox can read the package's private runtime,
   read-only (ADR-052). Find that runtime from Skwir's own executable and
   its package marker, never from a plugin's enclosing folders. Bind only

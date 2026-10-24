@@ -181,19 +181,7 @@ impl Manifest {
     /// # Errors
     /// What does not hold, in words.
     pub fn check(&self) -> Result<(), String> {
-        let id_ok = self.id.len() >= 2
-            && self.id.len() <= 64
-            && self.id.starts_with(|c: char| c.is_ascii_lowercase())
-            && self
-                .id
-                .chars()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
-        if !id_ok {
-            return Err(format!(
-                "id `{}`: lowercase letters, digits and dashes, starting with a letter",
-                self.id
-            ));
-        }
+        check_id(&self.id)?;
         if !(OLDEST..=VERSION).contains(&self.api) {
             return Err(format!(
                 "it speaks version {} of the protocol; skwir speaks {OLDEST} to {VERSION}",
@@ -255,6 +243,46 @@ impl Manifest {
     }
 }
 
+/// The namespaces of skwir's own commands, settings and fields that are
+/// not a built-in plugin's id: the core's and the shell's, and those a
+/// built-in plugin names some of its own under. A plugin from outside may
+/// take none as its id, whose commands and fields are named under it: they
+/// would sit among skwir's, and a command of the same name would stand for
+/// skwir's own. A built-in plugin's id is refused where plugins are found
+/// (`skwir_extend::discover`), and `crates/skwir/tests/outside_ids.rs`
+/// checks that this list leaves out none of the namespaces of skwir's
+/// commands and settings. `keys` is the keymap's (`keys.like`).
+pub const RESERVED: &[&str] = &[
+    "archive", "core", "keyboard", "keys", "names", "notes", "player", "plugins", "privacy",
+    "reading", "settings", "tab", "ui",
+];
+
+/// Whether `id` can be a plugin's: lowercase letters, digits and dashes,
+/// starting with a letter, and none of skwir's own namespaces
+/// ([`RESERVED`]).
+///
+/// # Errors
+/// Why it cannot, in words.
+pub fn check_id(id: &str) -> Result<(), String> {
+    let id_ok = id.len() >= 2
+        && id.len() <= 64
+        && id.starts_with(|c: char| c.is_ascii_lowercase())
+        && id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !id_ok {
+        return Err(format!(
+            "id `{id}`: lowercase letters, digits and dashes, starting with a letter"
+        ));
+    }
+    if RESERVED.contains(&id) {
+        return Err(format!(
+            "id `{id}`: skwir's own commands and settings are named under it"
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,6 +311,11 @@ mod tests {
         assert_eq!(manifest("word-count").check(), Ok(()));
         assert!(manifest("Word").check().is_err());
         assert!(manifest("x").check().is_err());
+        // Skwir's own namespaces: `plugins.set_enabled`, `settings.apply`,
+        // the shell's `ui.*`.
+        for id in ["plugins", "settings", "ui", "tab"] {
+            assert!(manifest(id).check().unwrap_err().contains("skwir's own"));
+        }
         let mut both = manifest("both");
         both.run.program = Some("bin/both".into());
         assert!(both.check().is_err());

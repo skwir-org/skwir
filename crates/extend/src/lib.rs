@@ -28,6 +28,10 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 pub use external::External;
+/// Whether an id can be a plugin's from outside (lowercase letters, digits
+/// and dashes, none of skwir's own namespaces): what `discover` asks of a
+/// manifest, beside the ids `taken`.
+pub use skwir_plugin_api::manifest::check_id;
 
 /// The helper that runs a plugin's WebAssembly module (ADR-046).
 pub const MODULE_WORKER: skwir_platform::process::Worker = skwir_platform::process::Worker {
@@ -56,9 +60,10 @@ pub fn folders() -> Vec<PathBuf> {
 
 /// The plugins of `folders`: each folder in them that holds a
 /// `plugin.toml`, in name order. One whose manifest does not hold
-/// together, or whose id is `taken` (a plugin built into skwir, or one
-/// found before), is left out, and the log says why. Reads the folders:
-/// at startup, before the window.
+/// together, whose id is one of skwir's own namespaces ([`check_id`]), or
+/// whose id is `taken` (a plugin built into skwir, or one found before),
+/// is left out, and the log says why. Reads the folders: at startup,
+/// before the window.
 pub fn discover(folders: &[PathBuf], taken: &[&str]) -> Vec<Arc<External>> {
     let mut ids: HashSet<String> = taken.iter().map(|id| (*id).to_owned()).collect();
     let mut found = Vec::new();

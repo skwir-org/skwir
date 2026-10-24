@@ -146,5 +146,16 @@ fn a_manifest_that_does_not_hold_together_is_left_out() {
     )
     .unwrap();
     std::fs::write(other.join("x.wasm"), b"\0asm").unwrap();
+    // Named as skwir's own are named: its `plugins.set_enabled` would be
+    // the plugin's, the Plugins page's switch reaching it.
+    let own = plugins.join("own");
+    std::fs::create_dir_all(&own).unwrap();
+    std::fs::write(
+        own.join("plugin.toml"),
+        "id = \"plugins\"\ntitle = \"Plugins\"\n[run]\nmodule = \"x.wasm\"\n\
+         [[commands]]\nname = \"plugins.set_enabled\"\ntitle = \"Turn on or off\"\n",
+    )
+    .unwrap();
+    std::fs::write(own.join("x.wasm"), b"\0asm").unwrap();
     assert!(skwir_extend::discover(&[plugins], &["tags"]).is_empty());
 }
