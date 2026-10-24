@@ -57,7 +57,10 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   nothing acts, and an agent's call of it asks the user first. A window
   command (`ui.*`) is the user's alone unless `commands.rs` lists it among
   those that show or act: one that answers a dialog or presses for the
-  user must never be an agent's.
+  user must never be an agent's. The player's `player.request` (play,
+  pause, seek, the volume) shows: sound from the window is the window's,
+  so an agent plays and sets the volume unasked, as the media keys do
+  (decided 2026-10-24).
 - **Data.** A command that only answers whoever asks (an agent's
   question, a menu's items, Properties' rows, the timeline's bars) is
   registered `.data()`: it reads, and run by a person it would show

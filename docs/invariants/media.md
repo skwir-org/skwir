@@ -226,7 +226,7 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 
 - Neighbours (same-kind files before and after the one shown, in pane
   order) are found when the listing or entry changes
-  (`Shell::media_neighbours`, bounded), never while painting. Previous and
+  (`Shell::neighbours`, `media.rs`, bounded), never while painting. Previous and
   Next show only when there are any.
 - Stepping (`ui.media_step`) moves the pane's selection and the preview
   follows, so the list shows what plays; it keeps playing if it was

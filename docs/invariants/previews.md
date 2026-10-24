@@ -104,8 +104,10 @@ A name that says nothing is not a binary file.
 - Inside, the file is at `sandbox::inside_name`, never its own name; what
   a program would read from the name (a compressed file's one member) is
   passed with `--stem`.
-- The PDF readers and the player are sessions of their own, outside the
-  sandbox (ADR-004, ADR-005, ADR-016).
+- The PDF readers and the player are sessions of their own (ADR-004,
+  ADR-005, ADR-016). A reader's worker runs isolated like the helpers
+  above (`sandbox::untrusted_reading`, [reader.md](reader.md)); the
+  player's runs outside the sandbox.
 
 ## Pictures
 
