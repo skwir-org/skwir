@@ -34,14 +34,16 @@ impl Plugin for PreviewPlugin {
         app.previews.register(self.id(), Arc::new(Provider));
     }
 }
+/// A mail, by type (AGENTS.md, "Types"): `.eml` is the database's.
+static MAIL: skwir_platform::mime::Types = skwir_platform::mime::Types::new(&["message/rfc822"]);
+
 struct Provider;
 impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         "email"
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        inspection::extension(&req.entry.path) == "eml"
-            || req.mime.as_deref() == Some("message/rfc822")
+        MAIL.holds(&req.entry.path, req.mime.as_deref())
     }
     fn extract(
         &self,

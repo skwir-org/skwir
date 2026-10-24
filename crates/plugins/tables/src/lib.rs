@@ -64,6 +64,10 @@ mod spreadsheet;
 mod sqlite;
 mod starts;
 
+/// Tables written as text, by type.
+static TEXT_TABLES: skwir_platform::mime::Types =
+    skwir_platform::mime::Types::new(&["text/csv", "text/tab-separated-values"]);
+
 struct Provider {
     /// Spreadsheets are `LibreOffice`'s to draw as pages, when it is there.
     pages: bool,
@@ -82,7 +86,10 @@ impl PreviewProvider for Provider {
             return !(self.pages
                 && skwir_platform::preview::shown_as_pages(&req.entry.path, req.mime.as_deref()));
         }
-        matches!(extension.as_str(), "csv" | "tsv" | "jsonl" | "ndjson")
+        // By type (AGENTS.md, "Types"); JSON Lines has none in the
+        // database, so its name is all there is to go by.
+        TEXT_TABLES.holds(&req.entry.path, req.mime.as_deref())
+            || matches!(extension.as_str(), "jsonl" | "ndjson")
             || sqlite::EXTENSIONS.contains(&extension.as_str())
             || req
                 .mime

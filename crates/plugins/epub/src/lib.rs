@@ -91,7 +91,7 @@ impl ThumbnailProvider for Cover {
         Stage::Fallback
     }
     fn accepts(&self, req: &ThumbRequest) -> bool {
-        inspection::extension(&req.entry.path) == "epub"
+        EPUB.holds(&req.entry.path, req.mime.as_deref())
     }
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
         let mut container = Container::open(&req.entry.resolve()?, cancel)?;
@@ -112,6 +112,10 @@ impl ThumbnailProvider for Cover {
 }
 /// A part of the book's XML, parsed once it is known not to nest deeper
 /// than the parser's recursion can go (`inspection::xml_depth`).
+/// An EPUB, by type (AGENTS.md, "Types").
+static EPUB: skwir_platform::mime::Types =
+    skwir_platform::mime::Types::new(&["application/epub+zip"]);
+
 fn parse_xml(text: &str) -> anyhow::Result<roxmltree::Document<'_>> {
     inspection::xml_depth(text.as_bytes())?;
     Ok(roxmltree::Document::parse(text)?)
@@ -172,7 +176,7 @@ impl PreviewProvider for Provider {
         "epub"
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        inspection::extension(&req.entry.path) == "epub"
+        EPUB.holds(&req.entry.path, req.mime.as_deref())
     }
     /// A picture a chapter named, by its member: read through the same
     /// bounded reader, and never outside the container.

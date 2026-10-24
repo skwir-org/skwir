@@ -29,16 +29,25 @@ impl Plugin for PreviewPlugin {
         app.previews.register(self.id(), Arc::new(Provider));
     }
 }
+/// What is read as data, by type: the database's names for JSON, JSON5,
+/// YAML and TOML.
+static DATA: skwir_platform::mime::Types = skwir_platform::mime::Types::new(&[
+    "application/json",
+    "application/json5",
+    "application/yaml",
+    "application/toml",
+]);
+
 struct Provider;
 impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         "structured-data"
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        matches!(
-            inspection::extension(&req.entry.path).as_str(),
-            "json" | "jsonc" | "json5" | "yaml" | "yml" | "toml"
-        )
+        // By type (AGENTS.md, "Types"); JSON with comments has none in the
+        // database, so its name is all there is to go by.
+        DATA.holds(&req.entry.path, req.mime.as_deref())
+            || inspection::extension(&req.entry.path) == "jsonc"
     }
     fn inspect(
         &self,
