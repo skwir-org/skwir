@@ -455,20 +455,58 @@ impl ChecksumsPlugin {
         };
         self.changed(app);
         if let Some((lane, lifetime)) = lane {
-            let this = Arc::clone(self);
-            let weak = app.weak();
-            let job = lifetime.child();
-            app.scheduler
-                .spawn(Priority::Normal, "checksums", job, move || {
-                    if let Some(app) = weak.upgrade() {
-                        while this.read_next(&app, lane, &lifetime) {}
+            self.run(app, lane, lifetime);
+        }
+    }
+
+    /// The lane's next read, a job of its own in the remote lane of the
+    /// file it reads (remote.md): a server that stops answering holds a
+    /// worker of its own, never a shared one. Reads stay one at a time,
+    /// the last asked first; none waiting, the lane ends.
+    fn run(self: &Arc<Self>, app: &App, lane: u64, lifetime: CancelToken) {
+        let next = {
+            let mut state = self.state.lock();
+            match state.asked.last() {
+                Some(ask) if state.lane == Some(lane) => {
+                    Some(skwir_core::fs::reach::lane(&ask.file.path))
+                }
+                _ => {
+                    if state.lane == Some(lane) {
+                        state.lane = None;
                     }
+                    None
+                }
+            }
+        };
+        let Some(in_lane) = next else { return };
+        let this = Arc::clone(self);
+        let weak = app.weak();
+        let job = lifetime.child();
+        app.scheduler
+            .spawn_in(in_lane, Priority::Normal, "checksums", job, move || {
+                let Some(app) = weak.upgrade() else {
                     let mut state = this.state.lock();
                     if state.lane == Some(lane) {
                         state.lane = None;
                     }
-                });
-        }
+                    return;
+                };
+                // Asked meanwhile, a file of another lane is read in its own.
+                let here = this
+                    .state
+                    .lock()
+                    .asked
+                    .last()
+                    .is_some_and(|ask| skwir_core::fs::reach::lane(&ask.file.path) == in_lane);
+                if !here || this.read_next(&app, lane, &lifetime) {
+                    this.run(&app, lane, lifetime);
+                } else {
+                    let mut state = this.state.lock();
+                    if state.lane == Some(lane) {
+                        state.lane = None;
+                    }
+                }
+            });
     }
 
     /// The lane's turn: read the file asked last, for what is asked of it;
@@ -956,7 +994,10 @@ mod tests {
             .into_iter()
             .find(|(label, _)| *label == "checksums")
             .map_or(0, |(_, stats)| stats.runs);
-        assert_eq!(lanes, 1, "one job held a worker for them all");
+        assert_eq!(
+            lanes, 3,
+            "a job a file asked, one at a time, each in its file's lane"
+        );
         // The file not there said so, as a message.
         assert!(
             app.take_notifications()
