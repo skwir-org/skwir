@@ -6,7 +6,8 @@
 // The version, and in a release build (what is run and shipped) the
 // commit it was built from: a debug build (the tests) is not built again
 // for a commit, and a release build only once per commit. Outside a git
-// checkout (a source archive, Nix's build) the version alone.
+// checkout of skwir (a source archive, Nix's build, the release's archive
+// unpacked inside the AUR's own checkout) the version alone.
 
 /// Tell the crate being built its `SKWIR_BUILD`.
 fn emit_build() {
@@ -23,10 +24,13 @@ fn emit_build() {
 /// script run again when another is: HEAD's file (another branch, or a
 /// commit on none), the folder of the branch's ref (a commit, its ref
 /// written there, or made there from `packed-refs`) and `packed-refs`.
+/// `None` unless the checkout is skwir's own, whose top holds this file:
+/// git answers for whatever repository the folder is in.
 fn commit() -> Option<String> {
     let output = std::process::Command::new("git")
         .args([
             "rev-parse",
+            "--show-toplevel",
             "--absolute-git-dir",
             "--path-format=absolute",
             "--git-common-dir",
@@ -39,6 +43,10 @@ fn commit() -> Option<String> {
         .filter(|output| output.status.success())?;
     let text = String::from_utf8(output.stdout).ok()?;
     let mut lines = text.lines();
+    let top = std::path::Path::new(lines.next()?);
+    if !top.join("tools/build/identity.rs").is_file() {
+        return None;
+    }
     let (git, common, hash) = (lines.next()?, lines.next()?, lines.next()?);
     let git = std::path::Path::new(git);
     let common = std::path::Path::new(common);
