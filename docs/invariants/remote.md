@@ -303,6 +303,38 @@ ADR-077 (which revises ADR-021).
   a UUID of its own. Two wsdd on one interface never hear each other.
   Never the user's Avahi, bus or network.
 
+## Servers' configurations (ADR-086)
+
+- The tools' own configurations are the store: a remote added in Skwir
+  is rclone's, in rclone's configuration, which Skwir changes only
+  through rclone's remote control (`rclone_config::Session`, a `rclone
+  rcd` on a socket of the runtime folder, its own for the form's
+  while), never by writing the file. Skwir keeps no list or secret of
+  it. A session a Skwir gone left serving is stopped by the next one
+  (`config-<pid>-<n>.sock`).
+- A secret goes to rclone in a request's body, a password command's
+  answer or its environment, never a command line. It reaches the plugin
+  only from the window's form (`App::fill`): a command's arguments never
+  carry one (`rclone_forms::Prefill::refusal`), a form never shows one
+  kept (`Kind::Secret { kept }`), and one typed again is the only one
+  written.
+- Forms are made from what rclone describes (`config/providers`), never
+  from a list of kinds in Skwir; what a form leaves at rclone's default
+  is not written. rclone's own questions are asked as it puts them; the
+  plugin answers only that the browser is here and whether to sign in
+  again (`config_is_local`, `config_refresh_token`).
+- A remote Skwir names is one its address holds (`rclone://name/`).
+- The configuration's password: the keyring's (`rclone:configuration`)
+  where the user kept it, else asked of the window (`ConfigAsk`, through
+  rclone's `--password-command`); never asked for a listing nobody asked
+  for.
+- Tested with configurations of the tests' own: nextest gives every test
+  `RCLONE_CONFIG`, `SSH_AUTH_SOCK` and AWS's files of the tests' own
+  (`tools/test/isolate-xdg.sh`), and a test names its own configuration
+  (`Rclone { config }`). A sign-in is tried with a browser of the test's
+  own first on the `PATH` (it notes the page, opens nothing): never a real
+  provider, never the user's browser.
+
 ## Connectors
 
 - One trait (`remote::connector::Connector`): connect an address's top
