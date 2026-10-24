@@ -179,10 +179,29 @@ mod imp {
         }
     }
 
+    /// Windows' `ERROR_PIPE_BUSY`: every instance of the pipe is taken.
+    const PIPE_BUSY: i32 = 231;
+    /// How long a client waits for an instance of a busy pipe: the window
+    /// makes the next one as soon as it took a client (`accept`).
+    const BUSY_PATIENCE: std::time::Duration = std::time::Duration::from_secs(5);
+
+    /// A busy pipe is a window that listens, between two clients: asked
+    /// again shortly, as tokio's documentation has it, never taken for
+    /// one that does not listen.
     pub async fn connect(address: &Address) -> Result<NamedPipeClient, NotListening> {
-        ClientOptions::new()
-            .open(address.0.as_os_str())
-            .map_err(|_| NotListening)
+        let deadline = tokio::time::Instant::now() + BUSY_PATIENCE;
+        loop {
+            match ClientOptions::new().open(address.0.as_os_str()) {
+                Ok(client) => return Ok(client),
+                Err(error)
+                    if error.raw_os_error() == Some(PIPE_BUSY)
+                        && tokio::time::Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+                Err(_) => return Err(NotListening),
+            }
+        }
     }
 }
 
