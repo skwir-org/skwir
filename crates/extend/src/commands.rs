@@ -155,14 +155,7 @@ fn ask(
     let paths: Vec<PathBuf> = refs.iter().map(|r| r.path.clone()).collect();
     let call = Call::new(paths, runner.granted, cancel);
     let entries = (0..refs.len())
-        .map(|n| {
-            let mime = refs[n]
-                .path
-                .file_name()
-                .and_then(skwir_platform::mime::by_name)
-                .map(|m| m.0);
-            call.describe(n, mime)
-        })
+        .map(|n| call.describe(n, crate::type_of(&refs[n].path)))
         .collect();
     let params = CommandParams {
         command: name.to_owned(),

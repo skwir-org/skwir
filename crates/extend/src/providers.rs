@@ -130,7 +130,7 @@ impl FieldProvider for Fields {
             return Ok(None);
         }
         let call = Call::new(vec![path.to_owned()], self.runner.granted, cancel.clone());
-        let mime = path.file_name().and_then(mime::by_name).map(|m| m.0);
+        let mime = crate::type_of(path);
         let params = FieldParams {
             key: key.to_owned(),
             file: call.describe(0, mime),

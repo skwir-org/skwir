@@ -93,6 +93,15 @@ pub fn discover(folders: &[PathBuf], taken: &[&str]) -> Vec<Arc<External>> {
     found
 }
 
+/// The type a plugin is told a file at `path` has: what it opens has (a
+/// link's target, `fs::content_path`), by its name and, where that is
+/// ambiguous, its bytes; none for a special file or a link to nothing.
+/// Never the type its own name says. On a worker: it stats the file.
+pub(crate) fn type_of(path: &std::path::Path) -> Option<String> {
+    let content = skwir_core::fs::content_path(path)?;
+    skwir_platform::mime::identify(content.file_name()?, &content).map(|mime| mime.0)
+}
+
 /// `text`, kept for as long as skwir runs: a plugin's id and names, which
 /// the registries take as `&'static str`. Each text is kept once.
 pub(crate) fn intern(text: &str) -> &'static str {
