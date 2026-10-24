@@ -161,3 +161,94 @@ fn a_held_key_repeats_only_what_its_command_declares() {
     let said = serde_json::to_value(&spec).unwrap();
     assert!(said.get("repeats").is_none(), "{said}");
 }
+
+#[test]
+fn an_argument_a_command_does_not_take_is_refused_never_dropped() {
+    use serde_json::json;
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let refused = |name: &str, args: serde_json::Value| {
+        let invocation = Invocation {
+            name: name.into(),
+            args,
+        };
+        let checked = app.commands.check(&invocation).expect_err("refused");
+        let dispatched = app.dispatch(&invocation).expect_err("refused");
+        assert_eq!(checked.to_string(), dispatched.to_string());
+        checked.to_string()
+    };
+    // A misspelled `entries` would leave them out, and the command would
+    // act on the pane's selection instead.
+    let said = refused("trash", json!({ "entry": ["/nowhere/x’ y.txt"] }));
+    assert!(said.contains("unknown field `entry`"), "{said}");
+    assert!(said.contains("`entries`"), "names what it takes: {said}");
+    // Names a flattened struct brings are taken; others are not.
+    let set_access = |args| Invocation {
+        name: "set_access".into(),
+        args,
+    };
+    assert!(
+        app.commands
+            .check(&set_access(
+                json!({ "mode": "644", "entries": [], "inside": true })
+            ))
+            .is_ok()
+    );
+    refused("set_access", json!({ "mode": "644", "entrie": [] }));
+    // A command that takes none refuses any; one taking any JSON takes all.
+    app.commands
+        .register::<NoArgs, _>("probe", "probe.none", "None", "", |_, _| Ok(Outcome::Done));
+    app.commands
+        .register::<serde_json::Value, _>("probe", "probe.any", "Any", "", |_, _| {
+            Ok(Outcome::Done)
+        });
+    refused("probe.none", json!({ "pane": 1 }));
+    assert!(
+        app.dispatch(&Invocation {
+            name: "probe.any".into(),
+            args: json!({ "whatever": [1, 2] }),
+        })
+        .is_ok()
+    );
+    // Enum arguments: the names of every variant are taken.
+    #[derive(serde::Deserialize, schemars::JsonSchema)]
+    #[serde(tag = "action", rename_all = "snake_case")]
+    #[allow(dead_code)] // Read by serde only.
+    enum Step {
+        Go { to: String },
+        Stop { now: bool },
+    }
+    app.commands
+        .register_raw::<Step, _>("probe", "probe.step", "Step", "", |_, _| Ok(Outcome::Done));
+    assert!(
+        app.dispatch(&Invocation {
+            name: "probe.step".into(),
+            args: json!({ "action": "go", "to": "x" }),
+        })
+        .is_ok()
+    );
+    refused("probe.step", json!({ "action": "go", "to": "x", "too": 1 }));
+}
+
+#[test]
+fn a_plugin_from_outside_takes_no_other_owners_command() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    app.commands
+        .register::<NoArgs, _>("core", "probe.kept", "Kept", "", |_, _| {
+            Ok(Outcome::Value("core's".into()))
+        });
+    app.commands.register_dynamic(
+        "outsider",
+        "probe.kept",
+        "Taken",
+        "",
+        serde_json::json!({ "type": "object" }),
+        |_, _| Ok(Outcome::Value("the outsider's".into())),
+    );
+    let Outcome::Value(answer) = app.dispatch(&Invocation::new("probe.kept")).unwrap() else {
+        panic!("a value");
+    };
+    assert_eq!(answer, "core's");
+    assert_eq!(&*app.commands.get("probe.kept").unwrap().owner, "core");
+}

@@ -235,6 +235,132 @@ impl ArgsSchema {
     }
 }
 
+/// The names of the arguments a typed command takes, read from its schema
+/// the first time it is called: serde leaves out a name its type does not
+/// have, so a misspelled `entries` would be dropped and the command would
+/// act on the selection. Refused instead, as `register_dynamic` refuses
+/// one its schema does not hold.
+struct Takes {
+    schema: ArgsSchema,
+    names: std::sync::OnceLock<Option<std::collections::BTreeSet<String>>>,
+}
+
+impl Takes {
+    fn new(schema: ArgsSchema) -> Arc<Self> {
+        Arc::new(Takes {
+            schema,
+            names: std::sync::OnceLock::new(),
+        })
+    }
+
+    /// Whether every argument `args` names is one the command takes;
+    /// arguments that are not an object are left to serde to refuse.
+    fn check(&self, args: &serde_json::Value) -> Result<(), serde_json::Error> {
+        use serde::de::Error as _;
+        let Some(object) = args.as_object() else {
+            return Ok(());
+        };
+        let names = self
+            .names
+            .get_or_init(|| property_names(self.schema.get().as_value()));
+        match names {
+            Some(names) => match object.keys().find(|key| !names.contains(*key)) {
+                Some(unknown) => Err(serde_json::Error::custom(format!(
+                    "unknown field `{unknown}`{}",
+                    expected(names)
+                ))),
+                None => Ok(()),
+            },
+            None => Ok(()),
+        }
+    }
+}
+
+/// ", expected `a` or `b`", as serde says it.
+fn expected(names: &std::collections::BTreeSet<String>) -> String {
+    let names: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
+    match names.as_slice() {
+        [] => ", there are none".to_owned(),
+        [one] => format!(", expected {one}"),
+        [rest @ .., last] => format!(", expected one of {}, {last}", rest.join(", ")),
+    }
+}
+
+/// The names an object `root` describes may hold, or `None` when it may
+/// hold any (a map, a `serde_json::Value`, a schema this does not read).
+/// Flattened fields arrive as `allOf`, enums as `oneOf`/`anyOf`, each
+/// variant's names taken together; `$ref`s are followed into `$defs`.
+fn property_names(root: &serde_json::Value) -> Option<std::collections::BTreeSet<String>> {
+    use serde_json::Value;
+    fn walk(
+        root: &Value,
+        schema: &Value,
+        names: &mut std::collections::BTreeSet<String>,
+        depth: u8,
+    ) -> Option<()> {
+        // A cycle of `$ref`s, or nesting no argument type has: take any.
+        if depth > 16 {
+            return None;
+        }
+        let object = schema.as_object()?;
+        if let Some(reference) = object.get("$ref").and_then(Value::as_str) {
+            let target = reference
+                .strip_prefix("#/$defs/")
+                .and_then(|name| root.get("$defs")?.get(name))
+                .or_else(|| {
+                    let name = reference.strip_prefix("#/definitions/")?;
+                    root.get("definitions")?.get(name)
+                })?;
+            walk(root, target, names, depth + 1)?;
+        }
+        match object.get("additionalProperties") {
+            None | Some(Value::Bool(false)) => {}
+            Some(_) => return None,
+        }
+        if let Some(properties) = object.get("properties") {
+            names.extend(properties.as_object()?.keys().cloned());
+        }
+        if let Some(all) = object.get("allOf") {
+            for member in all.as_array()? {
+                walk(root, member, names, depth + 1)?;
+            }
+        }
+        for key in ["oneOf", "anyOf"] {
+            if let Some(choices) = object.get(key) {
+                for choice in choices.as_array()? {
+                    // A choice that is no object (`null` of an `Option`, a
+                    // variant named by a string) names nothing.
+                    if may_be_object(choice) {
+                        walk(root, choice, names, depth + 1)?;
+                    }
+                }
+            }
+        }
+        let described = ["$ref", "properties", "allOf", "oneOf", "anyOf"]
+            .iter()
+            .any(|key| object.contains_key(*key));
+        // An object said to be one, with nothing said of what it holds,
+        // holds nothing (`NoArgs`); anything else is not read here.
+        (described || object.get("type") == Some(&Value::from("object"))).then_some(())
+    }
+    fn may_be_object(schema: &Value) -> bool {
+        match schema.get("type") {
+            Some(Value::String(t)) => t == "object",
+            Some(Value::Array(types)) => types.iter().any(|t| t == "object"),
+            Some(_) => false,
+            None => {
+                schema.get("const").is_none_or(Value::is_object)
+                    && schema
+                        .get("enum")
+                        .and_then(Value::as_array)
+                        .is_none_or(|values| values.iter().any(Value::is_object))
+            }
+        }
+    }
+    let mut names = std::collections::BTreeSet::new();
+    walk(root, root, &mut names, 0).map(|()| names)
+}
+
 impl std::ops::Deref for ArgsSchema {
     type Target = schemars::Schema;
     fn deref(&self) -> &schemars::Schema {
@@ -483,7 +609,13 @@ pub enum CommandError {
 /// A name registered by a second owner shadows the first rather than
 /// replacing it: when that owner is disabled, the earlier command comes
 /// back instead of the name disappearing. The same owner registering a
-/// name again replaces its own command.
+/// name again replaces its own command. A plugin from outside
+/// (`register_dynamic`) shadows nothing: a name another owner holds is
+/// refused to it.
+///
+/// Arguments are checked before a handler runs: an object's names must be
+/// ones the command's schema holds (a typed command's, read from its type),
+/// so a misspelled argument is refused, never dropped.
 #[derive(Default)]
 pub struct CommandRegistry {
     /// Per name, every owner's registration; the last one is active.
@@ -506,15 +638,18 @@ impl CommandRegistry {
         F: Fn(A, &App) -> anyhow::Result<Outcome> + Send + Sync + 'static,
     {
         let n: Arc<str> = name.into();
+        let takes = Takes::new(ArgsSchema::of::<A>());
+        let check = Arc::clone(&takes);
         let h: Handler = Arc::new(move |args, app| {
-            let typed: A =
-                serde_json::from_value(args).map_err(|reason| CommandError::InvalidArgs {
-                    name: n.clone(),
-                    reason,
-                })?;
+            let invalid = |reason| CommandError::InvalidArgs {
+                name: n.clone(),
+                reason,
+            };
+            check.check(&args).map_err(invalid)?;
+            let typed: A = serde_json::from_value(args).map_err(invalid)?;
             handler(typed, app)
         });
-        self.insert::<A>(owner, name, title, description, h)
+        self.insert::<A>(owner, name, title, description, takes, h)
     }
 
     /// Register a command whose handler takes its arguments as they came,
@@ -533,16 +668,18 @@ impl CommandRegistry {
         F: Fn(serde_json::Value, &App) -> anyhow::Result<Outcome> + Send + Sync + 'static,
     {
         let n: Arc<str> = name.into();
+        let takes = Takes::new(ArgsSchema::of::<A>());
+        let check = Arc::clone(&takes);
         let h: Handler = Arc::new(move |args, app| {
-            serde_json::from_value::<A>(args.clone()).map_err(|reason| {
-                CommandError::InvalidArgs {
-                    name: n.clone(),
-                    reason,
-                }
-            })?;
+            let invalid = |reason| CommandError::InvalidArgs {
+                name: n.clone(),
+                reason,
+            };
+            check.check(&args).map_err(invalid)?;
+            serde_json::from_value::<A>(args.clone()).map_err(invalid)?;
             handler(args, app)
         });
-        self.insert::<A>(owner, name, title, description, h)
+        self.insert::<A>(owner, name, title, description, takes, h)
     }
 
     /// Register a command whose arguments `schema` describes, handled as
@@ -604,6 +741,24 @@ impl CommandRegistry {
         });
         let schema = serde_json::from_value(schema)
             .unwrap_or_else(|_| schemars::json_schema!({ "type": "object" }));
+        // A plugin from outside never shadows a command another owner
+        // registered (the core's, the window's, a plugin's): it would be
+        // handed what was asked of that one, the user's settings or
+        // selection (ADR-045). Its registration is refused, and the name
+        // keeps answering as it did.
+        if let Some(holder) = self
+            .commands
+            .read()
+            .get(name)
+            .and_then(|stack| stack.iter().find(|(spec, _, _)| &*spec.owner != owner))
+        {
+            tracing::warn!(command = name, owner, holder = %holder.0.owner, "a plugin from outside may not take another's command");
+            return Declared {
+                registry: self,
+                name: name.into(),
+                owner: owner.into(),
+            };
+        }
         self.insert_spec(
             owner,
             name,
@@ -621,13 +776,18 @@ impl CommandRegistry {
         name: &str,
         title: &str,
         description: &str,
+        takes: Arc<Takes>,
         h: Handler,
     ) -> Declared<'_>
     where
         A: DeserializeOwned + JsonSchema + 'static,
     {
-        let v: Validator = Arc::new(|args| serde_json::from_value::<A>(args.clone()).map(|_| ()));
-        self.insert_spec(owner, name, title, description, ArgsSchema::of::<A>(), v, h)
+        let schema = takes.schema.clone();
+        let v: Validator = Arc::new(move |args| {
+            takes.check(args)?;
+            serde_json::from_value::<A>(args.clone()).map(|_| ())
+        });
+        self.insert_spec(owner, name, title, description, schema, v, h)
     }
 
     #[allow(clippy::too_many_arguments)] // A command's declaration, whole.
