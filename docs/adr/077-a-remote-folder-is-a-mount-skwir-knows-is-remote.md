@@ -130,7 +130,12 @@ Revises ADR-021: its direction kept, its steps decided.
    go of one, list the servers its configuration names. Which connector
    opens an address is a setting, an order (`remote.connectors`): sshfs,
    GVfs, rclone, then fstab. A mount already there is used first. Adding
-   a protocol is a scheme a connector maps, or a connector.
+   a protocol is a scheme a connector maps, or a connector. (Amended
+   2026-10-24: a connector that fails without asking the user anything
+   leaves the address to the next installed, as the order says; one
+   that asked speaks for the attempt. An NFS address's top is its whole
+   path, as its export may be of several parts that only the server
+   says; the connector tells the export from what it mounted.)
    - **sshfs**: `sftp://`, through the user's ssh (configuration, agent,
      known hosts), reconnecting, a server gone told within a minute.
    - **GVfs**: `gio mount`, its questions read from its output and
