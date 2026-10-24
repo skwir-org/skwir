@@ -7,20 +7,28 @@
 //! choice.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
-use gpui::{AnyElement, Context, Div, ScrollHandle, SharedString, div, prelude::*, px};
+use gpui::{
+    AnyElement, Context, Div, ScrollStrategy, SharedString, UniformListScrollHandle, div,
+    prelude::*, px,
+};
 use skwir_core::app::ClashQuestion;
 use skwir_core::op::clash::{Act, Answer, Choice, Clash, FileChoice, FolderChoice, Policy, Side};
 
 use crate::controls::{self, ButtonStyle};
 use crate::keymap;
-use crate::modal::{self, ListMove};
+use crate::modal::{self, ListMove, Rows};
 use crate::review::{Review, ReviewFocus};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-/// The clashes listed at most: the others follow the choice for all.
-const SHOWN: usize = 200;
+/// The clashes' list: every one, two lines a row (its name, then both
+/// sides), only those in sight built.
+const ROWS: Rows = Rows {
+    height: 48.,
+    shown: 7,
+};
 
 /// A file's choices for all, and for one (where "if newer" is seen).
 const FILES: [Choice; 4] = [
@@ -43,7 +51,7 @@ pub struct Clashes {
     /// The files' choice for all, the folders' (where one is a folder
     /// onto a folder), then the clashes shown.
     cursor: usize,
-    scroll: ScrollHandle,
+    scroll: UniformListScrollHandle,
 }
 
 fn label(choice: Choice) -> &'static str {
@@ -89,7 +97,7 @@ impl Clashes {
             folders: FolderChoice::default(),
             each: HashMap::new(),
             cursor: 0,
-            scroll: ScrollHandle::new(),
+            scroll: UniformListScrollHandle::new(),
         }
     }
 
@@ -165,13 +173,13 @@ impl Clashes {
     }
 
     fn rows(&self) -> usize {
-        self.heads() + self.shown().len().min(SHOWN)
+        self.heads() + self.shown().len()
     }
 
     fn move_cursor(&mut self, mv: ListMove) {
         self.cursor = mv.from(self.cursor.min(self.rows() - 1), self.rows());
         if let Some(row) = self.cursor.checked_sub(self.heads()) {
-            self.scroll.scroll_to_item(row);
+            self.scroll.scroll_to_item(row, ScrollStrategy::Nearest);
         }
     }
 
@@ -335,6 +343,101 @@ fn choices(
     )
 }
 
+/// The clashes' rows in `range`, the only ones drawn: each its name
+/// (under the folder merged it is in), both sides, and its choices.
+fn clash_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Vec<AnyElement> {
+    let Some(Review::Clashes(clashes)) = shell.reviews.front() else {
+        return Vec::new();
+    };
+    let theme = cx.global::<Theme>().clone();
+    let now = jiff::Zoned::now();
+    let shown = clashes.shown();
+    let mut rows = Vec::with_capacity(range.len());
+    for n in range {
+        let Some(&i) = shown.get(n) else {
+            break;
+        };
+        let clash = &clashes.question.clashes[i];
+        // Where it is, from the folder the plan goes to.
+        let mut depth = 0;
+        let mut root = clash;
+        while let Some(parent) = root.inside {
+            depth += 1;
+            root = &clashes.question.clashes[parent];
+        }
+        let base = root.there.path.parent().unwrap_or(&root.there.path);
+        let name = clash
+            .there
+            .path
+            .strip_prefix(base)
+            .unwrap_or(&clash.there.path)
+            .to_string_lossy()
+            .into_owned();
+        let (yours, theirs) = (said(&clash.source, &now), said(&clash.there, &now));
+        let newer_mark = |is: bool| if is { " · newer" } else { "" };
+        let later = newer(clash);
+        let earlier = matches!((clash.source.modified, clash.there.modified),
+            (Some(coming), Some(staying)) if coming < staying);
+        let detail = format!(
+            "Yours: {yours}{} — There: {theirs}{}",
+            newer_mark(later),
+            newer_mark(earlier)
+        );
+        let options: &[Choice] = if clash.folders() { &FOLDERS } else { &FILE };
+        rows.push(
+            div()
+                // Known by its clash, not by where it stands.
+                .id(("clash-row", i))
+                .h(px(ROWS.height))
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .rounded_md()
+                .when(clashes.cursor == clashes.heads() + n, |d| d.bg(theme.hover))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .pl(px(16. * depth as f32))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .min_w_0()
+                                .text_sm()
+                                .line_height(px(20.))
+                                .when(clash.source.folder, |d| {
+                                    d.child(controls::glyph("folder", theme.text_muted, 14.))
+                                })
+                                .child(div().min_w_0().truncate().child(name)),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .line_height(px(16.))
+                                .text_color(theme.text_muted)
+                                .truncate()
+                                .child(detail),
+                        ),
+                )
+                .child(choices(
+                    format!("clash-{i}").into(),
+                    Row::Clash(i),
+                    options,
+                    clashes.outcome(i),
+                    &theme,
+                    cx,
+                ))
+                .into_any_element(),
+        );
+    }
+    rows
+}
+
 pub fn render(
     clashes: &Clashes,
     handles: &ReviewFocus,
@@ -342,7 +445,6 @@ pub fn render(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
-    let now = jiff::Zoned::now();
     let (verb, done) = clashes.words();
     let first = clashes.question.clashes.first();
     let dest = first
@@ -405,101 +507,14 @@ pub fn render(
             cx,
         ));
     }
-    let shown = clashes.shown();
-    let mut list = div()
-        .id("clashes")
-        .track_scroll(&clashes.scroll)
-        .overflow_y_scroll()
-        .max_h(px(360.))
-        .flex()
-        .flex_col()
-        .gap(px(2.));
-    for (n, &i) in shown.iter().take(SHOWN).enumerate() {
-        let clash = &clashes.question.clashes[i];
-        // Where it is, from the folder the plan goes to.
-        let mut depth = 0;
-        let mut root = clash;
-        while let Some(parent) = root.inside {
-            depth += 1;
-            root = &clashes.question.clashes[parent];
-        }
-        let base = root.there.path.parent().unwrap_or(&root.there.path);
-        let name = clash
-            .there
-            .path
-            .strip_prefix(base)
-            .unwrap_or(&clash.there.path)
-            .to_string_lossy()
-            .into_owned();
-        let (yours, theirs) = (said(&clash.source, &now), said(&clash.there, &now));
-        let newer_mark = |is: bool| if is { " · newer" } else { "" };
-        let later = newer(clash);
-        let earlier = matches!((clash.source.modified, clash.there.modified),
-            (Some(coming), Some(staying)) if coming < staying);
-        let detail = format!(
-            "Yours: {yours}{} — There: {theirs}{}",
-            newer_mark(later),
-            newer_mark(earlier)
-        );
-        let options: &[Choice] = if clash.folders() { &FOLDERS } else { &FILE };
-        list = list.child(
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .when(at_cursor(clashes.heads() + n), |d| d.bg(theme.hover))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .pl(px(16. * depth as f32))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_1()
-                                .min_w_0()
-                                .text_sm()
-                                .when(clash.source.folder, |d| {
-                                    d.child(controls::glyph("folder", theme.text_muted, 14.))
-                                })
-                                .child(div().min_w_0().truncate().child(name)),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(theme.text_muted)
-                                .truncate()
-                                .child(detail),
-                        ),
-                )
-                .child(choices(
-                    format!("clash-{i}").into(),
-                    Row::Clash(i),
-                    options,
-                    clashes.outcome(i),
-                    &theme,
-                    cx,
-                )),
-        );
-    }
-    if shown.len() > SHOWN {
-        list = list.child(
-            div()
-                .px_2()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child(format!(
-                    "… and {} more, as chosen for all",
-                    crate::format::thousands(shown.len() - SHOWN)
-                )),
-        );
-    }
+    let list = ROWS.list(
+        "clashes",
+        clashes.shown().len(),
+        &clashes.scroll,
+        &theme,
+        |shell, range, _, cx| clash_rows(shell, range, cx),
+        cx,
+    );
     let panel = modal::panel("clashes", 720., &theme)
         .aria_label("Names already taken")
         .p_3()
@@ -674,6 +689,30 @@ mod tests {
         assert_eq!(
             beside.head_names(),
             ("Folders, for all", "Folders onto folders, for all")
+        );
+    }
+
+    /// Every name taken is a row the keys reach, however many: the list
+    /// scrolls, never cut at a count.
+    #[test]
+    fn every_name_taken_is_listed() {
+        let clashes = (0..1_000)
+            .map(|n| clash(&format!("/example/dest/it's {n}.txt"), false, None, true))
+            .collect();
+        let mut d = Clashes::new(ClashQuestion {
+            id: 1,
+            title: "copy to /example/dest".into(),
+            clashes,
+        });
+        assert_eq!(d.shown().len(), 1_000);
+        assert_eq!(d.rows(), 1 + 1_000);
+        d.move_cursor(ListMove::Last);
+        assert_eq!(d.cursor, 1_000);
+        d.step_choice(1);
+        assert_eq!(
+            d.choice(999),
+            Choice::Replace,
+            "the last one chosen for itself"
         );
     }
 
