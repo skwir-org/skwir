@@ -852,24 +852,36 @@ fn local_path(base: &std::path::Path, href: &str) -> Option<std::path::PathBuf> 
     let href = percent_encoding::percent_decode_str(href)
         .decode_utf8()
         .ok()?;
-    // Decoded, it may name a root or another machine (`%5C%5Cserver`):
-    // joined, it would replace the folder, and canonicalizing it would
-    // reach the machine before anything checked it was beside the
-    // document.
-    let named = std::path::Path::new(href.as_ref());
-    if href.starts_with(['/', '\\'])
-        || named.components().any(|c| {
-            matches!(
-                c,
-                std::path::Component::Prefix(_) | std::path::Component::RootDir
-            )
-        })
-    {
+    // Decoded, it may name a root or another machine (`%5C%5Cserver`), or
+    // climb out of the folder (`../../net/host/a.png`): refused by name.
+    // Joined, the first would replace the folder, and canonicalizing
+    // either would reach the machine, an automount or a mount that stopped
+    // answering before anything checked it was beside the document.
+    if href.starts_with(['/', '\\']) {
         return None;
     }
+    let named = below(std::path::Path::new(href.as_ref()))?;
     let base = skwir_core::os_path::canonical(base).ok()?;
-    let path = skwir_core::os_path::canonical(base.join(href.as_ref())).ok()?;
+    let path = skwir_core::os_path::canonical(base.join(named)).ok()?;
     path.starts_with(&base).then_some(path)
+}
+
+/// What a relative name names below the folder it is read in, its `.` and
+/// `..` taken by name alone, without the filesystem: `None` when it climbs
+/// above that folder. Links inside the folder are the caller's to resolve.
+fn below(named: &std::path::Path) -> Option<std::path::PathBuf> {
+    let mut parts = Vec::new();
+    for part in named.components() {
+        match part {
+            std::path::Component::Normal(part) => parts.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                parts.pop()?;
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => return None,
+        }
+    }
+    Some(parts.iter().collect())
 }
 /// Resolve only local descendants of the document directory, including symlinks.
 pub fn local_image(base: &std::path::Path, href: &str, cancel: &CancelToken) -> Option<Image> {
@@ -1503,5 +1515,18 @@ mod tests {
         assert!(local_path(&docs, "\\\\server\\share\\x.png").is_none());
         assert!(local_path(&docs, "%5C%5Cserver%5Cshare%5Cx.png").is_none());
         assert!(local_path(&docs, "%2Fetc%2Fhostname").is_none());
+    }
+
+    #[test]
+    fn a_name_climbing_out_of_the_folder_is_refused_by_name() {
+        let below = |name: &str| below(std::path::Path::new(name));
+        let here = |parts: &[&str]| Some(parts.iter().collect::<std::path::PathBuf>());
+        assert_eq!(below("nested/../it's here.png"), here(&["it's here.png"]));
+        assert_eq!(below("./a/./b/../café.png"), here(&["a", "café.png"]));
+        // Refused before anything is resolved on disk: an automount, a
+        // mount that stopped answering, are never reached.
+        assert_eq!(below("../../net/host/a.png"), None);
+        assert_eq!(below("a/../../b.png"), None);
+        assert_eq!(below("/net/host/a.png"), None);
     }
 }
