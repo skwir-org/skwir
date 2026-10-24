@@ -255,7 +255,7 @@ impl PreviewProvider for MediaPreviews {
                 req.seconds,
                 req.max_side,
                 req.fit,
-                "video-v4",
+                "video-v5",
             ),
         )?;
         if let Some(preview) = cached(&self.cache, &key, req.max_side) {
@@ -271,7 +271,7 @@ impl PreviewProvider for MediaPreviews {
                 "-select_streams",
                 "v:0",
                 "-show_entries",
-                "format=duration:stream=width,height:stream_side_data=rotation",
+                "format=duration:stream=width,height,sample_aspect_ratio:stream_side_data=rotation",
                 "-of",
                 "json",
             ])
@@ -289,7 +289,8 @@ impl PreviewProvider for MediaPreviews {
             .as_u64()
             .zip(stream["height"].as_u64())
             .and_then(|(w, h)| Some((u32::try_from(w).ok()?, u32::try_from(h).ok()?)))
-            .filter(|&(w, h)| w > 0 && h > 0);
+            .filter(|&(w, h)| w > 0 && h > 0)
+            .map(|size| square_pixels(size, stream["sample_aspect_ratio"].as_str()));
         // A phone's film is stored the other way and turned when decoded.
         let turned = stream["side_data_list"]
             .as_array()
@@ -847,6 +848,21 @@ enum Frame {
     Keyframe(f64),
 }
 
+/// A film's size as it is shown, its pixels made square: its stored size
+/// stretched by its `sample_aspect_ratio` (`64:45`, a widescreen DVD's), as
+/// ffprobe says it. One unknown (`0:1`, `N/A`) is square.
+fn square_pixels((width, height): (u32, u32), ratio: Option<&str>) -> (u32, u32) {
+    let ratio = ratio
+        .and_then(|ratio| ratio.split_once(':'))
+        .and_then(|(num, den)| Some((num.parse::<u64>().ok()?, den.parse::<u64>().ok()?)))
+        .filter(|&(num, den)| num > 0 && den > 0);
+    let Some((num, den)) = ratio else {
+        return (width, height);
+    };
+    let shown = (u64::from(width) * num + den / 2) / den;
+    (u32::try_from(shown).unwrap_or(u32::MAX).max(1), height)
+}
+
 /// `frame` of `path`, written in `scratch` (`ffmpeg_picture`): where.
 fn ffmpeg_frame(
     ffmpeg: &Path,
@@ -893,8 +909,11 @@ fn ffmpeg_frame(
             "1",
             "-vf",
         ])
+        // Its pixels made square first, as the player shows them (a
+        // widescreen DVD's 720 × 576 is 1024 × 576), then within `side`,
+        // never enlarged: the poster is the film's shape.
         .arg(format!(
-            "{filters}scale='min(iw,{side})':'min(ih,{side})':force_original_aspect_ratio=decrease,setsar=1"
+            "{filters}scale=w='max(1,round(iw*sar*min(1,{side}/max(iw*sar,ih))))':h='max(1,round(ih*min(1,{side}/max(iw*sar,ih))))',setsar=1"
         ))
         .args(["-threads", "1"]);
     // A film's frame, already a lossy decode, is kept as JPEG at high
@@ -1493,6 +1512,60 @@ mod tests {
         assert!(
             backend.render(&req, &token).is_err(),
             "must invalidate cached output"
+        );
+    }
+
+    #[test]
+    fn a_film_is_laid_out_with_square_pixels() {
+        assert_eq!(square_pixels((720, 576), Some("64:45")), (1024, 576));
+        assert_eq!(square_pixels((1440, 1080), Some("4:3")), (1920, 1080));
+        for unknown in [None, Some("0:1"), Some("N/A"), Some("1:0"), Some("1:1")] {
+            assert_eq!(square_pixels((720, 576), unknown), (720, 576));
+        }
+    }
+
+    #[test]
+    #[ignore = "requires installed FFmpeg and ffprobe; run explicitly for preview changes"]
+    fn an_anamorphic_film_s_poster_has_its_shape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("Synthetic d'Example DVD.mkv");
+        let token = CancelToken::new();
+        // A widescreen DVD's frames: 720 × 576, each pixel 64:45 wide.
+        process::run(
+            Command::new(process::required("ffmpeg").unwrap())
+                .args([
+                    "-nostdin",
+                    "-v",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "testsrc2=size=720x576:rate=4",
+                    "-t",
+                    "1",
+                    "-vf",
+                    "setsar=64/45",
+                    "-c:v",
+                    "ffv1",
+                ])
+                .arg(&path),
+            &token,
+            RENDER_TIMEOUT,
+        )
+        .unwrap();
+        let backend = MediaPreviews::new(Cache::new(tmp.path()).namespace("preview"));
+        let mut req = request(&path);
+        req.mime = Some("video/x-matroska".into());
+        req.seconds = Some(0.0);
+        let poster = backend.render(&req, &token).unwrap();
+        let PreviewInfo::Video { size, .. } = poster.info else {
+            panic!("a film");
+        };
+        assert_eq!(size, Some((1024, 576)));
+        let (width, height) = (poster.image.width, poster.image.height);
+        assert!(
+            (f64::from(width) / f64::from(height) - 16. / 9.).abs() < 0.01,
+            "{width} × {height}"
         );
     }
 
