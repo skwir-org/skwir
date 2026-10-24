@@ -53,6 +53,10 @@ struct Clipboard {
     /// Places cut or copied (a tag's): pasted in a folder, copied there as
     /// their location says (`Verbs::export`); in a place, given to it.
     places: Vec<skwir_core::Location>,
+    /// The cut was pasted on a place (a tag's), as a plan that gives the
+    /// files their notes there: each is done once that plan gave it them
+    /// (`follow`), kept while it is refused, fails or is cancelled.
+    pasted: bool,
 }
 
 /// `clipboard_paste`: into a pane, from Skwir's clipboard or, when given,
@@ -196,22 +200,40 @@ fn publish(app: &App, entries: &[EntryRef], cut: bool) {
 
 /// Follow what the clipboard holds through applied changes. A cut entry
 /// that was moved (by its paste or otherwise), trashed or deleted leaves
-/// it; once none is left, nothing waits for a paste. So a paste that is
-/// refused, fails or is cancelled keeps what was cut.
+/// it, as does one pasted on a place once given its notes there; once
+/// none is left, nothing waits for a paste. So a paste that is refused,
+/// fails or is cancelled keeps what was cut.
 fn follow(clipboard: &Mutex<Clipboard>, changes: &[Change], app: &App) {
     let mut c = clipboard.lock();
     if c.entries.is_empty() {
         return;
     }
     let before = c.entries.len();
-    let cut = c.cut;
+    let (cut, pasted) = (c.cut, c.pasted);
     let follow = skwir_core::op::Follow::new(changes);
+    let noted: Vec<&std::path::Path> = changes
+        .iter()
+        .filter_map(|change| match change {
+            Change::Metadata { path, .. } => Some(path.as_path()),
+            _ => None,
+        })
+        .collect();
     c.entries.retain_mut(|entry| {
         let through = follow.through(&entry.path);
         match through.at {
             None => false,
             // A cut entry that moved went where it was going.
             Some(_) if cut && through.moved => false,
+            // One pasted on a place is there once given its notes.
+            Some(at)
+                if cut
+                    && pasted
+                    && noted
+                        .iter()
+                        .any(|p| *p == entry.path.as_path() || *p == at.as_path()) =>
+            {
+                false
+            }
             Some(at) => {
                 entry.path = at;
                 true
@@ -271,7 +293,8 @@ fn paste(clipboard: &Mutex<Clipboard>, a: PasteArgs, app: &App) -> anyhow::Resul
 /// A paste into a location that is no folder but takes files (a tag's):
 /// what its provider says a drop means there (`Verbs::drop`), with the
 /// clipboard's files, whether they were cut, and where from. A cut is
-/// done once pasted.
+/// done once pasted: once the plan it answers applies, when it answers
+/// one.
 fn paste_on_place(
     clipboard: &Mutex<Clipboard>,
     pane: PaneId,
@@ -299,9 +322,14 @@ fn paste_on_place(
     }
     let outcome = app.dispatch(&invocation)?;
     if cut && own {
-        *clipboard.lock() = Clipboard::default();
-        app.pending.clear();
-        app.wake();
+        if let Outcome::Plan(_) = &outcome {
+            // Done once that plan applies (`follow`).
+            clipboard.lock().pasted = true;
+        } else {
+            *clipboard.lock() = Clipboard::default();
+            app.pending.clear();
+            app.wake();
+        }
     }
     Ok(outcome)
 }
@@ -516,6 +544,7 @@ impl Plugin for OpsBasicPlugin {
                     cut: false,
                     from,
                     places,
+                    pasted: false,
                 };
                 Ok(outcome)
             },
@@ -536,6 +565,7 @@ impl Plugin for OpsBasicPlugin {
                     cut: true,
                     from,
                     places,
+                    pasted: false,
                 };
                 Ok(outcome)
             },

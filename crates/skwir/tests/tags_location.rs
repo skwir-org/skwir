@@ -604,3 +604,29 @@ fn a_tag_opens_in_a_tab_where_it_leads() {
     assert!(tabs[0].shown, "the tab shown stays shown");
     assert_eq!(tabs[1].panes[0].location.as_ref(), Some(&leads));
 }
+
+/// Files cut and pasted on a tag stay cut until the paste's plan applies:
+/// one refused, failed or cancelled leaves them to paste again.
+#[test]
+fn files_cut_and_pasted_on_a_tag_stay_cut_until_its_plan_applies() {
+    let s = setup();
+    go(&s, &Location::from_path(&s.root));
+    s.app
+        .dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "names": ["notes.txt"] }),
+        ))
+        .unwrap();
+    s.app.dispatch(&Invocation::new("clipboard_cut")).unwrap();
+    assert_eq!(s.app.pending.get().len(), 1);
+    go(&s, &tag_location(&s.root, Some("family")));
+    let plan = plan_of(s.app.dispatch(&Invocation::new("clipboard_paste")).unwrap());
+    // Not applied yet: still cut.
+    assert_eq!(s.app.pending.get().len(), 1, "cut until it applies");
+    let r = s.app.executor.execute_blocking(&plan, s.app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    assert!(read_tags(&s.root.join("notes.txt")).contains(&"family".to_owned()));
+    until(&s.app, "the cut done", || {
+        s.app.pending.get().is_empty().then_some(())
+    });
+}
