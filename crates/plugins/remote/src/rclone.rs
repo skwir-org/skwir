@@ -109,6 +109,7 @@ impl Connector for Rclone {
     fn schemes(&self) -> &'static [Scheme] {
         &[
             Scheme::Rclone,
+            Scheme::S3,
             Scheme::Sftp,
             Scheme::Smb,
             Scheme::Dav,
@@ -331,6 +332,16 @@ pub(crate) fn remote_of(top: &Address) -> anyhow::Result<String> {
     let mut parts = Vec::new();
     let kind = match top.scheme {
         Scheme::Rclone => return Ok(format!("{}:{path}", top.host)),
+        // Through the user's own AWS configuration (its credentials,
+        // region and endpoint; a profile where the address names one):
+        // nothing kept of it (ADR-086). The bucket is the mount's top.
+        Scheme::S3 => {
+            let mut remote = ":s3,provider='AWS',env_auth='true'".to_owned();
+            if let Some(profile) = &top.user {
+                let _ = write!(remote, ",profile={}", quoted(profile));
+            }
+            return Ok(format!("{remote}:{}/{path}", top.host));
+        }
         // Through the user's ssh: the host and user go to it, not here.
         Scheme::Sftp => "sftp",
         Scheme::Smb => {
@@ -393,7 +404,7 @@ fn password_variable(scheme: Scheme) -> Option<&'static str> {
         Scheme::Smb => Some("RCLONE_SMB_PASS"),
         Scheme::Dav | Scheme::Davs => Some("RCLONE_WEBDAV_PASS"),
         Scheme::Ftp | Scheme::Ftps => Some("RCLONE_FTP_PASS"),
-        Scheme::Sftp | Scheme::Nfs | Scheme::Afp | Scheme::Rclone => None,
+        Scheme::Sftp | Scheme::Nfs | Scheme::Afp | Scheme::Rclone | Scheme::S3 => None,
     }
 }
 
@@ -598,6 +609,15 @@ mod tests {
             "ssh -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -p 2222 me@h"
         );
         assert!(remote_of(&top("nfs://h/export")).is_err());
+        // S3 through the user's AWS configuration, its profile named.
+        assert_eq!(
+            remote_of(&top("s3://bucket-one.example/a/b")).unwrap(),
+            ":s3,provider='AWS',env_auth='true':bucket-one.example/"
+        );
+        assert_eq!(
+            remote_of(&top("s3://work@bucket-one/")).unwrap(),
+            ":s3,provider='AWS',env_auth='true',profile='work':bucket-one/"
+        );
         assert_eq!(
             remote_of(&top("ftp://o'brien@h/")).unwrap(),
             ":ftp,host='h',user='o''brien':",

@@ -73,7 +73,7 @@ pub fn of_mount(point: &Path, cancel: &CancelToken) -> Option<Features> {
     };
     asked()
         .inspect_err(|error| {
-            tracing::debug!("rclone's mount did not say what it can do: {error:#}")
+            tracing::debug!("rclone's mount did not say what it can do: {error:#}");
         })
         .ok()
 }

@@ -202,7 +202,7 @@ fn kio_scheme(scheme: Scheme) -> Option<&'static str> {
         Scheme::Ftp => Some("ftp"),
         Scheme::Sftp => Some("sftp"),
         Scheme::Nfs => Some("nfs"),
-        Scheme::Ftps | Scheme::Afp | Scheme::Rclone => None,
+        Scheme::Ftps | Scheme::Afp | Scheme::Rclone | Scheme::S3 => None,
     }
 }
 

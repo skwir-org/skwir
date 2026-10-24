@@ -249,8 +249,8 @@ ADR-077 (which revises ADR-021).
 
 ## Addresses
 
-- `sftp:`, `smb:`, `dav:`, `davs:`, `ftp:`, `ftps:`, `nfs:`, `afp:` and
-  `rclone:` locations are addresses (`remote::address::Address`): opening
+- `sftp:`, `smb:`, `dav:`, `davs:`, `ftp:`, `ftps:`, `nfs:`, `afp:`,
+  `rclone:` and `s3:` locations are addresses (`remote::address::Address`): opening
   one connects it on a thread of its own and sends
   `ListingEvent::Redirect` with the mounted folder, which replaces the
   address in the pane's history, only while the pane still shows the
@@ -260,8 +260,8 @@ ADR-077 (which revises ADR-021).
   is let go of only when it answers "not connected"; a live one is never
   unmounted under what uses it.
 - An address's top is what one mount of it holds (`Address::top`): the
-  server for SFTP, FTP, WebDAV and rclone's remotes, a share for SMB, a
-  volume for AFP. An NFS export may be of several parts (`/srv/photos`),
+  server for SFTP, FTP, WebDAV and rclone's remotes, a bucket for S3, a
+  share for SMB, a volume for AFP. An NFS export may be of several parts (`/srv/photos`),
   which only the server says: an NFS address keeps its whole path, and
   the connector says the export from what it mounted
   (`Connected::address`: GVfs's mount spec). An address's path holds no
@@ -279,6 +279,12 @@ ADR-077 (which revises ADR-021).
   of the bookmarks: renamed and moved among the folders' by the same
   commands (`places.rename_bookmark`, `places.move_bookmark`), named by
   `Marked::Address`, in the file's order.
+- An `s3://bucket/path` address (`s3://profile@bucket/` for an AWS
+  profile) opens through the user's own AWS configuration (credentials,
+  region and endpoint, as the AWS tools read them), by an rclone remote
+  made of the address's parts (`env_auth`): nothing is kept of it, in
+  rclone's configuration or Skwir's (ADR-086). Tested against `rclone
+  serve s3` with AWS files of the test's own.
 - An agent's call connects only once the user allowed it.
 - The address field completes the server being typed (`sftp://me@ho`)
   with those known: mounted, the tools', the remote bookmarks, and for

@@ -20,11 +20,14 @@ pub enum Scheme {
     Afp,
     /// A remote of rclone's configuration, by its name (`rclone://gdrive/`).
     Rclone,
+    /// An S3 bucket, through the user's own AWS configuration
+    /// (`s3://bucket/path`, `s3://profile@bucket/`, ADR-086).
+    S3,
 }
 
 impl Scheme {
     /// Every scheme, each by its own name: what the plugin opens.
-    pub const ALL: [Scheme; 9] = [
+    pub const ALL: [Scheme; 10] = [
         Scheme::Sftp,
         Scheme::Smb,
         Scheme::Dav,
@@ -34,6 +37,7 @@ impl Scheme {
         Scheme::Nfs,
         Scheme::Afp,
         Scheme::Rclone,
+        Scheme::S3,
     ];
 
     /// Names another program gives a scheme here: `ssh://` is SFTP for
@@ -56,6 +60,7 @@ impl Scheme {
             Scheme::Nfs => "nfs",
             Scheme::Afp => "afp",
             Scheme::Rclone => "rclone",
+            Scheme::S3 => "s3",
         }
     }
 
@@ -82,6 +87,7 @@ impl Scheme {
             Scheme::Nfs => "NFS",
             Scheme::Afp => "AFP",
             Scheme::Rclone => "rclone",
+            Scheme::S3 => "S3",
         }
     }
 }
@@ -292,7 +298,7 @@ impl Address {
             Scheme::Ftps => Some(990),
             Scheme::Nfs => Some(2049),
             Scheme::Afp => Some(548),
-            Scheme::Rclone => None,
+            Scheme::Rclone | Scheme::S3 => None,
         };
         self.port.filter(|p| Some(*p) != usual)
     }
@@ -314,6 +320,11 @@ impl Address {
                 format!("{name} on {server}")
             }
             Scheme::Rclone => self.host.clone(),
+            // A bucket, and the AWS profile it is reached by.
+            Scheme::S3 => match &self.user {
+                Some(profile) => format!("{} ({profile})", self.host),
+                None => self.host.clone(),
+            },
             _ => match &self.user {
                 Some(user) => format!("{user}@{server}"),
                 None => server,

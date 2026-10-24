@@ -132,7 +132,7 @@ pub fn gvfs_named(address: &Address, user: Option<&str>) -> Option<Vec<(&'static
         Scheme::Smb => "smb",
         Scheme::Dav | Scheme::Davs => "http",
         Scheme::Ftp | Scheme::Ftps => "ftp",
-        Scheme::Nfs | Scheme::Afp | Scheme::Rclone => return None,
+        Scheme::Nfs | Scheme::Afp | Scheme::Rclone | Scheme::S3 => return None,
     };
     let mut named = vec![
         ("protocol", protocol.to_owned()),

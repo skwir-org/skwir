@@ -967,3 +967,99 @@ fn what_rclone_says_a_storage_can_do_shapes_its_mount() {
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// An `s3://` address opens through the user's own AWS configuration
+/// (credentials, region, endpoint; a profile where the address names
+/// one), by rclone with nothing saved: its configuration stays as it was.
+/// Against an S3 server of the test's own, and AWS files of its own.
+#[test]
+fn an_s3_address_opens_through_the_aws_configuration_keeping_nothing() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("s3");
+    let data = base.join("served");
+    std::fs::create_dir_all(data.join("bucket-one/sub")).unwrap();
+    std::fs::write(data.join("bucket-one/sub/it's here.txt"), "hello").unwrap();
+    let served = Served::start("s3", &data, &["--auth-key", "AKIDTEST,secret-of-the-test"]);
+    let aws = base.join("aws");
+    std::fs::create_dir_all(&aws).unwrap();
+    let endpoint = format!("http://127.0.0.1:{}", served.port);
+    std::fs::write(
+        aws.join("config"),
+        format!(
+            "[default]\nregion = us-east-1\nendpoint_url = {endpoint}\n\n[profile work]\nregion = eu-west-3\nendpoint_url = {endpoint}\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        aws.join("credentials"),
+        "[default]\naws_access_key_id = AKIDTEST\naws_secret_access_key = secret-of-the-test\n\n[work]\naws_access_key_id = AKIDTEST\naws_secret_access_key = secret-of-the-test\n",
+    )
+    .unwrap();
+    // SAFETY: nextest runs each test in a process of its own, and this
+    // runs before the test starts an app or a program, so no other thread
+    // reads the environment meanwhile.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("AWS_CONFIG_FILE", aws.join("config"));
+        std::env::set_var("AWS_SHARED_CREDENTIALS_FILE", aws.join("credentials"));
+        std::env::remove_var("AWS_PROFILE");
+    }
+    let config = base.join("rclone.conf");
+    std::fs::write(&config, "").unwrap();
+    let app = app_with_rclone(&base, &config, Arc::default());
+    let pane = app.workspace.read().active_id();
+    let address = "s3://bucket-one/sub";
+    app.navigate(pane, &skwir_core::location::Location::parse(address))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let folder = loop {
+        app.pump();
+        if let Some(path) = app.pane_location(pane).and_then(|l| l.path()) {
+            break path;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the address never led to its folder"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let point = skwir_core::fs::reach::of(&folder).unwrap().point.clone();
+    let _left = Unmounted(point.clone());
+    assert_eq!(
+        std::fs::read_to_string(folder.join("it's here.txt")).unwrap(),
+        "hello"
+    );
+    let shown = app.pane_location(pane).unwrap();
+    assert_eq!(app.address_of(&shown).unwrap().to_string(), address);
+
+    // By a profile of its own.
+    let by_profile = mounted(&app, "s3://work@bucket-one/");
+    let _left_too = Unmounted(by_profile.clone());
+    assert!(by_profile.join("sub/it's here.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(&config).unwrap(),
+        "",
+        "nothing kept in rclone's configuration"
+    );
+    for point in [&point, &by_profile] {
+        app.dispatch(&Invocation::with_args(
+            "remote.disconnect",
+            &serde_json::json!({ "path": point }),
+        ))
+        .unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while [&point, &by_profile]
+        .iter()
+        .any(|p| skwir_core::fs::reach::of(p).is_some_and(|r| r.point == **p))
+    {
+        app.pump();
+        assert!(Instant::now() < deadline, "never let go of");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
