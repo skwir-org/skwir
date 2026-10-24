@@ -1042,13 +1042,18 @@ impl Shell {
         if drag.covered != covered {
             drag.covered.clone_from(&covered);
             let mut ids = drag.kept.clone();
-            let sorted = &self.ui().list.sorted;
-            ids.extend(
-                covered
-                    .iter()
-                    .filter_map(|index| sorted.get(*index).copied()),
-            );
-            self.select_ids(ids, "replace", window, cx);
+            // In the pane the band began in, whichever is active now (a
+            // key or the other pane's menu may have moved it meanwhile).
+            let pane = drag.pane;
+            self.with_pane(pane, |shell| {
+                let sorted = &shell.ui().list.sorted;
+                ids.extend(
+                    covered
+                        .iter()
+                        .filter_map(|index| sorted.get(*index).copied()),
+                );
+                shell.select_ids(ids, "replace", window, cx);
+            });
         }
         cx.notify();
     }
