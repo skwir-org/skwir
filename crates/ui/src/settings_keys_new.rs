@@ -201,7 +201,25 @@ fn properties(spec: &CommandSpec) -> Option<serde_json::Map<String, Value>> {
 }
 
 /// A property's schema, its `$ref` and `Option`'s `null` looked through.
+/// A plugin from outside declares its schema, so it is untrusted: each
+/// step is taken in a loop that meets a schema once, and a schema that
+/// refers to itself, or a chain of any length, ends where it turns back,
+/// never in the stack.
 fn resolved<'a>(root: &'a Value, schema: &'a Value) -> &'a Value {
+    let mut met = std::collections::HashSet::new();
+    let mut schema = schema;
+    while met.insert(std::ptr::from_ref(schema)) {
+        match stands_for(root, schema) {
+            Some(next) => schema = next,
+            None => break,
+        }
+    }
+    schema
+}
+
+/// What `schema` stands for, a step down: the definition its `$ref` names,
+/// else its one option that is not `null`.
+fn stands_for<'a>(root: &'a Value, schema: &'a Value) -> Option<&'a Value> {
     if let Some(name) = schema
         .get("$ref")
         .and_then(Value::as_str)
@@ -209,7 +227,7 @@ fn resolved<'a>(root: &'a Value, schema: &'a Value) -> &'a Value {
     {
         for defs in ["$defs", "definitions"] {
             if let Some(def) = root.get(defs).and_then(|d| d.get(name)) {
-                return resolved(root, def);
+                return Some(def);
             }
         }
     }
@@ -222,11 +240,11 @@ fn resolved<'a>(root: &'a Value, schema: &'a Value) -> &'a Value {
             if let [one] = real.as_slice()
                 && one.get("const").is_none()
             {
-                return resolved(root, one);
+                return Some(one);
             }
         }
     }
-    schema
+    None
 }
 
 fn kind_of(root: &Value, schema: &Value) -> Kind {
@@ -919,5 +937,52 @@ impl SettingsView {
             page = page.child(row);
         }
         page
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::{Kind, kind_of};
+
+    /// A schema a plugin from outside declares is untrusted: one that
+    /// refers to itself, round two definitions or along a long chain, is
+    /// read as JSON to type, never followed without end.
+    #[test]
+    fn a_schema_that_refers_to_itself_ends_where_it_turns_back() {
+        let root = json!({
+            "$defs": {
+                "a": { "$ref": "#/$defs/a" },
+                "b": { "anyOf": [{ "$ref": "#/$defs/c" }, { "type": "null" }] },
+                "c": { "oneOf": [{ "$ref": "#/$defs/b" }] },
+            }
+        });
+        assert!(matches!(
+            kind_of(&root, &json!({ "$ref": "#/$defs/a" })),
+            Kind::Json
+        ));
+        assert!(matches!(
+            kind_of(&root, &json!({ "$ref": "#/$defs/b" })),
+            Kind::Json
+        ));
+        let mut defs = serde_json::Map::new();
+        let long = 100_000;
+        for n in 0..long {
+            defs.insert(
+                format!("d{n}"),
+                json!({ "$ref": format!("#/$defs/d{}", n + 1) }),
+            );
+        }
+        defs.insert(format!("d{long}"), json!({ "type": "boolean" }));
+        let root = json!({ "$defs": defs });
+        assert!(matches!(
+            kind_of(&root, &json!({ "$ref": "#/$defs/d0" })),
+            Kind::Switch
+        ));
+        // What it was before: a reference through an `Option` to a choice.
+        let root = json!({ "$defs": { "how": { "enum": ["fast", "it's slow"] } } });
+        let schema = json!({ "anyOf": [{ "$ref": "#/$defs/how" }, { "type": "null" }] });
+        assert!(matches!(kind_of(&root, &schema), Kind::Choice(choices) if choices.len() == 2));
     }
 }
