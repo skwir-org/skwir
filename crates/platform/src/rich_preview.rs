@@ -139,8 +139,10 @@ pub fn html(
     check(cancel)?;
     let mut walk = Walk::default();
     let mut stack: Vec<Context> = vec![Context::default()];
-    // A subtree that is not read: hidden, too deep, or a picture.
-    let mut skip: Option<NodeId> = None;
+    // A subtree that is not read: hidden, too deep, or a picture. Hidden,
+    // the places it names stay where it stood (a printed page's mark a
+    // book's style hides): a link to one still lands.
+    let mut skip: Option<(NodeId, bool)> = None;
     for (visited, edge) in doc.tree.root().traverse().enumerate() {
         if visited % 256 == 0 {
             check(cancel)?;
@@ -150,7 +152,11 @@ pub fn html(
         }
         match edge {
             Edge::Open(node) => {
-                if skip.is_some() {
+                if let Some((_, hidden)) = skip {
+                    if hidden && let Some(e) = node.value().as_element() {
+                        let parent = stack.last().expect("the root context");
+                        walk.anchor(parent, e, node.id());
+                    }
                     continue;
                 }
                 let parent = stack.last().expect("the root context").clone();
@@ -172,11 +178,15 @@ pub fn html(
                     Node::Element(e) => {
                         let element = ElementRef::wrap(node).expect("an element");
                         let style = sheets.compute(element, &parent.style);
-                        if style.display == Display::None
-                            || stack.len() > limits::HTML_DEPTH
+                        if style.display == Display::None {
+                            walk.anchor(&parent, e, node.id());
+                            skip = Some((node.id(), true));
+                            continue;
+                        }
+                        if stack.len() > limits::HTML_DEPTH
                             || matches!(e.name(), "annotation" | "annotation-xml")
                         {
-                            skip = Some(node.id());
+                            skip = Some((node.id(), false));
                             continue;
                         }
                         // A list's items are numbered as the walk meets
@@ -193,7 +203,7 @@ pub fn html(
                         let context = parent.enter(node, e, style, item);
                         walk.anchor(&context, e, node.id());
                         if walk.open(&context, node, e, &mut resources) {
-                            skip = Some(node.id());
+                            skip = Some((node.id(), false));
                             continue;
                         }
                         stack.push(context);
@@ -202,7 +212,7 @@ pub fn html(
                 }
             }
             Edge::Close(node) => {
-                if skip == Some(node.id()) {
+                if skip.is_some_and(|(skipped, _)| skipped == node.id()) {
                     skip = None;
                     continue;
                 }
@@ -1207,6 +1217,11 @@ mod tests {
             ]
         );
         assert_eq!(blocks[1].anchors, ["page_12"]);
+        // A mark the book's style hides is a place all the same.
+        let hidden = r#"<p>Before<span epub:type="pagebreak" id="page_13" style="display: none"><b id="inner">13</b></span> after.</p>"#;
+        let read_hidden = read(hidden, Markup::Html);
+        assert_eq!(texts(&read_hidden), ["Before after."]);
+        assert_eq!(read_hidden[0].anchors, ["page_13", "inner"]);
         assert_eq!(blocks[2].kind, BlockKind::Rule);
         assert_eq!(blocks[3].anchors, ["n1"]);
         assert_eq!(blocks[0].anchors, ["r1"], "the note's way back");
