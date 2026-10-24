@@ -195,8 +195,16 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     name: args.name,
                     options: args.options,
                 };
+                // Without rclone, the servers added by their address alone.
+                if skwir_core::os_path::find_program("rclone").is_none() {
+                    return servers_alone(&remotes_, app);
+                }
                 in_form(&remotes_, app, "added", move |flow, remotes, app| {
-                    if let Some(name) = flow.add(&prefill)? {
+                    let made = flow.add(&prefill)?;
+                    if let Some(crate::rclone_forms::Made::Bookmark(name)) = &made {
+                        app.notify(NotifyLevel::Info, format!("“{name}” is kept as a bookmark"));
+                    }
+                    if let Some(crate::rclone_forms::Made::Remote(name)) = made {
                         remotes.refresh(app);
                         // What it keeps of its secrets is only obscured:
                         // encrypting the whole is offered.
@@ -437,6 +445,34 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             Ok(Outcome::Done)
         },
     );
+}
+
+/// Add Server where rclone is not installed: the servers added by their
+/// address alone, on a thread of its own.
+fn servers_alone(remotes: &Remotes, app: &App) -> anyhow::Result<Outcome> {
+    let lifetime = remotes
+        .lifetime()
+        .ok_or_else(|| anyhow::anyhow!("remote folders are turned off"))?;
+    let weak = app.weak();
+    std::thread::Builder::new()
+        .name("skwir-remote-form".into())
+        .spawn(move || {
+            let Some(app) = weak.upgrade() else { return };
+            let cancel = lifetime.child();
+            match crate::servers_form::add_any(&app, &cancel) {
+                Ok(Some(name)) => {
+                    app.notify(NotifyLevel::Info, format!("“{name}” is kept as a bookmark"));
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    app.notify(
+                        NotifyLevel::Error,
+                        format!("The server was not added: {error:#}"),
+                    );
+                }
+            }
+        })?;
+    Ok(Outcome::Done)
 }
 
 /// Ask for the password to encrypt rclone's configuration with, and

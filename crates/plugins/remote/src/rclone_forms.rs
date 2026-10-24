@@ -210,7 +210,7 @@ fn kind_form(backends: &[Backend], chosen: Option<&str>) -> Form {
                 format!("{} ({})", b.description, b.name)
             };
             Choice::new(b.name.clone(), b.title.clone())
-                .detail(detail)
+                .detail(format!("{detail}: a remote of rclone's"))
                 .section(section)
         })
         .collect();
@@ -219,8 +219,12 @@ fn kind_form(backends: &[Backend], chosen: Option<&str>) -> Form {
             .cmp(&(b.section != "Storage"))
             .then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
     });
+    // The servers kept as bookmarks first, in their own order.
+    let mut all = crate::servers_form::choices();
+    all.extend(choices);
+    let choices = all;
     Form::new("Add Server", "Next")
-        .intro("A remote of rclone's: kept in rclone's own configuration, where rclone in a terminal finds it too.")
+        .intro("A server kept as a bookmark, or a remote of rclone's, kept in rclone's own configuration where rclone in a terminal finds it too.")
         .field(
             Field::new(PICKED, "Kind of storage", Kind::Pick { choices })
                 .value(chosen.unwrap_or_default())
@@ -481,7 +485,7 @@ impl Flow<'_> {
     ///
     /// # Errors
     /// When rclone did not answer.
-    pub fn add(&self, prefill: &Prefill) -> anyhow::Result<Option<String>> {
+    pub fn add(&self, prefill: &Prefill) -> anyhow::Result<Option<Made>> {
         let backends = self.session.backends(self.cancel)?;
         let mut kind = prefill.kind.clone();
         let mut provider = prefill.provider.clone();
@@ -500,6 +504,20 @@ impl Flow<'_> {
                     _ => return Ok(None),
                 }
             };
+            // A server kept as a bookmark, by its address.
+            if let Some(scheme) = crate::servers_form::scheme_of(chosen) {
+                let back = prefill.kind.is_none();
+                match crate::servers_form::add(self.app, scheme, &values, back, self.cancel)? {
+                    crate::servers_form::Added::Done(name) => {
+                        return Ok(Some(Made::Bookmark(name)));
+                    }
+                    crate::servers_form::Added::Back => {
+                        kind = None;
+                        continue;
+                    }
+                    crate::servers_form::Added::Cancelled => return Ok(None),
+                }
+            }
             let backend = backends
                 .iter()
                 .find(|b| b.name == *chosen)
@@ -528,7 +546,7 @@ impl Flow<'_> {
             }
             let shown = provider.clone().unwrap_or_default();
             match self.add_options(backend, &shown, &mut name, &mut values)? {
-                Added::Done(name) => return Ok(Some(name)),
+                Added::Done(name) => return Ok(Some(Made::Remote(name))),
                 Added::Cancelled => return Ok(None),
                 Added::Back if asked_provider => provider = None,
                 Added::Back => {
@@ -944,6 +962,15 @@ enum Added {
     Done(String),
     Back,
     Cancelled,
+}
+
+/// What Add Server made, by its name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Made {
+    /// A remote of rclone's configuration.
+    Remote(String),
+    /// A server kept as a bookmark by its address.
+    Bookmark(String),
 }
 
 #[derive(PartialEq, Eq)]

@@ -410,11 +410,21 @@ impl Connector for Kio {
     }
 
     fn servers(&self, _cancel: &CancelToken) -> Vec<Server> {
+        let Some(data) = skwir_core::xdg::data_home() else {
+            return Vec::new();
+        };
         // KDE's places (Dolphin's sidebar), the remote ones.
-        skwir_core::xdg::data_home()
-            .and_then(|data| std::fs::read_to_string(data.join("user-places.xbel")).ok())
+        let mut servers = std::fs::read_to_string(data.join("user-places.xbel"))
             .map(|xml| kde_places(&xml))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // KDE's network folders (`remote:/`, its Add Network Folder), one
+        // place each, but those the sidebar's places name already.
+        for server in network_folders(&data.join("remoteview")) {
+            if !servers.iter().any(|s| s.address == server.address) {
+                servers.push(server);
+            }
+        }
+        servers
     }
 
     fn reads_whole(&self, remote: &Remote) -> bool {
@@ -422,6 +432,62 @@ impl Connector for Kio {
             .and_then(|below| below.first().copied())
             .is_some_and(read_whole)
     }
+}
+
+/// KDE's network folders (`remote:/`), each a desktop entry in `folder`
+/// (`$XDG_DATA_HOME/remoteview`) linking to its address: those of a
+/// protocol Skwir opens, not hidden, named as the entry names them, in
+/// the order of their files' names.
+fn network_folders(folder: &Path) -> Vec<Server> {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "desktop"))
+        .collect();
+    files.sort();
+    files
+        .iter()
+        .filter_map(|file| {
+            // A link is a few lines: one longer is no link.
+            let text = skwir_core::fs::file::read_regular(file, 64 * 1024).ok()?;
+            network_folder(&String::from_utf8_lossy(&text))
+        })
+        .collect()
+}
+
+/// The network folder a desktop entry of KDE's `remoteview` links to.
+fn network_folder(entry: &str) -> Option<Server> {
+    let mut in_entry = false;
+    let (mut name, mut url, mut hidden) = (None, None, false);
+    for line in entry.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_entry = line == "[Desktop Entry]";
+            continue;
+        }
+        if !in_entry {
+            continue;
+        }
+        match line.split_once('=').map(|(k, v)| (k.trim(), v.trim())) {
+            Some(("Name", value)) => name = Some(value.to_owned()),
+            Some(("URL", value)) => url = Some(value.to_owned()),
+            Some(("Hidden", value)) => hidden = value == "true",
+            _ => {}
+        }
+    }
+    if hidden {
+        return None;
+    }
+    let address = Address::parse(&url?).ok()?;
+    Some(Server {
+        label: name
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| address.label()),
+        address,
+        kind: String::new(),
+    })
 }
 
 /// The remote places of KDE's `user-places.xbel` (Dolphin's sidebar):
@@ -460,6 +526,53 @@ fn kde_places(xml: &str) -> Vec<Server> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// KDE's network folders, each a desktop entry linking to its address,
+    /// are servers named as the entries name them.
+    #[test]
+    fn kde_s_network_folders_are_servers() {
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(
+            folder.path().join("b-photos.desktop"),
+            "[Desktop Entry]\nCharset=\nIcon=folder-remote\nName=It's the photos\nType=Link\nURL=smb://WORK;me@nas/photos\n",
+        )
+        .unwrap();
+        std::fs::write(
+            folder.path().join("a-home.desktop"),
+            "[Desktop Entry]\nName=\nType=Link\nURL=sftp://me@example.com:2222/home/me\n",
+        )
+        .unwrap();
+        std::fs::write(
+            folder.path().join("c-gone.desktop"),
+            "[Desktop Entry]\nName=Gone\nHidden=true\nURL=ftp://old\n",
+        )
+        .unwrap();
+        std::fs::write(
+            folder.path().join("d-other.desktop"),
+            "[Desktop Entry]\nName=Not a server\nURL=file:///home\n",
+        )
+        .unwrap();
+        std::fs::write(folder.path().join("notes.txt"), "URL=ftp://x\n").unwrap();
+        let servers = network_folders(folder.path());
+        let said: Vec<(String, String)> = servers
+            .iter()
+            .map(|s| (s.label.clone(), s.address.to_string()))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (
+                    "me@example.com:2222".to_owned(),
+                    "sftp://me@example.com:2222/home/me".to_owned()
+                ),
+                (
+                    "It's the photos".to_owned(),
+                    "smb://WORK;me@nas/photos".to_owned()
+                ),
+            ]
+        );
+        assert!(network_folders(&folder.path().join("none")).is_empty());
+    }
 
     #[test]
     fn kde_s_remote_places_are_servers() {

@@ -330,6 +330,14 @@ ADR-077 (which revises ADR-021).
   plugin answers only that the browser is here and whether to sign in
   again (`config_is_local`, `config_refresh_token`).
 - A remote Skwir names is one its address holds (`rclone://name/`).
+- One Add Server for every kind: a server added by its address (SFTP,
+  SMB, WebDAV, FTP, NFS, AFP: `servers_form`) is kept as a bookmark in
+  the desktop's shared bookmarks under the name given
+  (`places.bookmark_address`), then opened; its password is asked by
+  that first connection (with the window's Remember, ADR-082), never by
+  the form. Without rclone, Add Server offers these alone. KDE's network
+  folders (`$XDG_DATA_HOME/remoteview/*.desktop`) are known servers, as
+  its places are.
 - The configuration's password: the keyring's (`rclone:configuration`)
   where the user kept it, else asked of the window (`ConfigAsk`, through
   rclone's `--password-command`); never asked for a listing nobody asked

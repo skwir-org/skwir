@@ -1063,3 +1063,103 @@ fn an_s3_address_opens_through_the_aws_configuration_keeping_nothing() {
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// One Add Server for every kind: a server added by its address (a
+/// WebDAV one here) is kept as a bookmark under the name given, in the
+/// desktop's shared bookmarks (the test's own), then opened; its password
+/// is asked by the connection, never by the form.
+#[test]
+fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("by-address");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(served_root.join("sub folder")).unwrap();
+    std::fs::write(served_root.join("sub folder/hello.txt"), "hello").unwrap();
+    let served = Served::start("webdav", &served_root, &[]);
+    let config = base.join("rclone.conf");
+    let app = app_with_rclone(&base, &config, Arc::default());
+    app.plugins
+        .add(Arc::new(skwir_plugin_places::PlacesPlugin::default()), &app);
+    let window = Window::new(&app);
+
+    app.dispatch(&Invocation::new("remote.add_server")).unwrap();
+    let kinds = window.form(30);
+    let Kind::Pick { choices } = &kinds.form.fields[0].kind else {
+        panic!("a pick of kinds");
+    };
+    assert_eq!(choices[0].value, "address:sftp", "servers by address first");
+    window.accept(&kinds, &[("picked", "address:dav")]);
+    let parts = window.form(30);
+    assert!(parts.form.back, "Back to the kinds");
+    assert!(
+        !parts
+            .form
+            .fields
+            .iter()
+            .any(skwir_core::form::Field::secret),
+        "no password asked here: the connection asks it"
+    );
+    let port = served.port.to_string();
+    window.accept(
+        &parts,
+        &[
+            ("host", "127.0.0.1"),
+            ("port", &port),
+            ("path", "sub folder"),
+            ("title", "It's my files"),
+        ],
+    );
+    until_said(&app, 30, "“It's my files” is kept as a bookmark");
+    let uri = format!("dav://127.0.0.1:{}/sub%20folder", served.port);
+    let bookmarks = skwir_core::xdg::config_home()
+        .unwrap()
+        .join("gtk-3.0/bookmarks");
+    let line = format!("{uri} It's my files");
+    assert!(
+        std::fs::read_to_string(&bookmarks)
+            .unwrap()
+            .lines()
+            .any(|l| l == line),
+        "kept by its address and name"
+    );
+    assert!(
+        std::fs::read_to_string(&config).map_or(true, |c| c.is_empty()),
+        "nothing of rclone's"
+    );
+    // Opened in the pane: the server's folder, mounted.
+    let pane = app.workspace.read().active_id();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let folder = loop {
+        app.pump();
+        if let Some(path) = app.pane_location(pane).and_then(|l| l.path()) {
+            break path;
+        }
+        assert!(Instant::now() < deadline, "never opened");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let point = skwir_core::fs::reach::of(&folder).unwrap().point.clone();
+    let _left = Unmounted(point.clone());
+    assert!(folder.join("hello.txt").exists());
+
+    app.dispatch(&Invocation::with_args(
+        "places.unbookmark_address",
+        &serde_json::json!({ "address": uri }),
+    ))
+    .unwrap();
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point) {
+        app.pump();
+        assert!(Instant::now() < deadline, "never let go of");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}

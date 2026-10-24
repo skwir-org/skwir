@@ -39,6 +39,7 @@ pub mod rclone_features;
 pub mod rclone_forms;
 pub mod rsync;
 mod runs;
+pub mod servers_form;
 pub mod sftp;
 mod ssh_mount;
 pub mod sshfs;
