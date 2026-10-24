@@ -3,7 +3,9 @@
 //! `rename_bulk`.
 
 use gpui::{AnyElement, Context, Entity, Subscription, Window, div, prelude::*, px};
+use skwir_core::EntryId;
 use skwir_core::command::{Invocation, Outcome};
+use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::clip::clipped;
@@ -28,6 +30,10 @@ const FIELDS: [(&str, &str); 4] = [
 const SHOWN: usize = 40;
 
 pub struct BulkState {
+    /// The pane it was opened for, and what was selected there then: it
+    /// renames those, whatever pane is active or is selected later.
+    pane: PaneId,
+    selected: Vec<EntryId>,
     pub inputs: Vec<Entity<TextInput>>,
     pub case: usize,
     pub focused: usize,
@@ -95,7 +101,21 @@ impl Shell {
             "replacement": opt(text(2)),
             "case": case,
             "start": start,
-            "pane": self.pane,
+            "pane": b.pane,
+        })
+    }
+
+    /// Whether the pane it was opened for still selects what it did: the
+    /// dialog renames nothing else (a selection changed meanwhile, by an
+    /// agent's cursor or a listing renamed under it).
+    fn bulk_still_selected(&self) -> bool {
+        let Some(b) = &self.bulk else {
+            return false;
+        };
+        let ws = self.app.workspace.read();
+        ws.pane(b.pane).is_some_and(|p| {
+            p.selection.len() == b.selected.len()
+                && b.selected.iter().all(|id| p.selection.contains(*id))
         })
     }
 
@@ -106,6 +126,13 @@ impl Shell {
             return;
         }
         let back = FocusReturn::capture(window, cx);
+        let pane = self.pane;
+        let selected: Vec<EntryId> = {
+            let ws = self.app.workspace.read();
+            ws.pane(pane)
+                .map(|p| p.selection.iter().collect())
+                .unwrap_or_default()
+        };
         let mut inputs = Vec::new();
         let mut subs = Vec::new();
         for (i, (_, placeholder)) in FIELDS.iter().enumerate() {
@@ -131,6 +158,8 @@ impl Shell {
         }
         inputs[0].update(cx, |i, cx| i.focus(window, cx));
         self.bulk = Some(BulkState {
+            pane,
+            selected,
             inputs,
             case: 0,
             focused: 0,
@@ -190,6 +219,9 @@ impl Shell {
     /// before is cancelled, and says the first `SHOWN` renames alone, with
     /// how many there are.
     fn bulk_refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.bulk_still_selected() {
+            return self.bulk_selection_changed(cx);
+        }
         let mut spec = self.bulk_spec(cx);
         spec["limit"] = SHOWN.into();
         let cancel = self.app.lifetime().child();
@@ -197,12 +229,13 @@ impl Shell {
         b.asked += 1;
         b.current = false;
         let asked = b.asked;
+        let pane = b.pane;
         if let Some(before) = b.pending.replace(cancel.clone()) {
             before.cancel();
         }
         let app = std::sync::Arc::clone(&self.app);
         self.off_thread_until(
-            self.pane_lane(self.pane),
+            self.pane_lane(pane),
             "rename-bulk-preview",
             cancel,
             move || match app.dispatch(&Invocation::with_args("rename_bulk.preview", &spec)) {
@@ -246,12 +279,30 @@ impl Shell {
     }
 
     fn bulk_apply(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.bulk_still_selected() {
+            return self.bulk_selection_changed(cx);
+        }
         let spec = self.bulk_spec(cx);
         if self.bulk.as_ref().is_some_and(|b| !b.applies()) {
             return;
         }
         self.close_bulk(window, cx);
         self.run("rename_bulk", spec, window, cx);
+    }
+
+    /// What it was opened for is no longer selected: said where the
+    /// renames were, and nothing applies.
+    fn bulk_selection_changed(&mut self, cx: &mut Context<Self>) {
+        let Some(b) = &mut self.bulk else { return };
+        if let Some(pending) = b.pending.take() {
+            pending.cancel();
+        }
+        b.asked += 1;
+        b.preview.clear();
+        b.renamed = 0;
+        b.error = Some("The selection changed since this opened: open it again".into());
+        b.current = true;
+        cx.notify();
     }
 }
 
