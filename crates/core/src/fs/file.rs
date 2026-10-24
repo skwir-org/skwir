@@ -21,26 +21,24 @@ use std::path::Path;
 /// (a sidecar, a `.trashinfo`, a folder's notes): one larger is not one.
 pub const SIDE_FILE_LIMIT: u64 = 16 << 20;
 
-/// Open `path` for reading if, once opened, it is a regular file.
+/// Open `path` for reading if it is a regular file.
+///
+/// What is there is looked at before it is opened: opening a device runs
+/// its driver (a serial port's resets the board on it), and opening a
+/// pipe releases its writer.
 ///
 /// # Errors
 /// The open error, or `InvalidInput` when the path is not a regular file.
 pub fn open_regular(path: &Path) -> io::Result<File> {
     #[cfg(unix)]
     {
-        use rustix::fs::OFlags;
-        use std::os::unix::fs::OpenOptionsExt;
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(OFlags::NONBLOCK.bits().cast_signed())
-            .open(path)?;
-        ensure_regular(&file)?;
-        let flags = rustix::fs::fcntl_getfl(&file)?;
-        rustix::fs::fcntl_setfl(&file, flags - OFlags::NONBLOCK)?;
-        Ok(file)
+        open_looked_at(path, false)
     }
     #[cfg(not(unix))]
     {
+        if !std::fs::metadata(path)?.is_file() {
+            return Err(not_regular());
+        }
         let file = File::open(path)?;
         ensure_regular(&file)?;
         Ok(file)
@@ -56,24 +54,7 @@ pub fn open_regular(path: &Path) -> io::Result<File> {
 pub fn open_regular_unfollowed(path: &Path) -> io::Result<File> {
     #[cfg(unix)]
     {
-        use rustix::fs::OFlags;
-        use std::os::unix::fs::OpenOptionsExt;
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags((OFlags::NONBLOCK | OFlags::NOFOLLOW).bits().cast_signed())
-            .open(path)
-            .map_err(|e| {
-                // A link at the end: `ELOOP`.
-                if e.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error()) {
-                    io::Error::new(io::ErrorKind::InvalidInput, "a link")
-                } else {
-                    e
-                }
-            })?;
-        ensure_regular(&file)?;
-        let flags = rustix::fs::fcntl_getfl(&file)?;
-        rustix::fs::fcntl_setfl(&file, flags - OFlags::NONBLOCK)?;
-        Ok(file)
+        open_looked_at(path, true)
     }
     #[cfg(not(unix))]
     {
@@ -82,6 +63,76 @@ pub fn open_regular_unfollowed(path: &Path) -> io::Result<File> {
         }
         open_regular(path)
     }
+}
+
+/// Open what is at `path` (itself, with `unfollowed`, a link at its end
+/// refused) once it is seen to be a regular file. Linux looks at it
+/// through a descriptor that opens nothing (`O_PATH`) and opens that
+/// again (`/proc/self/fd`): the same file, whatever takes its name
+/// meanwhile. Elsewhere, or without `/proc`, it is looked at by its path,
+/// then opened without waiting (`O_NONBLOCK`) and looked at again.
+#[cfg(unix)]
+fn open_looked_at(path: &Path, unfollowed: bool) -> io::Result<File> {
+    use rustix::fs::{Mode, OFlags};
+    use std::os::unix::fs::OpenOptionsExt;
+    let not_followed = if unfollowed {
+        OFlags::NOFOLLOW
+    } else {
+        OFlags::empty()
+    };
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let at = rustix::fs::open(
+            path,
+            OFlags::PATH | OFlags::CLOEXEC | not_followed,
+            Mode::empty(),
+        )?;
+        let kind = rustix::fs::FileType::from_raw_mode(rustix::fs::fstat(&at)?.st_mode);
+        if kind == rustix::fs::FileType::Symlink {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "a link"));
+        }
+        if kind != rustix::fs::FileType::RegularFile {
+            return Err(not_regular());
+        }
+        let again = format!("/proc/self/fd/{}", at.as_raw_fd());
+        match rustix::fs::open(
+            again.as_str(),
+            OFlags::RDONLY | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(fd) => return Ok(File::from(fd)),
+            Err(rustix::io::Errno::NOENT) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let meta = if unfollowed {
+        std::fs::symlink_metadata(path)?
+    } else {
+        std::fs::metadata(path)?
+    };
+    if meta.is_symlink() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "a link"));
+    }
+    if !meta.is_file() {
+        return Err(not_regular());
+    }
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags((OFlags::NONBLOCK | not_followed).bits().cast_signed())
+        .open(path)
+        .map_err(|e| {
+            // A link at the end since: `ELOOP`.
+            if e.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error()) {
+                io::Error::new(io::ErrorKind::InvalidInput, "a link")
+            } else {
+                e
+            }
+        })?;
+    ensure_regular(&file)?;
+    let flags = rustix::fs::fcntl_getfl(&file)?;
+    rustix::fs::fcntl_setfl(&file, flags - OFlags::NONBLOCK)?;
+    Ok(file)
 }
 
 /// The whole of the regular file at `path`, at most `limit` bytes long.
@@ -154,11 +205,12 @@ fn ensure_regular(file: &File) -> io::Result<()> {
     if file.metadata()?.is_file() {
         Ok(())
     } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "not a regular file",
-        ))
+        Err(not_regular())
     }
+}
+
+fn not_regular() -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidInput, "not a regular file")
 }
 
 #[cfg(test)]
@@ -253,6 +305,54 @@ mod tests {
         let err = open_regular(&fifo).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
         assert!(read_regular(&fifo, SIDE_FILE_LIMIT).is_err());
+    }
+
+    /// A pipe is looked at, never opened, to be refused: a writer waiting
+    /// for a reader still waits. Through a link too.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_pipe_refused_is_never_opened() {
+        use std::os::unix::fs::OpenOptionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("it's a pipe");
+        rustix::fs::mknodat(
+            rustix::fs::CWD,
+            &fifo,
+            rustix::fs::FileType::Fifo,
+            rustix::fs::Mode::from_raw_mode(0o600),
+            0,
+        )
+        .unwrap();
+        let link = dir.path().join("x.jpg.xmp");
+        std::os::unix::fs::symlink(&fifo, &link).unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let writer = {
+            let fifo = fifo.clone();
+            std::thread::spawn(move || {
+                // Waits until a reader opens it.
+                let opened = std::fs::OpenOptions::new().write(true).open(&fifo);
+                tx.send(opened.is_ok()).unwrap();
+            })
+        };
+        for _ in 0..3 {
+            assert!(open_regular(&link).is_err());
+            assert!(open_regular(&fifo).is_err());
+            assert!(open_regular_unfollowed(&fifo).is_err());
+        }
+        assert!(
+            rx.recv_timeout(std::time::Duration::from_millis(200))
+                .is_err(),
+            "the writer was let go"
+        );
+        // Let it go.
+        let reader = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(rustix::fs::OFlags::NONBLOCK.bits().cast_signed())
+            .open(&fifo)
+            .unwrap();
+        assert!(rx.recv().unwrap());
+        writer.join().unwrap();
+        drop(reader);
     }
 
     #[test]
