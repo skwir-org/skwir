@@ -389,6 +389,10 @@ pub struct Shell {
     /// Advances with each `reveal_path`, so only the latest one's answer
     /// from its worker is acted on.
     reveal_asked: u64,
+    /// The window's commands asked from elsewhere (an agent, a script)
+    /// that the dialog open would take instead (`Shell::takes_now`),
+    /// oldest first: they run once it closes.
+    front_waiting: VecDeque<Invocation>,
     /// Links as the pointer and Ctrl left them, and a line waiting for its
     /// file's preview (`links.rs`).
     pub(crate) links: crate::links::LinkState,
@@ -675,6 +679,7 @@ impl Shell {
             files_icon: None,
             reveal: None,
             reveal_asked: 0,
+            front_waiting: VecDeque::new(),
             links: crate::links::LinkState::default(),
             stored_session: None,
             sidebar_scroll: gpui::ScrollHandle::new(),
@@ -1721,19 +1726,14 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The dialog's own, and Up and Down in a list of its (a long list
-        // of choices): the one command every list one picks from shares.
-        if self.settings.is_some() && !name.starts_with("ui.settings") && name != "ui.list_move" {
-            return;
-        }
-        // The overview is something to read: a key meant for the window
-        // behind it closes it instead of acting unseen.
-        if self.shortcuts.is_some() && !matches!(name, "ui.shortcuts" | "ui.settings") {
-            self.toggle_shortcuts(window, cx);
-            return;
-        }
-        if self.about.is_some() && name != "ui.about" {
-            self.toggle_about(window, cx);
+        if !self.takes_now(name) {
+            // Settings keeps what it is not asked; the overview and About
+            // close.
+            if self.settings.is_none() && self.shortcuts.is_some() {
+                self.toggle_shortcuts(window, cx);
+            } else if self.settings.is_none() && self.about.is_some() {
+                self.toggle_about(window, cx);
+            }
             return;
         }
         // Settings may contain private paths; never trace their values.
@@ -1787,6 +1787,24 @@ impl Shell {
             Err(e) => self.report_error(&e, cx),
         }
         cx.notify();
+    }
+
+    /// Whether `name` runs now, rather than the dialog open taking it:
+    /// Settings runs only its own and Up and Down in a list of its (a
+    /// long list of choices: the one command every list one picks from
+    /// shares); the F1 overview and About, something to read, close
+    /// instead of acting unseen. One rule for keys and for what is asked
+    /// from elsewhere, which waits for the dialog to close.
+    fn takes_now(&self, name: &str) -> bool {
+        if self.settings.is_some() {
+            name.starts_with("ui.settings") || name == "ui.list_move"
+        } else if self.shortcuts.is_some() {
+            matches!(name, "ui.shortcuts" | "ui.settings")
+        } else if self.about.is_some() {
+            name == "ui.about"
+        } else {
+            true
+        }
     }
 
     /// A user-initiated plan applies immediately (it is undoable), as a
@@ -2505,8 +2523,15 @@ impl Shell {
             }
         }
         // The window's commands asked from elsewhere (an agent, a
-        // script): run as if pressed, on the active pane.
-        for request in self.app.take_front_requests() {
+        // script): run as if pressed, on the active pane, in the order
+        // asked. One the dialog open would take (Settings, the F1
+        // overview, About) waits, with those after it, until it closes:
+        // the caller was told it reached the window.
+        self.front_waiting.extend(self.app.take_front_requests());
+        while let Some(request) = self.front_waiting.front()
+            && self.takes_now(&request.name)
+        {
+            let request = self.front_waiting.pop_front().expect("one waits");
             self.run(&request.name, request.args, window, cx);
         }
         self.pending = self.app.pending.get();
