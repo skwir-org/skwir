@@ -18,7 +18,14 @@ const ID: &str = "shell";
 const PROGRAM_KEY: &str = "shell.program";
 
 /// Quote `s` for POSIX shells: bare when safe, single-quoted otherwise.
+/// A control character (an escape, a carriage return) is never pasted as
+/// it is: a terminal or a line editor acts on it before the shell reads
+/// the quotes (an escape can end a bracketed paste), so such a name is
+/// written in ANSI-C quotes, as one that is not UTF-8 is.
 pub fn quote(s: &str) -> String {
+    if s.chars().any(char::is_control) {
+        return quote_bytes(s.as_bytes());
+    }
     if !s.is_empty()
         && s.chars().all(|c| {
             c.is_ascii_alphanumeric()
@@ -285,6 +292,10 @@ mod tests {
         assert_eq!(quote("it's"), "'it'\\''s'");
         assert_eq!(quote("été.txt"), "'été.txt'");
         assert_eq!(quote(""), "''");
+        // An escape or a carriage return never reaches the terminal as it
+        // is: `\e[201~` would end a bracketed paste.
+        assert_eq!(quote("a\u{1b}[201~b"), "$'a\\x1b[201~b'");
+        assert_eq!(quote("it's\r"), "$'it\\'s\\x0d'");
         assert_eq!(
             quote_paths(&["/x/a".into(), "/x/b c".into()]),
             "/x/a '/x/b c'"
