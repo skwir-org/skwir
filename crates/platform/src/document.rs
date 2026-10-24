@@ -403,18 +403,13 @@ impl DocumentSession for WorkerSession {
     }
 }
 
-pub(crate) type FileVersion = (u64, SystemTime, (i64, i64));
-/// Size, modification and change time: what tells a file was rewritten,
-/// for sessions and for preview cache keys alike.
+pub(crate) type FileVersion = (u64, SystemTime, Option<SystemTime>);
+/// Size, modification and change time (`fs::stat::changed`, which Windows
+/// answers too): what tells a file was rewritten, its modification time
+/// kept, for sessions and for preview cache keys alike.
 pub(crate) fn file_version(path: &Path) -> anyhow::Result<FileVersion> {
     let m = path.metadata()?;
-    #[cfg(unix)]
-    let changed = {
-        use std::os::unix::fs::MetadataExt;
-        (m.ctime(), m.ctime_nsec())
-    };
-    #[cfg(not(unix))]
-    let changed = (0, 0);
+    let changed = skwir_core::fs::stat::changed(path, &m);
     Ok((m.len(), m.modified()?, changed))
 }
 

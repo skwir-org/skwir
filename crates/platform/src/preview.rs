@@ -11,7 +11,7 @@ use skwir_core::cache::CacheSlot;
 use skwir_core::preview::{Preview, PreviewInfo, PreviewProvider, PreviewRequest};
 use skwir_core::{CancelToken, thumbs::Image};
 
-use crate::inspection::{check, extension};
+use crate::inspection::check;
 use crate::process;
 use crate::sandbox::{self, Otherwise};
 
@@ -508,8 +508,11 @@ pub fn playlist(path: &Path, mime: Option<&str>) -> Option<PlaylistFormat> {
         .map(|&(_, format)| format)
 }
 
+/// A PDF, by the request's type (`mime::of_request`), never its name.
+static PDF: crate::mime::Types = crate::mime::Types::new(&["application/pdf"]);
+
 fn is_pdf(req: &PreviewRequest) -> bool {
-    req.mime.as_deref() == Some("application/pdf") || extension(&req.entry.path) == "pdf"
+    PDF.holds(&req.entry.path, req.mime.as_deref())
 }
 
 /// Office documents, by type: what `LibreOffice` converts to PDF for a

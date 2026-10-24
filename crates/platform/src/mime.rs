@@ -547,9 +547,7 @@ fn found_database() -> Option<std::path::PathBuf> {
             } else {
                 &[]
             };
-            let named = std::env::var_os("XDG_DATA_DIRS")
-                .map(|dirs| std::env::split_paths(&dirs).collect::<Vec<_>>())
-                .unwrap_or_default();
+            let named = crate::xdg::data_dirs();
             beside
                 .chain(managed.iter().map(PathBuf::from))
                 .chain(named)
