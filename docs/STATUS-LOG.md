@@ -4255,3 +4255,17 @@ Built on main, one commit per item or step, none pushed.
   a terminal: it moved that terminal's processes into its `init.scope`
   (nothing killed, the user's manager not asked); none is run since.
   Never a real systemd, launchd or Task Scheduler running an entry.
+- **Final checks** on the tree as committed (916af14c): `just
+  release-check` passed whole (`lint-all` with both cross lints, `deny`,
+  `notices-check`, `test-all` 2190 tests with 26 skipped, `smoke`,
+  `a11y-check`, `poppler-check`, `mupdf-check`, `djvu-check`,
+  `bench-check`, `release-tools-check`); `just remote-check` passed (141
+  tests, 2 skipped; NFS and AFP, AFC, Nearby; GNOME Keyring 5 of 5,
+  KeePassXC 5 of 5, a locked keyring 2 of 2); `just test-windows` passed
+  (1655 tests, 22 skipped, rclone's Windows release among them). The run
+  before found a setting titled in lowercase, a race in Connect at
+  Login's menu test, a bookmark test sharing the tests' bookmarks file
+  with another, and, once, sshfs's "goes on by itself" test reaching no
+  folder within 60 s as the last of 140 tests at once (passed in
+  `test-all`, three times alone and in the next `remote-check`): the
+  first three fixed, the last not seen again.
