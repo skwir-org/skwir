@@ -360,7 +360,10 @@ fn sshfs_asks_the_window_for_a_password_and_an_unknown_host_through_skwir() {
         askpass: Some(PathBuf::from(env!("CARGO_BIN_EXE_skwir"))),
         ..Sshfs::default()
     };
-    if let Some(why) = sshfs.unavailable().or_else(|| Rclone::default().unavailable()) {
+    if let Some(why) = sshfs
+        .unavailable()
+        .or_else(|| Rclone::default().unavailable())
+    {
         eprintln!("skipped: {why}");
         return;
     }

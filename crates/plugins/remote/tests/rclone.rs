@@ -95,7 +95,9 @@ fn an_address_rclone_opens_is_a_folder_and_a_copy_is_on_the_server_once_done() {
     let address = Address::parse(&format!("dav://127.0.0.1:{}/sub folder", served.port)).unwrap();
     let ask: Arc<dyn Ask> = Arc::new(NoOne);
     let cancel = CancelToken::new();
-    let connected = Rclone::default().connect(&address, &ask, &cancel).expect("connect");
+    let connected = Rclone::default()
+        .connect(&address, &ask, &cancel)
+        .expect("connect");
     let point = connected.point.clone();
     let remote = skwir_core::fs::reach::of(&point).expect("a network mount");
     assert_eq!(remote.point, point);

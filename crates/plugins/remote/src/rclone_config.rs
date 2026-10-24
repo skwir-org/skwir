@@ -389,7 +389,11 @@ impl Session {
     /// # Errors
     /// When rclone did not answer.
     pub fn backends(&self, cancel: &CancelToken) -> anyhow::Result<Vec<Backend>> {
-        Ok(backends(&self.call("config/providers", &json!({}), cancel)?))
+        Ok(backends(&self.call(
+            "config/providers",
+            &json!({}),
+            cancel,
+        )?))
     }
 
     /// The remotes of the configuration, by name.
@@ -691,7 +695,6 @@ impl Ask for ConfigAsk {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,7 +710,10 @@ mod tests {
 
     #[test]
     fn rclone_s_questions_are_steps() {
-        assert_eq!(Step::of(&json!({ "State": "", "Option": null })), Step::Done);
+        assert_eq!(
+            Step::of(&json!({ "State": "", "Option": null })),
+            Step::Done
+        );
         let step = Step::of(&json!({
             "State": "*oauth-islocal,teamdrive,,",
             "Option": {
@@ -732,13 +738,25 @@ mod tests {
     #[test]
     fn a_remote_is_named_as_its_address_holds_it() {
         assert_eq!(name_refusal("photos-2024.nas+old_one"), None);
-        for refused in ["", "a/b", "a:b", "-a", ".a", "my photos", "me@nas", "photos-é"] {
+        for refused in [
+            "",
+            "a/b",
+            "a:b",
+            "-a",
+            ".a",
+            "my photos",
+            "me@nas",
+            "photos-é",
+        ] {
             assert!(name_refusal(refused).is_some(), "{refused}");
             if !refused.is_empty() && !refused.contains([':', '/']) {
                 // What Skwir refuses is what its address cannot hold: none,
                 // or one naming another (a user at a server).
                 let address = crate::address::Address::parse(&format!("rclone://{refused}/"));
-                assert!(address.is_err() || address.unwrap().host != refused, "{refused}");
+                assert!(
+                    address.is_err() || address.unwrap().host != refused,
+                    "{refused}"
+                );
             }
         }
         assert!(crate::address::Address::parse("rclone://photos-2024.nas+old_one/").is_ok());

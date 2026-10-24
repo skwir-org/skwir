@@ -177,7 +177,11 @@ impl Connector for Sshfs {
 
 /// What sshfs is given for `top` mounted at `point`: the server's root,
 /// so one mount holds every path of it; its ssh the master of `control`.
-fn arguments(top: &Address, point: &Path, control: Option<&Path>) -> Vec<std::ffi::OsString> {
+pub(crate) fn arguments(
+    top: &Address,
+    point: &Path,
+    control: Option<&Path>,
+) -> Vec<std::ffi::OsString> {
     let mut remote = String::new();
     if let Some(user) = &top.user {
         remote.push_str(user);

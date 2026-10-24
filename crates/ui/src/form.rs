@@ -247,8 +247,7 @@ impl Shell {
                     input: open.then(|| self.form_input(field, "", at, &mut subs, window, cx)),
                 },
                 Kind::Pick { choices } => {
-                    let input =
-                        self.form_input(field, "Type to filter", at, &mut subs, window, cx);
+                    let input = self.form_input(field, "Type to filter", at, &mut subs, window, cx);
                     input.update(cx, |i, cx| i.set_text(String::new(), cx));
                     Control::Pick {
                         input,
@@ -416,7 +415,11 @@ impl Shell {
                 self.form_answer(false, window, cx);
                 return;
             }
-            Some(Control::Choice { value, input, focus }) => {
+            Some(Control::Choice {
+                value,
+                input,
+                focus,
+            }) => {
                 value.clone_from(&choice.value);
                 if let Some(input) = input {
                     input.update(cx, |i, cx| i.set_text(choice.value, cx));
@@ -574,7 +577,9 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             continue;
         }
         if state.shows(field) {
-            body = body.child(field_row(shell, state, at, field, control, &theme, window, cx));
+            body = body.child(field_row(
+                shell, state, at, field, control, &theme, window, cx,
+            ));
         }
     }
     let folded = state.folded();
@@ -650,7 +655,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .max_h(relative(0.8))
         .p_3()
         .gap_3()
-        .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child(form.title.clone()))
+        .child(
+            div()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child(form.title.clone()),
+        )
         .child(body)
         .children(state.refusal.clone().map(|refusal| {
             div()
@@ -661,14 +670,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .child(refusal)
         }))
         .child(modal::footer(hint, buttons, &theme));
-    Some(modal::modal(
-        panel,
-        80.,
-        3,
-        Shell::form_cancel,
-        &theme,
-        cx,
-    ))
+    Some(modal::modal(panel, 80., 3, Shell::form_cancel, &theme, cx))
 }
 
 /// Field `at`: its label, its control, what it is.
@@ -804,9 +806,7 @@ fn field_row(
                     Some("search"),
                     theme,
                 ))
-                .child(choice_list(
-                    shell, state, at, field, PICK_ROWS, theme, cx,
-                ));
+                .child(choice_list(shell, state, at, field, PICK_ROWS, theme, cx));
         }
         Control::Link { focus } => {
             let url = field.value.clone();

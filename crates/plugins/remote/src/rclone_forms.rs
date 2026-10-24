@@ -292,11 +292,21 @@ fn options_form(
             for remote in remotes {
                 let on = chosen.as_ref().is_some_and(|c| c.contains(remote));
                 form = form.field(
-                    Field::new(format!("{UPSTREAM}{remote}"), format!("Include “{remote}”"), Kind::Toggle)
-                        .value(on.to_string()),
+                    Field::new(
+                        format!("{UPSTREAM}{remote}"),
+                        format!("Include “{remote}”"),
+                        Kind::Toggle,
+                    )
+                    .value(on.to_string()),
                 );
             }
-            let mut field = field_of(opt, provider, listed.filter(|_| chosen.is_none()), false, remotes);
+            let mut field = field_of(
+                opt,
+                provider,
+                listed.filter(|_| chosen.is_none()),
+                false,
+                remotes,
+            );
             field.required = remotes.is_empty();
             field.advanced = !remotes.is_empty();
             form = form.field(field);
@@ -407,10 +417,16 @@ fn parameters(
             }
             continue;
         }
-        let was = before.get(&opt.name).map_or(opt.default.as_str(), String::as_str);
+        let was = before
+            .get(&opt.name)
+            .map_or(opt.default.as_str(), String::as_str);
         if value != was {
             // Emptied, it goes back to rclone's default.
-            let value = if value.is_empty() { opt.default.clone() } else { value };
+            let value = if value.is_empty() {
+                opt.default.clone()
+            } else {
+                value
+            };
             parameters.insert(opt.name.clone(), Value::String(value));
         }
     }
@@ -500,7 +516,9 @@ impl Flow<'_> {
             {
                 asked_provider = true;
                 match self.fill(form) {
-                    Some(Answer::Accepted(answer)) => provider = Some(answer.get(PICKED).to_owned()),
+                    Some(Answer::Accepted(answer)) => {
+                        provider = Some(answer.get(PICKED).to_owned())
+                    }
                     Some(Answer::Back(_)) => {
                         kind = None;
                         continue;
@@ -572,7 +590,10 @@ impl Flow<'_> {
                 continue;
             }
             let parameters = parameters(backend, provider, &answer, &BTreeMap::new());
-            let step = match self.session.create(&chosen, &backend.name, &parameters, self.cancel) {
+            let step = match self
+                .session
+                .create(&chosen, &backend.name, &parameters, self.cancel)
+            {
                 Ok(step) => step,
                 Err(refused) => {
                     error = Some(said(&refused));
@@ -630,7 +651,12 @@ impl Flow<'_> {
     /// waits for the browser's sign-in) shows a form that waits with it,
     /// the sign-in's page to open again; its Cancel stops the sign-in.
     /// `None` when the user gave up.
-    fn answer_waiting(&self, name: &str, state: &str, result: &str) -> anyhow::Result<Option<Step>> {
+    fn answer_waiting(
+        &self,
+        name: &str,
+        state: &str,
+        result: &str,
+    ) -> anyhow::Result<Option<Step>> {
         let (done, answered) = crossbeam_channel::bounded(1);
         {
             let (session, cancel) = (Arc::clone(self.session), self.cancel.clone());
@@ -790,7 +816,13 @@ impl Flow<'_> {
 
     /// Change remote `name`'s options in its form, until saved (true) or
     /// given up (false).
-    fn change(&self, name: &str, backend: &Backend, provider: &str, token: Token) -> anyhow::Result<bool> {
+    fn change(
+        &self,
+        name: &str,
+        backend: &Backend,
+        provider: &str,
+        token: Token,
+    ) -> anyhow::Result<bool> {
         let (_, mut before) = self.held(name)?;
         let kept: Vec<String> = backend
             .options
@@ -900,9 +932,11 @@ fn keep_typed(values: &mut BTreeMap<String, String>, name: &mut Option<String>, 
 /// What rclone refused, in its words.
 fn said(error: &anyhow::Error) -> String {
     let text = format!("{error:#}");
-    let text = text.strip_prefix("rclone refused ").map_or(text.as_str(), |rest| {
-        rest.split_once(": ").map_or(rest, |(_, why)| why)
-    });
+    let text = text
+        .strip_prefix("rclone refused ")
+        .map_or(text.as_str(), |rest| {
+            rest.split_once(": ").map_or(rest, |(_, why)| why)
+        });
     crate::rclone::words(text)
 }
 
@@ -938,7 +972,8 @@ mod tests {
     #[test]
     fn an_option_s_help_titles_its_field() {
         let mut key = opt("access_key_id");
-        key.help = "AWS Access Key ID.\n\nLeave blank for anonymous access or runtime credentials.".into();
+        key.help =
+            "AWS Access Key ID.\n\nLeave blank for anonymous access or runtime credentials.".into();
         assert_eq!(
             titled(&key),
             (
@@ -991,8 +1026,14 @@ mod tests {
         assert_eq!(choices[0].value, "us-east-1");
 
         let remote = opt("remote");
-        let Kind::Choice { choices, open } =
-            field_of(&remote, "", None, false, &["photos".into(), "it's mine".into()]).kind
+        let Kind::Choice { choices, open } = field_of(
+            &remote,
+            "",
+            None,
+            false,
+            &["photos".into(), "it's mine".into()],
+        )
+        .kind
         else {
             panic!("a choice of remotes");
         };
@@ -1077,10 +1118,19 @@ mod tests {
             options: vec![opt("endpoint"), secret],
         };
         let mut prefill = Prefill::default();
-        prefill.options.insert("endpoint".into(), "https://example.com".into());
+        prefill
+            .options
+            .insert("endpoint".into(), "https://example.com".into());
         assert_eq!(prefill.refusal(&backend), None);
-        prefill.options.insert("secret_access_key".into(), "x".into());
-        assert!(prefill.refusal(&backend).unwrap().contains("the user types it"));
+        prefill
+            .options
+            .insert("secret_access_key".into(), "x".into());
+        assert!(
+            prefill
+                .refusal(&backend)
+                .unwrap()
+                .contains("the user types it")
+        );
         let mut odd = Prefill::default();
         odd.options.insert("nothing".into(), "x".into());
         assert!(odd.refusal(&backend).unwrap().contains("no option"));

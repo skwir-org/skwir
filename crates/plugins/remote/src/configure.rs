@@ -51,9 +51,21 @@ struct NamedArgs {
 pub(crate) fn menu_items(name: &str, signs_in: bool) -> Vec<MenuItem> {
     let named = |command: &str| Invocation::new(command).with("id", name);
     let mut items = vec![
-        MenuItem::new("place", "Edit Server…", "settings", 410, named("remote.edit_server")),
+        MenuItem::new(
+            "place",
+            "Edit Server…",
+            "settings",
+            410,
+            named("remote.edit_server"),
+        ),
         MenuItem::new("place", "Test Server", "", 411, named("remote.test_server")),
-        MenuItem::new("place", "Remove Server…", "trash", 310, named("remote.remove_server")),
+        MenuItem::new(
+            "place",
+            "Remove Server…",
+            "trash",
+            310,
+            named("remote.remove_server"),
+        ),
     ];
     if signs_in {
         items.push(MenuItem::new(
@@ -331,7 +343,10 @@ fn encrypt_in_form(
 ) -> anyhow::Result<()> {
     use skwir_core::form::{Answer, Field, Form, Kind};
     if crate::rclone_config::encrypted(rclone, &remotes.rclone, cancel)? {
-        app.notify(NotifyLevel::Info, "rclone's configuration is encrypted already");
+        app.notify(
+            NotifyLevel::Info,
+            "rclone's configuration is encrypted already",
+        );
         return Ok(());
     }
     let form = Form::new("Encrypt rclone's Configuration", "Encrypt")
@@ -390,23 +405,24 @@ fn in_form(
         .spawn(move || {
             let Some(app) = weak.upgrade() else { return };
             let cancel = lifetime.child();
-            let ask: Arc<dyn crate::connector::Ask> = Arc::new(crate::rclone_config::ConfigAsk::new(
-                Arc::new(crate::WindowAsk {
-                    app: Arc::downgrade(&app),
-                }),
-                remotes.rclone.keyring(),
-            ));
+            let ask: Arc<dyn crate::connector::Ask> =
+                Arc::new(crate::rclone_config::ConfigAsk::new(
+                    Arc::new(crate::WindowAsk {
+                        app: Arc::downgrade(&app),
+                    }),
+                    remotes.rclone.keyring(),
+                ));
             let result =
                 crate::rclone_config::Session::start(&rclone, &remotes.rclone, &ask, &cancel)
-                .map(Arc::new)
-                .and_then(|session| {
-                    let flow = crate::rclone_forms::Flow {
-                        app: &app,
-                        session: &session,
-                        cancel: &cancel,
-                    };
-                    work(&flow, &remotes, &app)
-                });
+                    .map(Arc::new)
+                    .and_then(|session| {
+                        let flow = crate::rclone_forms::Flow {
+                            app: &app,
+                            session: &session,
+                            cancel: &cancel,
+                        };
+                        work(&flow, &remotes, &app)
+                    });
             remotes.records.changed();
             if let Err(error) = result
                 && !cancel.is_cancelled()

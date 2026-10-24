@@ -150,8 +150,10 @@ impl Connector for Rclone {
             .ok_or_else(|| anyhow::anyhow!("rclone is not installed"))?;
         let remote = remote_of(&top)?;
         let password = match password_variable(top.scheme) {
-            Some(variable) => logged_in(&rclone, self.config(), &remote, &top, variable, ask, cancel)?
-                .map(|password| (variable, password)),
+            Some(variable) => {
+                logged_in(&rclone, self.config(), &remote, &top, variable, ask, cancel)?
+                    .map(|password| (variable, password))
+            }
             None => None,
         };
         let point = mounter::point_for(self.id(), &top)?;
@@ -257,7 +259,12 @@ impl Connector for Rclone {
             if let Some(password) = password {
                 command.env("RCLONE_CONFIG_PASS", password);
             }
-            skwir_platform::process::run_to_exit(&mut command, None, cancel, Duration::from_secs(10))
+            skwir_platform::process::run_to_exit(
+                &mut command,
+                None,
+                cancel,
+                Duration::from_secs(10),
+            )
         };
         let finished = match listed(None) {
             Ok(finished) if !finished.status.success() && needs_password(&finished.stderr) => {
@@ -287,7 +294,8 @@ impl Connector for Rclone {
 /// Whether what rclone said is its configuration needing a password it
 /// was not given.
 pub(crate) fn needs_password(said: &str) -> bool {
-    said.contains("unable to decrypt configuration") || said.contains("not allowed to ask for password")
+    said.contains("unable to decrypt configuration")
+        || said.contains("not allowed to ask for password")
 }
 
 /// The remotes `rclone listremotes --long` names: `gdrive: drive`.
@@ -315,7 +323,7 @@ fn remotes(listed: &str) -> Vec<Server> {
 /// What rclone mounts for `top`: a remote of its configuration, or one it
 /// is given by its parts (a connection string, `:sftp,host=…:`), a value
 /// quoted where it holds what would end it.
-fn remote_of(top: &Address) -> anyhow::Result<String> {
+pub(crate) fn remote_of(top: &Address) -> anyhow::Result<String> {
     let path = String::from_utf8_lossy(&top.path)
         .trim_start_matches('/')
         .to_owned();
@@ -517,7 +525,7 @@ fn ssh_command(top: &Address) -> String {
 }
 
 /// `rclone mount`'s arguments for `remote` at `point`.
-fn mount_arguments(remote: &str, point: &Path) -> Vec<std::ffi::OsString> {
+pub(crate) fn mount_arguments(remote: &str, point: &Path) -> Vec<std::ffi::OsString> {
     let mut args: Vec<std::ffi::OsString> = vec!["mount".into(), remote.into(), point.into()];
     args.extend(
         [

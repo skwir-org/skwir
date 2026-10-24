@@ -19,8 +19,8 @@ use skwir_core::form::{Answer, Asked, Kind, Values};
 use skwir_plugin_remote::connector::Connector;
 use skwir_plugin_remote::passwords::Keyring;
 use skwir_plugin_remote::rclone::Rclone;
-use std::sync::Mutex;
 use skwir_plugin_remote::{RemotePlugin, Remotes};
+use std::sync::Mutex;
 
 /// A folder of the test's on the home's file system, never `/tmp`.
 fn fixture(name: &str) -> PathBuf {
@@ -114,18 +114,28 @@ impl<'a> Window<'a> {
             if let Some(next) = next {
                 return next;
             }
-            assert!(Instant::now() < deadline, "no form was asked; said: {:?}", said(self.app));
+            assert!(
+                Instant::now() < deadline,
+                "no form was asked; said: {:?}",
+                said(self.app)
+            );
             std::thread::sleep(Duration::from_millis(20));
         }
     }
 
     /// Answer `asked` with `values` over what its fields hold.
     fn accept(&self, asked: &Asked, values: &[(&str, &str)]) {
-        assert!(self.app.answer_form(asked.id, Some(Answer::Accepted(filled(asked, values)))));
+        assert!(
+            self.app
+                .answer_form(asked.id, Some(Answer::Accepted(filled(asked, values))))
+        );
     }
 
     fn back(&self, asked: &Asked) {
-        assert!(self.app.answer_form(asked.id, Some(Answer::Back(filled(asked, &[])))));
+        assert!(
+            self.app
+                .answer_form(asked.id, Some(Answer::Back(filled(asked, &[]))))
+        );
     }
 
     fn cancel(&self, asked: &Asked) {
@@ -152,7 +162,10 @@ fn filled(asked: &Asked, values: &[(&str, &str)]) -> Values {
 
 /// What the app said since asked last.
 fn said(app: &App) -> Vec<String> {
-    app.take_notifications().into_iter().map(|n| n.text).collect()
+    app.take_notifications()
+        .into_iter()
+        .map(|n| n.text)
+        .collect()
 }
 
 /// Until the app says something containing `words`, within `seconds`.
@@ -209,8 +222,7 @@ fn app_with_rclone(base: &Path, config: &Path, keyring: Arc<TestKeyring>) -> Arc
         askpass: Some(PathBuf::from(env!("CARGO_BIN_EXE_skwir"))),
         keyring: Some(keyring),
     };
-    let remotes =
-        Remotes::with(vec![Arc::new(rclone.clone())]).with_rclone(rclone);
+    let remotes = Remotes::with(vec![Arc::new(rclone.clone())]).with_rclone(rclone);
     app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
     app
 }
@@ -252,8 +264,16 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
     let Kind::Pick { choices } = &kinds.form.fields[0].kind else {
         panic!("a pick of kinds: {:?}", kinds.form);
     };
-    assert!(choices.iter().any(|c| c.value == "webdav" && c.section == "Storage"));
-    assert!(choices.iter().any(|c| c.value == "crypt" && c.section == "On other remotes"));
+    assert!(
+        choices
+            .iter()
+            .any(|c| c.value == "webdav" && c.section == "Storage")
+    );
+    assert!(
+        choices
+            .iter()
+            .any(|c| c.value == "crypt" && c.section == "On other remotes")
+    );
     assert!(!choices.iter().any(|c| c.value == "memory"));
     window.accept(&kinds, &[("picked", "webdav")]);
 
@@ -266,32 +286,69 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
     // A name rclone's address cannot hold is refused, the form kept.
     window.accept(
         &options,
-        &[("remote.name", "my nas"), ("url", &url), ("user", "me"), ("pass", secret)],
+        &[
+            ("remote.name", "my nas"),
+            ("url", &url),
+            ("user", "me"),
+            ("pass", secret),
+        ],
     );
     let refused = window.form(30);
-    assert!(refused.form.error.as_deref().unwrap().contains("letters a–z"));
+    assert!(
+        refused
+            .form
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("letters a–z")
+    );
     assert_eq!(
-        refused.form.fields.iter().find(|f| f.key == "url").unwrap().value,
+        refused
+            .form
+            .fields
+            .iter()
+            .find(|f| f.key == "url")
+            .unwrap()
+            .value,
         url,
         "what was typed is kept"
     );
     assert_eq!(
-        refused.form.fields.iter().find(|f| f.key == "pass").unwrap().value,
+        refused
+            .form
+            .fields
+            .iter()
+            .find(|f| f.key == "pass")
+            .unwrap()
+            .value,
         "",
         "never a secret"
     );
     window.accept(
         &refused,
-        &[("remote.name", "nas-1"), ("url", &url), ("user", "me"), ("pass", secret)],
+        &[
+            ("remote.name", "nas-1"),
+            ("url", &url),
+            ("user", "me"),
+            ("pass", secret),
+        ],
     );
     until_said(&app, 30, "“nas-1” is added");
     let kept = section(&config, "nas-1").expect("in rclone's configuration");
     assert!(kept.contains(&"type = webdav".to_owned()), "{kept:?}");
     assert!(kept.contains(&format!("url = {url}")), "{kept:?}");
-    let pass = kept.iter().find(|l| l.starts_with("pass = ")).expect("its password");
-    assert!(!pass.contains("s3cret"), "kept obscured, as rclone keeps it");
+    let pass = kept
+        .iter()
+        .find(|l| l.starts_with("pass = "))
+        .expect("its password");
     assert!(
-        !std::fs::read_to_string(&config).unwrap().contains("pacer_min_sleep"),
+        !pass.contains("s3cret"),
+        "kept obscured, as rclone keeps it"
+    );
+    assert!(
+        !std::fs::read_to_string(&config)
+            .unwrap()
+            .contains("pacer_min_sleep"),
         "a default left as it is stays rclone's"
     );
 
@@ -304,7 +361,10 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
             let titles: Vec<&str> = place.menu.iter().map(|i| i.title.as_str()).collect();
             assert!(titles.contains(&"Edit Server…"), "{titles:?}");
             assert!(titles.contains(&"Remove Server…"), "{titles:?}");
-            assert!(!titles.contains(&"Sign In Again…"), "WebDAV signs in with its password");
+            assert!(
+                !titles.contains(&"Sign In Again…"),
+                "WebDAV signs in with its password"
+            );
             break;
         }
         assert!(Instant::now() < deadline, "never listed");
@@ -334,7 +394,10 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
     window.accept(&edit, &[("pacer_min_sleep", "20ms")]);
     until_said(&app, 30, "“nas-1” is saved");
     let kept_now = section(&config, "nas-1").unwrap();
-    assert!(kept_now.contains(&"pacer_min_sleep = 20ms".to_owned()), "{kept_now:?}");
+    assert!(
+        kept_now.contains(&"pacer_min_sleep = 20ms".to_owned()),
+        "{kept_now:?}"
+    );
     assert!(kept_now.contains(pass), "the password as it was");
 
     // A wrong password: rclone cannot list it, the user goes back and
@@ -376,11 +439,20 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
     .unwrap();
     let prefilled = window.form(30);
     assert_eq!(
-        prefilled.form.fields.iter().find(|f| f.key == "url").unwrap().value,
+        prefilled
+            .form
+            .fields
+            .iter()
+            .find(|f| f.key == "url")
+            .unwrap()
+            .value,
         url
     );
     window.cancel(&prefilled);
-    assert!(section(&config, "from-agent").is_none(), "nothing until the user adds it");
+    assert!(
+        section(&config, "from-agent").is_none(),
+        "nothing until the user adds it"
+    );
 
     // Removed, once the user says so.
     app.dispatch(&Invocation::with_args(
@@ -449,12 +521,25 @@ fn rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password() 
     let asked = window.form(30);
     window.accept(&asked, &[("password", "one"), ("again", "other")]);
     let again = window.form(30);
-    assert_eq!(again.form.error.as_deref(), Some("The two passwords differ"));
+    assert_eq!(
+        again.form.error.as_deref(),
+        Some("The two passwords differ")
+    );
     let password = "a pass phrase, it's \"mine\"";
-    window.accept(&again, &[("password", password), ("again", password), ("keep", "true")]);
+    window.accept(
+        &again,
+        &[
+            ("password", password),
+            ("again", password),
+            ("keep", "true"),
+        ],
+    );
     until_said(&app, 60, "rclone's configuration is encrypted");
     let text = std::fs::read_to_string(&config).unwrap();
-    assert!(text.starts_with("# Encrypted rclone configuration File"), "{text}");
+    assert!(
+        text.starts_with("# Encrypted rclone configuration File"),
+        "{text}"
+    );
     assert!(!text.contains("plain"), "nothing of it readable");
     assert_eq!(
         keyring.own("rclone:configuration").as_deref(),
@@ -464,7 +549,12 @@ fn rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password() 
     // Its remotes are still listed, opened with the keyring's password.
     app.dispatch(&Invocation::new("remote.refresh")).unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);
-    while app.registry.places.find(|p| p.title.starts_with("plain")).is_none() {
+    while app
+        .registry
+        .places
+        .find(|p| p.title.starts_with("plain"))
+        .is_none()
+    {
         app.pump();
         assert!(Instant::now() < deadline, "never listed");
         std::thread::sleep(Duration::from_millis(50));
@@ -568,9 +658,7 @@ fn a_browser_s_sign_in_waits_with_its_page_and_is_cancelled() {
     // offers.
     let waiting = loop {
         let asked = window.next(60, |_| true);
-        if asked.form.waiting.is_some()
-            && asked.form.fields.iter().any(|f| f.kind == Kind::Link)
-        {
+        if asked.form.waiting.is_some() && asked.form.fields.iter().any(|f| f.kind == Kind::Link) {
             break asked;
         }
         if asked.form.waiting.is_none() {
@@ -579,10 +667,16 @@ fn a_browser_s_sign_in_waits_with_its_page_and_is_cancelled() {
         }
     };
     let page = &waiting.form.fields[0].value;
-    assert!(page.starts_with("http://127.0.0.1:53682/auth?state="), "{page}");
+    assert!(
+        page.starts_with("http://127.0.0.1:53682/auth?state="),
+        "{page}"
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     while !std::fs::read_to_string(&opened).is_ok_and(|o| o.trim() == page) {
-        assert!(Instant::now() < deadline, "the browser was never asked to open it");
+        assert!(
+            Instant::now() < deadline,
+            "the browser was never asked to open it"
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
     window.cancel(&waiting);
@@ -607,9 +701,7 @@ fn a_browser_s_sign_in_waits_with_its_page_and_is_cancelled() {
     .unwrap();
     let waiting = loop {
         let asked = window.next(60, |_| true);
-        if asked.form.waiting.is_some()
-            && asked.form.fields.iter().any(|f| f.kind == Kind::Link)
-        {
+        if asked.form.waiting.is_some() && asked.form.fields.iter().any(|f| f.kind == Kind::Link) {
             break asked;
         }
         if asked.form.waiting.is_none() {
@@ -659,7 +751,12 @@ fn a_remote_stands_on_the_remotes_picked_in_its_form() {
     ))
     .unwrap();
     let options = window.form(30);
-    let stands_on = options.form.fields.iter().find(|f| f.key == "remote").unwrap();
+    let stands_on = options
+        .form
+        .fields
+        .iter()
+        .find(|f| f.key == "remote")
+        .unwrap();
     let Kind::Choice { choices, open } = &stands_on.kind else {
         panic!("a choice of remotes: {stands_on:?}");
     };
@@ -730,6 +827,9 @@ fn a_remote_stands_on_the_remotes_picked_in_its_form() {
     );
     until_said(&app, 30, "“both” is added");
     let kept = section(&config, "both").unwrap();
-    assert!(kept.contains(&"upstreams = one: two:".to_owned()), "{kept:?}");
+    assert!(
+        kept.contains(&"upstreams = one: two:".to_owned()),
+        "{kept:?}"
+    );
     std::fs::remove_dir_all(&base).unwrap();
 }

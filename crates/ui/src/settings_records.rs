@@ -657,7 +657,15 @@ impl SettingsView {
         }
         // Kept by their owner elsewhere: its commands change them.
         if let Some(source) = spec.constraints.record_source.clone() {
-            return self.sourced_row(key, &source, (title, detail), (id, edge, item), actions, theme, cx);
+            return self.sourced_row(
+                key,
+                &source,
+                (title, detail),
+                (id, edge, item),
+                actions,
+                theme,
+                cx,
+            );
         }
         let busy = self.drafts.contains_key(key);
         let (edit_focus, remove_focus) = (

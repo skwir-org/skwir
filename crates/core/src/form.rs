@@ -389,7 +389,11 @@ mod tests {
     fn a_form_refuses_what_its_fields_cannot_hold() {
         let form = Form::new("Add Server", "Add")
             .field(Field::text("name", "Name").required())
-            .field(Field::new("port", "Port", Kind::Integer { min: 1, max: 65535 }))
+            .field(Field::new(
+                "port",
+                "Port",
+                Kind::Integer { min: 1, max: 65535 },
+            ))
             .field(Field::new("key", "Key", Kind::Secret { kept: true }).required())
             .field(Field::new(
                 "kind",
@@ -409,7 +413,10 @@ mod tests {
             Some("Port is a whole number from 1 to 65535")
         );
         // A secret kept stays when nothing is typed.
-        assert_eq!(form.refusal(&values(&[("name", "n"), ("port", "22")])), None);
+        assert_eq!(
+            form.refusal(&values(&[("name", "n"), ("port", "22")])),
+            None
+        );
         assert_eq!(
             form.refusal(&values(&[("name", "n"), ("kind", "b2")]))
                 .as_deref(),
