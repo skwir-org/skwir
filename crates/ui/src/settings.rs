@@ -1062,7 +1062,21 @@ impl Narrowed {
     /// Keep the choices whose label holds every word of `query`, case
     /// ignored, the one highlighted staying highlighted while kept.
     pub(crate) fn narrow(&mut self, query: &str) {
-        let was = self.kept.get(self.highlighted).copied();
+        let was = self.highlighted_value().map(str::to_owned);
+        self.narrow_keeping(query, was.as_deref());
+    }
+
+    /// The choices declared again (the fonts, once listed), narrowed by
+    /// `query`: the one highlighted stays, found by its value, never by
+    /// its place in the list before.
+    pub(crate) fn relist(&mut self, choices: std::rc::Rc<[(String, String)]>, query: &str) {
+        let was = self.highlighted_value().map(str::to_owned);
+        self.choices = choices;
+        self.narrow_keeping(query, was.as_deref());
+    }
+
+    /// `narrow`, highlighting the choice of value `was` while kept.
+    fn narrow_keeping(&mut self, query: &str, was: Option<&str>) {
         let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
         self.kept = self
             .choices
@@ -1075,7 +1089,7 @@ impl Narrowed {
             .map(|(at, _)| at)
             .collect();
         self.highlighted = was
-            .and_then(|was| self.kept.iter().position(|at| *at == was))
+            .and_then(|was| self.kept.iter().position(|at| self.choices[*at].0 == was))
             .unwrap_or(0);
         self.scroll
             .scroll_to_item(self.highlighted, gpui::ScrollStrategy::Nearest);
@@ -1615,9 +1629,8 @@ impl SettingsView {
         {
             let choices = Narrowed::choices_of(&spec);
             if choices != narrowed.choices {
-                narrowed.choices = choices;
                 let query = narrowed.field.read(cx).text().to_owned();
-                narrowed.narrow(&query);
+                narrowed.relist(choices, &query);
             }
         } else if let Some(key) = &self.dropdown
             && self
