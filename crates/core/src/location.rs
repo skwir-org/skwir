@@ -1866,7 +1866,7 @@ mod tests {
         );
     }
 
-    /// A file the system comes to hide (a Mac's UF_HIDDEN its stat finds,
+    /// A file the system comes to hide (a Mac's `UF_HIDDEN` its stat finds,
     /// `attrib +h`) leaves what is drawn as it leaves what is shown, and a
     /// re-listing that cannot tell keeps it hidden.
     #[test]
