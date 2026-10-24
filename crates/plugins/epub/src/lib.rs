@@ -499,8 +499,10 @@ struct Container {
     package: skwir_platform::package::Package,
     /// Members `META-INF/encryption.xml` lists, by the algorithm named.
     encrypted: HashMap<String, String>,
-    /// The package's unique identifier, which obfuscated fonts are keyed by.
-    identifier: String,
+    /// The package's unique identifier, which obfuscated fonts are keyed
+    /// by: read by `package`, else when a font first needs it (a
+    /// fixed-layout page drawn, a search, a cover read without the rest).
+    identifier: Option<String>,
 }
 
 /// How EPUB obfuscates embedded fonts: not encryption, a key every reading
@@ -554,7 +556,7 @@ impl Container {
         let mut container = Self {
             package: skwir_platform::package::Package::open(path, "This EPUB", false, cancel)?,
             encrypted: HashMap::new(),
-            identifier: String::new(),
+            identifier: None,
         };
         if let Ok(xml) = container.read("META-INF/encryption.xml", "EPUB encryption", cancel) {
             let text = inspection::decode(&xml).0;
@@ -584,10 +586,22 @@ impl Container {
     /// and nothing for what is encrypted.
     fn file(&mut self, href: &str, cancel: &CancelToken) -> Option<Vec<u8>> {
         let mut bytes = self.read(href, "EPUB resource", cancel).ok()?;
-        if let Some(algorithm) = member_key(href).and_then(|key| self.encrypted.get(&key)) {
-            deobfuscate(&mut bytes, algorithm, &self.identifier)?;
+        if let Some(algorithm) = member_key(href).and_then(|key| self.encrypted.get(&key).cloned())
+        {
+            let identifier = self.identifier(cancel)?;
+            deobfuscate(&mut bytes, &algorithm, &identifier)?;
         }
         Some(bytes)
+    }
+    /// The package's unique identifier, read from its package document the
+    /// first time it is needed.
+    fn identifier(&mut self, cancel: &CancelToken) -> Option<String> {
+        if self.identifier.is_none() {
+            let (_, _, opf) = package_document(self, cancel).ok()?;
+            let text = inspection::decode(&opf).0;
+            self.identifier = Some(unique_identifier(&parse_xml(&text).ok()?)?);
+        }
+        self.identifier.clone()
     }
     /// The first `limit` bytes of a resource, or all of it if it is shorter:
     /// enough to learn a picture's size without inflating the rest.
@@ -640,6 +654,15 @@ fn package_document(
     let opf = container.read(&opf_path, "EPUB package", cancel)?;
     Ok((container_xml, opf_path, opf))
 }
+/// The identifier obfuscated fonts are keyed by: the one the package
+/// document names as its unique identifier.
+fn unique_identifier(doc: &roxmltree::Document<'_>) -> Option<String> {
+    let unique = doc.root_element().attribute("unique-identifier");
+    doc.descendants()
+        .find(|n| n.has_tag_name("identifier") && n.attribute("id") == unique)
+        .and_then(|n| n.text())
+        .map(|identifier| identifier.trim().to_owned())
+}
 /// Build the in-memory package rbook parses: container.xml, the OPF and the
 /// contents documents (EPUB 3 nav, EPUB 2 NCX) it may read, all stored after
 /// passing through the bounded reader.
@@ -658,14 +681,8 @@ fn package(container: &mut Container, cancel: &CancelToken) -> anyhow::Result<(r
                 && n.attribute("property") == Some("rendition:layout")
                 && n.text().map(str::trim) == Some("pre-paginated")
         });
-        // The identifier obfuscated fonts are keyed by.
-        let unique = doc.root_element().attribute("unique-identifier");
-        if let Some(identifier) = doc
-            .descendants()
-            .find(|n| n.has_tag_name("identifier") && n.attribute("id") == unique)
-            .and_then(|n| n.text())
-        {
-            identifier.trim().clone_into(&mut container.identifier);
+        if let Some(identifier) = unique_identifier(&doc) {
+            container.identifier = Some(identifier);
         }
         let items: Vec<_> = doc
             .descendants()
@@ -1429,6 +1446,37 @@ mod tests {
                 .picture(&request, &view, "../outside.png", &cancel)
                 .is_err(),
             "a key is a member, never a path out of the container"
+        );
+    }
+
+    /// A font is restored whatever opened the book: a fixed-layout page's
+    /// drawing and a search open the container afresh, without the
+    /// package being read first, and found no identifier to key it by.
+    #[test]
+    fn an_obfuscated_font_is_restored_in_a_container_opened_afresh() {
+        let font: Vec<u8> = (0..1500u32).map(|i| (i % 241) as u8).collect();
+        let mut stored = font.clone();
+        deobfuscate(&mut stored, IDPF_OBFUSCATION, "urn:example:synthetic").unwrap();
+        let encryption = format!(
+            r#"<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:enc="http://www.w3.org/2001/04/xmlenc#"><enc:EncryptedData><enc:EncryptionMethod Algorithm="{IDPF_OBFUSCATION}"/><enc:CipherData><enc:CipherReference URI="EPUB/fonts/Libre%20Été.otf"/></enc:CipherData></enc:EncryptedData></encryption>"#
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fonts.epub");
+        write(
+            &path,
+            &[
+                ("mimetype", b"application/epub+zip"),
+                ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+                ("META-INF/encryption.xml", encryption.as_bytes()),
+                ("EPUB/book.opf", OPF.as_bytes()),
+                ("EPUB/fonts/Libre Été.otf", &stored),
+            ],
+        );
+        let cancel = CancelToken::new();
+        let mut container = Container::open(&path, &cancel).unwrap();
+        assert_eq!(
+            container.file("EPUB/fonts/Libre%20Été.otf", &cancel),
+            Some(font)
         );
     }
 
