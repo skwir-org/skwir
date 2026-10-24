@@ -152,9 +152,48 @@ impl Shell {
     }
 }
 
-/// What was remembered, if anything was.
+impl Session {
+    /// What a window could have written, of a file edited by hand: a length
+    /// dragged is finite and above 0, a share between 0 and 1, a column's
+    /// width finite; anything else is 0, not dragged, as before the first
+    /// drag (`inf` and `nan` are TOML too, and nothing draws them).
+    fn written(mut self) -> Self {
+        let length = |value: &mut f32| {
+            if !(value.is_finite() && *value > 0.) {
+                *value = 0.;
+            }
+        };
+        let share = |value: &mut f32| {
+            if !(*value > 0. && *value < 1.) {
+                *value = 0.;
+            }
+        };
+        for value in [
+            &mut self.sidebar_width,
+            &mut self.preview_width,
+            &mut self.preview_height,
+            &mut self.player_height,
+            &mut self.terminal_height,
+        ] {
+            length(value);
+        }
+        for value in [
+            &mut self.split_share,
+            &mut self.members_height_share,
+            &mut self.members_width_share,
+            &mut self.properties_height_share,
+            &mut self.properties_width_share,
+        ] {
+            share(value);
+        }
+        self.column_widths.retain(|_, width| width.is_finite());
+        self
+    }
+}
+
+/// What was remembered, if anything was, as a window could have written it.
 pub fn restore(app: &skwir_core::App) -> Option<Session> {
-    let session = app.settings.get::<Session>(SESSION_KEY)?;
+    let session = app.settings.get::<Session>(SESSION_KEY)?.written();
     (session != Session::default()).then_some(session)
 }
 
@@ -186,6 +225,27 @@ mod tests {
             let value = toml::Value::try_from(&session).unwrap();
             assert_eq!(value.try_into::<Session>().unwrap(), session);
         }
+        // What a hand could write and no window would: not dragged.
+        let edited: Session = toml::from_str(
+            "sidebar_width = inf\npreview_width = -3.0\npreview_height = nan\n\
+             split_share = 1.5\nplayer_height = 120.0\n\
+             [column_widths]\nsize = nan\nmodified = 140.0",
+        )
+        .unwrap();
+        let edited = edited.written();
+        assert_eq!(
+            (
+                edited.sidebar_width,
+                edited.preview_width,
+                edited.preview_height
+            ),
+            (0., 0., 0.)
+        );
+        assert_eq!((edited.split_share, edited.player_height), (0., 120.));
+        assert_eq!(
+            edited.column_widths.into_iter().collect::<Vec<_>>(),
+            [("modified".to_owned(), 140.)]
+        );
         // What a file does not say reads as the default: automatic.
         let sparse: Session = toml::from_str("split = true\npreview = true").unwrap();
         assert_eq!(
