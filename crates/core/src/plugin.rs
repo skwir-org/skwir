@@ -148,19 +148,29 @@ struct SetEnabledArgs {
 
 /// Plugin management as commands, so the settings UI, the CLI and agents
 /// share one surface. Lifecycle callbacks can block (a plugin joins its
-/// threads on disable), so the toggle runs on a worker.
+/// threads on disable): with a window, the toggle runs on a worker, as a
+/// plugin it stops may be the one whose connection asked (`settings.apply`
+/// does the same). Without one (`skwir cmd`), it runs where it is asked
+/// and answers once saved: the process may end as soon as it answers.
 pub(crate) fn register(app: &App) {
     app.commands.register::<SetEnabledArgs, _>(
         "core",
         "plugins.set_enabled",
         "Enable or disable a plugin",
-        "Toggle a plugin at runtime and remember the choice; completion is signalled by a wake and `plugins.list`",
+        "Toggle a plugin at runtime and remember the choice; with the window open, completion is signalled by a wake and `plugins.list`",
         |args, app| {
             anyhow::ensure!(
                 app.plugins.list().iter().any(|p| p.id == args.id),
                 "unknown plugin: {}",
                 args.id
             );
+            if !crate::scheduler::has_window() {
+                app.plugins.set_enabled(&args.id, args.enabled, app);
+                app.settings
+                    .save()
+                    .map_err(|error| anyhow::anyhow!("The plugin choice was not saved: {error:#}"))?;
+                return Ok(crate::command::Outcome::Done);
+            }
             let weak = app.weak();
             app.scheduler.spawn(
                 crate::scheduler::Priority::Normal,

@@ -80,6 +80,13 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
 - An agent's plan is proposed, and its tool answers with the verdict
   (`App::propose_awaiting`). `skwir cmd` prints a plan, or applies it with
   `--apply` as the user's own action.
+- Without a window (`skwir cmd` with none open) a skwir of its own runs
+  the command and ends once it answers, so a command answers once its
+  work is done (saved, applied). What it hands a worker on the window's
+  thread (`scheduler::on_window_thread`; `has_window` where the work may
+  stop the connection asking, as `settings.apply` and
+  `plugins.set_enabled` do) it does where it is asked elsewhere; anything
+  left queued is cancelled with the app.
 - What an agent needs to see is a command answering a value (`entries`,
   `tab.list`), never a protocol of its own. `entries` with a `location`
   lists a folder without showing it, so reading never moves the user's

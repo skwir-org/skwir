@@ -429,12 +429,10 @@ fn plugins_toggle_through_the_command_and_the_choice_is_persisted() {
         &serde_json::json!({"id": "sample", "enabled": false}),
     ))
     .unwrap();
-    // The job wakes the UI after saving; tolerate earlier, unrelated wakes.
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while !path.is_file() {
-        let left = deadline.saturating_duration_since(std::time::Instant::now());
-        rx.recv_timeout(left).expect("the toggle completes");
-    }
+    // Without a window (`skwir cmd`), it answers once saved: the process
+    // may end then.
+    assert!(path.is_file(), "saved before it answered");
+    drop(rx);
     assert!(!app.plugins.is_enabled("sample"));
     assert!(app.plugins.revision() > before);
     assert!(
@@ -498,6 +496,16 @@ fn startup_opens_the_chosen_folder_or_the_last_one_and_falls_back_to_home() {
         startup_folder(&app.settings, home),
         std::path::Path::new("/srv/it's shared")
     );
+    // Typed in the dialog as in the address field.
+    for (typed, folder) in [
+        ("~", home.to_path_buf()),
+        ("~/Été 2024", home.join("Été 2024")),
+        ("~not mine", std::path::PathBuf::from("~not mine")),
+    ] {
+        app.settings
+            .set(STARTUP_FOLDER, toml::Value::String(typed.into()));
+        assert_eq!(startup_folder(&app.settings, home), folder, "{typed}");
+    }
     // Not remembered unless asked for: the file is not rewritten at every exit.
     assert!(!remember_location(
         &app.settings,
@@ -592,6 +600,20 @@ fn records_are_checked_field_by_field_and_never_hold_a_secret() {
     assert!(refused(r#"[{"id":"a","name":"x","zoom":30}]"#).contains("0 to 22"));
     assert!(refused(r#"[{"id":"a","name":"x"},{"id":"a","name":"y"}]"#).contains("share"));
     assert!(refused(r#"[{"name":"x"}]"#).contains("id"));
+    // A file's records may leave their ids out, as what reads them does
+    // (Home Manager's shortcuts, private folders); two that share one
+    // still do not.
+    let file = |text: &str| {
+        let table: toml::Table = format!("servers = {text}").parse().unwrap();
+        spec.check(&table["servers"])
+    };
+    file(r#"[{ name = "x" }, { name = "It's y" }]"#).unwrap();
+    assert!(
+        file(r#"[{ id = "a", name = "x" }, { id = "a", name = "y" }]"#)
+            .unwrap_err()
+            .to_string()
+            .contains("share")
+    );
     assert!(refused(r#"[{"id":"a","name":"x","key":"hunter2"}]"#).contains("keyring"));
     assert!(refused(r#"[{"id":"a","name":"x","headers":[["","v"]]}]"#).contains("needs a name"));
     // Nothing is a list of nothing.
@@ -746,7 +768,7 @@ fn a_broken_settings_file_is_never_saved_over() {
     settings.set("sample.budget", toml::Value::Integer(99));
     let broken = "[sample\nengine = ";
     std::fs::write(&path, broken).unwrap();
-    assert_eq!(settings.reload(), None);
+    assert_eq!(settings.reload(), Some(Vec::new()), "nothing taken in");
     let error = settings.save().unwrap_err().to_string();
     assert!(error.contains("is not valid"), "{error}");
     assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
@@ -759,6 +781,55 @@ fn a_broken_settings_file_is_never_saved_over() {
     settings.save().unwrap();
     let saved: toml::Table = std::fs::read_to_string(&path).unwrap().parse().unwrap();
     assert_eq!(saved["sample"]["budget"].as_integer(), Some(99));
+}
+
+/// A settings file that is no TOML stops only a change of its own keys:
+/// the window's state and the user's data are saved all the same, and the
+/// data file is taken in when another process changes it (ADR-057).
+#[test]
+fn a_broken_settings_file_stops_only_its_own_keys() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, state, data) = (
+        dir.path().join("settings.toml"),
+        dir.path().join("state.toml"),
+        dir.path().join("data.toml"),
+    );
+    std::fs::write(&path, "[ui]\ntheme = 'dark'\n").unwrap();
+    let settings = Settings::load(&path).with_state(&state).with_data(&data);
+    settings.declare(state_spec("ui.session"));
+    settings.declare(data_spec("sample.saved"));
+    let broken = "[ui\ntheme = ";
+    std::fs::write(&path, broken).unwrap();
+    let mut session = toml::Table::new();
+    session.insert("panes".into(), toml::Value::Integer(2));
+    settings.set("ui.session", toml::Value::Table(session));
+    settings.set("sample.saved", searches(&["l'été « 2024 »"]));
+    settings.save().unwrap();
+    assert_eq!(
+        table(&state)["ui"]["session"]["panes"].as_integer(),
+        Some(2)
+    );
+    assert_eq!(
+        table(&data)["sample"]["saved"],
+        searches(&["l'été « 2024 »"])
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
+
+    // Another process saves a search: taken in, the settings file broken.
+    std::fs::write(&data, "[sample]\nsaved = ['mine', 'theirs']\n").unwrap();
+    assert_eq!(settings.reload(), Some(vec!["sample.saved".to_owned()]));
+    assert_eq!(
+        settings.get::<Vec<String>>("sample.saved"),
+        Some(vec!["mine".to_owned(), "theirs".to_owned()])
+    );
+
+    // A setting's change is refused, what is kept apart saved first.
+    settings.set("ui.theme", toml::Value::String("light".into()));
+    settings.set("sample.saved", searches(&["after"]));
+    let error = settings.save().unwrap_err().to_string();
+    assert!(error.contains("is not valid"), "{error}");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
+    assert_eq!(table(&data)["sample"]["saved"], searches(&["after"]));
 }
 
 /// A running skwir follows its settings file: a value changed there
@@ -1257,4 +1328,38 @@ fn settings_from_a_file_are_checked_as_the_dialog_checks_them() {
         panic!("expected a value")
     };
     assert_eq!(fine["problems"], serde_json::json!([]));
+
+    // A file named is read only if it is a regular file, and not too
+    // large to be one: a pipe or a device is never opened.
+    let dir = tempfile::tempdir().unwrap();
+    let check = |path: &std::path::Path| {
+        app.dispatch(&Invocation::with_args(
+            "settings.check",
+            &serde_json::json!({ "file": path }),
+        ))
+        .err()
+        .map(|error| error.to_string())
+    };
+    let named = dir.path().join("it's settings.toml");
+    std::fs::write(&named, "[sample]\nengine = 'second'\n").unwrap();
+    assert_eq!(check(&named), None);
+    let large = dir.path().join("large.toml");
+    std::fs::File::create(&large)
+        .unwrap()
+        .set_len(64 << 20)
+        .unwrap();
+    assert!(check(&large).is_some_and(|e| e.contains("cannot be read")));
+    assert!(check(dir.path()).is_some_and(|e| e.contains("cannot be read")));
+    #[cfg(unix)]
+    {
+        let fifo = dir.path().join("a pipe.toml");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        assert!(check(&fifo).is_some_and(|e| e.contains("cannot be read")));
+    }
 }

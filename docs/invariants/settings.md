@@ -9,7 +9,9 @@ the reasoning.
 
 - Use the `SettingSpec` constructors: `toggle`, `choice`, `integer`,
   `number`, `text`, `path`, `command`; `records` for a list the user
-  builds in the dialog (tile servers); `data` for what the user makes
+  builds in the dialog (tile servers: a record needs an id in the dialog,
+  which edits it by it; a file's may leave it out, as what reads records
+  does); `data` for what the user makes
   through commands rather than the dialog (saved searches, pinned tags),
   kept in the data file (ADR-057); `state` for what skwir keeps of the
   window (ADR-056).

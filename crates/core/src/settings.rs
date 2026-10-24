@@ -29,6 +29,10 @@ pub const STARTUP_FOLDER: &str = "core.startup_folder";
 /// Application data: where the window was when it closed.
 pub const LAST_LOCATION: &str = "core.last_location";
 
+/// The most read of a file of settings (one of skwir's, or one to check):
+/// a larger one is not one.
+const FILE_LIMIT: u64 = 16 << 20;
+
 /// The Settings dialog's pages, by their subject (ADR-072): a setting
 /// names the one it is shown on (`SettingSpec::page`), whoever owns its
 /// key. The dialog draws each, and orders its sections.
@@ -526,8 +530,11 @@ impl SettingSpec {
         }
     }
 
-    /// Records from their JSON text, each checked against the fields.
-    fn parse_records(&self, text: &str) -> anyhow::Result<toml::Value> {
+    /// Records from their JSON text, each checked against the fields. The
+    /// dialog edits a record by its id, which each needs there; a file's
+    /// (`Beside::File`, Home Manager's) may leave them out, as what reads
+    /// the records does (shortcuts, private folders).
+    fn parse_records(&self, text: &str, beside: Beside<'_>) -> anyhow::Result<toml::Value> {
         let records: Vec<serde_json::Map<String, serde_json::Value>> =
             serde_json::from_str(if text.trim().is_empty() { "[]" } else { text })
                 .map_err(|error| anyhow::anyhow!("expected a list of records: {error}"))?;
@@ -537,11 +544,16 @@ impl SettingSpec {
             let id = record
                 .get("id")
                 .and_then(serde_json::Value::as_str)
-                .filter(|id| !id.is_empty())
-                .ok_or_else(|| anyhow::anyhow!("every record needs an id"))?;
-            anyhow::ensure!(ids.insert(id.to_owned()), "two records share the id {id}");
+                .filter(|id| !id.is_empty());
+            anyhow::ensure!(
+                id.is_some() || matches!(beside, Beside::File),
+                "every record needs an id"
+            );
             let mut table = toml::Table::new();
-            table.insert("id".into(), toml::Value::String(id.into()));
+            if let Some(id) = id {
+                anyhow::ensure!(ids.insert(id.to_owned()), "two records share the id {id}");
+                table.insert("id".into(), toml::Value::String(id.into()));
+            }
             for field in &self.constraints.fields {
                 let value = record.get(&field.key).filter(|v| !v.is_null());
                 let empty = match value {
@@ -687,7 +699,7 @@ impl SettingSpec {
             self.key
         );
         let value = match self.default {
-            _ if self.kind == SettingKind::Records => self.parse_records(text)?,
+            _ if self.kind == SettingKind::Records => self.parse_records(text, beside)?,
             toml::Value::String(_) => toml::Value::String(text.into()),
             toml::Value::Boolean(_) => toml::Value::Boolean(
                 text.trim()
@@ -849,7 +861,9 @@ pub(crate) fn register(app: &crate::App) {
                 let table: toml::Table = match (&args.file, &args.settings) {
                     (Some(file), None) => {
                         let path = crate::os_path::absolute(file)?;
-                        let text = std::fs::read_to_string(path).map_err(|error| {
+                        // Whatever an agent names: a pipe or a device is no
+                        // settings file, nor is one larger than any.
+                        let text = crate::fs::file::read_regular_text(path, FILE_LIMIT).map_err(|error| {
                             anyhow::anyhow!(
                                 "“{}” cannot be read: {}",
                                 path.display(),
@@ -1068,6 +1082,7 @@ impl Drop for SaveGuard {
 
 /// Where a window opens when the command line names no folder: the last
 /// folder or the chosen one, per `core.startup`, falling back to `home`.
+/// The chosen one is typed: `~` is `home`, as in the address field.
 pub fn startup_folder(settings: &Settings, home: &Path) -> PathBuf {
     let stored = |key: &str| {
         settings
@@ -1075,9 +1090,14 @@ pub fn startup_folder(settings: &Settings, home: &Path) -> PathBuf {
             .map(PathArg::into_inner)
             .filter(|path| !path.as_os_str().is_empty())
     };
+    let typed = |path: PathBuf| match path.strip_prefix("~") {
+        Ok(rest) if rest.as_os_str().is_empty() => home.to_path_buf(),
+        Ok(rest) => home.join(rest),
+        Err(_) => path,
+    };
     let choice = match settings.get::<String>(STARTUP).as_deref() {
         Some("last") => stored(LAST_LOCATION),
-        _ => stored(STARTUP_FOLDER),
+        _ => stored(STARTUP_FOLDER).map(typed),
     };
     choice.unwrap_or_else(|| home.to_path_buf())
 }
@@ -1748,7 +1768,7 @@ impl Settings {
     /// # Errors
     /// When it cannot be read, or is no TOML (a hand edit under way).
     fn on_disk(path: &Path) -> anyhow::Result<toml::Table> {
-        let bytes = match std::fs::read(path) {
+        let bytes = match crate::fs::file::read_regular(path, FILE_LIMIT) {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(toml::Table::new()),
             Err(e) => anyhow::bail!(
@@ -1855,8 +1875,11 @@ impl Settings {
     /// their files first (the state, then the user's data), the others in
     /// the settings file. A file none of whose keys changed is not touched
     /// (a read-only settings file never is by a change of the window's
-    /// state or of a saved search). What is saved: the settings file's
-    /// table with the others' (`values` itself where there is no file).
+    /// state or of a saved search), nor needs to be read: one that is no
+    /// TOML (a hand edit under way) stops only a change of its own keys,
+    /// after the others are saved. What is saved: the settings file's
+    /// table with the others' (`values` itself where there is no file, or
+    /// it cannot be read and none of its keys changed).
     fn persist(
         &self,
         values: &toml::Table,
@@ -1875,14 +1898,6 @@ impl Settings {
                 }
             }
         }
-        let (disk, mut saved) = match &self.path {
-            Some(path) => {
-                let disk = Self::on_disk(path)?;
-                let merged = Self::overlay(disk.clone(), values, &settings)?;
-                (Some(disk), merged)
-            }
-            None => (None, values.clone()),
-        };
         let mut apart = toml::Table::new();
         for (&store, path) in &self.apart {
             let (Some(keys), Some(path)) = (apart_keys.get(&store), path) else {
@@ -1908,11 +1923,25 @@ impl Settings {
             self.apart_read.lock().insert(store, merged.clone());
             Self::merge_into(&mut apart, merged);
         }
-        if let (Some(path), Some(disk)) = (&self.path, disk)
-            && saved != disk
-        {
-            Self::write_whole(path, Store::Settings, &saved)?;
-        }
+        let mut saved = match &self.path {
+            Some(path) => match Self::on_disk(path) {
+                Ok(disk) => {
+                    let merged = Self::overlay(disk.clone(), values, &settings)?;
+                    if merged != disk {
+                        Self::write_whole(path, Store::Settings, &merged)?;
+                    }
+                    merged
+                }
+                // None of its keys changed: nothing of it is taken in
+                // until it can be read again (`reload`).
+                Err(error) if settings.is_empty() => {
+                    tracing::debug!("{error:#}");
+                    values.clone()
+                }
+                Err(error) => return Err(error),
+            },
+            None => values.clone(),
+        };
         Self::merge_into(&mut saved, apart.clone());
         // A key kept apart is its file's, whole: never merged with a copy
         // the settings file still holds.
@@ -1953,24 +1982,24 @@ impl Settings {
     /// and the data file as they stand, with what this process changed and
     /// has not saved yet over them. The declared keys whose value changed,
     /// and the plugins' `enabled`; `None` when there is no settings file to
-    /// follow, or it cannot be read (it is left as it is, and the next save
-    /// says why).
+    /// follow. A settings file that cannot be read is left as it is (the
+    /// next save of one of its keys says why), and the data file is taken
+    /// in all the same.
     pub fn reload(&self) -> Option<Vec<String>> {
         let path = self.path.as_ref()?;
         let pending = self.writer.lock();
-        let disk = match Self::on_disk(path) {
-            Ok(disk) => disk,
+        let values = self.values.read().clone();
+        let mut merged = match Self::on_disk(path) {
+            Ok(disk) => match Self::overlay(disk, &values, &pending) {
+                Ok(merged) => merged,
+                Err(error) => {
+                    tracing::warn!("the settings file cannot take this window's: {error:#}");
+                    values.clone()
+                }
+            },
             Err(error) => {
                 tracing::warn!("{error:#}");
-                return None;
-            }
-        };
-        let values = self.values.read().clone();
-        let mut merged = match Self::overlay(disk, &values, &pending) {
-            Ok(merged) => merged,
-            Err(error) => {
-                tracing::warn!("the settings file cannot take this window's: {error:#}");
-                return None;
+                values.clone()
             }
         };
         // What is kept apart is its own file's, not the settings file's:
