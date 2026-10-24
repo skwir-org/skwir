@@ -388,6 +388,7 @@ fn clash_rows(shell: &Shell, range: Range<usize>, cx: &mut Context<Shell>) -> Ve
             div()
                 // Known by its clash, not by where it stands.
                 .id(("clash-row", i))
+                .w_full()
                 .h(px(ROWS.height))
                 .flex()
                 .items_center()
