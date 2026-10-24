@@ -13,15 +13,17 @@ use skwir_core::os_path::from_bytes_ref;
 
 use crate::profiles::Profile;
 
-/// One measured quantity: min and median over the runs, in microseconds.
-#[derive(Debug, Serialize)]
+/// One measured quantity: min and median over the runs, in microseconds,
+/// and how many runs there were: none for one not measured.
+#[derive(Debug, Default, Serialize)]
 pub struct Stat {
     pub min_us: u64,
     pub median_us: u64,
+    pub runs: usize,
 }
 
 /// All measurements for one profile.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Default, Serialize)]
 pub struct Report {
     pub files: u64,
     pub runs: usize,
@@ -96,6 +98,7 @@ impl Stat {
     const NONE: Stat = Stat {
         min_us: 0,
         median_us: 0,
+        runs: 0,
     };
 
     /// Min and median of `samples`; `NONE` for no samples.
@@ -106,6 +109,7 @@ impl Stat {
             (Some(min), Some(median)) => Stat {
                 min_us: us(min),
                 median_us: us(median),
+                runs: samples.len(),
             },
             _ => Stat::NONE,
         }
@@ -841,7 +845,10 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
     }
 }
 
-/// Compare `report` against `budgets`; prints one line per metric. Returns false on regression.
+/// Compare `report` against `budgets`; prints one line per metric. Returns
+/// false on regression, and for a budget it cannot hold to: one of a
+/// metric not measured here (a tree the generator could not tag), or of
+/// none it knows (a misspelled key).
 pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
     let Some(b) = budgets.profiles.get(profile.name()) else {
         eprintln!("bench: {}: no budgets, skipped", profile.name());
@@ -879,8 +886,22 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         ("mime_by_name_us", &report.mime_by_name),
     ];
     let mut ok = true;
+    for key in b.keys() {
+        if !measured.iter().any(|(name, _)| name == key) {
+            eprintln!("bench: {}.{key}: no such metric FAIL", profile.name());
+            ok = false;
+        }
+    }
     for (key, stat) in measured {
         if let Some(&max) = b.get(key) {
+            if stat.runs == 0 {
+                eprintln!(
+                    "bench: {}.{key}: not measured (budget {max}) FAIL",
+                    profile.name()
+                );
+                ok = false;
+                continue;
+            }
             // Compare the min: the budget is about what the machine can do, not scheduler noise.
             let pass = stat.min_us <= max;
             ok &= pass;
@@ -893,4 +914,24 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         }
     }
     ok
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A budget holds only for what was measured: one of a metric not
+    /// measured, or of none, fails.
+    #[test]
+    fn a_budget_not_measured_or_of_no_metric_fails() {
+        let budgets: Budgets = toml::from_str("[flat100k]\ntags_fill_us = 10\n").unwrap();
+        let mut report = Report::default();
+        assert!(!check(Profile::Flat100k, &report, &budgets), "not measured");
+        report.tags_fill = Stat::of(vec![Duration::from_micros(5)]);
+        assert!(check(Profile::Flat100k, &report, &budgets));
+        report.tags_fill = Stat::of(vec![Duration::from_micros(50)]);
+        assert!(!check(Profile::Flat100k, &report, &budgets), "over");
+        let misspelled: Budgets = toml::from_str("[flat100k]\ntag_fill_us = 10\n").unwrap();
+        assert!(!check(Profile::Flat100k, &report, &misspelled));
+    }
 }
