@@ -117,8 +117,10 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   history, running or waiting, touched what it did
   (`JournalEntry::touched`, the footprints its runs had), else refused,
   saying which did, and nothing taken back. A step's
-  footprint names what its `describe` and its companions touch: a new
-  step kind says its own, or runs alone.
+  footprint names what its `describe` and its companions touch
+  (`Footprint::made_with`, `read_with`: their places by the companions'
+  rules `Volumes` carries, none looked at, a companions' folder such as
+  `.ts` included): a new step kind says its own, or runs alone.
 - **Retry (ADR-080).** A plan a step's error stopped keeps the steps it
   had left, unfolded and settled (`Executor::retry`, the toast's Retry,
   the `retry` command; the eight latest, `STOPPED_KEPT`). A retry is a

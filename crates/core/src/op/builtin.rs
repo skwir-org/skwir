@@ -390,11 +390,14 @@ impl super::Kind for Rename {
 }
 
 impl super::Effect for Rename {
-    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+    fn footprint(
+        &self,
+        volumes: &super::footprint::Volumes,
+    ) -> Option<super::footprint::Footprint> {
         Some(
             super::footprint::Footprint::default()
-                .made(&self.entry.path)
-                .made(&self.target()),
+                .made_with(&self.entry.path, volumes)
+                .made_with(&self.target(), volumes),
         )
     }
     fn describe(&self) -> Change {
@@ -533,8 +536,8 @@ impl super::Effect for Move {
             .is_some_and(|from| volumes.same(from, &self.dest_dir));
         Some(
             super::footprint::Footprint::default()
-                .made(src)
-                .made(&target)
+                .made_with(src, volumes)
+                .made_with(&target, volumes)
                 .heavy_if(across)
                 .store_if(trash, super::footprint::TRASH),
         )
@@ -956,12 +959,15 @@ impl super::Kind for Copy {
 }
 
 impl super::Effect for Copy {
-    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+    fn footprint(
+        &self,
+        volumes: &super::footprint::Volumes,
+    ) -> Option<super::footprint::Footprint> {
         let target = self.target(&self.entry.path);
         Some(
             super::footprint::Footprint::default()
-                .read(&self.entry.path)
-                .made(&target)
+                .read_with(&self.entry.path, volumes)
+                .made_with(&target, volumes)
                 .heavy_if(true),
         )
     }
@@ -1251,8 +1257,12 @@ impl super::Effect for Uncopy {
     ) -> Option<super::footprint::Footprint> {
         let path = &self.entry.path;
         Some(
-            super::footprint::Footprint::default()
-                .made(path)
+            self.beside
+                .iter()
+                .fold(
+                    super::footprint::Footprint::default().made(path),
+                    |all, b| all.made(&b.path),
+                )
                 .heavy_if(volumes.is_folder(path)),
         )
     }
@@ -1859,15 +1869,21 @@ fn copy_file(
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     // Where the system copies a whole file (Windows), it does: it keeps
-    // what a byte copy would lose there.
+    // what a byte copy would lose there. Its place must be free (macOS's
+    // `clonefile` refuses one taken): what a run this one retries cut
+    // short there is gone on from, or replaced, byte by byte.
     let mut written = 0;
-    let whole = sys::copy_whole(src, dst, preserve_attributes, &mut |total| {
-        // Counted as the system says: nothing is written through off
-        // Linux yet (`fs::volume::is_removable`).
-        ctx.advance(total.saturating_sub(written));
-        written = total;
-        ctx.check_cancelled().is_ok()
-    });
+    let whole = if ctx.is_cut(dst) {
+        None
+    } else {
+        sys::copy_whole(src, dst, preserve_attributes, &mut |total| {
+            // Counted as the system says: nothing is written through off
+            // Linux yet (`fs::volume::is_removable`).
+            ctx.advance(total.saturating_sub(written));
+            written = total;
+            ctx.check_cancelled().is_ok()
+        })
+    };
     if let Some(copied) = whole {
         // Stopped by Cancel, the copy is cancelled, not failed.
         if copied.is_err() {
@@ -2593,10 +2609,13 @@ impl super::Kind for Trash {
 }
 
 impl super::Effect for Trash {
-    fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
+    fn footprint(
+        &self,
+        volumes: &super::footprint::Volumes,
+    ) -> Option<super::footprint::Footprint> {
         Some(
             super::footprint::Footprint::default()
-                .made(&self.entry.path)
+                .made_with(&self.entry.path, volumes)
                 .store(super::footprint::TRASH),
         )
     }
@@ -3002,12 +3021,24 @@ impl Untrashed {
         self.info.exists() && item_of_info(&self.info).is_some_and(|item| exists(&item))
     }
 
-    /// Back in the trash where it was, as the trash said.
+    /// Whether nothing is left to put back: it is in the trash as it was,
+    /// or gone from where it came back to (deleted since: its file goes
+    /// with nothing, and an undo of what it came back with goes on).
+    fn is_done(&self) -> bool {
+        self.is_back()
+            || !exists(&self.path) && item_of_info(&self.info).is_none_or(|item| !exists(&item))
+    }
+
+    /// Back in the trash where it was, as the trash said; gone since it
+    /// came back, there is nothing to put back, nor a record of nothing.
     fn put_back(&self, ctx: &StepContext) -> anyhow::Result<()> {
         let item = item_of_info(&self.info).ok_or_else(|| {
             anyhow::anyhow!("“{}” is no trash's record", display_name(&self.info))
         })?;
         if !exists(&item) {
+            if !exists(&self.path) {
+                return Ok(());
+            }
             move_entry(ctx, &self.path, &item, &[])?;
         }
         if !self.info.exists() {
@@ -3367,7 +3398,7 @@ impl super::Effect for Unmerge {
         let back = |inner: &PathArg| exists(&item.join(inner));
         if self.info.exists()
             && self.moved.iter().all(back)
-            && self.companions.iter().all(Untrashed::is_back)
+            && self.companions.iter().all(Untrashed::is_done)
         {
             return StepStatus::AlreadyDone;
         }
@@ -3778,7 +3809,7 @@ impl super::Effect for Delete {
         let path = &self.entry.path;
         Some(
             super::footprint::Footprint::default()
-                .made(path)
+                .made_with(path, volumes)
                 .heavy_if(volumes.is_folder(path))
                 .store_if(in_trash(path).is_some(), super::footprint::TRASH),
         )
@@ -4523,6 +4554,53 @@ mod tests {
         assert!(super::super::Effect::apply(&restore, &StepContext::detached()).is_err());
         assert!(!restore.path.exists());
         assert_eq!(std::fs::read_dir(camera).unwrap().count(), 0);
+    }
+
+    /// The undo of a restore that merged into a folder there goes on when
+    /// a companion that came back with it was deleted since: nothing of it
+    /// is put back, and what moved goes back to the trash.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_merged_restore_is_undone_without_a_companion_deleted_since() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let trash = tmp.path().join(".Trash-1000");
+        std::fs::create_dir_all(trash.join("files/old  folder")).unwrap();
+        std::fs::create_dir_all(trash.join("info")).unwrap();
+        let docs = tmp.path().join("docs/old  folder");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("it’s back.txt"), "back").unwrap();
+        let said = b"[Trash Info]\nPath=docs/old%20%20folder\n".to_vec();
+        let undo = Unmerge {
+            path: docs.clone(),
+            info: PathArg(trash.join("info/old  folder.trashinfo")),
+            info_text: said.clone(),
+            moved: vec![PathArg("it’s back.txt".into())],
+            folders: Vec::new(),
+            companions: vec![Untrashed {
+                // Deleted since it came back.
+                path: tmp.path().join("docs/._old  folder"),
+                info: PathArg(trash.join("info/._old  folder.trashinfo")),
+                info_text: said,
+            }],
+        };
+        let ctx = StepContext::detached();
+        assert_eq!(
+            super::super::Effect::check(&undo, &ctx),
+            StepStatus::Pending { reversible: true }
+        );
+        super::super::Effect::apply(&undo, &ctx).unwrap();
+        assert!(trash.join("files/old  folder/it’s back.txt").is_file());
+        assert!(trash.join("info/old  folder.trashinfo").is_file());
+        assert!(
+            !trash.join("info/._old  folder.trashinfo").exists(),
+            "no record of nothing"
+        );
+        assert_eq!(
+            super::super::Effect::check(&undo, &ctx),
+            StepStatus::AlreadyDone
+        );
     }
 
     /// A tree compared with what is there is read once a plan, while

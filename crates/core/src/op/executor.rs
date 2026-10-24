@@ -1510,8 +1510,9 @@ impl Executor {
         while let Some((seq, steps)) = self.next_to_measure() {
             // A step that panics saying what it touches cannot say: its
             // plan runs alone, and the next is measured.
+            let companions = Arc::clone(&self.companions.lock());
             let footprint = super::guarded(|| {
-                let volumes = super::footprint::Volumes::now();
+                let volumes = super::footprint::Volumes::now().with_companions(companions);
                 Ok(
                     Footprint::of_steps(steps.iter().map(|s| s.footprint(&volumes)))
                         .canonical()

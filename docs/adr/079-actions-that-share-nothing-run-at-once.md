@@ -44,8 +44,11 @@ one lane (`op::executor`) and operations.md's "Running".
    - `write(T)`: the tree at `T` changed, made or removed (a copy's
      target, a move's source and target, a deletion, a tag edit's file);
    - `names(F)`: a name made, removed or renamed in the folder `F` (any
-     step that makes or removes an entry claims its parent; companions
-     and sidecars live beside their file, so they are covered);
+     step that makes or removes an entry claims its parent; a step
+     claims its companions' places as it claims its file's,
+     `Footprint::made_with`; amended 2026-10-24: "they live beside their
+     file, so they are covered" missed a write in place and a companions'
+     folder);
    - `store(S)`: something several actions keep: a volume's trash (its
      `files` and `info`), the tags index, a plugin's store.
 

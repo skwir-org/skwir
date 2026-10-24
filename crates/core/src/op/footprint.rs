@@ -116,6 +116,28 @@ impl Footprint {
         self
     }
 
+    /// The tree at `path` made, written or removed, as [`Footprint::made`],
+    /// with its companions' places (ADR-028), as `volumes` has their rules
+    /// (none looked at): they go where it goes, in a folder of their own
+    /// too (`.ts`).
+    #[must_use]
+    pub fn made_with(self, path: &Path, volumes: &Volumes) -> Self {
+        volumes
+            .beside(path)
+            .iter()
+            .fold(self.made(path), |all, place| all.made(place))
+    }
+
+    /// The tree at `path` read, as [`Footprint::read`], with its
+    /// companions' places (a copy carries them).
+    #[must_use]
+    pub fn read_with(self, path: &Path, volumes: &Volumes) -> Self {
+        volumes
+            .beside(path)
+            .iter()
+            .fold(self.read(path), |all, place| all.read(place))
+    }
+
     /// The tree at `path` written in place: its attributes, its notes.
     #[must_use]
     pub fn written(mut self, path: &Path) -> Self {
@@ -293,13 +315,15 @@ fn within(set: &BTreeSet<PathBuf>, tree: &Path) -> bool {
 }
 
 /// What a footprint asks of the volumes, read once for an action's steps:
-/// which volume holds a path (its mount, by the mount table), and whether
-/// a path on this machine is a folder.
+/// which volume holds a path (its mount, by the mount table), whether a
+/// path on this machine is a folder, and where its companions would be.
 pub struct Volumes {
     /// Mount points, the longest first.
     points: Option<Vec<PathBuf>>,
     /// Those of volumes kept in memory (tmpfs, ramfs): on no disk.
     in_memory: Vec<PathBuf>,
+    /// The companions' rules (ADR-028) the plan is applied with.
+    companions: Option<std::sync::Arc<crate::companions::Companions>>,
 }
 
 impl Volumes {
@@ -319,12 +343,39 @@ impl Volumes {
             return Volumes {
                 points: Some(points),
                 in_memory,
+                companions: None,
             };
         }
         Volumes {
             points: None,
             in_memory: Vec::new(),
+            companions: None,
         }
+    }
+
+    /// The same, the companions' places as `companions` has them.
+    #[must_use]
+    pub fn with_companions(
+        mut self,
+        companions: std::sync::Arc<crate::companions::Companions>,
+    ) -> Self {
+        self.companions = Some(companions);
+        self
+    }
+
+    /// Where the companions of the file at `path` would be, by every rule:
+    /// names, none looked at.
+    pub fn beside(&self, path: &Path) -> Vec<PathBuf> {
+        let (Some(rules), Some(dir), Some(name)) =
+            (&self.companions, path.parent(), path.file_name())
+        else {
+            return Vec::new();
+        };
+        rules
+            .of(name)
+            .into_iter()
+            .map(|place| dir.join(place))
+            .collect()
     }
 
     /// Whether `a` and `b` are on one volume: a move between them is a
@@ -384,6 +435,24 @@ mod tests {
 
     fn p(path: &str) -> PathBuf {
         PathBuf::from(path)
+    }
+
+    /// What goes with a file is claimed with it (ADR-028): a rename of
+    /// one meets what writes beside it in a companions' folder of its own.
+    #[test]
+    fn a_file_s_companions_are_claimed_with_it() {
+        let rules = crate::companions::Companions::default();
+        rules.register("test", std::sync::Arc::new(crate::companions::tests::Rules));
+        let volumes = Volumes::now().with_companions(std::sync::Arc::new(rules));
+        let rename = Footprint::default()
+            .made_with(&p("/disk/notes/it’s a.txt"), &volumes)
+            .made_with(&p("/disk/notes/b.txt"), &volumes);
+        let note = Footprint::default().written(&p("/disk/notes/.notes/it’s a.txt.note"));
+        assert!(rename.conflicts(&note));
+        let without = Footprint::default()
+            .made(&p("/disk/notes/it’s a.txt"))
+            .made(&p("/disk/notes/b.txt"));
+        assert!(!without.conflicts(&note), "what it said before");
     }
 
     #[test]
