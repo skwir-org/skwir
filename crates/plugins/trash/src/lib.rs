@@ -973,7 +973,9 @@ fn register_commands(app: &App, trashes: &Trashes) {
         .plans();
     let t = trashes.clone();
     app.commands
-        .register::<NoArgs, _>(
+        // Its location's tool runs it with the pane showing the trash
+        // (`ToolPane::Shown`), which it takes; it empties every trash.
+        .register::<skwir_core::app::PaneArg, _>(
             ID,
             "trash.empty",
             "Empty the trash",

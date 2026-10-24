@@ -625,6 +625,8 @@ pub struct Tool {
     pub icon: &'static str,
     /// What it does, its tooltip: "Empty Trash…".
     pub title: String,
+    /// Run with `pane` added (`ToolPane`): a command that takes it, as
+    /// commands refuse an argument they do not take.
     pub command: crate::command::Invocation,
     /// The pane it is run with, as `pane`.
     pub pane: ToolPane,
