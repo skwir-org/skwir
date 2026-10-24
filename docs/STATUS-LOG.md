@@ -4269,3 +4269,49 @@ Built on main, one commit per item or step, none pushed.
   folder within 60 s as the last of 140 tests at once (passed in
   `test-all`, three times alone and in the next `remote-check`): the
   first three fixed, the last not seen again.
+
+### The keys press the focused control again (2026-10-24)
+
+Found building the servers' forms: Tab to a dialog's Cancel or Create,
+then Enter or Space, did nothing. The cause was older and wider. Since
+gpui came from Zed's main branch (61597287, 2026-10-18), gpui clicks a
+focused control on a key's release only where the key's press reached
+it; the patch it replaced (0007) recorded the press before any binding
+ran. Every control in the `toolbar_button` key context binds Enter and
+Space (`ui.toolbar_activate`, so a dialog's own Enter cannot answer
+behind a focused Cancel) and took the press without answering it,
+waiting for a click that no longer came: dialogs' buttons, toolbar
+buttons and their popups' rows (the view menu, More, the places' menu,
+the player's), the outline's rows. The committed build, run beside the
+fixed one on Xvfb, did nothing on Enter on a focused view button.
+
+- **One way to be pressed.** `modal::pressed` makes a control answer a
+  click and `ui.toolbar_activate` with the same press, in that key
+  context; a dialog's footer holds only what it makes (`Pressed`). The
+  toolbar's buttons, the outline's rows, every footer, and the form's
+  controls use it; the form's own dispatch by focus (`form_activate`) is
+  gone. A held key presses once (ADR-066's capture). gpui's click on the
+  release does not follow: the press never reached the control.
+- **A popup's rows.** Down or Tab in a popup opened by its button went
+  past its rows to the window's first button, the sidebar's toggle,
+  before and after the fix: gpui now registers a tab group's own focus
+  inside the group, and the popup's focus had index 1, after its rows'
+  0. With the fix, Down then Enter would have hidden the sidebar. The
+  popup's focus has index 0 now.
+- Checked on Xvfb (debug build, test folders): New Folder's Cancel by
+  Enter (nothing made) and Create by Space (made); a deletion's question,
+  Tab to Cancel, Enter: the file kept; Enter on the grid view button;
+  the view menu opened by Enter, Down to List then Tree, Space on Tree;
+  a remote's Mount Options: Space on Read Only, Enter unfolding File
+  Cache, Down and Enter choosing, Shift+Tab to Cancel and Enter, nothing
+  saved. Up as the first key in a popup leaves it and closes it,
+  pressing nothing, as before.
+- **The keyring harnesses took the session's X socket.** Both
+  (`keepassxc-keyring.sh`, `locked-keyring.sh`) started Xvfb with
+  `-displayfd`, which tries :0 first and unlinks the socket's path before
+  finding :0 taken: Hyprland's Xwayland serves `/tmp/.X11-unix/X0` as a
+  file only, so every `remote-check` removed it, the night's final run
+  too (the session's new X applications then fail until it is linked
+  back). They now take a display from :90 up with no lock and no socket
+  (`tools/test/own-display.sh`, as `smoke.py`); both passed again (5 of
+  5, 2 of 2) and left the session's sockets as they were.

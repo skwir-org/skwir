@@ -7,8 +7,8 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Context, Div, FocusHandle, Focusable, KeyDownEvent, MouseButton, ScrollHandle,
-    SharedString, Stateful, UniformListScrollHandle, Window, deferred, div, point,
+    AnyElement, App, Context, Div, FocusHandle, Focusable, KeyContext, KeyDownEvent, MouseButton,
+    ScrollHandle, SharedString, Stateful, UniformListScrollHandle, Window, deferred, div, point,
 };
 use gpui::{prelude::*, px};
 
@@ -17,10 +17,11 @@ use crate::keymap::RunCommand;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-/// The shared button's key context (`keymap::PLACES`' `toolbar_button`):
-/// Enter and Space press the focused button, before a dialog's own Enter
-/// answers it (`ui.accept`, `ui.review_apply`).
-const BUTTON: &str = "ToolbarButton";
+/// The key context of a control the keys press ([`pressed`],
+/// `keymap::PLACES`' `toolbar_button`): Enter and Space press the focused
+/// one, before a dialog's own Enter answers it (`ui.accept`,
+/// `ui.review_apply`).
+pub(crate) const BUTTON: &str = "ToolbarButton";
 
 /// The focus to give back when a popup or dialog closes: whatever had it
 /// when it opened (a preview's reader, the address bar, a pane), not
@@ -250,33 +251,14 @@ pub fn panel(id: &'static str, width: f32, theme: &Theme) -> Stateful<Div> {
 /// The end of a dialog that waits for an answer: what its keys do, muted,
 /// then its buttons, Cancel first and the answer last, named by its verb
 /// (Rename, Unlock, Delete). Every answer the keys give, a click gives.
-/// Each button is pressed by Enter or Space when Tab reached it (a focused
-/// Cancel cancels, whatever Enter does elsewhere in the dialog), and a
-/// press on one leaves the keyboard where it was, in the field: one that
-/// clicks nothing (a dimmed button, a release outside) strands nothing.
+/// Each button is pressed by Enter or Space when Tab reached it
+/// ([`pressed`]: a focused Cancel cancels, whatever Enter does elsewhere in
+/// the dialog), and a press on one leaves the keyboard where it was, in
+/// the field: one that clicks nothing (a dimmed button, a release outside)
+/// strands nothing.
 pub fn footer(
     hint: impl Into<gpui::SharedString>,
-    buttons: impl IntoIterator<Item = Stateful<Div>>,
-    theme: &Theme,
-) -> Div {
-    footer_of(hint, buttons, pressable, theme)
-}
-
-/// [`footer`] for a dialog that presses its focused control itself on
-/// `ui.toolbar_activate` (a form): its buttons say they are buttons to
-/// the keys ([`keyed`]) and leave the action to it.
-pub fn footer_keyed(
-    hint: impl Into<gpui::SharedString>,
-    buttons: impl IntoIterator<Item = Stateful<Div>>,
-    theme: &Theme,
-) -> Div {
-    footer_of(hint, buttons, keyed, theme)
-}
-
-fn footer_of(
-    hint: impl Into<gpui::SharedString>,
-    buttons: impl IntoIterator<Item = Stateful<Div>>,
-    wrap: fn(Stateful<Div>) -> Stateful<Div>,
+    buttons: impl IntoIterator<Item = Pressed>,
     theme: &Theme,
 ) -> Div {
     div()
@@ -292,28 +274,70 @@ fn footer_of(
                 .child(hint.into()),
         )
         .children(buttons.into_iter().map(|button| {
-            wrap(button).on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+            button
+                .0
+                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
         }))
 }
 
-/// A control Enter and Space reach as a button's (`ui.toolbar_activate`),
-/// which its dialog answers by what has the keyboard (a form's switch, its
-/// dropdown, its buttons): gpui clicks no control whose key a binding took.
-pub fn keyed(control: Stateful<Div>) -> Stateful<Div> {
-    control.key_context(BUTTON)
+/// A control the keys press as a click does, made by [`pressed`]: all a
+/// dialog's footer holds.
+pub struct Pressed(Stateful<Div>);
+
+impl Pressed {
+    /// The control, to place or dress further.
+    pub fn control(self) -> Stateful<Div> {
+        self.0
+    }
 }
 
-/// A control Enter and Space press while it has the keyboard, as a
-/// dialog's buttons are.
-pub fn pressable(control: Stateful<Div>) -> Stateful<Div> {
-    control
-        .key_context(BUTTON)
-        // Taken here: the key's release on this control clicks it.
-        .on_action(|action: &RunCommand, _, cx| {
-            if action.name != "ui.toolbar_activate" {
-                cx.propagate();
-            }
-        })
+impl IntoElement for Pressed {
+    type Element = Stateful<Div>;
+
+    fn into_element(self) -> Self::Element {
+        self.0
+    }
+}
+
+/// `control`, pressed by a click and, while it has the keyboard, by Enter
+/// and Space: there they run `ui.toolbar_activate` (its key context,
+/// `BUTTON`), which it answers with `press`, so no other binding of theirs
+/// (a dialog's Enter, the player's Space) answers behind it. Never left to
+/// gpui's own click on the key's release, which comes only where no
+/// binding took the key's press.
+pub fn pressed(
+    control: Stateful<Div>,
+    press: impl Fn(&mut Shell, &mut Window, &mut Context<Shell>) + 'static,
+    cx: &mut Context<Shell>,
+) -> Pressed {
+    pressed_with(control, |_| {}, press, cx)
+}
+
+/// [`pressed`], its key context also saying what `keys` adds (which row of
+/// a popup it is).
+pub fn pressed_with(
+    control: Stateful<Div>,
+    keys: impl FnOnce(&mut KeyContext),
+    press: impl Fn(&mut Shell, &mut Window, &mut Context<Shell>) + 'static,
+    cx: &mut Context<Shell>,
+) -> Pressed {
+    let mut context = KeyContext::default();
+    context.add(BUTTON);
+    keys(&mut context);
+    let press = Rc::new(press);
+    let by_keys = Rc::clone(&press);
+    Pressed(
+        control
+            .key_context(context)
+            .on_click(cx.listener(move |this, _, window, cx| press(this, window, cx)))
+            .on_action(cx.listener(move |this, action: &RunCommand, window, cx| {
+                if action.name == "ui.toolbar_activate" {
+                    by_keys(this, window, cx);
+                } else {
+                    cx.propagate();
+                }
+            })),
+    )
 }
 
 /// What a dialog lists, rows of one `height` (what a deletion takes, a

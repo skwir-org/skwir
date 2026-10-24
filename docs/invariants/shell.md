@@ -30,9 +30,14 @@ Views are in [views.md](views.md); what locations decide, in
   and their place in it; what is inside a row is known within it. Where
   two items may show the same, their position joins what they are known
   by.
-- gpui clicks on Enter/Space key-up, and only if focus has not moved since
-  the key went down (its focus generation): never dispatch again on
-  key-down.
+- A focused control is pressed by Enter and Space through
+  `modal::pressed`: where it has the keyboard (`toolbar_button`) the keys
+  run `ui.toolbar_activate`, which it answers with its press, so no other
+  binding of theirs (a dialog's Enter, the player's Space) answers behind
+  it. gpui's own click on a key's release comes only where the key's
+  press reached the control, which a binding stops, and only if focus has
+  not moved since (its focus generation): a control whose keys are bound
+  is never left to it, and nothing presses twice.
 - Previews share one frame (`preview.rs`) and one toolbar
   (`preview_bar.rs`): a kind lists tools in slots, never builds a row
   ([previews.md](previews.md), "The preview frame"). Preview menus close
@@ -83,6 +88,10 @@ Views are in [views.md](views.md); what locations decide, in
   ends (`ui.toolbar_first`, `ui.toolbar_last`). The row reached scrolls
   into view in prepaint (`toolbar::RevealRow`, read from the focused
   button's key context, `row`).
+- gpui puts a tab group's own focus inside the group, ordered among its
+  stops by its own `tab_index`: a popup's focus keeps index 0, before its
+  rows, or Down and Tab pass them and leave for the window's first
+  button (`toolbar::Popup`).
 - A menu that depends on a toolbar variant is built once per variant and
   chosen in the popover's deferred prepaint from `AdaptiveRow::chosen`
   (`PopoverAnchor::popup_for`).
@@ -439,7 +448,8 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   answer, round their ends (`Shell::walk_dialog`, `modal::tab_among`),
   never the window behind it; a list one picks from keeps it in its
   field. A focused footer button is pressed by Enter and Space, before
-  the dialog's own Enter (a focused Cancel cancels); a press on one
+  the dialog's own Enter (a focused Cancel cancels): a footer holds only
+  `modal::Pressed` controls; a press on one
   leaves the keyboard in the field; Escape that nothing in the dialog
   answered cancels it (`modal::modal`).
 - **A question names what it is about when asked.** `ui.ask` fills the

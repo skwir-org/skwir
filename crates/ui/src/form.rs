@@ -19,7 +19,7 @@ use skwir_core::form::{Answer, Asked, Choice, Field, Form, Kind, Values};
 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
-use crate::keymap::{self, RunCommand};
+use crate::keymap;
 use crate::modal::{self, FocusReturn, ListMove, Picker};
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -532,47 +532,6 @@ impl Shell {
         }
     }
 
-    /// Enter or Space on what has the keyboard (`ui.toolbar_activate`): a
-    /// switch turned, a choice unfolded or chosen, a link opened, a button
-    /// pressed.
-    fn form_activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(form) = self.form.as_ref() else {
-            return;
-        };
-        if form.cancel_focus.is_focused(window) {
-            self.close_form(window, cx);
-        } else if form.accept_focus.is_focused(window) {
-            self.form_answer(false, window, cx);
-        } else if form.back_focus.is_focused(window) {
-            self.form_answer(true, window, cx);
-        } else if form.more_focus.is_focused(window) {
-            self.form_more(cx);
-        } else if let Some((at, control)) =
-            form.controls
-                .iter()
-                .enumerate()
-                .find(|(_, control)| match control {
-                    Control::Toggle { focus, .. }
-                    | Control::Choice { focus, .. }
-                    | Control::Link { focus } => focus.is_focused(window),
-                    _ => false,
-                })
-        {
-            match control {
-                Control::Toggle { .. } => self.form_toggle(at, cx),
-                Control::Choice { input: None, .. } if form.open == Some(at) => {
-                    self.form_choose(None, window, cx);
-                }
-                Control::Choice { .. } => self.form_unfold(at, cx),
-                Control::Link { .. } => {
-                    let url = form.form.fields[at].value.clone();
-                    self.open_address(&url, cx);
-                }
-                _ => {}
-            }
-        }
-    }
-
     fn form_more(&mut self, cx: &mut Context<Self>) {
         if let Some(form) = self.form.as_mut() {
             form.more = !form.more;
@@ -632,25 +591,24 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             format!("More options ({folded})").into()
         };
         body = body.child(
-            div().flex().child(
-                modal::keyed(
-                    controls::button(
-                        "form-more",
-                        label,
-                        Some(if state.more { "fold" } else { "unfold" }),
-                        ButtonStyle::Plain,
-                        &state.more_focus,
-                        &theme,
-                    )
-                    .aria_expanded(state.more),
+            div().flex().child(modal::pressed(
+                controls::button(
+                    "form-more",
+                    label,
+                    Some(if state.more { "fold" } else { "unfold" }),
+                    ButtonStyle::Plain,
+                    &state.more_focus,
+                    &theme,
                 )
-                .on_click(cx.listener(|this, _, _, cx| this.form_more(cx))),
-            ),
+                .aria_expanded(state.more),
+                |this, _, cx| this.form_more(cx),
+                cx,
+            )),
         );
     }
     let mut buttons = Vec::new();
     if form.back && form.waiting.is_none() {
-        buttons.push(
+        buttons.push(modal::pressed(
             controls::button(
                 "form-back",
                 "Back",
@@ -658,11 +616,12 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 ButtonStyle::Plain,
                 &state.back_focus,
                 &theme,
-            )
-            .on_click(cx.listener(|this, _, window, cx| this.form_answer(true, window, cx))),
-        );
+            ),
+            |this, window, cx| this.form_answer(true, window, cx),
+            cx,
+        ));
     }
-    buttons.push(
+    buttons.push(modal::pressed(
         controls::button(
             "form-cancel",
             "Cancel",
@@ -670,11 +629,12 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
             ButtonStyle::Plain,
             &state.cancel_focus,
             &theme,
-        )
-        .on_click(cx.listener(|this, _, window, cx| this.close_form(window, cx))),
-    );
+        ),
+        Shell::close_form,
+        cx,
+    ));
     if form.waiting.is_none() {
-        buttons.push(
+        buttons.push(modal::pressed(
             controls::button(
                 "form-accept",
                 form.accept.clone(),
@@ -682,9 +642,10 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 ButtonStyle::Plain,
                 &state.accept_focus,
                 &theme,
-            )
-            .on_click(cx.listener(|this, _, window, cx| this.form_answer(false, window, cx))),
-        );
+            ),
+            |this, window, cx| this.form_answer(false, window, cx),
+            cx,
+        ));
     }
     let hint = if form.waiting.is_some() {
         "Escape to cancel"
@@ -711,14 +672,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .text_color(theme.error)
                 .child(refusal)
         }))
-        .child(modal::footer_keyed(hint, buttons, &theme))
-        .on_action(cx.listener(|this, action: &RunCommand, window, cx| {
-            if action.name == "ui.toolbar_activate" {
-                this.form_activate(window, cx);
-            } else {
-                cx.propagate();
-            }
-        }));
+        .child(modal::footer(hint, buttons, &theme));
     Some(modal::modal(panel, 80., 3, Shell::form_cancel, &theme, cx))
 }
 
@@ -763,16 +717,17 @@ fn field_row(
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(
-                        modal::keyed(controls::switch(
+                    .child(modal::pressed(
+                        controls::switch(
                             SharedString::from(format!("form-switch-{at}")),
                             *on,
                             focus,
                             theme,
-                        ))
-                        .aria_label(title.clone())
-                        .on_click(cx.listener(move |this, _, _, cx| this.form_toggle(at, cx))),
-                    )
+                        )
+                        .aria_label(title.clone()),
+                        move |this, _, cx| this.form_toggle(at, cx),
+                        cx,
+                    ))
                     .child(
                         div()
                             .id(SharedString::from(format!("form-switch-label-{at}")))
@@ -800,22 +755,21 @@ fn field_row(
                         .flex()
                         .gap_1()
                         .child(controls::field(input, None, focused, false, None, theme))
-                        .child(
-                            modal::keyed(
-                                controls::icon_button(
-                                    SharedString::from(format!("form-suggest-{at}")),
-                                    "chevron",
-                                    "Suggestions",
-                                    focus,
-                                    theme,
-                                )
-                                .aria_expanded(open),
+                        .child(modal::pressed(
+                            controls::icon_button(
+                                SharedString::from(format!("form-suggest-{at}")),
+                                "chevron",
+                                "Suggestions",
+                                focus,
+                                theme,
                             )
-                            .on_click(cx.listener(move |this, _, _, cx| this.form_unfold(at, cx))),
-                        )
+                            .aria_expanded(open),
+                            move |this, _, cx| this.form_unfold(at, cx),
+                            cx,
+                        ))
                         .into_any_element()
                 }
-                None => modal::keyed(
+                None => modal::pressed(
                     controls::dropdown(
                         SharedString::from(format!("form-choice-{at}")),
                         if shown.is_empty() {
@@ -828,14 +782,15 @@ fn field_row(
                     )
                     .aria_label(field.title.clone())
                     .aria_expanded(open),
+                    move |this, window, cx| {
+                        if this.form.as_ref().is_some_and(|f| f.open == Some(at)) {
+                            this.form_choose(None, window, cx);
+                        } else {
+                            this.form_unfold(at, cx);
+                        }
+                    },
+                    cx,
                 )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    if this.form.as_ref().is_some_and(|f| f.open == Some(at)) {
-                        this.form_choose(None, window, cx);
-                    } else {
-                        this.form_unfold(at, cx);
-                    }
-                }))
                 .into_any_element(),
             };
             row = row.child(label).child(picker);
@@ -859,19 +814,18 @@ fn field_row(
         }
         Control::Link { focus } => {
             let url = field.value.clone();
-            row = row.child(
-                div().flex().child(
-                    modal::keyed(controls::button(
-                        SharedString::from(format!("form-link-{at}")),
-                        field.title.clone(),
-                        Some("link"),
-                        ButtonStyle::Plain,
-                        focus,
-                        theme,
-                    ))
-                    .on_click(cx.listener(move |this, _, _, cx| this.open_address(&url, cx))),
+            row = row.child(div().flex().child(modal::pressed(
+                controls::button(
+                    SharedString::from(format!("form-link-{at}")),
+                    field.title.clone(),
+                    Some("link"),
+                    ButtonStyle::Plain,
+                    focus,
+                    theme,
                 ),
-            );
+                move |this, _, cx| this.open_address(&url, cx),
+                cx,
+            )));
         }
     }
     row.children(help).into_any_element()

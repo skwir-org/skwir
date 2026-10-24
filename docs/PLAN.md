@@ -166,18 +166,6 @@ on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
 
-**Found 2026-10-24** (building the servers' forms, ADR-086):
-- A dialog's buttons are not pressed by the keyboard: Tab to a prompt's
-  Cancel or Create, then Enter, does nothing (seen on Xvfb in New
-  Folder). gpui turns Enter or Space on a focused control into a click
-  only where no binding took the key, and every dialog's buttons bind
-  them (`ui.toolbar_activate`, `modal::pressable`) so that a dialog's
-  own Enter (a confirmation's `ui.accept`) cannot fire behind a focused
-  Cancel. A form answers the action itself by what has the keyboard
-  (`modal::keyed`, `Shell::form_activate`): each dialog (prompts,
-  confirmations, reviews, Rename several, the tag editor) does the same,
-  or gpui records the press of a control whose key a binding took.
-
 **From the review of 2026-10-23** (fixed 2026-10-24, "Review fixes"
 above; each with the design its fixer proposed):
 - A cut file dims another folder's name of it: `Pending` keeps each

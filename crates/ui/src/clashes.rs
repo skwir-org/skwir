@@ -554,24 +554,30 @@ pub fn render(
         .child(modal::footer(
             "↑↓ a row, ←→ its choice · Enter goes on, Escape cancels",
             [
-                controls::button(
-                    "review-cancel",
-                    "Cancel",
-                    None,
-                    ButtonStyle::Plain,
-                    &handles.cancel,
-                    &theme,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.review_cancel(cx))),
-                controls::button(
-                    "review-apply",
-                    verb,
-                    Some("check"),
-                    ButtonStyle::Plain,
-                    &handles.apply,
-                    &theme,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.review_apply(cx))),
+                modal::pressed(
+                    controls::button(
+                        "review-cancel",
+                        "Cancel",
+                        None,
+                        ButtonStyle::Plain,
+                        &handles.cancel,
+                        &theme,
+                    ),
+                    |this, _, cx| this.review_cancel(cx),
+                    cx,
+                ),
+                modal::pressed(
+                    controls::button(
+                        "review-apply",
+                        verb,
+                        Some("check"),
+                        ButtonStyle::Plain,
+                        &handles.apply,
+                        &theme,
+                    ),
+                    |this, _, cx| this.review_apply(cx),
+                    cx,
+                ),
             ],
             &theme,
         ));

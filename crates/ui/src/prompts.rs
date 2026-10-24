@@ -610,24 +610,30 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
         .child(modal::footer(
             "Enter to confirm, Escape to cancel",
             [
-                controls::button(
-                    "prompt-cancel",
-                    "Cancel",
-                    None,
-                    ButtonStyle::Plain,
-                    &p.cancel_focus,
-                    &theme,
-                )
-                .on_click(cx.listener(|this, _, window, cx| this.prompt_cancel(window, cx))),
-                controls::button(
-                    "prompt-accept",
-                    p.accept.clone(),
-                    Some("check"),
-                    ButtonStyle::Plain,
-                    &p.accept_focus,
-                    &theme,
-                )
-                .on_click(cx.listener(|this, _, window, cx| this.prompt_answer(window, cx))),
+                modal::pressed(
+                    controls::button(
+                        "prompt-cancel",
+                        "Cancel",
+                        None,
+                        ButtonStyle::Plain,
+                        &p.cancel_focus,
+                        &theme,
+                    ),
+                    Shell::prompt_cancel,
+                    cx,
+                ),
+                modal::pressed(
+                    controls::button(
+                        "prompt-accept",
+                        p.accept.clone(),
+                        Some("check"),
+                        ButtonStyle::Plain,
+                        &p.accept_focus,
+                        &theme,
+                    ),
+                    Shell::prompt_answer,
+                    cx,
+                ),
             ],
             &theme,
         ));
@@ -666,24 +672,30 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
         .child(modal::footer(
             "Enter to confirm, Escape to cancel",
             [
-                controls::button(
-                    "confirm-no",
-                    "Cancel",
-                    None,
-                    ButtonStyle::Plain,
-                    &c.cancel,
-                    &theme,
-                )
-                .on_click(cx.listener(|this, _, window, cx| this.confirm_dismiss(window, cx))),
-                controls::button(
-                    "confirm-yes",
-                    yes,
-                    icon,
-                    ButtonStyle::Danger,
-                    &c.accept,
-                    &theme,
-                )
-                .on_click(cx.listener(|this, _, window, cx| this.confirm_accept(window, cx))),
+                modal::pressed(
+                    controls::button(
+                        "confirm-no",
+                        "Cancel",
+                        None,
+                        ButtonStyle::Plain,
+                        &c.cancel,
+                        &theme,
+                    ),
+                    Shell::confirm_dismiss,
+                    cx,
+                ),
+                modal::pressed(
+                    controls::button(
+                        "confirm-yes",
+                        yes,
+                        icon,
+                        ButtonStyle::Danger,
+                        &c.accept,
+                        &theme,
+                    ),
+                    Shell::confirm_accept,
+                    cx,
+                ),
             ],
             &theme,
         ));

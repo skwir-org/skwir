@@ -452,25 +452,31 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .child(modal::footer(
             hint,
             [
-                controls::button(
-                    "review-cancel",
-                    refuse,
-                    None,
-                    ButtonStyle::Plain,
-                    &cancel_focus,
-                    &theme,
-                )
-                .on_click(cx.listener(|this, _, _, cx| this.review_cancel(cx))),
-                controls::button(
-                    "review-apply",
-                    allow,
-                    Some("check"),
-                    ButtonStyle::Plain,
-                    &apply_focus,
-                    &theme,
-                )
-                .when(applicable != Some(true), |d| d.opacity(0.5))
-                .on_click(cx.listener(|this, _, _, cx| this.review_apply(cx))),
+                modal::pressed(
+                    controls::button(
+                        "review-cancel",
+                        refuse,
+                        None,
+                        ButtonStyle::Plain,
+                        &cancel_focus,
+                        &theme,
+                    ),
+                    |this, _, cx| this.review_cancel(cx),
+                    cx,
+                ),
+                modal::pressed(
+                    controls::button(
+                        "review-apply",
+                        allow,
+                        Some("check"),
+                        ButtonStyle::Plain,
+                        &apply_focus,
+                        &theme,
+                    )
+                    .when(applicable != Some(true), |d| d.opacity(0.5)),
+                    |this, _, cx| this.review_apply(cx),
+                    cx,
+                ),
             ],
             &theme,
         ));

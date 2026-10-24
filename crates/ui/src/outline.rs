@@ -225,7 +225,7 @@ fn row(
     let (command, closing) = (entry.command.clone(), close.clone());
     let (title, clip) = crate::elements::clip::text(entry.title.clone());
     let hover = theme.hover;
-    div()
+    let row = div()
         .id(crate::elements::known_by(
             "outline-entry",
             (at.index, &entry.title),
@@ -245,26 +245,23 @@ fn row(
         .when(command.is_some(), |d| {
             d.cursor_pointer()
                 .tab_index(0)
-                .key_context("ToolbarButton")
                 .when(!at.current, |d| d.hover(move |s| s.bg(hover)))
                 .focus(|s| s.border_color(theme.accent))
         })
-        .child(title)
-        .on_click(cx.listener(move |shell, _, window, cx| {
+        .child(title);
+    crate::modal::pressed(
+        row,
+        move |shell, window, cx| {
             if let Some((name, args)) = &command {
                 shell.run(name, args.clone(), window, cx);
                 if !at.pinned {
                     shell.run(closing.0, closing.1.clone(), window, cx);
                 }
             }
-        }))
-        .on_action(cx.listener(|_, action: &crate::keymap::RunCommand, _, cx| {
-            // Activation comes from GPUI's key-up click, as in toolbar::Button.
-            if action.name != "ui.toolbar_activate" {
-                cx.propagate();
-            }
-        }))
-        .into_any_element()
+        },
+        cx,
+    )
+    .into_any_element()
 }
 
 /// The entry of the part shown in a document read by pages: the last of

@@ -921,29 +921,35 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     let footer = modal::footer(
         "Enter on an empty field applies",
         [
-            controls::button(
-                "tags-cancel",
-                "Cancel",
-                None,
-                ButtonStyle::Plain,
-                &e.cancel_focus,
-                &theme,
-            )
-            .on_click(cx.listener(|this, _, window, cx| this.close_tag_editor(window, cx))),
-            controls::button(
-                "tags-apply",
-                "Apply",
-                Some("check"),
-                ButtonStyle::Plain,
-                &e.apply_focus,
-                &theme,
-            )
-            .when_some(apply_keys, |d, keys| {
-                d.tooltip(move |_, cx| {
-                    crate::toolbar::tooltip(format!("Apply ({keys})").into(), cx)
-                })
-            })
-            .on_click(cx.listener(|this, _, window, cx| this.tag_editor_apply(window, cx))),
+            modal::pressed(
+                controls::button(
+                    "tags-cancel",
+                    "Cancel",
+                    None,
+                    ButtonStyle::Plain,
+                    &e.cancel_focus,
+                    &theme,
+                ),
+                Shell::close_tag_editor,
+                cx,
+            ),
+            modal::pressed(
+                controls::button(
+                    "tags-apply",
+                    "Apply",
+                    Some("check"),
+                    ButtonStyle::Plain,
+                    &e.apply_focus,
+                    &theme,
+                )
+                .when_some(apply_keys, |d, keys| {
+                    d.tooltip(move |_, cx| {
+                        crate::toolbar::tooltip(format!("Apply ({keys})").into(), cx)
+                    })
+                }),
+                Shell::tag_editor_apply,
+                cx,
+            ),
         ],
         &theme,
     )

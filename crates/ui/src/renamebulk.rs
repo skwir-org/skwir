@@ -441,25 +441,31 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         .child(modal::footer(
             "Tab switches fields · Enter renames (undoable) · Escape cancels",
             [
-                controls::button(
-                    "bulk-cancel",
-                    "Cancel",
-                    None,
-                    ButtonStyle::Plain,
-                    &b.cancel_focus,
-                    &theme,
-                )
-                .on_click(cx.listener(|this, _, window, cx| this.close_bulk(window, cx))),
-                controls::button(
-                    "bulk-apply",
-                    "Rename",
-                    Some("check"),
-                    ButtonStyle::Plain,
-                    &b.apply_focus,
-                    &theme,
-                )
-                .when(!b.applies(), |d| d.opacity(0.5))
-                .on_click(cx.listener(|this, _, window, cx| this.bulk_apply(window, cx))),
+                modal::pressed(
+                    controls::button(
+                        "bulk-cancel",
+                        "Cancel",
+                        None,
+                        ButtonStyle::Plain,
+                        &b.cancel_focus,
+                        &theme,
+                    ),
+                    Shell::close_bulk,
+                    cx,
+                ),
+                modal::pressed(
+                    controls::button(
+                        "bulk-apply",
+                        "Rename",
+                        Some("check"),
+                        ButtonStyle::Plain,
+                        &b.apply_focus,
+                        &theme,
+                    )
+                    .when(!b.applies(), |d| d.opacity(0.5)),
+                    Shell::bulk_apply,
+                    cx,
+                ),
             ],
             &theme,
         ));

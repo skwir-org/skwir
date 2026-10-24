@@ -313,7 +313,7 @@ impl Button {
         let revealed = cx
             .try_global::<RevealRow>()
             .is_some_and(|reveal| reveal.row.as_ref() == Some(&id));
-        div()
+        let button = div()
             .id(self.id)
             .role(if menu {
                 gpui::Role::MenuItem
@@ -357,14 +357,6 @@ impl Button {
             .focusable()
             .tab_index(0)
             .tab_stop(enabled)
-            // Its id says which row of a popup the keyboard reached
-            // (`Shell::reveal_focused_row`).
-            .key_context({
-                let mut context = gpui::KeyContext::default();
-                context.add("ToolbarButton");
-                context.set(ROW, id);
-                context
-            })
             .when(self.active, |d| {
                 d.bg(theme.selection_bg).text_color(theme.selection_text)
             })
@@ -454,8 +446,13 @@ impl Button {
                     gpui::MouseButton::Left,
                     cx.listener(|this, _, _, _| this.held = None),
                 )
-            })
-            .on_click(cx.listener(move |this, _, window, cx| {
+            });
+        // Its id says which row of a popup the keyboard reached
+        // (`Shell::reveal_focused_row`).
+        crate::modal::pressed_with(
+            button,
+            |keys| keys.set(ROW, id),
+            move |this, window, cx| {
                 // The release of a long press: what it held ran instead.
                 if this
                     .held
@@ -467,14 +464,10 @@ impl Button {
                 if enabled {
                     invoke(this, pane, &command, args.clone(), window, cx);
                 }
-            }))
-            .on_action(cx.listener(move |_, action: &RunCommand, _, cx| {
-                // GPUI sends a keyboard click on key-up. Consume key-down so
-                // a parent's Enter/Space binding cannot also activate an action.
-                if action.name != "ui.toolbar_activate" {
-                    cx.propagate();
-                }
-            }))
+            },
+            cx,
+        )
+        .control()
     }
 }
 
@@ -582,7 +575,7 @@ impl Shell {
         let Some(row) = stack
             .iter()
             .rev()
-            .find(|context| context.contains("ToolbarButton"))
+            .find(|context| context.contains(crate::modal::BUTTON))
             .and_then(|context| context.get(ROW).cloned())
         else {
             return;
@@ -683,7 +676,10 @@ pub struct Popup {
 impl Popup {
     pub fn new(kind: &'static str, window: &mut Window, cx: &mut Context<Shell>) -> Self {
         let previous = crate::modal::FocusReturn::capture(window, cx);
-        let focus = cx.focus_handle().tab_index(1).tab_stop(false);
+        // gpui puts a group's own focus inside the group (`popup_panel`),
+        // ordered among its rows by its index: first, so the arrows and Tab
+        // go on to the first row, never past them out of the popup.
+        let focus = cx.focus_handle().tab_stop(false);
         window.focus(&focus, cx);
         Self {
             kind,
