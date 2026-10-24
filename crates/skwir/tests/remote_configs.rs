@@ -625,3 +625,111 @@ fn a_browser_s_sign_in_waits_with_its_page_and_is_cancelled() {
     );
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// A remote built on others: an encrypted one picks the remote (and the
+/// folder of it) it stands on among those there are, and what is written
+/// through it is encrypted there; a union stands on the remotes switched
+/// on in its form.
+#[test]
+fn a_remote_stands_on_the_remotes_picked_in_its_form() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("on-remotes");
+    let (one, two) = (base.join("one"), base.join("two"));
+    std::fs::create_dir_all(one.join("vault")).unwrap();
+    std::fs::create_dir_all(&two).unwrap();
+    let config = base.join("rclone.conf");
+    std::fs::write(
+        &config,
+        format!(
+            "[one]\ntype = alias\nremote = {}\n\n[two]\ntype = alias\nremote = {}\n",
+            one.display(),
+            two.display()
+        ),
+    )
+    .unwrap();
+    let app = app_with_rclone(&base, &config, Arc::default());
+    let window = Window::new(&app);
+
+    app.dispatch(&Invocation::with_args(
+        "remote.add_server",
+        &serde_json::json!({ "kind": "crypt" }),
+    ))
+    .unwrap();
+    let options = window.form(30);
+    let stands_on = options.form.fields.iter().find(|f| f.key == "remote").unwrap();
+    let Kind::Choice { choices, open } = &stands_on.kind else {
+        panic!("a choice of remotes: {stands_on:?}");
+    };
+    assert!(open, "a folder of one may follow");
+    let offered: Vec<&str> = choices.iter().map(|c| c.value.as_str()).collect();
+    assert_eq!(offered, ["one:", "two:"]);
+    window.accept(
+        &options,
+        &[
+            ("remote.name", "secret-1"),
+            ("remote", "one:vault"),
+            ("password", "a pass phrase, it's long"),
+        ],
+    );
+    until_said(&app, 30, "“secret-1” is added");
+    let kept = section(&config, "secret-1").unwrap();
+    assert!(kept.contains(&"remote = one:vault".to_owned()), "{kept:?}");
+    // Written through it, it is encrypted where it stands.
+    let file = base.join("hello.txt");
+    std::fs::write(&file, "hello").unwrap();
+    let status = Command::new("rclone")
+        .arg("--config")
+        .arg(&config)
+        .arg("copyto")
+        .arg(&file)
+        .arg("secret-1:hello.txt")
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let stored: Vec<String> = std::fs::read_dir(one.join("vault"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(stored.len(), 1);
+    assert_ne!(stored[0], "hello.txt", "its name encrypted");
+    let read = Command::new("rclone")
+        .arg("--config")
+        .arg(&config)
+        .args(["cat", "secret-1:hello.txt"])
+        .output()
+        .unwrap();
+    assert_eq!(read.stdout, b"hello");
+
+    app.dispatch(&Invocation::with_args(
+        "remote.add_server",
+        &serde_json::json!({ "kind": "union" }),
+    ))
+    .unwrap();
+    let options = window.form(30);
+    let switches: Vec<&str> = options
+        .form
+        .fields
+        .iter()
+        .filter(|f| f.kind == Kind::Toggle && f.key.starts_with("upstream:"))
+        .map(|f| f.title.as_str())
+        .collect();
+    assert_eq!(
+        switches,
+        ["Include “one”", "Include “secret-1”", "Include “two”"]
+    );
+    window.accept(
+        &options,
+        &[
+            ("remote.name", "both"),
+            ("upstream:one", "true"),
+            ("upstream:two", "true"),
+        ],
+    );
+    until_said(&app, 30, "“both” is added");
+    let kept = section(&config, "both").unwrap();
+    assert!(kept.contains(&"upstreams = one: two:".to_owned()), "{kept:?}");
+    std::fs::remove_dir_all(&base).unwrap();
+}
