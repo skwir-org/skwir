@@ -253,7 +253,8 @@ impl Walk<'_> {
             }
             let Ok(meta) = entry.metadata() else { continue };
             present.insert(name.clone());
-            if hidden(&name) {
+            // Hidden as a search's walk has it: a dot, or Windows' mark.
+            if skwir_core::fs::is_hidden(&entry) {
                 if meta.is_dir() && app.companions.is_folder(&name) {
                     // A folder of companions for the whole folder: anything
                     // in it changed, the folder is read whole.

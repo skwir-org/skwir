@@ -663,6 +663,34 @@ pub(crate) fn mounts_below(root: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Whether Windows marks `path`, or a folder of it below `root`, hidden:
+/// what the walk (the `ignore` crate) leaves out there beside a name's dot
+/// (`plocate::visible`). Each folder is asked once (`known`): an index
+/// names many files of one. Elsewhere a dot alone says it.
+#[cfg(windows)]
+fn marked_hidden(path: &Path, root: &Path, known: &mut HashMap<PathBuf, bool>) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    /// `FILE_ATTRIBUTE_HIDDEN`.
+    const HIDDEN: u32 = 2;
+    let marked =
+        |p: &Path| std::fs::symlink_metadata(p).is_ok_and(|m| m.file_attributes() & HIDDEN != 0);
+    marked(path)
+        || path
+            .ancestors()
+            .skip(1)
+            .take_while(|above| *above != root)
+            .any(|above| {
+                *known
+                    .entry(above.to_path_buf())
+                    .or_insert_with(|| marked(above))
+            })
+}
+
+#[cfg(not(windows))]
+fn marked_hidden(_: &Path, _: &Path, _: &mut HashMap<PathBuf, bool>) -> bool {
+    false
+}
+
 /// Reject paths the walk cannot reach before any filesystem read: hidden
 /// names, excess depth, and a network mount anywhere below the root.
 fn in_walk<'a>(q: &Query, path: &'a Path) -> Option<&'a Path> {
@@ -864,6 +892,7 @@ impl Shared {
         let started = Instant::now();
         let mut statter = Statter::default();
         let mut linked: HashMap<PathBuf, bool> = HashMap::new();
+        let mut marked: HashMap<PathBuf, bool> = HashMap::new();
         let unreached = mounts_below(&real_root);
         for real in paths {
             if cancel.is_cancelled() {
@@ -888,7 +917,7 @@ impl Shared {
             let Some(name) = real.file_name() else {
                 continue;
             };
-            if through_link {
+            if through_link || (!q.hidden && marked_hidden(&real, &real_root, &mut marked)) {
                 continue;
             }
             let path = q.root.join(relative);
