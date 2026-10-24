@@ -650,7 +650,7 @@ impl PaneView for ColumnsView {
                 self.row.clone(),
             ))
             // Ctrl and the wheel size the rows, over any column.
-            .child(zoom_wheel::overlay(Zoomed::View, cx))
+            .child(zoom_wheel::overlay(Zoomed::View(pane), cx))
             .into_any_element()
     }
 

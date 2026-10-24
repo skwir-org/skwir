@@ -496,7 +496,7 @@ impl PaneView for GridView {
             drag: shell.marquee.clone(),
         };
         // Ctrl and the wheel resize the tiles.
-        let wheel = zoom_wheel::overlay(Zoomed::View, cx);
+        let wheel = zoom_wheel::overlay(Zoomed::View(pane), cx);
         div()
             .relative()
             .size_full()

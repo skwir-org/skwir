@@ -979,7 +979,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                 .min_h_0()
                 .w_full()
                 .child(map)
-                .child(zoom_wheel::overlay(Zoomed::View, cx)),
+                .child(zoom_wheel::overlay(Zoomed::View(pane), cx)),
         )
         .children(legend)
         .child(crate::elements::clip::clipped(

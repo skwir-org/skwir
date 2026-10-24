@@ -1579,8 +1579,8 @@ impl Shell {
         };
         let dir = if larger { "in" } else { "out" };
         match zoomed {
-            Zoomed::View => {
-                self.zoom_to(dir, cx);
+            Zoomed::View(pane) => {
+                self.with_pane(pane, |shell| shell.zoom_to(dir, cx));
             }
             Zoomed::Preview => self.preview_zoom_toward(dir, pointer, window, cx),
             Zoomed::Text { parked } => self.inspect_text_step(larger, parked, window, cx),
@@ -1588,8 +1588,8 @@ impl Shell {
     }
 
     /// Zoom what the pane's view sizes (`PaneView::zooms`): the grid's
-    /// tiles, the rows of the list and the columns, each keeping its own
-    /// size, or the view's own scale. Returns whether something changed.
+    /// tiles, the rows the list, the tree and the columns share, Usage's
+    /// levels, or the view's own scale. Returns whether something changed.
     fn zoom_to(&mut self, dir: &str, cx: &mut Context<Self>) -> bool {
         fn step(levels: &[u32], current: u32, default: u32, dir: &str) -> u32 {
             let at = |zoom| levels.iter().position(|z| *z == zoom);

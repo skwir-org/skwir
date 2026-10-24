@@ -5,14 +5,16 @@
 //! would scroll too. A map has none: its wheel zooms around the pointer,
 //! with Ctrl or without.
 use gpui::{Context, ScrollWheelEvent, prelude::*};
+use skwir_core::workspace::PaneId;
 
 use crate::shell::Shell;
 
 /// What a step of Ctrl and the wheel sizes (`Shell::zoom_wheel`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Zoomed {
-    /// The pane's view (`ui.zoom`), which stays where it is.
-    View,
+    /// A pane's view (`ui.zoom`), which stays where it is: the pane drawn
+    /// under the pointer, which need not be the active one.
+    View(PaneId),
     /// What the preview shows to be looked at: a picture or a page
     /// (`ui.preview_zoom`; a book laid out into pages, its text).
     Preview,

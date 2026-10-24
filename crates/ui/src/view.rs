@@ -40,8 +40,8 @@ pub enum Nav {
 pub enum Zooms {
     /// The grid's tiles.
     Tiles,
-    /// The rows of the list, the tree and the columns, each view keeping
-    /// its own size.
+    /// The rows of the list, the tree and the columns: one size the three
+    /// share (`Shell::row_zoom`), the window's as the tiles' size is.
     Rows,
     /// Its own way (`PaneView::zoom`): the map's scale.
     Own,

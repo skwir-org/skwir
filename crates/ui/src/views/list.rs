@@ -332,6 +332,16 @@ impl ListView {
             ..ListView::default()
         }
     }
+
+    /// Put the row `anchor` names at the top, as far into it, at the rows'
+    /// height as it is now.
+    fn place_anchor(&mut self, anchor: (usize, f32)) {
+        let state = self.scroll.0.borrow();
+        let offset = state.base_handle.offset();
+        state
+            .base_handle
+            .set_offset(gpui::point(offset.x, px(row_offset(anchor, self.height))));
+    }
 }
 
 /// Everything a row needs, collected under the workspace lock: what every
@@ -841,7 +851,9 @@ impl PaneView for ListView {
                 before,
             );
             self.height = height;
-            self.restore_anchor((row, within * height / before));
+            // A scroll asked meanwhile still runs after it: the zoom keys
+            // keep the cursor in view (`Shell::zoom_step`).
+            self.place_anchor((row, within * height / before));
         }
         let list = uniform_list(
             "rows",
@@ -881,7 +893,7 @@ impl PaneView for ListView {
                     .w_full()
                     .child(list)
                     .child(marquee)
-                    .child(zoom_wheel::overlay(Zoomed::View, cx))
+                    .child(zoom_wheel::overlay(Zoomed::View(pane), cx))
                     .child(crate::elements::scrollbar::vertical(
                         ("list-scrollbar", pane.0 as usize),
                         crate::elements::scrollbar::Scrolls::Offset(
@@ -904,13 +916,9 @@ impl PaneView for ListView {
     }
 
     fn restore_anchor(&mut self, anchor: (usize, f32)) {
-        let mut state = self.scroll.0.borrow_mut();
         // A pending scroll (the reset of a new listing) would move it again.
-        state.deferred_scroll_to_item = None;
-        let offset = state.base_handle.offset();
-        state
-            .base_handle
-            .set_offset(gpui::point(offset.x, px(row_offset(anchor, self.height))));
+        self.scroll.0.borrow_mut().deferred_scroll_to_item = None;
+        self.place_anchor(anchor);
     }
 
     fn nav_delta(&self, nav: Nav, shell: &Shell) -> Option<isize> {
