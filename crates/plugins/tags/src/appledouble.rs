@@ -310,6 +310,33 @@ pub fn read(path: &Path) -> Option<AppleDouble> {
     AppleDouble::parse(&bytes)
 }
 
+/// The `._` file beside a file, as an edit finds it.
+enum Beside {
+    /// None there: one is made where the store creates.
+    None,
+    /// One it rewrites, as read.
+    Rewritten(AppleDouble),
+    /// One it leaves alone, the other stores kept: laid out otherwise
+    /// (`AppleSingle`, version 1, other entries, a stray file of that name),
+    /// unreadable, or larger than an undo keeps of it
+    /// (`fs::file::SIDE_FILE_LIMIT`, `notes::raw::snapshot`).
+    Left,
+}
+
+fn beside(path: &Path) -> Beside {
+    let Some(aside) = sidecar(path) else {
+        return Beside::Left;
+    };
+    match std::fs::symlink_metadata(&aside) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Beside::None,
+        Ok(meta) if meta.len() <= skwir_core::fs::file::SIDE_FILE_LIMIT => match read(path) {
+            Some(ad) if ad.writable => Beside::Rewritten(ad),
+            _ => Beside::Left,
+        },
+        _ => Beside::Left,
+    }
+}
+
 /// Write `ad` as the sidecar of `path`, replacing it whole: a Mac reading
 /// it meanwhile sees the old one or the new one.
 pub fn write(path: &Path, ad: &AppleDouble) -> io::Result<()> {
@@ -540,20 +567,22 @@ impl NotesStore for AppleDoubleStore {
         let Some(aside) = sidecar(file.path) else {
             return Vec::new();
         };
-        if !create && !aside.exists() {
-            return Vec::new();
+        match beside(file.path) {
+            Beside::Rewritten(_) => {}
+            Beside::None if create => {}
+            // Never written: nothing of it is kept for an undo.
+            Beside::None | Beside::Left => return Vec::new(),
         }
         vec![RawKey::Beside {
             path: aside.file_name().map(PathBuf::from).unwrap_or_default(),
         }]
     }
     fn write(&self, file: &Probe<'_>, notes: &Notes, create: bool) -> io::Result<Wrote> {
-        let existing = read(file.path);
         let has_notes = notes.has_user_notes();
-        let mut ad = match existing {
-            Some(ad) => ad,
-            None if create && has_notes => AppleDouble::empty(),
-            None => return Ok(Wrote::NotHere),
+        let mut ad = match beside(file.path) {
+            Beside::Rewritten(ad) => ad,
+            Beside::None if create && has_notes => AppleDouble::empty(),
+            Beside::None | Beside::Left => return Ok(Wrote::NotHere),
         };
         let before = ad.clone();
         let theirs = ad
@@ -775,6 +804,42 @@ pub(crate) mod tests {
             store.write(&probe, &notes, false).unwrap(),
             Wrote::Unchanged
         );
+    }
+
+    /// A `._` file the store cannot rewrite as macOS lays it out is left
+    /// alone, whatever it is asked: never replaced by a new one, nor kept
+    /// for an undo.
+    #[test]
+    fn a_sidecar_laid_out_otherwise_is_never_replaced() {
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("appledouble-")
+            .tempdir_in(base)
+            .unwrap();
+        let file = tmp.path().join("it's song.mp3");
+        std::fs::write(&file, b"x").unwrap();
+        let store = AppleDoubleStore::default();
+        let probe = Probe {
+            path: &file,
+            name: file.file_name().unwrap(),
+            attributes: &[],
+            folder: false,
+        };
+        let notes = Notes {
+            tags: vec![Tag::named("Été")],
+            ..Notes::default()
+        };
+        let mut version_1 = as_a_mac_writes(&[("a", b"1")]);
+        version_1[5] = 0x01;
+        let mut three = as_a_mac_writes(&[("a", b"1")]);
+        three[25] = 3;
+        for bytes in [version_1, three, b"a stray file".to_vec()] {
+            std::fs::write(sidecar(&file).unwrap(), &bytes).unwrap();
+            assert!(store.keys(&probe, true).is_empty());
+            assert_eq!(store.write(&probe, &notes, true).unwrap(), Wrote::NotHere);
+            assert_eq!(std::fs::read(sidecar(&file).unwrap()).unwrap(), bytes);
+        }
     }
 
     #[test]

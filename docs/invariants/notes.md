@@ -47,7 +47,11 @@ registered in `App::notes` by its plugin); all share one model,
 - Its inverse (`restore_notes`) puts back each store's exact bytes, and
   refuses if another application changed them since.
 - A `._` file is rewritten whole as macOS lays it out, keeping every
-  other attribute and its mode; one laid out otherwise is never written.
+  other attribute and its mode; one laid out otherwise, unreadable or
+  larger than an undo keeps (`SIDE_FILE_LIMIT`) is never written. A
+  store that finds its file beside one it cannot write (an XMP sidecar
+  in UTF-16) leaves it alone and keeps nothing of it for the undo: the
+  other stores are written.
 - An edit of several files applies the change (`tags.edit`: add these,
   remove those), never a list written over each file.
 - Commands take `entries`, so Properties and the tag editor act on what they

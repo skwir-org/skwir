@@ -191,6 +191,9 @@ impl NotesStore for XmpStore {
             return Vec::new();
         };
         match Self::existing(dir, file.name) {
+            // One it cannot read is left alone (`write`): nothing of it is
+            // kept for an undo, which could not read it either.
+            Some(path) if read(&path).is_err() => Vec::new(),
             Some(path) => vec![RawKey::Beside {
                 path: path.file_name().map(PathBuf::from).unwrap_or_default(),
             }],
@@ -207,9 +210,13 @@ impl NotesStore for XmpStore {
         let has_notes = notes.has_user_notes();
         let (path, text) = match Self::existing(dir, file.name) {
             Some(path) => {
-                let text = read(&path)?;
-                let Some(edited) = packet::edit(&text, notes) else {
-                    // Not XMP skwir can edit: left alone, the others kept.
+                // Not text it reads (UTF-16, which XMP allows), larger than
+                // a sidecar, or not XMP skwir can edit: left alone, the
+                // others kept.
+                let Some((text, edited)) = read(&path).ok().and_then(|text| {
+                    let edited = packet::edit(&text, notes)?;
+                    Some((text, edited))
+                }) else {
                     tracing::debug!(path = %path.display(), "xmp: a sidecar left as it is");
                     return Ok(Wrote::NotHere);
                 };

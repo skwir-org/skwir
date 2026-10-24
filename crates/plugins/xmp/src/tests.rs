@@ -183,3 +183,37 @@ fn names_with_accents_are_read_as_names() {
     );
     assert_eq!(XmpCompanion.owner(OsStr::new("abcèdef")), None);
 }
+
+/// A sidecar it cannot read as text (UTF-16, which XMP allows) is left
+/// alone by an edit, the other stores kept: never written, nor kept for
+/// an undo that could not read it either.
+#[test]
+fn a_sidecar_it_cannot_read_is_left_alone() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("it's photos");
+    std::fs::create_dir(&dir).unwrap();
+    let file = dir.join("ü a.jpg");
+    std::fs::write(&file, b"x").unwrap();
+    let utf16: Vec<u8> = std::iter::once(0xfeff_u16)
+        .chain(SIDECAR.encode_utf16())
+        .flat_map(u16::to_le_bytes)
+        .collect();
+    std::fs::write(dir.join("ü a.jpg.xmp"), &utf16).unwrap();
+    let store = XmpStore::default();
+    let probe = Probe {
+        path: &file,
+        name: file.file_name().unwrap(),
+        attributes: &[],
+        folder: false,
+    };
+    assert!(store.keys(&probe, true).is_empty());
+    let notes = Notes {
+        tags: vec![Tag::named("trip")],
+        ..Notes::default()
+    };
+    assert!(matches!(
+        store.write(&probe, &notes, true),
+        Ok(Wrote::NotHere)
+    ));
+    assert_eq!(std::fs::read(dir.join("ü a.jpg.xmp")).unwrap(), utf16);
+}
