@@ -2270,6 +2270,14 @@ mod builtin {
                             .remove(n.as_os_str())
                             .or_else(|| p.listing.find_by_name(n.as_os_str()).map(|e| e.id))
                         {
+                            // Nothing acts on what cannot be seen: a dot
+                            // file while hidden files are off, a name the
+                            // filter leaves out (`Pane::select_revealed`
+                            // shows it first).
+                            Some(id) if !p.is_shown(id) => anyhow::bail!(
+                                "`{}` is not shown: hidden, or left out by the filter",
+                                n.display()
+                            ),
                             Some(id) => ids.push(id),
                             None => anyhow::bail!("no entry named `{}`", n.display()),
                         }
@@ -2314,6 +2322,9 @@ mod builtin {
                     }
                     SelectMode::Pick => ids.into_iter().for_each(|id| p.selection.pick(id)),
                 }
+                // An id the pane no longer shows (a row drawn a moment
+                // ago) is not selected.
+                p.retain_shown();
                 Ok(Outcome::Done)
             },
         )

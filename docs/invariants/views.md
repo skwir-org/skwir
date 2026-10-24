@@ -47,6 +47,11 @@ around the views is in [shell.md](shell.md).
   so the row keeps its selection and the cursor. A file renamed onto the
   name from beside it is both renames. Renames that arrive together are
   followed in their order (`Selection::rekey`).
+- **Only what is shown is selected.** `select` refuses a name the pane
+  does not show (a dot file while hidden files are off, a name the filter
+  leaves out) and lets go of an id it does not show (`Pane::is_shown`):
+  Delete must never take what cannot be seen. Showing a hidden entry by
+  name turns hidden files on first (`Pane::select_revealed`).
 - Scheme moves say `follow` (`ui.cursor`, `step: follow`): they move a
   following selection and leave a picked one. `pick` is yazi's mark. A
   sweep (`select_sweep`) holds a range while the cursor moves (`sweep` in

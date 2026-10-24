@@ -70,6 +70,36 @@ fn select_all_and_invert_take_only_what_the_pane_shows() {
     assert_eq!(cursor(&app).as_deref(), Some("b's"));
 }
 
+/// What a script or an agent selects is what the pane shows: a hidden
+/// file named is refused, an id not shown is not selected, a name the
+/// filter leaves out is refused too.
+#[test]
+fn what_is_not_shown_is_not_selected() {
+    let (_tmp, app) = tree();
+    let by_names = |names: &[&str]| {
+        app.dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "names": names }),
+        ))
+    };
+    let error = by_names(&["b's", ".hidden"]).unwrap_err().to_string();
+    assert!(error.contains("not shown"), "{error}");
+    assert!(selected(&app).is_empty(), "nothing of it selected");
+    select_mode(&app, ".hidden", "add");
+    assert!(selected(&app).is_empty());
+    by_names(&["b's"]).unwrap();
+    select_mode(&app, ".hidden", "add");
+    assert_eq!(selected(&app), ["b's"]);
+    app.dispatch(&Invocation::with_args(
+        "filter",
+        &serde_json::json!({ "text": "ü" }),
+    ))
+    .unwrap();
+    assert!(by_names(&["a one"]).is_err());
+    by_names(&["c ü"]).unwrap();
+    assert_eq!(selected(&app), ["c ü"]);
+}
+
 #[test]
 fn the_cursor_moves_without_touching_the_selection() {
     let (_tmp, app) = tree();

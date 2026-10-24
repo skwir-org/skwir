@@ -624,6 +624,40 @@ pub struct Pill {
     pub tag: Option<crate::metadata::TagRef>,
 }
 
+/// Whether a pane shows an entry, by its id: listed by `listing` or one
+/// opened in place (`kept`, `expanded`), shown by its listing (hidden
+/// files, companions), and kept by the filter and the narrowing.
+fn shows<'a>(
+    listing: &'a Listing,
+    kept: &'a [Kept],
+    expanded: &'a [Opened],
+    filter: Option<&'a str>,
+    narrowed: Option<&'a Narrowed>,
+    sort: SortSpec,
+) -> impl Fn(EntryId) -> bool + 'a {
+    let filter = filter.map(NameFilter::new);
+    let top = listing.shows(sort);
+    let opened: Vec<_> = opened(kept, expanded)
+        .map(|(_, k)| (&k.listing, k.listing.shows(sort)))
+        .collect();
+    move |id| {
+        let found = std::iter::once((listing, &top as &dyn Fn(EntryId) -> bool))
+            .chain(
+                opened
+                    .iter()
+                    .map(|(l, shows)| (*l, shows as &dyn Fn(EntryId) -> bool)),
+            )
+            .find_map(|(l, shows)| l.get(id).map(|e| (e, shows(id))));
+        match found {
+            Some((e, true)) => {
+                filter.as_ref().is_none_or(|f| f.holds(&e.name))
+                    && narrowed.is_none_or(|n| n.shows(e))
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Whether the pane shows `entry`: its name holds the filter, and the
 /// narrowing keeps it.
 fn shown(filter: Option<&NameFilter>, narrowed: Option<&Narrowed>, entry: &Entry) -> bool {
@@ -1255,7 +1289,7 @@ impl Pane {
     /// to a dot name too), a companion hidden beside its file, what the
     /// filter or the narrowing leaves out, a file the narrowing cannot tell
     /// yet included: it waits hidden, and nothing acts on what is hidden.
-    fn retain_shown(&mut self) {
+    pub(crate) fn retain_shown(&mut self) {
         self.keep_shown(false);
     }
 
@@ -1263,29 +1297,32 @@ impl Pane {
     /// entry leaves the view (`Selection::retain_near`).
     fn keep_shown(&mut self, back: bool) {
         let shown = self.shown.lock().clone();
-        let (listing, kept, expanded) = (&self.listing, &self.kept, &self.expanded);
-        let filter = self.filter.as_deref().map(NameFilter::new);
-        let (narrowed, sort) = (self.narrowed.as_ref(), self.sort);
-        let top = listing.shows(sort);
-        let opened: Vec<_> = opened(kept, expanded)
-            .map(|(_, k)| (&k.listing, k.listing.shows(sort)))
-            .collect();
-        let holds = |id| {
-            let found = std::iter::once((listing, &top))
-                .chain(opened.iter().map(|(l, shows)| (*l, shows)))
-                .find_map(|(l, shows)| l.get(id).map(|e| (e, shows(id))));
-            match found {
-                Some((e, true)) => {
-                    filter.as_ref().is_none_or(|f| f.holds(&e.name))
-                        && narrowed.is_none_or(|n| n.shows(e))
-                }
-                _ => false,
-            }
-        };
+        let holds = shows(
+            &self.listing,
+            &self.kept,
+            &self.expanded,
+            self.filter.as_deref(),
+            self.narrowed.as_ref(),
+            self.sort,
+        );
         match shown {
             Some(shown) => self.selection.retain_near(holds, &shown, back),
             None => self.selection.retain(holds),
         }
+    }
+
+    /// Whether the pane shows entry `id`: listed, here or in a folder
+    /// opened in place, not hidden (a dot file, a companion) and kept by
+    /// the filter and the narrowing. What a command selects must be.
+    pub fn is_shown(&self, id: EntryId) -> bool {
+        shows(
+            &self.listing,
+            &self.kept,
+            &self.expanded,
+            self.filter.as_deref(),
+            self.narrowed.as_ref(),
+            self.sort,
+        )(id)
     }
 
     fn expanded_changed(&mut self) {
