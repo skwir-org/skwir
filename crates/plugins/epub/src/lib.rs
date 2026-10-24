@@ -617,10 +617,21 @@ impl Container {
             .ok_or_else(|| anyhow::anyhow!("Missing EPUB resource {href}"))
     }
     /// Read one resource by container href (absolute or root-relative, percent-encoded or not).
+    /// One `encryption.xml` lists as encrypted (a protected book's
+    /// chapters) is refused, saying so: read raw, it showed as garbage. A
+    /// font only obfuscated is read, for `file` to restore.
     fn read(&mut self, href: &str, what: &str, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
         let name =
             member_key(href).ok_or_else(|| anyhow::anyhow!("Missing EPUB resource {href}"))?;
         anyhow::ensure!(self.package.has(&name), "Missing EPUB resource {href}");
+        if self.encrypted.get(&name).is_some_and(|algorithm| {
+            ![IDPF_OBFUSCATION, ADOBE_OBFUSCATION].contains(&algorithm.as_str())
+        }) {
+            anyhow::bail!(
+                "This EPUB is protected: its {} is encrypted",
+                what.to_lowercase()
+            );
+        }
         self.package.read(&name, limits::BINARY_INPUT, what, cancel)
     }
 }
@@ -1478,6 +1489,38 @@ mod tests {
             container.file("EPUB/fonts/Libre%20Été.otf", &cancel),
             Some(font)
         );
+    }
+
+    /// A protected book's chapter says it is encrypted, rather than showing
+    /// its bytes; its obfuscated font is still read.
+    #[test]
+    fn an_encrypted_chapter_says_so() {
+        let encryption = format!(
+            r#"<?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:enc="http://www.w3.org/2001/04/xmlenc#"><enc:EncryptedData><enc:EncryptionMethod Algorithm="http://www.w3.org/2001/04/xmlenc#aes128-cbc"/><enc:CipherData><enc:CipherReference URI="EPUB/one.xhtml"/></enc:CipherData></enc:EncryptedData><enc:EncryptedData><enc:EncryptionMethod Algorithm="{IDPF_OBFUSCATION}"/><enc:CipherData><enc:CipherReference URI="EPUB/a.otf"/></enc:CipherData></enc:EncryptedData></encryption>"#
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("protected.epub");
+        write(
+            &path,
+            &[
+                ("mimetype", b"application/epub+zip"),
+                ("META-INF/container.xml", CONTAINER_XML.as_bytes()),
+                ("META-INF/encryption.xml", encryption.as_bytes()),
+                ("EPUB/book.opf", OPF.as_bytes()),
+                ("EPUB/one.xhtml", b"\x8f\x02 ciphered bytes"),
+                ("EPUB/a.otf", b"font"),
+            ],
+        );
+        let cancel = CancelToken::new();
+        let mut container = Container::open(&path, &cancel).unwrap();
+        let error = container
+            .read("EPUB/one.xhtml", "Chapter", &cancel)
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "This EPUB is protected: its chapter is encrypted"
+        );
+        assert!(container.read("EPUB/a.otf", "Font", &cancel).is_ok());
     }
 
     /// Obfuscation is its own inverse, keyed by the package's identifier:
