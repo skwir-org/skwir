@@ -33,12 +33,28 @@ pub const MARKER: &str = ".private";
 /// What a private path is said as, where an answer would name it.
 pub const WITHHELD: &str = "(private)";
 
-/// Private from the start: where keys, passwords and credentials live.
+/// Private from the start: where keys, passwords and credentials live,
+/// the desktop's keyrings among them on each system.
 pub const DEFAULT_FOLDERS: &[&str] = &[
     "~/.ssh",
     "~/.gnupg",
     "~/.password-store",
+    // GNOME's keyrings, KDE's wallets.
+    #[cfg(not(any(target_os = "macos", windows)))]
     "~/.local/share/keyrings",
+    #[cfg(not(any(target_os = "macos", windows)))]
+    "~/.local/share/kwalletd",
+    #[cfg(target_os = "macos")]
+    "~/Library/Keychains",
+    // The Credential Manager's vaults, and the keys that protect them.
+    #[cfg(windows)]
+    "~/AppData/Roaming/Microsoft/Credentials",
+    #[cfg(windows)]
+    "~/AppData/Local/Microsoft/Credentials",
+    #[cfg(windows)]
+    "~/AppData/Local/Microsoft/Vault",
+    #[cfg(windows)]
+    "~/AppData/Roaming/Microsoft/Protect",
     "~/.pki",
     "~/.aws",
     "~/.kube",
@@ -192,16 +208,42 @@ pub struct Privacy {
 
 impl Privacy {
     /// What `settings` say now: each folder with `~` read as the home
-    /// folder; one that is not absolute is left out.
+    /// folder; one that is not absolute is left out. A folder may be said
+    /// as its path alone (`privacy.folders = ["~/.ssh"]`, as a hand or Home
+    /// Manager writes it); a value that is no list keeps the folders private
+    /// from the start: what cannot be read never makes a folder public.
     pub fn of(settings: &Settings) -> Privacy {
         let home = crate::os_path::home();
-        let folders = settings
-            .get::<toml::Value>(FOLDERS_KEY)
-            .and_then(|value| value.as_array().cloned())
-            .unwrap_or_default()
+        let value = settings.get::<toml::Value>(FOLDERS_KEY);
+        let listed: Vec<String> = match value.as_ref().map(toml::Value::as_array) {
+            Some(Some(records)) => records
+                .iter()
+                .filter_map(|record| {
+                    let path = match record {
+                        toml::Value::String(path) => Some(path.as_str()),
+                        record => record.get("path").and_then(toml::Value::as_str),
+                    };
+                    if path.is_none() {
+                        tracing::warn!("{FOLDERS_KEY}: a folder is a path or a record of one");
+                    }
+                    path.map(str::to_owned)
+                })
+                .collect(),
+            Some(None) => {
+                tracing::warn!("{FOLDERS_KEY} is no list: the folders private from the start are");
+                DEFAULT_FOLDERS
+                    .iter()
+                    .map(|path| (*path).to_owned())
+                    .collect()
+            }
+            None => DEFAULT_FOLDERS
+                .iter()
+                .map(|path| (*path).to_owned())
+                .collect(),
+        };
+        let folders = listed
             .iter()
-            .filter_map(|record| record.get("path")?.as_str().map(str::to_owned))
-            .filter_map(|text| expand(&text, home.as_deref()))
+            .filter_map(|text| expand(text, home.as_deref()))
             .collect();
         Privacy {
             folders,
@@ -255,7 +297,7 @@ pub struct Checker<'a> {
     privacy: &'a Privacy,
     marked: HashMap<PathBuf, bool>,
     /// Resolve lazily: taking a Privacy snapshot itself never reads disk.
-    resolved_folders: Option<std::io::Result<Vec<PathBuf>>>,
+    resolved_folders: Option<Vec<PathBuf>>,
 }
 
 impl Checker<'_> {
@@ -281,16 +323,23 @@ impl Checker<'_> {
         let Ok(resolved) = resolved_name(path) else {
             return true;
         };
+        // A folder that cannot be resolved (a link to a drive not
+        // mounted, a parent that cannot be read) holds what is under it as
+        // it is written, checked above: nothing reached through it could
+        // be resolved either. It never makes every path private.
         let folders = self.resolved_folders.get_or_insert_with(|| {
             self.privacy
                 .folders
                 .iter()
-                .map(|p| resolved_name(p))
+                .filter_map(|folder| match resolved_name(folder) {
+                    Ok(resolved) => Some(resolved),
+                    Err(error) => {
+                        tracing::debug!("a private folder cannot be resolved: {error}");
+                        None
+                    }
+                })
                 .collect()
         });
-        let Ok(folders) = folders else {
-            return true;
-        };
         if folders.iter().any(|folder| resolved.starts_with(folder)) {
             return true;
         }
@@ -638,6 +687,57 @@ mod tests {
         symlink(diary.join("missing"), &dangling).unwrap();
         assert!(privacy.holds(&dangling));
         assert!(!privacy.holds(&tmp.path().join("public future file")));
+    }
+
+    /// A private folder that cannot be resolved (a link to a drive not
+    /// mounted) keeps what is under its name private, and leaves the other
+    /// files as they are.
+    #[cfg(unix)]
+    #[test]
+    fn a_private_folder_that_cannot_be_resolved_keeps_only_itself() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = tmp.path().join("it's a store");
+        std::os::unix::fs::symlink(tmp.path().join("unmounted/drive"), &store).unwrap();
+        let keys = tmp.path().join("keys");
+        std::fs::create_dir(&keys).unwrap();
+        let open = tmp.path().join("open.txt");
+        std::fs::write(&open, "public").unwrap();
+        let privacy = Privacy::folders([store.clone(), keys.clone()]);
+        let mut check = privacy.checker();
+        assert!(check.holds(&store.join("bank.gpg")));
+        assert!(check.holds(&keys.join("id")));
+        assert!(!check.holds(&open));
+    }
+
+    /// The private folders as the settings say them: records, or paths
+    /// alone as a hand writes them; a value that is no list keeps the
+    /// folders private from the start.
+    #[cfg(unix)]
+    #[test]
+    fn private_folders_are_read_however_they_are_written() {
+        let settings = Settings::in_memory();
+        declare(&settings);
+        let home = crate::os_path::home().unwrap();
+        let listed = |value: toml::Value| {
+            settings.set(FOLDERS_KEY, value);
+            Privacy::of(&settings).listed().to_vec()
+        };
+        let paths: toml::Value = toml::Value::Array(vec![
+            toml::Value::String("~/it's mine".into()),
+            toml::Value::String("/srv/l'été".into()),
+        ]);
+        assert_eq!(
+            listed(paths),
+            [home.join("it's mine"), PathBuf::from("/srv/l'été")]
+        );
+        let mut record = toml::Table::new();
+        record.insert("path".into(), toml::Value::String("~/.ssh".into()));
+        assert_eq!(
+            listed(toml::Value::Array(vec![toml::Value::Table(record)])),
+            [home.join(".ssh")]
+        );
+        let defaults = listed(toml::Value::String("~/.ssh".into()));
+        assert!(defaults.contains(&home.join(".ssh")) && defaults.contains(&home.join(".gnupg")));
     }
 
     // Its paths are Unix's, which Windows reads as relative: Windows' own
