@@ -106,6 +106,21 @@ impl Dropped {
         dropped
     }
 
+    /// The arguments of the command a drop of it into `dest` runs
+    /// (`move`, `copy`, `link`), the entries named: never the selection by
+    /// the time it runs. `None` when nothing is named, since a command
+    /// given no entries takes the selection.
+    fn args(&self, dest: &Path, pane: Option<PaneId>) -> Option<serde_json::Value> {
+        if self.entries.is_empty() {
+            return None;
+        }
+        let mut args = serde_json::json!({ "entries": self.entries, "dest": PathArg::from(dest) });
+        if let Some(pane) = pane {
+            args["pane"] = serde_json::json!(pane);
+        }
+        Some(args)
+    }
+
     /// What `when` reads of it: how many, whether all are folders or
     /// files, and their types. Nothing of where it is: a drop's menu is
     /// about what was dropped.
@@ -501,14 +516,18 @@ impl Shell {
             return;
         }
         let modifiers = window.modifiers();
-        let args = serde_json::json!({ "dest": PathArg::from(dest), "pane": from });
+        // What was dropped, named now: the selection may change before a
+        // worker answers or the user does, and a command handed no
+        // entries acts on the selection of its moment (`App::targets`).
+        let dropped = self.dropped_from(from);
+        let Some(args) = dropped.args(dest, Some(from)) else {
+            return;
+        };
         // Said (Shift+F5, Shift+F6), or by the keys held.
         if let Some(how) = how.or_else(|| held(modifiers)) {
             return self.run(how.command(), args, window, cx);
         }
-        // Asked about what was dropped, named now: the selection may
-        // change before the answer.
-        let asked = ask.then(|| (self.dropped_from(from), window.mouse_position()));
+        let asked = ask.then(|| (dropped, window.mouse_position()));
         let devices: std::collections::HashSet<u64> = {
             let ws = self.app.workspace.read();
             ws.pane(from)
@@ -584,10 +603,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let entries = &dropped.entries;
-        if entries.is_empty() {
+        let Some(args) = dropped.args(dest, None) else {
             return;
-        }
-        let args = serde_json::json!({ "entries": entries, "dest": PathArg::from(dest) });
+        };
         let (ctx, types) = dropped.when();
         let mut offered: Vec<MenuItem> = self
             .app
@@ -1040,6 +1058,37 @@ mod tests {
             archives
         ));
         assert!(!holds(&dropped(&[("not an archive.zip", true)]), archives));
+    }
+
+    /// What a drop runs names what was dropped: the command takes those
+    /// entries, whatever the pane selects by the time it runs (here,
+    /// nothing). Nothing named runs nothing, since a command handed no
+    /// entries takes the selection.
+    #[test]
+    fn a_drop_runs_on_what_was_dropped() {
+        let base = scratch("named");
+        let (src, dest) = (base.join("from"), base.join("into ‘here’"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dest).unwrap();
+        let file = src.join("it's a file.txt");
+        std::fs::write(&file, b"hello").unwrap();
+        let config = base.join("config");
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(&config)).unwrap();
+        let dropped = Dropped::of_paths(std::slice::from_ref(&file));
+        let args = dropped.args(&dest, Some(PaneId(7))).expect("named");
+        assert_eq!(args["pane"], 7);
+        let args = dropped.args(&dest, None).expect("named");
+        let outcome = app.dispatch(&Invocation::with_args("copy", &args)).unwrap();
+        let skwir_core::command::Outcome::Plan(plan) = outcome else {
+            panic!("a plan");
+        };
+        assert_eq!(plan.steps.len(), 1);
+        assert!(matches!(
+            plan.steps[0].describe(),
+            skwir_core::op::Change::Copy { from, .. } if from == file
+        ));
+        assert!(Dropped::default().args(&dest, None).is_none());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// A scratch tree under the user's cache, never `/tmp` (see AGENTS.md).
