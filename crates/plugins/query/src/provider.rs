@@ -1190,7 +1190,8 @@ mod tests {
                 | ListingEvent::Renamed(_)
                 | ListingEvent::Changed
                 | ListingEvent::AsOf(_)
-                | ListingEvent::Redirect(_) => {}
+                | ListingEvent::Redirect(_)
+                | ListingEvent::Moved(_) => {}
             }
         }
     }

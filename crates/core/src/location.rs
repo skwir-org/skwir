@@ -230,6 +230,11 @@ pub enum ListingEvent {
     /// its place in the history: an address connected to a mount shows
     /// the mounted folder (ADR-077). Sent once, as the last event.
     Redirect(Location),
+    /// The folder listed moved, and the listing followed it: it lists it
+    /// at this path from now on. A path location is then reached there:
+    /// its holder shows it at that address, in its place in the history,
+    /// with what it opened in place inside it (`Listing::moved_to`).
+    Moved(PathBuf),
 }
 
 /// Called after events are queued so a sleeping UI can wake and pump.
@@ -944,6 +949,12 @@ pub struct Listing {
     /// Where the location said it is reached (`ListingEvent::Redirect`),
     /// until its holder shows it (`take_redirect`).
     redirect: Option<Location>,
+    /// Where the folder it lists is reached since it moved
+    /// (`ListingEvent::Moved`), `None` while it is where it was opened.
+    moved: Option<Location>,
+    /// A move its holder has not followed yet (`take_moved`): where it
+    /// was reached before (`None`: where it was opened), and now.
+    unfollowed: Option<(Option<Location>, Location)>,
 }
 
 impl Default for Listing {
@@ -969,6 +980,8 @@ impl Default for Listing {
             owners: crate::hashing::Set::default(),
             renamed: Vec::new(),
             redirect: None,
+            moved: None,
+            unfollowed: None,
         }
     }
 }
@@ -1112,6 +1125,18 @@ impl Listing {
             ListingEvent::Redirect(location) => {
                 self.redirect = Some(location);
                 delta.any = true;
+            }
+            ListingEvent::Moved(path) => {
+                let now = Location::from_path(path);
+                if self.moved.as_ref() != Some(&now) {
+                    let before = match self.unfollowed.take() {
+                        Some((before, _)) => before,
+                        None => self.moved.clone(),
+                    };
+                    self.unfollowed = Some((before, now.clone()));
+                    self.moved = Some(now);
+                    delta.any = true;
+                }
             }
         }
         for (moved, version) in [
@@ -1573,6 +1598,38 @@ impl Listing {
     /// Where the location said it is reached, once (`ListingEvent::Redirect`).
     pub fn take_redirect(&mut self) -> Option<Location> {
         self.redirect.take()
+    }
+
+    /// Where the folder it lists is reached since it moved
+    /// (`ListingEvent::Moved`): the address a path location shows from
+    /// then on ([`Listing::address`]).
+    pub fn moved_to(&self) -> Option<&Location> {
+        self.moved.as_ref()
+    }
+
+    /// The address `open`, listed by this listing, is reached at: where
+    /// its folder moved for a path location, else where it was opened. A
+    /// location of another scheme that lists a folder through a path's
+    /// listing (a trashed folder's) keeps its own.
+    pub fn address<'a>(&'a self, open: &'a dyn OpenLocation) -> &'a Location {
+        let opened = open.location();
+        match &self.moved {
+            Some(moved) if opened.is_path() => moved,
+            _ => opened,
+        }
+    }
+
+    /// The folder it lists is now at `now`, moved with a folder above it,
+    /// which its holder followed: no event says so, a watch seeing only
+    /// the folder it watches move.
+    pub(crate) fn relocate(&mut self, now: Location) {
+        self.moved = Some(now);
+    }
+
+    /// The move its holder has not followed yet, once: where the folder
+    /// was reached before (`None`: where it was opened) and now.
+    pub(crate) fn take_moved(&mut self) -> Option<(Option<Location>, Location)> {
+        self.unfollowed.take()
     }
 }
 

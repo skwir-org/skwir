@@ -40,6 +40,13 @@ around the views is in [shell.md](shell.md).
   the next file. A folder closed in place takes the cursor that was
   inside it. One place does it, `Selection::retain_near`, from the order
   `Pane::order` last gave.
+- **A name saved over never left the view.** An editor saves by writing a
+  new file and renaming it onto the name (gedit, Kate, VS Code): the
+  listing sends the name's old entry renamed to the new one
+  (`ListingEvent::Renamed`), as it does a provisional id a stat corrects,
+  so the row keeps its selection and the cursor. A file renamed onto the
+  name from beside it is both renames. Renames that arrive together are
+  followed in their order (`Selection::rekey`).
 - Scheme moves say `follow` (`ui.cursor`, `step: follow`): they move a
   following selection and leave a picked one. `pick` is yazi's mark. A
   sweep (`select_sweep`) holds a range while the cursor moves (`sweep` in
@@ -77,6 +84,14 @@ around the views is in [shell.md](shell.md).
   (`workspace::Opened`), so it works with places (a tag's) too.
 - Read a pane's entries through `Pane::entry`, `Pane::path_of`,
   `Pane::location_of` and `Pane::order`, never `pane.listing` alone.
+- **A folder that moves is shown where it went.** Its listing follows it
+  and says so (`ListingEvent::Moved`); a path location is then reached at
+  its new address (`Listing::address`, which `Pane::location` and `Kept`
+  read): the folder shown in its step of the history, so a paste or a new
+  folder goes there (`App::pane_dir`), a folder opened in place under its
+  new name, with what is open inside it (`Pane::follow_moves`: a watch
+  sees only its own folder move). The folder shown is not followed when a
+  folder above it moves: nothing watches its parents.
 - Only a view that says `opens_in_place` keeps them open; the shell
   closes them under any other.
 - The columns view's columns are a folder's parents or the places of a

@@ -108,6 +108,49 @@ fn watcher_reports_create_rename_and_delete() {
     wait(&app, pane, |l| l.len() == 1);
 }
 
+/// An editor saves by writing a new file and renaming it onto the name:
+/// the row under the name is the new file's, and keeps its selection and
+/// the cursor, whether the new file was listed under its own name first
+/// or not.
+#[test]
+fn a_file_saved_over_by_a_rename_keeps_its_selection() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("saved");
+    std::fs::create_dir(&dir).unwrap();
+    for name in ["a.txt", "it's notes.txt", "z.txt"] {
+        std::fs::write(dir.join(name), b"before").unwrap();
+    }
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &dir);
+    let name = "it's notes.txt";
+    for listed_first in [false, true] {
+        let before = listed(&app, pane, name);
+        select(&app, &[name]);
+        let staged = dir.join(".goutputstream-é1");
+        std::fs::write(&staged, b"after").unwrap();
+        if listed_first {
+            wait(&app, pane, |l| {
+                l.find_by_name(staged.file_name().unwrap()).is_some()
+            });
+        }
+        std::fs::rename(&staged, dir.join(name)).unwrap();
+        wait(&app, pane, |l| {
+            l.find_by_name(name.as_ref())
+                .is_some_and(|e| e.file() != before.file())
+                && l.find_by_name(staged.file_name().unwrap()).is_none()
+        });
+        let after = listed(&app, pane, name);
+        assert_eq!(
+            selected(&app, pane),
+            [after.id],
+            "listed first: {listed_first}"
+        );
+        let ws = app.workspace.read();
+        assert_eq!(ws.pane(pane).unwrap().selection.cursor, Some(after.id));
+    }
+}
+
 /// The entry the pane lists under `name`.
 fn listed(
     app: &skwir_core::App,
@@ -461,6 +504,136 @@ fn a_listing_follows_its_folder_when_it_moves_and_says_when_it_is_gone() {
 
     std::fs::remove_dir_all(&moved).unwrap();
     wait(&app, pane, |l| l.is_empty() && l.error().is_some());
+}
+
+/// Wait until `done` holds of the pane, pumping it.
+fn wait_pane(
+    app: &skwir_core::App,
+    pane: skwir_core::workspace::PaneId,
+    done: impl Fn(&skwir_core::workspace::Pane) -> bool,
+) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        app.pump();
+        if done(app.workspace.read().pane(pane).unwrap()) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "the pane never got there");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// A folder shown that moves is shown where it went: its address, the
+/// folder commands work in (a paste, a new folder) and its step of the
+/// history, while a new folder at its old name is another.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_folder_shown_that_moves_is_shown_where_it_went() {
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("it's here");
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::write(dir.join("f"), b"1").unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &dir);
+    let f = entry_id(&app, pane, "f");
+
+    let moved = tmp.path().join("it’s moved, été");
+    std::fs::rename(&dir, &moved).unwrap();
+    std::fs::create_dir(&dir).unwrap();
+    wait_pane(&app, pane, |p| {
+        p.location() == Some(&Location::from_path(&moved))
+    });
+    assert_eq!(app.pane_dir(pane).unwrap(), moved);
+    assert_eq!(app.work_dir(pane).unwrap(), moved);
+    {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        assert_eq!(p.history[p.history_pos], Location::from_path(&moved));
+        assert_eq!(p.path_of(f), Some(moved.join("f")));
+    }
+    // Shown again from the history, it is listed where it went.
+    app.dispatch(&skwir_core::command::Invocation::new("up"))
+        .unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    app.dispatch(&skwir_core::command::Invocation::new("back"))
+        .unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    assert_eq!(app.pane_dir(pane).unwrap(), moved);
+    assert_eq!(listed(&app, pane, "f").id, f);
+}
+
+/// A folder opened in place that is renamed is opened in place under
+/// its new name: its files are where they are now, and it closes.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_folder_opened_in_place_that_is_renamed_stays_open_under_its_new_name() {
+    use skwir_core::command::Invocation;
+    let tmp = home_tempdir();
+    let root = tmp.path().join("root");
+    let photos = root.join("Photos");
+    let inner = photos.join("inner");
+    std::fs::create_dir_all(&inner).unwrap();
+    std::fs::write(photos.join("it's a.jpg"), b"x").unwrap();
+    std::fs::write(inner.join("deep.txt"), b"x").unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &root);
+    let expand = |id: skwir_core::EntryId, mode: &str| {
+        app.dispatch(&Invocation::with_args(
+            "expand",
+            &serde_json::json!({ "ids": [id], "mode": mode }),
+        ))
+        .expect("expand");
+    };
+    let kept_id = |dir: &std::path::Path, name: &str| {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        p.kept(&Location::from_path(dir))
+            .expect("opened")
+            .find_by_name(name.as_ref())
+            .expect("listed")
+            .id
+    };
+    let complete = |dir: &std::path::Path| {
+        let at = Location::from_path(dir);
+        move |p: &skwir_core::workspace::Pane| {
+            p.kept(&at).is_some_and(skwir_core::Listing::is_complete)
+        }
+    };
+    expand(entry_id(&app, pane, "Photos"), "expand");
+    wait_pane(&app, pane, complete(&photos));
+    expand(kept_id(&photos, "inner"), "expand");
+    wait_pane(&app, pane, complete(&inner));
+    let (a, deep) = (kept_id(&photos, "it's a.jpg"), kept_id(&inner, "deep.txt"));
+
+    let renamed = root.join("Photos 2024 – été");
+    std::fs::rename(&photos, &renamed).unwrap();
+    let (now, inner_now) = (
+        Location::from_path(&renamed),
+        Location::from_path(renamed.join("inner")),
+    );
+    wait_pane(&app, pane, |p| {
+        p.is_expanded(&now)
+            && p.listing
+                .find_by_name("Photos 2024 – été".as_ref())
+                .is_some()
+    });
+    {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        assert!(!p.is_expanded(&Location::from_path(&photos)));
+        assert!(
+            p.is_expanded(&inner_now),
+            "what is open inside goes with it"
+        );
+        assert_eq!(p.path_of(a), Some(renamed.join("it's a.jpg")));
+        assert_eq!(p.path_of(deep), Some(renamed.join("inner/deep.txt")));
+        assert!(p.kept(&now).is_some() && p.kept(&inner_now).is_some());
+    }
+    // Closed by its new name, with what is open inside it.
+    expand(entry_id(&app, pane, "Photos 2024 – été"), "collapse");
+    wait_pane(&app, pane, |p| p.expanded().is_empty());
 }
 
 #[cfg(unix)]

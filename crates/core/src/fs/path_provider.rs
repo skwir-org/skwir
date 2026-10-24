@@ -77,8 +77,9 @@ struct Shared {
 /// resolve against). A listing streams before it stats, so it names an
 /// entry's file by the directory's device and `d_ino`; the two differ only
 /// for a mount point or a subvolume root. Hydration finds out, re-keys the
-/// entry (removed under the provisional id, added under the real one) and
-/// keeps an alias, so a later re-listing uses the real id straight away.
+/// entry (renamed from the provisional id to the real one, so its row
+/// keeps its selection) and keeps an alias, so a later re-listing uses the
+/// real id straight away.
 #[derive(Default)]
 struct Names {
     by_id: hashing::Map<EntryId, OsString>,
@@ -554,6 +555,8 @@ impl Shared {
             }
         }
         let (mut updated, mut rekeyed): (Vec<Entry>, Vec<Entry>) = (Vec::new(), Vec::new());
+        // Ids a stat found another file under: a provisional one, or a
+        // file another took the place of (an editor saving).
         let mut stale = Vec::new();
         {
             let mut names = self.names.lock();
@@ -577,23 +580,33 @@ impl Shared {
             self.fill(&dir, &mut updated);
             self.send_as_now(ListingEvent::Updated(updated));
         }
-        gone.extend(stale);
         if !gone.is_empty() {
             self.send_as_now(ListingEvent::Removed(gone));
         }
+        // The row under the name is the file found there, in its place
+        // and its selection.
         if !rekeyed.is_empty() {
             self.fill(&dir, &mut rekeyed);
-            self.send_as_now(ListingEvent::Added(rekeyed));
+            self.send_as_now(ListingEvent::Renamed(
+                stale.into_iter().zip(rekeyed).collect(),
+            ));
         }
     }
 
     /// The directory itself moved: find where through its descriptor, which
-    /// followed it. A directory that is gone empties the listing.
+    /// followed it, and tell its holder, which shows it there
+    /// (`ListingEvent::Moved`). A directory that is gone empties the
+    /// listing.
     fn follow_self(&self) -> bool {
         let Some(now) = self.folder.path_now() else {
             return false;
         };
-        *self.dir.write() = now;
+        let before = self.dir();
+        let now = spelled_as(&before, now);
+        if now != before {
+            self.dir.write().clone_from(&now);
+            self.tx.send(ListingEvent::Moved(now));
+        }
         true
     }
 
@@ -664,6 +677,9 @@ impl Shared {
         }
         let mut added = Vec::new();
         let mut removed = Vec::new();
+        // Names another file took (a rename onto them), each with the id
+        // it held.
+        let mut replaced = Vec::new();
         // A companion keeps its file's notes (ADR-028: a Mac's `._x`, a
         // sidecar): when it changes, the file's notes did.
         let mut names = c.names;
@@ -683,6 +699,7 @@ impl Shared {
                 // A rename onto this name leaves the id it replaced stale.
                 if let Some(stale) = names.insert(e.id, name) {
                     removed.push(stale);
+                    replaced.push((stale, e.id));
                 }
                 added.push(e);
             } else if let Some(id) = names.remove_name(&name) {
@@ -695,6 +712,25 @@ impl Shared {
         // come under its new one: a rename, so its row keeps its place and
         // its selection.
         let mut renamed = renames(&mut removed, &mut added);
+        // A name another file took is its row still, unless its file was
+        // renamed: an editor saves by writing a new file and renaming it
+        // onto the name (gedit, Kate, VS Code), and what was selected there
+        // stays so, as in Dolphin and Nautilus. A file renamed onto it from
+        // beside it is both.
+        for (stale, now) in replaced {
+            let Some(at) = removed.iter().position(|id| *id == stale) else {
+                continue;
+            };
+            removed.swap_remove(at);
+            let entry = match added.iter().position(|e| e.id == now) {
+                Some(at) => added.swap_remove(at),
+                None => match renamed.iter().find(|(_, e)| e.id == now) {
+                    Some((_, e)) => e.clone(),
+                    None => continue,
+                },
+            };
+            renamed.push((stale, entry));
+        }
         if !removed.is_empty() {
             self.send_as_now(ListingEvent::Removed(removed));
         }
@@ -709,6 +745,29 @@ impl Shared {
             self.fill(&self.dir(), &mut added);
             self.send_as_now(ListingEvent::Added(added));
         }
+    }
+}
+
+/// Where a folder that was at `before` is `now` (a path the system
+/// resolved), spelled as `before` was while it stays in the same folder:
+/// renamed, it keeps the address it was reached by (through a link above
+/// it). Stats both folders above it: on the listing's worker.
+fn spelled_as(before: &Path, now: PathBuf) -> PathBuf {
+    let (Some(was_in), Some(is_in), Some(name)) = (before.parent(), now.parent(), now.file_name())
+    else {
+        return now;
+    };
+    if was_in == is_in {
+        return now;
+    }
+    let id = |p: &Path| {
+        std::fs::metadata(p)
+            .ok()
+            .and_then(|meta| super::stat::identity(p, &meta))
+    };
+    match id(was_in) {
+        Some(folder) if id(is_in) == Some(folder) => was_in.join(name),
+        _ => now,
     }
 }
 

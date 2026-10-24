@@ -190,8 +190,11 @@ working in an area, also read that area's rules (see
   entry. Compare a stat with a row through `entry.file()`.
 - A rename is an entry renamed: the provider pairs the name that went
   with the one that came by their file and sends `ListingEvent::Renamed`;
-  the pane follows (`Listing::take_renamed`, `Selection::rekey`). A
-  listed entry named by a reference is found at its path
+  the pane follows (`Listing::take_renamed`, `Selection::rekey`). A name
+  another file takes (a rename onto it, an editor saving) is its row
+  still: the provider sends the old id renamed to the new. A folder shown
+  that moves says so (`ListingEvent::Moved`), and the pane shows it where
+  it went. A listed entry named by a reference is found at its path
   (`Pane::entry_at`).
 - **References.** Reference entries by `EntryRef` (id + path hint), never
   by path alone. A reference follows a file to a new name only when it

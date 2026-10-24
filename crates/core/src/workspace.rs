@@ -279,18 +279,21 @@ impl Selection {
     }
 
     /// Follow entries renamed (`Listing::take_renamed`, each id before and
-    /// after): what was selected of them stays selected, in its place, the
-    /// cursor and the anchor on it.
+    /// after, in the order they were): what was selected of them stays
+    /// selected, in its place, the cursor and the anchor on it. Renamed
+    /// twice (A to B, then B to C), it follows both.
     pub fn rekey(&mut self, renamed: &[(EntryId, EntryId)]) {
         if renamed.is_empty() {
             return;
         }
-        let now = |id: EntryId| {
-            renamed
-                .iter()
-                .find(|(before, _)| *before == id)
-                .map_or(id, |(_, after)| *after)
-        };
+        // Where each id ends: taken from the last rename back, an id
+        // renamed is where what it was renamed to ends.
+        let mut ends: crate::hashing::Map<EntryId, EntryId> = crate::hashing::Map::default();
+        for (before, after) in renamed.iter().rev() {
+            let end = ends.get(after).copied().unwrap_or(*after);
+            ends.insert(*before, end);
+        }
+        let now = |id: EntryId| ends.get(&id).copied().unwrap_or(id);
         if self.items.iter().any(|id| now(*id) != *id) {
             self.items = self.items.iter().map(|id| now(*id)).collect();
             self.touch();
@@ -378,7 +381,7 @@ pub struct Kept {
 
 impl Kept {
     fn new(open: Arc<dyn OpenLocation>, listing: Listing) -> Self {
-        let location = open.location().clone();
+        let location = listing.address(open.as_ref()).clone();
         Kept {
             path: location.path(),
             location,
@@ -404,6 +407,37 @@ impl Kept {
             .as_ref()
             .is_some_and(|open| !open.events().is_empty())
     }
+
+    /// Follow the folder it lists where it moved (`Listing::take_moved`):
+    /// where it was reached before and now.
+    fn follow_moved(&mut self) -> Option<(Location, Location)> {
+        let open = self.open.as_ref()?;
+        let (_, now) = self.listing.take_moved()?;
+        if !open.location().is_path() {
+            return None;
+        }
+        let before = std::mem::replace(&mut self.location, now.clone());
+        self.path = now.path();
+        Some((before, now))
+    }
+
+    /// It is at `now`, moved with a folder above it.
+    fn relocate(&mut self, now: Location) {
+        self.path = now.path();
+        self.listing.relocate(now.clone());
+        self.location = now;
+    }
+}
+
+/// Where `path` is once the folder `from` moved to `to`: itself, or what
+/// is under it, moved with it; `None` when it is elsewhere.
+fn moved_path(path: &Path, from: &Path, to: &Path) -> Option<PathBuf> {
+    let rest = path.strip_prefix(from).ok()?;
+    Some(if rest.as_os_str().is_empty() {
+        to.to_path_buf()
+    } else {
+        to.join(rest)
+    })
 }
 
 impl Drop for Kept {
@@ -753,8 +787,8 @@ impl Pane {
         self.set_filter(None);
         // A narrowing stays below the folder it was set in.
         let below = |n: &Narrowed| {
-            let open = self.open.as_ref().map(|o| o.location().path());
-            open.flatten().is_some_and(|path| path.starts_with(&n.root))
+            let open = self.location().and_then(Location::path);
+            open.is_some_and(|path| path.starts_with(&n.root))
         };
         if self.narrowed.as_ref().is_some_and(|n| !below(n)) {
             self.set_narrowed(None);
@@ -1072,8 +1106,10 @@ impl Pane {
             || self.kept.iter().any(Kept::backlog)
     }
 
+    /// The location the pane shows: where it was opened, or where its
+    /// folder moved since (`Listing::address`).
     pub fn location(&self) -> Option<&Location> {
-        self.open.as_ref().map(|o| o.location())
+        self.open.as_ref().map(|o| self.listing.address(o.as_ref()))
     }
 
     /// Apply pending listing events, the kept locations' too, for at most
@@ -1089,6 +1125,7 @@ impl Pane {
             }
             None => 0,
         };
+        let mut moves: Vec<(Location, Location)> = self.follow_moved().into_iter().collect();
         let mut opened = 0;
         for kept in &mut self.kept {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
@@ -1099,10 +1136,14 @@ impl Pane {
             if self.expanded.iter().any(|o| o.location == kept.location) {
                 opened += applied;
             }
+            moves.extend(kept.follow_moved());
         }
         if opened > 0 {
             self.tree_version += 1;
             self.opened_moved();
+        }
+        if !moves.is_empty() {
+            self.follow_moves(&moves);
         }
         self.follow_renamed();
         if self.open.is_none() {
@@ -1116,6 +1157,63 @@ impl Pane {
         }
         self.take_restore();
         n + opened
+    }
+
+    /// Follow the folder shown where it moved (`Listing::take_moved`): it is
+    /// shown there, in its place in the history. Where it was reached
+    /// before and now.
+    fn follow_moved(&mut self) -> Option<(Location, Location)> {
+        let open = self.open.as_ref()?;
+        let (before, now) = self.listing.take_moved()?;
+        if !open.location().is_path() {
+            return None;
+        }
+        let before = before.unwrap_or_else(|| open.location().clone());
+        self.replace_here(now.clone());
+        Some((before, now))
+    }
+
+    /// Follow folders that moved, each where it was reached before and
+    /// now: what the pane keeps of them or under them goes with them, the
+    /// folders kept and opened in place (whose own listings, each watching
+    /// its folder alone, see nothing move) and the narrowing's folder. The
+    /// folder shown moved with one above it is not followed: its listing
+    /// would still name its files where they were.
+    fn follow_moves(&mut self, moves: &[(Location, Location)]) {
+        for (before, now) in moves {
+            let (Some(from), Some(to)) = (before.path(), now.path()) else {
+                continue;
+            };
+            let there = |location: &Location| {
+                let path = moved_path(&location.path()?, &from, &to)?;
+                Some(if path == to {
+                    now.clone()
+                } else {
+                    Location::from_path(path)
+                })
+            };
+            for kept in self.kept.iter_mut().chain(self.left.as_mut()) {
+                if let Some(at) = there(&kept.location)
+                    && at != kept.location
+                {
+                    kept.relocate(at);
+                }
+            }
+            for o in &mut self.expanded {
+                if let Some(at) = there(&o.location) {
+                    o.location = at;
+                }
+                if let Some(at) = o.within.as_ref().and_then(there) {
+                    o.within = Some(at);
+                }
+            }
+            if let Some(n) = &mut self.narrowed
+                && let Some(root) = moved_path(&n.root, &from, &to)
+            {
+                n.root = root;
+            }
+        }
+        self.expanded_changed();
     }
 
     /// What the pane keeps by entry follows the entries its listings say
@@ -1299,7 +1397,7 @@ impl Pane {
         let shown = self
             .open
             .iter()
-            .filter(|open| of(open.location().path().as_deref()))
+            .filter(|_| of(self.location().and_then(Location::path).as_deref()))
             .cloned();
         let kept = self
             .kept
@@ -2018,6 +2116,26 @@ mod tests {
         sel.remove(id(1));
         sel.remove(id(3));
         assert_eq!((sel.anchor, sel.cursor), (Some(id(2)), Some(id(2))));
+    }
+
+    /// Renames that arrive together are followed in their order: a chain
+    /// to its end, a swap back to where it was.
+    #[test]
+    fn a_selection_follows_renames_in_their_order() {
+        let id = |ino| EntryId {
+            file: crate::FileId::new(1, ino),
+            at: 0,
+        };
+        let mut sel = Selection::default();
+        sel.set([id(1), id(5)]);
+        sel.rekey(&[
+            (id(1), id(2)),
+            (id(2), id(3)),
+            (id(5), id(6)),
+            (id(6), id(5)),
+        ]);
+        assert_eq!(sel.iter().collect::<Vec<_>>(), [id(3), id(5)]);
+        assert_eq!((sel.anchor, sel.cursor), (Some(id(3)), Some(id(5))));
     }
 
     /// A cursor whose entry leaves the view goes to the entry after it, or
