@@ -74,6 +74,34 @@ secret.
    configuration with the keyring's password (mounts, listings, forms),
    else asks the window; a listing nobody asked for never asks.
 
+9. **What a storage can do is what rclone says.** Each rclone mount
+   Skwir made is asked once through its remote control
+   (`operations/fsinfo`): no size shown where its storage cannot say one
+   (rclone's mount makes one up), Copy Public Link where it makes one,
+   and where it empties a trash of its own and its options keep one
+   (Google Drive's `use_trash`…), a deletion's question and toast say
+   where it goes rather than that it is gone for good. Never decided by
+   a kind's name alone.
+10. **`s3://` addresses keep nothing.** An S3 bucket opens through the
+    user's own AWS configuration (credentials, region, endpoint, a
+    profile named in the address), by an rclone remote made of the
+    address's parts (`env_auth`).
+11. **One Add Server for every kind.** A server added by its address
+    (SFTP, SMB, WebDAV, FTP, NFS, AFP) is kept as a bookmark in the
+    desktop's shared bookmarks under the name given, its password asked
+    by its first connection (ADR-082), never by the form; rclone's kinds
+    follow in the same list. KDE's network folders are known servers.
+12. **Mount options are Skwir's data, given at connection.** Read only,
+    rclone's file cache and bandwidth, sshfs's compression: kept by the
+    server's address in the plugin's data, never in a tool's
+    configuration; GVfs and KIO take none.
+13. **On Windows and macOS.** rclone's remote control is a socket of the
+    runtime folder on Unix and, on Windows, a port of the loopback behind
+    a login made for it, given to rclone in its environment alone (Wine,
+    standing in for Windows here, has no Unix socket). rclone mounts
+    through WinFsp in a folder of Skwir's local application data, never
+    a drive letter, and on macOS without a FUSE through `nfsmount`.
+
 ## Consequences
 
 - Skwir stays stateless: removing it leaves rclone's remotes as they
@@ -87,4 +115,9 @@ secret.
 - Tests run against servers, configurations, keyrings and a browser of
   their own (`RCLONE_CONFIG` and a fake `xdg-open`): nothing is signed in
   to a real provider here, so a sign-in is checked up to the page rclone
-  serves.
+  serves. A cloud's trash is named by what rclone and the remote's
+  options say, never seen filling here. WinFsp mounts and macOS are
+  compiled only; rclone's Windows release is tried under Wine.
+- Skwir writes a tool's configuration only through the tool: rclone's
+  file never by hand, the desktop's bookmarks through the places plugin's
+  commands.
