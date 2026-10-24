@@ -1141,13 +1141,14 @@ fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
         .unwrap()
         .join("gtk-3.0/bookmarks");
     let line = format!("{uri} It's my files");
-    assert!(
-        std::fs::read_to_string(&bookmarks)
-            .unwrap()
-            .lines()
-            .any(|l| l == line),
-        "kept by its address and name"
-    );
+    // Written by the places plugin on a worker, after its command
+    // returned: the folder may open first.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !std::fs::read_to_string(&bookmarks).is_ok_and(|kept| kept.lines().any(|l| l == line)) {
+        app.pump();
+        assert!(Instant::now() < deadline, "kept by its address and name");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     assert!(
         std::fs::read_to_string(&config).map_or(true, |c| c.is_empty()),
         "nothing of rclone's"
@@ -1158,6 +1159,13 @@ fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
         &serde_json::json!({ "address": uri }),
     ))
     .unwrap();
+    // Gone before the folder holding it is removed, by the same worker.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while std::fs::read_to_string(&bookmarks).is_ok_and(|kept| kept.lines().any(|l| l == line)) {
+        app.pump();
+        assert!(Instant::now() < deadline, "its bookmark never went");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     app.dispatch(&Invocation::with_args(
         "remote.disconnect",
         &serde_json::json!({ "path": point }),
