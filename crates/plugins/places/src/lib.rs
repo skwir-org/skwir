@@ -917,55 +917,72 @@ fn describe(edit: &BookmarkEdit, shown: Option<&str>, done: bool) -> Option<Stri
 }
 
 impl Places {
-    /// Apply `edit` to the bookmarks on a worker, republish, and say what
-    /// happened with the way back: Undo, or Redo when this was an undo.
-    fn edit(&self, app: &App, edit: BookmarkEdit, undo: bool, watcher: Watcher) {
+    /// Apply `edit` to the bookmarks, republish, and say what happened
+    /// with the way back: Undo, or Redo when this was an undo. Asked on
+    /// the window's thread, it runs on a worker and says its failure;
+    /// anywhere else (an agent's call, a script's, another plugin's
+    /// worker) it runs where it is, and its failure is the caller's, who
+    /// then knows the bookmark was not kept.
+    fn edit(
+        &self,
+        app: &App,
+        edit: BookmarkEdit,
+        undo: bool,
+        watcher: Watcher,
+    ) -> anyhow::Result<()> {
+        if !skwir_core::scheduler::on_window_thread() {
+            return self.apply(app, &edit, undo, &watcher);
+        }
         let this = self.clone();
         self.spawn(app, "places-bookmarks", move |app| {
-            // A new bookmark is a folder; one coming back (an undone
-            // removal) may be missing, and was a bookmark all the same.
-            if let BookmarkEdit::Add { path, .. } = &edit
-                && !undo
-                && !path.is_dir()
-            {
+            if let Err(error) = this.apply(app, &edit, undo, &watcher) {
                 app.notify(
                     NotifyLevel::Error,
-                    format!(
-                        "“{}” is not a folder: only folders can be bookmarked",
-                        name_of(path)
-                    ),
-                );
-                return;
-            }
-            let shown = match edit.address() {
-                Some(address) => skwir_platform::places::remote_bookmarks()
-                    .into_iter()
-                    .find(|b| b.address == address)
-                    .map(|b| b.title),
-                None => skwir_platform::places::bookmarks()
-                    .into_iter()
-                    .find(|b| Some(b.path.as_path()) == edit.path())
-                    .map(|b| b.title),
-            };
-            match skwir_platform::places::edit_bookmarks(&edit) {
-                Ok(Some(inverse)) => {
-                    watcher.watch_bookmarks();
-                    this.populate(app);
-                    if let Some(text) = describe(&edit, shown.as_deref(), true) {
-                        app.notify_undoable(text, undo, invocation(&inverse, !undo));
-                    }
-                }
-                Ok(None) => {
-                    if let Some(text) = describe(&edit, shown.as_deref(), false) {
-                        app.notify(NotifyLevel::Info, text);
-                    }
-                }
-                Err(error) => app.notify(
-                    NotifyLevel::Error,
                     format!("The bookmarks were not changed: {error:#}"),
-                ),
+                );
             }
         });
+        Ok(())
+    }
+
+    fn apply(
+        &self,
+        app: &App,
+        edit: &BookmarkEdit,
+        undo: bool,
+        watcher: &Watcher,
+    ) -> anyhow::Result<()> {
+        // A new bookmark is a folder; one coming back (an undone removal)
+        // may be missing, and was a bookmark all the same.
+        if let BookmarkEdit::Add { path, .. } = edit
+            && !undo
+            && !path.is_dir()
+        {
+            anyhow::bail!(
+                "“{}” is not a folder: only folders can be bookmarked",
+                name_of(path)
+            );
+        }
+        let shown = match edit.address() {
+            Some(address) => skwir_platform::places::remote_bookmarks()
+                .into_iter()
+                .find(|b| b.address == address)
+                .map(|b| b.title),
+            None => skwir_platform::places::bookmarks()
+                .into_iter()
+                .find(|b| Some(b.path.as_path()) == edit.path())
+                .map(|b| b.title),
+        };
+        if let Some(inverse) = skwir_platform::places::edit_bookmarks(edit)? {
+            watcher.watch_bookmarks();
+            self.populate(app);
+            if let Some(text) = describe(edit, shown.as_deref(), true) {
+                app.notify_undoable(text, undo, invocation(&inverse, !undo));
+            }
+        } else if let Some(text) = describe(edit, shown.as_deref(), false) {
+            app.notify(NotifyLevel::Info, text);
+        }
+        Ok(())
     }
 }
 
@@ -1045,7 +1062,7 @@ impl Plugin for PlacesPlugin {
                         title: args.title,
                         before: args.before.map(MarkArg::into_marked),
                     };
-                    places.edit(app, edit, undo, watcher.clone());
+                    places.edit(app, edit, undo, watcher.clone())?;
                     return Ok(Outcome::Done);
                 }
                 // Restored or deleted, a folder of the trash leaves the
@@ -1061,7 +1078,7 @@ impl Plugin for PlacesPlugin {
                     title: args.title,
                     before: args.before.map(MarkArg::into_marked),
                 };
-                places.edit(app, edit, undo, watcher.clone());
+                places.edit(app, edit, undo, watcher.clone())?;
                 Ok(Outcome::Done)
             },
         );
@@ -1074,7 +1091,7 @@ impl Plugin for PlacesPlugin {
             move |args, app| {
                 let undo = args.undo;
                 let path = target(app, args)?;
-                places.edit(app, BookmarkEdit::Remove { path }, undo, watcher.clone());
+                places.edit(app, BookmarkEdit::Remove { path }, undo, watcher.clone())?;
                 Ok(Outcome::Done)
             },
         );
@@ -1090,7 +1107,7 @@ impl Plugin for PlacesPlugin {
                     title: args.title,
                     before: args.before.map(MarkArg::into_marked),
                 };
-                places.edit(app, edit, args.undo, watcher.clone());
+                places.edit(app, edit, args.undo, watcher.clone())?;
                 Ok(Outcome::Done)
             },
         );
@@ -1104,7 +1121,7 @@ impl Plugin for PlacesPlugin {
                 let edit = BookmarkEdit::RemoveAddress {
                     address: args.address,
                 };
-                places.edit(app, edit, args.undo, watcher.clone());
+                places.edit(app, edit, args.undo, watcher.clone())?;
                 Ok(Outcome::Done)
             },
         );
@@ -1119,7 +1136,7 @@ impl Plugin for PlacesPlugin {
                     mark: named(args.path, args.address)?,
                     title: Some(args.title),
                 };
-                places.edit(app, edit, args.undo, watcher.clone());
+                places.edit(app, edit, args.undo, watcher.clone())?;
                 Ok(Outcome::Done)
             },
         );
@@ -1134,7 +1151,7 @@ impl Plugin for PlacesPlugin {
                     mark: named(args.path, args.address)?,
                     before: args.before.map(MarkArg::into_marked),
                 };
-                places.edit(app, edit, args.undo, watcher.clone());
+                places.edit(app, edit, args.undo, watcher.clone())?;
                 Ok(Outcome::Done)
             },
         );
@@ -1679,11 +1696,17 @@ mod tests {
         // Only folders; and a bookmark whose folder went is shown as such.
         let note = tmp.path().join("note.txt");
         std::fs::write(&note, b"x").unwrap();
-        let refused = run(
-            "places.bookmark",
-            serde_json::json!({ "path": path(&note) }),
+        // Asked from no window's thread, refused to its caller.
+        let refused = app
+            .dispatch(&Invocation::with_args(
+                "places.bookmark",
+                &serde_json::json!({ "path": path(&note) }),
+            ))
+            .unwrap_err();
+        assert!(
+            format!("{refused:#}").contains("only folders can be bookmarked"),
+            "{refused:#}"
         );
-        assert_eq!(refused.level, NotifyLevel::Error);
         std::fs::remove_dir(&b).unwrap();
         app.dispatch(&Invocation::new("places.refresh")).unwrap();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
@@ -1794,6 +1817,65 @@ mod tests {
     /// published, the plugin is quiet; another program's edit still counts.
     // GTK's bookmarks (step F, ADR-035).
     #[cfg(target_os = "linux")]
+    /// A bookmark asked anywhere but on the window's thread (another
+    /// plugin's worker, an agent's call) is written before the command
+    /// returns, and a refusal is the caller's: Add Server says nothing it
+    /// has not seen done. From the window's thread, it is written on a
+    /// worker, and a refusal is said.
+    #[test]
+    #[allow(unsafe_code)]
+    fn a_bookmark_is_kept_when_its_command_returns_off_the_window() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config");
+        // SAFETY: one test per process under nextest, set before the app
+        // starts any thread; the bookmarks file is then this test's own.
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", &config) };
+        let file = tmp.path().join("notes, not a folder.txt");
+        std::fs::write(&file, "x").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(PlacesPlugin::default()), &app);
+        let kept = || std::fs::read_to_string(config.join("gtk-3.0/bookmarks")).unwrap_or_default();
+
+        let address = "sftp://nas.example/srv/it's shared";
+        let asked = std::thread::spawn({
+            let app = app.clone();
+            move || {
+                app.dispatch(&Invocation::with_args(
+                    "places.bookmark_address",
+                    &serde_json::json!({ "address": address, "title": "Shared" }),
+                ))
+            }
+        });
+        asked.join().unwrap().unwrap();
+        assert!(
+            kept().contains(" Shared"),
+            "written once it returned: {}",
+            kept()
+        );
+        assert_eq!(next_notice(&app).text, "Bookmarked “Shared”");
+        let refused = app
+            .dispatch(&Invocation::with_args(
+                "places.bookmark",
+                &serde_json::json!({ "path": PathArg::from(file.as_path()) }),
+            ))
+            .unwrap_err();
+        assert!(
+            format!("{refused:#}").contains("is not a folder"),
+            "{refused:#}"
+        );
+        assert!(app.take_notifications().is_empty(), "the caller's to say");
+
+        skwir_core::scheduler::mark_window_thread(&app.scheduler);
+        app.dispatch(&Invocation::with_args(
+            "places.bookmark",
+            &serde_json::json!({ "path": PathArg::from(file.as_path()) }),
+        ))
+        .unwrap();
+        let said = next_notice(&app);
+        assert_eq!(said.level, NotifyLevel::Error);
+        assert!(said.text.contains("is not a folder"), "{}", said.text);
+    }
+
     #[test]
     #[allow(unsafe_code)]
     fn reading_the_bookmarks_rescans_nothing() {

@@ -363,7 +363,9 @@ ADR-077 (which revises ADR-021).
 - One Add Server for every kind: a server added by its address (SFTP,
   SMB, WebDAV, FTP, NFS, AFP: `servers_form`) is kept as a bookmark in
   the desktop's shared bookmarks under the name given
-  (`places.bookmark_address`), then opened; its password is asked by
+  (`places.bookmark_address`, which asked from the form's worker writes
+  it before it returns and says so, with its Undo: the remote plugin
+  says nothing of it), then opened; its password is asked by
   that first connection (with the window's Remember, ADR-082), never by
   the form. Without rclone, Add Server offers these alone. KDE's network
   folders (`$XDG_DATA_HOME/remoteview/*.desktop`) are known servers, as

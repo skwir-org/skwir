@@ -1495,9 +1495,6 @@ protocol is a scheme a connector maps, or a connector.
     keyring's password alone opens one there;
   - a remote half made when Skwir ends mid-question (its sign-in, a
     crypt's) stays in rclone's configuration until removed;
-  - a server added by its address is said "kept as a bookmark" when the
-    places plugin was asked, which writes it on a worker: a write that
-    fails says so after (found by the bookmark test racing the write);
   - Settings' Network page lists rclone's remotes only: the servers kept
     as bookmarks, and each server's mount options, Connect at Login and
     key login, are reached from its menu alone;

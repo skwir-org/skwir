@@ -255,11 +255,13 @@ pub fn add(
         } else {
             name.to_owned()
         };
+        // Kept once it returns: asked from a worker, the places plugin
+        // writes it there, and says so.
         app.dispatch(&Invocation::with_args(
             "places.bookmark_address",
             &serde_json::json!({ "address": address.uri(), "title": name }),
         ))
-        .map_err(|error| anyhow::anyhow!("the bookmark was not kept: {error:#}"))?;
+        .map_err(|error| anyhow::anyhow!("its address was not kept as a bookmark: {error:#}"))?;
         let pane = app.pane_or_active(None);
         if let Err(error) = app.navigate(pane, &address.location()) {
             tracing::debug!("the server added was not opened: {error:#}");

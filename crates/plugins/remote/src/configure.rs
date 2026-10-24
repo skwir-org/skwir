@@ -263,11 +263,9 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     return servers_alone(&remotes_, app);
                 }
                 in_form(&remotes_, app, "added", move |flow, remotes, app| {
-                    let made = flow.add(&prefill)?;
-                    if let Some(crate::rclone_forms::Made::Bookmark(name)) = &made {
-                        app.notify(NotifyLevel::Info, format!("“{name}” is kept as a bookmark"));
-                    }
-                    if let Some(crate::rclone_forms::Made::Remote(name)) = made {
+                    // A server kept as a bookmark is said so by the places
+                    // plugin, once written, with its Undo.
+                    if let Some(crate::rclone_forms::Made::Remote(name)) = flow.add(&prefill)? {
                         remotes.refresh(app);
                         // What it keeps of its secrets is only obscured:
                         // encrypting the whole is offered.
@@ -688,11 +686,9 @@ fn servers_alone(remotes: &Remotes, app: &App) -> anyhow::Result<Outcome> {
         .spawn(move || {
             let Some(app) = weak.upgrade() else { return };
             let cancel = lifetime.child();
+            // Kept, it is said so by the places plugin, with its Undo.
             match crate::servers_form::add_any(&app, &cancel) {
-                Ok(Some(name)) => {
-                    app.notify(NotifyLevel::Info, format!("“{name}” is kept as a bookmark"));
-                }
-                Ok(None) => {}
+                Ok(_) => {}
                 Err(error) => {
                     app.notify(
                         NotifyLevel::Error,

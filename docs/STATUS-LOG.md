@@ -4340,3 +4340,27 @@ they moved to a page of their own (ADR-072 amended).
   `plugins_toggle`; on Xvfb, Settings listing Network after Terminal,
   its page with the two remotes of a test configuration and the tools'
   order.
+
+### A bookmark is said once it is kept (2026-10-24)
+
+Add Server said "“…” is kept as a bookmark" as soon as it had asked the
+places plugin, which wrote the bookmark on a worker afterwards and said
+"Bookmarked “…”" itself: two notices, the first before the fact, and a
+write that failed contradicted it after (the bookmark test raced the
+same write, "Network, a page of its own" above).
+
+- The places plugin's bookmark edits follow the commands' rule: asked
+  on the window's thread they run on a worker and say a refusal there;
+  anywhere else (another plugin's worker, an agent's call, a script's)
+  they run before the command returns, and a refusal is the caller's
+  error. Add Server's form runs on a worker: it now knows the bookmark is
+  written, or tells why not ("The server was not added: its address was
+  not kept as a bookmark: …"), and says nothing itself; the places
+  plugin's "Bookmarked “…”" with its Undo is said once, after the write.
+- Checked: a places test (a bookmark asked from another thread is in
+  the file when the command returns and said once; a file refused to
+  its caller with nothing said; the same asked from a thread marked as
+  the window's said as an error), the places plugin's tests, and the
+  test of a server added by its address, which now reads the file right
+  after "Bookmarked “It's my files”" and right after its removal (passed
+  twice alone).
