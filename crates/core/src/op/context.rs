@@ -242,6 +242,8 @@ pub struct StepContext {
     /// The names of a folder read a moment ago, which the checks run
     /// meanwhile answer from ([`StepContext::knowing`]).
     known: RefCell<Option<(PathBuf, HashSet<std::ffi::OsString>)>>,
+    /// Whether each folder asked tells no case apart (`folds_case`).
+    folds: RefCell<HashMap<PathBuf, bool>>,
     /// The originals of moves a batch copied from a remote, removed at the
     /// plan's end (`transfer::remove_deferred`), each with what it was as
     /// copied and where its copy went.
@@ -299,6 +301,9 @@ struct Foreseen {
     folders: HashSet<PathBuf>,
     /// How many of `made` each folder holds.
     made_in: HashMap<PathBuf, usize>,
+    /// How many of `made` each folder holds under each name, its case
+    /// left out (`folded`): a folder that tells no case apart meets them.
+    made_folded: HashMap<(PathBuf, String), usize>,
     /// Taken away, with what is in it: moved, renamed, put in the trash,
     /// removed, and the places of its companions.
     gone: HashSet<PathBuf>,
@@ -311,6 +316,9 @@ impl Foreseen {
             && let Some(dir) = path.parent()
         {
             *self.made_in.entry(dir.to_path_buf()).or_default() += 1;
+            if let Some(key) = folded_key(path) {
+                *self.made_folded.entry(key).or_default() += 1;
+            }
         }
         if folder {
             self.folders.insert(path.to_path_buf());
@@ -320,10 +328,13 @@ impl Foreseen {
     /// `path` goes, and where its companions would be (no disk read: a
     /// place that holds none is gone all the same).
     fn take(&mut self, path: &Path, companions: &crate::companions::Companions) {
-        if self.made.remove(path)
-            && let Some(held) = path.parent().and_then(|dir| self.made_in.get_mut(dir))
-        {
-            *held -= 1;
+        if self.made.remove(path) {
+            if let Some(held) = path.parent().and_then(|dir| self.made_in.get_mut(dir)) {
+                *held -= 1;
+            }
+            if let Some(held) = folded_key(path).and_then(|key| self.made_folded.get_mut(&key)) {
+                *held -= 1;
+            }
         }
         self.folders.remove(path);
         self.gone.insert(path.to_path_buf());
@@ -340,6 +351,69 @@ impl Foreseen {
             .take_while(|p| !self.made.contains(*p))
             .any(|p| self.gone.contains(p))
     }
+}
+
+/// `path`'s folder and its name, its case left out ([`folded`]).
+fn folded_key(path: &Path) -> Option<(PathBuf, String)> {
+    Some((path.parent()?.to_path_buf(), folded(path.file_name()?)))
+}
+
+/// A name with its case left out, as a volume that tells no case apart
+/// (FAT, exFAT, NTFS, SMB, APFS as it comes) compares it, near enough.
+fn folded(name: &std::ffi::OsStr) -> String {
+    name.to_str().map_or_else(
+        || {
+            name.as_encoded_bytes()
+                .to_ascii_lowercase()
+                .escape_ascii()
+                .to_string()
+        },
+        str::to_lowercase,
+    )
+}
+
+/// Whether the folder `dir` tells no case apart: an entry there whose
+/// name has a letter of case is found under its other case, else the
+/// folder itself in its own (on the same volume). Where nothing tells,
+/// taken to: a dry run never lets through two names that may be one.
+/// Asked only when two spellings meet.
+fn folds_case(dir: &Path) -> bool {
+    let swapped = |name: &std::ffi::OsStr| {
+        let name = name.to_str()?;
+        let other: String = name
+            .chars()
+            .map(|c| {
+                if c.is_lowercase() {
+                    c.to_uppercase().next().unwrap_or(c)
+                } else {
+                    c.to_lowercase().next().unwrap_or(c)
+                }
+            })
+            .collect();
+        (other != name).then_some(other)
+    };
+    let found_as = |path: &Path, other: &Path| {
+        let id = crate::fs::stat::id_of(path)?;
+        Some(crate::fs::stat::id_of(other) == Some(id))
+    };
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten().take(64) {
+            if let Some(other) = swapped(&entry.file_name())
+                && let Some(folds) = found_as(&entry.path(), &dir.join(other))
+            {
+                return folds;
+            }
+        }
+    }
+    if let (Some(parent), Some(name)) = (dir.parent(), dir.file_name())
+        && let Some(other) = swapped(name)
+        && crate::fs::stat::id_of(parent).map(|id| id.dev)
+            == crate::fs::stat::id_of(dir).map(|id| id.dev)
+        && let Some(folds) = found_as(dir, &parent.join(other))
+    {
+        return folds;
+    }
+    true
 }
 
 /// A copy a plan made of a file with several names: where it is now, the
@@ -441,6 +515,7 @@ impl StepContext {
             lists_remotes: false,
             listed: RefCell::default(),
             known: RefCell::default(),
+            folds: RefCell::default(),
             removing: RefCell::default(),
             beside: RefCell::default(),
             compared: Arc::default(),
@@ -1229,7 +1304,9 @@ impl StepContext {
     /// to), as this dry run's earlier steps leave it.
     pub fn exists(&self, path: &Path) -> bool {
         let foreseen = self.foreseen.borrow();
-        foreseen.made.contains(path) || !foreseen.went(path) && self.there(path)
+        foreseen.made.contains(path)
+            || self.made_respelled(&foreseen, path)
+            || !foreseen.went(path) && self.there(path)
     }
 
     /// Whether something is at `path` now: in a folder whose names were
@@ -1333,9 +1410,37 @@ impl StepContext {
         self.batched.borrow().contains_key(src)
     }
 
-    /// Whether an earlier step of this dry run puts something at `path`.
+    /// Whether an earlier step of this dry run puts something at `path`:
+    /// under another case of its name too, in a folder that tells no case
+    /// apart (`Photo.jpg` and `photo.jpg` copied onto a stick).
     pub fn made(&self, path: &Path) -> bool {
-        self.foreseen.borrow().made.contains(path)
+        let foreseen = self.foreseen.borrow();
+        foreseen.made.contains(path) || self.made_respelled(&foreseen, path)
+    }
+
+    /// Whether an earlier step puts something at another case of `path`'s
+    /// name, and its folder tells no case apart (asked once a folder).
+    fn made_respelled(&self, foreseen: &Foreseen, path: &Path) -> bool {
+        let Some(key) = folded_key(path) else {
+            return false;
+        };
+        if foreseen.made_folded.get(&key).is_none_or(|&held| held == 0) {
+            return false;
+        }
+        *self
+            .folds
+            .borrow_mut()
+            .entry(key.0.clone())
+            .or_insert_with(|| folds_case(&key.0))
+    }
+
+    /// The same context, the folder `dir` taken to tell no case apart
+    /// or to, as a test's volume does not.
+    #[cfg(test)]
+    #[must_use]
+    pub(super) fn folding(self, dir: &Path, folds: bool) -> Self {
+        self.folds.borrow_mut().insert(dir.to_path_buf(), folds);
+        self
     }
 
     /// Whether the folder `dir` holds nothing once this dry run's earlier
@@ -1365,6 +1470,39 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
+
+    /// What an earlier step makes is met under another case of its name
+    /// where the folder tells no case apart, and only there.
+    #[test]
+    fn a_name_made_meets_its_other_case_where_case_is_not_told_apart() {
+        let stick = Path::new("/media/stick");
+        let made = || {
+            let ctx = StepContext::detached();
+            ctx.foresee(&crate::op::Change::Copy {
+                from: "/disk/Été Photo.jpg".into(),
+                to: stick.join("Été Photo.jpg"),
+            });
+            ctx
+        };
+        let ctx = made().folding(stick, true);
+        assert!(ctx.made(&stick.join("été photo.jpg")) && ctx.exists(&stick.join("ÉTÉ PHOTO.JPG")));
+        assert!(!ctx.made(&stick.join("other.jpg")));
+        let ctx = made().folding(stick, false);
+        assert!(!ctx.made(&stick.join("été photo.jpg")));
+        assert!(ctx.made(&stick.join("Été Photo.jpg")));
+    }
+
+    /// A folder's case rule is read from what it holds: here, a disk's
+    /// that tells case apart.
+    #[test]
+    fn a_folder_that_tells_case_apart_says_so() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("Mixed Case.txt"), "x").unwrap();
+        // Linux's tmp folders tell case apart; other systems' may not.
+        if cfg!(target_os = "linux") {
+            assert!(!folds_case(tmp.path()));
+        }
+    }
 
     #[test]
     fn what_waits_for_a_write_out_is_done_at_it_all_of_it() {
