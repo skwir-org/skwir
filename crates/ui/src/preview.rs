@@ -679,8 +679,13 @@ pub struct PreviewState {
     pub properties: Vec<crate::properties::Group>,
     properties_at: Option<u64>,
     /// Several entries selected: how many, what they weigh together, and
-    /// who may use them; empty with one.
+    /// who may use them; empty with one. Collected with Properties, and
+    /// again as the listing's sizes move (`summary_at`): the files'
+    /// sizes and modes arrive after the selection.
     pub selection_summary: Vec<crate::properties::Group>,
+    /// What `selection_summary` was collected for: Properties' key, and
+    /// the listing's `size_version`.
+    summary_at: Option<(u64, u64)>,
     /// A drive the entries selected are on is mounted read-only: their
     /// shared permissions offer no change. Read on a worker, one look per
     /// drive, when several are selected.
@@ -900,6 +905,7 @@ impl Default for PreviewState {
             properties: Vec::new(),
             properties_at: None,
             selection_summary: Vec::new(),
+            summary_at: None,
             selection_read_only: false,
             selection_drives: crate::latest::Latest::default(),
             selection_drives_of: Vec::new(),
@@ -1858,18 +1864,18 @@ impl Shell {
                 None => (None, None),
             };
             let selection = self.selection_ctx();
-            let (summary, drives) = if selection.count < 2 {
-                (Vec::new(), std::collections::BTreeMap::new())
+            let drives = if selection.count < 2 {
+                std::collections::BTreeMap::new()
             } else {
                 let ws = self.app.workspace.read();
                 let pane = ws.pane(self.pane);
-                let entries: Vec<&skwir_core::entry::Entry> = pane
-                    .map(|p| p.selection.iter().filter_map(|id| p.entry(id)).collect())
-                    .unwrap_or_default();
                 // The drives they are on, one path each: what a change of
                 // access acts on is what a link leads to.
                 let mut drives = std::collections::BTreeMap::new();
-                for entry in &entries {
+                for entry in pane
+                    .into_iter()
+                    .flat_map(|p| p.selection.iter().filter_map(|id| p.entry(id)))
+                {
                     let file = entry.target.as_ref().map_or(entry.file(), |t| t.id);
                     if !drives.contains_key(&file.dev)
                         && let Some(path) = pane.and_then(|p| p.path_of(entry.id))
@@ -1877,18 +1883,37 @@ impl Shell {
                         drives.insert(file.dev, path);
                     }
                 }
+                drives
+            };
+            self.preview.summary_at = None;
+            self.ask_selection_drives(drives);
+        }
+        let sizes = self
+            .app
+            .workspace
+            .read()
+            .pane(self.pane)
+            .map_or(0, |p| p.listing.size_version());
+        if self.preview.summary_at != Some((seen, sizes)) {
+            self.preview.summary_at = Some((seen, sizes));
+            let selection = self.selection_ctx();
+            self.preview.selection_summary = if selection.count < 2 {
+                Vec::new()
+            } else {
+                let ws = self.app.workspace.read();
+                let entries: Vec<&skwir_core::entry::Entry> = ws
+                    .pane(self.pane)
+                    .map(|p| p.selection.iter().filter_map(|id| p.entry(id)).collect())
+                    .unwrap_or_default();
                 // The whole size once every file's is known, never a part.
-                let summary = crate::properties::selection_groups(
+                crate::properties::selection_groups(
                     &entries,
                     selection.count,
                     selection.bytes,
                     self.pane,
-                    &user,
-                );
-                (summary, drives)
+                    &crate::properties::User::current(),
+                )
             };
-            self.preview.selection_summary = summary;
-            self.ask_selection_drives(drives);
         }
         self.ask_sources(&entry, &key.path);
         while let Ok((generation, rows)) = self.preview.sources_rx.try_recv() {
