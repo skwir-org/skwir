@@ -29,6 +29,40 @@ use crate::rclone_config::{self, Backend, Opt, Session, Step};
 
 /// The field naming the remote.
 const NAME: &str = "remote.name";
+
+/// The rclone remotes Skwir began to set up and did not finish, by name:
+/// noted before rclone is asked to make one, forgotten once its setup ends
+/// (done, undone, or the remote removed). One Skwir ended in the middle of
+/// (its browser's sign-in, a crypt's password) stays in rclone's
+/// configuration, half made: where it is listed it says so, and its menu
+/// finishes it (Edit) or removes it.
+pub(crate) const UNFINISHED: &str = "remote.unfinished";
+
+/// The remotes noted as not finished ([`UNFINISHED`]).
+pub(crate) fn unfinished(app: &App) -> Vec<String> {
+    app.settings.get(UNFINISHED).unwrap_or_default()
+}
+
+/// Note remote `name` as not finished, or no longer, saved at once: what
+/// is noted must outlast Skwir ending.
+pub(crate) fn note_unfinished(app: &App, name: &str, unfinished_now: bool) {
+    let mut names = unfinished(app);
+    if names.iter().any(|n| n == name) == unfinished_now {
+        return;
+    }
+    if unfinished_now {
+        names.push(name.to_owned());
+    } else {
+        names.retain(|n| n != name);
+    }
+    app.settings.set(
+        UNFINISHED,
+        toml::Value::Array(names.into_iter().map(toml::Value::String).collect()),
+    );
+    if let Err(error) = app.settings.save() {
+        tracing::warn!("which remotes are half made was not saved: {error:#}");
+    }
+}
 /// The field of a pick (a kind, a provider).
 const PICKED: &str = "picked";
 /// The field answering one of rclone's questions.
@@ -608,12 +642,17 @@ impl Flow<'_> {
                 continue;
             }
             let parameters = parameters(backend, provider, &answer, &BTreeMap::new());
+            // Noted first: Skwir may end before its questions do.
+            note_unfinished(self.app, &chosen, true);
             let step = match self
                 .session
                 .create(&chosen, &backend.name, &parameters, self.cancel)
             {
                 Ok(step) => step,
                 Err(refused) => {
+                    if !self.session.remotes(self.cancel)?.contains(&chosen) {
+                        note_unfinished(self.app, &chosen, false);
+                    }
                     error = Some(said(&refused));
                     continue;
                 }
@@ -622,11 +661,15 @@ impl Flow<'_> {
                 Asked::Done => {}
                 Asked::Cancelled => {
                     // Half made: not kept.
-                    let _ = self.session.delete(&chosen, self.cancel);
+                    if self.session.delete(&chosen, self.cancel).is_ok() {
+                        note_unfinished(self.app, &chosen, false);
+                    }
                     return Ok(Added::Cancelled);
                 }
             }
-            match self.checked(&chosen, backend, provider, true)? {
+            let checked = self.checked(&chosen, backend, provider, true)?;
+            note_unfinished(self.app, &chosen, false);
+            match checked {
                 Checked::Kept => return Ok(Added::Done(chosen)),
                 Checked::Dropped => return Ok(Added::Cancelled),
             }
@@ -897,6 +940,8 @@ impl Flow<'_> {
         if !self.change(name, backend, &provider, Token::Keep)? {
             return Ok(false);
         }
+        // Its questions all answered: one half made is finished.
+        note_unfinished(self.app, name, false);
         self.checked(name, backend, &provider, false)?;
         Ok(true)
     }

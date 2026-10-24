@@ -144,10 +144,18 @@ fn record_actions(
     server: &crate::connector::Server,
     at_login: &std::collections::HashSet<String>,
     remembered: &[String],
+    unfinished: &[String],
 ) -> Vec<serde_json::Value> {
     let action = |label: &str, command: &str, args: serde_json::Value| serde_json::json!({ "label": label, "command": command, "args": args });
     let top = server.address.top();
     let mut actions = Vec::new();
+    if let Some(name) = remote_name(&server.address).filter(|n| unfinished.iter().any(|u| u == n)) {
+        actions.push(action(
+            FINISH,
+            "remote.edit_server",
+            serde_json::json!({ "id": name }),
+        ));
+    }
     if let Some(name) = remote_name(&server.address) {
         actions.push(action(
             "Test",
@@ -203,8 +211,9 @@ fn record_actions(
 }
 
 /// The items of an rclone remote's menu in the sidebar: Edit, Sign In
-/// Again where it signs in through a browser (`signs_in`), Remove.
-pub(crate) fn menu_items(name: &str, signs_in: bool) -> Vec<MenuItem> {
+/// Again where it signs in through a browser (`signs_in`), Remove; first,
+/// Finish Setting Up where Skwir did not finish it (`unfinished`).
+pub(crate) fn menu_items(name: &str, signs_in: bool, unfinished: bool) -> Vec<MenuItem> {
     let named = |command: &str| Invocation::new(command).with("id", name);
     let mut items = vec![
         MenuItem::new(
@@ -232,8 +241,26 @@ pub(crate) fn menu_items(name: &str, signs_in: bool) -> Vec<MenuItem> {
             named("remote.reconnect"),
         ));
     }
+    if unfinished {
+        items.push(MenuItem::new(
+            "place",
+            FINISH,
+            "settings",
+            405,
+            named("remote.edit_server"),
+        ));
+    }
     items
 }
+
+/// What finishes setting up a remote of rclone's Skwir did not finish
+/// (`rclone_forms::UNFINISHED`): its Edit, which asks rclone's questions
+/// again.
+const FINISH: &str = "Finish Setting Up…";
+
+/// What a remote of rclone's Skwir did not finish setting up says of
+/// itself where it is listed.
+pub(crate) const NOT_FINISHED: &str = "not finished setting up";
 
 /// The id of the entry that connects `address`'s server at login, where
 /// one may (ADR-087): a remote of rclone's configuration, by rclone; an
@@ -358,10 +385,16 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     (state.servers.clone(), state.at_login.clone())
                 };
                 let remembered = crate::remembered(app);
+                let unfinished = crate::rclone_forms::unfinished(app);
                 let records: Vec<serde_json::Value> = servers
                     .iter()
                     .map(|server| {
                         let (id, name, kind) = match remote_name(&server.address) {
+                            Some(name) if unfinished.iter().any(|u| u == name) => (
+                                name.to_owned(),
+                                name.to_owned(),
+                                format!("{} · {} · {NOT_FINISHED}", server.kind, server.kept.said()),
+                            ),
                             Some(name) => (
                                 name.to_owned(),
                                 name.to_owned(),
@@ -379,7 +412,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                             "id": id,
                             "name": name,
                             "kind": kind,
-                            "actions": record_actions(server, &at_login, &remembered),
+                            "actions": record_actions(server, &at_login, &remembered, &unfinished),
                             "fixed": fixed,
                         })
                     })
@@ -516,6 +549,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                         remotes.disconnect(app, point, false)?;
                     }
                     flow.session.delete(&args.id, flow.cancel)?;
+                    crate::rclone_forms::note_unfinished(app, &args.id, false);
                     forget_kept_for(remotes, app, &address, flow.cancel);
                     remotes.refresh(app);
                     app.notify(NotifyLevel::Info, format!("“{}” is removed", args.id));
@@ -1378,9 +1412,11 @@ mod tests {
     #[test]
     fn an_rclone_remote_s_menu_signs_in_again_where_it_signs_in() {
         let titles = |items: Vec<MenuItem>| items.into_iter().map(|i| i.title).collect::<Vec<_>>();
-        assert!(titles(menu_items("photos", true)).contains(&"Sign In Again…".to_owned()));
-        assert!(!titles(menu_items("nas", false)).contains(&"Sign In Again…".to_owned()));
-        let item = &menu_items("it's", false)[0];
+        assert!(titles(menu_items("photos", true, false)).contains(&"Sign In Again…".to_owned()));
+        assert!(!titles(menu_items("nas", false, false)).contains(&"Sign In Again…".to_owned()));
+        assert!(titles(menu_items("nas", false, true)).contains(&FINISH.to_owned()));
+        assert!(!titles(menu_items("nas", false, false)).contains(&FINISH.to_owned()));
+        let item = &menu_items("it's", false, false)[0];
         assert_eq!(item.command.args["id"], "it's");
         assert!(signs_in("drive") && !signs_in("s3"));
     }

@@ -406,6 +406,14 @@ ADR-077 (which revises ADR-021).
   bring), its confirmation saying so. A line forgets that password as
   its menu does (Forget Password). Settings is told when one is kept or
   forgotten (`Remotes::note_remembered`).
+- A remote of rclone's Skwir began to set up is noted
+  (`rclone_forms::UNFINISHED`) before rclone is asked to make it, saved at
+  once, and forgotten once its setup ends: done, cancelled (the remote
+  removed), or removed later. One still noted is half made (Skwir ended
+  in the middle of its questions): its line in Settings and its place say
+  so (`NOT_FINISHED`, the place drawn as not ready), its line and menu
+  offer Finish Setting Up… (Edit, rclone's questions again) and Remove;
+  Skwir never removes it unasked.
 - The configuration's password: the keyring's (`rclone:configuration`)
   where the user kept it, else asked of the window (`ConfigAsk`, through
   rclone's `--password-command`); never asked for a listing nobody asked
@@ -554,6 +562,11 @@ ADR-077 (which revises ADR-021).
   its user `tester` is the user and `nobody` its guest (`nss_wrapper`),
   on a port of its own; a share asking `tester`'s password, one a guest
   opens (KIO's password dialog no test answers).
+- A test lets go of what it mounted before its server stops, once it is
+  mounted (an address opened as added connects a moment later), and only
+  its own server's (`let_go_of_mounts`, by its port: the tests' runtime
+  folder is shared): a mount whose server is gone holds whatever looks
+  into it, the next tests included.
 - KDE's dialogs and KWallet are tried in a window on a display of its
   own, the bus started with that display so `kiod` and `ksecretd` draw
   there. KWallet 6.30 is `ksecretd` (wallets, the Secret Service) with

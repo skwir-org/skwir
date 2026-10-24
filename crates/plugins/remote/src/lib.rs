@@ -723,6 +723,7 @@ impl Remotes {
         let proved = skwir_core::fs::reach::proved_changed();
         let chosen: HashMap<String, String> = app.settings.get(CHOSEN).unwrap_or_default();
         let remembered: Vec<String> = app.settings.get(REMEMBERED).unwrap_or_default();
+        let unfinished = rclone_forms::unfinished(app);
         let default: String = app
             .settings
             .get(THUMBNAILS)
@@ -807,9 +808,11 @@ impl Remotes {
                 // Mounted, but not of the configuration (a connection
                 // string's): nothing to edit.
                 if let Some(kind) = kind {
-                    place
-                        .menu
-                        .extend(configure::menu_items(name, configure::signs_in(kind)));
+                    place.menu.extend(configure::menu_items(
+                        name,
+                        configure::signs_in(kind),
+                        unfinished.iter().any(|u| u == name),
+                    ));
                 }
             } else if let Some(kept) = address.and_then(|a| {
                 state
@@ -845,10 +848,19 @@ impl Remotes {
                 .menu
                 .extend(configure::server_items(&server.address, &state.at_login));
             if let Some(name) = configure::remote_name(&server.address) {
+                let half_made = unfinished.iter().any(|u| u == name);
                 place.menu.extend(configure::menu_items(
                     name,
                     configure::signs_in(&server.kind),
+                    half_made,
                 ));
+                // Drawn as not ready, saying why, opened all the same.
+                if half_made {
+                    place.unavailable = Some(format!(
+                        "{name} is {}: Finish Setting Up… in its menu",
+                        configure::NOT_FINISHED
+                    ));
+                }
             } else if server.kept.by_address() {
                 place.menu.extend(configure::kept_items(&server.address));
             }
@@ -1180,6 +1192,11 @@ impl Plugin for RemotePlugin {
             options::SETTING,
             "The mount options chosen for each server, by its address",
             toml::Value::Table(toml::map::Map::new()),
+        ));
+        app.settings.declare(SettingSpec::data(
+            rclone_forms::UNFINISHED,
+            "The remotes of rclone's Skwir began to set up and did not finish, by name",
+            toml::Value::Array(Vec::new()),
         ));
         app.settings.declare(SettingSpec::data(
             REMEMBERED,

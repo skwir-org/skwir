@@ -4542,3 +4542,29 @@ overnight: the review's remote items, then what the servers' work left.
   path begins with a space or holds a backslash ("Malformed URL"), so
   those two are checked in the listing alone. Dolphin itself was not
   run.
+- **A half-made remote says so.** A remote of rclone's Skwir ended in
+  the middle of setting up (its browser's sign-in, a crypt's password)
+  stayed in rclone's configuration, listed as any other. Skwir now notes
+  a remote before asking rclone to make it, saved at once, and forgets
+  it once its setup ends (done, cancelled and removed, or removed
+  later). One still noted at the next run says "not finished setting up"
+  on its line in Settings, its place in the Network section is drawn as
+  not ready with that tooltip, and its line and menu offer Finish
+  Setting Up… (Edit: its form, then rclone's questions again) beside
+  Remove…. Checked by `remote_configs`' new test: Add Server for Google
+  Drive answered until its sign-in's page waits (nothing reaches
+  Google), the remote noted; Skwir's settings and rclone's configuration
+  copied then, as Skwir ending would leave them; the first run's Cancel
+  removes the remote and the note; a second run from the copies lists it
+  half made with Finish Setting Up… first, its place not ready with the
+  item in its menu, and Remove takes the remote and its note out. Finish
+  Setting Up… is Edit, whose sign-in was not completed (no provider).
+- **Found: the tests left rclone mounts behind.** `remote_configs`' test
+  of servers added by their address (its KDE-kept server, opened as
+  added) and the new one of a server given its parts ended with their
+  mounts up, their servers then stopped: dead mounts in the tests'
+  shared runtime folder, which hold whatever looks into them. Each now
+  lets go of its own server's mounts, once mounted, before the server
+  stops (`let_go_of_mounts`). Three such mounts from this night's runs
+  (two of those tests', one of a run that failed before its Eject) were
+  let go of by hand, their rclone processes ended by their pids.

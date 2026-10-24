@@ -720,6 +720,159 @@ fn a_browser_s_sign_in_waits_with_its_page_and_is_cancelled() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A remote Skwir ended in the middle of setting up (here, while its
+/// browser's sign-in waits) stays in rclone's configuration, half made:
+/// Skwir noted it first, so the next run says so where it is listed (its
+/// line in Settings, its place drawn as not ready) and offers Finish
+/// Setting Up… and Remove…, which removes it and the note.
+#[test]
+fn a_remote_left_half_made_is_said_so_and_removed() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("half-made");
+    let _opened = fake_browser(&base);
+    // Settings kept in files, as a run of Skwir keeps them.
+    let app_in = |dir: &str, config: &Path| {
+        let root = base.join(dir);
+        let app = App::new(AppConfig {
+            settings_path: Some(root.join("settings.toml")),
+            data_path: Some(root.join("data.toml")),
+            ..AppConfig::ephemeral(root.join("app"))
+        })
+        .unwrap();
+        let rclone = Rclone {
+            config: Some(config.to_path_buf()),
+            askpass: Some(PathBuf::from(env!("CARGO_BIN_EXE_skwir"))),
+            keyring: Some(Arc::new(TestKeyring::default())),
+        };
+        let remotes = Remotes::with(vec![Arc::new(rclone.clone())])
+            .with_rclone(rclone)
+            .with_keyring(Arc::new(TestKeyring::default()));
+        app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+        app
+    };
+    let unfinished =
+        |app: &App| -> Vec<String> { app.settings.get("remote.unfinished").unwrap_or_default() };
+    let config = base.join("first/rclone.conf");
+    std::fs::create_dir_all(base.join("first")).unwrap();
+    let first = app_in("first", &config);
+    let window = Window::new(&first);
+    first
+        .dispatch(&Invocation::with_args(
+            "remote.add_server",
+            &serde_json::json!({ "kind": "drive" }),
+        ))
+        .unwrap();
+    let options = window.form(30);
+    window.accept(&options, &[("remote.name", "half-made-1")]);
+    let waiting = loop {
+        let asked = window.next(60, |_| true);
+        if asked.form.waiting.is_some() && asked.form.fields.iter().any(|f| f.kind == Kind::Link) {
+            break asked;
+        }
+        if asked.form.waiting.is_none() {
+            window.accept(&asked, &[]);
+        }
+    };
+    assert_eq!(
+        unfinished(&first),
+        ["half-made-1"],
+        "noted before its questions"
+    );
+    // What Skwir ending now leaves: its settings, rclone's configuration.
+    let second_dir = base.join("second");
+    std::fs::create_dir_all(&second_dir).unwrap();
+    for name in ["settings.toml", "data.toml"] {
+        let from = base.join("first").join(name);
+        if from.exists() {
+            std::fs::copy(&from, second_dir.join(name)).unwrap();
+        }
+    }
+    let left = second_dir.join("rclone.conf");
+    std::fs::copy(&config, &left).unwrap();
+    assert!(
+        section(&left, "half-made-1").is_some(),
+        "half made in rclone's configuration"
+    );
+    // The first run's sign-in cancelled: its remote is not kept, nor noted.
+    window.cancel(&waiting);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while section(&config, "half-made-1").is_some() || !unfinished(&first).is_empty() {
+        first.pump();
+        assert!(Instant::now() < deadline, "undone, its note forgotten");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(window);
+
+    // The next run says so.
+    let second = app_in("second", &left);
+    assert_eq!(unfinished(&second), ["half-made-1"]);
+    let record = record_of(&second, "half-made-1", 30);
+    assert!(
+        record["kind"]
+            .as_str()
+            .unwrap()
+            .ends_with("not finished setting up"),
+        "{record}"
+    );
+    assert_eq!(record["actions"][0]["label"], "Finish Setting Up…");
+    assert_eq!(record["actions"][0]["command"], "remote.edit_server");
+    assert_eq!(record["actions"][0]["args"]["id"], "half-made-1");
+    let place = |app: &App| {
+        app.registry
+            .places
+            .find(|p| p.key.as_deref() == Some("remote:rclone://half-made-1/"))
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while place(&second).is_none() {
+        second.pump();
+        assert!(Instant::now() < deadline, "its place shown");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let shown = place(&second).unwrap();
+    assert!(
+        shown
+            .unavailable
+            .as_deref()
+            .is_some_and(|why| why.contains("not finished setting up")),
+        "{shown:?}"
+    );
+    assert!(
+        shown
+            .menu
+            .iter()
+            .any(|item| item.title == "Finish Setting Up…")
+    );
+    // Removed, its note goes too.
+    let window = Window::new(&second);
+    second
+        .dispatch(&Invocation::with_args(
+            "remote.remove_server",
+            &serde_json::json!({ "id": "half-made-1" }),
+        ))
+        .unwrap();
+    let confirm = window.form(30);
+    window.accept(&confirm, &[]);
+    until_said(&second, 30, "“half-made-1” is removed");
+    assert!(section(&left, "half-made-1").is_none());
+    assert!(unfinished(&second).is_empty());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while server_records(&second)
+        .iter()
+        .any(|r| r["id"] == "half-made-1")
+    {
+        second.pump();
+        assert!(Instant::now() < deadline, "no longer listed");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(window);
+    drop(second);
+    drop(first);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// A remote built on others: an encrypted one picks the remote (and the
 /// folder of it) it stands on among those there are, and what is written
 /// through it is encrypted there; a union stands on the remotes switched
@@ -1075,6 +1228,35 @@ fn server_records(app: &App) -> Vec<serde_json::Value> {
         panic!("records");
     };
     records["records"].as_array().unwrap().clone()
+}
+
+/// Let go of what the app mounted of the server on `port`, before that
+/// server stops: a mount whose server is gone holds whatever looks into
+/// it, other tests' included (the runtime folder is the tests' shared
+/// one). Only this test's server's: others mount there too.
+fn let_go_of_mounts(app: &App, port: u16) {
+    let this = format!("127.0.0.1:{port}");
+    let points: Vec<PathBuf> = skwir_core::fs::reach::all()
+        .into_iter()
+        .map(|r| r.point.clone())
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().contains(&this))
+        })
+        .collect();
+    for point in points {
+        app.dispatch(&Invocation::with_args(
+            "remote.disconnect",
+            &serde_json::json!({ "path": point }),
+        ))
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point) {
+            app.pump();
+            assert!(Instant::now() < deadline, "{} let go of", point.display());
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
 }
 
 /// The record of the server `id`, once listed, within `seconds`.
@@ -1451,6 +1633,7 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
         "forgotten with its last server"
     );
     assert!(remembered(&app).is_empty());
+    let_go_of_mounts(&app, served.port);
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }
@@ -1516,6 +1699,15 @@ fn a_server_given_its_parts_is_added_from_a_form_filled_in() {
     until_said(&app, 30, "“Test Files” is added");
     let address = format!("dav://127.0.0.1:{port}/dav");
     assert_eq!(record_of(&app, &address, 30)["name"], "Test Files");
+    // Opened as added: let go of once mounted, before its server stops.
+    let pane = app.workspace.read().active_id();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !app.pane_location(pane).is_some_and(|l| l.is_path()) {
+        app.pump();
+        assert!(Instant::now() < deadline, "opened as added");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let_go_of_mounts(&app, served.port);
     drop(app);
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();

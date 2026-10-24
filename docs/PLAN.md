@@ -1493,8 +1493,13 @@ protocol is a scheme a connector maps, or a connector.
   - on Windows, ssh's questions and an encrypted rclone configuration's
     password reach no window (the askpass is a Unix socket): the
     keyring's password alone opens one there;
-  - a remote half made when Skwir ends mid-question (its sign-in, a
-    crypt's) stays in rclone's configuration until removed;
+  - a remote half made when Skwir ends mid-question is said so where it
+    is listed (Finish Setting Up…, Remove…), never removed unasked; one
+    half made by another program than Skwir is not known to be;
+  - GNOME Files' recent servers (`~/.config/gtk-4.0/servers`, GTK 3's
+    `gtk-3.0/servers`) are not read (the user's choice, 2026-10-24): a
+    history GNOME fills on each connection, not a list the user keeps,
+    which would fill the Network section with every server ever opened;
   - a server added by its address has no Test (rclone's lists its top
     through rclone's remote control; Skwir speaks no protocol itself, and
     connecting is opening it);
