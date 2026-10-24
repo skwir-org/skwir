@@ -302,6 +302,12 @@ pub fn view(shell: &Shell, parked: bool) -> Option<View<'_>> {
     }
 }
 
+/// Whether an inspection of `kind` has text to find: a map and a model
+/// have none, and their bar no find (`bar`, `inspect_find_open`).
+fn finds(kind: InspectionKind) -> bool {
+    !matches!(kind, InspectionKind::Map | InspectionKind::Model)
+}
+
 pub(crate) fn counts_printed(shell: &Shell, data: &Inspection) -> bool {
     shell.prefs.printed_pages && !data.printed_pages.is_empty()
 }
@@ -2134,6 +2140,13 @@ impl Shell {
     }
 
     fn inspect_find_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Ctrl+F and F3 open no field the bar does not draw: focused
+        // undrawn, it would hand the keyboard to the pane.
+        if let Some(PreviewContent::Inspection(display)) = &self.preview.content
+            && !finds(display.data.kind)
+        {
+            return;
+        }
         if self.preview.inspection.find.is_none() {
             let hex = matches!(
                 &self.preview.content,
@@ -2498,8 +2511,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         }));
     }
 
-    // A map and a model have no text to find.
-    if !matches!(data.kind, InspectionKind::Map | InspectionKind::Model) {
+    if finds(data.kind) {
         bar.push(
             Item::button(
                 Slot::Tools,
