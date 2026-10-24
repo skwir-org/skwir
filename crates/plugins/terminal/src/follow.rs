@@ -46,6 +46,10 @@ pub fn family(program: &str) -> Option<Family> {
     }
 }
 
+/// What PowerShell's tokenizer takes as a single quote: `'` and U+2018 to
+/// U+201B (‘ ’ ‚ ‛).
+const POWERSHELL_QUOTES: [char; 5] = ['\'', '\u{2018}', '\u{2019}', '\u{201a}', '\u{201b}'];
+
 /// `path` as one word `family`'s shell reads back as it is, or `None`
 /// for a path a shell line cannot carry: a name that is not UTF-8, a
 /// control character (a line editor acts on it before the shell reads the
@@ -69,7 +73,21 @@ pub fn word(family: Family, path: &Path) -> Option<String> {
     Some(match family {
         Family::Posix => format!("'{}'", path.replace('\'', r"'\''")),
         Family::Fish => format!("'{}'", path.replace('\\', r"\\").replace('\'', r"\'")),
-        Family::PowerShell => format!("'{}'", path.replace('\'', "''")),
+        Family::PowerShell => {
+            // PowerShell ends a single-quoted string on any of its single
+            // quotes, the typographic ones too (`John’s Music`); each is
+            // doubled, which reads back as itself.
+            let mut word = String::with_capacity(path.len() + 2);
+            word.push('\'');
+            for c in path.chars() {
+                if POWERSHELL_QUOTES.contains(&c) {
+                    word.push(c);
+                }
+                word.push(c);
+            }
+            word.push('\'');
+            word
+        }
         Family::Cmd => {
             if path.contains(['%', '"']) {
                 return None;
@@ -225,6 +243,28 @@ mod tests {
             );
         }
         assert!(word(Family::Cmd, Path::new(r"C:\100%")).is_none());
+    }
+
+    #[test]
+    fn powershell_reads_its_typographic_quotes_as_quotes() {
+        // A name that ends the quoted word on a typographic quote would run
+        // what follows it as commands.
+        assert_eq!(
+            word(
+                Family::PowerShell,
+                Path::new("/m/x\u{2019}; Remove-Item ~; #")
+            )
+            .unwrap(),
+            "'/m/x\u{2019}\u{2019}; Remove-Item ~; #'"
+        );
+        assert_eq!(
+            word(Family::PowerShell, Path::new("/m/‘a’ ‚b‛ 'c'")).unwrap(),
+            "'/m/‘‘a’’ ‚‚b‛‛ ''c'''"
+        );
+        assert_eq!(
+            cd_line(Family::PowerShell, Path::new("/m/Jo’s Music")).unwrap(),
+            "\x1b Set-Location -LiteralPath '/m/Jo’’s Music'\r".as_bytes()
+        );
     }
 
     #[test]
