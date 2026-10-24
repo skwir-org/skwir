@@ -110,6 +110,10 @@ pub struct Deleting {
     /// Each remote's mount and address: a folder there is said by its
     /// address, not the mount's path (ADR-077).
     remotes: Vec<(PathBuf, skwir_core::Location)>,
+    /// Where the server keeps every row deleted, when one does and all are
+    /// there (a cloud's own trash, ADR-086): what the question says
+    /// rather than that they are gone for good.
+    kept_in: Option<String>,
     scroll: UniformListScrollHandle,
     cancel: CancelToken,
 }
@@ -150,6 +154,7 @@ impl Deleting {
     fn of(
         plan: &Plan,
         remotes: Vec<(PathBuf, skwir_core::Location)>,
+        kept_by: &[(PathBuf, String)],
         cancel: CancelToken,
     ) -> (Self, Vec<(usize, PathBuf)>) {
         let home = skwir_core::os_path::home();
@@ -194,6 +199,20 @@ impl Deleting {
             });
             paths.push((at, path));
         }
+        // One trash of a server keeps them all, or they are said gone.
+        let kept: Vec<Option<&String>> = paths
+            .iter()
+            .map(|(_, path)| {
+                kept_by
+                    .iter()
+                    .find(|(point, _)| path.starts_with(point))
+                    .map(|(_, trash)| trash)
+            })
+            .collect();
+        let kept_in = match kept.first() {
+            Some(Some(first)) if kept.iter().all(|k| *k == Some(*first)) => Some((*first).clone()),
+            _ => None,
+        };
         let mut known = rows.iter().filter(|r| !r.trashed && !r.other);
         let first = known.next().and_then(|r| r.folder.clone());
         let same = known.all(|r| r.folder == first);
@@ -215,6 +234,7 @@ impl Deleting {
             counted: paths.is_empty(),
             home,
             remotes,
+            kept_in,
             scroll: UniformListScrollHandle::new(),
             cancel,
         };
@@ -240,6 +260,16 @@ impl Deleting {
         };
         let from = if trash { " from the trash" } else { "" };
         let note = note.map_or(String::new(), |note| format!(" {note}."));
+        if let Some(kept_in) = &self.kept_in {
+            let (goes, back) = if rows.len() == 1 {
+                ("It goes", "it")
+            } else {
+                ("They go", "them")
+            };
+            return format!(
+                "Delete {what}? {goes} to {kept_in}; Skwir cannot put {back} back.{note}"
+            );
+        }
         format!("Delete {what}{from} permanently? This cannot be undone.{note}")
     }
 
@@ -505,15 +535,16 @@ impl Shell {
     /// what it deletes.
     pub fn confirm_deleting(&mut self, plan: Plan, window: &mut Window, cx: &mut Context<Self>) {
         let cancel = self.app.lifetime().child();
-        let remotes = self
-            .app
-            .registry
-            .remotes
-            .all()
+        let known = self.app.registry.remotes.all();
+        let trashes: Vec<(PathBuf, String)> = known
+            .iter()
+            .filter_map(|known| Some((known.point.clone(), known.trash.clone()?)))
+            .collect();
+        let remotes = known
             .into_iter()
             .filter_map(|known| Some((known.point, known.address?)))
             .collect();
-        let (listed, paths) = Deleting::of(&plan, remotes, cancel.clone());
+        let (listed, paths) = Deleting::of(&plan, remotes, &trashes, cancel.clone());
         let question = listed.question(plan.note.as_deref());
         let id = plan.id;
         self.open_confirm(question, Confirmed::Apply(plan), window, cx);
@@ -830,7 +861,7 @@ mod tests {
     fn the_question_names_what_it_deletes() {
         let dir = PathBuf::from("/data/it's a café");
         let one = plan(vec![dir.join("notes  draft.txt")]);
-        let (listed, paths) = Deleting::of(&one, Vec::new(), CancelToken::new());
+        let (listed, paths) = Deleting::of(&one, Vec::new(), &[], CancelToken::new());
         assert_eq!(
             listed.question(None),
             "Delete “notes  draft.txt” permanently? This cannot be undone."
@@ -840,7 +871,7 @@ mod tests {
         assert!(!listed.folders);
 
         let several = plan(vec![dir.join("a"), dir.join("b")]);
-        let (listed, _) = Deleting::of(&several, Vec::new(), CancelToken::new());
+        let (listed, _) = Deleting::of(&several, Vec::new(), &[], CancelToken::new());
         assert_eq!(
             listed.question(Some("1 of these has other names: its file stays")),
             "Delete 2 items permanently? This cannot be undone. \
@@ -849,13 +880,13 @@ mod tests {
         assert!(!listed.folders, "one folder holds them");
 
         let apart = plan(vec![dir.join("a"), PathBuf::from("/elsewhere/b")]);
-        let (listed, _) = Deleting::of(&apart, Vec::new(), CancelToken::new());
+        let (listed, _) = Deleting::of(&apart, Vec::new(), &[], CancelToken::new());
         assert!(listed.folders && listed.one_folder.is_none());
 
         // Items of a trash: by count, their folders read from their records.
         let trash = PathBuf::from("/data/.Trash-1000/files");
         let trashed = plan(vec![trash.join("a.txt"), trash.join("b.txt")]);
-        let (listed, _) = Deleting::of(&trashed, Vec::new(), CancelToken::new());
+        let (listed, _) = Deleting::of(&trashed, Vec::new(), &[], CancelToken::new());
         assert_eq!(
             listed.question(None),
             "Delete 2 items from the trash permanently? This cannot be undone."
@@ -868,7 +899,7 @@ mod tests {
         mixed.steps.push(Box::new(Trash {
             entry: EntryRef::new(FileId::new(1, 2), dir.join("here.txt")),
         }));
-        let (listed, _) = Deleting::of(&mixed, Vec::new(), CancelToken::new());
+        let (listed, _) = Deleting::of(&mixed, Vec::new(), &[], CancelToken::new());
         assert_eq!(
             listed.question(Some(
                 "It is in a network folder, which keeps no trash; the other item goes to the trash"
@@ -876,6 +907,30 @@ mod tests {
             "Delete “on the server.txt” permanently? This cannot be undone. \
              It is in a network folder, which keeps no trash; the other item goes to the trash."
         );
+    }
+
+    /// Deleted on a server that keeps a trash of its own (a cloud's), the
+    /// question says where it goes, never that it is gone for good; one of
+    /// them on a server that keeps none, it says so as ever.
+    #[test]
+    fn a_deletion_kept_in_a_servers_trash_says_where_it_goes() {
+        let dir = PathBuf::from("/run/user/1/skwir/remote/rclone rclone:%2F%2Fphotos%2F");
+        let trashes = vec![(dir.clone(), "Google Drive's trash".to_owned())];
+        let one = plan(vec![dir.join("it's here.jpg")]);
+        let (listed, _) = Deleting::of(&one, Vec::new(), &trashes, CancelToken::new());
+        assert_eq!(
+            listed.question(None),
+            "Delete “it's here.jpg”? It goes to Google Drive's trash; Skwir cannot put it back."
+        );
+        let two = plan(vec![dir.join("a"), dir.join("b")]);
+        let (listed, _) = Deleting::of(&two, Vec::new(), &trashes, CancelToken::new());
+        assert_eq!(
+            listed.question(None),
+            "Delete 2 items? They go to Google Drive's trash; Skwir cannot put them back."
+        );
+        let mixed = plan(vec![dir.join("a"), PathBuf::from("/run/user/1/other/b")]);
+        let (listed, _) = Deleting::of(&mixed, Vec::new(), &trashes, CancelToken::new());
+        assert!(listed.question(None).contains("permanently"));
     }
 
     /// What the worker reads: what each is, its companions, what the
@@ -896,7 +951,7 @@ mod tests {
         // Inside the folder listed first: counted there.
         let inner = tmp.path().join("old  project/src");
         let all = plan(vec![folder, photo, empty, gone, inner]);
-        let (mut listed, paths) = Deleting::of(&all, Vec::new(), CancelToken::new());
+        let (mut listed, paths) = Deleting::of(&all, Vec::new(), &[], CancelToken::new());
         // Not all in one folder: each row says its own.
         assert!(listed.folders);
         assert_eq!(listed.summary(), "Counting…");
@@ -959,7 +1014,8 @@ mod tests {
             "[Trash Info]\nPath=docs/caf%C3%A9/it%27s%20a%20note.txt\nDeletionDate=2026-10-19T10:00:00\n",
         )
         .unwrap();
-        let (mut listed, paths) = Deleting::of(&plan(vec![item]), Vec::new(), CancelToken::new());
+        let (mut listed, paths) =
+            Deleting::of(&plan(vec![item]), Vec::new(), &[], CancelToken::new());
         assert_eq!(
             listed.question(None),
             "Delete 1 item from the trash permanently? This cannot be undone."

@@ -34,6 +34,7 @@ pub mod rclone;
 pub mod rclone_config;
 #[cfg(unix)]
 pub mod rclone_copy;
+pub mod rclone_features;
 #[cfg(unix)]
 pub mod rclone_forms;
 pub mod rsync;
@@ -138,6 +139,9 @@ struct State {
     /// Each mount's free and whole space, as its server says (measured
     /// in its lane).
     space: HashMap<PathBuf, (u64, u64)>,
+    /// What the storage of each rclone mount Skwir made can do, as rclone
+    /// says (ADR-086): asked once a mount, in its lane.
+    features: HashMap<PathBuf, rclone_features::Features>,
     /// Bumped by each refresh, so a slower one never wins.
     generation: u64,
     /// The mounts as last read (`Remotes::mounted`): what every publish
@@ -484,6 +488,9 @@ impl Remotes {
                     state
                         .space
                         .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
+                    state
+                        .features
+                        .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
                 }
                 let Some(app) = weak.upgrade() else {
                     return;
@@ -547,6 +554,11 @@ impl Remotes {
             }
             let asking = Asking(Arc::clone(&self.state), point.clone());
             let (this, weak) = (self.clone(), weak.clone());
+            // What an rclone mount of Skwir's can do, asked once a mount.
+            let ask_features = m.recognised.ours
+                && m.connector.as_ref().is_some_and(|c| c.id() == "rclone")
+                && !self.state.lock().features.contains_key(&point);
+            let lifetime_of_ask = lifetime.clone();
             app.scheduler.spawn_in(
                 m.remote.lane(),
                 Priority::Background,
@@ -559,9 +571,26 @@ impl Remotes {
                     if !gone && let Some(app) = weak.upgrade() {
                         app.sweep_left_on(&point);
                     }
+                    let features = (ask_features && !gone)
+                        .then(|| rclone_features::of_mount(&point, &lifetime_of_ask))
+                        .flatten();
+                    if let Some(features) = &features {
+                        this.state
+                            .lock()
+                            .features
+                            .insert(point.clone(), features.clone());
+                    }
                     // How full it is, as the server says: asked here too,
-                    // where waiting holds no one else.
-                    let space = if gone {
+                    // where waiting holds no one else. Not where rclone
+                    // says its storage cannot tell: its mount makes a size
+                    // up.
+                    let tells = this
+                        .state
+                        .lock()
+                        .features
+                        .get(&point)
+                        .is_none_or(|f| f.about);
+                    let space = if gone || !tells {
                         None
                     } else {
                         skwir_platform::places::space(&point)
@@ -644,6 +673,7 @@ impl Remotes {
                 label: m.recognised.label.clone(),
                 thumbnails: thumbnails(rule, near, whole, fast),
                 forget: m.connector.as_ref().and_then(|c| c.forget(&m.remote)),
+                trash: state.features.get(point).and_then(|f| f.trash.clone()),
             });
             let mut place = match m.recognised.device {
                 Some(device) => Place::new(

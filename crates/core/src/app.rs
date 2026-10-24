@@ -2831,6 +2831,17 @@ mod builtin {
                 };
                 let refs = app.targets(a.pane, a.entries)?;
                 let deleted = refs.iter().filter(|e| without(e)).count();
+                // A server that keeps what is deleted in a trash of its own
+                // (a cloud's, ADR-086) is said by the question itself.
+                let for_good = refs
+                    .iter()
+                    .filter(|e| without(e))
+                    .filter(|e| {
+                        app.remote(&e.path)
+                            .and_then(|(_, known)| known?.trash)
+                            .is_none()
+                    })
+                    .count();
                 let steps: Vec<Box<dyn op::Operation>> = refs
                     .into_iter()
                     .map(|e| -> Box<dyn op::Operation> {
@@ -2854,12 +2865,12 @@ mod builtin {
                 // (`deleting.rs`): where they are, and what goes to the
                 // trash beside them.
                 let kept = all - deleted;
-                let said = if deleted == 1 {
+                let said = if for_good == 1 {
                     "It is in a network folder, which keeps no trash"
                 } else {
                     "They are in network folders, which keep no trash"
                 };
-                Ok(Outcome::Plan(match (deleted, kept) {
+                Ok(Outcome::Plan(match (for_good, kept) {
                     (0, _) => plan,
                     (_, 0) => plan.with_note(said),
                     (_, 1) => plan.with_note(format!("{said}; the other item goes to the trash")),

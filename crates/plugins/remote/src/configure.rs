@@ -41,6 +41,21 @@ struct AddArgs {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct PaneArg {
+    #[serde(default)]
+    pane: Option<skwir_core::workspace::PaneId>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct EntriesArgs {
+    /// The file to link to: the selection's where none is given.
+    #[serde(default)]
+    entries: Vec<skwir_core::op::EntryArg>,
+    #[serde(default)]
+    pane: Option<skwir_core::workspace::PaneId>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct NamedArgs {
     /// The remote's name in rclone's configuration.
     id: String,
@@ -311,6 +326,97 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             },
         )
         .shows();
+    // Copy Public Link, where the storage of a mount Skwir made makes one
+    // (rclone's `PublicLink`): offered from what was asked of the mount,
+    // in memory.
+    let remotes_ = remotes.clone();
+    app.commands
+        .register::<PaneArg, _>(
+            ID,
+            "remote.public_link_menu",
+            "Offer a public link in the context menu",
+            "The context menu's Copy Public Link, for a file of a remote whose storage makes one. Answers from memory",
+            move |args, app| {
+                let refs = app.selected_refs(app.pane_or_active(args.pane));
+                let [one] = refs.as_slice() else {
+                    return Ok(Outcome::Value(serde_json::json!({ "items": [] })));
+                };
+                let links = skwir_core::fs::reach::of(&one.path).is_some_and(|remote| {
+                    remote.point != one.path
+                        && remotes_
+                            .state
+                            .lock()
+                            .features
+                            .get(&remote.point)
+                            .is_some_and(|f| f.public_link)
+                });
+                let items: Vec<MenuItem> = links
+                    .then(|| {
+                        MenuItem::new(
+                            "context",
+                            "Copy Public Link",
+                            "link",
+                            150,
+                            Invocation::new("remote.public_link").with(
+                                "entries",
+                                serde_json::json!([skwir_core::op::EntryArg::from(one.clone())]),
+                            ),
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+                Ok(Outcome::Value(serde_json::json!({ "items": items })))
+            },
+        )
+        .data();
+    app.registry.menu_sources.add(
+        ID,
+        skwir_core::registry::MenuSource {
+            menu: "context".into(),
+            when: Some("selection single !place".into()),
+            command: Invocation::new("remote.public_link_menu"),
+            replaces: Vec::new(),
+        },
+    );
+    app.commands.register::<EntriesArgs, _>(
+        ID,
+        "remote.public_link",
+        "Copy public link",
+        "Make a public link to a file of a remote whose storage makes one (a cloud's share link), and put it on the clipboard",
+        move |args, app| {
+            let target = app
+                .targets(args.pane, args.entries)?
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("nothing to link to"))?;
+            let remote = skwir_core::fs::reach::of(&target.path)
+                .ok_or_else(|| anyhow::anyhow!("it is not in a remote folder"))?;
+            let weak = app.weak();
+            let cancel = app.lifetime().child();
+            // The storage may take its time: in the remote's own lane.
+            app.scheduler.spawn_in(
+                remote.lane(),
+                skwir_core::scheduler::Priority::Normal,
+                "remote.public_link",
+                cancel.clone(),
+                move || {
+                    let made = crate::rclone_features::public_link(&remote.point, &target.path, &cancel);
+                    let Some(app) = weak.upgrade() else { return };
+                    match made {
+                        Ok(url) => app.request_front(Invocation::with_args(
+                            "ui.copy_text",
+                            &serde_json::json!({ "text": url, "what": "the public link" }),
+                        )),
+                        Err(error) => app.notify(
+                            NotifyLevel::Error,
+                            format!("No public link was made: {error:#}"),
+                        ),
+                    }
+                },
+            );
+            Ok(Outcome::Done)
+        },
+    );
     let remotes_ = remotes.clone();
     app.commands.register::<NamedArgs, _>(
         ID,

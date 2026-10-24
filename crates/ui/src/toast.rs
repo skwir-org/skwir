@@ -134,6 +134,7 @@ pub fn describe(
     first: Option<&Change>,
     named: Option<&str>,
     applied: usize,
+    kept_in: Option<&str>,
 ) -> String {
     let many = format::count(applied, "item");
     let one = applied == 1;
@@ -146,8 +147,15 @@ pub fn describe(
         Some(Change::Trash { .. }) => format!("Moved {many} to Trash"),
         Some(Change::Restore { path }) if one => format!("Restored {}", quoted(path)),
         Some(Change::Restore { .. }) => format!("Restored {many}"),
-        Some(Change::Delete { path }) if one => format!("Deleted {} permanently", quoted(path)),
-        Some(Change::Delete { .. }) => format!("Deleted {many} permanently"),
+        // Kept by its server (a cloud's trash, ADR-086), never said gone.
+        Some(Change::Delete { path }) if one => match kept_in {
+            Some(trash) => format!("Deleted {} (in {trash})", quoted(path)),
+            None => format!("Deleted {} permanently", quoted(path)),
+        },
+        Some(Change::Delete { .. }) => match kept_in {
+            Some(trash) => format!("Deleted {many} (in {trash})"),
+            None => format!("Deleted {many} permanently"),
+        },
         Some(Change::Rename { from, to }) if one => {
             format!("Renamed {} to {}", quoted(from), quoted(to))
         }
@@ -428,7 +436,21 @@ impl Shell {
                     };
                     let running = self.toasts.running.remove(index);
                     let run = running.run;
-                    let (text, tone) = ended(running, applied, error, cancelled, items);
+                    // Deleted where its server keeps a trash (ADR-086).
+                    let kept_in = match &running.first {
+                        Some(Change::Delete { path }) => {
+                            self.app.remote(path).and_then(|(_, known)| known?.trash)
+                        }
+                        _ => None,
+                    };
+                    let (text, tone) = ended(
+                        running,
+                        applied,
+                        error,
+                        cancelled,
+                        items,
+                        kept_in.as_deref(),
+                    );
                     let actions = finished_actions(
                         plan,
                         run,
@@ -465,13 +487,21 @@ fn ended(
     error: Option<String>,
     cancelled: bool,
     items: Option<skwir_core::op::Items>,
+    kept_in: Option<&str>,
 ) -> (String, Tone) {
     let (title, run) = (running.title, running.run);
     let (first, named, count) = match items.or(running.items) {
         Some(items) if error.is_none() && !cancelled => (Some(items.first), None, items.count),
         _ => (running.first, running.first_named, applied),
     };
-    let done = describe(&title, run, first.as_ref(), named.as_deref(), count);
+    let done = describe(
+        &title,
+        run,
+        first.as_ref(),
+        named.as_deref(),
+        count,
+        kept_in,
+    );
     match (error, cancelled) {
         (Some(error), _) if applied > 0 => (format!("{done}, then stopped: {error}"), Tone::Error),
         (Some(error), _) => (
@@ -900,16 +930,16 @@ mod tests {
             count: 1,
         };
         assert_eq!(
-            ended(running(None), 2, None, false, Some(copied.clone())),
+            ended(running(None), 2, None, false, Some(copied.clone()), None),
             ("Copied “a.txt” to it's here".to_owned(), Tone::Success)
         );
         // Said as asked when nothing better comes.
         assert_eq!(
-            ended(running(Some(copied)), 2, None, false, None).0,
+            ended(running(Some(copied)), 2, None, false, None, None).0,
             "Copied “a.txt” to it's here"
         );
         assert_eq!(
-            ended(running(None), 0, None, true, None),
+            ended(running(None), 0, None, true, None, None),
             (
                 "Copy to /example/it's here: cancelled before anything was done".to_owned(),
                 Tone::Info
@@ -1093,11 +1123,11 @@ mod tests {
             path: PathBuf::from("/example/it's a draft.txt"),
         };
         assert_eq!(
-            describe("move to trash", RunKind::Apply, Some(&trash), None, 1),
+            describe("move to trash", RunKind::Apply, Some(&trash), None, 1, None),
             "Moved “it's a draft.txt” to Trash"
         );
         assert_eq!(
-            describe("move to trash", RunKind::Apply, Some(&trash), None, 3),
+            describe("move to trash", RunKind::Apply, Some(&trash), None, 3, None),
             "Moved 3 items to Trash"
         );
         let copy = Change::Copy {
@@ -1105,7 +1135,7 @@ mod tests {
             to: PathBuf::from("/example/Archive 2026/a.txt"),
         };
         assert_eq!(
-            describe("copy", RunKind::Apply, Some(&copy), None, 2),
+            describe("copy", RunKind::Apply, Some(&copy), None, 2, None),
             "Copied 2 items to Archive 2026"
         );
         let link = Change::Link {
@@ -1113,23 +1143,30 @@ mod tests {
             to: PathBuf::from("/example/Archive 2026/a.txt"),
         };
         assert_eq!(
-            describe("link", RunKind::Apply, Some(&link), None, 1),
+            describe("link", RunKind::Apply, Some(&link), None, 1, None),
             "Made a link to “a.txt” in Archive 2026"
         );
         assert_eq!(
-            describe("link", RunKind::Apply, Some(&link), None, 3),
+            describe("link", RunKind::Apply, Some(&link), None, 3, None),
             "Made 3 links in Archive 2026"
         );
         assert_eq!(
-            describe("undo move to trash", RunKind::Undo, Some(&trash), None, 1),
+            describe(
+                "undo move to trash",
+                RunKind::Undo,
+                Some(&trash),
+                None,
+                1,
+                None
+            ),
             "Undid: move to trash"
         );
         assert_eq!(
-            describe("add tag", RunKind::Apply, None, None, 2),
+            describe("add tag", RunKind::Apply, None, None, 2, None),
             "Add tag (2 items)"
         );
         assert_eq!(
-            describe("paste", RunKind::Apply, None, None, 0),
+            describe("paste", RunKind::Apply, None, None, 0, None),
             "Paste: nothing to do"
         );
         // An item of a trash, by the name the step said it had there; a
@@ -1143,9 +1180,25 @@ mod tests {
                 RunKind::Apply,
                 Some(&trashed),
                 Some("it's a draft.txt"),
-                1
+                1,
+                None
             ),
             "Deleted “it's a draft.txt” permanently"
+        );
+        // Kept by its server's own trash (a cloud's): never said gone.
+        let on_drive = Change::Delete {
+            path: PathBuf::from("/example/remote/it's a photo.jpg"),
+        };
+        assert_eq!(
+            describe(
+                "delete permanently",
+                RunKind::Apply,
+                Some(&on_drive),
+                None,
+                1,
+                Some("Google Drive's trash")
+            ),
+            "Deleted “it's a photo.jpg” (in Google Drive's trash)"
         );
         let out = Change::Move {
             from: PathBuf::from("/example/Trash/files/it's a draft.txt.2"),
@@ -1157,7 +1210,8 @@ mod tests {
                 RunKind::Apply,
                 Some(&out),
                 Some("it's a draft.txt"),
-                1
+                1,
+                None
             ),
             "Moved “it's a draft.txt” to Archive 2026"
         );

@@ -833,3 +833,137 @@ fn a_remote_stands_on_the_remotes_picked_in_its_form() {
     );
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// Lets go of a FUSE mount the test made, should it fail midway: a mount
+/// whose program is gone holds whatever looks into it.
+struct Unmounted(PathBuf);
+
+impl Drop for Unmounted {
+    fn drop(&mut self) {
+        if skwir_core::fs::reach::of(&self.0).is_some_and(|r| r.point == self.0) {
+            let _ = Command::new("fusermount3").arg("-uz").arg(&self.0).status();
+        }
+    }
+}
+
+/// The mount `address` leads to once a pane shows it, mounted by the app.
+fn mounted(app: &App, address: &str) -> PathBuf {
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &skwir_core::location::Location::parse(address))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        app.pump();
+        if let Some(path) = app.pane_location(pane).and_then(|l| l.path()) {
+            return skwir_core::fs::reach::of(&path).unwrap().point.clone();
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{address} never led to its folder"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// What rclone says a mount's storage can do shapes it: a storage that
+/// cannot say how full it is shows no size (rclone's mount makes one up),
+/// one that can shows its own; a move within a mount is made on the
+/// server (WebDAV's `MOVE`), its bytes never coming down and back up.
+#[test]
+fn what_rclone_says_a_storage_can_do_shapes_its_mount() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("features");
+    let disk = base.join("disk");
+    std::fs::create_dir_all(&disk).unwrap();
+    let served_root = base.join("served");
+    std::fs::create_dir_all(served_root.join("a folder")).unwrap();
+    std::fs::create_dir_all(served_root.join("elsewhere")).unwrap();
+    std::fs::write(served_root.join("a folder/large.bin"), vec![7u8; 16 << 20]).unwrap();
+    let served = Served::start("webdav", &served_root, &["-vv"]);
+    let config = base.join("rclone.conf");
+    std::fs::write(
+        &config,
+        format!(
+            "[mem]\ntype = memory\n\n[disk]\ntype = alias\nremote = {}\n\n[dav]\ntype = webdav\nurl = http://127.0.0.1:{}/\n",
+            disk.display(),
+            served.port
+        ),
+    )
+    .unwrap();
+    let app = app_with_rclone(&base, &config, Arc::default());
+    let in_memory = mounted(&app, "rclone://mem/");
+    let _left = Unmounted(in_memory.clone());
+    let on_disk = mounted(&app, "rclone://disk/");
+    let _left_too = Unmounted(on_disk.clone());
+    let space = |point: &Path| {
+        app.registry
+            .places
+            .find(|p| p.location == skwir_core::location::Location::from_path(point))
+            .and_then(|p| p.space)
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while space(&on_disk).is_none() {
+        app.pump();
+        app.dispatch(&Invocation::new("remote.refresh")).unwrap();
+        assert!(Instant::now() < deadline, "the disk's space was never said");
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    // Asked as often again: the storage in memory says none.
+    for _ in 0..10 {
+        app.pump();
+        app.dispatch(&Invocation::new("remote.refresh")).unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(space(&in_memory), None, "no size made up");
+    assert!(
+        skwir_platform::places::space(&in_memory).is_some(),
+        "rclone's mount says one all the same"
+    );
+
+    // A move within the WebDAV mount: one MOVE on the server.
+    let on_dav = mounted(&app, "rclone://dav/");
+    let _left_dav = Unmounted(on_dav.clone());
+    let plan = skwir_core::op::Plan::with_steps(
+        "move",
+        vec![Box::new(skwir_core::op::Move::new(
+            skwir_core::op::EntryRef::from_path(on_dav.join("a folder")).unwrap(),
+            on_dav.join("elsewhere"),
+        )) as Box<dyn skwir_core::op::Operation>],
+    );
+    let done = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(done.error.is_none(), "{:?}", done.error);
+    assert_eq!(
+        std::fs::metadata(served_root.join("elsewhere/a folder/large.bin"))
+            .unwrap()
+            .len(),
+        16 << 20
+    );
+    let log = std::fs::read_to_string(served_root.with_extension("webdav.log")).unwrap();
+    assert!(log.contains("MOVE"), "moved on the server");
+    assert!(
+        !log.lines()
+            .any(|l| l.contains("PUT") && l.contains("large.bin")),
+        "never sent up again"
+    );
+    for point in [&in_memory, &on_disk, &on_dav] {
+        app.dispatch(&Invocation::with_args(
+            "remote.disconnect",
+            &serde_json::json!({ "path": point }),
+        ))
+        .unwrap();
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while [&in_memory, &on_disk, &on_dav]
+        .iter()
+        .any(|p| skwir_core::fs::reach::of(p).is_some_and(|r| r.point == **p))
+    {
+        app.pump();
+        assert!(Instant::now() < deadline, "never let go of");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}

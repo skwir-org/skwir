@@ -99,6 +99,11 @@ pub struct Known {
     /// it answers from what it read before (kio-fuse keeps a listing and a
     /// file's attributes 30 seconds): `App::read_again`.
     pub forget: Option<Forget>,
+    /// Where its server keeps what is deleted there, in the user's words
+    /// (“Google Drive's trash”): a deletion's question says so rather than
+    /// that it is gone for good (ADR-086). `None`: deleted for good, as on
+    /// any network folder.
+    pub trash: Option<String>,
 }
 
 /// What a remote's program is told so that it reads its server again

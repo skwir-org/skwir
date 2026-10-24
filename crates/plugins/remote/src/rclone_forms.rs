@@ -517,7 +517,7 @@ impl Flow<'_> {
                 asked_provider = true;
                 match self.fill(form) {
                     Some(Answer::Accepted(answer)) => {
-                        provider = Some(answer.get(PICKED).to_owned())
+                        provider = Some(answer.get(PICKED).to_owned());
                     }
                     Some(Answer::Back(_)) => {
                         kind = None;
