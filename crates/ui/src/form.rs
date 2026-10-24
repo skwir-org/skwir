@@ -213,7 +213,7 @@ impl Shell {
         {
             self.close_form(window, cx);
         }
-        if self.form.is_some() || self.modal_open() || self.review_focus.is_some() {
+        if self.form.is_some() || self.modal_open_beside_settings() || self.review_focus.is_some() {
             return;
         }
         if let Some(asked) = self.forms.pop_front() {

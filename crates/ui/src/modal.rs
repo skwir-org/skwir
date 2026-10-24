@@ -163,9 +163,10 @@ impl Shell {
         walks
     }
 
-    /// Whether a dialog that owns the keyboard is open. A proposal waits
-    /// for these to close before it takes the keyboard for its review.
-    pub fn modal_open(&self) -> bool {
+    /// Whether a dialog a question waits behind is open: any but
+    /// Settings, above which what a plugin's work waits for (a form, a
+    /// password, ADR-086) is asked, its Edit and Add having asked for it.
+    pub fn modal_open_beside_settings(&self) -> bool {
         self.palette.is_some()
             || self.jump.is_some()
             || self.choose.is_some()
@@ -175,9 +176,14 @@ impl Shell {
             || self.form.is_some()
             || self.confirm.is_some()
             || self.menu.is_some()
-            || self.settings.is_some()
             || self.shortcuts.is_some()
             || self.about.is_some()
+    }
+
+    /// Whether a dialog that owns the keyboard is open. A proposal waits
+    /// for these to close before it takes the keyboard for its review.
+    pub fn modal_open(&self) -> bool {
+        self.modal_open_beside_settings() || self.settings.is_some()
     }
 }
 

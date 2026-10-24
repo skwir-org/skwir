@@ -231,7 +231,7 @@ impl Shell {
         {
             self.close_prompt(window, cx);
         }
-        if self.modal_open() || self.review_focus.is_some() {
+        if self.modal_open_beside_settings() || self.review_focus.is_some() {
             return;
         }
         let Some(question) = self.secrets.pop_front() else {
