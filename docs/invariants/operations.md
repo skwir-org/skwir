@@ -448,7 +448,12 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 - A move removes originals only once a write-out has their copies on the
   drive (`StepContext::after_write_out`, batched so write-outs stay a
   tenth of the plan's time), and keeps an original that changed after its
-  copy began.
+  copy began. A move whose original's removal waits (here, or for the
+  plan's end after a batch) is undone by an `Unmove`: where the original
+  stayed (the same file there; on a mount that makes numbers up,
+  anything), the move left a copy, taken back as a copy's undo takes it
+  (`CopyUndo`: to the trash, or for good only while the original is whole
+  as it was copied); else it moves back.
 - On FUSE (ntfs-3g), the write-out itself is the wait, on its own thread,
   a second of writing apart, since each one rewrites the new files'
   records.
@@ -494,6 +499,11 @@ The trash plugin reads ([locations.md](locations.md)); the core acts.
   from.
 - Trash refuses files already in a trash at any depth (`op::in_trash`);
   moves within the trash apply only to a trashed folder's files.
+- A trash onto another volume (the home trash for a volume that refuses
+  one of its own) copies, then removes the original; failing there, it
+  leaves nothing the trash does not list (`builtin::failed_across`):
+  while the original is whole the copy goes with its record, once part
+  of it went the copy stays, listed (`OriginalStays`).
 - `.trashinfo` is parsed one way (`op::parse_trash_info`).
 - An item is its record: two names of one file trashed apart are two
   items (ADR-049), and Empty Trash removes every record.

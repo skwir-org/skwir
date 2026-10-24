@@ -816,7 +816,8 @@ impl StepContext {
     /// (`WRITE_OUT_SHARE`), and at its end. Many moves share one. What
     /// fails of it is told at the plan's end: the step that asks has done
     /// what it said (a copy whose original stays is still a copy, and its
-    /// undo still takes it back), and the plan goes on.
+    /// undo, `builtin::Unmove`, takes the copy back then), and the plan
+    /// goes on.
     pub(super) fn after_write_out(&self, then: impl FnOnce() -> anyhow::Result<()> + 'static) {
         self.waiting.borrow_mut().push(Box::new(then));
         let (since, took) = self.written_out.get();

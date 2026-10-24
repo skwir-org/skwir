@@ -625,14 +625,39 @@ impl super::Effect for Move {
         }
         let origin = src.parent().unwrap_or(Path::new("/")).to_path_buf();
         let along = along(ctx, &src, &target);
-        move_entry(ctx, &src, &target, &along)?;
+        let moved = move_entry(ctx, &src, &target, &along)?;
         // Moved to another filesystem, it is a new file, of one name.
         let (id, only) = named(&target).unwrap_or((self.entry.id, self.entry.only_name));
-        Ok(Some(Box::new(Move {
+        let back = Move {
             entry: EntryRef::new(id, target.clone()).with_only_name(only),
             dest_dir: origin,
             // Back under the name it had.
             new_name: (target.file_name() != src.file_name()).then(|| file_name(&src)),
+        };
+        let Some(copied_as) = moved.waits else {
+            return Ok(Some(Box::new(back)));
+        };
+        // Its original's removal waits, and may not come: its undo tells
+        // then whether the move left a copy.
+        let original =
+            EntryRef::new(self.entry.id, src.clone()).with_only_name(self.entry.only_name);
+        let copy = back.entry.clone();
+        let copy_undo = if keeps_no_trash(&target) {
+            CopyUndo::Uncopy(Uncopy {
+                entry: copy,
+                source: original.clone(),
+                made_as: made_state(&target),
+                beside: MadeBeside::now(moved.beside),
+                preserve_attributes: true,
+            })
+        } else {
+            CopyUndo::Trash(Trash { entry: copy })
+        };
+        Ok(Some(Box::new(Unmove {
+            back,
+            original,
+            copied_as: copied_as.0.map(|state| state.to_hex().to_string()),
+            copy_undo,
         })))
     }
 }
@@ -651,18 +676,37 @@ impl Move {
     }
 }
 
+/// What [`move_entry`] did with the original.
+struct Moved {
+    /// Across volumes, its removal waits (a write-out onto a drive that
+    /// can be unplugged, the plan's end after a batch), and may not come:
+    /// what it was as it was copied (`state_of`).
+    waits: Option<super::context::CopiedAs>,
+    /// Across volumes, the companions placed beside the copy.
+    beside: Vec<PathBuf>,
+}
+
 /// Move `src` to `target` with its companions (`along`): renamed, or
 /// across volumes copied and then removed. A move must never lose
 /// metadata, whatever the copy preference says, and a failed transfer must
 /// not leave a partial target. The companion holding the file's attributes
 /// is converted with them (ADR-028); the others go as files.
-fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> anyhow::Result<()> {
+fn move_entry(
+    ctx: &StepContext,
+    src: &Path,
+    target: &Path,
+    along: &[Along],
+) -> anyhow::Result<Moved> {
     // Copied by a batch, which read what it was first (ADR-078): on
     // another device, never renamed.
     let batched = ctx.take_batched_state(src);
     let renamed = match batched {
         Some(_) => Err(std::io::Error::from(std::io::ErrorKind::CrossesDevices).into()),
         None => rename_noreplace(src, target),
+    };
+    let mut moved = Moved {
+        waits: None,
+        beside: Vec::new(),
     };
     match renamed {
         Ok(()) => {
@@ -682,7 +726,9 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
                     _ => (p.to_path_buf(), state_of(p)),
                 })
                 .collect();
-            let through = copy_entry(src, target, dest_dir, true, along, ctx)?.through;
+            let made = copy_entry(src, target, dest_dir, true, along, ctx)?;
+            let through = made.through;
+            moved.beside = made.beside;
             let dest_dir = dest_dir.to_path_buf();
             if let Some(copied_as) = batched
                 && !through
@@ -696,8 +742,10 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
                 // unchanged there, all looked at at once
                 // (`transfer::remove_deferred`).
                 ctx.remove_later(src.to_path_buf(), copied_as, dest_dir);
-                return Ok(());
+                moved.waits = Some(copied_as);
+                return Ok(moved);
             }
+            let copied_as = originals[0].1;
             let remove = move || {
                 // Edited while it was copied, or since: the copy may not
                 // hold it, so nothing of it goes. Gone is nothing to remove.
@@ -707,15 +755,17 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
                 if let Some((changed, _)) = changed {
                     return Err(changed_since(changed, &dest_dir));
                 }
-                let ((src, _), companions) = originals.split_first().expect("the original first");
+                let ((src, before), companions) =
+                    originals.split_first().expect("the original first");
                 // Part of the source may be gone: say that the copy is
                 // whole, so that nothing looks lost.
-                remove_original(src).with_context(|| {
-                    format!(
+                remove_original(src).with_context(|| OriginalStays {
+                    whole: state_of(src) == *before,
+                    said: format!(
                         "“{}” was copied whole to “{}”, but its original could not all be removed",
                         display_name(src),
                         dest_dir.display()
-                    )
+                    ),
                 })?;
                 for (companion, _) in companions {
                     let _ = remove_original(companion);
@@ -727,23 +777,51 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
                 // and all: with the others the plan moves there, at their
                 // next write-out.
                 ctx.after_write_out(remove);
+                moved.waits = Some(super::context::CopiedAs(copied_as));
             } else {
                 remove()?;
             }
         }
         Err(e) => return Err(e),
     }
-    Ok(())
+    Ok(moved)
+}
+
+/// What a move across volumes says once its copy is whole and its
+/// original stays: `whole`, nothing of it removed (it changed after it was
+/// copied, or none of it could be removed), or in part, the copy alone
+/// holding what went. Its words are the error's, told as any.
+#[derive(Debug)]
+pub(super) struct OriginalStays {
+    pub(super) whole: bool,
+    said: String,
+}
+
+impl std::fmt::Display for OriginalStays {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.said)
+    }
+}
+
+impl OriginalStays {
+    /// Whether `error` says the original stayed only in part (anyhow
+    /// finds a context among an error's contexts).
+    fn in_part(error: &anyhow::Error) -> bool {
+        error.downcast_ref::<Self>().is_some_and(|s| !s.whole)
+    }
 }
 
 /// What a move says of its original `path`, changed after it was copied
-/// into `dest_dir`: it stays.
+/// into `dest_dir`: it stays, whole.
 pub(super) fn changed_since(path: &Path, dest_dir: &Path) -> anyhow::Error {
-    anyhow::anyhow!(
-        "“{}” changed after it was copied to “{}”: its original stays where it was",
-        display_name(path),
-        dest_dir.display()
-    )
+    anyhow::Error::msg(OriginalStays {
+        whole: true,
+        said: format!(
+            "“{}” changed after it was copied to “{}”: its original stays where it was",
+            display_name(path),
+            dest_dir.display()
+        ),
+    })
 }
 
 /// What the tree at `path` is, links not followed: each entry's name,
@@ -1210,6 +1288,112 @@ impl super::Effect for Uncopy {
             new_name: (self.source.path.file_name() != Some(name)).then(|| name.to_owned()),
             preserve_attributes: self.preserve_attributes,
         })))
+    }
+}
+
+// ------------------------------------------------------------------ unmove
+
+/// Take back a move to another volume whose original's removal waited (a
+/// write-out onto a drive that can be unplugged, the plan's end after a
+/// batch from a remote): the undo of [`Move`] then, which a move back
+/// alone would not be. That removal may never have come (the write-out
+/// failed, the original changed meanwhile, it could not be removed): the
+/// original stayed where it was, and the move left a copy, which this
+/// takes back as a copy's undo does ([`CopyUndo`]): put in the trash, or
+/// where none is kept removed for good, then only while the original is
+/// whole as it was copied (else the copy may hold what the original lost:
+/// both stay, and the undo says so). Where the original went, it moves the
+/// entry back (`back`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Unmove {
+    /// The move back: the undo where the original went.
+    pub back: Move,
+    /// The original, where it was.
+    pub original: EntryRef,
+    /// What the original was as it was copied (`state_of`, in
+    /// hexadecimal); `None` where it could not all be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copied_as: Option<String>,
+    /// What takes the copy back, should the original have stayed.
+    pub copy_undo: CopyUndo,
+}
+
+/// What takes back a copy ([`Unmove`]): as [`Copy`]'s undo does.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum CopyUndo {
+    Trash(Trash),
+    Uncopy(Uncopy),
+}
+
+impl Unmove {
+    /// The step it takes: the copy's undo where the original stayed where
+    /// it was, else the move back. The original is told there by its
+    /// identity (where a mount makes numbers up, by something there);
+    /// where the copy would go for good, it must be whole as it was
+    /// copied too. Moved back by a batch already (ADR-078), what is there
+    /// is the move back's.
+    fn step(&self, ctx: &StepContext) -> Result<&dyn Operation, String> {
+        if let Ok(src) = ctx.resolve(&self.back.entry)
+            && ctx.placed_by_batch(&src, &self.back.target(&src))
+        {
+            return Ok(&self.back);
+        }
+        let at = &self.original.path;
+        let whole = || self.copied_as.is_some() && made_state(at) == self.copied_as;
+        // Where a mount makes numbers up, what is there is all it says.
+        let stayed = match crate::fs::stat::id_of(at) {
+            None => false,
+            Some(id) if id.lasts() && self.original.id.lasts() && !keeps_no_trash(at) => {
+                id == self.original.id
+            }
+            Some(_) => true,
+        };
+        if !stayed {
+            return Ok(&self.back);
+        }
+        match &self.copy_undo {
+            CopyUndo::Trash(trash) => Ok(trash),
+            CopyUndo::Uncopy(uncopy) if whole() => Ok(uncopy),
+            CopyUndo::Uncopy(_) => Err(format!(
+                "“{}” stayed where it was, changed since it was moved: Undo leaves it and its copy",
+                display_name(at)
+            )),
+        }
+    }
+}
+
+impl super::Kind for Unmove {
+    const KIND: &'static str = "unmove";
+}
+
+impl super::Effect for Unmove {
+    fn footprint(
+        &self,
+        volumes: &super::footprint::Volumes,
+    ) -> Option<super::footprint::Footprint> {
+        let undo: &dyn Operation = match &self.copy_undo {
+            CopyUndo::Trash(trash) => trash,
+            CopyUndo::Uncopy(uncopy) => uncopy,
+        };
+        let mut both = super::Effect::footprint(&self.back, volumes)?;
+        both.merge(undo.footprint(volumes)?);
+        Some(both.read(&self.original.path))
+    }
+    fn describe(&self) -> Change {
+        super::Effect::describe(&self.back)
+    }
+    fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
+        super::Effect::writes(&self.back, ctx)
+    }
+    fn check(&self, ctx: &StepContext) -> StepStatus {
+        match self.step(ctx) {
+            Ok(step) => step.check(ctx),
+            Err(why) => conflict(why),
+        }
+    }
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        self.step(ctx).map_err(anyhow::Error::msg)?.apply(ctx)
     }
 }
 
@@ -2449,8 +2633,7 @@ fn trash_item(ctx: &StepContext, path: &Path) -> anyhow::Result<Option<PathBuf>>
             super::put_trash::Put::Done { info } => Ok(Some(info)),
             super::put_trash::Put::Across { item, info } => {
                 if let Err(error) = move_entry(ctx, path, &item, &[]) {
-                    let _ = std::fs::remove_file(&info);
-                    return Err(error);
+                    return Err(failed_across(error, &item, &info));
                 }
                 Ok(Some(info))
             }
@@ -2461,6 +2644,30 @@ fn trash_item(ctx: &StepContext, path: &Path) -> anyhow::Result<Option<PathBuf>>
         let _ = ctx;
         Ok(sys::trash_item(path)?)
     }
+}
+
+/// A move into the trash on another volume that failed (`trash_item`),
+/// its copy `item` in the trash's `files` and its record `info` made: the
+/// trash holds nothing it does not list. While the original is whole, the
+/// copy goes with its record; once part of the original went, the copy
+/// alone holds it, and stays with its record, listed in the trash to be
+/// restored from there.
+#[cfg(target_os = "linux")]
+fn failed_across(error: anyhow::Error, item: &Path, info: &Path) -> anyhow::Error {
+    if exists(item) && OriginalStays::in_part(&error) {
+        return error.context("all of it is in the trash");
+    }
+    if exists(item)
+        && let Err(cleanup) = super::staging::remove_tree(item)
+    {
+        return error.context(format!(
+            "a copy of it is left in “{}” ({})",
+            item.display(),
+            super::io_words(&cleanup)
+        ));
+    }
+    let _ = std::fs::remove_file(info);
+    error
 }
 
 /// Put `item` of the trash back where it came from, its record gone. On
@@ -4148,6 +4355,7 @@ pub fn register_builtin(reg: &OpRegistry) {
     reg.register::<NewFile>("core");
     reg.register::<RemoveEmptyFile>("core");
     reg.register::<Uncopy>("core");
+    reg.register::<Unmove>("core");
     reg.register::<Link>("core");
     reg.register::<Unlink>("core");
     reg.register::<super::access::SetAccess>("core");
@@ -4271,6 +4479,79 @@ mod tests {
         assert!(super::super::Effect::apply(&restore, &StepContext::detached()).is_err());
         assert!(!restore.path.exists());
         assert_eq!(std::fs::read_dir(camera).unwrap().count(), 0);
+    }
+
+    /// A move into the trash on another volume that failed leaves nothing
+    /// the trash does not list: while the original is whole its copy goes
+    /// with its record; once part of the original went, both stay, listed.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_failed_trash_across_volumes_leaves_nothing_unlisted() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let trash = tmp.path().join(".Trash-1000");
+        let (item, info) = (
+            trash.join("files/it’s a  folder"),
+            trash.join("info/it’s a  folder.trashinfo"),
+        );
+        let made = || {
+            std::fs::create_dir_all(&item).unwrap();
+            std::fs::write(item.join("notes.txt"), "notes").unwrap();
+            std::fs::create_dir_all(trash.join("info")).unwrap();
+            std::fs::write(&info, "[Trash Info]\nPath=/example/it’s a  folder\n").unwrap();
+        };
+        made();
+        let whole = changed_since(Path::new("/example/it’s a  folder"), &trash);
+        let _ = failed_across(whole, &item, &info);
+        assert!(!item.exists() && !info.exists(), "nothing unlisted left");
+        made();
+        let in_part =
+            anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+                .context(OriginalStays {
+                    whole: false,
+                    said: "its original could not all be removed".into(),
+                });
+        let said = super::super::said(&failed_across(in_part, &item, &info));
+        assert!(item.join("notes.txt").is_file() && info.is_file(), "{said}");
+        assert!(said.contains("all of it is in the trash"), "{said}");
+    }
+
+    /// A move across volumes whose original cannot all be removed says
+    /// that part of it went (`OriginalStays`), which a failed trash reads.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_move_across_volumes_says_whether_its_original_stayed_whole() {
+        if rustix::process::geteuid().is_root() {
+            return;
+        }
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let shm = Path::new("/dev/shm");
+        if crate::fs::stat::id_of(shm).map(|id| id.dev)
+            == crate::fs::stat::id_of(tmp.path()).map(|id| id.dev)
+            || !shm.is_dir()
+        {
+            eprintln!("skipped: no second filesystem available");
+            return;
+        }
+        let there = tempfile::tempdir_in(shm).unwrap();
+        // Its one file removed, the folder holding it is not: `kept`
+        // keeps its names.
+        let src = tmp.path().join("project  ’25");
+        std::fs::create_dir_all(src.join("kept/sub")).unwrap();
+        std::fs::write(src.join("kept/sub/data.txt"), "data").unwrap();
+        std::fs::set_permissions(src.join("kept"), std::fs::Permissions::from_mode(0o555)).unwrap();
+        let ctx = StepContext::detached();
+        let error = move_entry(&ctx, &src, &there.path().join("project  ’25"), &[]).err();
+        std::fs::set_permissions(src.join("kept"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let error = error.expect("its original could not all be removed");
+        assert!(OriginalStays::in_part(&error), "{error:#}");
+        assert!(
+            !OriginalStays::in_part(&changed_since(&src, there.path())),
+            "a changed one stays whole"
+        );
     }
 
     /// A copy onto a camera that fails takes back what it made, never the

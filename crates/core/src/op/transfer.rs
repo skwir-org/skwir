@@ -456,6 +456,7 @@ pub(super) fn resolve_ahead(steps: &[Box<dyn Operation>], ctx: &StepContext) {
             any.downcast_ref::<Copy>()
                 .map(|c| &c.entry)
                 .or_else(|| any.downcast_ref::<Move>().map(|m| &m.entry))
+                .or_else(|| any.downcast_ref::<super::Unmove>().map(|u| &u.back.entry))
                 .or_else(|| removal(step.as_ref()))
         })
         .filter(|entry| crate::fs::reach::of(&entry.path).is_some())
@@ -708,7 +709,10 @@ fn batchable(step: &dyn Operation) -> Option<Batchable<'_>> {
             moving: false,
         });
     }
-    let moving = any.downcast_ref::<Move>()?;
+    // An undo of a move whose original's removal waited moves back as one.
+    let moving = any
+        .downcast_ref::<Move>()
+        .or_else(|| any.downcast_ref::<super::Unmove>().map(|u| &u.back))?;
     let across = match (
         crate::fs::reach::of(&moving.entry.path),
         crate::fs::reach::of(&moving.dest_dir),
@@ -2424,6 +2428,50 @@ mod tests {
         for e in &kept {
             same(e, &dest.join(e.file_name().unwrap()));
         }
+    }
+
+    /// A move whose original's removal waited for the plan's end, and
+    /// never came (the original changed since its batch copied it), left a
+    /// copy: its Undo takes the copy back, the original staying as changed,
+    /// and moves the others back.
+    #[test]
+    fn undo_of_a_move_whose_original_stayed_takes_its_copy_back() {
+        let tmp = home_tempdir();
+        let entries = served(&tmp.path().join("there"));
+        let from = tmp.path().join("there/served");
+        let dest = tmp.path().join("here");
+        std::fs::create_dir(&dest).unwrap();
+        crate::fs::reach::pretend_remote(&from);
+        let removals = Arc::new(Mutex::new(Vec::new()));
+        let executor = executor_with(Fake {
+            calls: Arc::default(),
+            fails: false,
+            cancels: None,
+            cancels_after: None,
+            touches: Mutex::new(Some(from.join("run.sh"))),
+            removals: Some(Arc::clone(&removals)),
+            alone: false,
+            breaks: Mutex::default(),
+            cuts: Mutex::default(),
+            anew: false,
+        });
+        let r = executor.execute_blocking(&moves(&entries, &dest), &CancelToken::new());
+        let error = r.error.unwrap_or_default();
+        assert!(error.contains("changed after it was copied"), "{error}");
+        assert_eq!(r.applied, entries.len(), "each step did what it said");
+        assert_eq!(names(&from), ["run.sh"], "the changed one stayed");
+        let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
+        assert!(undone.error.is_none(), "{:?}", undone.error);
+        assert!(names(&dest).is_empty(), "its copy taken back too");
+        assert_eq!(
+            names(&from),
+            ["it's a.txt", "kept.txt", "run.sh", "sub folder", "to a"]
+        );
+        assert_eq!(
+            std::fs::read_to_string(from.join("run.sh")).unwrap(),
+            "#!/bin/sh and more",
+            "the original as changed"
+        );
     }
 
     /// An original changed after its step found it unchanged, before the
