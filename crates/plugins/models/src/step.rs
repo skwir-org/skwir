@@ -96,6 +96,7 @@ fn statements(text: &str) -> Vec<(String, Vec<Value>)> {
     let mut parser = Parser {
         bytes: text.as_bytes(),
         at: 0,
+        depth: 0,
     };
     let mut out = Vec::new();
     loop {
@@ -125,9 +126,16 @@ fn statements(text: &str) -> Vec<(String, Vec<Value>)> {
     out
 }
 
+/// How deep parameters may nest: a header's nest two or three deep, and
+/// each level is a frame of `Parser::value` on the worker's stack, which
+/// 64 KiB of `(` would overflow, aborting the whole program.
+const DEPTH: usize = 32;
+
 struct Parser<'a> {
     bytes: &'a [u8],
     at: usize,
+    /// The lists and typed parameters open around `at`.
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -141,7 +149,19 @@ impl Parser<'_> {
         }
     }
 
+    /// The value at `at`, `None` for one malformed or nested deeper than
+    /// `DEPTH`.
     fn value(&mut self) -> Option<Value> {
+        if self.depth == DEPTH {
+            return None;
+        }
+        self.depth += 1;
+        let value = self.value_here();
+        self.depth -= 1;
+        value
+    }
+
+    fn value_here(&mut self) -> Option<Value> {
         self.blank();
         match self.peek()? {
             b'\'' => {
@@ -285,6 +305,32 @@ mod tests {
             header(text),
             [("Format".to_owned(), "STEP AP203".to_owned())]
         );
+    }
+
+    #[test]
+    fn deep_nesting_is_refused_not_recursed_into() {
+        // 64 KiB of `(` (lists, then typed parameters) once took a frame
+        // each and overflowed the worker's stack: on a small stack here,
+        // the header still answers with what came before it.
+        let lists = format!(
+            "HEADER;FILE_SCHEMA(('IFC4'));X{};ENDSEC;",
+            "(".repeat(65_000)
+        );
+        let typed = format!(
+            "HEADER;FILE_SCHEMA(('IFC4'));X({});ENDSEC;",
+            "A(".repeat(32_000)
+        );
+        let read = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || (header(&lists), header(&typed)))
+            .unwrap()
+            .join()
+            .unwrap();
+        let format = vec![("Format".to_owned(), "STEP".to_owned())];
+        assert_eq!(read, (format.clone(), format));
+        // Nesting a header has is read.
+        let text = "HEADER;FILE_SCHEMA(((((('AP203'))))));ENDSEC;";
+        assert_eq!(header(text).len(), 1);
     }
 
     #[test]
