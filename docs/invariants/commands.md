@@ -140,6 +140,10 @@ control plugin's `run`:
   the window (`commands::reaches_out`), naming the command that does it
   and asks (`ui.preview_copy`, `ui.open_url`). The window runs what it is
   handed as the user's.
+- A location an agent's call puts in a dormant pane (a tab opened
+  behind) is opened as that call when its tab is shown
+  (`Pane::asked_by`): what asks before an agent's open (a remote's
+  connection) asks then too.
 - A script (`skwir cmd`) is the user's own.
 - **The endpoint determines trust (ADR-085).** The agent endpoint always
   proposes and enforces the permission layer, regardless of MCP metadata.

@@ -567,6 +567,11 @@ pub struct Pane {
     /// What the folder's files are narrowed to, kept below the folder it
     /// was set in.
     narrowed: Option<Narrowed>,
+    /// The agent's call that put its location in a dormant pane (a tab
+    /// opened behind, `tab.new`): opened later, on the window's thread, it
+    /// is opened as that call (`permissions::as_agent`), so a location
+    /// that asks before it acts for an agent (a server connected) asks.
+    asked_by: Option<crate::permissions::Privacy>,
     /// The filtered order, the order it filtered (by identity), the
     /// filter's version and, while narrowed, the listings' (a file's
     /// metadata arriving decides whether it is shown), and the order.
@@ -735,6 +740,7 @@ impl Pane {
             filter: None,
             filter_version: 0,
             narrowed: None,
+            asked_by: None,
             filter_cache: parking_lot::Mutex::new(None),
         }
     }
@@ -745,7 +751,19 @@ impl Pane {
         let mut pane = Pane::new(id);
         pane.history.push(location);
         pane.sort = sort;
+        pane.asked_by = crate::permissions::agent_call();
         pane
+    }
+
+    /// The agent's call its location waits to be opened as, once: see
+    /// `asked_by`.
+    pub(crate) fn take_asked_by(&mut self) -> Option<crate::permissions::Privacy> {
+        self.asked_by.take()
+    }
+
+    /// Put back what `take_asked_by` took, the opening having failed.
+    pub(crate) fn set_asked_by(&mut self, asked_by: Option<crate::permissions::Privacy>) {
+        self.asked_by = asked_by;
     }
 
     /// Go on from the current step of `history` to `location`: the steps

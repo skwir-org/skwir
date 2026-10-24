@@ -492,3 +492,81 @@ fn the_settings_dialog_path_applies_the_change() {
     }
     assert!(app.pump_until_complete(first, WAIT));
 }
+
+/// `asks:` answers nothing, and says whether an agent's call opened it.
+struct Asks(std::sync::Arc<parking_lot::Mutex<Vec<bool>>>);
+
+struct AsksOpen {
+    location: Location,
+    rx: crossbeam_channel::Receiver<skwir_core::location::ListingEvent>,
+    _sink: skwir_core::location::EventSink,
+}
+
+impl skwir_core::location::OpenLocation for AsksOpen {
+    fn location(&self) -> &Location {
+        &self.location
+    }
+    fn events(&self) -> &crossbeam_channel::Receiver<skwir_core::location::ListingEvent> {
+        &self.rx
+    }
+    fn hydrate(&self, _: &[skwir_core::EntryId], _: skwir_core::scheduler::Priority) {}
+    fn path_of(&self, _: skwir_core::EntryId) -> Option<std::path::PathBuf> {
+        None
+    }
+    fn refresh(&self) {}
+    fn close(&self) {}
+}
+
+impl skwir_core::location::LocationProvider for Asks {
+    fn scheme(&self) -> &'static str {
+        "asks"
+    }
+    fn open(
+        &self,
+        location: &Location,
+        ctx: skwir_core::location::OpenContext,
+    ) -> anyhow::Result<std::sync::Arc<dyn skwir_core::location::OpenLocation>> {
+        self.0
+            .lock()
+            .push(skwir_core::permissions::agent_call().is_some());
+        let (sink, rx) = ctx.channel();
+        sink.send(skwir_core::location::ListingEvent::Complete);
+        Ok(std::sync::Arc::new(AsksOpen {
+            location: location.clone(),
+            rx,
+            _sink: sink,
+        }))
+    }
+}
+
+/// A tab an agent's call opens behind the shown one opens its location as
+/// that call once it is shown, from the window: what a provider asks
+/// before it acts for an agent (a server's connection) is asked. The
+/// user's own tab opens as theirs.
+#[test]
+fn a_tab_an_agent_opened_behind_opens_as_the_agent_s_call() {
+    let dir = home_tempdir();
+    let app = app(dir.path());
+    navigate(&app, dir.path());
+    let opened = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+    app.register_provider("test", std::sync::Arc::new(Asks(opened.clone())));
+    let behind = |agent: bool| {
+        let open = || {
+            app.new_tab(None, Some(Location::new("asks", "/l'été")), false)
+                .unwrap()
+                .0
+        };
+        if agent {
+            skwir_core::permissions::as_agent(skwir_core::permissions::Privacy::folders([]), open)
+        } else {
+            open()
+        }
+    };
+    for agent in [true, false] {
+        let tab = behind(agent);
+        assert!(opened.lock().is_empty(), "dormant until shown");
+        app.select_tab(tab).unwrap();
+        assert_eq!(*opened.lock(), [agent], "opened by an agent: {agent}");
+        opened.lock().clear();
+    }
+}

@@ -243,8 +243,12 @@ impl App {
         failed.map_or(Ok(()), Err)
     }
 
+    /// Open what dormant `pane` shows. A location an agent's call put
+    /// there is opened as that call, wherever it is opened (the window's
+    /// thread, once its tab is shown): what a provider asks before it acts
+    /// for an agent (`permissions::agent_call`) is asked.
     fn resume(&self, pane: PaneId) -> anyhow::Result<()> {
-        let (location, restore) = {
+        let (location, restore, asked_by) = {
             let mut ws = self.workspace.write();
             let Some(p) = ws.pane_mut(pane) else {
                 return Ok(());
@@ -255,16 +259,23 @@ impl App {
             let Some(location) = p.shown().cloned() else {
                 return Ok(());
             };
-            (location, p.take_restore_selection())
+            (location, p.take_restore_selection(), p.take_asked_by())
         };
-        let shown = self.wake_pane(pane, &location, {
-            let restore = restore.clone();
-            move |p| p.set_restore(restore)
-        });
+        let wake = || {
+            self.wake_pane(pane, &location, {
+                let restore = restore.clone();
+                move |p| p.set_restore(restore)
+            })
+        };
+        let shown = match asked_by.clone() {
+            Some(privacy) => crate::permissions::as_agent(privacy, wake),
+            None => wake(),
+        };
         if shown.is_err()
             && let Some(p) = self.workspace.write().pane_mut(pane)
         {
             p.set_restore(restore);
+            p.set_asked_by(asked_by);
         }
         shown
     }
