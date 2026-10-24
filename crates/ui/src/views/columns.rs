@@ -280,38 +280,46 @@ fn side_column(
             let theme = cx.global::<Theme>().clone();
             let icon_px = u16::try_from(this.row_zoom).unwrap_or(u16::MAX);
             let height = row_height(this.row_zoom);
-            // Only the rows drawn are read from the kept listing.
-            let rows: Vec<SideRow> = {
+            // Only the rows drawn are read from the kept listing. An entry
+            // gone meanwhile is a blank, as `list::row_elements` keeps one:
+            // the rows after it keep their places and their numbers.
+            let rows: Vec<Option<SideRow>> = {
                 let ws = this.app.workspace.read();
                 let listing = ws.pane(pane).and_then(|p| p.kept(&at));
                 let p = ws.pane(pane);
                 ids[range.clone()]
                     .iter()
-                    .filter_map(|id| listing?.get(*id))
-                    .map(|e| SideRow {
-                        id: e.id,
-                        label: e.name_str().into_owned().into(),
-                        name: e.name.clone(),
-                        is_dir: e.is_dir(),
-                        icon: this.icons.for_entry(
-                            e,
-                            || path.as_ref().map(|dir| dir.join(&e.name)),
-                            icon_px,
-                        ),
-                        link: icons::Link::of(e),
-                        place: p.and_then(|p| p.kept_location_of(&at, e.id)).map(|leads| {
-                            let tag = e
-                                .metadata
-                                .value(skwir_core::entry::keys::PLACE_TAG)
-                                .and_then(skwir_core::Value::as_str);
-                            (leads, tag.map(|tag| this.tag_colors.of(tag)))
-                        }),
+                    .map(|id| listing?.get(*id))
+                    .map(|e| {
+                        e.map(|e| SideRow {
+                            id: e.id,
+                            label: e.name_str().into_owned().into(),
+                            name: e.name.clone(),
+                            is_dir: e.is_dir(),
+                            icon: this.icons.for_entry(
+                                e,
+                                || path.as_ref().map(|dir| dir.join(&e.name)),
+                                icon_px,
+                            ),
+                            link: icons::Link::of(e),
+                            place: p.and_then(|p| p.kept_location_of(&at, e.id)).map(|leads| {
+                                let tag = e
+                                    .metadata
+                                    .value(skwir_core::entry::keys::PLACE_TAG)
+                                    .and_then(skwir_core::Value::as_str);
+                                (leads, tag.map(|tag| this.tag_colors.of(tag)))
+                            }),
+                        })
                     })
                     .collect()
             };
             let a11y = this.a11y;
             let mut out = Vec::with_capacity(rows.len());
             for (ix, row) in range.zip(rows) {
+                let Some(row) = row else {
+                    out.push(div().id(("row-gone", ix)).h(px(height)));
+                    continue;
+                };
                 let target = path.as_ref().map(|dir| dir.join(&row.name));
                 let is_on_path = child.as_ref().is_some_and(|child| row.name == *child);
                 let mark =
