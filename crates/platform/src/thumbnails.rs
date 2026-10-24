@@ -162,7 +162,8 @@ impl ThumbCache {
             height: 1,
             rgba: vec![0; 4].into(),
         };
-        Self::write(&self.fail_dir(), path, &pixel, mtime, Some(tools)).map(drop)
+        self.write(&self.fail_dir(), path, &pixel, mtime, Some(tools))
+            .map(drop)
     }
 
     fn fail_dir(&self) -> PathBuf {
@@ -187,11 +188,22 @@ impl ThumbCache {
             image.height,
             size.dir_name()
         );
-        Self::write(&self.root.join(size.dir_name()), path, image, mtime, None)
+        self.write(&self.root.join(size.dir_name()), path, image, mtime, None)
     }
 
-    /// `image` written for `path` into `dir`, as `store` says.
+    /// Whether `path` is one of the cache's own files, named through the
+    /// cache's folder as it is given or as it resolves.
+    fn holds(&self, path: &Path) -> bool {
+        path.starts_with(&self.root)
+            || skwir_core::os_path::canonical(&self.root).is_ok_and(|root| path.starts_with(root))
+    }
+
+    /// `image` written for `path` into `dir`, as `store` says. Never for
+    /// one of the cache's own files, as the specification says: shown in a
+    /// folder of the cache, each thumbnail stored there would be listed,
+    /// and stored in turn, without end.
     fn write(
+        &self,
         dir: &Path,
         path: &Path,
         image: &Image,
@@ -203,6 +215,11 @@ impl ThumbCache {
             std::fs::symlink_metadata(path).with_context(|| format!("stat {}", path.display()))?;
         anyhow::ensure!(meta.is_file(), "{} is not a regular file", path.display());
         anyhow::ensure!(path.is_absolute(), "{} is not absolute", path.display());
+        anyhow::ensure!(
+            !self.holds(path),
+            "{} is a thumbnail of the cache's own",
+            path.display()
+        );
         let dir = dir.to_path_buf();
         std::fs::create_dir_all(&dir)?;
         set_mode(&dir, 0o700);
@@ -354,6 +371,53 @@ mod tests {
             .set_modified(mtime + std::time::Duration::from_secs(5))
             .unwrap();
         assert!(thumbs.lookup(&src, ThumbSize::Normal).is_none());
+    }
+
+    #[test]
+    fn the_caches_own_files_are_never_thumbnailed() {
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("thumbnails-")
+            .tempdir_in(base)
+            .unwrap();
+        let root = tmp.path().join("it's the cache");
+        let thumbs = ThumbCache::at(&root);
+        let src = tmp.path().join("photo café.jpg");
+        std::fs::write(&src, b"only its mtime matters").unwrap();
+        let mtime = std::fs::metadata(&src).unwrap().modified().unwrap();
+        let img = Image {
+            width: 2,
+            height: 2,
+            rgba: vec![9u8; 2 * 2 * 4].into(),
+        };
+        let stored = thumbs.store(&src, ThumbSize::Normal, &img, mtime).unwrap();
+        // Shown in the cache's folder, its thumbnail is not stored again,
+        // nor a failure for it, nor through a link to the cache's folder.
+        assert!(
+            thumbs
+                .store(&stored, ThumbSize::Normal, &img, mtime)
+                .is_err()
+        );
+        assert!(thumbs.store_failed(&stored, mtime, "tools").is_err());
+        #[cfg(unix)]
+        {
+            let alias = tmp.path().join("alias");
+            std::os::unix::fs::symlink(&root, &alias).unwrap();
+            let through = ThumbCache::at(&alias);
+            let named = root.join("normal").join(stored.file_name().unwrap());
+            assert!(
+                through
+                    .store(&named, ThumbSize::Normal, &img, mtime)
+                    .is_err()
+            );
+        }
+        let normal: Vec<_> = std::fs::read_dir(root.join("normal"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(normal, [stored]);
+        assert!(!root.join("fail").exists());
     }
 
     #[test]
