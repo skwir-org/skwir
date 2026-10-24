@@ -56,6 +56,12 @@ struct EntriesArgs {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct AddressArgs {
+    /// The server's address (`sftp://me@nas/`, `rclone://photos/`).
+    address: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct NamedArgs {
     /// The remote's name in rclone's configuration.
     id: String,
@@ -425,6 +431,64 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             Ok(Outcome::Done)
         },
     );
+    let remotes_ = remotes.clone();
+    app.commands
+        .register::<AddressArgs, _>(
+            ID,
+            "remote.mount_options",
+            "Mount options…",
+            "Choose how a server is mounted when it next connects: read only, rclone's file cache and bandwidth, sshfs's compression",
+            move |args, app| {
+                let top = Address::parse(args.address.trim())?.top();
+                anyhow::ensure!(
+                    crate::options::takes_options(top.scheme),
+                    "no tool Skwir mounts {} with takes options",
+                    top.scheme.title()
+                );
+                let lifetime = remotes_
+                    .lifetime()
+                    .ok_or_else(|| anyhow::anyhow!("remote folders are turned off"))?;
+                let weak = app.weak();
+                std::thread::Builder::new()
+                    .name("skwir-remote-form".into())
+                    .spawn(move || {
+                        let Some(app) = weak.upgrade() else { return };
+                        let cancel = lifetime.child();
+                        let blank = crate::options::form(&top, &crate::options::of(&app, &top));
+                        let mut asked = blank.clone();
+                        loop {
+                            let Some(skwir_core::form::Answer::Accepted(values)) =
+                                app.fill(asked, &cancel)
+                            else {
+                                return;
+                            };
+                            match crate::options::of_values(&values) {
+                                Ok(options) => {
+                                    match crate::options::keep(&app, &top, &options) {
+                                        Ok(()) => app.notify(
+                                            NotifyLevel::Info,
+                                            format!(
+                                                "“{}” is mounted so when it next connects",
+                                                top.label()
+                                            ),
+                                        ),
+                                        Err(error) => app.notify(
+                                            NotifyLevel::Error,
+                                            format!("The mount options were not saved: {error:#}"),
+                                        ),
+                                    }
+                                    return;
+                                }
+                                Err(refused) => {
+                                    asked = blank.clone().again(&values, format!("{refused:#}"));
+                                }
+                            }
+                        }
+                    })?;
+                Ok(Outcome::Done)
+            },
+        )
+        .shows();
     let remotes_ = remotes.clone();
     app.commands.register::<NamedArgs, _>(
         ID,

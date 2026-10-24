@@ -1163,3 +1163,101 @@ fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// The arguments of the rclone mounting `point`, read from the system's
+/// list of processes: the one whose line names the point.
+fn rclone_mounting(point: &Path) -> Vec<String> {
+    for entry in std::fs::read_dir("/proc").unwrap().flatten() {
+        let Ok(line) = std::fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        let args: Vec<String> = line
+            .split(|b| *b == 0)
+            .map(|a| String::from_utf8_lossy(a).into_owned())
+            .collect();
+        if args.iter().any(|a| a == "mount") && args.iter().any(|a| Path::new(a) == point) {
+            return args;
+        }
+    }
+    Vec::new()
+}
+
+/// Mount options chosen for a server in its form are kept in the plugin's
+/// data and given to rclone when it next connects: read only, nothing
+/// written there; its file cache as chosen, after Skwir's own.
+#[test]
+fn mount_options_chosen_for_a_server_shape_its_next_mount() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("options");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    std::fs::write(served_root.join("kept.txt"), "kept").unwrap();
+    let served = Served::start("webdav", &served_root, &[]);
+    let config = base.join("rclone.conf");
+    std::fs::write(
+        &config,
+        format!(
+            "[dav]\ntype = webdav\nurl = http://127.0.0.1:{}/\n",
+            served.port
+        ),
+    )
+    .unwrap();
+    let app = app_with_rclone(&base, &config, Arc::default());
+    let window = Window::new(&app);
+    app.dispatch(&Invocation::with_args(
+        "remote.mount_options",
+        &serde_json::json!({ "address": "rclone://dav/" }),
+    ))
+    .unwrap();
+    let asked = window.form(30);
+    assert!(
+        !asked.form.fields.iter().any(|f| f.key == "compression"),
+        "ssh's alone"
+    );
+    window.accept(&asked, &[("read_only", "true"), ("bandwidth", "fast")]);
+    let refused = window.form(30);
+    assert!(refused.form.error.as_deref().unwrap().contains("rate"));
+    window.accept(
+        &refused,
+        &[
+            ("read_only", "true"),
+            ("cache", "full"),
+            ("bandwidth", "10M"),
+        ],
+    );
+    until_said(&app, 30, "when it next connects");
+
+    let point = mounted(&app, "rclone://dav/");
+    let _left = Unmounted(point.clone());
+    assert_eq!(
+        std::fs::read_to_string(point.join("kept.txt")).unwrap(),
+        "kept"
+    );
+    let refused = std::fs::write(point.join("new.txt"), "no").unwrap_err();
+    assert_eq!(
+        refused.raw_os_error(),
+        Some(30),
+        "read only (EROFS): {refused}"
+    );
+    let args = rclone_mounting(&point);
+    let cache = args.iter().rposition(|a| a == "--vfs-cache-mode").unwrap();
+    assert_eq!(args[cache + 1], "full", "the user's, after Skwir's own");
+    let limit = args.iter().position(|a| a == "--bwlimit").unwrap();
+    assert_eq!(args[limit + 1], "10M");
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point) {
+        app.pump();
+        assert!(Instant::now() < deadline, "never let go of");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}

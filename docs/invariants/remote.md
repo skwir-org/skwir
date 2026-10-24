@@ -330,6 +330,11 @@ ADR-077 (which revises ADR-021).
   plugin answers only that the browser is here and whether to sign in
   again (`config_is_local`, `config_refresh_token`).
 - A remote Skwir names is one its address holds (`rclone://name/`).
+- Mount options (read only, rclone's file cache and bandwidth, sshfs's
+  compression) are the plugin's data by the server's address
+  (`remote.options`, `options::MountOptions`), never a tool's
+  configuration, given when it next connects (`Connector::connect_with`),
+  after Skwir's own arguments so they win. GVfs and KIO take none.
 - One Add Server for every kind: a server added by its address (SFTP,
   SMB, WebDAV, FTP, NFS, AFP: `servers_form`) is kept as a bookmark in
   the desktop's shared bookmarks under the name given

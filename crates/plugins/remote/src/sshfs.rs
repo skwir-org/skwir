@@ -99,6 +99,21 @@ impl Connector for Sshfs {
         ask: &Arc<dyn Ask>,
         cancel: &CancelToken,
     ) -> anyhow::Result<Connected> {
+        self.connect_with(
+            address,
+            &crate::options::MountOptions::default(),
+            ask,
+            cancel,
+        )
+    }
+
+    fn connect_with(
+        &self,
+        address: &Address,
+        options: &crate::options::MountOptions,
+        ask: &Arc<dyn Ask>,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Connected> {
         let top = address.top();
         top.ssh_user()?;
         let sshfs = skwir_core::os_path::find_program("sshfs")
@@ -116,6 +131,10 @@ impl Connector for Sshfs {
         }
         let mut command = Command::new(sshfs);
         command.args(arguments(&top, &point, control.as_deref()));
+        // What the user chose for it (ADR-086).
+        if let Some(chosen) = crate::options::sshfs_options(options) {
+            command.arg("-o").arg(chosen);
+        }
         for option in &self.ssh_options {
             command.arg("-o").arg(option);
         }
@@ -224,7 +243,7 @@ pub fn of_source(source: &str) -> Option<Address> {
 
 /// What ssh and sshfs say on failing, in the user's words where it can be
 /// told.
-fn words(said: &str) -> String {
+pub(crate) fn words(said: &str) -> String {
     let said = said.trim();
     if said.contains("Permission denied") {
         "the server refused the login (wrong password, or no key it accepts)".to_owned()

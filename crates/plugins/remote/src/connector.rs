@@ -122,6 +122,21 @@ pub trait Connector: Send + Sync {
         ask: &Arc<dyn Ask>,
         cancel: &CancelToken,
     ) -> anyhow::Result<Connected>;
+    /// [`Connector::connect`] with the options the user chose for the
+    /// server (ADR-086): those its tool takes, the rest left. A tool that
+    /// takes none (GVfs, KIO) connects as ever.
+    ///
+    /// # Errors
+    /// As [`Connector::connect`].
+    fn connect_with(
+        &self,
+        address: &Address,
+        _options: &crate::options::MountOptions,
+        ask: &Arc<dyn Ask>,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Connected> {
+        self.connect(address, ask, cancel)
+    }
     /// Whether `remote`, a mount of the table, is this tool's, and of what.
     fn recognises(&self, remote: &Remote) -> Option<Recognised>;
     /// Let go of `remote`, one it recognises. Blocks: on a worker.

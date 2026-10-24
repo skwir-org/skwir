@@ -27,6 +27,7 @@ pub mod lan;
 pub mod login;
 mod mounter;
 pub mod nearby;
+pub mod options;
 pub mod passwords;
 mod provider;
 pub mod rclone;
@@ -264,8 +265,9 @@ impl Remotes {
             cancel.clone(),
         ));
         let asked: Arc<dyn Ask> = keyed.clone();
+        let options = options::of(app, &address.top());
         let connected = connector
-            .connect(address, &asked, cancel)
+            .connect_with(address, &options, &asked, cancel)
             .map_err(|error| anyhow::anyhow!("{error:#}"))?;
         if let Some(noted) = keyed.served() {
             note_remembered(app, &noted);
@@ -716,6 +718,7 @@ impl Remotes {
             place
                 .menu
                 .extend(address.and_then(|a| forget_item(a, &remembered)));
+            place.menu.extend(address.and_then(options_item));
             #[cfg(unix)]
             if let Some(name) = address.and_then(configure::remote_name) {
                 let kind = state
@@ -751,6 +754,7 @@ impl Remotes {
                 .get(&server.address.to_string())
                 .map(|s| (*s).to_owned());
             place.menu.extend(forget_item(&server.address, &remembered));
+            place.menu.extend(options_item(&server.address));
             #[cfg(unix)]
             if let Some(name) = configure::remote_name(&server.address) {
                 place.menu.extend(configure::menu_items(
@@ -849,6 +853,21 @@ fn forget_item(address: &Address, remembered: &[String]) -> Option<skwir_core::r
             "",
             530,
             Invocation::new("remote.forget_password").with("server", key),
+        )
+    })
+}
+
+/// The menu item that opens the mount options of `address`'s server,
+/// where a tool that mounts it takes some (ADR-086).
+fn options_item(address: &Address) -> Option<skwir_core::registry::MenuItem> {
+    // Its form is asked where the forms of servers are (`configure`).
+    (cfg!(unix) && options::takes_options(address.scheme)).then(|| {
+        skwir_core::registry::MenuItem::new(
+            "place",
+            "Mount Options…",
+            "sliders",
+            420,
+            Invocation::new("remote.mount_options").with("address", address.top().to_string()),
         )
     })
 }
@@ -1051,6 +1070,11 @@ impl Plugin for RemotePlugin {
         app.settings.declare(SettingSpec::data(
             CHOSEN,
             "The thumbnails chosen for each remote, by its address",
+            toml::Value::Table(toml::map::Map::new()),
+        ));
+        app.settings.declare(SettingSpec::data(
+            options::SETTING,
+            "The mount options chosen for each server, by its address",
             toml::Value::Table(toml::map::Map::new()),
         ));
         app.settings.declare(SettingSpec::data(

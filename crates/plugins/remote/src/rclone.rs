@@ -146,6 +146,21 @@ impl Connector for Rclone {
         ask: &Arc<dyn Ask>,
         cancel: &CancelToken,
     ) -> anyhow::Result<Connected> {
+        self.connect_with(
+            address,
+            &crate::options::MountOptions::default(),
+            ask,
+            cancel,
+        )
+    }
+
+    fn connect_with(
+        &self,
+        address: &Address,
+        options: &crate::options::MountOptions,
+        ask: &Arc<dyn Ask>,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Connected> {
         let top = address.top();
         let rclone = skwir_core::os_path::find_program("rclone")
             .ok_or_else(|| anyhow::anyhow!("rclone is not installed"))?;
@@ -160,6 +175,8 @@ impl Connector for Rclone {
         let point = mounter::point_for(self.id(), &top)?;
         let mut command = command(&rclone, self.config());
         command.args(mount_arguments(&remote, &point));
+        // What the user chose for it (ADR-086): after Skwir's own, so it wins.
+        command.args(crate::options::rclone_arguments(options));
         // Its remote control, the user's alone, for copies made on the
         // server (`rclone_copy`).
         #[cfg(unix)]
