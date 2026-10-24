@@ -30,7 +30,7 @@ const STEPS: i32 = 1000;
 
 impl MbTiles {
     pub(crate) fn open(path: &Path, cancel: &CancelToken) -> anyhow::Result<MbTiles> {
-        let uri = format!("{}?immutable=1", skwir_platform::uri::file_uri(path));
+        let uri = format!("{}?immutable=1", skwir_platform::uri::sqlite_uri(path));
         let connection = Connection::open_with_flags(
             uri,
             OpenFlags::SQLITE_OPEN_READ_ONLY

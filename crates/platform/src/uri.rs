@@ -45,6 +45,21 @@ pub fn file_uri(path: &Path) -> String {
     format!("file://{encoded}")
 }
 
+/// A file's URI as SQLite opens one (`SQLITE_OPEN_URI`): [`file_uri`],
+/// a Windows share named in its path rather than its authority
+/// (`file:////server/share/x`), as SQLite refuses an authority other than
+/// `localhost`.
+pub fn sqlite_uri(path: &Path) -> String {
+    share_in_path(file_uri(path))
+}
+
+fn share_in_path(uri: String) -> String {
+    match uri.strip_prefix("file://") {
+        Some(rest) if !rest.starts_with('/') => format!("file:////{rest}"),
+        _ => uri,
+    }
+}
+
 /// A remote folder's address as a URI other programs read (GTK
 /// bookmarks, GVfs): `scheme://` then what follows it, its bytes escaped as
 /// a path's are (ADR-077). `rest` is the text after `scheme:`, its `%XX`
@@ -220,6 +235,15 @@ mod tests {
         assert_eq!(
             windows_file_uri(r"\\server\share\x y"),
             "file://server/share/x%20y"
+        );
+        // SQLite reads a share in the path, never the authority.
+        assert_eq!(
+            share_in_path(windows_file_uri(r"\\server\share\it's.mbtiles")),
+            "file:////server/share/it's.mbtiles"
+        );
+        assert_eq!(
+            share_in_path(windows_file_uri(r"C:\a b.db")),
+            "file:///C:/a%20b.db"
         );
         assert_eq!(
             windows_path_of("", "/C:/Users/it's%20me", true).as_deref(),
