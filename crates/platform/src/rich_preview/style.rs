@@ -605,7 +605,10 @@ impl<'i> DeclarationParser<'i> for Descriptors {
         input: &mut Parser<'i, 't>,
         _: &ParserState,
     ) -> Result<(String, Vec<Value>), ParseError<'i, ()>> {
-        Ok((name.to_ascii_lowercase(), values(input).0))
+        Ok((
+            name.to_ascii_lowercase(),
+            values(input, limits::CSS_DEPTH).0,
+        ))
     }
 }
 impl AtRuleParser<'_> for Descriptors {
@@ -730,6 +733,14 @@ impl<'i> QualifiedRuleParser<'i> for Rules {
         &mut self,
         input: &mut Parser<'i, 't>,
     ) -> Result<SelectorList<Simple>, ParseError<'i, ()>> {
+        // The selectors' parser recurses once a nested `:not(`, `:is(`…,
+        // with no bound of its own: a rule nested deeper is skipped.
+        let start = input.state();
+        let deep = nests_deeper(input, limits::CSS_DEPTH);
+        input.reset(&start);
+        if deep {
+            return Err(input.new_custom_error(()));
+        }
         SelectorList::parse(&Selectors, input, ParseRelative::No)
             .map_err(|error| error.location.new_custom_error(()))
     }
@@ -796,7 +807,7 @@ impl<'i> DeclarationParser<'i> for Declarations {
         input: &mut Parser<'i, 't>,
         _: &ParserState,
     ) -> Result<Vec<Declaration>, ParseError<'i, ()>> {
-        let (values, important) = values(input);
+        let (values, important) = values(input, limits::CSS_DEPTH);
         Ok(properties(&name.to_ascii_lowercase(), &values)
             .into_iter()
             .map(|property| Declaration {
@@ -826,8 +837,10 @@ impl RuleBodyItemParser<'_, Vec<Declaration>, ()> for Declarations {
 }
 
 /// A declaration's value, token by token, and whether it is `!important`.
-/// Functions keep their arguments (`rgb()`, `matrix()`, `url()`).
-fn values(input: &mut Parser<'_, '_>) -> (Vec<Value>, bool) {
+/// Functions keep their arguments (`rgb()`, `matrix()`, `url()`), `room`
+/// levels deep: one nested deeper is `Other`, its arguments passed over by
+/// the parser without recursing (`limits::CSS_DEPTH`).
+fn values(input: &mut Parser<'_, '_>, room: usize) -> (Vec<Value>, bool) {
     let mut out = Vec::new();
     let mut important = false;
     while let Ok(token) = input.next().cloned() {
@@ -846,10 +859,13 @@ fn values(input: &mut Parser<'_, '_>) -> (Vec<Value>, bool) {
             Token::UnquotedUrl(url) => Value::Url(url.to_string()),
             Token::Comma => Value::Comma,
             Token::Hash(hex) | Token::IDHash(hex) => Value::Hash(hex.to_ascii_lowercase()),
+            Token::Function(_) if room == 0 => Value::Other,
             Token::Function(name) => {
                 let name = name.to_ascii_lowercase();
                 let inner = input
-                    .parse_nested_block(|input| Ok::<_, ParseError<'_, ()>>(values(input).0))
+                    .parse_nested_block(|input| {
+                        Ok::<_, ParseError<'_, ()>>(values(input, room - 1).0)
+                    })
                     .unwrap_or_default();
                 match (name.as_str(), inner.as_slice()) {
                     ("url", [Value::String(url)]) => Value::Url(url.clone()),
@@ -860,6 +876,33 @@ fn values(input: &mut Parser<'_, '_>) -> (Vec<Value>, bool) {
         });
     }
     (out, important)
+}
+
+/// Whether what `input` holds nests its functions and blocks deeper than
+/// `room` levels, read as the parser reads it, recursing no deeper than
+/// that to tell.
+fn nests_deeper(input: &mut Parser<'_, '_>, room: usize) -> bool {
+    while let Ok(token) = input.next() {
+        if !matches!(
+            token,
+            Token::Function(_)
+                | Token::ParenthesisBlock
+                | Token::SquareBracketBlock
+                | Token::CurlyBracketBlock
+        ) {
+            continue;
+        }
+        if room == 0
+            || input
+                .parse_nested_block(|input| {
+                    Ok::<_, ParseError<'_, ()>>(nests_deeper(input, room - 1))
+                })
+                .unwrap_or(false)
+        {
+            return true;
+        }
+    }
+    false
 }
 
 #[derive(Clone, Debug)]
@@ -1425,6 +1468,33 @@ mod tests {
             .a { garbage }";
         let style = style_of(html, css, "p");
         assert!(style.italic && !style.bold);
+    }
+
+    #[test]
+    fn deep_nesting_is_passed_over_not_a_stack_overflow() {
+        // The parsers recurse once a level: a hundred thousand of them
+        // overflowed the stack, which aborts the whole process.
+        let levels = 100_000;
+        let deep = format!("{}x{}", "a(".repeat(levels), ")".repeat(levels));
+        let html = format!(r#"<p id="p" style="margin: {deep}; font-style: italic">x</p>"#);
+        assert!(
+            style_of(&html, "", "p").italic,
+            "the declarations after the deep value are read"
+        );
+        let not = format!("{}p{}", ":not(".repeat(levels), ")".repeat(levels));
+        let css = format!("{not} {{ font-weight: bold }} p {{ font-style: italic }}");
+        let style = style_of(r#"<p id="p">x</p>"#, &css, "p");
+        assert!(
+            style.italic && !style.bold,
+            "the deep rule is skipped, the next one read"
+        );
+        // As deep as the bound, a selector still matches.
+        let within = format!(
+            "{}p{} {{ font-weight: bold }}",
+            ":is(".repeat(limits::CSS_DEPTH),
+            ")".repeat(limits::CSS_DEPTH)
+        );
+        assert!(style_of(r#"<p id="p">x</p>"#, &within, "p").bold);
     }
 
     #[test]

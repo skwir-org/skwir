@@ -50,9 +50,9 @@ pub mod limits {
     /// Element depth of HTML read in reading mode.
     pub const HTML_DEPTH: usize = 128;
     /// Element depth a walk of a document's XML follows (Word's,
-    /// `OpenDocument`'s), wrappers included: what a file nests deeper is
-    /// left out, rather than the walk's stack overflowing, which aborts
-    /// the whole process.
+    /// `OpenDocument`'s, a page's SVG frame), wrappers included: what a
+    /// file nests deeper is left out, rather than the walk's stack
+    /// overflowing, which aborts the whole process.
     pub const XML_DEPTH: usize = 128;
     /// Element depth of an XML text that is parsed at all (`xml_depth`):
     /// the parser (roxmltree's, usvg's too) recurses once for each level,
@@ -61,6 +61,14 @@ pub mod limits {
     /// (`scheduler::WORKER_STACK`) holds four times this in a release
     /// build, twice in a debug one; no document a person made comes near.
     pub const XML_PARSED_DEPTH: usize = 512;
+    /// Nesting of a stylesheet's functions and blocks that is read
+    /// (`calc(var(--a, calc(…)))`, `:not(:is(…))`): the CSS parser and
+    /// the selectors' recurse once a level, with no bound of their own,
+    /// so a style attribute of a few hundred kilobytes nested a hundred
+    /// thousand deep overflowed the stack and aborted the whole process.
+    /// A value nested deeper is left out, a rule whose selector is is
+    /// skipped; no stylesheet a person wrote comes near.
+    pub const CSS_DEPTH: usize = 32;
     /// Style rules kept for one page, the built-in ones included; its
     /// stylesheets together are bounded by `TEXT_INPUT`.
     pub const STYLE_RULES: usize = 4000;

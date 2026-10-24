@@ -1030,7 +1030,7 @@ impl<R: Resources> Layout<'_, R> {
         svg.push('>');
         let mut inside = String::new();
         for child in node.children() {
-            svg_node(child, &mut inside, &mut pictures);
+            svg_node(child, &mut inside, &mut pictures, 1);
         }
         let svg = self.canvas.svg();
         svg.push_str(&inside);
@@ -1046,7 +1046,17 @@ impl<R: Resources> Layout<'_, R> {
 
 /// Write an SVG frame's element as it is, but for its pictures, which are
 /// set aside with their place (`x y width height` in the frame's units).
-fn svg_node(node: NodeRef<'_, Node>, out: &mut String, pictures: &mut Vec<(String, [f32; 4])>) {
+/// The walk recurses once a level, `depth` the element's in the frame:
+/// what the frame nests deeper than `limits::XML_DEPTH` is left out.
+fn svg_node(
+    node: NodeRef<'_, Node>,
+    out: &mut String,
+    pictures: &mut Vec<(String, [f32; 4])>,
+    depth: usize,
+) {
+    if depth > limits::XML_DEPTH {
+        return;
+    }
     match node.value() {
         Node::Text(text) => out.push_str(&escape(text)),
         Node::Element(e) if e.name() == "image" => {
@@ -1076,7 +1086,7 @@ fn svg_node(node: NodeRef<'_, Node>, out: &mut String, pictures: &mut Vec<(Strin
             }
             out.push('>');
             for child in node.children() {
-                svg_node(child, out, pictures);
+                svg_node(child, out, pictures, depth + 1);
             }
             let _ = write!(out, "</{}>", e.name());
         }
@@ -1755,6 +1765,25 @@ mod tests {
             })
             .collect();
         assert_eq!(pictures, [[0., 0., 300., 400.]]);
+    }
+
+    #[test]
+    fn a_deep_svg_frame_is_cut_short_not_a_stack_overflow() {
+        // Too deep for the XML reader, the page goes to the HTML parser,
+        // which bounds nothing: the frame's walk recursed once a level.
+        let levels = 100_000;
+        let page = format!(
+            r#"<html><head><meta name="viewport" content="width=100, height=100"/></head>
+            <body><svg viewBox="0 0 10 10">{}<rect width="5" height="5"/>{}</svg></body></html>"#,
+            "<g>".repeat(levels),
+            "</g>".repeat(levels)
+        );
+        let (canvas, drawn) = laid_out(&page, &mut files());
+        let svg = fragments(&canvas);
+        // The frame's own group, then the levels within the bound.
+        assert_eq!(svg.matches("<g>").count(), 1 + limits::XML_DEPTH);
+        assert!(!svg.contains("<rect"), "what lies deeper is left out");
+        render(canvas, drawn, 64, &CancelToken::new()).expect("drawn within the bound");
     }
 
     #[test]
