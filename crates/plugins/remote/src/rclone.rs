@@ -32,7 +32,70 @@ pub const FSTYPE: &str = "fuse.rclone";
 /// How long connecting may take: a cloud's first listing, a password.
 const PATIENCE: Duration = Duration::from_secs(120);
 
-pub struct Rclone;
+/// rclone, through the user's own configuration, or the one a test names.
+#[derive(Clone, Default)]
+pub struct Rclone {
+    /// The configuration rclone is given (`--config`): `None` for its own
+    /// default, the user's.
+    pub config: Option<std::path::PathBuf>,
+    /// What rclone runs to ask its configuration's password: `None` for
+    /// this executable (a test names Skwir's).
+    pub askpass: Option<std::path::PathBuf>,
+    /// Where the password of an encrypted configuration is kept, when the
+    /// user asked (ADR-086): the desktop's keyring where `None`.
+    pub keyring: Option<Arc<dyn crate::passwords::Keyring>>,
+}
+
+impl std::fmt::Debug for Rclone {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Rclone")
+            .field("config", &self.config)
+            .field("askpass", &self.askpass)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Rclone {
+    /// rclone given the configuration at `config` (a test's own).
+    pub fn with_config(config: std::path::PathBuf) -> Self {
+        Rclone {
+            config: Some(config),
+            ..Rclone::default()
+        }
+    }
+
+    /// The keyring the configuration's password is kept in.
+    pub fn keyring(&self) -> Arc<dyn crate::passwords::Keyring> {
+        self.keyring
+            .clone()
+            .unwrap_or_else(|| Arc::new(crate::passwords::Desktop))
+    }
+
+    /// The program rclone runs to ask its configuration's password.
+    ///
+    /// # Errors
+    /// When this executable cannot be found.
+    pub fn askpass_program(&self) -> std::io::Result<std::path::PathBuf> {
+        match &self.askpass {
+            Some(program) => Ok(program.clone()),
+            None => std::env::current_exe(),
+        }
+    }
+
+    /// The configuration it is given, `None` for rclone's own.
+    pub fn config(&self) -> Option<&Path> {
+        self.config.as_deref()
+    }
+}
+
+/// `rclone` run with `config` where one is named.
+pub(crate) fn command(rclone: &Path, config: Option<&Path>) -> Command {
+    let mut command = Command::new(rclone);
+    if let Some(config) = config {
+        command.arg("--config").arg(config);
+    }
+    command
+}
 
 impl Connector for Rclone {
     fn id(&self) -> &'static str {
@@ -87,12 +150,12 @@ impl Connector for Rclone {
             .ok_or_else(|| anyhow::anyhow!("rclone is not installed"))?;
         let remote = remote_of(&top)?;
         let password = match password_variable(top.scheme) {
-            Some(variable) => logged_in(&rclone, &remote, &top, variable, ask, cancel)?
+            Some(variable) => logged_in(&rclone, self.config(), &remote, &top, variable, ask, cancel)?
                 .map(|password| (variable, password)),
             None => None,
         };
         let point = mounter::point_for(self.id(), &top)?;
-        let mut command = Command::new(rclone);
+        let mut command = command(&rclone, self.config());
         command.args(mount_arguments(&remote, &point));
         // Its remote control, the user's alone, for copies made on the
         // server (`rclone_copy`).
@@ -116,11 +179,10 @@ impl Connector for Rclone {
         }
         // A configuration kept encrypted asks its password of the window.
         let attempt = mounter::attempt(cancel);
-        let askpass = mounter::Askpass::serve(ask, &attempt)?;
+        let program = self.askpass_program()?;
+        let askpass = mounter::Askpass::serve_with(program.clone(), ask, &attempt)?;
         askpass.give(&mut command);
-        command
-            .arg("--password-command")
-            .arg(std::env::current_exe()?);
+        command.arg("--password-command").arg(program);
         mounter::mount(&mut command, &point, &attempt, PATIENCE).map_err(|error| {
             let error = anyhow::anyhow!("{}", words(&error.to_string()));
             mounter::ended(&attempt, cancel, error)
@@ -184,18 +246,48 @@ impl Connector for Rclone {
         let Some(rclone) = skwir_core::os_path::find_program("rclone") else {
             return Vec::new();
         };
-        let mut command = Command::new(rclone);
-        command.args(["listremotes", "--long"]);
-        // An encrypted configuration is not opened to list it.
-        command.arg("--ask-password=false");
-        match skwir_platform::process::run(&mut command, cancel, Duration::from_secs(10)) {
-            Ok(out) => remotes(&String::from_utf8_lossy(&out)),
+        // An encrypted configuration is opened with the password the
+        // keyring keeps for it, where the user asked (ADR-086); never asked
+        // of the window: nobody asked to see it.
+        let listed = |password: Option<&str>| {
+            let mut command = command(&rclone, self.config());
+            command
+                .args(["listremotes", "--long", "--ask-password=false"])
+                .env_remove("RCLONE_CONFIG_PASS");
+            if let Some(password) = password {
+                command.env("RCLONE_CONFIG_PASS", password);
+            }
+            skwir_platform::process::run_to_exit(&mut command, None, cancel, Duration::from_secs(10))
+        };
+        let finished = match listed(None) {
+            Ok(finished) if !finished.status.success() && needs_password(&finished.stderr) => {
+                match self.keyring().own(crate::rclone_config::KEYRING_KEY) {
+                    Some(password) => listed(Some(&password)),
+                    None => Ok(finished),
+                }
+            }
+            other => other,
+        };
+        match finished {
+            Ok(finished) if finished.status.success() => {
+                remotes(&String::from_utf8_lossy(&finished.stdout))
+            }
+            Ok(finished) => {
+                tracing::debug!("rclone listremotes: {}", finished.stderr.trim());
+                Vec::new()
+            }
             Err(error) => {
                 tracing::debug!("rclone listremotes: {error:#}");
                 Vec::new()
             }
         }
     }
+}
+
+/// Whether what rclone said is its configuration needing a password it
+/// was not given.
+pub(crate) fn needs_password(said: &str) -> bool {
+    said.contains("unable to decrypt configuration") || said.contains("not allowed to ask for password")
 }
 
 /// The remotes `rclone listremotes --long` names: `gdrive: drive`.
@@ -214,6 +306,7 @@ fn remotes(listed: &str) -> Vec<Server> {
                     format!("{name} ({kind})")
                 },
                 address,
+                kind: kind.to_owned(),
             })
         })
         .collect()
@@ -305,6 +398,7 @@ const TRIES: usize = 3;
 /// obscured for `variable`; `None` where none was needed.
 fn logged_in(
     rclone: &Path,
+    config: Option<&Path>,
     remote: &str,
     top: &Address,
     variable: &str,
@@ -319,7 +413,7 @@ fn logged_in(
             .as_deref()
             .map(|password| obscured(rclone, password))
             .transpose()?;
-        match listed(rclone, remote, variable, given.as_deref(), cancel) {
+        match listed(rclone, config, remote, variable, given.as_deref(), cancel) {
             Ok(()) => return Ok(given),
             Err(said) if refused(&said) && asked < TRIES => {
                 asked += 1;
@@ -340,12 +434,13 @@ fn logged_in(
 /// `password` in `variable`; else what it said.
 fn listed(
     rclone: &Path,
+    config: Option<&Path>,
     remote: &str,
     variable: &str,
     password: Option<&str>,
     cancel: &CancelToken,
 ) -> Result<(), String> {
-    let mut command = Command::new(rclone);
+    let mut command = command(rclone, config);
     command
         .args([
             "lsf",
@@ -368,7 +463,7 @@ fn listed(
 
 /// `password` obscured as rclone reads it (`rclone obscure -`), given it
 /// through a pipe: never a command line, never a file.
-fn obscured(rclone: &Path, password: &str) -> anyhow::Result<String> {
+pub(crate) fn obscured(rclone: &Path, password: &str) -> anyhow::Result<String> {
     use std::io::Write as _;
     use std::process::Stdio;
     let mut child = Command::new(rclone)
@@ -444,7 +539,7 @@ fn mount_arguments(remote: &str, point: &Path) -> Vec<std::ffi::OsString> {
 }
 
 /// What rclone says on failing, in the user's words where it can be told.
-fn words(said: &str) -> String {
+pub(crate) fn words(said: &str) -> String {
     let said = said.trim();
     let line = said
         .lines()

@@ -137,7 +137,7 @@ remote-check:
     # Samba run as the user, believing it is root (ADR-082's SMB tests).
     export SKWIR_TEST_SAMBA="$(out samba):$(out uid_wrapper):$(out nss_wrapper)"
     cargo nextest run -p skwir -p skwir-plugin-remote --no-fail-fast \
-        -E 'binary(remote_folders) | package(skwir-plugin-remote)'
+        -E 'binary(remote_folders) | binary(remote_configs) | package(skwir-plugin-remote)'
     binary=$(cargo nextest list -p skwir -p skwir-plugin-remote -E 'binary(remote_folders)' \
         --message-format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["rust-suites"]["skwir::remote_folders"]["binary-path"])')
     tools/test/gvfs-nfs-afp.sh "$binary"

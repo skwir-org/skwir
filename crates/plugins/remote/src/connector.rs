@@ -94,6 +94,9 @@ impl Device {
 pub struct Server {
     pub address: Address,
     pub label: String,
+    /// What kind of storage its tool says it is (rclone's type: `drive`,
+    /// `s3`), empty where it says none.
+    pub kind: String,
 }
 
 /// An installed tool that mounts remotes.

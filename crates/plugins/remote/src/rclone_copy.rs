@@ -25,7 +25,7 @@ use skwir_core::op::transfer::{Aside, Control, NotServed, Told, Transfer};
 
 /// The folder of the sockets of the mounts Skwir made, in the runtime
 /// folder beside theirs.
-fn sockets() -> Option<PathBuf> {
+pub(crate) fn sockets() -> Option<PathBuf> {
     Some(skwir_core::xdg::runtime_dir()?.join("skwir").join("rc"))
 }
 
@@ -56,7 +56,7 @@ const PATIENCE: Duration = Duration::from_secs(3600);
 
 /// A call to the remote control on `socket`: `method` with `args`, its
 /// answer's JSON. HTTP/1.1 over the socket, one call a connection.
-fn call(
+pub(crate) fn call(
     socket: &Path,
     method: &str,
     args: &serde_json::Value,

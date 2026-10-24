@@ -210,6 +210,7 @@ impl Connector for Fstab {
                         .file_name()
                         .map_or_else(|| e.source.clone(), |n| n.to_string_lossy().into_owned()),
                     address: e.address?,
+                    kind: String::new(),
                 })
             })
             .collect()

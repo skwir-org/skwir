@@ -12,6 +12,8 @@
 pub mod address;
 #[cfg(target_os = "linux")]
 mod bus;
+#[cfg(unix)]
+mod configure;
 pub mod connector;
 pub mod fstab;
 pub mod gio_copy;
@@ -27,7 +29,11 @@ pub mod passwords;
 mod provider;
 pub mod rclone;
 #[cfg(unix)]
+pub mod rclone_config;
+#[cfg(unix)]
 pub mod rclone_copy;
+#[cfg(unix)]
+pub mod rclone_forms;
 pub mod rsync;
 mod runs;
 pub mod sftp;
@@ -171,6 +177,12 @@ pub struct Remotes {
     /// One publish at a time, each of the state as it then is: the last
     /// to run shows the newest mounts.
     publishing: Arc<Mutex<()>>,
+    /// rclone's remotes as Settings lists them (ADR-086), told when they
+    /// change.
+    records: skwir_core::settings::RecordSource,
+    /// rclone as its remotes are changed (ADR-086): its own configuration,
+    /// the user's, or a test's.
+    rclone: rclone::Rclone,
 }
 
 impl Default for Remotes {
@@ -179,7 +191,7 @@ impl Default for Remotes {
             Arc::new(sshfs::Sshfs::default()),
             Arc::new(gvfs::Gvfs::default()),
             Arc::new(kio::Kio::default()),
-            Arc::new(rclone::Rclone),
+            Arc::new(rclone::Rclone::default()),
             Arc::new(fstab::Fstab),
             Arc::new(system_shares::SystemShares),
         ])
@@ -195,7 +207,22 @@ impl Remotes {
             connecting: Arc::default(),
             keyring: Arc::new(passwords::Desktop),
             publishing: Arc::default(),
+            records: skwir_core::settings::RecordSource::new(
+                "remote.rclone_records",
+                "remote.add_server",
+                "remote.edit_server",
+                "remote.remove_server",
+            ),
+            rclone: rclone::Rclone::default(),
         }
+    }
+
+    /// The plugin changing rclone's remotes as `rclone` says (a test's
+    /// configuration): give its rclone connector the same.
+    #[must_use]
+    pub fn with_rclone(mut self, rclone: rclone::Rclone) -> Self {
+        self.rclone = rclone;
+        self
     }
 
     /// The plugin keeping servers' passwords in `keyring` (a test's).
@@ -216,6 +243,13 @@ impl Remotes {
         ask: &Arc<dyn Ask>,
         cancel: &CancelToken,
     ) -> anyhow::Result<connector::Connected> {
+        // rclone's configuration's password, where it is encrypted: the
+        // keyring's first (ADR-086).
+        #[cfg(unix)]
+        let ask: &Arc<dyn Ask> = &(Arc::new(rclone_config::ConfigAsk::new(
+            Arc::clone(ask),
+            self.rclone.keyring(),
+        )) as Arc<dyn Ask>);
         let keyed = Arc::new(passwords::Keyed::new(
             Arc::clone(ask),
             Arc::clone(&self.keyring),
@@ -477,6 +511,9 @@ impl Remotes {
                     if !current(&state) {
                         return;
                     }
+                    if state.servers != servers {
+                        this.records.changed();
+                    }
                     state.servers = servers;
                     state.local = local;
                 }
@@ -646,6 +683,21 @@ impl Remotes {
             place
                 .menu
                 .extend(address.and_then(|a| forget_item(a, &remembered)));
+            #[cfg(unix)]
+            if let Some(name) = address.and_then(configure::remote_name) {
+                let kind = state
+                    .servers
+                    .iter()
+                    .find(|s| s.address.host == name && s.address.scheme == Scheme::Rclone)
+                    .map(|s| s.kind.as_str());
+                // Mounted, but not of the configuration (a connection
+                // string's): nothing to edit.
+                if let Some(kind) = kind {
+                    place
+                        .menu
+                        .extend(configure::menu_items(name, configure::signs_in(kind)));
+                }
+            }
             places.push(place);
         }
         for server in &state.servers {
@@ -666,6 +718,13 @@ impl Remotes {
                 .get(&server.address.to_string())
                 .map(|s| (*s).to_owned());
             place.menu.extend(forget_item(&server.address, &remembered));
+            #[cfg(unix)]
+            if let Some(name) = configure::remote_name(&server.address) {
+                place.menu.extend(configure::menu_items(
+                    name,
+                    configure::signs_in(&server.kind),
+                ));
+            }
             places.push(place);
         }
         // The servers announced on the local network, found while it is
@@ -984,6 +1043,9 @@ impl Plugin for RemotePlugin {
         }
         // Servers found on the local network, while shown (ADR-084).
         app.register_provider(ID, Arc::new(nearby::Provider));
+        // The servers the tools keep, changed from Skwir (ADR-086).
+        #[cfg(unix)]
+        configure::register(&self.remotes, app);
         let remotes = self.remotes.clone();
         app.commands.register::<ConnectArgs, _>(
             ID,

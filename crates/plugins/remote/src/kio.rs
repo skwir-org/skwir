@@ -448,7 +448,11 @@ fn kde_places(xml: &str) -> Vec<Server> {
                 .find(|n| n.has_tag_name("title"))
                 .and_then(|n| n.text())
                 .map_or_else(|| address.label(), str::to_owned);
-            Some(Server { address, label })
+            Some(Server {
+                address,
+                label,
+                kind: String::new(),
+            })
         })
         .collect()
 }

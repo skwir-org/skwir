@@ -100,7 +100,7 @@ fn until(app: &App, seconds: u64, what: &str, mut ready: impl FnMut() -> bool) {
 
 #[test]
 fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() {
-    if let Some(why) = Rclone.unavailable() {
+    if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
     }
@@ -111,7 +111,7 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
     let served = Served::start("webdav", &served_root, &[]);
     let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
     // rclone alone: never the session's GVfs.
-    let remotes = Remotes::with(vec![Arc::new(Rclone)]);
+    let remotes = Remotes::with(vec![Arc::new(Rclone::default())]);
     app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
     app.plugins
         .add(Arc::new(skwir_plugin_places::PlacesPlugin::default()), &app);
@@ -256,7 +256,7 @@ fn unique_mount_numbers() -> bool {
 
 #[test]
 fn a_folder_mounted_again_holds_other_files_by_number_and_the_same_by_path() {
-    if let Some(why) = Rclone.unavailable() {
+    if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
     }
@@ -266,7 +266,7 @@ fn a_folder_mounted_again_holds_other_files_by_number_and_the_same_by_path() {
     std::fs::write(served_root.join("it's here.txt"), "here").unwrap();
     let served = Served::start("webdav", &served_root, &[]);
     let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
-    let remotes = Remotes::with(vec![Arc::new(Rclone)]);
+    let remotes = Remotes::with(vec![Arc::new(Rclone::default())]);
     app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
     let pane = app.workspace.read().active_id();
     let address = Location::parse(&format!("dav://127.0.0.1:{}/", served.port));
@@ -360,7 +360,7 @@ fn sshfs_asks_the_window_for_a_password_and_an_unknown_host_through_skwir() {
         askpass: Some(PathBuf::from(env!("CARGO_BIN_EXE_skwir"))),
         ..Sshfs::default()
     };
-    if let Some(why) = sshfs.unavailable().or_else(|| Rclone.unavailable()) {
+    if let Some(why) = sshfs.unavailable().or_else(|| Rclone::default().unavailable()) {
         eprintln!("skipped: {why}");
         return;
     }
@@ -1507,7 +1507,7 @@ fn a_folder_cut_short_by_its_server_goes_on_by_rsync() {
 /// socket: a folder and a large file, whole there, the mount showing them.
 #[test]
 fn rclone_copies_within_its_mount_on_the_server() {
-    if let Some(why) = Rclone.unavailable() {
+    if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
     }
@@ -1520,7 +1520,7 @@ fn rclone_copies_within_its_mount_on_the_server() {
     std::fs::create_dir(served_root.join("copies")).unwrap();
     let served = Served::start("webdav", &served_root, &[]);
     let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
-    let remotes = Remotes::with(vec![Arc::new(Rclone)]);
+    let remotes = Remotes::with(vec![Arc::new(Rclone::default())]);
     app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
     let pane = app.workspace.read().active_id();
     let address = Location::parse(&format!("dav://127.0.0.1:{}/", served.port));
@@ -2186,7 +2186,7 @@ fn gvfs_webdav_takes_copies_by_gio_and_through_its_bridge() {
         eprintln!("skipped: SKWIR_TEST_GVFS names no GVfs package");
         return;
     };
-    if let Some(why) = Rclone.unavailable() {
+    if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
     }
@@ -2653,7 +2653,7 @@ fn gvfs_mounts_through_gio_its_questions_answered_by_the_window() {
         eprintln!("skipped: SKWIR_TEST_GVFS names no GVfs package");
         return;
     };
-    if let Some(why) = Rclone.unavailable() {
+    if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
     }
@@ -3076,7 +3076,7 @@ fn kio_fuse_mounts_each_server_a_folder_of_its_own_read_again_when_told() {
         eprintln!("skipped: SKWIR_TEST_KIO names no KIO packages");
         return;
     };
-    if let Some(why) = Rclone.unavailable() {
+    if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
     }
@@ -3227,7 +3227,7 @@ fn kio_folders_open_from_their_address_and_f5_reads_the_server_again() {
         eprintln!("skipped: SKWIR_TEST_KIO names no KIO packages");
         return;
     };
-    if let Some(why) = Rclone.unavailable() {
+    if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
     }
@@ -3306,7 +3306,7 @@ fn a_copy_its_server_refuses_as_it_is_closed_is_told_so_a_move_keeps_its_origina
         eprintln!("skipped: SKWIR_TEST_KIO names no KIO packages");
         return;
     };
-    if let Some(why) = Rclone.unavailable() {
+    if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
     }
@@ -3464,7 +3464,7 @@ fn disconnected(app: &App, pane: skwir_core::workspace::PaneId) {
 
 #[test]
 fn rclone_asks_a_server_s_password_once_and_keeps_it_when_told() {
-    if let Some(why) = Rclone.unavailable() {
+    if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
     }
@@ -3480,7 +3480,7 @@ fn rclone_asks_a_server_s_password_once_and_keeps_it_when_told() {
     let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
     app.set_window_shown();
     let keyring = Arc::new(TestKeyring::default());
-    let remotes = Remotes::with(vec![Arc::new(Rclone)]).with_keyring(keyring.clone());
+    let remotes = Remotes::with(vec![Arc::new(Rclone::default())]).with_keyring(keyring.clone());
     app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
     let pane = app.workspace.read().active_id();
     let address = format!("dav://tester@127.0.0.1:{}/", served.port);
@@ -3726,7 +3726,7 @@ impl Drop for OwnSamba {
 
 #[test]
 fn rclone_opens_an_smb_share_its_password_asked_and_kept() {
-    if let Some(why) = Rclone.unavailable() {
+    if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
     }
@@ -3743,7 +3743,7 @@ fn rclone_opens_an_smb_share_its_password_asked_and_kept() {
     let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
     app.set_window_shown();
     let keyring = Arc::new(TestKeyring::default());
-    let remotes = Remotes::with(vec![Arc::new(Rclone)]).with_keyring(keyring.clone());
+    let remotes = Remotes::with(vec![Arc::new(Rclone::default())]).with_keyring(keyring.clone());
     app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
     let pane = app.workspace.read().active_id();
     let address = format!("smb://tester@127.0.0.1:{}/share", samba.port);
@@ -3969,7 +3969,7 @@ fn kioclient_copies_to_and_from_kio_s_servers_in_batches() {
         eprintln!("skipped: SKWIR_TEST_KIO names no KIO packages");
         return;
     };
-    if let Some(why) = Rclone.unavailable() {
+    if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
     }

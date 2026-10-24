@@ -83,7 +83,7 @@ fn fixture(name: &str) -> PathBuf {
 
 #[test]
 fn an_address_rclone_opens_is_a_folder_and_a_copy_is_on_the_server_once_done() {
-    if let Some(why) = Rclone.unavailable() {
+    if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
     }
@@ -95,13 +95,13 @@ fn an_address_rclone_opens_is_a_folder_and_a_copy_is_on_the_server_once_done() {
     let address = Address::parse(&format!("dav://127.0.0.1:{}/sub folder", served.port)).unwrap();
     let ask: Arc<dyn Ask> = Arc::new(NoOne);
     let cancel = CancelToken::new();
-    let connected = Rclone.connect(&address, &ask, &cancel).expect("connect");
+    let connected = Rclone::default().connect(&address, &ask, &cancel).expect("connect");
     let point = connected.point.clone();
     let remote = skwir_core::fs::reach::of(&point).expect("a network mount");
     assert_eq!(remote.point, point);
     assert_eq!(remote.fstype, "fuse.rclone");
     assert!(!remote.by_kernel());
-    let recognised = Rclone.recognises(&remote).expect("its own");
+    let recognised = Rclone::default().recognises(&remote).expect("its own");
     assert!(recognised.ours);
     assert_eq!(recognised.address.as_ref(), Some(&address.top()));
 
@@ -123,7 +123,7 @@ fn an_address_rclone_opens_is_a_folder_and_a_copy_is_on_the_server_once_done() {
         "on the server as soon as written"
     );
 
-    Rclone
+    Rclone::default()
         .disconnect(&remote, &recognised, &cancel)
         .expect("disconnect");
     assert!(skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point));
