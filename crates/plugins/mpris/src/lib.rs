@@ -224,12 +224,21 @@ impl Player {
         now(&self.0).map_or(1., |now| now.rate)
     }
     #[zbus(property)]
+    fn set_rate(&self, rate: f64) {
+        // The spec: a rate of 0 is a pause; out of range, it is ignored.
+        if rate == 0. {
+            request(&self.0, PlayerRequest::Pause);
+        } else if skwir_core::media::RATES.contains(&rate) {
+            request(&self.0, PlayerRequest::Rate(rate));
+        }
+    }
+    #[zbus(property)]
     fn minimum_rate(&self) -> f64 {
-        1.
+        *skwir_core::media::RATES.start()
     }
     #[zbus(property)]
     fn maximum_rate(&self) -> f64 {
-        1.
+        *skwir_core::media::RATES.end()
     }
     #[zbus(property)]
     fn metadata(&self) -> HashMap<String, OwnedValue> {
@@ -320,6 +329,7 @@ fn serve(
             let _ = iface.playback_status_changed(emitter).await;
             let _ = iface.metadata_changed(emitter).await;
             let _ = iface.volume_changed(emitter).await;
+            let _ = iface.rate_changed(emitter).await;
             let _ = iface.can_go_next_changed(emitter).await;
             let _ = iface.can_go_previous_changed(emitter).await;
             let _ = iface.can_play_changed(emitter).await;

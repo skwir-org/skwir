@@ -143,12 +143,16 @@ pub enum Control {
     Audio(i32),
     Subtitle(i32),
 }
+/// How fast a track may play, 1 as recorded: what the player offers and
+/// what MPRIS says it can.
+pub const RATES: std::ops::RangeInclusive<f64> = 0.25..=3.;
+
 impl Control {
     pub fn valid(&self) -> bool {
         match self {
             Self::Seek(v) => v.is_finite() && *v >= 0.,
             Self::Volume(v) => v.is_finite() && (0. ..=1.).contains(v),
-            Self::Rate(v) => v.is_finite() && (0.25..=3.).contains(v),
+            Self::Rate(v) => v.is_finite() && RATES.contains(v),
             Self::Audio(v) => *v >= 0,
             Self::Subtitle(v) => *v >= -1,
             Self::Play(_) | Self::Mute(_) => true,
