@@ -130,7 +130,10 @@ impl Shell {
         let hidden = key.hidden;
         let (tx, rx) = flume::bounded(1);
         let token = cancel.clone();
-        self.app.scheduler.spawn(
+        // A stat for each file: in the folder's lane, so a server that
+        // stopped answering holds its own.
+        self.app.scheduler.spawn_in(
+            skwir_core::fs::reach::lane(&dir),
             skwir_core::scheduler::Priority::Background,
             "folder-weight",
             cancel,
@@ -183,52 +186,42 @@ fn listed_bytes(p: &skwir_core::workspace::Pane, unknown_at: usize) -> Listed {
 }
 
 /// The files in `dir` a pane shows, added up: what is not a folder, names
-/// starting with a dot only when `hidden`, those holding `filter`. Links
-/// count as themselves, as the listing sizes them. A file of several
-/// names (hard links) counts once (ADR-049), where the system says how
-/// many names a file has. `None` once cancelled, or when the folder
-/// cannot be read.
+/// hidden only when `hidden`, those holding `filter`. Each is stat-ed as
+/// the listing stats it (`fs::stat_entry`) and weighs what it does there
+/// (`Entry::weighed`): a link its target's size, a link to a folder
+/// nothing. A file counts once however many names lead to it, as
+/// `entry::weight` counts (ADR-049). `None` once cancelled, or when the
+/// folder cannot be read.
 fn weigh(dir: &Path, hidden: bool, filter: Option<&str>, cancel: &CancelToken) -> Option<u64> {
-    let mut bytes = 0u64;
-    let mut linked = std::collections::HashSet::new();
+    use skwir_core::{Entry, EntryId, EntryKind};
+    let folder = skwir_core::fs::Dir::open(dir).ok()?;
     let filter = filter.map(skwir_core::workspace::NameFilter::new);
-    for entry in std::fs::read_dir(dir).ok()? {
+    let mut bytes = 0u64;
+    let mut seen = std::collections::HashSet::new();
+    for listed in folder.read().ok()? {
         if cancel.is_cancelled() {
             return None;
         }
-        let Ok(entry) = entry else { continue };
-        let name = entry.file_name();
-        if !hidden && skwir_core::fs::is_hidden(&entry) {
+        let Ok(listed) = listed else { continue };
+        // A folder weighs nothing here: it needs no stat.
+        if listed.kind == EntryKind::Directory
+            || filter.as_ref().is_some_and(|f| !f.holds(&listed.name))
+        {
             continue;
         }
-        if filter.as_ref().is_some_and(|f| !f.holds(&name)) {
+        let mut entry = Entry::new(EntryId::UNKNOWN, listed.name, listed.kind);
+        entry.hidden = listed.hidden;
+        if !hidden && entry.is_hidden() {
             continue;
         }
-        // Not followed: a link weighs what the listing says it does.
-        match entry.metadata() {
-            Ok(meta) if !meta.is_dir() && once(&meta, &mut linked) => {
-                bytes = bytes.saturating_add(meta.len());
-            }
-            _ => {}
+        if skwir_core::fs::stat_entry(&folder, &mut entry)
+            && let Some((file, size)) = entry.weighed()
+            && seen.insert(file)
+        {
+            bytes = bytes.saturating_add(size);
         }
     }
     Some(bytes)
-}
-
-/// Whether a file `meta` says has several names is met here for the first
-/// time: each is counted once. Where the system says nothing of names
-/// (`std` on Windows), every name counts.
-fn once(meta: &std::fs::Metadata, linked: &mut std::collections::HashSet<(u64, u64)>) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        meta.nlink() <= 1 || linked.insert((meta.dev(), meta.ino()))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (meta, linked);
-        true
-    }
 }
 
 #[cfg(test)]
@@ -256,6 +249,21 @@ mod tests {
         {
             std::fs::hard_link(dir.join("notes.md"), dir.join("notes again.md")).unwrap();
             assert_eq!(weigh(dir, false, None, &token), Some(320));
+        }
+        // A link weighs what it leads to, as the listing sizes it: a file
+        // from elsewhere its size, one counted here already nothing more,
+        // a folder nothing.
+        #[cfg(unix)]
+        {
+            let away = tempfile::tempdir().unwrap();
+            std::fs::write(away.path().join("big «iso»"), [0u8; 4000]).unwrap();
+            let link = |to: &std::path::Path, name: &str| {
+                std::os::unix::fs::symlink(to, dir.join(name)).unwrap();
+            };
+            link(&away.path().join("big «iso»"), "iso ’link’");
+            link(&dir.join("it's a report.txt"), "report again");
+            link(away.path(), "away");
+            assert_eq!(weigh(dir, false, None, &token), Some(4320));
         }
         token.cancel();
         assert_eq!(weigh(dir, false, None, &token), None);
