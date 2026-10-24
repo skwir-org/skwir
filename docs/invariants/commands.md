@@ -170,6 +170,11 @@ control plugin's `run`:
   `reach::NOT_ANSWERING` at most: past that the path is private and that
   server is not asked again by the same checker (`App::privacy` gives it
   the app's workers; a `Privacy` without them reads where it is asked).
+  A path that looking up would reach another machine for
+  (`Checker::reaches_elsewhere`, `fs::volume::Here`: below an automount
+  point nothing is mounted on, a Windows share by its server's name) is
+  never read: private, and an agent's call naming one is refused before
+  anything else (ADR-044, amended 2026-10-25).
 - Only `map-tiles` makes requests of its own (`AGENTS.md`, "Engineering
   rules"); the `remote` plugin reaches servers through the tools it starts
   (ADR-077), and connects an address an agent opens only once the user

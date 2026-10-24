@@ -203,8 +203,7 @@ above; each with the design its fixer proposed):
   handling; `tags.export` and the tags-everywhere commands propose
   after answering, so `skwir cmd` exits first; libarchive's
   lrzip, grzip and lzop filters run programs from `PATH` (on Windows
-  unsandboxed); an agent naming `/net/host/…` or `\\host\share` reaches
-  that host unasked; a tag of a name Windows refuses fails its export.
+  unsandboxed); a tag of a name Windows refuses fails its export.
 - Not exercised in a window: the drops, bulk rename, front requests
   while a dialog is open, the queued toggles, the zoom wheel's pane,
   the rubber band's pane, the map's clamp, the printed-page steps; NFS

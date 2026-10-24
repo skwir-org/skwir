@@ -480,6 +480,12 @@ fn admit(
     check: &mut permissions::Checker<'_>,
     cancelled: &dyn Fn() -> bool,
 ) -> anyhow::Result<()> {
+    if let Some(path) = check.elsewhere_in(&invocation.args) {
+        anyhow::bail!(
+            "looking up {} would make the system reach another machine, which an agent may not do unasked: the user opens it in skwir first",
+            path.display()
+        );
+    }
     anyhow::ensure!(
         check.named_in(&invocation.args).is_none(),
         "this names a private folder, which skwir keeps from agents (Settings, Privacy)"

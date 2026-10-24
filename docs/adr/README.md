@@ -57,7 +57,7 @@ them by topic.
 | [041](041-pdfium-carried-and-what-each-system-brings.md) | PDFium carried; what each system brings | built on Linux |
 | [042](042-apache-2.0.md) | Skwir is under the Apache License 2.0 | in force |
 | [043](043-agents-and-scripts-drive-the-window.md) | Agents and scripts drive the running window | built |
-| [044](044-the-permission-layer.md) | The permission layer | built |
+| [044](044-the-permission-layer.md) | The permission layer (amended 2026-10-25: no host reached unasked) | built |
 | [045](045-plugins-from-outside-as-programs.md) | Plugins from outside, run as programs | built on Linux |
 | [046](046-plugins-as-webassembly-modules.md) | Plugins as WebAssembly modules | built |
 | [047](047-previews-from-outside-are-files-skwir-shows.md) | A preview from outside is a file Skwir shows | built |

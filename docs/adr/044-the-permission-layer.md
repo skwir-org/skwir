@@ -88,3 +88,22 @@ Each kind of code can be held to a different degree:
   the host.
 - Control (ADR-043) stays off by default: an agent driving the window
   is the user's choice, now made with this layer in between.
+
+## Amendments
+
+- 2026-10-25: a path an agent names that looking up would make the
+  system reach another machine the user is not on yet (below an
+  automount point nothing is mounted on: Linux's `-hosts` maps and
+  systemd's automount units, macOS's `/net`; on Windows a share by its
+  server's name, `\\host\share`, not connected) is refused before
+  anything reads it, saying the user opens it in skwir first; the
+  privacy check never reads one (it is private, unchecked), nor an
+  automount point's own `.private`, a machine's name there. A server
+  mounted already is not another machine (its mount stands where the
+  automount point was): its paths are checked in its lane
+  (`docs/invariants/remote.md`). On Windows a share by its server's
+  name is refused connected or not, which the system does not say
+  unasked; a drive letter mapped to one is this machine's. Before, the check
+  itself mounted what an agent named, from whichever host it named. The
+  same rule the terminal follows for the paths it finds (ADR-029's
+  amendment of 2026-10-14, `fs::volume::Here`).

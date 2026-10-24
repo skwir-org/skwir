@@ -4466,3 +4466,21 @@ overnight: the review's remote items, then what the servers' work left.
   waiting on the server, the lane's two; with the two walks as they were,
   thirteen. Also by unit tests: a remote tree walked in its lane finds
   what a local walk finds; one walker counts what eight count.
+- **No host reached for an agent unasked** (ADR-044 amended). The
+  privacy check of an agent's call resolved what it named: below an
+  automount point (Linux's `-hosts` maps, macOS's `/net`) that mounted
+  from the host the path named, and on Windows a `\\host\share` connected
+  to it with the user's credentials, before the call was refused or ran.
+  Such a path (`fs::volume::Here`, the terminal's rule) is never read
+  now: private for the check, and an agent's call naming one is refused
+  first, saying the user opens it in skwir. Nor is an automount point's
+  own `.private` looked up (a machine of that name). A server mounted
+  already is checked as any remote, in its lane; on Windows a share by its
+  server's name is refused connected or not (a drive letter mapped to one
+  is not). Checked by a
+  core test with an automount table of the test's (a path below it
+  private unread, named in arguments as text and as bytes, withheld from
+  an answer; the point itself and its marker), and a control test under
+  Wine (a share by its server's name refused at once, other calls
+  running). No automount point could be made here: Linux's and macOS's
+  real ones are not tried.

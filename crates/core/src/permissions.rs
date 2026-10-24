@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::command::{CommandSpec, Effect};
+use crate::fs::volume::Here;
 use crate::scheduler::{Lane, Priority, Scheduler};
 use crate::settings::{RecordField, SettingSpec, Settings};
 
@@ -36,6 +37,14 @@ pub const MARKER_KEY: &str = "privacy.marker";
 pub const MARKER: &str = ".private";
 /// What a private path is said as, where an answer would name it.
 pub const WITHHELD: &str = "(private)";
+
+/// A folder of this machine's, where a lookup is asked from
+/// ([`Checker::reaches_elsewhere`]): a share named by its server's name is
+/// on none.
+#[cfg(windows)]
+const LOCAL_ROOT: &str = "C:\\";
+#[cfg(not(windows))]
+const LOCAL_ROOT: &str = "/";
 
 /// Private from the start: where keys, passwords and credentials live,
 /// the desktop's keyrings among them on each system.
@@ -298,6 +307,7 @@ impl Privacy {
             marked: Arc::default(),
             resolved_folders: None,
             unanswered: Vec::new(),
+            here: None,
         }
     }
 
@@ -337,6 +347,9 @@ pub struct Checker<'a> {
     resolved_folders: Option<Arc<Vec<PathBuf>>>,
     /// The lanes of the remotes that did not answer in time.
     unanswered: Vec<Lane>,
+    /// The mounts, read once: what a lookup would reach another machine
+    /// for ([`Checker::reaches_elsewhere`]).
+    here: Option<Here>,
 }
 
 impl Checker<'_> {
@@ -354,14 +367,20 @@ impl Checker<'_> {
         if self.privacy.folders.is_empty() && !self.privacy.marker {
             return false;
         }
+        // Looked up, it would reach another machine: it is never read, and
+        // what cannot be checked is not public.
+        if self.reaches_elsewhere(path) {
+            return true;
+        }
         let folders = self.resolved_folders();
-        let (privacy, marked, asked) = (
+        let (privacy, marked, asked, here) = (
             self.privacy.clone(),
             Arc::clone(&self.marked),
             path.to_owned(),
+            self.here().clone(),
         );
         self.answered(path, move || {
-            looks_private(&privacy, &folders, &marked, &asked)
+            looks_private(&privacy, &folders, &marked, &here, &asked)
         })
         .unwrap_or(true)
     }
@@ -375,23 +394,20 @@ impl Checker<'_> {
         if let Some(folders) = &self.resolved_folders {
             return Arc::clone(folders);
         }
-        let folders: Vec<PathBuf> = self
-            .privacy
-            .folders
-            .clone()
-            .into_iter()
-            .filter_map(|folder| {
-                let asked = folder.clone();
-                match self.answered(&folder, move || resolved_name(&asked)) {
-                    Some(Ok(resolved)) => Some(resolved),
-                    Some(Err(error)) => {
-                        tracing::debug!("a private folder cannot be resolved: {error}");
-                        None
-                    }
-                    None => None,
+        let mut folders = Vec::new();
+        for folder in self.privacy.folders.clone() {
+            if self.reaches_elsewhere(&folder) {
+                continue;
+            }
+            let asked = folder.clone();
+            match self.answered(&folder, move || resolved_name(&asked)) {
+                Some(Ok(resolved)) => folders.push(resolved),
+                Some(Err(error)) => {
+                    tracing::debug!("a private folder cannot be resolved: {error}");
                 }
-            })
-            .collect();
+                None => {}
+            }
+        }
         Arc::clone(self.resolved_folders.insert(Arc::new(folders)))
     }
 
@@ -431,6 +447,44 @@ impl Checker<'_> {
             self.unanswered.push(lane);
         }
         answer
+    }
+
+    /// Whether looking `path` up would make the system reach another
+    /// machine the user is not on yet (`fs::volume::Here`, ADR-029): below
+    /// an automount point nothing is mounted on (`/net/host`); on Windows
+    /// a share by its server's name (`\\host\share`), whether connected
+    /// or not being nothing the system says unasked (a drive letter is
+    /// this machine's). A server mounted already is no other machine: its
+    /// mount stands where the automount point was.
+    pub fn reaches_elsewhere(&mut self, path: &Path) -> bool {
+        !self.here().holds(path, Path::new(LOCAL_ROOT))
+    }
+
+    fn here(&mut self) -> &Here {
+        self.here.get_or_insert_with(Here::now)
+    }
+
+    /// The first path `value` names (a string that is one, a path written
+    /// as its bytes) that looking up would reach another machine for
+    /// ([`Checker::reaches_elsewhere`]): an agent naming it is refused
+    /// before anything reads it.
+    pub fn elsewhere_in(&mut self, value: &Value) -> Option<PathBuf> {
+        match value {
+            Value::String(text) => {
+                let path = Path::new(text);
+                (path.is_absolute() && self.reaches_elsewhere(path)).then(|| path.to_owned())
+            }
+            Value::Array(items) => items.iter().find_map(|item| self.elsewhere_in(item)),
+            Value::Object(object) => {
+                if let Some(path) = bytes_path(object)
+                    && self.reaches_elsewhere(&path)
+                {
+                    return Some(path);
+                }
+                object.values().find_map(|item| self.elsewhere_in(item))
+            }
+            _ => None,
+        }
     }
 
     /// The first private path `value` names: a string that is a path, or
@@ -526,9 +580,10 @@ fn looks_private(
     privacy: &Privacy,
     folders: &[PathBuf],
     marks: &Mutex<HashMap<PathBuf, bool>>,
+    here: &Here,
     path: &Path,
 ) -> bool {
-    if marked(privacy, marks, path) {
+    if marked(privacy, marks, here, path) {
         return true;
     }
     // A missing final name is normal for a proposed write. Resolve its
@@ -539,12 +594,19 @@ fn looks_private(
     if folders.iter().any(|folder| resolved.starts_with(folder)) {
         return true;
     }
-    marked(privacy, marks, &resolved)
+    marked(privacy, marks, here, &resolved)
 }
 
 /// Whether a folder holding `path` holds a [`MARKER`], each folder read
-/// once (`marks`, never held while reading).
-fn marked(privacy: &Privacy, marks: &Mutex<HashMap<PathBuf, bool>>, path: &Path) -> bool {
+/// once (`marks`, never held while reading). An automount point holds
+/// only what it mounts: its marker is never looked up, which would ask
+/// for a machine of that name (`/net/.private`).
+fn marked(
+    privacy: &Privacy,
+    marks: &Mutex<HashMap<PathBuf, bool>>,
+    here: &Here,
+    path: &Path,
+) -> bool {
     if !privacy.marker {
         return false;
     }
@@ -552,7 +614,11 @@ fn marked(privacy: &Privacy, marks: &Mutex<HashMap<PathBuf, bool>>, path: &Path)
         if let Some(known) = marks.lock().get(folder).copied() {
             return known;
         }
-        let marked = match std::fs::symlink_metadata(folder.join(MARKER)) {
+        let file = folder.join(MARKER);
+        if !here.holds(&file, Path::new(LOCAL_ROOT)) {
+            return false;
+        }
+        let marked = match std::fs::symlink_metadata(file) {
             Ok(_) => true,
             Err(error) => !matches!(
                 error.kind(),
@@ -717,6 +783,72 @@ pub fn agent_call() -> Option<Privacy> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    impl Privacy {
+        /// A checker that takes the mounts as `here` says them.
+        fn checker_in(&self, here: Here) -> Checker<'_> {
+            Checker {
+                here: Some(here),
+                ..self.checker()
+            }
+        }
+    }
+
+    /// A path a lookup would reach another machine for is never read: below
+    /// an automount point nothing is mounted on, it is private (unchecked)
+    /// and said to reach elsewhere wherever an agent names it; the point
+    /// itself, and this machine's paths, are checked as ever.
+    #[test]
+    fn a_path_that_would_reach_another_machine_is_not_read() {
+        let tmp = tempfile::tempdir().unwrap();
+        let net = tmp.path().join("net");
+        let file = net.join("host").join("export").join("it's a note");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "public, were it read").unwrap();
+        let local = tmp.path().join("local note");
+        std::fs::write(&local, "public").unwrap();
+        let privacy = Privacy {
+            folders: vec![tmp.path().join("keys")],
+            marker: true,
+            workers: None,
+        };
+        let here = || Here::with_automounts([net.clone()]);
+        let mut check = privacy.checker_in(here());
+        assert!(check.reaches_elsewhere(&file));
+        assert!(check.holds(&file), "never read, so private");
+        assert!(!check.reaches_elsewhere(&net) && !check.holds(&net));
+        // Its marker would be a machine's name: never looked up.
+        std::fs::write(net.join(MARKER), "").unwrap();
+        assert!(!privacy.checker_in(here()).holds(&net));
+        assert!(!check.holds(&local));
+        let args = json!({ "expr": "ext:txt", "root": file, "pane": 1 });
+        assert_eq!(check.elsewhere_in(&args), Some(file.clone()));
+        let bytes = json!({ "path": { "bytes": file.as_os_str().as_encoded_bytes() } });
+        assert_eq!(check.elsewhere_in(&bytes), Some(file.clone()));
+        assert_eq!(check.elsewhere_in(&json!({ "root": local })), None);
+        assert_eq!(
+            privacy
+                .checker_in(here())
+                .redact(json!([file.to_str().unwrap()])),
+            json!([WITHHELD])
+        );
+    }
+
+    /// On Windows a share named by its server's name connects to that
+    /// server when looked up: never read for an agent.
+    #[cfg(windows)]
+    #[test]
+    fn a_share_by_its_server_s_name_is_not_read() {
+        let privacy = Privacy::folders([]);
+        let mut check = privacy.checker();
+        let share = Path::new(r"\\host.example\share\note.txt");
+        assert!(check.reaches_elsewhere(share));
+        assert_eq!(
+            check.elsewhere_in(&json!({ "root": share })),
+            Some(share.to_owned())
+        );
+        assert!(!check.reaches_elsewhere(Path::new(r"C:\Users\note.txt")));
+    }
 
     #[test]
     fn capabilities_are_a_set_said_in_words() {
