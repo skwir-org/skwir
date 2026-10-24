@@ -2809,7 +2809,7 @@ impl Shell {
                                         height: page.height,
                                         detail: Some(PreviewInfo::Document {
                                             page: page.content.page,
-                                            pages: session.info().pages,
+                                            pages: crate::reader::page_count(session.as_ref()),
                                         }),
                                         document: Some(page.content),
                                         facts: Vec::new(),
@@ -3509,13 +3509,10 @@ impl Shell {
         if let Some(PreviewContent::Inspection(display)) = &self.preview.content
             && crate::inspector::counts_printed(self, &display.data)
         {
-            let current = self.preview.inspection.printed_page(&display.data);
-            let index = if delta < 0 {
-                current.and_then(|index| index.checked_sub(1))
-            } else {
-                Some(current.map_or(0, |index| index + 1))
-            }
-            .filter(|index| *index < display.data.printed_pages.len());
+            let index = self
+                .preview
+                .inspection
+                .printed_step(&display.data, delta < 0);
             if let Some(index) = index {
                 let args = serde_json::json!({"action":"printed","index":index});
                 self.run("ui.inspect", args, window, cx);
@@ -3616,7 +3613,7 @@ impl Shell {
             .reader
             .session
             .as_ref()
-            .map(|s| s.info().pages)
+            .map(|s| crate::reader::page_count(s.as_ref()))
             .or(match &self.preview.content {
                 Some(PreviewContent::Image {
                     detail: Some(PreviewInfo::Document { pages, .. }),

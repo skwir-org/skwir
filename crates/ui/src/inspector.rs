@@ -331,6 +331,66 @@ fn page_starts(data: &Inspection) -> Vec<(usize, usize)> {
     starts
 }
 
+/// The printed page `starts` (`page_starts`) puts at block `top`: of the
+/// last block at or above it where pages start, the first to start there.
+/// Two marks in one block are one place to the view, which scrolls to
+/// blocks; the first of them is the page its top line is on.
+fn page_at(starts: &[(usize, usize)], top: usize) -> Option<usize> {
+    let above = &starts[..starts.partition_point(|(block, _)| *block <= top)];
+    let (last, _) = above.last()?;
+    above
+        .iter()
+        .find(|(block, _)| block == last)
+        .map(|(_, page)| *page)
+}
+
+/// The printed page a step from `current` goes to, `back` or on: the
+/// nearest page of another section, or of this one starting in a block
+/// before or after the current page's (`starts`, `page_starts`). Pages
+/// sharing the current page's block are where the view already is; one
+/// whose mark reading mode did not keep is nowhere to go. Back lands on
+/// the first page of its block, as the view will name it.
+fn page_step(
+    data: &Inspection,
+    starts: &[(usize, usize)],
+    current: Option<usize>,
+    back: bool,
+) -> Option<usize> {
+    let block_of = |index: usize| {
+        starts
+            .iter()
+            .find(|(_, page)| *page == index)
+            .map(|(block, _)| *block)
+    };
+    // The current page's block, when it starts in this section.
+    let here = current.and_then(block_of);
+    let goes = |index: &usize| {
+        let page = &data.printed_pages[*index];
+        if page.section != data.position {
+            return if back {
+                page.section < data.position
+            } else {
+                page.section > data.position
+            };
+        }
+        block_of(*index).is_some_and(|block| {
+            here.is_none_or(|here| if back { block < here } else { block > here })
+        })
+    };
+    if back {
+        // Of a block several pages start in, the first: what it is called
+        // once shown (`page_at`).
+        let to = (0..current?).rev().find(goes)?;
+        Some(
+            block_of(to)
+                .and_then(|block| starts.iter().find(|(at, _)| *at == block))
+                .map_or(to, |(_, page)| *page),
+        )
+    } else {
+        (current.map_or(0, |index| index + 1)..data.printed_pages.len()).find(goes)
+    }
+}
+
 /// The text size reading starts at, and Default size returns to.
 pub(crate) const TEXT_SIZE: f32 = 16.;
 
@@ -717,24 +777,31 @@ impl State {
     /// `None` before the first (a book's front matter).
     pub(crate) fn printed_page(&self, data: &Inspection) -> Option<usize> {
         let top = self.list.logical_scroll_top().item_ix.saturating_sub(1);
-        self.page_starts
-            .iter()
-            .take_while(|(block, _)| *block <= top)
-            .last()
-            .map(|(_, page)| *page)
-            .or_else(|| {
-                data.printed_pages
-                    .iter()
-                    .rposition(|page| page.section < data.position)
-            })
+        page_at(&self.page_starts, top).or_else(|| {
+            data.printed_pages
+                .iter()
+                .rposition(|page| page.section < data.position)
+        })
+    }
+    /// The printed page Previous (`back`) or Next goes to from the one at
+    /// the top (`page_step`): never one the view is already at.
+    pub(crate) fn printed_step(&self, data: &Inspection, back: bool) -> Option<usize> {
+        page_step(data, &self.page_starts, self.printed_page(data), back)
     }
     /// Show printed page `index`, of this section, at the top of the view.
-    /// `false` when it starts in another section.
+    /// `false` when it starts in another section. One of this section
+    /// whose mark reading mode did not keep leaves the view where it is.
     fn show_printed(&self, data: &Inspection, index: usize) -> bool {
-        let Some(&(block, _)) = self.page_starts.iter().find(|(_, page)| *page == index) else {
+        if data
+            .printed_pages
+            .get(index)
+            .is_none_or(|page| page.section != data.position)
+        {
             return false;
-        };
-        if let Some(item) = self.item_of(data, block) {
+        }
+        if let Some(&(block, _)) = self.page_starts.iter().find(|(_, page)| *page == index)
+            && let Some(item) = self.item_of(data, block)
+        {
             self.list.scroll_to(gpui::ListOffset {
                 item_ix: item,
                 offset_in_item: px(0.),
@@ -2163,13 +2230,14 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
     let printed = counts_printed(shell, data);
     let page = printed.then(|| state.printed_page(data)).flatten();
     let (previous, next, titles) = if printed {
-        let last = data.printed_pages.len() - 1;
+        let step = |back| {
+            state
+                .printed_step(data, back)
+                .map(|index| serde_json::json!({"action":"printed","index":index}))
+        };
         (
-            page.and_then(|page| page.checked_sub(1))
-                .map(|index| serde_json::json!({"action":"printed","index":index})),
-            Some(page.map_or(0, |page| page + 1))
-                .filter(|index| *index <= last)
-                .map(|index| serde_json::json!({"action":"printed","index":index})),
+            step(true),
+            step(false),
             ("Previous page · [", "Next page · ]", "Go to page"),
         )
     } else if state.bytes.is_some() {
@@ -3872,6 +3940,51 @@ mod tests {
         // Page 7 is the chapter's own start; 8 its mark; 9's mark was not
         // kept, and pages of other chapters are not here.
         assert_eq!(page_starts(&data), [(0, 1), (2, 2)]);
+    }
+
+    #[test]
+    fn printed_pages_step_past_marks_sharing_a_block() {
+        use skwir_core::inspection::PrintedPage;
+        let page = |label: &str, section, target: &str| PrintedPage {
+            label: label.into(),
+            section,
+            target: target.into(),
+        };
+        let data = Inspection {
+            kind: InspectionKind::Book,
+            position: 1,
+            sections: 3,
+            printed_pages: vec![
+                page("11", 0, "one.xhtml#p11"),
+                page("12", 1, "two.xhtml"),
+                page("13", 1, "two.xhtml#p13"),
+                page("14", 1, "two.xhtml#p14"),
+                page("15", 1, "two.xhtml#lost"),
+                page("16", 1, "two.xhtml#p16"),
+                page("17", 2, "three.xhtml#p17"),
+            ],
+            ..Inspection::default()
+        };
+        // 13 and 14 start in block 7; 15's mark was not kept.
+        let starts = [(0, 1), (7, 2), (7, 3), (9, 5)];
+        // Block 7 at the top is page 13, the first to start there.
+        assert_eq!(page_at(&starts, 7), Some(2));
+        assert_eq!(page_at(&starts, 8), Some(2));
+        assert_eq!(page_at(&starts, 9), Some(5));
+        let step = |current, back| page_step(&data, &starts, Some(current), back);
+        // On from 12 to 13, then past 14 (where the view is) and 15
+        // (nowhere) to 16, then to the next chapter.
+        assert_eq!(step(1, false), Some(2));
+        assert_eq!(step(2, false), Some(5));
+        assert_eq!(step(5, false), Some(6));
+        // Back from 16 to 13 (14's block, named by 13), from 13 to 12,
+        // from 12 to the chapter before.
+        assert_eq!(step(5, true), Some(2));
+        assert_eq!(step(2, true), Some(1));
+        assert_eq!(step(1, true), Some(0));
+        assert_eq!(step(0, true), None);
+        // Before any page, Next is this chapter's first.
+        assert_eq!(page_step(&data, &starts, None, false), Some(1));
     }
 
     fn code(lines: &[&str], folds: Vec<std::ops::Range<usize>>) -> Display {
