@@ -62,6 +62,15 @@ struct AddressArgs {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct AtLoginArgs {
+    /// The server's address: a remote of rclone's configuration
+    /// (`rclone://photos/`) or an SFTP server (`sftp://me@nas/`).
+    address: String,
+    /// Connect it at login (true), or no longer (false).
+    on: bool,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct NamedArgs {
     /// The remote's name in rclone's configuration.
     id: String,
@@ -95,6 +104,53 @@ pub(crate) fn menu_items(name: &str, signs_in: bool) -> Vec<MenuItem> {
             "",
             412,
             named("remote.reconnect"),
+        ));
+    }
+    items
+}
+
+/// The id of the entry that connects `address`'s server at login, where
+/// one may (ADR-087): a remote of rclone's configuration, by rclone; an
+/// SFTP server, by sshfs.
+pub(crate) fn login_id(address: &Address) -> Option<String> {
+    match address.scheme {
+        Scheme::Rclone => Some(crate::login::id_of("rclone", address)),
+        Scheme::Sftp => Some(crate::login::id_of("sshfs", address)),
+        _ => None,
+    }
+}
+
+/// A server's own items in its menu: Connect at Login (checked while it
+/// does), and for SFTP, Set Up Key Login.
+pub(crate) fn server_items(
+    address: &Address,
+    at_login: &std::collections::HashSet<String>,
+) -> Vec<MenuItem> {
+    let mut items = Vec::new();
+    if let Some(id) = login_id(address) {
+        let on = at_login.contains(&id);
+        items.push(MenuItem::new(
+            "place",
+            if on {
+                "Connect at Login ✓"
+            } else {
+                "Connect at Login"
+            },
+            "",
+            430,
+            Invocation::with_args(
+                "remote.connect_at_login",
+                &serde_json::json!({ "address": address.top().to_string(), "on": !on }),
+            ),
+        ));
+    }
+    if address.scheme == Scheme::Sftp {
+        items.push(MenuItem::new(
+            "place",
+            "Set Up Key Login…",
+            "lock",
+            431,
+            Invocation::new("remote.setup_key_login").with("address", address.top().to_string()),
         ));
     }
     items
@@ -490,6 +546,81 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         )
         .shows();
     let remotes_ = remotes.clone();
+    app.commands.register::<AtLoginArgs, _>(
+        ID,
+        "remote.connect_at_login",
+        "Connect at login",
+        "Have the system's service manager connect a server when the user logs in (a systemd user unit, a launch agent, a logon task), or no longer; connects it now too. Only what asks nothing at login: a remote of rclone's configuration not encrypted, an SFTP server logged in to by key",
+        move |args, app| {
+            let top = Address::parse(args.address.trim())?.top();
+            let id = login_id(&top).ok_or_else(|| {
+                anyhow::anyhow!("only rclone's remotes and SFTP servers connect at login")
+            })?;
+            let (remotes, weak) = (remotes_.clone(), app.weak());
+            let lifetime = remotes
+                .lifetime()
+                .ok_or_else(|| anyhow::anyhow!("remote folders are turned off"))?;
+            // It logs in and waits on the service manager: on a thread.
+            std::thread::Builder::new()
+                .name("skwir-at-login".into())
+                .spawn(move || {
+                    let Some(app) = weak.upgrade() else { return };
+                    let cancel = lifetime.child();
+                    let done = at_login(&remotes, &top, &id, args.on, &cancel);
+                    remotes.refresh(&app);
+                    let label = top.label();
+                    match (done, args.on) {
+                        (Ok(()), true) => app.notify(
+                            NotifyLevel::Info,
+                            format!("“{label}” connects at login"),
+                        ),
+                        (Ok(()), false) => app.notify(
+                            NotifyLevel::Info,
+                            format!("“{label}” no longer connects at login"),
+                        ),
+                        (Err(error), _) if !cancel.is_cancelled() => app.notify(
+                            NotifyLevel::Error,
+                            format!("“{label}” was not set to connect at login: {error:#}"),
+                        ),
+                        (Err(_), _) => {}
+                    }
+                })?;
+            Ok(Outcome::Done)
+        },
+    );
+    let remotes_ = remotes.clone();
+    app.commands
+        .register::<AddressArgs, _>(
+            ID,
+            "remote.setup_key_login",
+            "Set up key login…",
+            "Let ssh log in to an SFTP server by key, no password: a key the ssh agent holds, the user's default one, or a new one, its public half added to the server's authorized keys once the user chose it",
+            move |args, app| {
+                let top = Address::parse(args.address.trim())?.top();
+                anyhow::ensure!(top.scheme == Scheme::Sftp, "key login is ssh's: SFTP servers alone");
+                let (remotes, weak) = (remotes_.clone(), app.weak());
+                let lifetime = remotes
+                    .lifetime()
+                    .ok_or_else(|| anyhow::anyhow!("remote folders are turned off"))?;
+                std::thread::Builder::new()
+                    .name("skwir-remote-form".into())
+                    .spawn(move || {
+                        let Some(app) = weak.upgrade() else { return };
+                        let cancel = lifetime.child();
+                        if let Err(error) = crate::keys_form::set_up(&app, &remotes.keys, &top, &cancel)
+                            && !cancel.is_cancelled()
+                        {
+                            app.notify(
+                                NotifyLevel::Error,
+                                format!("Key login was not set up on “{}”: {error:#}", top.label()),
+                            );
+                        }
+                    })?;
+                Ok(Outcome::Done)
+            },
+        )
+        .shows();
+    let remotes_ = remotes.clone();
     app.commands.register::<NamedArgs, _>(
         ID,
         "remote.test_server",
@@ -509,6 +640,33 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             Ok(Outcome::Done)
         },
     );
+}
+
+/// Set the server at `top` to connect at login (`on`), or no longer: its
+/// entry `id` with the service manager.
+fn at_login(
+    remotes: &Remotes,
+    top: &Address,
+    id: &str,
+    on: bool,
+    cancel: &skwir_core::cancel::CancelToken,
+) -> anyhow::Result<()> {
+    let manager = remotes.login_manager()?;
+    let connector = if top.scheme == Scheme::Rclone {
+        "rclone"
+    } else {
+        "sshfs"
+    };
+    if !on {
+        let point = crate::login::point_of(connector, top)?;
+        return manager.uninstall(id, &point, cancel);
+    }
+    let at = if top.scheme == Scheme::Rclone {
+        crate::login::AtLogin::rclone(&remotes.rclone, top, cancel)?
+    } else {
+        crate::login::AtLogin::sshfs(&remotes.sshfs(), top, cancel)?
+    };
+    manager.install(&at, cancel)
 }
 
 /// Add Server where rclone is not installed: the servers added by their

@@ -337,6 +337,24 @@ ADR-077 (which revises ADR-021).
   in a log (`At`'s `Debug` says the port alone). On Windows rclone mounts
   through WinFsp in a folder of Skwir's (`winfsp`), its login kept beside
   it while it lives, and lets go when asked to quit.
+- Key login (`keys`, `keys_form`, ADR-086): the keys offered are the
+  agent's, then ssh's default ones it does not hold, then a new one made
+  in the user's `~/.ssh` (never over one there), its passphrase given to
+  ssh-keygen through the askpass, never its command line. Only public
+  halves leave the machine, over one login (a control master), through
+  the server's shell or, where it runs none, sftp. Tested against an
+  OpenSSH server run as the user (its home and commands the test's, by a
+  `ForceCommand`) and rclone's SFTP server (a password, no shell), with
+  an ssh agent and keys of the test's own: never the user's agent,
+  `~/.ssh`, configuration or known hosts.
+- Connect at login (`login`, ADR-087): the service manager's entry runs
+  Skwir's own mount command at Skwir's own point; what needs an answer at
+  login is refused. Tests read units with `systemd-analyze verify` in
+  their own folders, run a unit's command as it would be run, and install
+  through a stand-in `systemctl` given a runtime folder of its own: never
+  the user's manager, and never a manager of the test's own started from
+  a session's cgroup (systemd moves that cgroup's processes into its
+  `init.scope`).
 - Mount options (read only, rclone's file cache and bandwidth, sshfs's
   compression) are the plugin's data by the server's address
   (`remote.options`, `options::MountOptions`), never a tool's

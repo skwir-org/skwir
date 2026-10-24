@@ -19,6 +19,7 @@ pub mod gio_copy;
 pub mod gvfs;
 mod gvfs_spec;
 pub mod keys;
+mod keys_form;
 pub mod kio;
 pub mod kio_copy;
 mod known;
@@ -26,7 +27,6 @@ pub mod lan;
 pub mod login;
 mod mounter;
 pub mod nearby;
-pub mod winfsp;
 pub mod options;
 pub mod passwords;
 mod provider;
@@ -44,6 +44,7 @@ pub mod sftp;
 mod ssh_mount;
 pub mod sshfs;
 pub mod system_shares;
+pub mod winfsp;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -148,6 +149,8 @@ struct State {
     /// The mounts as last read (`Remotes::mounted`): what every publish
     /// shows, whoever asks for it.
     mounted: Arc<Vec<Mounted>>,
+    /// The remotes connected at login, by their entry's id (`login::id_of`).
+    at_login: std::collections::HashSet<String>,
     /// Mounts whose program is being asked whether it still answers: one
     /// question at a time each, never another queued behind one a server
     /// gone holds for good.
@@ -190,6 +193,22 @@ pub struct Remotes {
     /// rclone as its remotes are changed (ADR-086): its own configuration,
     /// the user's, or a test's.
     rclone: rclone::Rclone,
+    /// ssh as key login is set up and sshfs runs at login: the user's own
+    /// configuration, keys and agent, or a test's.
+    keys: KeySetup,
+    /// The service manager that connects remotes at login (ADR-087): the
+    /// user's own, or a test's.
+    login: Option<login::Manager>,
+}
+
+/// ssh as key login is set up (`keys`): its options, the folder of the
+/// user's keys and the agent asked for its keys, each the user's own where
+/// `None`.
+#[derive(Clone, Debug, Default)]
+pub struct KeySetup {
+    pub ssh: keys::Ssh,
+    pub ssh_dir: Option<PathBuf>,
+    pub agent: Option<PathBuf>,
 }
 
 impl Default for Remotes {
@@ -221,6 +240,42 @@ impl Remotes {
                 "remote.remove_server",
             ),
             rclone: rclone::Rclone::default(),
+            keys: KeySetup::default(),
+            login: None,
+        }
+    }
+
+    /// The plugin setting key login up as `keys` says (a test's ssh, keys
+    /// and agent).
+    #[must_use]
+    pub fn with_keys(mut self, keys: KeySetup) -> Self {
+        self.keys = keys;
+        self
+    }
+
+    /// The plugin connecting at login through `manager` (a test's).
+    #[must_use]
+    pub fn with_login(mut self, manager: login::Manager) -> Self {
+        self.login = Some(manager);
+        self
+    }
+
+    /// The service manager connecting remotes at login.
+    fn login_manager(&self) -> anyhow::Result<login::Manager> {
+        match &self.login {
+            Some(manager) => Ok(manager.clone()),
+            None => login::Manager::user(),
+        }
+    }
+
+    /// sshfs as it runs at login: with the ssh options key login is set up
+    /// with.
+    fn sshfs(&self) -> sshfs::Sshfs {
+        sshfs::Sshfs {
+            askpass: self.keys.ssh.askpass.clone(),
+            ssh_options: self.keys.ssh.options.clone(),
+            ssh_config: self.keys.ssh.config.clone(),
+            ..sshfs::Sshfs::default()
         }
     }
 
@@ -516,6 +571,19 @@ impl Remotes {
                         .entry(host.clone())
                         .or_insert_with(|| lan::local(&host));
                 }
+                // Which of them connect at login: their manager's files.
+                let at_login = this.login_manager().map_or_else(
+                    |_| std::collections::HashSet::new(),
+                    |manager| {
+                        mounted
+                            .iter()
+                            .filter_map(|m| m.recognised.address.clone())
+                            .chain(servers.iter().map(|s| s.address.clone()))
+                            .filter_map(|a| configure::login_id(&a))
+                            .filter(|id| manager.installed(id))
+                            .collect()
+                    },
+                );
                 {
                     let mut state = this.state.lock();
                     if !current(&state) {
@@ -526,6 +594,7 @@ impl Remotes {
                     }
                     state.servers = servers;
                     state.local = local;
+                    state.at_login = at_login;
                 }
                 if let Some(app) = weak.upgrade() {
                     this.publish(&app);
@@ -717,6 +786,11 @@ impl Remotes {
                 .menu
                 .extend(address.and_then(|a| forget_item(a, &remembered)));
             place.menu.extend(address.and_then(options_item));
+            if let Some(address) = address {
+                place
+                    .menu
+                    .extend(configure::server_items(address, &state.at_login));
+            }
             if let Some(name) = address.and_then(configure::remote_name) {
                 let kind = state
                     .servers
@@ -752,6 +826,9 @@ impl Remotes {
                 .map(|s| (*s).to_owned());
             place.menu.extend(forget_item(&server.address, &remembered));
             place.menu.extend(options_item(&server.address));
+            place
+                .menu
+                .extend(configure::server_items(&server.address, &state.at_login));
             if let Some(name) = configure::remote_name(&server.address) {
                 place.menu.extend(configure::menu_items(
                     name,
