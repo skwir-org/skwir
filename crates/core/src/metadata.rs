@@ -106,6 +106,25 @@ pub fn tag_within(tag: &str, category: &str) -> bool {
     tag_under(tag, category).is_some()
 }
 
+/// `tags` with `from` renamed `to`, or taken away without one; a tag met
+/// twice (the file had both) is kept once, where it came first. A category
+/// takes what is within it along: `Places` renamed `Lieux` makes
+/// `Places/France` `Lieux/France`, and removed takes it away.
+pub fn renamed_tags(tags: &[String], from: &str, to: Option<&str>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for tag in tags {
+        let tag = match (tag_under(tag, from), to) {
+            (None, _) => tag.clone(),
+            (Some(rest), Some(to)) => format!("{to}{rest}"),
+            (Some(_), None) => continue,
+        };
+        if !out.iter().any(|t| same_tag(t, &tag)) {
+            out.push(tag);
+        }
+    }
+    out
+}
+
 /// The setting where the tags plugin keeps the categories that hold one
 /// tag at a time (`Status`: `Status/Draft` or `Status/Final`): a field of
 /// the file, whose value is the tag within it. The UI reads it to show

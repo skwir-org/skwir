@@ -61,12 +61,30 @@ pub struct TagChange {
     /// The categories holding one tag at a time when the plan was made.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exclusive: Vec<String>,
+    /// Tags renamed (a category with what is within it), or taken away,
+    /// first, on what the file holds then: a tag renamed everywhere
+    /// leaves what else the file was given or lost since the plan was
+    /// made (`metadata::renamed_tags`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rename: Vec<TagRename>,
+}
+
+/// A tag renamed `to`, or taken away when `None`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TagRename {
+    pub from: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
 }
 
 impl TagChange {
     /// The tags a file holding `current` has once it is made.
     pub fn applied(&self, current: &[String]) -> Vec<String> {
-        let kept: Vec<String> = current
+        let mut renamed = current.to_vec();
+        for r in &self.rename {
+            renamed = crate::metadata::renamed_tags(&renamed, &r.from, r.to.as_deref());
+        }
+        let kept: Vec<String> = renamed
             .iter()
             .filter(|t| {
                 !self
@@ -283,6 +301,12 @@ impl SetNotes {
         }
         if let Some(change) = &self.change_tags {
             let mut said = Vec::new();
+            for r in &change.rename {
+                said.push(match &r.to {
+                    Some(to) => format!("rename the tag “{}” to “{to}” on “{name}”", r.from),
+                    None => format!("take {} off “{name}”", r.from),
+                });
+            }
             if !change.add.is_empty() {
                 said.push(format!("tag “{name}” {}", change.add.join(", ")));
             }
@@ -293,6 +317,7 @@ impl SetNotes {
             }
             let will = said.join(" and ");
             let did = will
+                .replacen("rename ", "renamed ", 1)
                 .replacen("tag “", "tagged “", 1)
                 .replacen("take ", "took ", 1);
             return (will, did, keys::TAGS);

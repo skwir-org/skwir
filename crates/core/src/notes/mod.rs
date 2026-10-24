@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::cache::CacheSlot;
 use crate::entry::{EntryId, FileId};
 use crate::metadata::{Listed, same_tag};
-pub use edit::{RestoreNotes, SetNotes, TagChange};
+pub use edit::{RestoreNotes, SetNotes, TagChange, TagRename};
 use raw::RawKey;
 
 /// A tag, as spelled, and the color a file gives it (a palette name of

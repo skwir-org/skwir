@@ -325,8 +325,8 @@ fn edit_plan(app: &App, vocabulary: &Arc<Vocabulary>, a: EditArgs) -> anyhow::Re
     let change = skwir_core::notes::TagChange {
         add: add.clone(),
         remove: remove.clone(),
-        within: Vec::new(),
         exclusive,
+        ..Default::default()
     };
     per_entry(
         app.targets(a.pane, a.entries)?,

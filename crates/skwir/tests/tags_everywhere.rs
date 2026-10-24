@@ -785,3 +785,46 @@ fn a_field_holds_one_value_and_follows_its_category() {
     assert_eq!(read_tags(&file), ["work", "State/Final"]);
     assert_eq!(fields(), ["Status"]);
 }
+
+/// A tag renamed everywhere changes what each file holds when the plan is
+/// applied: what another application gave a file or took from it while
+/// the plan waited for review stays so (notes.md, "Writing").
+#[cfg(unix)]
+#[test]
+fn a_rename_reviewed_late_keeps_what_files_got_or_lost_meanwhile() {
+    let tmp = home_tempdir();
+    let root = tmp.path().join("it's home");
+    std::fs::create_dir_all(&root).unwrap();
+    for (name, t) in [
+        ("a.txt", &["Places/France", "x"][..]),
+        ("Été b.txt", &["places"][..]),
+    ] {
+        std::fs::write(root.join(name), b"x").unwrap();
+        write_tags(&root.join(name), &tags(t)).unwrap();
+    }
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    app.plugins
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
+    let at = |name: &str| read_tags(&root.join(name));
+    app.dispatch(&Invocation::with_args(
+        "tags.rename",
+        &serde_json::json!({
+            "tag": "Places",
+            "to": "Lieux",
+            "root": PathArg::from(root.as_path()),
+        }),
+    ))
+    .unwrap();
+    let plan = proposal(&app);
+    assert_eq!(plan.steps.len(), 2);
+    // Meanwhile: one file gets a tag and loses one, the other gets one
+    // within the category renamed.
+    write_tags(&root.join("a.txt"), &tags(&["Places/France", "urgent"])).unwrap();
+    write_tags(&root.join("Été b.txt"), &tags(&["places", "Places/Italy"])).unwrap();
+    let r = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    assert_eq!(at("a.txt"), ["Lieux/France", "urgent"]);
+    assert_eq!(at("Été b.txt"), ["Lieux", "Lieux/Italy"]);
+}

@@ -11,31 +11,12 @@ use skwir_core::app::{App, NotifyLevel};
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::{ListingEvent, Location};
-use skwir_core::metadata::{same_tag, tag_leaf, tag_parent, tag_under, tag_within};
+use skwir_core::metadata::{same_tag, tag_leaf, tag_parent, tag_within};
 use skwir_core::op::{EntryRef, Plan};
 use skwir_core::os_path::PathArg;
 use skwir_core::scheduler::Priority;
 
 use skwir_core::notes::parse_tags;
-
-/// `tags` with `from` renamed `to`, or taken away without one; a tag met
-/// twice (the file had both) is kept once, where it came first. A category
-/// takes what is within it along: `Places` renamed `Lieux` makes
-/// `Places/France` `Lieux/France`, and removed takes it away.
-pub fn renamed(tags: &[String], from: &str, to: Option<&str>) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for tag in tags {
-        let tag = match (tag_under(tag, from), to) {
-            (None, _) => tag.clone(),
-            (Some(rest), Some(to)) => format!("{to}{rest}"),
-            (Some(_), None) => continue,
-        };
-        if !out.iter().any(|t| same_tag(t, &tag)) {
-            out.push(tag);
-        }
-    }
-    out
-}
 
 /// Tags renamed (`from`, several merging) to `to`, or taken away.
 #[derive(Clone, Debug)]
@@ -300,19 +281,31 @@ fn start_all(
                     }
                 }
             }
+            // The change, applied to what each file holds when its step
+            // is: what else it was given or lost meanwhile stays
+            // (notes.md, "Writing").
+            let change = skwir_core::notes::TagChange {
+                rename: renames
+                    .iter()
+                    .flat_map(|r| {
+                        r.from.iter().map(|from| skwir_core::notes::TagRename {
+                            from: from.clone(),
+                            to: r.to.clone(),
+                        })
+                    })
+                    .collect(),
+                ..Default::default()
+            };
             let mut plan = Plan::new(title);
             let mut merged = 0;
             for r in files {
+                // Read to leave out a file it would not change, and to say
+                // how many it merges.
                 let current = app
                     .notes
                     .read_path(&r.path, &app.notes.policy())
                     .tag_names();
-                let mut changed = current.clone();
-                for rename in &renames {
-                    for tag in &rename.from {
-                        changed = renamed(&changed, tag, rename.to.as_deref());
-                    }
-                }
+                let changed = change.applied(&current);
                 if changed == current {
                     continue;
                 }
@@ -321,7 +314,7 @@ fn start_all(
                 if changed.len() < current.len() && renames.iter().all(|r| r.to.is_some()) {
                     merged += 1;
                 }
-                plan.push(app.notes.edit(r).tags(changed));
+                plan.push(app.notes.edit(r).change_tags(change.clone()));
             }
             let n = plan.steps.len();
             if n > 0 {
@@ -361,6 +354,7 @@ fn start_all(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use skwir_core::metadata::renamed_tags as renamed;
 
     fn tags(t: &[&str]) -> Vec<String> {
         t.iter().map(|&s| s.to_owned()).collect()

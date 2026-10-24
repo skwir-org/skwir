@@ -53,7 +53,9 @@ registered in `App::notes` by its plugin); all share one model,
   in UTF-16) leaves it alone and keeps nothing of it for the undo: the
   other stores are written.
 - An edit of several files applies the change (`tags.edit`: add these,
-  remove those), never a list written over each file.
+  remove those; a tag renamed everywhere, `TagChange::rename`), to what
+  each file holds when its step is applied, never a list written over
+  each file.
 - Commands take `entries`, so Properties and the tag editor act on what they
   showed, not on the selection at the time.
 - Stores that disagree are merged against what Skwir last wrote (a
