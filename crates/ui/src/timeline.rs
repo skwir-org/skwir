@@ -331,10 +331,19 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let info = match (&t.histogram, t.hover) {
         (Some(h), Some(i)) if i < h.bars.len() => {
             let b = &h.bars[i];
-            format!(
-                "{} → {} · {} · {}",
+            // `end` is the first instant of the day after the bar's last:
+            // its last day holds the instant before.
+            let (first, last) = (
                 format::day(epoch(b.start)),
-                format::day(epoch(b.end)),
+                format::day(epoch(b.end.saturating_sub(1).max(b.start))),
+            );
+            let days = if first == last {
+                first
+            } else {
+                format!("{first} → {last}")
+            };
+            format!(
+                "{days} · {} · {}",
                 format::count(usize::try_from(b.count).unwrap_or(usize::MAX), "file"),
                 format::size(b.bytes)
             )
