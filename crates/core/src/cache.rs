@@ -39,18 +39,25 @@ impl Cache {
     }
 
     /// The cache the app uses in `base`, skwir's cache folder: the folder
-    /// [`LAYOUT`] names in it, made when something is first cached. What
-    /// else `base` holds, an older layout's or a cache from before layouts
-    /// were named, is deleted on a thread of its own, so starting never
-    /// waits for it.
+    /// [`LAYOUT`] names in it, made when something is first cached. An
+    /// older layout's folder there is deleted on a thread of its own, so
+    /// starting never waits for it. Nothing else is: what else `base`
+    /// holds is another's (the media worker's plugin registry), and a
+    /// newer layout's is a newer skwir's, run again later.
     pub fn open(base: impl Into<PathBuf>) -> Self {
         let base = base.into();
-        let layout = LAYOUT.to_string();
+        let older = |entry: &std::fs::DirEntry| {
+            entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.parse::<u32>().ok())
+                .is_some_and(|layout| layout < LAYOUT)
+        };
         let stale: Vec<PathBuf> = std::fs::read_dir(&base)
             .map(|entries| {
                 entries
                     .flatten()
-                    .filter(|entry| entry.file_name() != *layout)
+                    .filter(older)
                     .map(|entry| entry.path())
                     .collect()
             })
@@ -72,7 +79,7 @@ impl Cache {
                     }
                 });
         }
-        Cache::new(base.join(layout))
+        Cache::new(base.join(LAYOUT.to_string()))
     }
 
     /// Delete everything. Always safe.
@@ -251,20 +258,24 @@ mod tests {
     fn what_older_layouts_left_goes_and_this_one_stays() {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path().join("skwir");
-        std::fs::create_dir_all(base.join("tags/ab")).unwrap();
-        std::fs::write(base.join("tags/ab/cd"), b"of no layout").unwrap();
-        std::fs::write(base.join("stray"), b"").unwrap();
+        let older = base.join((LAYOUT - 1).to_string());
+        std::fs::create_dir_all(older.join("tags/ab")).unwrap();
+        std::fs::write(older.join("tags/ab/cd"), b"of an older layout").unwrap();
+        // Another's, and a newer skwir's: kept.
+        std::fs::create_dir_all(base.join("gstreamer")).unwrap();
+        std::fs::write(base.join("gstreamer/registry-x86_64.bin"), b"").unwrap();
+        let newer = base.join((LAYOUT + 1).to_string());
+        std::fs::create_dir_all(&newer).unwrap();
         let cache = Cache::open(&base);
         assert_eq!(cache.root(), base.join(LAYOUT.to_string()));
         assert!(!cache.root().exists(), "made when something is cached");
         cache.namespace("tags").put(b"key", b"kept").unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        while (base.join("tags").exists() || base.join("stray").exists())
-            && std::time::Instant::now() < deadline
-        {
+        while older.exists() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        assert!(!base.join("tags").exists() && !base.join("stray").exists());
+        assert!(!older.exists());
+        assert!(base.join("gstreamer/registry-x86_64.bin").is_file() && newer.is_dir());
         assert_eq!(
             Cache::open(&base).namespace("tags").get(b"key").as_deref(),
             Some(&b"kept"[..]),
