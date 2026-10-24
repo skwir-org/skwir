@@ -16,8 +16,9 @@ use std::time::{Duration, Instant};
 use skwir_core::app::{App, AppConfig};
 use skwir_core::command::Invocation;
 use skwir_core::form::{Answer, Asked, Kind, Values};
+use skwir_plugin_remote::address::Address;
 use skwir_plugin_remote::connector::Connector;
-use skwir_plugin_remote::passwords::Keyring;
+use skwir_plugin_remote::passwords::{self, Keyring};
 use skwir_plugin_remote::rclone::Rclone;
 use skwir_plugin_remote::{RemotePlugin, Remotes};
 use std::sync::Mutex;
@@ -214,15 +215,18 @@ impl Keyring for TestKeyring {
 }
 
 /// The app with the remote plugin, rclone given `config` alone, the
-/// password of an encrypted one kept in `keyring`.
+/// password of an encrypted one and servers' passwords kept in `keyring`.
 fn app_with_rclone(base: &Path, config: &Path, keyring: Arc<TestKeyring>) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let servers: Arc<dyn Keyring> = keyring.clone();
     let rclone = Rclone {
         config: Some(config.to_path_buf()),
         askpass: Some(PathBuf::from(env!("CARGO_BIN_EXE_skwir"))),
         keyring: Some(keyring),
     };
-    let remotes = Remotes::with(vec![Arc::new(rclone.clone())]).with_rclone(rclone);
+    let remotes = Remotes::with(vec![Arc::new(rclone.clone())])
+        .with_rclone(rclone)
+        .with_keyring(servers);
     app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
     app
 }
@@ -1127,7 +1131,8 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
         std::env::set_var("XDG_DATA_HOME", base.join("data"));
     }
     let config = base.join("rclone.conf");
-    let app = app_with_rclone(&base, &config, Arc::default());
+    let keyring = Arc::new(TestKeyring::default());
+    let app = app_with_rclone(&base, &config, Arc::clone(&keyring));
     app.plugins
         .add(Arc::new(skwir_plugin_places::PlacesPlugin::default()), &app);
     app.settings.set(
@@ -1311,7 +1316,50 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
             .ends_with("in KDE's network folders"),
         "{record}"
     );
-    // Removed where it is kept, once confirmed.
+    // A password Skwir keeps for its server (the user's, as on a
+    // connection's Remember) is forgotten from its line, and goes with the
+    // last server that needs it.
+    let shared = Address::parse(&id).unwrap();
+    let key = passwords::key(&shared, passwords::user_of(&shared).as_deref());
+    let remember = || {
+        keyring.keep(&key, "Skwir: a test", "it's s3cret").unwrap();
+        app.settings.set(
+            "remote.remembered",
+            toml::Value::Array(vec![toml::Value::String(key.clone())]),
+        );
+    };
+    let remembered =
+        |app: &App| -> Vec<String> { app.settings.get("remote.remembered").unwrap_or_default() };
+    remember();
+    let record = record_of(&app, &id, 30);
+    let forget = record["actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|a| a["label"] == "Forget Password")
+        .unwrap_or_else(|| panic!("{record}"))
+        .clone();
+    assert_eq!(forget["args"]["server"], key.as_str());
+    app.dispatch(&Invocation::with_args(
+        forget["command"].as_str().unwrap(),
+        &forget["args"],
+    ))
+    .unwrap();
+    until_said(&app, 30, "The password is forgotten");
+    assert!(keyring.own(&key).is_none() && remembered(&app).is_empty());
+    let record = record_of(&app, &id, 30);
+    assert!(
+        record["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|a| a["label"] != "Forget Password"),
+        "{record}"
+    );
+    remember();
+
+    // Removed where it is kept, once confirmed; its password stays, which
+    // “Ünïcode files” needs, on the same server as the same user.
     app.dispatch(&Invocation::with_args(
         "remote.remove_server",
         &serde_json::json!({ "id": id }),
@@ -1319,9 +1367,15 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
     .unwrap();
     let confirm = window.form(30);
     assert_eq!(confirm.form.title, "Remove “Shared”?");
+    assert!(
+        !confirm.form.intro.contains("password"),
+        "{}",
+        confirm.form.intro
+    );
     window.accept(&confirm, &[]);
     until_said(&app, 30, "“Shared” is removed");
     assert!(!entry.exists(), "its desktop entry gone");
+    assert_eq!(keyring.own(&key).as_deref(), Some("it's s3cret"));
 
     // A remote folder bookmarked (another file manager's) made a server:
     // offered in its place's menu, its bookmark then taken out.
@@ -1367,6 +1421,36 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
         panic!("a menu");
     };
     assert_eq!(menu["items"], serde_json::json!([]));
+
+    // The last server on it removed, its password goes too, said first.
+    for (address, name, last) in [
+        (&other, "It's bookmarked", false),
+        (&moved, "Ünïcode files", true),
+    ] {
+        app.dispatch(&Invocation::with_args(
+            "remote.remove_server",
+            &serde_json::json!({ "id": address }),
+        ))
+        .unwrap();
+        let confirm = window.form(30);
+        assert_eq!(confirm.form.title, format!("Remove “{name}”?"));
+        assert_eq!(
+            confirm
+                .form
+                .intro
+                .contains("the password it keeps for it in the keyring"),
+            last,
+            "{}",
+            confirm.form.intro
+        );
+        window.accept(&confirm, &[]);
+        until_said(&app, 30, &format!("“{name}” is removed"));
+    }
+    assert!(
+        keyring.own(&key).is_none(),
+        "forgotten with its last server"
+    );
+    assert!(remembered(&app).is_empty());
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }

@@ -4499,3 +4499,20 @@ overnight: the review's remote items, then what the servers' work left.
   in it); the window's test of a WebDAV address now mounts the folder
   asked. An address naming a file, not a folder, is taken for a share
   and fails to mount, as an NFS one does.
+- **A removed server's password goes with it.** Removing a server took
+  its mount options and its Connect at Login along, and left the
+  password Skwir kept for it in the keyring, which only a refusal at the
+  next prompt or the keyring's own window took out. It goes now with the
+  last server that needs it (the same server, as the same user), the
+  confirmation saying so; one another server still needs stays. Each
+  server's line in Settings › Network gains Forget Password where Skwir
+  keeps one, as its sidebar menu had; Settings is told when a password is
+  kept or forgotten. Found on the way: which servers still need it was
+  read from the state a refresh had yet to bring, so the last server
+  removed right after another kept its password; the servers kept by
+  address are read as they are now. Checked by `remote_configs`' test of
+  servers added by their address, with a keyring of the test's own
+  (never the desktop's): a password kept for the server, forgotten from
+  its line; kept again, staying while another server on it, as the same
+  user, is removed; forgotten with the last one, its confirmation saying
+  so.

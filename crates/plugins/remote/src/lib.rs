@@ -81,7 +81,7 @@ const THUMBNAILS: &str = "remote.thumbnails";
 const CHOSEN: &str = "remote.chosen";
 /// The servers whose password Skwir keeps in the keyring, by their key
 /// (`passwords::key`): never a password (ADR-082).
-const REMEMBERED: &str = "remote.remembered";
+pub(crate) const REMEMBERED: &str = "remote.remembered";
 
 /// The tools, in the order the user chose by default (2026-10-20: sshfs
 /// first for SFTP, then GVfs, rclone, the system's mounts), KIO after GVfs
@@ -324,7 +324,7 @@ impl Remotes {
             .connect_with(address, &options, &asked, cancel)
             .map_err(|error| anyhow::anyhow!("{error:#}"))?;
         if let Some(noted) = keyed.served() {
-            note_remembered(app, &noted);
+            self.note_remembered(app, &noted);
         }
         Ok(connected)
     }
@@ -961,10 +961,25 @@ fn options_item(address: &Address) -> Option<skwir_core::registry::MenuItem> {
     })
 }
 
-/// Note in the plugin's data that the server keyed in `noted` has a
-/// password of Skwir's kept, or no longer (ADR-082): its key alone.
+/// The servers whose password Skwir keeps in the keyring, by their key
+/// (`passwords::key`, ADR-082).
+pub(crate) fn remembered(app: &App) -> Vec<String> {
+    app.settings.get(REMEMBERED).unwrap_or_default()
+}
+
+impl Remotes {
+    /// Note in the plugin's data that the server keyed in `noted` has a
+    /// password of Skwir's kept, or no longer (ADR-082): its key alone.
+    /// Settings' list is told: a server's line forgets it.
+    pub(crate) fn note_remembered(&self, app: &App, noted: &passwords::Noted) {
+        note_remembered(app, noted);
+        self.records.changed();
+    }
+}
+
+/// [`Remotes::note_remembered`], the list unsaid.
 fn note_remembered(app: &App, noted: &passwords::Noted) {
-    let mut remembered: Vec<String> = app.settings.get(REMEMBERED).unwrap_or_default();
+    let mut remembered = remembered(app);
     match noted {
         passwords::Noted::Kept(key) if !remembered.contains(key) => remembered.push(key.clone()),
         passwords::Noted::Forgot(key) => remembered.retain(|k| k != key),
@@ -1295,7 +1310,7 @@ impl Plugin for RemotePlugin {
                         let Some(app) = weak.upgrade() else { return };
                         match remotes.keyring.forget(&args.server) {
                             Ok(()) => {
-                                note_remembered(&app, &passwords::Noted::Forgot(args.server));
+                                remotes.note_remembered(&app, &passwords::Noted::Forgot(args.server));
                                 app.notify(NotifyLevel::Info, "The password is forgotten");
                             }
                             Err(error) => app.notify(

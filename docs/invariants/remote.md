@@ -393,7 +393,13 @@ ADR-077 (which revises ADR-021).
   each line says where it is kept, and does what its menu does
   (`actions`); Edit and Remove are left out where another program
   changes it (`fixed`). Removing a server takes its mount options and its
-  entry at login along, where no other server kept shares its top.
+  entry at login along, where no other server kept shares its top, and
+  the password Skwir keeps for it in the keyring, where no other server
+  needs it (the same server, as the same user: the servers kept by
+  address read as they are then, never the state a refresh has yet to
+  bring), its confirmation saying so. A line forgets that password as
+  its menu does (Forget Password). Settings is told when one is kept or
+  forgotten (`Remotes::note_remembered`).
 - The configuration's password: the keyring's (`rclone:configuration`)
   where the user kept it, else asked of the window (`ConfigAsk`, through
   rclone's `--password-command`); never asked for a listing nobody asked

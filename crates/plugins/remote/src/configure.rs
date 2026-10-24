@@ -138,10 +138,12 @@ pub(crate) fn kept_items(address: &Address) -> Vec<MenuItem> {
 
 /// What a server's line in Settings does beside Edit and Remove, as its
 /// menu does: Test (rclone's), Mount Options, Connect at Login, Set Up Key
-/// Login, Sign In Again.
+/// Login, Sign In Again, Forget Password where Skwir keeps one
+/// (`remembered`, by key).
 fn record_actions(
     server: &crate::connector::Server,
     at_login: &std::collections::HashSet<String>,
+    remembered: &[String],
 ) -> Vec<serde_json::Value> {
     let action = |label: &str, command: &str, args: serde_json::Value| serde_json::json!({ "label": label, "command": command, "args": args });
     let top = server.address.top();
@@ -184,6 +186,17 @@ fn record_actions(
             "Sign In Again…",
             "remote.reconnect",
             serde_json::json!({ "id": server.address.host }),
+        ));
+    }
+    let key = crate::passwords::key(
+        &server.address,
+        crate::passwords::user_of(&server.address).as_deref(),
+    );
+    if remembered.contains(&key) {
+        actions.push(action(
+            "Forget Password",
+            "remote.forget_password",
+            serde_json::json!({ "server": key }),
         ));
     }
     actions
@@ -337,10 +350,15 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             "remote.server_records",
             "Servers",
             "Every server as Settings lists it: each one's name, kind and where it is kept, what its line does, and whether Skwir changes it (`fixed`: another program does)",
-            move |_, _| {
-                let state = remotes_.state.lock();
-                let records: Vec<serde_json::Value> = state
-                    .servers
+            move |_, app| {
+                // What the lines say reads the user database (a password's
+                // key): not under the state's lock.
+                let (servers, at_login) = {
+                    let state = remotes_.state.lock();
+                    (state.servers.clone(), state.at_login.clone())
+                };
+                let remembered = crate::remembered(app);
+                let records: Vec<serde_json::Value> = servers
                     .iter()
                     .map(|server| {
                         let (id, name, kind) = match remote_name(&server.address) {
@@ -361,7 +379,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                             "id": id,
                             "name": name,
                             "kind": kind,
-                            "actions": record_actions(server, &state.at_login),
+                            "actions": record_actions(server, &at_login, &remembered),
                             "fixed": fixed,
                         })
                     })
@@ -1028,8 +1046,13 @@ fn remove_kept(
 ) -> anyhow::Result<()> {
     use skwir_core::form::{Answer, Form};
     let server = kept_at(remotes, address)?;
+    let password = if password_of(remotes, app, address).is_some() {
+        ", and the password it keeps for it in the keyring"
+    } else {
+        ""
+    };
     let form = Form::new(format!("Remove “{}”?", server.label), "Remove").intro(format!(
-        "Skwir forgets the server, kept {}: what it holds stays where it is, and adding it again brings it back.",
+        "Skwir forgets the server, kept {}{password}: what it holds stays where it is, and adding it again brings it back.",
         server.kept.said()
     ));
     if !matches!(app.fill(form, cancel), Some(Answer::Accepted(_))) {
@@ -1042,15 +1065,53 @@ fn remove_kept(
     Ok(())
 }
 
-/// What Skwir kept for the server at `address`, once it is removed: its
-/// mount options and its entry connecting it at login, where no other
-/// server kept shares its top. What fails is said, the removal done.
+/// The key of the password Skwir keeps in the keyring for `address`'s
+/// server, where it keeps one no other server kept needs (the same server,
+/// logged in as the same user). Reads the user database: on a worker.
+fn password_of(remotes: &Remotes, app: &App, address: &Address) -> Option<String> {
+    let key_of = |a: &Address| crate::passwords::key(a, crate::passwords::user_of(a).as_deref());
+    let key = key_of(address);
+    if !crate::remembered(app).contains(&key) {
+        return None;
+    }
+    // Those kept by address as they are now (a removal just made is not
+    // yet in the state, refreshed after), the tools' as last read.
+    let tools: Vec<Address> = remotes
+        .state
+        .lock()
+        .servers
+        .iter()
+        .filter(|s| !s.kept.by_address())
+        .map(|s| s.address.clone())
+        .collect();
+    let kept = crate::servers::listed(app).into_iter().map(|s| s.address);
+    let mut others = kept.chain(tools).filter(|a| a != address);
+    (!others.any(|a| key_of(&a) == key)).then_some(key)
+}
+
+/// What Skwir kept for the server at `address`, once it is removed: the
+/// password it keeps for it in the keyring, where no other server kept
+/// needs it; its mount options and its entry connecting it at login,
+/// where no other server kept shares its top. What fails is said, the
+/// removal done.
 fn forget_kept_for(
     remotes: &Remotes,
     app: &App,
     address: &Address,
     cancel: &skwir_core::cancel::CancelToken,
 ) {
+    if let Some(key) = password_of(remotes, app, address) {
+        match remotes.keyring.forget(&key) {
+            Ok(()) => remotes.note_remembered(app, &crate::passwords::Noted::Forgot(key)),
+            Err(error) => app.notify(
+                NotifyLevel::Warning,
+                format!(
+                    "The password Skwir keeps for {} stays in the keyring: {error:#}",
+                    address.top().label()
+                ),
+            ),
+        }
+    }
     let top = address.top();
     let shared = remotes
         .state
