@@ -682,7 +682,7 @@ impl Walk<'_> {
         if let Some(num_id) = effective.num_id.as_deref().filter(|id| *id != "0") {
             let level = effective.level.unwrap_or(0);
             if let Some(marker) = self.numbering.next(num_id, level, &self.styles) {
-                shape.list_depth = level + 1;
+                shape.list_depth = level.saturating_add(1);
                 shape.marker = (!marker.is_empty()).then_some(marker);
             }
         }

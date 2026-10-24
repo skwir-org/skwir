@@ -50,6 +50,10 @@ pub(crate) struct Shape {
 /// The largest indent kept, in ems: a margin, not a layout.
 const INDENT: f32 = 8.;
 
+/// The deepest list nesting kept: what Word (9 levels) and ODF (10) have.
+/// A document's own number for it is bounded here, whatever said it.
+const LIST_DEPTH: u32 = 10;
+
 /// A table row being written: its cells are ranges of one block's text.
 struct Row {
     header: bool,
@@ -137,6 +141,7 @@ impl Builder {
             shape.indent = 0.;
         }
         shape.indent = shape.indent.clamp(0., INDENT);
+        shape.list_depth = shape.list_depth.min(LIST_DEPTH);
         self.shape = shape;
         self.marked = false;
     }
@@ -506,6 +511,21 @@ mod tests {
             assert_eq!(blocks[0].text, format!("p{first} word"), "part {wanted}");
             assert_eq!(kept, wanted.min(2));
         }
+    }
+
+    #[test]
+    fn a_list_nests_no_deeper_than_documents_can() {
+        // A level a file names (Word's `w:ilvl`) indents by its depth.
+        let mut builder = Builder::new(0);
+        builder.paragraph(Shape {
+            marker: Some("1.".into()),
+            list_depth: u32::MAX,
+            ..Shape::default()
+        });
+        builder.text("deep", &Look::default(), None);
+        builder.body_end();
+        let (blocks, _) = builder.into_blocks();
+        assert_eq!(blocks[0].list_depth, LIST_DEPTH);
     }
 
     #[test]

@@ -484,7 +484,7 @@ impl Walk<'_> {
         list.counts[level] = match self.item_start.take() {
             Some(start) => start,
             None if list.counts[level] == 0 => definition.start.max(1),
-            None => list.counts[level] + 1,
+            None => list.counts[level].saturating_add(1),
         };
         for deeper in &mut list.counts[level + 1..] {
             *deeper = 0;
@@ -562,7 +562,7 @@ impl Walk<'_> {
         self.headings[index] = if self.headings[index] == 0 {
             definition.start.max(1)
         } else {
-            self.headings[index] + 1
+            self.headings[index].saturating_add(1)
         };
         for deeper in &mut self.headings[level..] {
             *deeper = 0;

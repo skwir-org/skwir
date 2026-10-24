@@ -673,3 +673,17 @@ fn a_conversion_kept_reads_back_as_it_was() {
     assert!(!cut && none.is_empty());
     assert!(super::converted_from(b"\x89PNG\r\n").is_none());
 }
+
+/// A list's number taken from the file, at the largest a file can say,
+/// is counted on without overflowing (a debug build panicked).
+#[test]
+fn an_open_document_list_counts_on_from_the_largest_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("counted.odt");
+    open_document(
+        &path,
+        r#"<text:list text:style-name="L1"><text:list-item text:start-value="4294967295"><text:p>Last</text:p></text:list-item><text:list-item><text:p>After</text:p></text:list-item></text:list>"#,
+    );
+    let read = odt::read(&path, 0, &CancelToken::new()).unwrap();
+    assert_eq!(texts(&read.blocks), ["Last", "After"]);
+}
