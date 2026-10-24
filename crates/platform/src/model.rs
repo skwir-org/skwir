@@ -245,10 +245,9 @@ fn draw_with(
     let side = side.clamp(16, 2048);
     // A line of what it measured, then the picture: a PNG of the side
     // asked, at most its pixels and what a PNG adds, past what helpers
-    // that answer in text may say. Or the mesh: two counts, three
-    // positions and a triangle's three indices a triangle at most.
+    // that answer in text may say. Or the mesh (`mesh_bytes`).
     let picture = u64::from(side) * u64::from(side) * 4 + (1 << 16);
-    let mesh = whole.map_or(0, |most| 8 + most as u64 * (3 * 12 + 12) + (1 << 16));
+    let mesh = whole.map_or(0, |most| mesh_bytes(most) + (1 << 16));
     let command = run
         .command
         .arg(&run.input)
@@ -316,6 +315,14 @@ fn draw_with(
     Ok(Drawn { shown, measures })
 }
 
+/// The most bytes a mesh of `most` triangles takes as the helper writes it
+/// (`mesh_from`): two counts, then a triangle's three positions (three
+/// `f32` each, where no triangle shares one), its three indices, and the
+/// three positions' colours (four bytes each).
+fn mesh_bytes(most: usize) -> u64 {
+    8 + most as u64 * (3 * 12 + 3 * 4 + 3 * 4)
+}
+
 /// The mesh the helper wrote (`--mesh`): two counts, then the positions
 /// and the triangles, all little-endian, then when `coloured` a colour a
 /// position (four bytes); no more than `most` triangles, each index naming
@@ -368,6 +375,32 @@ fn mesh_from(
 
 #[cfg(test)]
 mod tests {
+    /// A coloured mesh whose triangles share no position, the largest the
+    /// helper writes, is within what is read of it: the bound left the
+    /// colours out, and such a mesh failed instead of being shown.
+    #[test]
+    fn a_coloured_mesh_of_unshared_triangles_is_read_whole() {
+        let triangles = 4;
+        let positions = 3 * triangles;
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&u32::try_from(positions).unwrap().to_le_bytes());
+        bytes.extend_from_slice(&u32::try_from(triangles).unwrap().to_le_bytes());
+        for i in 0..positions {
+            for axis in 0..3 {
+                bytes.extend_from_slice(&((i * 3 + axis) as f32).to_le_bytes());
+            }
+        }
+        for i in 0..positions {
+            bytes.extend_from_slice(&u32::try_from(i).unwrap().to_le_bytes());
+        }
+        for _ in 0..positions {
+            bytes.extend_from_slice(&[200, 30, 30, 255]);
+        }
+        assert_eq!(bytes.len() as u64, super::mesh_bytes(triangles));
+        let mesh = super::mesh_from(&bytes, triangles, true).unwrap();
+        assert_eq!(mesh.triangles(), triangles);
+    }
+
     use super::*;
 
     fn model_naming(folder: &Path, uris: &[&str]) -> PathBuf {
