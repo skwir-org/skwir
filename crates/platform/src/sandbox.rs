@@ -41,6 +41,68 @@ const SYSTEM: &[&str] = &[
     "/var/cache/fontconfig",
 ];
 
+/// What an isolated program is handed of skwir's environment, as an
+/// allow-list: what finds programs and libraries (NixOS's loader for a
+/// program built elsewhere too), the language and the time zone, fonts
+/// and the system's data, the modules decoders load (a desktop
+/// thumbnailer's image loaders, `GStreamer`'s plugins), and the `PDFium`
+/// library skwir's PDF helper is told of. Nothing else of the session
+/// reaches it (ADR-045, 4): no token, no key's agent, no display, no
+/// session bus. The sandbox sets its home, cache and temporary folders,
+/// and a caller what its program is told besides.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const PASSED: &[&str] = &[
+    "PATH",
+    "LD_LIBRARY_PATH",
+    "NIX_LD",
+    "NIX_LD_LIBRARY_PATH",
+    "LANG",
+    "LANGUAGE",
+    "LOCPATH",
+    "TZ",
+    "TZDIR",
+    "FONTCONFIG_FILE",
+    "FONTCONFIG_PATH",
+    "XDG_DATA_DIRS",
+    "XDG_CONFIG_DIRS",
+    "GDK_PIXBUF_MODULE_FILE",
+    "GDK_PIXBUF_MODULEDIR",
+    "GST_PLUGIN_SYSTEM_PATH",
+    "GST_PLUGIN_SYSTEM_PATH_1_0",
+    "GST_PLUGIN_PATH",
+    "GST_PLUGIN_PATH_1_0",
+    "GST_PLUGIN_SCANNER",
+    "GST_PLUGIN_SCANNER_1_0",
+    "SKWIR_PDFIUM_LIBRARY",
+    "RUST_BACKTRACE",
+];
+
+/// Names passed by their start: the locale's categories (`LC_TIME`…) and
+/// NixOS's locale archives, one a version of its C library.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const PASSED_STARTS: &[&str] = &["LC_", "LOCALE_ARCHIVE"];
+
+/// And to a plugin that may use the network: where the certificates that
+/// vouch for servers are. Not a proxy's address, which can hold its
+/// password.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const PASSED_NETWORK: &[&str] = &["SSL_CERT_FILE", "SSL_CERT_DIR", "NIX_SSL_CERT_FILE"];
+
+/// `command` handed only what [`PASSED`] lets through of skwir's own
+/// environment (with `network`, [`PASSED_NETWORK`] too): what the caller
+/// sets on it after this, it is told.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn hand_environment(command: &mut Command, network: bool) {
+    command.env_clear();
+    command.envs(std::env::vars_os().filter(|(name, _)| {
+        name.to_str().is_some_and(|name| {
+            PASSED.contains(&name)
+                || PASSED_STARTS.iter().any(|start| name.starts_with(start))
+                || (network && PASSED_NETWORK.contains(&name))
+        })
+    }));
+}
+
 /// Whether a program can run isolated here: on Linux, whether bubblewrap
 /// is installed and can make its namespaces, which a container or a
 /// kernel that restricts them refuses; on macOS, whether `sandbox-exec`
@@ -307,7 +369,8 @@ fn bind_package_runtime(command: &mut Command, program: &Path) {
 }
 
 /// Bubblewrap: the system's folders read-only, the input at `/input`, the
-/// working folder at `/work`, nothing else; no network, no session. A
+/// working folder at `/work`, nothing else; no network, no session, of
+/// skwir's environment only what `PASSED` lets through. A
 /// program outside the system's folders is bound at its own path, and so
 /// is what it also reads (`readable`).
 #[cfg(target_os = "linux")]
@@ -320,6 +383,7 @@ fn isolated(
 ) -> anyhow::Result<Untrusted> {
     let bwrap = crate::process::required("bwrap")?;
     let mut command = Command::new(bwrap);
+    hand_environment(&mut command, false);
     command.args(["--unshare-all", "--die-with-parent", "--new-session"]);
     for system in SYSTEM {
         if Path::new(system).exists() {
@@ -368,17 +432,24 @@ fn isolated(
             "--setenv",
             "XDG_CACHE_HOME",
             "/work/cache",
+            // Folders of its own for what a program keeps (`dbus-daemon`,
+            // which LibreOffice's wrapper starts, looks for the user's in
+            // the password database without them, which the sandbox has
+            // not, and fails).
+            "--setenv",
+            "XDG_CONFIG_HOME",
+            "/work/config",
+            "--setenv",
+            "XDG_DATA_HOME",
+            "/work/data",
+            "--setenv",
+            "XDG_STATE_HOME",
+            "/work/state",
             // GIO reads files itself instead of asking gvfs over the
             // session bus, which is not there.
             "--setenv",
             "GIO_USE_VFS",
             "local",
-            "--unsetenv",
-            "DISPLAY",
-            "--unsetenv",
-            "WAYLAND_DISPLAY",
-            "--unsetenv",
-            "DBUS_SESSION_BUS_ADDRESS",
             "--",
         ])
         .arg(program);
@@ -493,7 +564,7 @@ fn isolated(
         std::os::unix::fs::symlink(&path, &link)?;
         also.push(path);
     }
-    for folder in ["home", "cache", "tmp"] {
+    for folder in ["home", "cache", "config", "data", "state", "tmp"] {
         std::fs::create_dir_all(work.join(folder))?;
     }
     // What it also reads, each a parameter of its own: a path is never
@@ -509,6 +580,7 @@ fn isolated(
             .map(|n| format!("(allow file-read* (subpath (param \"READABLE{n}\")))\n")),
     );
     let mut command = Command::new("/usr/bin/sandbox-exec");
+    hand_environment(&mut command, false);
     command.arg("-p").arg(profile);
     let named = [
         ("WORK".to_owned(), &work),
@@ -530,6 +602,9 @@ fn isolated(
         .current_dir(&work)
         .env("HOME", work.join("home"))
         .env("XDG_CACHE_HOME", work.join("cache"))
+        .env("XDG_CONFIG_HOME", work.join("config"))
+        .env("XDG_DATA_HOME", work.join("data"))
+        .env("XDG_STATE_HOME", work.join("state"))
         .env("TMPDIR", work.join("tmp"));
     Ok(Untrusted {
         command,
@@ -554,7 +629,8 @@ fn isolated(
 /// run isolated for as long as it serves: the system's programs and
 /// libraries readable, its own `folder` readable at its own path, its
 /// working folder `work` writable (its home, its cache, its current
-/// folder), nothing of the user's; no network unless `network`. It reads
+/// folder), nothing of the user's, of skwir's environment only what
+/// `PASSED` lets through; no network unless `network`. It reads
 /// files only through skwir, which hands it the bytes. An error where the
 /// system cannot isolate: such a plugin never runs otherwise.
 ///
@@ -594,6 +670,7 @@ fn plugin_isolated(
 ) -> anyhow::Result<Command> {
     let bwrap = crate::process::required("bwrap")?;
     let mut command = Command::new(bwrap);
+    hand_environment(&mut command, network);
     command.args(["--unshare-all", "--die-with-parent", "--new-session"]);
     if network {
         command.arg("--share-net");
@@ -631,15 +708,22 @@ fn plugin_isolated(
             "--setenv",
             "XDG_CACHE_HOME",
             "/work/cache",
+            // Folders of its own for what a program keeps (`dbus-daemon`,
+            // which LibreOffice's wrapper starts, looks for the user's in
+            // the password database without them, which the sandbox has
+            // not, and fails).
+            "--setenv",
+            "XDG_CONFIG_HOME",
+            "/work/config",
+            "--setenv",
+            "XDG_DATA_HOME",
+            "/work/data",
+            "--setenv",
+            "XDG_STATE_HOME",
+            "/work/state",
             "--setenv",
             "TMPDIR",
             "/tmp",
-            "--unsetenv",
-            "DISPLAY",
-            "--unsetenv",
-            "WAYLAND_DISPLAY",
-            "--unsetenv",
-            "DBUS_SESSION_BUS_ADDRESS",
             "--",
         ])
         .arg(program);
@@ -657,7 +741,7 @@ fn plugin_isolated(
     let work = std::fs::canonicalize(work)?;
     let folder = std::fs::canonicalize(folder)?;
     let program = std::fs::canonicalize(program)?;
-    for inside in ["home", "cache", "tmp"] {
+    for inside in ["home", "cache", "config", "data", "state", "tmp"] {
         std::fs::create_dir_all(work.join(inside))?;
     }
     // The converters' profile, the plugin's folder in place of an input,
@@ -667,6 +751,7 @@ fn plugin_isolated(
         profile.push_str("(allow network*)\n");
     }
     let mut command = Command::new("/usr/bin/sandbox-exec");
+    hand_environment(&mut command, network);
     command.arg("-p").arg(profile);
     for (name, value) in [
         ("WORK", &work),
@@ -683,6 +768,9 @@ fn plugin_isolated(
         .current_dir(&work)
         .env("HOME", work.join("home"))
         .env("XDG_CACHE_HOME", work.join("cache"))
+        .env("XDG_CONFIG_HOME", work.join("config"))
+        .env("XDG_DATA_HOME", work.join("data"))
+        .env("XDG_STATE_HOME", work.join("state"))
         .env("TMPDIR", work.join("tmp"));
     Ok(command)
 }
@@ -867,6 +955,69 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(work.path().join("out")).unwrap(),
             "its ownhidden\n"
+        );
+    }
+
+    /// Of skwir's environment, an isolated program and a plugin are handed
+    /// what they need to run (where programs are, the language), never the
+    /// rest: a token in the session is not theirs to read.
+    #[cfg(unix)]
+    #[test]
+    fn an_isolated_program_is_handed_only_what_it_needs_of_the_environment() {
+        if !available() {
+            eprintln!("nothing can isolate here");
+            return;
+        }
+        // SAFETY: nextest runs each test in a process of its own, and
+        // nothing else reads the environment before this.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("SKWIR_TEST_TOKEN", "a session's secret");
+            std::env::set_var("LC_TIME", "C.UTF-8");
+        }
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("sandbox-")
+            .tempdir_in(base)
+            .unwrap();
+        let input = dir.path().join("it's an input.txt");
+        std::fs::write(&input, "input").unwrap();
+        let folder = dir.path().join("plugin");
+        std::fs::create_dir(&folder).unwrap();
+        let script = folder.join("tell");
+        std::fs::write(&script, "#!/bin/sh\nenv > seen.txt\n").unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let seen = |mut command: Command, work: &Path| {
+            crate::process::run(
+                &mut command,
+                &skwir_core::CancelToken::new(),
+                std::time::Duration::from_secs(20),
+            )
+            .unwrap();
+            std::fs::read_to_string(work.join("seen.txt")).unwrap()
+        };
+        let work = dir.path().join("work");
+        std::fs::create_dir(&work).unwrap();
+        let mut run = command(&script, &input, &work).unwrap();
+        run.command.env("SKWIR_TEST_TOLD", "what the caller says");
+        let converter = seen(run.command, &work);
+        let work = dir.path().join("plugin work");
+        std::fs::create_dir(&work).unwrap();
+        let plugin = seen(plugin(&script, &folder, &work, false).unwrap(), &work);
+        for seen in [&converter, &plugin] {
+            assert!(!seen.contains("SKWIR_TEST_TOKEN"), "{seen}");
+            assert!(seen.lines().any(|line| line == "LC_TIME=C.UTF-8"), "{seen}");
+            assert!(seen.lines().any(|line| line.starts_with("PATH=")), "{seen}");
+        }
+        assert!(
+            converter
+                .lines()
+                .any(|line| line == "SKWIR_TEST_TOLD=what the caller says"),
+            "what its caller sets reaches it: {converter}"
         );
     }
 

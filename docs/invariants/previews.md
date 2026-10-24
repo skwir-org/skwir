@@ -101,6 +101,12 @@ A name that says nothing is not a binary file.
   helpers (the archive and model workers) run unisolated
   (`Otherwise::Run`).
 - A sandbox that started and failed is never retried outside it.
+- Of Skwir's environment, a sandboxed program (and a plugin from
+  outside) is handed only what `sandbox::PASSED` lets through: where
+  programs and libraries are, the language and the time zone, fonts, the
+  modules decoders load. What else its program is told, its caller sets
+  on the command. A variable a program needs is added there, never a
+  deny-list of the session's secrets.
 - Inside, the file is at `sandbox::inside_name`, never its own name; what
   a program would read from the name (a compressed file's one member) is
   passed with `--stem`.
@@ -440,7 +446,13 @@ A text document is read as its structure, or laid out as pages.
     block holding its mark (`inspector::page_starts`, built when a
     chapter arrives).
   - The page shown is the last to start at or above the top of the view,
-    read from the list's scroll, never measured.
+    read from the list's scroll, never measured; of pages starting in one
+    block, the first (`inspector::page_at`).
+  - Previous and next go by place, not by number (`page_step`): to the
+    nearest page starting in another block or chapter. Pages sharing the
+    shown page's block are where the view is; a mark reading mode did
+    not keep is skipped, and asked for by its label it leaves the view
+    where it is, never reads the chapter again.
   - A page in another chapter opens that chapter at its mark; a chapter
     reached by a link then shows only its number (`request.target` is
     cleared on arrival).
