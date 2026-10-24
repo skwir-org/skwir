@@ -34,6 +34,12 @@ use wasmtime::{Config, Engine, Store, StoreContextMut, StoreLimits, StoreLimitsB
 const FUEL: u64 = 20_000_000_000;
 /// The memory a module may grow to.
 const MEMORY: usize = 256 * 1024 * 1024;
+/// The elements one of its tables may grow to: a module's function table
+/// holds a few thousand. Wasmtime bounds none by default, so a module
+/// declaring a table of 2³² elements, filled at almost no fuel, took tens
+/// of gigabytes past `MEMORY`; at most 16 tables of these are a few tens
+/// of megabytes.
+const TABLE_ELEMENTS: usize = 1 << 18;
 
 /// The interfaces of the plugin world (`crates/plugin-api/wit`).
 const HOST: &str = "skwir:plugin/host@0.1.0";
@@ -224,6 +230,7 @@ fn serve(path: &std::path::Path, keep: Option<&std::path::Path>) -> anyhow::Resu
 fn limits() -> StoreLimits {
     StoreLimitsBuilder::new()
         .memory_size(MEMORY)
+        .table_elements(TABLE_ELEMENTS)
         .instances(16)
         .tables(16)
         .memories(4)
