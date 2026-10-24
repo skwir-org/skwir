@@ -774,7 +774,7 @@ mod tests {
         );
         assert_eq!(
             remote_of(&top("davs://cloud.example.com:8443/remote.php/webdav")).unwrap(),
-            ":webdav,url='https://cloud.example.com:8443':/"
+            ":webdav,url='https://cloud.example.com:8443':/remote.php/webdav/"
         );
         assert_eq!(remote_of(&top("sftp://me@h:2222/x")).unwrap(), ":sftp:");
         assert_eq!(

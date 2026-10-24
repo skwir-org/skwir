@@ -124,8 +124,10 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
     assert!(app.pump_until_complete(pane, Duration::from_secs(20)));
     let shown = app.pane_location(pane).unwrap();
     let folder = shown.path().unwrap();
-    assert!(folder.ends_with("sub folder"), "{}", folder.display());
     let remote = skwir_core::fs::reach::of(&folder).expect("a remote's");
+    // A WebDAV share is where its server serves it: the folder asked is
+    // what is mounted.
+    assert_eq!(remote.point, folder, "the folder asked, mounted");
     // Failed midway, the test lets go of it before its server stops: a
     // mount whose server is gone holds whatever looks into it.
     let _left = Unmounted(remote.point.clone());
@@ -4243,5 +4245,102 @@ fn a_server_that_stops_answering_holds_no_more_than_its_lane() {
     drop(sshd);
     // What the app writes as it ends goes before its folder does.
     drop(app);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// A WebDAV share is where its server serves it, its server's root often
+/// none (Nextcloud's `/remote.php/dav/files/…`; here rclone's
+/// `--baseurl`, under which alone it answers): its address opens through
+/// rclone and through GVfs, each mounting the share asked, its files
+/// there, and saying it is of that share.
+#[test]
+fn a_webdav_share_below_its_server_s_root_opens_where_it_is() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("dav-share");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(served_root.join("it's a folder")).unwrap();
+    std::fs::write(served_root.join("it's a folder/note é.txt"), "x").unwrap();
+    let served = Served::start(
+        "webdav",
+        &served_root,
+        &["--baseurl", "/remote.php/dav/files/me"],
+    );
+    let address = Address::parse(&format!(
+        "dav://127.0.0.1:{}/remote.php/dav/files/me/it's a folder",
+        served.port
+    ))
+    .unwrap();
+    let share = Address::parse(&format!(
+        "dav://127.0.0.1:{}/remote.php/dav/files/me/it's a folder/",
+        served.port
+    ))
+    .unwrap();
+    let ask: Arc<dyn Ask> = Arc::new(Answers::default());
+    // What the connector mounted (rclone: the share asked; GVfs: the
+    // collection its server serves, the share asked below it) holds the
+    // share's files where the address says.
+    let opened = |connector: &dyn Connector, mounted: &Address| {
+        let connected = connector
+            .connect(&address, &ask, &CancelToken::new())
+            .unwrap_or_else(|error| panic!("{}: {error:#}", connector.id()));
+        let left = Unmounted(connected.point.clone());
+        assert_eq!(
+            &connected.address,
+            mounted,
+            "{}: what it mounted",
+            connector.id()
+        );
+        let below = connected.address.below(&address).expect("the share in it");
+        let folder = connected
+            .point
+            .join(skwir_core::os_path::from_bytes(below.to_vec()));
+        let names: Vec<String> = std::fs::read_dir(&folder)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            names,
+            ["note é.txt"],
+            "{}: the share's files",
+            connector.id()
+        );
+        (connected, left)
+    };
+
+    let rclone = Rclone::default();
+    let (connected, left) = opened(&rclone, &share);
+    let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
+    let recognised = rclone.recognises(&remote).expect("rclone's");
+    rclone
+        .disconnect(&remote, &recognised, &CancelToken::new())
+        .expect("disconnect");
+    drop(left);
+
+    if let Some(package) = std::env::var_os("SKWIR_TEST_GVFS").map(PathBuf::from) {
+        let private = PrivateGvfs::start(&package, &base);
+        let gvfs = skwir_plugin_remote::gvfs::Gvfs {
+            env: private.env.clone(),
+            runtime: Some(private.runtime.clone()),
+            ..Default::default()
+        };
+        let served_from = Address::parse(&format!(
+            "dav://127.0.0.1:{}/remote.php/dav/files/me/",
+            served.port
+        ))
+        .unwrap();
+        let (connected, left) = opened(&gvfs, &served_from);
+        let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
+        let recognised = gvfs.recognises(&remote).expect("GVfs's");
+        gvfs.disconnect(&remote, &recognised, &CancelToken::new())
+            .expect("disconnect");
+        drop(left);
+        drop(private);
+    } else {
+        eprintln!("GVfs skipped: SKWIR_TEST_GVFS names no GVfs package");
+    }
+    drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }

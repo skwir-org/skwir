@@ -4484,3 +4484,18 @@ overnight: the review's remote items, then what the servers' work left.
   Wine (a share by its server's name refused at once, other calls
   running). No automount point could be made here: Linux's and macOS's
   real ones are not tried.
+- **A WebDAV share is where its server serves it.** A WebDAV address's
+  top was its server's root, which is often no share at all
+  (Nextcloud's are below `/remote.php/dav/files/`): Skwir asked rclone
+  and GVfs to mount the root, which such a server refuses, so the
+  address never opened. It keeps its whole path now, as an NFS export
+  does: rclone mounts the share asked, and GVfs, given it, mounts the
+  collection its server serves it in, the share below, as its mount
+  spec's prefix says. The kept address is the one typed. Checked by
+  `remote_folders`' new test against `rclone serve webdav --baseurl
+  /remote.php/dav/files/me` (nothing at its root): the address of a
+  folder there opens through rclone (mounted at that folder) and
+  through a GVfs of the test's own (mounted at the prefix, the folder
+  in it); the window's test of a WebDAV address now mounts the folder
+  asked. An address naming a file, not a folder, is taken for a share
+  and fails to mount, as an NFS one does.

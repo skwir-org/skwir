@@ -190,7 +190,6 @@ above; each with the design its fixer proposed):
   numbers through `f64`, as the formatted JSON did.
 - The tags index knows hidden files by a leading dot only (Windows'
   mark).
-- A WebDAV address's top is its server's root.
 - The window: a records save waiting on the keyring brings an old list
   back; the switch knob and the treemap's hatch take no theme token; a
   place's mosaic types its pictures by name; link fragments compared

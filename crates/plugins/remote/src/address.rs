@@ -231,12 +231,14 @@ impl Address {
 
     /// The server's address, at its top: what one mount of it holds,
     /// for the protocols whose mount is of the whole server (SFTP, FTP,
-    /// WebDAV, rclone's remote). An SMB share and an AFP volume are
-    /// mounted one at a time: their first part stays. An NFS export may
-    /// be of several parts (`/srv/photos`), which only the server says:
-    /// the whole path stays, and what a connector mounted for it (GVfs:
-    /// the export holding it; the system: that folder of it) says the
-    /// export ([`Connected::address`](crate::connector::Connected)).
+    /// rclone's remote). An SMB share and an AFP volume are mounted one at
+    /// a time: their first part stays. An NFS export may be of several
+    /// parts (`/srv/photos`), and a WebDAV share is where its server
+    /// serves it (`/remote.php/dav/files/me`, its root often no share at
+    /// all), which only the server says: the whole path stays, a folder,
+    /// and what a connector mounted for it (GVfs: the export or share
+    /// holding it; the system: that folder of it) says the export or
+    /// share ([`Connected::address`](crate::connector::Connected)).
     pub fn top(&self) -> Address {
         let mut top = self.clone();
         top.path = match self.scheme {
@@ -248,8 +250,10 @@ impl Address {
                     [b"/".as_slice(), share, b"/"].concat()
                 }
             }
-            Scheme::Nfs if !self.path.ends_with(b"/") => [self.path.as_slice(), b"/"].concat(),
-            Scheme::Nfs => self.path.clone(),
+            Scheme::Nfs | Scheme::Dav | Scheme::Davs if !self.path.ends_with(b"/") => {
+                [self.path.as_slice(), b"/"].concat()
+            }
+            Scheme::Nfs | Scheme::Dav | Scheme::Davs => self.path.clone(),
             _ => b"/".to_vec(),
         };
         top
@@ -581,6 +585,13 @@ mod tests {
         assert_eq!(nfs.top().path, b"/srv/photos/");
         assert_eq!(nfs.top().below(&nfs), Some(b"".as_slice()));
         assert_eq!(Address::parse("nfs://nas/").unwrap().top().path, b"/");
+        // So may a WebDAV share, its server's root often none.
+        let dav = Address::parse("davs://me@cloud.example/remote.php/dav/files/me").unwrap();
+        assert_eq!(dav.top().path, b"/remote.php/dav/files/me/");
+        let below =
+            Address::parse("davs://me@cloud.example/remote.php/dav/files/me/It's 2024").unwrap();
+        assert_eq!(dav.top().below(&below), Some(b"It's 2024".as_slice()));
+        assert_eq!(Address::parse("dav://nas:8080/").unwrap().top().path, b"/");
         // A port not the usual one is said; the usual one is not.
         let label = |text: &str| Address::parse(text).unwrap().label();
         assert_eq!(label("dav://127.0.0.1:8080/"), "127.0.0.1:8080");

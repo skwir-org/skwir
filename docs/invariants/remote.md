@@ -269,11 +269,14 @@ ADR-077 (which revises ADR-021).
   is let go of only when it answers "not connected"; a live one is never
   unmounted under what uses it.
 - An address's top is what one mount of it holds (`Address::top`): the
-  server for SFTP, FTP, WebDAV and rclone's remotes, a bucket for S3, a
-  share for SMB, a volume for AFP. An NFS export may be of several parts (`/srv/photos`),
-  which only the server says: an NFS address keeps its whole path, and
-  the connector says the export from what it mounted
-  (`Connected::address`: GVfs's mount spec). An address's path holds no
+  server for SFTP, FTP and rclone's remotes, a bucket for S3, a share
+  for SMB, a volume for AFP. An NFS export may be of several parts
+  (`/srv/photos`), and a WebDAV share is where its server serves it
+  (`/remote.php/dav/files/me`, the server's root often no share): only
+  the server says, so such an address keeps its whole path, a folder,
+  and the connector says the export or share from what it mounted
+  (`Connected::address`: GVfs's mount spec, whose WebDAV prefix is the
+  collection the server serves the path in). An address's path holds no
   `.` or `..` (`Address::parse`), and what it names below a mount is
   joined to its point name by name, never above it.
 - A remote folder is named by its address where the user reads or keeps
