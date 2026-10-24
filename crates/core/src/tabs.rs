@@ -48,6 +48,14 @@ struct ClosedPane {
     selection: Selection,
 }
 
+impl ClosedPane {
+    /// Where in its history it was, within it: a pane is recorded with a
+    /// history (`close_tab`), never an empty one.
+    fn pos(&self) -> usize {
+        self.history_pos.min(self.history.len().saturating_sub(1))
+    }
+}
+
 /// The tabs closed last, newest last.
 #[derive(Default)]
 pub struct Closed {
@@ -244,7 +252,10 @@ impl App {
             if !p.is_dormant() {
                 return Ok(());
             }
-            (p.history[p.history_pos].clone(), p.take_restore_selection())
+            let Some(location) = p.shown().cloned() else {
+                return Ok(());
+            };
+            (location, p.take_restore_selection())
         };
         let shown = self.wake_pane(pane, &location, {
             let restore = restore.clone();
@@ -382,13 +393,13 @@ impl App {
                 closed
                     .panes
                     .iter()
-                    .map(|p| (p.history[p.history_pos].clone(), p.sort))
+                    .map(|p| (p.history[p.pos()].clone(), p.sort))
                     .collect(),
             );
             for (id, record) in ids.iter().zip(closed.panes) {
                 if let Some(p) = ws.pane_mut(*id) {
+                    p.history_pos = record.pos();
                     p.history = record.history;
-                    p.history_pos = record.history_pos;
                     p.set_restore(Some(record.selection));
                 }
             }

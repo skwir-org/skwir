@@ -2168,7 +2168,7 @@ mod builtin {
                         })
                     };
                     if let Some((pos, loc, left)) = target {
-                        app.show(pane, &loc, |p| p.go_to(pos, left))?;
+                        app.show(pane, &loc, |p| p.go_to(pos, &loc, left))?;
                     }
                     Ok(Outcome::Done)
                 });

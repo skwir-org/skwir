@@ -738,11 +738,18 @@ impl Pane {
         }
     }
 
-    /// Go to step `pos` of `history` (Back, Forward): `left`, the entry the
-    /// cursor was on, is kept for the step left, and the entry the cursor
-    /// was on when `pos` was left is selected again once the listing has
-    /// it, as a link followed and gone back from expects.
-    pub(crate) fn go_to(&mut self, pos: usize, left: Option<EntryId>) {
+    /// Go to step `pos` of `history` (Back, Forward), which is `location`,
+    /// the one now shown: `left`, the entry the cursor was on, is kept for
+    /// the step left, and the entry the cursor was on when `pos` was left
+    /// is selected again once the listing has it, as a link followed and
+    /// gone back from expects. A history that changed since `pos` was read
+    /// (a navigation from elsewhere meanwhile, an agent's) no longer has it
+    /// there: what is shown is a step of its own.
+    pub(crate) fn go_to(&mut self, pos: usize, location: &Location, left: Option<EntryId>) {
+        if self.history.get(pos) != Some(location) {
+            self.go_on(location.clone(), left);
+            return;
+        }
         self.remember_left(self.history_pos, left);
         self.history_pos = pos;
         let again = self.left_at.get(pos).copied().flatten().map(|id| {
@@ -2116,6 +2123,29 @@ mod tests {
         sel.remove(id(1));
         sel.remove(id(3));
         assert_eq!((sel.anchor, sel.cursor), (Some(id(2)), Some(id(2))));
+    }
+
+    /// Back or Forward whose step went from the history meanwhile (a
+    /// navigation from elsewhere between reading it and showing it) makes
+    /// what it shows a step of its own: the position stays in the history.
+    #[test]
+    fn a_step_gone_meanwhile_is_shown_as_a_new_one() {
+        let at = |name: &str| Location::from_path(format!("/example/{name}"));
+        let mut p = Pane::new(PaneId(1));
+        for name in ["a", "b", "c"] {
+            p.go_on(at(name), None);
+        }
+        // Back read step 1 (b); meanwhile the pane went from a to d.
+        p.history_pos = 0;
+        p.go_on(at("d"), None);
+        p.go_to(1, &at("b"), None);
+        assert_eq!(p.history, [at("a"), at("d"), at("b")]);
+        assert_eq!(p.history_pos, 2);
+        p.go_to(7, &at("c"), None);
+        assert_eq!(p.history[p.history_pos], at("c"));
+        // Still there, it is gone to.
+        p.go_to(0, &at("a"), None);
+        assert_eq!(p.history_pos, 0);
     }
 
     /// Renames that arrive together are followed in their order: a chain
