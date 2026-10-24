@@ -59,7 +59,8 @@ pub struct Running {
     failed: Option<Change>,
     failed_named: Option<String>,
     /// What the user asked for, where the steps are not its items (a
-    /// merge, a replace): what the result says once the plan is through.
+    /// merge, a replace), as `Started` said it, before the plan was
+    /// checked: what the result says when `Finished` says nothing better.
     items: Option<skwir_core::op::Items>,
     /// Waiting where it would answer Cancel, until resumed.
     paused: bool,
@@ -418,6 +419,7 @@ impl Shell {
                     error,
                     cancelled,
                     undoable,
+                    items,
                     ..
                 } => {
                     let Some(index) = self.toasts.running.iter().position(|r| r.plan == plan)
@@ -425,32 +427,8 @@ impl Shell {
                         continue;
                     };
                     let running = self.toasts.running.remove(index);
-                    let (title, run) = (running.title, running.run);
-                    // Through, it did what was asked, item by item; cut
-                    // short, as far as its steps went.
-                    let (first, named, count) = match running.items {
-                        Some(items) if error.is_none() && !cancelled => {
-                            (Some(items.first), None, items.count)
-                        }
-                        _ => (running.first, running.first_named, applied),
-                    };
-                    let done = describe(&title, run, first.as_ref(), named.as_deref(), count);
-                    let (text, tone) = match (error, cancelled) {
-                        (Some(error), _) if applied > 0 => {
-                            (format!("{done}, then stopped: {error}"), Tone::Error)
-                        }
-                        (Some(error), _) => (
-                            failure(
-                                &title,
-                                running.failed.as_ref(),
-                                running.failed_named.as_deref(),
-                                &error,
-                            ),
-                            Tone::Error,
-                        ),
-                        (None, true) => (format!("Cancelled. {done}"), Tone::Info),
-                        (None, false) => (done, Tone::Success),
-                    };
+                    let run = running.run;
+                    let (text, tone) = ended(running, applied, error, cancelled, items);
                     let actions = finished_actions(
                         plan,
                         run,
@@ -472,6 +450,48 @@ impl Shell {
         if any {
             cx.notify();
         }
+    }
+}
+
+/// What the toast of `running`, ended, says: what it did, item by item
+/// when it went through (`items`, as done: unfolded, names taken settled,
+/// which `Started` could not say yet; else what it was asked), as far as
+/// its steps went when cut short; what stopped it; or that it was
+/// cancelled, before anything was done (a question about names taken
+/// answered Cancel) or after.
+fn ended(
+    running: Running,
+    applied: usize,
+    error: Option<String>,
+    cancelled: bool,
+    items: Option<skwir_core::op::Items>,
+) -> (String, Tone) {
+    let (title, run) = (running.title, running.run);
+    let (first, named, count) = match items.or(running.items) {
+        Some(items) if error.is_none() && !cancelled => (Some(items.first), None, items.count),
+        _ => (running.first, running.first_named, applied),
+    };
+    let done = describe(&title, run, first.as_ref(), named.as_deref(), count);
+    match (error, cancelled) {
+        (Some(error), _) if applied > 0 => (format!("{done}, then stopped: {error}"), Tone::Error),
+        (Some(error), _) => (
+            failure(
+                &title,
+                running.failed.as_ref(),
+                running.failed_named.as_deref(),
+                &error,
+            ),
+            Tone::Error,
+        ),
+        (None, true) if applied == 0 => (
+            format!(
+                "{}: cancelled before anything was done",
+                capitalized(&title)
+            ),
+            Tone::Info,
+        ),
+        (None, true) => (format!("Cancelled. {done}"), Tone::Info),
+        (None, false) => (done, Tone::Success),
     }
 }
 
@@ -843,9 +863,59 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 
 #[cfg(test)]
 mod tests {
-    use super::{bar, describe, failure, finished_actions, quit_question, waiting_lines};
+    use super::{
+        Running, Tone, bar, describe, ended, failure, finished_actions, quit_question,
+        waiting_lines,
+    };
     use skwir_core::op::{Change, RunKind, Transfer};
     use std::path::PathBuf;
+
+    /// A plan ended says what it did as it was done: one file replaced is
+    /// one item, though its steps were two (put in the trash, then copied),
+    /// which `Started` could not know before the names taken were settled.
+    /// Cancelled before anything was done, it says so.
+    #[test]
+    fn a_plan_ended_says_what_was_done_as_it_was_done() {
+        let running = |items| Running {
+            plan: skwir_core::op::Plan::new("copy to /example/it's here").id,
+            title: "copy to /example/it's here".into(),
+            run: RunKind::Apply,
+            total: 1,
+            first: Some(Change::Trash {
+                path: PathBuf::from("/example/it's here/a.txt"),
+            }),
+            first_named: None,
+            failed: None,
+            failed_named: None,
+            items,
+            paused: false,
+            cancelling: false,
+            going_on: false,
+        };
+        let copied = skwir_core::op::Items {
+            first: Change::Copy {
+                from: PathBuf::from("/example/a.txt"),
+                to: PathBuf::from("/example/it's here/a.txt"),
+            },
+            count: 1,
+        };
+        assert_eq!(
+            ended(running(None), 2, None, false, Some(copied.clone())),
+            ("Copied “a.txt” to it's here".to_owned(), Tone::Success)
+        );
+        // Said as asked when nothing better comes.
+        assert_eq!(
+            ended(running(Some(copied)), 2, None, false, None).0,
+            "Copied “a.txt” to it's here"
+        );
+        assert_eq!(
+            ended(running(None), 0, None, true, None),
+            (
+                "Copy to /example/it's here: cancelled before anything was done".to_owned(),
+                Tone::Info
+            )
+        );
+    }
 
     /// A toast's Undo takes back the plan it reports, by its id, as the
     /// core's `undo` takes it; Retry names it too, and Redo follows an undo.
