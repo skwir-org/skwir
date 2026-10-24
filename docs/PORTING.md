@@ -243,14 +243,26 @@ Left:
   Windows' SMB and WebDAV (through its WebClient) by their UNC path,
   connected with `WNetAddConnection2W`; macOS's SMB, AFP, NFS and WebDAV
   mounted by NetFS under `/Volumes`; their addresses' parsing tried under
-  Wine, the calls compiled only. sshfs and rclone need a FUSE: on macOS
-  macFUSE or FUSE-T (looked for; mount points in the user's own
-  temporary folder, macOS having no runtime folder); rclone's mounts are
-  not built on Windows (it runs in the foreground there, and a folder
-  WinFsp mounts is no remote `fs::reach` knows: a UNC name would be),
-  sshfs does not run there. GVfs, KIO's kio-fuse (ADR-081) and fstab are
-  Linux's. The askpass socket is Unix's: on
-  Windows ssh's questions do not reach the window (a named pipe would).
+  Wine, the calls compiled only. sshfs needs a FUSE: on macOS macFUSE or
+  FUSE-T (looked for; mount points in the user's own temporary folder,
+  macOS having no runtime folder); rclone mounts with one where there,
+  else through `rclone nfsmount` (its NFS server, the system's mount),
+  compiled only. On Windows rclone mounts through WinFsp (ADR-086) in a
+  folder of Skwir's local application data (`%LOCALAPPDATA%\skwir\remote`,
+  never a drive letter), started with no window and left running, its
+  remote control on the loopback behind a login made for it (kept beside
+  the folder while it lives), asked to quit to let go of it; the core
+  knows its mounts by their being mount points there
+  (`fs::reach::mounts_in`). Compiled and its parts unit-tested; WinFsp is
+  a driver Wine lacks, so nothing is mounted under Wine. rclone's remote
+  control on the loopback and the configuration's forms' session are
+  tried under Wine with rclone's own Windows release, pinned
+  (`tools/test/rclone-windows.sh`, `just test-windows`): Wine has no Unix
+  socket (`WSAEAFNOSUPPORT`). sshfs does not run on Windows. GVfs, KIO's
+  kio-fuse (ADR-081) and fstab are Linux's. The askpass socket is Unix's:
+  on Windows ssh's questions do not reach the window (a named pipe
+  would), so an encrypted rclone configuration opens there with the
+  keyring's password alone.
   Eject asks what uses a mount of `/proc` on Linux, of `lsof` on a Mac
   (compiled only). A paused plan holds its tool: `SIGSTOP` to its group
   on Unix, each thread of its job's processes suspended on Windows

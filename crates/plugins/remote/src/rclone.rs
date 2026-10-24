@@ -130,13 +130,11 @@ impl Connector for Rclone {
         {
             return Some("FUSE (fusermount3) is not installed".to_owned());
         }
-        #[cfg(target_os = "macos")]
-        if !crate::sshfs::fuse_on_macos() {
-            return Some("macFUSE or FUSE-T is not installed".to_owned());
-        }
+        // Without macFUSE or FUSE-T, rclone mounts over NFS (`nfsmount`).
         #[cfg(windows)]
-        return Some("rclone's mounts are not built on Windows yet".to_owned());
-        #[cfg(not(windows))]
+        if !crate::winfsp::installed() {
+            return Some("WinFsp is not installed: rclone mounts through it on Windows".to_owned());
+        }
         None
     }
 
@@ -172,48 +170,25 @@ impl Connector for Rclone {
             }
             None => None,
         };
-        let point = mounter::point_for(self.id(), &top)?;
-        let mut command = command(&rclone, self.config());
-        command.args(mount_arguments(&remote, &point));
-        // What the user chose for it (ADR-086): after Skwir's own, so it wins.
-        command.args(crate::options::rclone_arguments(options));
-        // Its remote control, the user's alone, for copies made on the
-        // server (`rclone_copy`).
-        #[cfg(unix)]
-        if let Some(socket) = crate::rclone_copy::socket_for(&point)
-            && crate::rclone_copy::socket_folder().is_ok()
-        {
-            // One a mount gone left: rclone would not listen there.
-            let _ = std::fs::remove_file(&socket);
-            let mut at = std::ffi::OsString::from("unix://");
-            at.push(&socket);
-            command.args(["--rc", "--rc-no-auth", "--rc-addr"]).arg(at);
-        }
-        if let Some((variable, password)) = &password {
-            command.env(variable, password);
-        }
-        if top.scheme == Scheme::Sftp {
-            // A word each, split at spaces by rclone: names checked so.
-            top.ssh_user()?;
-            command.arg("--sftp-ssh").arg(ssh_command(&top));
-        }
-        // A configuration kept encrypted asks its password of the window.
-        let attempt = mounter::attempt(cancel);
-        let program = self.askpass_program()?;
-        let askpass = mounter::Askpass::serve_with(program.clone(), ask, &attempt)?;
-        askpass.give(&mut command);
-        command.arg("--password-command").arg(program);
-        mounter::mount(&mut command, &point, &attempt, PATIENCE).map_err(|error| {
-            let error = anyhow::anyhow!("{}", words(&error.to_string()));
-            mounter::ended(&attempt, cancel, error)
-        })?;
-        Ok(Connected {
-            point,
-            address: top,
-        })
+        #[cfg(windows)]
+        return self.mount_on_windows(&rclone, &remote, &top, options, password.as_ref(), cancel);
+        #[cfg(not(windows))]
+        self.mount_on_unix(
+            &rclone,
+            &remote,
+            top,
+            options,
+            password.as_ref(),
+            ask,
+            cancel,
+        )
     }
 
     fn recognises(&self, remote: &Remote) -> Option<Recognised> {
+        // macOS's `nfsmount` is the system's NFS: Skwir's by its folder.
+        if cfg!(target_os = "macos") && remote.fstype == "nfs" {
+            return mounter::ours(self.id(), &remote.point);
+        }
         if remote.fstype != FSTYPE {
             return None;
         }
@@ -246,7 +221,14 @@ impl Connector for Rclone {
         recognised: &Recognised,
         cancel: &CancelToken,
     ) -> anyhow::Result<()> {
-        mounter::unmount(&remote.point, recognised.ours, cancel)
+        #[cfg(windows)]
+        let unmounted = {
+            let _ = recognised;
+            unmount_on_windows(&remote.point, cancel)
+        };
+        #[cfg(not(windows))]
+        let unmounted = mounter::unmount(&remote.point, recognised.ours, cancel);
+        unmounted
     }
 
     /// Copies within one mount Skwir made, by rclone on the server
@@ -314,6 +296,179 @@ impl Connector for Rclone {
 pub(crate) fn needs_password(said: &str) -> bool {
     said.contains("unable to decrypt configuration")
         || said.contains("not allowed to ask for password")
+}
+
+#[cfg(not(windows))]
+impl Rclone {
+    /// Mount `remote` (`top`'s) at a folder of Skwir's: `rclone mount
+    /// --daemon` with FUSE, or `nfsmount` on macOS without it.
+    #[allow(clippy::too_many_arguments)] // the parts of one connection
+    fn mount_on_unix(
+        &self,
+        rclone: &Path,
+        remote: &str,
+        top: Address,
+        options: &crate::options::MountOptions,
+        password: Option<&(&'static str, String)>,
+        ask: &Arc<dyn Ask>,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Connected> {
+        let point = mounter::point_for(self.id(), &top)?;
+        let mut command = command(rclone, self.config());
+        #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+        let mut args = mount_arguments(remote, &point);
+        // macOS without macFUSE or FUSE-T: rclone serves the remote over NFS
+        // on this machine and has the system mount it (`nfsmount`).
+        #[cfg(target_os = "macos")]
+        if !crate::sshfs::fuse_on_macos() {
+            args[0] = "nfsmount".into();
+        }
+        command.args(args);
+        // What the user chose for it (ADR-086): after Skwir's own, so it wins.
+        command.args(crate::options::rclone_arguments(options));
+        // Its remote control, the user's alone, for copies made on the
+        // server (`rclone_copy`).
+        #[cfg(unix)]
+        if let Some(socket) = crate::rclone_copy::socket_for(&point)
+            && crate::rclone_copy::socket_folder().is_ok()
+        {
+            // One a mount gone left: rclone would not listen there.
+            let _ = std::fs::remove_file(&socket);
+            let mut at = std::ffi::OsString::from("unix://");
+            at.push(&socket);
+            command.args(["--rc", "--rc-no-auth", "--rc-addr"]).arg(at);
+        }
+        if let Some((variable, password)) = password {
+            command.env(variable, password);
+        }
+        if top.scheme == Scheme::Sftp {
+            // A word each, split at spaces by rclone: names checked so.
+            top.ssh_user()?;
+            command.arg("--sftp-ssh").arg(ssh_command(&top));
+        }
+        // A configuration kept encrypted asks its password of the window.
+        let attempt = mounter::attempt(cancel);
+        let program = self.askpass_program()?;
+        let askpass = mounter::Askpass::serve_with(program.clone(), ask, &attempt)?;
+        askpass.give(&mut command);
+        command.arg("--password-command").arg(program);
+        mounter::mount(&mut command, &point, &attempt, PATIENCE).map_err(|error| {
+            let error = anyhow::anyhow!("{}", words(&error.to_string()));
+            mounter::ended(&attempt, cancel, error)
+        })?;
+        Ok(Connected {
+            point,
+            address: top,
+        })
+    }
+}
+
+#[cfg(windows)]
+impl Rclone {
+    /// Mount `remote` (`top`'s) through `WinFsp` in a folder of Skwir's, in
+    /// the foreground with no window, its remote control on the loopback
+    /// (`winfsp`): once its folder is there.
+    fn mount_on_windows(
+        &self,
+        rclone: &Path,
+        remote: &str,
+        top: &Address,
+        options: &crate::options::MountOptions,
+        password: Option<&(&'static str, String)>,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Connected> {
+        use std::os::windows::process::CommandExt as _;
+        /// `CREATE_NO_WINDOW`: no console behind it.
+        const NO_WINDOW: u32 = 0x0800_0000;
+        let folder = crate::connector::mounts_folder()
+            .ok_or_else(|| anyhow::anyhow!("there is no folder to mount in"))?;
+        mounter::make_private(&folder)?;
+        skwir_core::fs::reach::mounts_in(folder.clone(), FSTYPE);
+        let point = folder.join(crate::connector::point_name(self.id(), top));
+        if skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point) {
+            anyhow::bail!("it is connected already");
+        }
+        // WinFsp makes the folder itself: one left empty goes first.
+        let _ = std::fs::remove_dir(&point);
+        let at = crate::rc::At::loopback()?;
+        crate::winfsp::keep_login(&point, &at)?;
+        let log = crate::winfsp::log_file(&point)
+            .ok_or_else(|| anyhow::anyhow!("no folder for its log"))?;
+        let _ = std::fs::remove_file(&log);
+        let mut command = command(rclone, self.config());
+        command
+            .args(crate::winfsp::mount_arguments(remote, &point, &at, &log))
+            .args(crate::options::rclone_arguments(options))
+            .envs(at.serving().1)
+            .arg("--ask-password=false")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(NO_WINDOW);
+        if let Some((variable, password)) = password {
+            command.env(variable, password);
+        }
+        if top.scheme == Scheme::Sftp {
+            // Windows' own OpenSSH, its configuration and agent.
+            top.ssh_user()?;
+            command.arg("--sftp-ssh").arg(ssh_command(top));
+        }
+        if let Some(kept) = self.keyring().own(crate::rclone_config::KEYRING_KEY) {
+            command.env("RCLONE_CONFIG_PASS", kept);
+        }
+        let (ended_tx, ended) = crossbeam_channel::bounded(1);
+        skwir_platform::process::spawn_watched(&mut command, move |status| {
+            let _ = ended_tx.send(status);
+        })?;
+        let deadline = std::time::Instant::now() + PATIENCE;
+        loop {
+            skwir_core::fs::reach::changed();
+            if skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point) && at.answers() {
+                return Ok(Connected {
+                    point,
+                    address: top.clone(),
+                });
+            }
+            if ended.try_recv().is_ok() {
+                let said = std::fs::read_to_string(&log).unwrap_or_default();
+                crate::winfsp::forget(&point);
+                anyhow::bail!("{}", words(&said));
+            }
+            if cancel.is_cancelled() || std::time::Instant::now() > deadline {
+                let _ = crate::rc::call(
+                    &at,
+                    "core/quit",
+                    &serde_json::json!({}),
+                    &CancelToken::new(),
+                );
+                crate::winfsp::forget(&point);
+                anyhow::bail!("rclone did not mount it in time");
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+}
+
+/// Let go of the mount Skwir made at `point` on Windows: rclone asked to
+/// quit through its remote control, which unmounts first.
+#[cfg(windows)]
+fn unmount_on_windows(point: &Path, cancel: &CancelToken) -> anyhow::Result<()> {
+    let at = crate::winfsp::rc_of(point)
+        .ok_or_else(|| anyhow::anyhow!("Skwir did not mount it, so it cannot let go of it"))?;
+    crate::rc::call(&at, "core/quit", &serde_json::json!({}), cancel)?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        skwir_core::fs::reach::changed();
+        if skwir_core::fs::reach::of(point).is_none_or(|r| r.point != point) {
+            crate::winfsp::forget(point);
+            return Ok(());
+        }
+        anyhow::ensure!(
+            std::time::Instant::now() < deadline,
+            "rclone did not let go of it"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 /// The remotes `rclone listremotes --long` names: `gdrive: drive`.

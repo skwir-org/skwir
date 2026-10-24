@@ -20,6 +20,12 @@ unset DISPLAY WAYLAND_DISPLAY
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine
 # Tests that need what Wine lacks (its shell does not trash) skip, saying so.
 export SKWIR_TEST_UNDER_WINE=1
+# rclone's own Windows release, pinned, for its remote control and
+# configuration as Windows has them (ADR-086); without it they skip.
+if rclone="$(tools/test/rclone-windows.sh)"; then
+    SKWIR_TEST_RCLONE="$(winepath -w "$rclone" 2>/dev/null)"
+    export SKWIR_TEST_RCLONE
+fi
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-target/cross}"
 # The type database a package carries, where it puts it, beside the
 # program (ADR-037): in `share` above the test programs.

@@ -12,7 +12,6 @@
 pub mod address;
 #[cfg(target_os = "linux")]
 mod bus;
-#[cfg(unix)]
 mod configure;
 pub mod connector;
 pub mod fstab;
@@ -27,16 +26,16 @@ pub mod lan;
 pub mod login;
 mod mounter;
 pub mod nearby;
+pub mod winfsp;
 pub mod options;
 pub mod passwords;
 mod provider;
+pub mod rc;
 pub mod rclone;
-#[cfg(unix)]
 pub mod rclone_config;
 #[cfg(unix)]
 pub mod rclone_copy;
 pub mod rclone_features;
-#[cfg(unix)]
 pub mod rclone_forms;
 pub mod rsync;
 mod runs;
@@ -253,7 +252,6 @@ impl Remotes {
     ) -> anyhow::Result<connector::Connected> {
         // rclone's configuration's password, where it is encrypted: the
         // keyring's first (ADR-086).
-        #[cfg(unix)]
         let ask: &Arc<dyn Ask> = &(Arc::new(rclone_config::ConfigAsk::new(
             Arc::clone(ask),
             self.rclone.keyring(),
@@ -719,7 +717,6 @@ impl Remotes {
                 .menu
                 .extend(address.and_then(|a| forget_item(a, &remembered)));
             place.menu.extend(address.and_then(options_item));
-            #[cfg(unix)]
             if let Some(name) = address.and_then(configure::remote_name) {
                 let kind = state
                     .servers
@@ -755,7 +752,6 @@ impl Remotes {
                 .map(|s| (*s).to_owned());
             place.menu.extend(forget_item(&server.address, &remembered));
             place.menu.extend(options_item(&server.address));
-            #[cfg(unix)]
             if let Some(name) = configure::remote_name(&server.address) {
                 place.menu.extend(configure::menu_items(
                     name,
@@ -860,8 +856,7 @@ fn forget_item(address: &Address, remembered: &[String]) -> Option<skwir_core::r
 /// The menu item that opens the mount options of `address`'s server,
 /// where a tool that mounts it takes some (ADR-086).
 fn options_item(address: &Address) -> Option<skwir_core::registry::MenuItem> {
-    // Its form is asked where the forms of servers are (`configure`).
-    (cfg!(unix) && options::takes_options(address.scheme)).then(|| {
+    options::takes_options(address.scheme).then(|| {
         skwir_core::registry::MenuItem::new(
             "place",
             "Mount Options…",
@@ -1101,8 +1096,13 @@ impl Plugin for RemotePlugin {
         // Servers found on the local network, while shown (ADR-084).
         app.register_provider(ID, Arc::new(nearby::Provider));
         // The servers the tools keep, changed from Skwir (ADR-086).
-        #[cfg(unix)]
         configure::register(&self.remotes, app);
+        // Windows lists no mount table: rclone's mounts are the folders of
+        // Skwir's that WinFsp made mount points.
+        #[cfg(windows)]
+        if let Some(folder) = connector::mounts_folder() {
+            reach::mounts_in(folder, rclone::FSTYPE);
+        }
         let remotes = self.remotes.clone();
         app.commands.register::<ConnectArgs, _>(
             ID,

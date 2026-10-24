@@ -9,7 +9,9 @@
 
 use std::path::Path;
 
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(unix)]
+use serde_json::json;
 use skwir_core::cancel::CancelToken;
 
 #[cfg(unix)]
@@ -148,6 +150,7 @@ pub fn public_link(point: &Path, path: &Path, cancel: &CancelToken) -> anyhow::R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn a_cloud_s_trash_is_named_unless_its_options_delete_for_good() {

@@ -330,6 +330,13 @@ ADR-077 (which revises ADR-021).
   plugin answers only that the browser is here and whether to sign in
   again (`config_is_local`, `config_refresh_token`).
 - A remote Skwir names is one its address holds (`rclone://name/`).
+- rclone's remote control is reached through `rc::At`: a socket of the
+  runtime folder on Unix (no login: no other user reaches it), the
+  loopback on Windows behind a login made for each session or mount,
+  given to rclone in its environment alone, never on its command line or
+  in a log (`At`'s `Debug` says the port alone). On Windows rclone mounts
+  through WinFsp in a folder of Skwir's (`winfsp`), its login kept beside
+  it while it lives, and lets go when asked to quit.
 - Mount options (read only, rclone's file cache and bandwidth, sshfs's
   compression) are the plugin's data by the server's address
   (`remote.options`, `options::MountOptions`), never a tool's

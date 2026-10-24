@@ -13,10 +13,8 @@
 
 use std::collections::HashMap;
 use std::ffi::OsString;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
 use parking_lot::Mutex;
 use skwir_core::CancelToken;
@@ -51,86 +49,20 @@ pub fn socket_folder() -> anyhow::Result<PathBuf> {
     Ok(folder)
 }
 
-/// How long a call may take: a large file copied on the server.
-const PATIENCE: Duration = Duration::from_secs(3600);
-
 /// A call to the remote control on `socket`: `method` with `args`, its
-/// answer's JSON. HTTP/1.1 over the socket, one call a connection.
+/// answer's JSON (`rc::call`).
 pub(crate) fn call(
     socket: &Path,
     method: &str,
     args: &serde_json::Value,
     cancel: &CancelToken,
 ) -> anyhow::Result<serde_json::Value> {
-    check_cancelled(cancel)?;
-    let body = serde_json::to_vec(args)?;
-    let mut stream = std::os::unix::net::UnixStream::connect(socket)?;
-    stream.set_read_timeout(Some(PATIENCE))?;
-    stream.set_write_timeout(Some(PATIENCE))?;
-    let interrupted = stream.try_clone()?;
-    let cancelled = cancel.subscribe();
-    let result = std::thread::scope(|scope| {
-        let (done, finished) = crossbeam_channel::bounded::<()>(0);
-        scope.spawn(move || {
-            crossbeam_channel::select! {
-                recv(cancelled.receiver()) -> _ => {
-                    let _ = interrupted.shutdown(std::net::Shutdown::Both);
-                }
-                recv(finished) -> _ => {}
-            }
-        });
-        // Dropped even on an I/O error, before the scope joins its listener.
-        let _done = done;
-        request(&mut stream, method, &body)
-    });
-    check_cancelled(cancel)?;
-    result
-}
-
-/// Keep the request synchronous: rclone ties its job to the HTTP request's
-/// context, so closing the connection cancels the server's work too. An
-/// asynchronous job would outlive a lost response naming its job id.
-fn request(
-    stream: &mut std::os::unix::net::UnixStream,
-    method: &str,
-    body: &[u8],
-) -> anyhow::Result<serde_json::Value> {
-    let head = format!(
-        "POST /{method} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    stream.write_all(head.as_bytes())?;
-    stream.write_all(body)?;
-    let mut answer = Vec::new();
-    stream.read_to_end(&mut answer)?;
-    let at = answer
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .ok_or_else(|| anyhow::anyhow!("rclone's answer to {method} is no HTTP"))?;
-    let status = String::from_utf8_lossy(&answer[..at]);
-    let status = status
-        .lines()
-        .next()
-        .and_then(|line| line.split(' ').nth(1))
-        .unwrap_or_default()
-        .to_owned();
-    let mut body = &answer[at + 4..];
-    // Chunked, as Go's server sends a body it did not size.
-    let unchunked;
-    if String::from_utf8_lossy(&answer[..at])
-        .to_ascii_lowercase()
-        .contains("transfer-encoding: chunked")
-    {
-        unchunked = dechunk(body);
-        body = &unchunked;
-    }
-    let json: serde_json::Value = serde_json::from_slice(body).unwrap_or(serde_json::Value::Null);
-    if status != "200" {
-        let said = json["error"].as_str().unwrap_or("no reason given");
-        anyhow::bail!("rclone refused {method}: {said}");
-    }
-    Ok(json)
+    crate::rc::call(
+        &crate::rc::At::Socket(socket.to_path_buf()),
+        method,
+        args,
+        cancel,
+    )
 }
 
 fn check_cancelled(cancel: &CancelToken) -> anyhow::Result<()> {
@@ -144,27 +76,6 @@ fn check_cancelled(cancel: &CancelToken) -> anyhow::Result<()> {
 fn checkpoint(control: &Control) -> anyhow::Result<()> {
     control.wait_while_paused();
     check_cancelled(control.cancel())
-}
-
-/// A chunked body's bytes.
-fn dechunk(mut chunked: &[u8]) -> Vec<u8> {
-    let mut out = Vec::new();
-    while let Some(at) = chunked.windows(2).position(|w| w == b"\r\n") {
-        let size = std::str::from_utf8(&chunked[..at])
-            .ok()
-            .and_then(|s| usize::from_str_radix(s.trim(), 16).ok())
-            .unwrap_or(0);
-        if size == 0 {
-            break;
-        }
-        let start = at + 2;
-        let Some(chunk) = chunked.get(start..start + size) else {
-            break;
-        };
-        out.extend_from_slice(chunk);
-        chunked = chunked.get(start + size + 2..).unwrap_or_default();
-    }
-    out
 }
 
 /// `path` below the mount at `point`, as rclone names it there.
@@ -385,9 +296,10 @@ impl Transfer for RcloneCopy {
 mod tests {
     use super::*;
 
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, Read, Write};
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::sync::{Arc, Weak};
+    use std::time::Duration;
 
     use crossbeam_channel::{Receiver, Sender};
     use skwir_core::op::{
@@ -757,10 +669,6 @@ mod tests {
         assert_eq!(
             on_server(Path::new("/m/point"), Path::new("/m/point")).as_deref(),
             Some("")
-        );
-        assert_eq!(
-            dechunk(b"5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"),
-            b"hello world"
         );
     }
 }

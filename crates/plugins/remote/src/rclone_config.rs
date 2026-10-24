@@ -224,10 +224,12 @@ pub fn name_refusal(name: &str) -> Option<&'static str> {
 /// stopped when dropped.
 pub struct Session {
     child: Child,
-    socket: PathBuf,
+    /// Where its remote control answers (`rc`).
+    at: crate::rc::At,
     /// What rclone said on its standard error, the last of it.
     said: Arc<Mutex<String>>,
     /// Where the configuration's password is asked, while it runs.
+    #[cfg(unix)]
     _askpass: mounter::Askpass,
 }
 
@@ -235,12 +237,16 @@ impl Drop for Session {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
-        let _ = std::fs::remove_file(&self.socket);
+        #[cfg(unix)]
+        if let crate::rc::At::Socket(socket) = &self.at {
+            let _ = std::fs::remove_file(socket);
+        }
     }
 }
 
 /// The socket a session of this process serves on: named by the process,
 /// so a session a process gone left behind can be told and stopped.
+#[cfg(unix)]
 fn session_socket() -> anyhow::Result<PathBuf> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -253,7 +259,9 @@ fn session_socket() -> anyhow::Result<PathBuf> {
 }
 
 /// Stop the sessions a Skwir gone left serving (it ended before it could):
-/// each told to quit, its socket removed.
+/// each told to quit, its socket removed. On Windows, which serves on the
+/// loopback, a session lives in Skwir's job and ends with it.
+#[cfg(unix)]
 fn sweep_left(cancel: &CancelToken) {
     let Some(folder) = crate::rclone_copy::sockets() else {
         return;
@@ -294,28 +302,47 @@ impl Session {
         ask: &Arc<dyn Ask>,
         cancel: &CancelToken,
     ) -> anyhow::Result<Session> {
-        sweep_left(cancel);
-        let socket = session_socket()?;
-        let _ = std::fs::remove_file(&socket);
-        let mut at = std::ffi::OsString::from("unix://");
-        at.push(&socket);
+        #[cfg(unix)]
+        let at = {
+            sweep_left(cancel);
+            let socket = session_socket()?;
+            let _ = std::fs::remove_file(&socket);
+            crate::rc::At::Socket(socket)
+        };
+        #[cfg(not(unix))]
+        let at = crate::rc::At::loopback()?;
         let mut command = crate::rclone::command(rclone, with.config());
+        let (serving, login) = at.serving();
         command
-            .args(["rcd", "--rc-no-auth", "--log-level", "NOTICE", "--rc-addr"])
-            .arg(at)
+            .args(["rcd", "--log-level", "NOTICE"])
+            .args(serving)
+            .envs(login)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            .env_remove("RCLONE_CONFIG_PASS");
         // A configuration kept encrypted asks its password through Skwir,
         // run as rclone's password command.
-        let program = with.askpass_program()?;
-        // Its own token: dropped with the session, it ends that alone.
-        let askpass = mounter::Askpass::serve_with(program.clone(), ask, &cancel.child())?;
-        askpass.give(&mut command);
-        command
-            .arg("--password-command")
-            .arg(program)
-            .env_remove("RCLONE_CONFIG_PASS");
+        #[cfg(unix)]
+        let askpass = {
+            let program = with.askpass_program()?;
+            // Its own token: dropped with the session, it ends that alone.
+            let askpass = mounter::Askpass::serve_with(program.clone(), ask, &cancel.child())?;
+            askpass.give(&mut command);
+            command.arg("--password-command").arg(program);
+            askpass
+        };
+        // Where Skwir has no way to ask (Windows, yet): the keyring's
+        // password, in rclone's environment alone, else rclone says it
+        // needs one.
+        #[cfg(not(unix))]
+        {
+            let _ = ask;
+            command.arg("--ask-password=false");
+            if let Some(password) = with.keyring().own(KEYRING_KEY) {
+                command.env("RCLONE_CONFIG_PASS", password);
+            }
+        }
         let mut child = command.spawn()?;
         let said = Arc::new(Mutex::new(String::new()));
         if let Some(mut stderr) = child.stderr.take() {
@@ -341,25 +368,27 @@ impl Session {
                     }
                 })?;
         }
-        let session = Session {
+        let mut session = Session {
             child,
-            socket,
+            at,
             said,
+            #[cfg(unix)]
             _askpass: askpass,
         };
         session.wait_serving(cancel)?;
         Ok(session)
     }
 
-    fn wait_serving(&self, cancel: &CancelToken) -> anyhow::Result<()> {
+    fn wait_serving(&mut self, cancel: &CancelToken) -> anyhow::Result<()> {
         let deadline = Instant::now() + STARTING;
         loop {
-            if std::os::unix::net::UnixStream::connect(&self.socket).is_ok() {
+            if self.at.answers() {
                 return Ok(());
             }
             // Ended: what it said is why.
-            if !self.socket.exists() && skwir_platform::process::runs(self.child.id()) != Some(true)
-            {
+            if self.child.try_wait().is_ok_and(|ended| ended.is_some()) {
+                // What it said last is read whole first.
+                std::thread::sleep(Duration::from_millis(50));
                 anyhow::bail!("{}", crate::rclone::words(&self.said.lock()));
             }
             anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
@@ -381,7 +410,7 @@ impl Session {
     /// # Errors
     /// What rclone refused, in its words.
     pub fn call(&self, method: &str, args: &Value, cancel: &CancelToken) -> anyhow::Result<Value> {
-        crate::rclone_copy::call(&self.socket, method, args, cancel)
+        crate::rc::call(&self.at, method, args, cancel)
     }
 
     /// The kinds of storage rclone has.
@@ -698,6 +727,121 @@ impl Ask for ConfigAsk {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rclone a test runs: `SKWIR_TEST_RCLONE` (rclone's own Windows
+    /// release, under Wine: `just test-windows`), else the one installed.
+    fn rclone() -> Option<PathBuf> {
+        std::env::var_os("SKWIR_TEST_RCLONE")
+            .map(PathBuf::from)
+            .or_else(|| skwir_core::os_path::find_program("rclone"))
+    }
+
+    /// Asks nothing: a configuration not encrypted needs no answer.
+    struct Nobody;
+
+    impl Ask for Nobody {
+        fn secret(&self, _: &str, _: &str, _: &CancelToken) -> Option<String> {
+            None
+        }
+        fn confirm(&self, _: &str, _: &str, _: &CancelToken) -> bool {
+            false
+        }
+    }
+
+    /// A session changes rclone's configuration through its remote control
+    /// (a socket on Unix, the loopback behind a login on Windows): a remote
+    /// made with its password obscured, read back, changed, removed. Under
+    /// Wine with rclone's own Windows release (`just test-windows`), on
+    /// Linux with the one installed; skipped, saying why, with none.
+    #[test]
+    fn a_session_changes_rclone_s_configuration_through_its_remote_control() {
+        let Some(rclone) = rclone() else {
+            eprintln!("skipped: rclone is not installed");
+            return;
+        };
+        let folder = tempfile::tempdir().unwrap();
+        let config = folder.path().join("rclone.conf");
+        let with = crate::rclone::Rclone::with_config(config.clone());
+        let ask: Arc<dyn Ask> = Arc::new(Nobody);
+        let cancel = CancelToken::new();
+        let session = Session::start(&rclone, &with, &ask, &cancel).unwrap();
+        assert!(
+            session
+                .backends(&cancel)
+                .unwrap()
+                .iter()
+                .any(|b| b.name == "webdav")
+        );
+        let mut parameters = serde_json::Map::new();
+        parameters.insert("url".into(), json!("http://127.0.0.1:1/"));
+        parameters.insert("pass".into(), json!("it's s3cret"));
+        let step = session
+            .create("nas-1", "webdav", &parameters, &cancel)
+            .unwrap();
+        assert_eq!(step, Step::Done);
+        assert_eq!(session.remotes(&cancel).unwrap(), ["nas-1"]);
+        let held = session.get("nas-1", &cancel).unwrap();
+        assert_eq!(held["type"], "webdav");
+        assert_ne!(held["pass"], "it's s3cret", "kept obscured");
+        let mut changed = serde_json::Map::new();
+        changed.insert("url".into(), json!("http://127.0.0.1:2/"));
+        session.update("nas-1", &changed, false, &cancel).unwrap();
+        assert_eq!(
+            session.get("nas-1", &cancel).unwrap()["url"],
+            "http://127.0.0.1:2/"
+        );
+        session.delete("nas-1", &cancel).unwrap();
+        assert!(session.remotes(&cancel).unwrap().is_empty());
+        drop(session);
+        let text = std::fs::read_to_string(&config).unwrap_or_default();
+        assert!(!text.contains("s3cret"), "{text}");
+    }
+
+    /// On the loopback, rclone's remote control takes the login made for
+    /// it alone: another is refused.
+    #[test]
+    fn a_remote_control_on_the_loopback_refuses_another_login() {
+        let Some(rclone) = rclone() else {
+            eprintln!("skipped: rclone is not installed");
+            return;
+        };
+        let folder = tempfile::tempdir().unwrap();
+        let at = crate::rc::At::loopback().unwrap();
+        let (serving, login) = at.serving();
+        let mut child = crate::rclone::command(&rclone, Some(&folder.path().join("rclone.conf")))
+            .arg("rcd")
+            .args(serving)
+            .envs(login)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !at.answers() {
+            assert!(Instant::now() < deadline, "rclone never served");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let cancel = CancelToken::new();
+        let version = crate::rc::call(&at, "core/version", &json!({}), &cancel).unwrap();
+        assert!(version["version"].as_str().unwrap().starts_with('v'));
+        #[allow(irrefutable_let_patterns)] // a socket too, on Unix
+        let crate::rc::At::Loopback { port, user, .. } = at.clone() else {
+            panic!("a loopback");
+        };
+        let other = crate::rc::At::Loopback {
+            port,
+            user,
+            pass: "not its own".into(),
+        };
+        let refused = crate::rc::call(&other, "core/version", &json!({}), &cancel).unwrap_err();
+        assert!(
+            format!("{refused:#}").contains("login was refused"),
+            "{refused:#}"
+        );
+        let _ = crate::rc::call(&at, "core/quit", &json!({}), &cancel);
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 
     #[test]
     fn an_option_applies_to_the_providers_rclone_says() {

@@ -360,6 +360,24 @@ pub(crate) fn pretend_made_up(device: u64, number: u64) {
     PRETENDED.with(|p| p.borrow_mut().push((device, number)));
 }
 
+/// The folders whose folders are mounts, each with its program's type,
+/// where the system lists no mount table (Windows): Skwir's own there are
+/// found so (`mounts_in`).
+static MOUNT_FOLDERS: Mutex<Vec<(PathBuf, String)>> = Mutex::new(Vec::new());
+
+/// Say that the folders of `folder` that are mount points (reparse
+/// points, on Windows) are mounts of type `fstype`: where the system lists
+/// no mount table (Windows), a program that mounts in a folder of its own
+/// (rclone through `WinFsp`, ADR-086) is known so. Elsewhere, the table says.
+pub fn mounts_in(folder: PathBuf, fstype: &str) {
+    let mut folders = MOUNT_FOLDERS.lock();
+    if !folders.iter().any(|(f, _)| *f == folder) {
+        folders.push((folder, fstype.to_owned()));
+    }
+    drop(folders);
+    changed();
+}
+
 /// Every network mount of the table, a bridge as one ([`bridged`] lists
 /// what it holds).
 pub fn all() -> Vec<Arc<Remote>> {
@@ -700,9 +718,34 @@ mod imp {
     use super::Remote;
 
     /// Windows lists no table: a path is told by its own form
-    /// ([`share_of`]).
+    /// ([`share_of`]), and a program's mounts in a folder it said by their
+    /// being mount points there ([`super::mounts_in`]).
     pub(super) fn read() -> (Vec<Remote>, Vec<(u64, u64)>) {
-        (Vec::new(), Vec::new())
+        use std::os::windows::fs::MetadataExt;
+        /// `FILE_ATTRIBUTE_REPARSE_POINT`: what a folder a file system is
+        /// mounted on is.
+        const REPARSE_POINT: u32 = 0x400;
+        let folders = super::MOUNT_FOLDERS.lock().clone();
+        let mut remotes = Vec::new();
+        for (folder, fstype) in folders {
+            let Ok(entries) = std::fs::read_dir(&folder) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let point = entry.path();
+                let mounted = std::fs::symlink_metadata(&point)
+                    .is_ok_and(|m| m.file_attributes() & REPARSE_POINT != 0);
+                if mounted {
+                    remotes.push(Remote {
+                        source: entry.file_name(),
+                        point,
+                        fstype: fstype.clone(),
+                        device: None,
+                    });
+                }
+            }
+        }
+        (remotes, Vec::new())
     }
 
     /// The share holding `path`: a UNC path's (`\\server\share`), or a

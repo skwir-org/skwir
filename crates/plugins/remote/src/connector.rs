@@ -186,13 +186,18 @@ pub trait Connector: Send + Sync {
 /// that the address can be read back from it after Skwir restarts
 /// (principle 3: nothing kept but the mount itself).
 pub fn mounts_folder() -> Option<PathBuf> {
-    // macOS and Windows have no runtime folder: the user's own temporary
-    // one, which no other user enters. Never the cache, which a start
-    // sweeps (`skwir_core::cache`), nor the XDG folders, which are not
-    // Windows' own.
-    #[cfg(any(target_os = "macos", not(unix)))]
+    // macOS has no runtime folder: the user's own temporary one, which no
+    // other user enters. Never the cache, which a start sweeps
+    // (`skwir_core::cache`).
+    #[cfg(target_os = "macos")]
     {
         Some(std::env::temp_dir().join("skwir").join("remote"))
+    }
+    // Windows: Skwir's local application data, the user's own (ADR-086:
+    // rclone's mounts through WinFsp are folders there).
+    #[cfg(not(unix))]
+    {
+        skwir_core::folders::state().map(|dir| dir.join("remote"))
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -205,7 +210,22 @@ pub fn mounts_folder() -> Option<PathBuf> {
 pub fn point_name(connector: &str, address: &Address) -> String {
     let text = address.top().to_string();
     // A folder's name holds no `/`: written as GVfs writes its own, `%2F`.
-    let text = text.replace('%', "%25").replace('/', "%2F");
+    let mut text = text.replace('%', "%25").replace('/', "%2F");
+    // Nor, on Windows, what its names cannot hold.
+    if cfg!(windows) {
+        for (c, written) in [
+            (':', "%3A"),
+            ('\\', "%5C"),
+            ('*', "%2A"),
+            ('?', "%3F"),
+            ('"', "%22"),
+            ('<', "%3C"),
+            ('>', "%3E"),
+            ('|', "%7C"),
+        ] {
+            text = text.replace(c, written);
+        }
+    }
     format!("{connector} {text}")
 }
 

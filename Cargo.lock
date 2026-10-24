@@ -8181,6 +8181,7 @@ dependencies = [
  "anyhow",
  "crossbeam-channel",
  "dirs 7.0.0",
+ "getrandom 0.3.4",
  "parking_lot",
  "roxmltree 0.21.1",
  "schemars",
