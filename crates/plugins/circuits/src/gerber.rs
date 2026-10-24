@@ -208,6 +208,9 @@ fn evaluate(expression: &str, variables: &HashMap<u32, f64>) -> Option<f64> {
     (at == tokens.len()).then_some(value)
 }
 
+/// The points an outline primitive (4) is read with at most.
+const OUTLINE_POINTS: usize = 100_000;
+
 /// Brackets and signs in a macro's expression, one inside the other: past
 /// it, the expression is not one (thirty thousand `-` would overflow the
 /// stack of the thumbnail's worker, which aborts the whole process).
@@ -389,9 +392,11 @@ fn macro_shapes(body: &[String], parameters: &[f64], scale: f64) -> Vec<(bool, S
                 ));
             }
             4 => {
-                let n = v(2) as usize;
+                // The count is the file's: bounded before it indexes, as a
+                // huge one would overflow `5 + 2 * n`.
+                let n = (v(2) as usize).min(OUTLINE_POINTS);
                 let rotation = v(5 + 2 * n);
-                let points = (0..=n.min(100_000))
+                let points = (0..=n)
                     .map(|i| turn((v(3 + 2 * i) * scale, v(4 + 2 * i) * scale), rotation))
                     .collect();
                 out.push((exposed, Shape::Polygon(points)));
@@ -1278,6 +1283,18 @@ G36*\nX0Y10000000D02*\nX10000000Y10000000D01*\nX10000000Y20000000D01*\nX0Y200000
             thicken("<path stroke-width=\"0.1\"/><path stroke-width=\"3\"/>", 1.),
             "<path stroke-width=\"1\"/><path stroke-width=\"3\"/>"
         );
+    }
+
+    #[test]
+    fn an_outline_s_count_is_bounded_before_it_indexes() {
+        // `2 * n` overflowed on a count the file made up (a panic in a
+        // debug build, a wrong rotation in a release one).
+        let body = ["4,1,99999999999999999999,0,0,1,0,1,1,0,0,0".to_owned()];
+        let shapes = macro_shapes(&body, &[], 1.);
+        let [(true, Shape::Polygon(points))] = shapes.as_slice() else {
+            panic!("one outline");
+        };
+        assert_eq!(points.len(), OUTLINE_POINTS + 1);
     }
 
     #[test]
