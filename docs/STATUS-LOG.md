@@ -4529,3 +4529,16 @@ overnight: the review's remote items, then what the servers' work left.
   and `remote_configs`' new test, Add Server given those arguments
   against `rclone serve webdav`: the form filled in, the server added
   and listed under the name given.
+- **KDE reads the network folders Skwir writes.** The desktop entries
+  Skwir writes in KDE's network folders followed what KDE's own Add
+  Network Folder writes, never read back by KDE. `remote_folders` gains
+  a test that reads them through KIO's `remote:/` (kio-extras' worker,
+  what Dolphin's Network shows), with a KIO and a bus of the test's own:
+  three servers kept there through `servers::add` are listed by the
+  names given (an apostrophe, Unicode, a leading space and a backslash
+  intact, whatever their files are called), and `kioclient stat` says
+  each leads where its address does (WebDAV's as KIO's `webdav://`, a
+  space escaped). `kioclient`'s own command line refuses a URL whose
+  path begins with a space or holds a backslash ("Malformed URL"), so
+  those two are checked in the listing alone. Dolphin itself was not
+  run.

@@ -384,7 +384,9 @@ ADR-077 (which revises ADR-021).
 - **The Network section is servers; Bookmarks are the user's.** A server
   added by its address is kept in Skwir's list (`remote.kept_servers`)
   or KDE's network folders (`$XDG_DATA_HOME/remoteview/*.desktop`,
-  written as KDE writes them, through `file::rewrite`), as
+  written as KDE writes them, through `file::rewrite`, and read back
+  through KIO's own `remote:/` in `remote-check`:
+  `kde_reads_the_network_folders_skwir_writes`), as
   `remote.servers_kept_in` says, and never as a bookmark. Both are read
   whatever is chosen and whatever connector is installed, and each is
   edited and removed where it is kept. Dolphin's remote places and

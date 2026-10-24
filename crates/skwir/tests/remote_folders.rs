@@ -4391,3 +4391,108 @@ fn a_webdav_share_below_its_server_s_root_opens_where_it_is() {
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// KDE's network folders as Skwir writes them (`servers::add`, KDE's
+/// chosen) read back through KIO's own `remote:/`, kio-extras' worker that
+/// Dolphin's Network shows: each server listed, by the name given, leading
+/// where its address does, its name and address holding what a desktop
+/// entry must escape.
+#[test]
+fn kde_reads_the_network_folders_skwir_writes() {
+    let Some(packages) = kio_packages() else {
+        eprintln!("skipped: SKWIR_TEST_KIO names no KIO packages");
+        return;
+    };
+    let Some(kioclient) = skwir_core::os_path::find_program("kioclient") else {
+        eprintln!("skipped: kioclient (KDE's command-line tools) is not installed");
+        return;
+    };
+    let base = fixture("kde-folders");
+    let data = base.join("data");
+    // SAFETY: nextest runs each test in a process of its own, and this
+    // runs before the test starts an app, so no other thread reads the
+    // environment meanwhile.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("XDG_DATA_HOME", &data);
+    }
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    app.plugins.add(
+        Arc::new(RemotePlugin::with(Remotes::with(Vec::new()))),
+        &app,
+    );
+    app.settings
+        .set("remote.servers_kept_in", toml::Value::String("kde".into()));
+    let servers = [
+        (
+            "It's shared",
+            "dav://127.0.0.1:8080/sub folder",
+            "webdav://127.0.0.1:8080/sub%20folder",
+        ),
+        (
+            "Ünïcode files",
+            "sftp://me@example.com:2222/srv/it's",
+            "sftp://me@example.com:2222/srv/it's",
+        ),
+        (" Back\\slash", "smb://nas/photos", "smb://nas/photos"),
+    ];
+    for (name, address, _) in servers {
+        let kept = skwir_plugin_remote::servers::add(&app, name, &Address::parse(address).unwrap())
+            .unwrap();
+        assert_eq!(kept, skwir_plugin_remote::servers::Kept::Kde, "{name}");
+    }
+    let private = PrivateKio::start(&packages, &base);
+    let kio = |args: &[&str]| {
+        let out = Command::new(&kioclient)
+            .args(args)
+            .envs(private.env.iter().map(|(k, v)| (k, v)))
+            .env("XDG_DATA_HOME", &data)
+            .output()
+            .expect("kioclient runs");
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    // Listed by the name given (its entry's `Name`), whatever its file is
+    // called; asked by it, where its address leads.
+    let listed = kio(&["ls", "remote:/"]);
+    let escaped = |name: &str| -> String {
+        name.bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() {
+                    char::from(b).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect()
+    };
+    let field = |stat: &str, key: &str| -> Option<String> {
+        stat.lines()
+            .find_map(|l| l.strip_prefix(key))
+            .map(|v| v.trim_start().to_owned())
+    };
+    for (name, _, url) in servers {
+        assert!(
+            listed.lines().any(|l| l == name),
+            "“{name}” listed: {listed}"
+        );
+        // kioclient's own command line refuses a URL whose path begins
+        // with a space or holds a backslash ("Malformed URL"), which
+        // Dolphin never types: those are listed alone.
+        if name.starts_with(' ') || name.contains('\\') {
+            continue;
+        }
+        let stat = kio(&["stat", &format!("remote:/{}", escaped(name))]);
+        assert_eq!(field(&stat, "NAME").as_deref(), Some(name), "{stat}");
+        assert_eq!(field(&stat, "TARGET_URL").as_deref(), Some(url), "{stat}");
+    }
+    let entries = std::fs::read_dir(data.join("remoteview")).unwrap().count();
+    assert_eq!(entries, servers.len());
+    drop(private);
+    drop(app);
+    std::fs::remove_dir_all(&base).unwrap();
+}
