@@ -4097,3 +4097,151 @@ fn kioclient_copies_to_and_from_kio_s_servers_in_batches() {
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// The threads of this process waiting for a FUSE server's answer, by
+/// what the system says each sleeps in.
+fn waiting_on_fuse() -> Vec<String> {
+    std::fs::read_dir("/proc/self/task")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|task| std::fs::read_to_string(task.path().join("wchan")).ok())
+        .filter(|wchan| wchan.contains("fuse") || wchan.contains("request_wait_answer"))
+        .collect()
+}
+
+/// A server's sessions stopped (`SIGSTOP`), let go of however a test
+/// ends: they are not its server's children, and stopped they stay the
+/// test's, so their numbers name no other process. `None` once thawed.
+struct Thawed(Option<Vec<u32>>);
+
+impl Drop for Thawed {
+    fn drop(&mut self) {
+        if let Some(sessions) = self.0.take() {
+            signal("-CONT", &sessions);
+            signal("-9", &sessions);
+        }
+    }
+}
+
+/// A server that stops answering holds no more of Skwir than its lane:
+/// a search of its folder and a count of its tags walk it a folder at a
+/// time on their jobs' threads, never threads of their own asking it all
+/// at once, and an agent's call naming a file there is answered within
+/// `reach::NOT_ANSWERING`, the file kept from it as private.
+#[test]
+fn a_server_that_stops_answering_holds_no_more_than_its_lane() {
+    let sshfs = Sshfs::default();
+    if let Some(why) = sshfs.unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("held-lane");
+    let Some(mut sshd) = OwnSshd::start(&base) else {
+        std::fs::remove_dir_all(&base).unwrap();
+        return;
+    };
+    let served = base.join("served");
+    for n in 0..40 {
+        let folder = served.join(format!("folder {n}")).join("it's inner");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join(format!("note {n}.txt")), "x").unwrap();
+    }
+    let sshfs = Arc::new(Sshfs {
+        ssh_options: sshd.options.clone(),
+        ssh_config: Some(PathBuf::from("/dev/null")),
+        ..sshfs
+    });
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![sshfs.clone() as Arc<dyn Connector>]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    app.plugins
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
+    let pane = app.workspace.read().active_id();
+    let user = std::env::var("USER").expect("the user's name");
+    let address = format!("sftp://{user}@127.0.0.1:{}{}", sshd.port, served.display());
+    app.navigate(pane, &Location::parse(&address)).unwrap();
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    let mounted = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&mounted).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+    until(&app, 30, "its folder was listed", || {
+        app.workspace
+            .read()
+            .pane(pane)
+            .is_some_and(|p| p.listing.is_complete())
+    });
+    assert!(waiting_on_fuse().is_empty(), "nothing waits on it yet");
+
+    let sessions = sshd.descendants();
+    signal("-STOP", &sessions);
+    // Let go however the test ends.
+    let mut thawed = Thawed(Some(sessions));
+    let search = app.workspace.write().add_pane();
+    app.navigate(
+        search,
+        &skwir_plugin_query::location_for("ext:txt", Some(&mounted)),
+    )
+    .unwrap();
+    let tags = app.workspace.write().add_pane();
+    app.dispatch(&Invocation::with_args(
+        "tags.browse",
+        &serde_json::json!({ "in": mounted, "pane": tags }),
+    ))
+    .unwrap();
+    // An agent's call naming a file there.
+    let asked = Instant::now();
+    let answer = skwir_plugin_control::run(
+        &app,
+        &Invocation::with_args(
+            "query.search",
+            &serde_json::json!({ "expr": "ext:txt", "root": mounted.join("folder 1"), "pane": search }),
+        ),
+        skwir_plugin_control::PlanMode::Propose,
+        &|| false,
+    );
+    let waited = asked.elapsed();
+    let error = answer.expect_err("a file whose privacy is unknown is private");
+    assert!(error.to_string().contains("private"), "{error:#}");
+    assert!(
+        waited < skwir_core::fs::reach::NOT_ANSWERING + Duration::from_secs(3),
+        "answered after {waited:?}"
+    );
+    std::thread::sleep(Duration::from_secs(2));
+    let waiting = waiting_on_fuse();
+    eprintln!("waiting on the server: {waiting:?}");
+    assert!(
+        waiting.len() <= skwir_core::scheduler::LANE_RUNS,
+        "no more than its lane waits on it: {waiting:?}"
+    );
+
+    signal("-CONT", &thawed.0.take().unwrap_or_default());
+    until(&app, 60, "the search ended", || {
+        app.workspace
+            .read()
+            .pane(search)
+            .is_some_and(|p| p.listing.is_complete())
+    });
+    until(&app, 60, "nothing waits on it any more", || {
+        waiting_on_fuse().is_empty()
+    });
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    until(&app, 30, "it was let go of", || {
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point)
+    });
+    drop(left);
+    sshd.stop();
+    drop(thawed);
+    drop(sshd);
+    // What the app writes as it ends goes before its folder does.
+    drop(app);
+    std::fs::remove_dir_all(&base).unwrap();
+}

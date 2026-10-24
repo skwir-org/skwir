@@ -67,6 +67,11 @@ ADR-077 (which revises ADR-021).
 - Search root opening, traversal, operation rechecks and hydration run in
   the root's remote lane. Keep a lane learned from the opened root's
   device for aliases, and move traversal there before reading descendants.
+  A walk of a remote's tree (a search's, a tag count's) runs on its job's
+  own thread, a folder at a time as a listing reads one: never threads of
+  the walker's own, which would ask the server as many at once as the
+  machine has cores, outside the lane, and be held by it unstood-in-for
+  (`a_server_that_stops_answering_holds_no_more_than_its_lane`).
 
 - Tool arguments use the receiving program's grammar. Rsync's `-e`
   command doubles an embedded matching quote and treats backslashes

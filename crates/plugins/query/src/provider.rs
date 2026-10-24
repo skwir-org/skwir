@@ -836,30 +836,46 @@ impl Shared {
             // a search of one walks it from its own folder (ADR-077).
             .filter_entry(move |dent| dent.path() == search_root || !reach::is_point(dent.path()));
         let cancel = batcher.cancel;
+        let visit = |result: Result<ignore::DirEntry, ignore::Error>, statter: &mut Statter| {
+            if cancel.is_cancelled() {
+                return ignore::WalkState::Quit;
+            }
+            let Ok(dent) = result else {
+                return ignore::WalkState::Continue;
+            };
+            if dent.depth() == 0 {
+                return ignore::WalkState::Continue;
+            }
+            let path = dent.path();
+            let Some(name) = path.file_name() else {
+                return ignore::WalkState::Continue;
+            };
+            if checked.contains(path) {
+                return ignore::WalkState::Continue;
+            }
+            let known = Known::Kind(kind_of(dent.file_type()));
+            consider(q, path, (name, known), batcher, deferred, statter);
+            ignore::WalkState::Continue
+        };
+        // A remote's tree is walked on this job's thread, in its lane, a
+        // folder at a time as a listing reads one (ADR-077): the walker's
+        // own threads would ask its server as many at once as this
+        // machine has cores, outside the lane, and a server that stops
+        // answering would hold threads no one stands in for.
+        if !batcher.shared.lane().is_shared() {
+            let mut statter = Statter::default();
+            for result in builder.build() {
+                if matches!(visit(result, &mut statter), ignore::WalkState::Quit) {
+                    return;
+                }
+            }
+            return;
+        }
+        let visit = &visit;
         builder.build_parallel().run(|| {
             // The walking thread's stats, through the folder it is in.
             let mut statter = Statter::default();
-            Box::new(move |result| {
-                if cancel.is_cancelled() {
-                    return ignore::WalkState::Quit;
-                }
-                let Ok(dent) = result else {
-                    return ignore::WalkState::Continue;
-                };
-                if dent.depth() == 0 {
-                    return ignore::WalkState::Continue;
-                }
-                let path = dent.path();
-                let Some(name) = path.file_name() else {
-                    return ignore::WalkState::Continue;
-                };
-                if checked.contains(path) {
-                    return ignore::WalkState::Continue;
-                }
-                let known = Known::Kind(kind_of(dent.file_type()));
-                consider(q, path, (name, known), batcher, deferred, &mut statter);
-                ignore::WalkState::Continue
-            })
+            Box::new(move |result| visit(result, &mut statter))
         });
     }
 
@@ -1278,6 +1294,47 @@ mod tests {
         );
         received.recv_timeout(Duration::from_secs(10)).unwrap();
         assert!(scheduler.wait_idle_here(Duration::from_secs(10)));
+    }
+
+    /// A remote's tree is walked in its lane, on the job's own thread: it
+    /// finds what the walkers' threads find of a tree on this machine,
+    /// below its folders, its hidden files left out and none counted twice.
+    #[test]
+    fn a_remote_tree_walked_in_its_lane_finds_what_a_local_walk_finds() {
+        let tmp = tempfile::tempdir().unwrap();
+        for folder in ["one", "one/two", "it's three", ".hidden"] {
+            std::fs::create_dir(tmp.path().join(folder)).unwrap();
+        }
+        for file in [
+            "a.txt",
+            "one/b.txt",
+            "one/two/c.txt",
+            "it's three/d é.txt",
+            ".hidden/e.txt",
+            "one/f.md",
+        ] {
+            std::fs::write(tmp.path().join(file), "x").unwrap();
+        }
+        let (local, _) = open(tmp.path());
+        assert_eq!(until_complete(&local), (4, 0));
+        let (remote, _) = open(tmp.path());
+        // Its first walk was in the shared lane: walk again in a remote's.
+        assert_eq!(until_complete(&remote), (4, 0));
+        assert!(
+            remote
+                .shared
+                .ctx
+                .scheduler
+                .wait_idle(Duration::from_secs(10))
+        );
+        *remote.shared.lane.lock() = Lane::keyed(1);
+        remote.refresh();
+        assert_eq!(until_complete(&remote), (4, 4));
+        let mut found: Vec<PathBuf> = remote.shared.paths.lock().values().cloned().collect();
+        found.sort();
+        let mut expected: Vec<PathBuf> = local.shared.paths.lock().values().cloned().collect();
+        expected.sort();
+        assert_eq!(found, expected);
     }
 
     #[test]

@@ -4450,3 +4450,19 @@ overnight: the review's remote items, then what the servers' work left.
   "private" after the wait, at once the second time, through a link
   too; this machine's paths checked as before; once let go, checked
   again.
+- **A remote's tree walked in its lane.** A search's walk of a remote
+  folder ran on the `ignore` crate's threads, and a tag location's count
+  on threads of its own: as many as the machine has cores (twelve at
+  most), asking the server all at once outside its lane, held by a server
+  that stopped answering with no worker stood in for. On a remote (by
+  its path, or the opened root's device) both now read on their job's
+  thread, a folder at a time, in the lane; on this machine they walk side
+  by side as before. Not timed: a remote search over a slow link may take
+  longer, as a listing of each folder in turn does. Checked by
+  `remote_folders`' new test against OpenSSH's own server through sshfs,
+  its sessions stopped (`SIGSTOP`) once the folder was listed: a search
+  and a tag count of the mounted folder, and an agent's call naming a
+  file there (refused as private within the wait), leave two threads
+  waiting on the server, the lane's two; with the two walks as they were,
+  thirteen. Also by unit tests: a remote tree walked in its lane finds
+  what a local walk finds; one walker counts what eight count.

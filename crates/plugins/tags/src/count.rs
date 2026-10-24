@@ -101,8 +101,31 @@ pub fn run_with(
     last: Option<(SystemTime, &HashSet<u64>)>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<(SystemTime, Vec<u64>, Counted)>> {
-    let began = SystemTime::now().checked_sub(MARGIN).unwrap_or(UNIX_EPOCH);
     std::fs::read_dir(root)?;
+    // A remote's tree is read on this job's thread alone, in its lane, a
+    // folder at a time as a listing reads one (ADR-077): threads of the
+    // count's own would ask its server as many at once as this machine
+    // has cores, outside the lane, and a server that stops answering
+    // would hold threads no one stands in for.
+    let remote = reach::of(root).is_some()
+        || std::fs::metadata(root)
+            .ok()
+            .and_then(|meta| skwir_core::fs::stat::identity(root, &meta))
+            .is_some_and(|id| reach::of_device(id.dev).is_some());
+    let walkers = if remote { 1 } else { walkers() };
+    Ok(walk_with(app, index, root, last, cancel, walkers))
+}
+
+/// [`run_with`], read by `walkers` threads, this one among them.
+fn walk_with(
+    app: &App,
+    index: &Arc<TagIndex>,
+    root: &Path,
+    last: Option<(SystemTime, &HashSet<u64>)>,
+    cancel: &CancelToken,
+    walkers: usize,
+) -> Option<(SystemTime, Vec<u64>, Counted)> {
+    let began = SystemTime::now().checked_sub(MARGIN).unwrap_or(UNIX_EPOCH);
     let empty = HashSet::new();
     let walk = Walk {
         app,
@@ -126,13 +149,13 @@ pub fn run_with(
     // Folders are read side by side, as a search walks: a check of a
     // million files took 1.3 s one folder after the other.
     std::thread::scope(|scope| {
-        for _ in 1..walkers() {
+        for _ in 1..walkers {
             scope.spawn(|| walk.work());
         }
         walk.work();
     });
     if cancel.is_cancelled() {
-        return Ok(None);
+        return None;
     }
     let mut learned = walk.learned.into_inner();
     // What the index knew in folders no longer there (or now hidden: those
@@ -151,7 +174,7 @@ pub fn run_with(
         folders: walk.folders.into_inner(),
         read: walk.read.into_inner(),
     };
-    Ok(Some((began, walk.seen_dirs.into_inner(), counted)))
+    Some((began, walk.seen_dirs.into_inner(), counted))
 }
 
 /// Threads a count walks with: as many as a search's walk.
@@ -435,5 +458,42 @@ mod tests {
             tally(&index),
             owned(&[("deep", 1), ("new", 1), ("work", 1)])
         );
+    }
+
+    /// A remote's tree is read by one walker, the job's own thread: it
+    /// counts what several count, every folder read once.
+    #[cfg(unix)]
+    #[test]
+    fn one_walker_counts_what_several_count() {
+        let tmp = home_tempdir();
+        let root = tmp.path().join("it's root");
+        let mut tagged = 0;
+        for folder in 0..12 {
+            let dir = root.join(format!("folder {folder}")).join("inner é");
+            std::fs::create_dir_all(&dir).unwrap();
+            for file in 0..3 {
+                let path = dir.join(format!("file {file}"));
+                std::fs::write(&path, b"x").unwrap();
+                if (folder + file) % 2 == 0 {
+                    skwir_core::fs::xattr::set(&path, "user.xdg.tags", b"work").unwrap();
+                    tagged += 1;
+                }
+            }
+        }
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins
+            .add(Arc::new(crate::TagsPlugin::default()), &app);
+        let cancel = CancelToken::new();
+        let counted = |walkers: usize| {
+            let index = crate::index::TagIndex::new(None, &app, CancelToken::new());
+            let (_, mut dirs, counted) =
+                super::walk_with(&app, &index, &root, None, &cancel, walkers).unwrap();
+            dirs.sort_unstable();
+            (index.tally(&root).0, dirs, counted.folders, counted.read)
+        };
+        let alone = counted(1);
+        assert_eq!(alone.0, vec![("work".to_owned(), tagged)]);
+        assert_eq!(alone.2, 25, "the root, its folders and theirs, each once");
+        assert_eq!(alone, counted(8));
     }
 }

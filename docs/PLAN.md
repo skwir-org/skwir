@@ -201,8 +201,7 @@ above; each with the design its fixer proposed):
   fails keeps its copy unjournaled; `restore_listed`, `RestorePart`
   and `Untrashed::take` copy and remove across volumes without 1.3's
   handling; `tags.export` and the tags-everywhere commands propose
-  after answering, so `skwir cmd` exits first; a tag search walking a
-  remote root runs on the `ignore` crate's threads; libarchive's
+  after answering, so `skwir cmd` exits first; libarchive's
   lrzip, grzip and lzop filters run programs from `PATH` (on Windows
   unsandboxed); an agent naming `/net/host/…` or `\\host\share` reaches
   that host unasked; a tag of a name Windows refuses fails its export.
