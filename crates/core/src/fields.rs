@@ -193,7 +193,9 @@ impl Fields {
     }
 
     /// The value of `key` for the file at `path`: remembered, kept in the
-    /// cache, or read now. On a worker: it may stat and read the file.
+    /// cache, or read now. On a worker, in `path`'s lane
+    /// (`fs::reach::lane`, ADR-077): it may stat and read the file, which
+    /// waits for good on a server that stopped answering.
     /// `None` when no provider answers it, the file says nothing, or it
     /// cannot be read.
     pub fn get(&self, key: &str, path: &Path, cancel: &CancelToken) -> Option<Value> {
@@ -201,8 +203,9 @@ impl Fields {
     }
 
     /// The values of `keys` for the file at `path`, in their order, as
-    /// [`Fields::get`] says each: those one provider answers are read
-    /// together ([`FieldProvider::read_keys`]). With `known`, the caller
+    /// [`Fields::get`] says each, on a worker in `path`'s lane: those one
+    /// provider answers are read together ([`FieldProvider::read_keys`]),
+    /// on the caller's thread. With `known`, the caller
     /// says the file's identity, and that `path` is a file and no link (a
     /// listing's entry, stat-ed already): the file is not stat-ed again.
     pub fn get_all(
