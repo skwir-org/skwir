@@ -121,6 +121,38 @@ additional checks and platform limits are recorded in `docs/STATUS-LOG.md`.
 | 13 | glTF buffer URIs are decoded as URIs | fixed; full release gate passes |
 | 14 | Rsync arguments use its own grammar | fixed; full release gate passes |
 
+## Review fixes (2026-10-24)
+
+The whole-project review of 2026-10-23 (at `b7643e46`: thirteen areas,
+182 findings with the reviewers' side notes, 6 high and about 50
+medium) was fixed overnight in local commits, one per fix or small
+group, none pushed. Each fix was linted and tested in its crate as it
+was made; the full checks ran at the end (`docs/STATUS-LOG.md`,
+2026-10-24). A finding judged wrong or not worth a change says why;
+what is left is under "What is left", "From the review of 2026-10-23".
+
+| Area | Fixed | In part | No change | Left |
+| --- | --- | --- | --- | --- |
+| Commands, tooling, docs | 20 | | 1 | 1 |
+| Core: file operations | 16 | | 1 | |
+| Core: kernel, settings, the binary | 30 | 1 | 1 | 4 |
+| Platform, plugins from outside, helpers | 17 | 1 | 1 | 1 |
+| Other plugins | 13 | 1 | | |
+| Search, tags, notes, remote | 19 | 1 | 1 | 1 |
+| Window: shell | 20 | | 2 | |
+| Window: views, previews, maps | 20 | | | 9 |
+
+The six highs are fixed: typed commands refuse arguments they do not
+take (a misspelled `entries` acted on the selection); PowerShell's
+typographic quotes are doubled (checked against pwsh 7.6); Undo of a
+copy where no trash is kept removes only what the copy placed; CSS,
+SVG and STEP nesting is bounded (their tests abort with a stack
+overflow without the bounds); the Wine harnesses leave the desktop
+alone (the test prefixes' menu entries and types were removed from the
+user's folders, by their choice). Decided on the night: a toast's Undo
+takes back its own plan (ADR-079 amended); `player.request` stays
+unasked for agents (commands.md); the PKGBUILDs' Maintainer lines stay.
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -133,6 +165,52 @@ closes an item removes its line; work that leaves one adds it here.
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
+
+**From the review of 2026-10-23** (fixed 2026-10-24, "Review fixes"
+above; each with the design its fixer proposed):
+- A cut file dims another folder's name of it: `Pending` keeps each
+  entry's folder, its readers pass the row's (ops-basic, the views).
+- `hydrate_paths` keeps a path's old identity when another file took
+  it: re-keying needs every location of many folders to follow.
+- Programs Skwir starts inherit `VK_LOADER_DRIVERS_DISABLE`: no one
+  place starts them; a platform constructor would drop what Skwir set
+  for itself.
+- An agent's privacy check resolves paths outside any remote's lane.
+- Extract Here of files dropped from another application types them
+  on the window's thread.
+- A network plugin's sandbox shares the host's abstract sockets: a
+  seccomp filter or a user-mode network, an ADR-045 amendment.
+- `platform::filesystem` calls `statfs` directly: no core seam.
+- The remote harnesses take their servers and tools from the registry's
+  nixpkgs, not the flake's: pinned, the flake's rclone 1.75.1 failed
+  Skwir's rclone mounts ("daemon exited with error code 1"), which the
+  registry's 1.75.2 passes. Pin them once the flake's nixpkgs moves.
+- Types by extension: the documents plugin's engine and Pandoc's
+  format, the XMP field provider; JSON Lines and JSON with comments,
+  which the database does not name. JSON Lines table cells print
+  numbers through `f64`, as the formatted JSON did.
+- The tags index knows hidden files by a leading dot only (Windows'
+  mark).
+- A WebDAV address's top is its server's root.
+- The window: a records save waiting on the keyring brings an old list
+  back; the switch knob and the treemap's hatch take no theme token; a
+  place's mosaic types its pictures by name; link fragments compared
+  undecoded; a press in a parked container view; `link` in
+  `VIEW_ONLY`; map markers in `f32`; accessibility nodes for every
+  marker; picture decodes holding workers while they wait their turn.
+- Seen on the night: a move across volumes whose immediate removal
+  fails keeps its copy unjournaled; `restore_listed`, `RestorePart`
+  and `Untrashed::take` copy and remove across volumes without 1.3's
+  handling; `tags.export` and the tags-everywhere commands propose
+  after answering, so `skwir cmd` exits first; a tag search walking a
+  remote root runs on the `ignore` crate's threads; libarchive's
+  lrzip, grzip and lzop filters run programs from `PATH` (on Windows
+  unsandboxed); an agent naming `/net/host/…` or `\\host\share` reaches
+  that host unasked; a tag of a name Windows refuses fails its export.
+- Not exercised in a window: the drops, bulk rename, front requests
+  while a dialog is open, the queued toggles, the zoom wheel's pane,
+  the rubber band's pane, the map's clamp, the printed-page steps; NFS
+  through Skwir's own connector (GVfs's source read only).
 
 **Gates not closed:**
 - Maps: idle CPU after panning on geotagged pictures (`images10k` has
@@ -205,7 +283,10 @@ leave (ADR-077).
   settings' key actions (by their place in the whole list).
 - A flaky test, `pending_opens_report_errors_asynchronously_and_can_be_replaced`
   (`crates/core/tests/listing.rs`), failed eight runs in a row on
-  2026-09-26, then passed; not investigated.
+  2026-09-26, then passed; not investigated. Since 2026-10-24 it holds
+  its worker without stand-ins (`AppConfig::stand_ins`), which removes
+  a later timing dependence but cannot explain that run, which came
+  before stand-ins.
 
 **Search, tags and places:**
 - Never read: Finder attributes or `._` files a Mac wrote (the tests

@@ -4097,3 +4097,67 @@ below), worked through in order, each committed after its checks.
   alternate-case transfers, not on a native Windows machine. macOS was
   compiled through the existing cross-check recipe, with its usual
   exclusions; no native macOS execution is claimed.
+
+### Review fixes, overnight (2026-10-24)
+
+- The whole-project review of 2026-10-23 (at `b7643e46`; 182 findings
+  with the reviewers' side notes) was fixed by six fixers working one
+  tree by file ownership and an integrator who committed each fix or
+  small group as it was handed over: 140 local commits, none pushed.
+  159 findings are fixed (4 of them in part), 7 needed no change (each
+  with its evidence), 16 are left with their designs (PLAN.md, "What is
+  left"). The run stopped from 03:45 to 05:30 at the usage limit and
+  went on.
+- The user's choices, asked before: the Wine harnesses' leftovers in
+  the desktop were removed (only the entries whose WINEPREFIX was under
+  `~/.cache/skwir-tests`, and the types they registered; both databases
+  refreshed); a toast's Undo takes back its own plan (ADR-079 amended);
+  `player.request` stays unasked (commands.md); the PKGBUILDs'
+  Maintainer lines stay.
+- Checked by hand, beyond the tests: the PowerShell quoting against
+  pwsh 7.6 (`Write-Output` of each word; the old quoting ran the
+  injected command); a fresh Wine prefix booted with `wine-env.sh`, and
+  later `test-windows` and `package-windows`, wrote nothing under
+  `~/.local/share/applications`, `~/.config/menus` or
+  `~/.local/share/mime` (compared with a list taken first); the
+  KeePassXC harness with the user's own KeePassXC running served from
+  its private folder (lock and socket seen there), and its instance no
+  longer outlives it (it was left spinning before); the media helper
+  cross-linted against GStreamer's Windows and macOS builds (macOS's
+  fetched once); libarchive's mtree `checkfs` off by default in 3.4.0
+  to 3.8.9 (sources, bsdtar), now pinned off; the sandbox's
+  allow-listed environment with every helper rebuilt and the real-tool
+  tests (LibreOffice in bwrap, PDFium, Poppler, MuPDF: 290 of 292, the
+  two keyring tests refusing outside their harness as before); shell
+  fixes on Xvfb (a toast under a progress card, 250 names taken listed,
+  `../x` over a search, a `file://` URI typed with escapes), where two
+  defects of the night's own were found and fixed.
+- Found by the final checks and fixed: an import unused in the Windows
+  test build; RUSTSEC-2026-0386 (tokio's `AsyncFd` constructors,
+  published after the 2026-10-23 checks), by tokio 1.53.3, the notices
+  made again; the formatted JSON's key order, which a crate tested
+  alone sorts and the workspace (serde_json's `preserve_order`) keeps;
+  the bench's relative data folder, which the core now refuses as a
+  location; two tests racing under Wine (a path compared as text, a
+  job queued before the first took the worker). The remote harnesses'
+  pin to the flake's nixpkgs was reverted: its rclone 1.75.1 fails
+  Skwir's rclone mounts, which the registry's 1.75.2 passes.
+- Final checks, each on the tree as committed then: `lint-all` (with
+  both cross lints and the media helper's), `deny`, `notices-check`,
+  `release-tools-check`, `test-all` (2123 tests, 26 skipped), `smoke`,
+  `a11y-check`, `poppler-check`, `mupdf-check`, `djvu-check`,
+  `bench-check` (all budgets met) and `package-windows` passed.
+  `test-windows`: 1611 of 1612, the one failing (a race of the test's
+  own) then fixed and passed under Wine alone. `remote-check`: its
+  servers' 91 tests, NFS and AFP, AFC and Nearby passed; its GNOME
+  Keyring stage failed 3 of 5 inside the whole sequence ("The name
+  org.freedesktop.secrets was not provided", though the harness had
+  seen the daemon own it) and passed 5 of 5 run alone; the KeePassXC
+  (5 of 5) and locked keyring (2 of 2) stages, which the failure
+  stopped, passed run after it. `just release-check` itself was not
+  run as one command.
+- Not exercised: most window-side fixes in a window (PLAN.md lists
+  them); NFS through Skwir's own connector; Windows' busy pipe, its
+  shares in SQLite URIs and its hidden marks (compiled only); macOS's
+  watcher and clonefile (compiled only); a case-insensitive volume (the
+  folding rule tested by its preset).
