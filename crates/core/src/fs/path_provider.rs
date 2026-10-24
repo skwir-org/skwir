@@ -34,11 +34,10 @@ impl LocationProvider for PathProvider {
         let path = location
             .path()
             .ok_or_else(|| anyhow::anyhow!("not a path: {location}"))?;
-        let path = if path.is_absolute() {
-            path
-        } else {
-            std::env::current_dir()?.join(path)
-        };
+        // Never the process's working folder: a relative path is its
+        // caller's to read from the folder it was typed in
+        // (`App::navigate`).
+        let path = crate::os_path::absolute(&path)?.to_path_buf();
         Ok(PathLocation::open(location.clone(), path, ctx))
     }
 }

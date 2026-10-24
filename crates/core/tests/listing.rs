@@ -563,6 +563,39 @@ fn a_folder_shown_that_moves_is_shown_where_it_went() {
     assert_eq!(listed(&app, pane, "f").id, f);
 }
 
+/// `./` and `../` are the folder shown's, never the process's: a path
+/// location is opened only absolute.
+#[test]
+fn a_relative_path_is_read_from_the_folder_shown() {
+    use skwir_core::command::Invocation;
+    let tmp = home_tempdir();
+    let (here, there) = (
+        tmp.path().join("a b/it's here"),
+        tmp.path().join("a b/l'été"),
+    );
+    std::fs::create_dir_all(&here).unwrap();
+    std::fs::create_dir_all(there.join("inner")).unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &here);
+    for (typed, reached) in [
+        ("../l'été", there.clone()),
+        ("./inner/..", there.clone()),
+        ("inner", there.join("inner")),
+    ] {
+        app.dispatch(&Invocation::with_args(
+            "navigate",
+            &serde_json::json!({ "location": typed }),
+        ))
+        .unwrap();
+        assert_eq!(app.pane_dir(pane).unwrap(), reached, "{typed}");
+    }
+    assert!(
+        app.open_location(&Location::from_path("relative/folder"))
+            .is_err()
+    );
+}
+
 /// A folder opened in place that is renamed is opened in place under
 /// its new name: its files are where they are now, and it closes.
 #[cfg(target_os = "linux")]

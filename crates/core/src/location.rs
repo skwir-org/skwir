@@ -152,17 +152,25 @@ pub fn escape(text: &[u8]) -> String {
     out
 }
 
+/// The value of a hex digit, any case.
+fn hex_digit(c: u8) -> Option<u8> {
+    char::from(c)
+        .to_digit(16)
+        .and_then(|d| u8::try_from(d).ok())
+}
+
 /// What `escape` wrote, as bytes again.
 pub fn unescape(text: &str) -> Vec<u8> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
+        // Two hex digits, nothing else: `from_str_radix` takes a sign too.
         if bytes[i] == b'%'
-            && let Some(hex) = bytes.get(i + 1..i + 3)
-            && let Ok(b) = u8::from_str_radix(std::str::from_utf8(hex).unwrap_or("zz"), 16)
+            && let Some(&[high, low]) = bytes.get(i + 1..i + 3)
+            && let (Some(high), Some(low)) = (hex_digit(high), hex_digit(low))
         {
-            out.push(b);
+            out.push(high << 4 | low);
             i += 3;
         } else {
             out.push(bytes[i]);
@@ -1637,6 +1645,18 @@ impl Listing {
 mod tests {
     use super::*;
     use crate::entry::EntryKind;
+
+    /// What `escape` writes reads back; a `%` not followed by two hex
+    /// digits (a sign among them) is itself.
+    #[test]
+    fn an_escape_is_a_percent_and_two_hex_digits() {
+        let name = "l'été 100% #1?\u{7}".as_bytes();
+        assert_eq!(unescape(&escape(name)), name);
+        assert_eq!(unescape("%41%e9%E9"), [b'A', 0xe9, 0xe9]);
+        for kept in ["%+1", "%-1", "% 1", "%4", "%", "%zz"] {
+            assert_eq!(unescape(kept), kept.as_bytes(), "{kept}");
+        }
+    }
 
     #[test]
     fn what_an_answer_rests_on_is_kept_until_a_run_says_otherwise() {
