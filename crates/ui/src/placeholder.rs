@@ -24,10 +24,19 @@ pub struct Placeholder {
 /// A failure in the user's words. The system's message stays as the detail:
 /// it is what someone will search for.
 pub fn failure(error: &str) -> Placeholder {
+    use std::io::ErrorKind;
     let lower = error.to_lowercase();
-    let (title, action) = if lower.contains("permission denied") || lower.contains("os error 13") {
+    // The system's code says what failed, read by the system's own table
+    // (errno here, Windows' codes there); a message without one by its
+    // words.
+    let kind = os_error_kind(error);
+    let (title, action) = if kind.map_or(lower.contains("permission denied"), |kind| {
+        kind == ErrorKind::PermissionDenied
+    }) {
         ("You don't have permission to open this folder", None)
-    } else if lower.contains("no such file") || lower.contains("os error 2") {
+    } else if kind.map_or(lower.contains("no such file"), |kind| {
+        matches!(kind, ErrorKind::NotFound | ErrorKind::NotADirectory)
+    }) {
         (
             "This folder no longer exists",
             Some(("Go to the parent folder", "up")),
@@ -192,26 +201,57 @@ pub fn render(
         .into_any_element()
 }
 
+/// The kind of the error a message ends by naming (`… (os error 2)`, as
+/// `std::io::Error` writes one).
+fn os_error_kind(error: &str) -> Option<std::io::ErrorKind> {
+    let (_, after) = error.rsplit_once("(os error ")?;
+    let code = after.split_once(')')?.0.parse().ok()?;
+    Some(std::io::Error::from_raw_os_error(code).kind())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{EmptyState, empty_folder, empty_place, failure};
 
     #[test]
     fn failures_read_as_sentences_and_keep_the_system_message() {
-        let denied = failure("Permission denied (os error 13)");
+        let said = std::io::Error::from(std::io::ErrorKind::PermissionDenied).to_string();
+        let denied = failure(&said);
         assert_eq!(
             denied.title,
             "You don't have permission to open this folder"
         );
-        assert_eq!(denied.detail, "Permission denied (os error 13)");
+        assert_eq!(denied.detail, said);
         assert_eq!(denied.action, None);
         assert_eq!(
             failure("No such file or directory (os error 2)").action,
             Some(("Go to the parent folder", "up"))
         );
+        // Errors as this system writes them, read by their code: a folder
+        // gone, and never a number inside a larger one.
+        let gone = std::fs::metadata("/nowhere/it’s gone")
+            .unwrap_err()
+            .to_string();
         assert_eq!(
-            failure("Input/output error (os error 5)").action,
-            Some(("Try again", "refresh"))
+            failure(&gone).action,
+            Some(("Go to the parent folder", "up")),
+            "{gone}"
+        );
+        #[cfg(unix)]
+        for code in [24, 28] {
+            // Too many open files; no space left on the device.
+            let said = std::io::Error::from_raw_os_error(code).to_string();
+            assert_eq!(
+                failure(&said).action,
+                Some(("Try again", "refresh")),
+                "{said}"
+            );
+        }
+        // Windows' access denied is its code 5, not errno 13.
+        #[cfg(windows)]
+        assert_eq!(
+            failure(&std::io::Error::from_raw_os_error(5).to_string()).title,
+            "You don't have permission to open this folder"
         );
     }
 
