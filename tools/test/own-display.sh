@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Sourced by the harnesses that draw (keyrings' prompts and windows): a
 # display of their own, Xvfb on the first number from :90 up that has no
 # lock and no socket, as smoke.py's. Never `-displayfd`: it tries :0
@@ -17,6 +18,7 @@ own_display() {
         xvfb_pid=$!
         for _ in $(seq 200); do
             if [ -e "/tmp/.X11-unix/X$number" ]; then
+                # shellcheck disable=SC2034 # The caller's, which sourced this.
                 display=":$number"
                 return 0
             fi

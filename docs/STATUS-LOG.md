@@ -4583,3 +4583,22 @@ overnight: the review's remote items, then what the servers' work left.
   named `Мои фото @nas` (of a folder of the test's) listed in Settings,
   opened by its escaped address, its file shown, the address kept as it
   reads back, let go of after.
+- **Connect at Login under the user's own systemd: a check to run.**
+  The tests never ask the user's service manager (they read units with
+  `systemd-analyze`, run their commands as systemd would, and install
+  through a stand-in `systemctl`), and this machine has no `/dev/kvm` for
+  a virtual machine's. `tools/test/login-user-systemd.sh`, for the user
+  to run in their session, runs one test ignored by default
+  (`remote_login::connect_at_login_under_the_user_s_own_systemd`, which
+  does nothing unless the script names the manager's unit and runtime
+  folders). Through Skwir's own installer, it puts one unit in the user's
+  unit folder, for a remote of an rclone configuration of the test's own
+  served by an rclone of its own on 127.0.0.1. The manager starts it and
+  it mounts. Its program is killed and the manager mounts it again
+  (`Restart=on-failure`, ten seconds). It is turned off while mounted
+  (the mount stays until let go of, then the unit ends), turned on and
+  let go of (not started again), and turned off. Nothing is left: no unit
+  file, no link, the manager knowing none, no mount; the script says any
+  leftover rather than removing by a pattern. Checked: shellcheck clean;
+  the test builds, and run without the script it skips at once. Not run
+  against the user's manager: that is the user's.

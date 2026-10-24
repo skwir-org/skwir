@@ -954,3 +954,202 @@ fn connect_at_login_is_turned_on_and_off_from_a_remote_s_menu() {
     });
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// `systemctl --user` of the user's own manager, found through `runtime`
+/// alone (as `Manager` asks it): what it prints, and whether it succeeded.
+fn user_systemctl(systemctl: &Path, runtime: &Path, args: &[&str]) -> (bool, String) {
+    let out = Command::new(systemctl)
+        .arg("--user")
+        .args(args)
+        .env_clear()
+        .env("XDG_RUNTIME_DIR", runtime)
+        .output()
+        .unwrap();
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).trim().to_owned(),
+    )
+}
+
+/// Until `ready` holds, within `seconds`, saying `what` otherwise: no app
+/// to pump.
+fn until_held(seconds: u64, what: &str, mut ready: impl FnMut() -> bool) {
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    while !ready() {
+        assert!(Instant::now() < deadline, "{what}");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// What a check of the user's manager took out however it ended: its
+/// unit (disabled, removed, forgotten), its mount.
+struct TakenOut<'a> {
+    manager: &'a Manager,
+    at: &'a AtLogin,
+}
+
+impl Drop for TakenOut<'_> {
+    fn drop(&mut self) {
+        let cancel = CancelToken::new();
+        if mounted_at(&self.at.point).is_some() {
+            let _ = Command::new("fusermount3")
+                .arg("-uz")
+                .arg(&self.at.point)
+                .status();
+        }
+        if let Err(error) = self.manager.uninstall(&self.at.id, &self.at.point, &cancel) {
+            eprintln!("taking the unit out: {error:#}");
+        }
+    }
+}
+
+/// Connect at Login under the user's own systemd user manager (ADR-087),
+/// the one check no stand-in makes: run only by
+/// `tools/test/login-user-systemd.sh`, which the user runs and which names
+/// their manager (`SKWIR_TEST_USER_UNITS`, `SKWIR_TEST_USER_RUNTIME`).
+/// Skwir's own code installs its unit in the user's unit folder, for a
+/// remote of an rclone configuration of the test's own, served by an
+/// rclone of the test's own on this machine; the manager starts it and it
+/// mounts; its program killed, the manager lets go of what it left and
+/// mounts again (`Restart=on-failure`); turned off while mounted, the mount
+/// stays until let go of, then the unit ends; turned on and off again with
+/// nothing mounted, it stops. Nothing is left: no unit, link or mount.
+#[test]
+#[ignore = "the user's own systemd: run by tools/test/login-user-systemd.sh"]
+fn connect_at_login_under_the_user_s_own_systemd() {
+    let (Some(units), Some(runtime)) = (
+        std::env::var_os("SKWIR_TEST_USER_UNITS").map(PathBuf::from),
+        std::env::var_os("SKWIR_TEST_USER_RUNTIME").map(PathBuf::from),
+    ) else {
+        eprintln!("skipped: run by tools/test/login-user-systemd.sh, which names the manager");
+        return;
+    };
+    if let Some(why) = no_rclone() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let Some(systemctl) = find("systemctl") else {
+        eprintln!("skipped: systemctl is not installed");
+        return;
+    };
+    let base = fixture("user-systemd");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    std::fs::write(served_root.join("hello é.txt"), "from the server").unwrap();
+    let served = Served::start("webdav", &served_root);
+    let name = format!("skwir-login-check-{}", std::process::id());
+    let config = base.join("rclone client.conf");
+    std::fs::write(
+        &config,
+        format!(
+            "[{name}]\ntype = webdav\nurl = http://127.0.0.1:{}\nvendor = other\n",
+            served.port
+        ),
+    )
+    .unwrap();
+    let rclone = Rclone::with_config(config);
+    let address = Address::rclone(&name, b"/").unwrap();
+    let cancel = CancelToken::new();
+    let at = AtLogin::rclone(&rclone, &address, &cancel).unwrap();
+    let manager = Manager {
+        folder: units.clone(),
+        program: systemctl.clone(),
+        runtime: Some(runtime.clone()),
+    };
+    let unit = login::unit_name(&at.id);
+    eprintln!("the unit: {}", units.join(&unit).display());
+    let _taken_out = TakenOut {
+        manager: &manager,
+        at: &at,
+    };
+    let ask = |args: &[&str]| user_systemctl(&systemctl, &runtime, args);
+    let active = || ask(&["is-active", &unit]).1 == "active";
+
+    // Turned on: enabled for the next login, started now, mounted.
+    manager.install(&at, &cancel).unwrap();
+    assert!(manager.installed(&at.id), "wanted by default.target");
+    assert_eq!(ask(&["is-enabled", &unit]).1, "enabled");
+    assert!(
+        active(),
+        "started: {}",
+        ask(&["status", "--no-pager", &unit]).1
+    );
+    let remote = until_mounted(&at.point, 30);
+    assert!(
+        rclone.recognises(&remote).unwrap().ours,
+        "Skwir's own mount"
+    );
+    assert_eq!(
+        std::fs::read_to_string(at.point.join("hello é.txt")).unwrap(),
+        "from the server"
+    );
+
+    // Its program killed: the manager lets go of what it left, and mounts
+    // again ten seconds later.
+    let (_, pid) = ask(&["show", "--property=MainPID", "--value", &unit]);
+    assert!(pid.parse::<u32>().is_ok_and(|p| p > 0), "{pid}");
+    assert!(
+        Command::new("kill")
+            .args(["-9", &pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    until_held(10, "its manager saw it fail", || !active());
+    until_held(30, "mounted again by its manager", || {
+        active() && mounted_at(&at.point).is_some()
+    });
+    assert_eq!(
+        std::fs::read_to_string(at.point.join("hello é.txt")).unwrap(),
+        "from the server"
+    );
+
+    // Turned off while mounted: no longer wanted at login, its unit
+    // removed and forgotten; the mount stays until let go of (Eject), then
+    // the unit ends and its point goes.
+    manager.uninstall(&at.id, &at.point, &cancel).unwrap();
+    assert!(!manager.installed(&at.id));
+    assert!(!units.join(&unit).exists());
+    assert!(mounted_at(&at.point).is_some(), "the mount stays");
+    assert!(
+        Command::new("fusermount3")
+            .arg("-u")
+            .arg(&at.point)
+            .status()
+            .unwrap()
+            .success()
+    );
+    until_held(30, "the unit ended once let go of", || !active());
+    until_held(10, "its point removed", || !at.point.exists());
+
+    // Turned on again, then let go of (Eject): the unit ends, not started
+    // again (its program ended well); turned off then, with nothing
+    // mounted, it is stopped and removed.
+    manager.install(&at, &cancel).unwrap();
+    until_mounted(&at.point, 30);
+    assert!(
+        Command::new("fusermount3")
+            .arg("-u")
+            .arg(&at.point)
+            .status()
+            .unwrap()
+            .success()
+    );
+    until_held(30, "the unit ended once let go of", || !active());
+    std::thread::sleep(Duration::from_secs(12));
+    assert!(
+        !active() && mounted_at(&at.point).is_none(),
+        "not started again"
+    );
+    manager.uninstall(&at.id, &at.point, &cancel).unwrap();
+    assert!(!units.join(&unit).exists());
+    assert!(
+        !units.join("default.target.wants").join(&unit).exists(),
+        "no link left"
+    );
+    let (_, listed) = ask(&["list-unit-files", "--no-legend", &unit]);
+    assert!(listed.is_empty(), "forgotten by the manager: {listed}");
+    assert!(!left_mounted(&base, &at.point));
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}

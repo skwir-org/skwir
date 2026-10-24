@@ -377,7 +377,11 @@ ADR-077 (which revises ADR-021).
   through a stand-in `systemctl` given a runtime folder of its own: never
   the user's manager, and never a manager of the test's own started from
   a session's cgroup (systemd moves that cgroup's processes into its
-  `init.scope`).
+  `init.scope`). The one check under the user's own manager is theirs to
+  run (`tools/test/login-user-systemd.sh`: a test ignored by default,
+  `connect_at_login_under_the_user_s_own_systemd`, that does nothing
+  unless the script names the manager's unit and runtime folders); no
+  recipe and no agent runs it.
 - Mount options (read only, rclone's file cache and bandwidth, sshfs's
   compression) are the plugin's data by the server's address
   (`remote.options`, `options::MountOptions`), never a tool's
