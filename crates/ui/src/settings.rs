@@ -589,11 +589,11 @@ pub fn declare(app: &App) {
 /// `preference` reads it meanwhile.
 pub fn remember(
     shell: &mut crate::shell::Shell,
-    key: &'static str,
+    key: impl Into<String>,
     value: String,
     cx: &mut gpui::Context<crate::shell::Shell>,
 ) {
-    shell.unsaved.insert(key, value);
+    shell.unsaved.insert(key.into(), value);
     flush_remembered(shell, cx);
 }
 
@@ -608,7 +608,7 @@ pub fn flush_remembered(
     let changes: serde_json::Map<String, serde_json::Value> = std::mem::take(&mut shell.unsaved)
         .into_iter()
         .filter(|(key, value)| shell.app.settings.text(key).as_ref() != Some(value))
-        .map(|(key, value)| (key.to_owned(), value.into()))
+        .map(|(key, value)| (key, value.into()))
         .collect();
     if changes.is_empty() {
         return;

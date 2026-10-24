@@ -266,7 +266,7 @@ pub struct Shell {
     backlog: bool,
     /// Preferences changed from the toolbars and not saved yet
     /// (`settings::remember`).
-    pub(crate) unsaved: std::collections::BTreeMap<&'static str, String>,
+    pub(crate) unsaved: std::collections::BTreeMap<String, String>,
     /// How the user arranged the sidebar's groups (`ui.sidebar_section`).
     pub sidebar_sections: crate::sidebar::Sections,
     /// The places as the user arranged them, and the places' revision
@@ -1530,7 +1530,7 @@ impl Shell {
         self.prefs.model_look = look;
         cx.notify();
         self.unsaved.insert(
-            crate::settings::MODEL_PERSPECTIVE_KEY,
+            crate::settings::MODEL_PERSPECTIVE_KEY.to_owned(),
             look.perspective.to_string(),
         );
         crate::settings::remember(
@@ -1703,6 +1703,20 @@ impl Shell {
         // one it stops on.
         if self.presented.is_some() && !name.starts_with("tab.") {
             self.present(false, window, cx);
+        }
+        // A setting the window changes (a menu's switch, a background
+        // chosen) waits behind a save that runs, never refused by it
+        // (`settings::remember`); the palette's too.
+        if name == "settings.apply"
+            && let Some(changes) = args["changes"].as_object()
+            && !changes.is_empty()
+            && changes.values().all(serde_json::Value::is_string)
+        {
+            for (key, value) in changes {
+                let value = value.as_str().unwrap_or_default().to_owned();
+                self.unsaved.insert(key.clone(), value);
+            }
+            return crate::settings::flush_remembered(self, cx);
         }
         if let Some(ui) = name.strip_prefix("ui.") {
             // Declared as every command is (`commands.rs`): a name or
