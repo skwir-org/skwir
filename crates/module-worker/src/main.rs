@@ -178,8 +178,12 @@ fn serve(path: &std::path::Path, keep: Option<&std::path::Path>) -> anyhow::Resu
     store.limiter(|state| &mut state.limits);
     let mut answer = None;
     while let Some(message) = store.data_mut().wire.next_message()? {
-        let Some(id) = message.id else {
-            continue; // A notification between calls: a late cancel.
+        // A notification between calls (a late cancel), or the answer to
+        // a read of a call skwir stopped waiting for: no request. Taken for
+        // one, its answer carried the read's id, which the call asked next
+        // could have.
+        let Some(id) = message.id.filter(|_| !message.is_response()) else {
+            continue;
         };
         let name = message.method.unwrap_or_default();
         let params = message.params.unwrap_or(serde_json::Value::Null);

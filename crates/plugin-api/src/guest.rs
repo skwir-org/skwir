@@ -194,8 +194,12 @@ pub mod stdio {
             cancelled: Cell::new(None),
         };
         while let Some(message) = host.next_message()? {
-            let Some(id) = message.id else {
-                continue; // A notification between calls: a late cancel.
+            // A notification between calls (a late cancel), or the answer
+            // to a read of a call skwir stopped waiting for: no request.
+            // Taken for one, its answer carried the read's id, which the
+            // call asked next could have.
+            let Some(id) = message.id.filter(|_| !message.is_response()) else {
+                continue;
             };
             let name = message.method.unwrap_or_default();
             let params = message.params.unwrap_or(Value::Null);
