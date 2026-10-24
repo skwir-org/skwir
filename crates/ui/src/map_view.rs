@@ -335,9 +335,11 @@ impl PaneView for MapView {
     }
 
     fn reset(&mut self) {
-        // Another location: fitted to its own files, nothing opened.
-        self.handles.view.set(None);
-        self.handles.fold();
+        // Another location: nothing of the last one's map is kept, as the
+        // preview starts its own afresh: fitted to its own files, nothing
+        // opened, no place the keys reached (an index of the last one's
+        // markers, which a ring and the screen reader named here).
+        self.handles = Handles::default();
     }
 
     fn render(&mut self, shell: &mut Shell, _: &mut Window, cx: &mut Context<Shell>) -> AnyElement {
