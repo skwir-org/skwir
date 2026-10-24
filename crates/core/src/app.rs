@@ -768,7 +768,7 @@ impl App {
     /// Open a location in a pane, replacing what it showed. Returns immediately;
     /// entries arrive through `pump`.
     pub fn navigate(&self, pane: PaneId, location: &Location) -> anyhow::Result<()> {
-        let location = &self.from_pane(pane, location)?;
+        let location = &self.reached_in(pane, location)?;
         let left = self.cursor_of(pane);
         self.show(pane, location, |p| p.go_on(location.clone(), left))
     }
@@ -777,7 +777,7 @@ impl App {
     /// the folder shown's, never the process's (shell.md), `..` read as
     /// the trail reads it; refused where the pane shows no folder (a
     /// search, a tag).
-    fn from_pane(&self, pane: PaneId, location: &Location) -> anyhow::Result<Location> {
+    fn reached_in(&self, pane: PaneId, location: &Location) -> anyhow::Result<Location> {
         let Some(relative) = location.path().filter(|path| path.is_relative()) else {
             return Ok(location.clone());
         };
