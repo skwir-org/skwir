@@ -30,6 +30,7 @@ use parking_lot::{Mutex, MutexGuard};
 use skwir_core::app::App;
 use skwir_core::cache::CacheSlot;
 use skwir_core::cancel::CancelToken;
+use skwir_core::fs::reach;
 use skwir_core::metadata::{tag_parent, tag_within};
 
 /// The setting: how much room the index may take, in megabytes.
@@ -616,11 +617,32 @@ impl TagIndex {
     /// The pieces holding the folders under `root`, read.
     fn load_under(&self, state: &mut State, root: &Path) -> Vec<(PathBuf, usize)> {
         let under = state.under(root);
-        let pieces: HashSet<usize> = under.iter().map(|(_, b)| *b).collect();
+        self.load_pieces(state, &under);
+        under
+    }
+
+    /// [`load_under`](Self::load_under), but the folders a walk of `root`
+    /// reaches: none in a network mount below it (ADR-077), which a count
+    /// never enters and a search never walks, though a pane shown there
+    /// taught the index its files. What the index answers of `root` is
+    /// what a count of it covers, and nothing there is read to tell.
+    fn load_reached(&self, state: &mut State, root: &Path) -> Vec<(PathBuf, usize)> {
+        let unreached: Vec<PathBuf> = reach::all()
+            .iter()
+            .filter(|r| r.point != root && r.point.starts_with(root))
+            .map(|r| r.point.clone())
+            .collect();
+        let mut under = state.under(root);
+        under.retain(|(path, _)| !unreached.iter().any(|point| path.starts_with(point)));
+        self.load_pieces(state, &under);
+        under
+    }
+
+    fn load_pieces(&self, state: &mut State, folders: &[(PathBuf, usize)]) {
+        let pieces: HashSet<usize> = folders.iter().map(|(_, b)| *b).collect();
         for at in pieces {
             self.load(state, at);
         }
-        under
     }
 
     /// Its thread, if it is not running (woken, if it is): it writes what
@@ -902,7 +924,7 @@ impl TagIndex {
     /// The tagged files under `root` it knows, by their folder.
     pub fn by_folder(&self, root: &Path) -> HashMap<PathBuf, Vec<PathBuf>> {
         let mut state = self.state();
-        let under = self.load_under(&mut state, root);
+        let under = self.load_reached(&mut state, root);
         under
             .into_iter()
             .filter_map(|(path, at)| {
@@ -1006,12 +1028,13 @@ impl TagIndex {
             .collect()
     }
 
-    /// The tags of the files under `root` outside hidden folders, each
-    /// with how many files have it (spelled as most of them spell it, in
-    /// the order of their names), and how many files have a tag.
+    /// The tags of the files under `root` outside hidden folders and
+    /// network mounts, each with how many files have it (spelled as most
+    /// of them spell it, in the order of their names), and how many files
+    /// have a tag.
     pub fn tally(&self, root: &Path) -> (Vec<(String, usize)>, usize) {
         let mut state = self.state();
-        let under = self.load_under(&mut state, root);
+        let under = self.load_reached(&mut state, root);
         let mut counts: HashMap<u32, u64> = HashMap::new();
         let mut files = 0usize;
         for (path, at) in under {
@@ -1047,7 +1070,7 @@ impl TagIndex {
             if ids.is_empty() {
                 return Vec::new();
             }
-            let under = self.load_under(&mut state, root);
+            let under = self.load_reached(&mut state, root);
             under
                 .into_iter()
                 .filter_map(|(path, at)| Some((state.pieces[at].folders.get(&path)?, path)))
@@ -1071,9 +1094,10 @@ impl TagIndex {
         here
     }
 
-    /// The tagged files under `root` outside hidden folders, each with its
-    /// tags as spelled on it: those with a tag within `within` only, when
-    /// given. What a tag location lists (`location.rs`).
+    /// The tagged files under `root` outside hidden folders and network
+    /// mounts, each with its tags as spelled on it: those with a tag within
+    /// `within` only, when given. What a tag location lists
+    /// (`location.rs`).
     pub fn files_under(&self, root: &Path, within: Option<&str>) -> Vec<(PathBuf, Vec<String>)> {
         let mut state = self.state();
         let ids: Option<Vec<u32>> = within.map(|tag| {
@@ -1088,7 +1112,7 @@ impl TagIndex {
         if ids.as_ref().is_some_and(Vec::is_empty) {
             return Vec::new();
         }
-        let under = self.load_under(&mut state, root);
+        let under = self.load_reached(&mut state, root);
         let mut out = Vec::new();
         for (path, at) in under {
             if hidden_under(&path, root) {

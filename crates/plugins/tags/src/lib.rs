@@ -36,6 +36,7 @@ use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Form, Invocation, Outcome};
 use skwir_core::entry::keys;
+use skwir_core::fs::reach;
 use skwir_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag};
 use skwir_core::op::{EntryRef, Plan};
 use skwir_core::os_path::PathArg;
@@ -420,34 +421,37 @@ fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuIt
 }
 
 /// Record a tag's color (`None`: the one its name gives it) in the
-/// settings, on a worker.
+/// settings: on a worker from the window's thread, else before answering
+/// (a script's, an agent's or a `skwir cmd` without a window, which ends
+/// once answered).
 fn set_color(app: &App, lifetime: &CancelToken, sidebar: &Sidebar, tag: &str, color: Option<&str>) {
     let (tag, color, weak) = (tag.to_lowercase(), color.map(str::to_owned), app.weak());
     let sidebar = sidebar.clone();
-    app.scheduler.spawn(
-        Priority::Normal,
-        "tags.color",
-        lifetime.child(),
-        move || {
-            let Some(app) = weak.upgrade() else { return };
-            let mut colors: toml::Table = app.settings.get(TAG_COLOR_SETTING).unwrap_or_default();
-            match color {
-                Some(color) => colors.insert(tag, toml::Value::String(color)),
-                None => colors.remove(&tag),
-            };
-            app.settings
-                .set(TAG_COLOR_SETTING, toml::Value::Table(colors));
-            if let Err(error) = app.settings.save() {
-                app.notify(
-                    skwir_core::app::NotifyLevel::Error,
-                    format!("The tag's color was not saved: {error:#}"),
-                );
-            }
-            // The sidebar's pill wears it at once.
-            sidebar.publish(&app);
-            app.wake();
-        },
-    );
+    let save = move || {
+        let Some(app) = weak.upgrade() else { return };
+        let mut colors: toml::Table = app.settings.get(TAG_COLOR_SETTING).unwrap_or_default();
+        match color {
+            Some(color) => colors.insert(tag, toml::Value::String(color)),
+            None => colors.remove(&tag),
+        };
+        app.settings
+            .set(TAG_COLOR_SETTING, toml::Value::Table(colors));
+        if let Err(error) = app.settings.save() {
+            app.notify(
+                skwir_core::app::NotifyLevel::Error,
+                format!("The tag's color was not saved: {error:#}"),
+            );
+        }
+        // The sidebar's pill wears it at once.
+        sidebar.publish(&app);
+        app.wake();
+    };
+    if skwir_core::scheduler::on_window_thread() {
+        app.scheduler
+            .spawn(Priority::Normal, "tags.color", lifetime.child(), save);
+    } else {
+        save();
+    }
 }
 
 /// The tags plugin.
@@ -674,6 +678,18 @@ impl Plugin for TagsPlugin {
                         let follow = skwir_core::op::Follow::new(changes);
                         paths = paths.iter().filter_map(|p| follow.through(p).at).collect();
                     }
+                    // What moved in from where no count covered is read
+                    // (counted, a folder) as what is copied: the index
+                    // carries along only the files it knew.
+                    for (from, to) in &moves {
+                        if let Some(to) = to
+                            && index.covering(from).is_none()
+                            && index.covering(to).is_some()
+                            && !paths.contains(to)
+                        {
+                            paths.push(to.clone());
+                        }
+                    }
                     places.changed(
                         &paths
                             .iter()
@@ -694,40 +710,54 @@ impl Plugin for TagsPlugin {
                     let Some(app) = weak.upgrade().filter(|_| !paths.is_empty()) else {
                         return;
                     };
-                    let (index, weak, places) =
-                        (Arc::clone(&index), weak.clone(), Arc::clone(&places));
-                    let job = lifetime.child();
-                    app.scheduler.spawn(
-                        Priority::Background,
-                        "tags.learn",
-                        job.clone(),
-                        move || {
-                            let Some(app) = weak.upgrade() else { return };
-                            let learned = paths
-                                .iter()
-                                .map(|p| {
-                                    let tags = notes_of(&app, p).tag_names();
-                                    (p.clone(), tags)
-                                })
-                                .collect();
-                            index.learn(learned);
-                            // A folder restored or copied brings its files:
-                            // the trash made the index forget them, and
-                            // their change times did not move, so no check
-                            // would read them again. They are counted.
-                            for folder in paths
-                                .iter()
-                                .filter(|p| std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir()))
-                            {
-                                if let Err(error) =
-                                    crate::count::run(&app, &index, folder, None, &job)
-                                {
-                                    tracing::debug!("tags: a folder brought back: {error:#}");
+                    // Each remote's files are read in its lane: a plan's
+                    // files may be on several (ADR-077).
+                    let mut lanes: Vec<(skwir_core::scheduler::Lane, Vec<std::path::PathBuf>)> =
+                        Vec::new();
+                    for path in paths {
+                        let lane = reach::lane(&path);
+                        match lanes.iter_mut().find(|(l, _)| *l == lane) {
+                            Some((_, paths)) => paths.push(path),
+                            None => lanes.push((lane, vec![path])),
+                        }
+                    }
+                    for (lane, paths) in lanes {
+                        let (index, weak, places) =
+                            (Arc::clone(&index), weak.clone(), Arc::clone(&places));
+                        let job = lifetime.child();
+                        app.scheduler.spawn_in(
+                            lane,
+                            Priority::Background,
+                            "tags.learn",
+                            job.clone(),
+                            move || {
+                                let Some(app) = weak.upgrade() else { return };
+                                let learned = paths
+                                    .iter()
+                                    .map(|p| {
+                                        let tags = notes_of(&app, p).tag_names();
+                                        (p.clone(), tags)
+                                    })
+                                    .collect();
+                                index.learn(learned);
+                                // A folder restored, copied or moved in brings
+                                // its files: the trash made the index forget
+                                // them, and their change times did not move,
+                                // so no check would read them again. They are
+                                // counted.
+                                for folder in paths.iter().filter(|p| {
+                                    std::fs::symlink_metadata(p).is_ok_and(|m| m.is_dir())
+                                }) {
+                                    if let Err(error) =
+                                        crate::count::run(&app, &index, folder, None, &job)
+                                    {
+                                        tracing::debug!("tags: a folder brought back: {error:#}");
+                                    }
                                 }
-                            }
-                            places.touch();
-                        },
-                    );
+                                places.touch();
+                            },
+                        );
+                    }
                 }),
             );
         }

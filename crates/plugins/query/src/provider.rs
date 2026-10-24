@@ -651,6 +651,18 @@ struct Reached {
     folders: HashMap<PathBuf, bool>,
 }
 
+/// The network mounts below `root` (not `root` itself), which a walk of
+/// it never enters (ADR-077), from the mount table in memory: what an
+/// index names under one is left out as the walk leaves it, before
+/// anything there is read.
+pub(crate) fn mounts_below(root: &Path) -> Vec<PathBuf> {
+    reach::all()
+        .iter()
+        .filter(|r| r.point != root && r.point.starts_with(root))
+        .map(|r| r.point.clone())
+        .collect()
+}
+
 /// Reject paths the walk cannot reach before any filesystem read: hidden
 /// names, excess depth, and a network mount anywhere below the root.
 fn in_walk<'a>(q: &Query, path: &'a Path) -> Option<&'a Path> {
@@ -825,7 +837,8 @@ impl Shared {
 
     /// Consider the files the indexes name for the query's tag (ADR-026),
     /// as the walk would have (hidden files and depth as it would, never
-    /// through a link), and return them for the walk to skip.
+    /// through a link, nor into a network mount below the root), and
+    /// return them for the walk to skip.
     fn hinted(
         &self,
         q: &Query,
@@ -851,6 +864,7 @@ impl Shared {
         let started = Instant::now();
         let mut statter = Statter::default();
         let mut linked: HashMap<PathBuf, bool> = HashMap::new();
+        let unreached = mounts_below(&real_root);
         for real in paths {
             if cancel.is_cancelled() {
                 break;
@@ -858,7 +872,9 @@ impl Shared {
             let Ok(relative) = real.strip_prefix(&real_root) else {
                 continue;
             };
-            if !crate::plocate::visible(relative, q.hidden, q.depth) {
+            if !crate::plocate::visible(relative, q.hidden, q.depth)
+                || unreached.iter().any(|point| real.starts_with(point))
+            {
                 continue;
             }
             // A folder on the way that is a link: the walk would not go

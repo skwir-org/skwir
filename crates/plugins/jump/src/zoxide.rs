@@ -31,15 +31,19 @@ pub fn parse(output: &[u8]) -> Vec<ZEntry> {
         .collect()
 }
 
+/// How long zoxide may take to answer.
+pub const TIMEOUT: Duration = Duration::from_secs(5);
+
 /// Ask zoxide, if it is installed. Worker-only: this runs a process. A
-/// missing binary, a failure or a timeout yields an empty list.
+/// missing binary, a failure or a timeout ([`TIMEOUT`]) yields an empty
+/// list.
 pub fn query(cancel: &CancelToken) -> Vec<ZEntry> {
     let Some(zoxide) = skwir_core::os_path::find_program("zoxide") else {
         return Vec::new();
     };
     let mut command = Command::new(zoxide);
     command.args(["query", "--list", "--score"]);
-    match skwir_platform::process::run(&mut command, cancel, Duration::from_secs(5)) {
+    match skwir_platform::process::run(&mut command, cancel, TIMEOUT) {
         Ok(out) => parse(&out),
         Err(e) => {
             tracing::debug!("zoxide: {e:#}");

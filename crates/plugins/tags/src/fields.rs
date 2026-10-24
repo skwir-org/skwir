@@ -39,48 +39,55 @@ pub fn marked(list: &[String], tag: &str, on: bool) -> Vec<String> {
     out
 }
 
-/// Mark the category `tag` as holding one tag at a time, or not, and save,
-/// on a worker; a toast says so, with Undo (Redo once `undo`).
+/// Mark the category `tag` as holding one tag at a time, or not, and save:
+/// on a worker from the window's thread, else before answering (a
+/// script's, an agent's or a `skwir cmd` without a window, which ends once
+/// answered); a toast says so, with Undo (Redo once `undo`).
 pub fn set(app: &App, saving: &Arc<Mutex<()>>, tag: &str, on: bool, undo: bool) {
     let tag = clean_tag(tag);
     let (saving, weak) = (Arc::clone(saving), app.weak());
-    app.scheduler.spawn(
-        skwir_core::scheduler::Priority::Normal,
-        "tags.exclusive",
-        app.lifetime().child(),
-        move || {
-            let Some(app) = weak.upgrade() else { return };
-            let _saving = saving.lock();
-            let was = exclusive(&app);
-            let list = marked(&was, &tag, on);
-            if list.len() == was.len() && list.iter().all(|t| was.iter().any(|w| same_tag(w, t))) {
-                return;
-            }
-            app.settings.set(
-                TAG_EXCLUSIVE_SETTING,
-                toml::Value::Array(list.into_iter().map(toml::Value::String).collect()),
-            );
-            match app.settings.save() {
-                Err(error) => app.notify(
-                    NotifyLevel::Error,
-                    format!("“{tag}” was not changed: {error:#}"),
+    let save = move || {
+        let Some(app) = weak.upgrade() else { return };
+        let _saving = saving.lock();
+        let was = exclusive(&app);
+        let list = marked(&was, &tag, on);
+        if list.len() == was.len() && list.iter().all(|t| was.iter().any(|w| same_tag(w, t))) {
+            return;
+        }
+        app.settings.set(
+            TAG_EXCLUSIVE_SETTING,
+            toml::Value::Array(list.into_iter().map(toml::Value::String).collect()),
+        );
+        match app.settings.save() {
+            Err(error) => app.notify(
+                NotifyLevel::Error,
+                format!("“{tag}” was not changed: {error:#}"),
+            ),
+            Ok(()) => app.notify_undoable(
+                if on {
+                    format!("A file now has one tag of “{tag}” at a time")
+                } else {
+                    format!("A file can have several tags of “{tag}” again")
+                },
+                undo,
+                Invocation::with_args(
+                    "tags.exclusive",
+                    &serde_json::json!({ "tag": tag, "on": !on, "undo": !undo }),
                 ),
-                Ok(()) => app.notify_undoable(
-                    if on {
-                        format!("A file now has one tag of “{tag}” at a time")
-                    } else {
-                        format!("A file can have several tags of “{tag}” again")
-                    },
-                    undo,
-                    Invocation::with_args(
-                        "tags.exclusive",
-                        &serde_json::json!({ "tag": tag, "on": !on, "undo": !undo }),
-                    ),
-                ),
-            }
-            app.wake();
-        },
-    );
+            ),
+        }
+        app.wake();
+    };
+    if skwir_core::scheduler::on_window_thread() {
+        app.scheduler.spawn(
+            skwir_core::scheduler::Priority::Normal,
+            "tags.exclusive",
+            app.lifetime().child(),
+            save,
+        );
+    } else {
+        save();
+    }
 }
 
 #[cfg(test)]

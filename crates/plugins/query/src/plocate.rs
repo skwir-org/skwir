@@ -50,10 +50,14 @@ pub fn try_locate(q: &Query, cancel: &CancelToken) -> Option<Located> {
     let patterns = q.name_substrings()?;
     let bin = skwir_core::os_path::find_program("plocate")?;
     let paths = locate_with(&bin, &patterns, q.case_sensitive, cancel)?;
+    // What a walk of `/` would not enter, its database may have indexed.
+    let unreached = crate::provider::mounts_below(&q.root);
     Some(Located {
         paths: paths
             .into_iter()
-            .filter(|p| visible(p, q.hidden, q.depth))
+            .filter(|p| {
+                visible(p, q.hidden, q.depth) && !unreached.iter().any(|point| p.starts_with(point))
+            })
             .collect(),
         updated: updated(&databases(&bin, cancel)),
     })

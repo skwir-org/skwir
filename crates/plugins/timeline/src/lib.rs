@@ -31,6 +31,7 @@ use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::entry::{Value, keys};
+use skwir_core::fs::reach;
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::scheduler::Priority;
@@ -346,8 +347,10 @@ fn pane_view(app: &App, pane: PaneId) -> anyhow::Result<(PathBuf, bool, CancelTo
     Ok((dir, p.sort.show_hidden, p.location_lifetime()))
 }
 
-/// Every entry below `root` (not `root` itself), folded by day. `None` when
-/// cancelled.
+/// Every entry below `root` (not `root` itself), folded by day, as a search
+/// walks: never into a network mount below it (ADR-077). `None` when
+/// cancelled. Run in `root`'s lane: a remote's folder is walked there one
+/// after the other, never on rayon's threads, which no lane holds.
 fn walk_days(root: &Path, hidden: bool, cancel: &CancelToken) -> Option<Days> {
     use rayon::prelude::*;
     fn one(dir: &Path, hidden: bool, cancel: &CancelToken) -> (Days, Vec<PathBuf>) {
@@ -359,6 +362,10 @@ fn walk_days(root: &Path, hidden: bool, cancel: &CancelToken) -> Option<Days> {
         if let Ok(rd) = std::fs::read_dir(dir) {
             for e in rd.flatten() {
                 if !hidden && skwir_core::fs::is_hidden(&e) {
+                    continue;
+                }
+                // Told before its stat, which its server would answer.
+                if e.file_type().is_ok_and(|t| t.is_dir()) && reach::is_point(&e.path()) {
                     continue;
                 }
                 // `DirEntry::metadata` does not follow links: a link is
@@ -374,20 +381,29 @@ fn walk_days(root: &Path, hidden: bool, cancel: &CancelToken) -> Option<Days> {
         }
         (days, subdirs)
     }
+    let fold = |(mut a, mut a_dirs): (Days, Vec<PathBuf>), (b, b_dirs): (Days, Vec<PathBuf>)| {
+        a.merge(b);
+        a_dirs.extend(b_dirs);
+        (a, a_dirs)
+    };
+    let remote = reach::of(root).is_some();
     let mut days = Days::default();
     let mut level = vec![root.to_path_buf()];
     while !level.is_empty() {
         if cancel.is_cancelled() {
             return None;
         }
-        let (d, next) = level.par_iter().map(|dir| one(dir, hidden, cancel)).reduce(
-            || (Days::default(), Vec::new()),
-            |(mut a, mut a_dirs), (b, b_dirs)| {
-                a.merge(b);
-                a_dirs.extend(b_dirs);
-                (a, a_dirs)
-            },
-        );
+        let (d, next) = if remote {
+            level
+                .iter()
+                .map(|dir| one(dir, hidden, cancel))
+                .fold((Days::default(), Vec::new()), fold)
+        } else {
+            level
+                .par_iter()
+                .map(|dir| one(dir, hidden, cancel))
+                .reduce(|| (Days::default(), Vec::new()), fold)
+        };
         days.merge(d);
         level = next;
     }
@@ -495,8 +511,12 @@ impl TimelinePlugin {
             let shared = Arc::clone(&self.state);
             let wake = app.waker_handle();
             let task_cancel = cancel.clone();
-            app.scheduler
-                .spawn(Priority::Background, "timeline.walk", cancel, move || {
+            app.scheduler.spawn_in(
+                reach::lane(&dir),
+                Priority::Background,
+                "timeline.walk",
+                cancel,
+                move || {
                     let Some(days) = walk_days(&dir, hidden, &task_cancel) else {
                         return;
                     };
@@ -512,7 +532,8 @@ impl TimelinePlugin {
                         drop(s);
                         wake();
                     }
-                });
+                },
+            );
         }
         Ok(ps.status())
     }

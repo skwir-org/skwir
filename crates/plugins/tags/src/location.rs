@@ -26,6 +26,7 @@ use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::Invocation;
 use skwir_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
+use skwir_core::fs::reach;
 use skwir_core::location::{
     Completion, Completions, Crumb, EmptyState, EventSink, ListingEvent, Location,
     LocationProvider, Narrowing, OpenContext, OpenLocation, Toggle, Trail, Verb, Verbs, escape,
@@ -702,7 +703,9 @@ impl Places {
             scope.running = true;
         }
         let (this, root) = (Arc::clone(self), root.to_path_buf());
-        app.scheduler.spawn(
+        // Its folder may be a remote's: its count reads there, in its lane.
+        app.scheduler.spawn_in(
+            reach::lane(&root),
             Priority::Normal,
             "tags.count",
             self.lifetime.child(),
@@ -873,7 +876,10 @@ impl Open {
             r.running = true;
         }
         let Some(me) = self.me.upgrade() else { return };
-        self.ctx.scheduler.spawn(
+        // It stats what it lists, in its folder's lane: the index answers
+        // nothing of a network mount below it (`TagIndex::files_under`).
+        self.ctx.scheduler.spawn_in(
+            reach::lane(&self.root),
             Priority::Visible,
             "tags.location",
             self.ctx.cancel.child(),
@@ -1092,11 +1098,15 @@ impl OpenLocation for Open {
             let sink = self.sink.clone();
             let metadata = Arc::clone(&self.ctx.metadata);
             let cancel = self.ctx.cancel.child();
-            self.ctx
-                .scheduler
-                .spawn(priority, "tags.location.stat", cancel.clone(), move || {
+            self.ctx.scheduler.spawn_in(
+                reach::lane(&self.root),
+                priority,
+                "tags.location.stat",
+                cancel.clone(),
+                move || {
                     skwir_core::fs::hydrate_paths(&items, &metadata, &sink, &cancel);
-                });
+                },
+            );
         }
     }
 

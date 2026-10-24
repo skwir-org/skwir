@@ -151,48 +151,77 @@ impl Index {
     const TTL: Duration = Duration::from_secs(10);
 }
 
+/// Whether the index was ever gathered, and the gathering under way.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+enum Gathered {
+    #[default]
+    Not,
+    Running,
+    Done,
+}
+
+/// The first gathering of the index: those asked meanwhile wait for it on
+/// the condition, never on a lock held across zoxide and the stats.
+#[derive(Default)]
+struct FirstGathering {
+    state: Mutex<Gathered>,
+    ended: parking_lot::Condvar,
+}
+
 /// The jump plugin.
 #[derive(Default)]
 pub struct JumpPlugin {
     index: Arc<Mutex<Index>>,
     /// Whether the index was ever gathered: nothing is asked of zoxide or
     /// the recent files until Jump is first used.
-    gathered: Arc<Mutex<bool>>,
+    gathered: Arc<FirstGathering>,
     /// Cancelled on disable: a refresh in flight stops and publishes nothing.
     lifetime: Mutex<CancelToken>,
 }
 
 /// Gather the index now, the first time it is needed, unless it was: a
 /// first query waits for it (on a worker, as the window asks) rather than
-/// ranking nothing, and those asked meanwhile wait for the same gathering.
-/// On the window's thread it is left to a worker, and what there is ranked.
+/// ranking nothing, and those asked meanwhile wait for the same gathering,
+/// as long as zoxide may take ([`zoxide::TIMEOUT`]), then rank what there
+/// is. On the window's thread it is left to a worker, and what there is
+/// ranked.
 fn first_need(
-    gathered: &Mutex<bool>,
+    gathered: &FirstGathering,
     index: &Arc<Mutex<Index>>,
     lifetime: &CancelToken,
     app: &App,
 ) {
     if skwir_core::scheduler::on_window_thread() {
-        if !*gathered.lock() {
+        if *gathered.state.lock() == Gathered::Not {
             refresh(index, lifetime, app);
         }
         return;
     }
-    let mut done = gathered.lock();
-    if *done {
-        return;
+    {
+        let mut state = gathered.state.lock();
+        let deadline = Instant::now() + zoxide::TIMEOUT;
+        while *state == Gathered::Running {
+            if gathered.ended.wait_until(&mut state, deadline).timed_out() {
+                return;
+            }
+        }
+        if *state == Gathered::Done {
+            return;
+        }
+        *state = Gathered::Running;
     }
     let cancel = lifetime.child();
     let dirs = zoxide::query(&cancel);
     let files = recent_files();
-    if cancel.is_cancelled() {
-        return;
+    let done = !cancel.is_cancelled();
+    if done {
+        let mut ix = index.lock();
+        ix.dirs = dirs;
+        ix.files = files;
+        ix.asked = Some(Instant::now());
     }
-    let mut ix = index.lock();
-    ix.dirs = dirs;
-    ix.files = files;
-    ix.asked = Some(Instant::now());
-    *done = true;
+    *gathered.state.lock() = if done { Gathered::Done } else { Gathered::Not };
+    gathered.ended.notify_all();
 }
 
 /// Start gathering the index again unless a refresh started less than
@@ -253,8 +282,10 @@ fn recent_files() -> Vec<xbel::Recent> {
 }
 
 /// Open a folder, or a file's folder with the file selected. Whether the
-/// path is a folder is asked on a worker (a sleeping disk can take a
-/// while); the name is selected when the listing brings it.
+/// path is a folder is asked on a worker, in its lane (a sleeping disk or
+/// a server can take a while); the name is selected when the listing
+/// brings it. The pane's: going elsewhere meanwhile, Back or closing it
+/// lets the jump go.
 fn jump_to(path: PathBuf, pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
     anyhow::ensure!(
         path.is_absolute(),
@@ -262,14 +293,22 @@ fn jump_to(path: PathBuf, pane: Option<PaneId>, app: &App) -> anyhow::Result<Out
         path.display()
     );
     let pane = app.pane_or_active(pane);
+    let visit = app
+        .workspace
+        .read()
+        .pane(pane)
+        .map(skwir_core::workspace::Pane::location_lifetime)
+        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+    let cancel = app.lifetime().linked(&visit);
     let weak = app.weak();
-    app.scheduler.spawn(
+    app.scheduler.spawn_in(
+        skwir_core::fs::reach::lane(&path),
         Priority::Normal,
         "jump.to",
-        app.lifetime().child(),
+        cancel.clone(),
         move || {
             let Some(app) = weak.upgrade() else { return };
-            if let Err(e) = go(&app, pane, &path) {
+            if let Err(e) = go(&app, pane, &path, &cancel) {
                 app.notify(NotifyLevel::Error, format!("{e:#}"));
             }
         },
@@ -277,10 +316,13 @@ fn jump_to(path: PathBuf, pane: Option<PaneId>, app: &App) -> anyhow::Result<Out
     Ok(Outcome::Done)
 }
 
-fn go(app: &App, pane: PaneId, path: &Path) -> anyhow::Result<()> {
+fn go(app: &App, pane: PaneId, path: &Path, cancel: &CancelToken) -> anyhow::Result<()> {
     let is_dir = std::fs::metadata(path)
         .map_err(|e| anyhow::anyhow!("{}: {e}", path.display()))?
         .is_dir();
+    if cancel.is_cancelled() {
+        return Ok(());
+    }
     if is_dir {
         return app.navigate(pane, &Location::from_path(path));
     }
@@ -384,7 +426,8 @@ impl Plugin for JumpPlugin {
     fn on_disable(&self, _app: &App) {
         self.lifetime.lock().cancel();
         *self.index.lock() = Index::default();
-        *self.gathered.lock() = false;
+        *self.gathered.state.lock() = Gathered::Not;
+        self.gathered.ended.notify_all();
     }
 }
 
@@ -440,58 +483,149 @@ impl RecentLocation {
         this
     }
 
+    /// List the recent files: stat-ed to be listed by their identity, each
+    /// remote's in its lane (ADR-077), so a server that stops answering
+    /// holds its own files, never the listing of the others: what is on
+    /// this machine is listed, then complete; a remote's come as its
+    /// server answers. What is gone is left out.
     fn list(&self) {
         let tx = self.tx.clone();
         let paths = Arc::clone(&self.paths);
         let cancel = self.ctx.cancel.child();
         let batch_size = self.ctx.batch_size.max(1);
+        let scheduler = self.ctx.scheduler.clone();
         self.ctx.scheduler.spawn(
             Priority::Visible,
             "recent.list",
             cancel.clone(),
             move || {
-                // Each is stat-ed below: what is gone is left out there.
                 let items = xbel::default_path()
                     .map(|p| xbel::load(&p))
                     .unwrap_or_default();
-                let mut batch = Vec::new();
-                let mut seen = std::collections::HashSet::new();
-                let mut map = HashMap::new();
-                for r in items {
-                    if cancel.is_cancelled() {
-                        return;
-                    }
-                    let Some(e) = skwir_core::fs::stat::stat_path(&r.path) else {
+                let wanted: std::collections::HashSet<PathBuf> =
+                    items.iter().map(|r| r.path.clone()).collect();
+                let listing = Listed {
+                    tx,
+                    paths,
+                    seen: Arc::default(),
+                    cancel: cancel.clone(),
+                    batch_size,
+                };
+                let mut here = Vec::new();
+                for (lane, items) in by_lane(items, |r| &r.path) {
+                    let items: Vec<PathBuf> = items.into_iter().map(|r| r.path).collect();
+                    if lane.is_shared() {
+                        here = items;
                         continue;
-                    };
-                    if !seen.insert(e.id) {
-                        continue;
                     }
-                    map.insert(e.id, r.path.clone());
-                    batch.push(e);
-                    if batch.len() >= batch_size {
-                        tx.send(ListingEvent::Added(std::mem::take(&mut batch)));
-                    }
+                    let listing = listing.clone();
+                    scheduler.spawn_in(
+                        lane,
+                        Priority::Visible,
+                        "recent.list",
+                        cancel.clone(),
+                        move || listing.stat(&items),
+                    );
                 }
+                listing.stat(&here);
+                // What was listed before and no longer is recent.
                 let prev: Vec<EntryId> = {
-                    let mut p = paths.lock();
-                    let prev = p
-                        .keys()
-                        .filter(|k| !map.contains_key(*k))
-                        .copied()
+                    let mut p = listing.paths.lock();
+                    let prev: Vec<EntryId> = p
+                        .iter()
+                        .filter(|(_, path)| !wanted.contains(*path))
+                        .map(|(id, _)| *id)
                         .collect();
-                    *p = map;
+                    for id in &prev {
+                        p.remove(id);
+                    }
                     prev
                 };
-                if !batch.is_empty() {
-                    tx.send(ListingEvent::Added(batch));
+                if cancel.is_cancelled() {
+                    return;
                 }
                 if !prev.is_empty() {
-                    tx.send(ListingEvent::Removed(prev));
+                    listing.tx.send(ListingEvent::Removed(prev));
                 }
-                tx.send(ListingEvent::Complete);
+                listing.tx.send(ListingEvent::Complete);
             },
         );
+    }
+}
+
+/// `items` grouped by the lane of their path (`fs::reach::lane`), in the
+/// order first met.
+fn by_lane<T>(
+    items: impl IntoIterator<Item = T>,
+    path: impl Fn(&T) -> &Path,
+) -> Vec<(skwir_core::scheduler::Lane, Vec<T>)> {
+    let mut lanes: Vec<(skwir_core::scheduler::Lane, Vec<T>)> = Vec::new();
+    for item in items {
+        let lane = skwir_core::fs::reach::lane(path(&item));
+        match lanes.iter_mut().find(|(l, _)| *l == lane) {
+            Some((_, items)) => items.push(item),
+            None => lanes.push((lane, vec![item])),
+        }
+    }
+    lanes
+}
+
+/// One listing of the recent files, shared by its lanes' jobs.
+#[derive(Clone)]
+struct Listed {
+    tx: EventSink,
+    paths: Arc<Mutex<HashMap<EntryId, PathBuf>>>,
+    /// The files listed, once each: two names of one file are one row.
+    seen: Arc<Mutex<std::collections::HashSet<EntryId>>>,
+    cancel: CancelToken,
+    batch_size: usize,
+}
+
+impl Listed {
+    /// Stat `items` and send them, in batches; what was listed at their
+    /// paths before and is not now (gone, or another file there) is taken
+    /// out.
+    fn stat(&self, items: &[PathBuf]) {
+        let mut batch = Vec::new();
+        for path in items {
+            if self.cancel.is_cancelled() {
+                return;
+            }
+            let Some(e) = skwir_core::fs::stat::stat_path(path) else {
+                continue;
+            };
+            if !self.seen.lock().insert(e.id) {
+                continue;
+            }
+            self.paths.lock().insert(e.id, path.clone());
+            batch.push(e);
+            if batch.len() >= self.batch_size {
+                self.tx.send(ListingEvent::Added(std::mem::take(&mut batch)));
+            }
+        }
+        let asked: std::collections::HashSet<&PathBuf> = items.iter().collect();
+        let removed: Vec<EntryId> = {
+            let seen = self.seen.lock();
+            let mut p = self.paths.lock();
+            let removed: Vec<EntryId> = p
+                .iter()
+                .filter(|(id, path)| asked.contains(path) && !seen.contains(*id))
+                .map(|(id, _)| *id)
+                .collect();
+            for id in &removed {
+                p.remove(id);
+            }
+            removed
+        };
+        if self.cancel.is_cancelled() {
+            return;
+        }
+        if !batch.is_empty() {
+            self.tx.send(ListingEvent::Added(batch));
+        }
+        if !removed.is_empty() {
+            self.tx.send(ListingEvent::Removed(removed));
+        }
     }
 }
 
@@ -512,22 +646,29 @@ impl OpenLocation for RecentLocation {
         if wanted.is_empty() {
             return;
         }
-        // A job for each slice, side by side on the workers.
-        for wanted in wanted.chunks(skwir_core::fs::HYDRATE_JOB) {
-            let wanted = wanted.to_vec();
-            let tx = self.tx.clone();
-            let metadata = Arc::clone(&self.ctx.metadata);
-            let paths = Arc::clone(&self.paths);
-            let cancel = self.ctx.cancel.child();
-            self.ctx
-                .scheduler
-                .spawn(priority, "recent.stat", cancel.clone(), move || {
-                    let gone = hydrate_paths(&wanted, &metadata, &tx, &cancel);
-                    let mut paths = paths.lock();
-                    for id in gone {
-                        paths.remove(&id);
-                    }
-                });
+        // A job for each slice, side by side on the workers, each remote's
+        // in its lane.
+        for (lane, wanted) in by_lane(wanted, |(_, path)| path) {
+            for wanted in wanted.chunks(skwir_core::fs::HYDRATE_JOB) {
+                let wanted = wanted.to_vec();
+                let tx = self.tx.clone();
+                let metadata = Arc::clone(&self.ctx.metadata);
+                let paths = Arc::clone(&self.paths);
+                let cancel = self.ctx.cancel.child();
+                self.ctx.scheduler.spawn_in(
+                    lane,
+                    priority,
+                    "recent.stat",
+                    cancel.clone(),
+                    move || {
+                        let gone = hydrate_paths(&wanted, &metadata, &tx, &cancel);
+                        let mut paths = paths.lock();
+                        for id in gone {
+                            paths.remove(&id);
+                        }
+                    },
+                );
+            }
         }
     }
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {

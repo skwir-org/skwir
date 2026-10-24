@@ -342,8 +342,10 @@ fn describe(app: &App, edit: &Edit, shown: Option<&str>, done: bool) -> Option<S
     })
 }
 
-/// Edits the saved searches on a worker (the settings file is written) and
-/// says what happened with the way back: Undo, or Redo after an undo.
+/// Edits the saved searches (the settings file is written) and says what
+/// happened with the way back: Undo, or Redo after an undo. On a worker
+/// from the window's thread, else before answering: a script's, an
+/// agent's or a `skwir cmd` without a window, which ends once answered.
 #[derive(Clone)]
 struct Editor {
     saving: Arc<Mutex<()>>,
@@ -353,35 +355,36 @@ struct Editor {
 impl Editor {
     fn run(&self, app: &App, edit: Edit, undo: bool) {
         let (saving, weak) = (Arc::clone(&self.saving), app.weak());
-        app.scheduler.spawn(
-            Priority::Normal,
-            "query-saved",
-            self.lifetime.child(),
-            move || {
-                let Some(app) = weak.upgrade() else { return };
-                let shown = saved(&app)
-                    .into_iter()
-                    .find(|s| s.expr == edit.expr())
-                    .map(|s| s.name);
-                match apply_edit(&app, &saving, &edit) {
-                    Ok(Some(inverse)) => {
-                        if let Some(text) = describe(&app, &edit, shown.as_deref(), true) {
-                            app.notify_undoable(text, undo, invocation(&inverse, !undo));
-                        }
+        let save = move || {
+            let Some(app) = weak.upgrade() else { return };
+            let shown = saved(&app)
+                .into_iter()
+                .find(|s| s.expr == edit.expr())
+                .map(|s| s.name);
+            match apply_edit(&app, &saving, &edit) {
+                Ok(Some(inverse)) => {
+                    if let Some(text) = describe(&app, &edit, shown.as_deref(), true) {
+                        app.notify_undoable(text, undo, invocation(&inverse, !undo));
                     }
-                    Ok(None) => {
-                        if let Some(text) = describe(&app, &edit, shown.as_deref(), false) {
-                            app.notify(NotifyLevel::Info, text);
-                        }
-                    }
-                    Err(error) => app.notify(
-                        NotifyLevel::Error,
-                        format!("The saved searches were not changed: {error:#}"),
-                    ),
                 }
-                app.wake();
-            },
-        );
+                Ok(None) => {
+                    if let Some(text) = describe(&app, &edit, shown.as_deref(), false) {
+                        app.notify(NotifyLevel::Info, text);
+                    }
+                }
+                Err(error) => app.notify(
+                    NotifyLevel::Error,
+                    format!("The saved searches were not changed: {error:#}"),
+                ),
+            }
+            app.wake();
+        };
+        if skwir_core::scheduler::on_window_thread() {
+            app.scheduler
+                .spawn(Priority::Normal, "query-saved", self.lifetime.child(), save);
+        } else {
+            save();
+        }
     }
 }
 

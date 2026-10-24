@@ -62,9 +62,14 @@ pub fn load(path: &Path) -> Vec<Recent> {
         .unwrap_or_default()
 }
 
-/// Entries whose file still exists. Stats each one: worker-only.
+/// Entries whose file still exists. Stats each one on this machine:
+/// worker-only. One on a remote is kept unread (ADR-077): its server may
+/// not answer, and the mount table in memory tells it apart.
 pub fn existing(items: Vec<Recent>) -> Vec<Recent> {
-    items.into_iter().filter(|r| r.path.exists()).collect()
+    items
+        .into_iter()
+        .filter(|r| skwir_core::fs::reach::of(&r.path).is_some() || r.path.exists())
+        .collect()
 }
 
 #[cfg(test)]

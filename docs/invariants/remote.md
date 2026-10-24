@@ -33,6 +33,11 @@ ADR-077 (which revises ADR-021).
   holding a worker (cancelled ones are let go of as more park, and with
   the pool). A remote that stops answering holds its own jobs, never the
   window, local work, or another remote's.
+- Work on files from many places (the shelf, the recent files, what a
+  plan touched, which the tags index learns) is split by lane, a job
+  each: a server that stops answering holds its own files' job, never
+  the others'. What it ranks without reading (Jump's recent files) is
+  not read there at all.
 - A worker busy past `STUCK` while work waits is replaced, up to the
   pool's size again, whether or not more work is asked after (a look is
   planned `STUCK` later): a call that never returns costs a thread, not
@@ -84,8 +89,13 @@ ADR-077 (which revises ADR-021).
   `App::read_again`, never `OpenLocation::refresh` alone: a program that
   keeps what it listed (kio-fuse, 30 s) is told to forget it first
   (`Known::forget`), in the remote's lane.
-- **Walks** (searches, counts) never enter a network mount below their
-  root (`reach::is_point`); Usage asks before measuring a remote.
+- **Walks** (searches, counts, the timeline's subtree) never enter a
+  network mount below their root (`reach::is_point`, told before the
+  point is stat-ed, which its server answers), nor answer what an index
+  learned there (the points below the root, from `reach::all`): a
+  search's hints and plocate's answer, the tags index's counts and tag
+  locations leave out what a pane shown there taught them. Usage asks
+  before measuring a remote.
 - **Delete** on a FUSE remote (sshfs, rclone, GVfs) is permanent and asked
   (the trash command makes a `Delete` there); a kernel share keeps its own
   `.Trash-<uid>`. Nothing is ever copied from a remote into this

@@ -1,6 +1,7 @@
 //! The count behind tag locations (`location.rs`): every tagged file under a folder,
-//! outside hidden folders, learned by the index (`index::TagIndex`), which
-//! then covers the folder as of the time the count began.
+//! outside hidden folders and the network mounts below it (ADR-077),
+//! learned by the index (`index::TagIndex`), which then covers the folder
+//! as of the time the count began.
 //!
 //! A first count reads every file's notes. A later one, the folder covered,
 //! checks: it reads again only what changed since. Setting a tag changes
@@ -27,6 +28,7 @@ use parking_lot::{Condvar, Mutex};
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::entry::{EntryId, FileId};
+use skwir_core::fs::reach;
 
 use crate::index::{TagIndex, stable_hash};
 
@@ -242,6 +244,13 @@ impl Walk<'_> {
         let mut owners: HashSet<OsString> = HashSet::new();
         for entry in entries.flatten() {
             let name = entry.file_name();
+            // A network mount below the folder counted is neither read nor
+            // entered (ADR-077): a count of it walks it from its own
+            // folder. Told before its stat, which its server answers.
+            if entry.file_type().is_ok_and(|t| t.is_dir()) && reach::is_point(&entry.path()) {
+                present.insert(name);
+                continue;
+            }
             let Ok(meta) = entry.metadata() else { continue };
             present.insert(name.clone());
             if hidden(&name) {

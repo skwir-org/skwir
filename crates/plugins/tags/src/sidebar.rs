@@ -190,7 +190,9 @@ fn set_invocation(pins: &[String], undo: bool) -> Invocation {
     )
 }
 
-/// Apply `edit` to the pins and save them, on a worker; a toast says what
+/// Apply `edit` to the pins and save them, on a worker from the window's
+/// thread, else before answering (a script's, an agent's or a `skwir cmd`
+/// without a window, which ends once answered); a toast says what
 /// changed, with Undo (Redo once `undo`). `then` runs once they are saved.
 pub fn edit(
     app: &App,
@@ -201,34 +203,39 @@ pub fn edit(
     then: impl FnOnce(&App) + Send + 'static,
 ) {
     let (saving, weak) = (Arc::clone(saving), app.weak());
-    app.scheduler.spawn(
-        skwir_core::scheduler::Priority::Normal,
-        "tags.pin",
-        lifetime.child(),
-        move || {
-            let Some(app) = weak.upgrade() else { return };
-            let _saving = saving.lock();
-            let was = pinned(&app);
-            let mut list = was.clone();
-            if !edit.apply(&mut list) {
-                return;
-            }
-            app.settings.set(
-                PINNED,
-                toml::Value::Array(list.into_iter().map(toml::Value::String).collect()),
+    let save = move || {
+        let Some(app) = weak.upgrade() else { return };
+        let _saving = saving.lock();
+        let was = pinned(&app);
+        let mut list = was.clone();
+        if !edit.apply(&mut list) {
+            return;
+        }
+        app.settings.set(
+            PINNED,
+            toml::Value::Array(list.into_iter().map(toml::Value::String).collect()),
+        );
+        if let Err(error) = app.settings.save() {
+            app.notify(
+                NotifyLevel::Error,
+                format!("The pinned tags were not saved: {error:#}"),
             );
-            if let Err(error) = app.settings.save() {
-                app.notify(
-                    NotifyLevel::Error,
-                    format!("The pinned tags were not saved: {error:#}"),
-                );
-            } else {
-                app.notify_undoable(edit.words(&was), undo, set_invocation(&was, !undo));
-            }
-            then(&app);
-            app.wake();
-        },
-    );
+        } else {
+            app.notify_undoable(edit.words(&was), undo, set_invocation(&was, !undo));
+        }
+        then(&app);
+        app.wake();
+    };
+    if skwir_core::scheduler::on_window_thread() {
+        app.scheduler.spawn(
+            skwir_core::scheduler::Priority::Normal,
+            "tags.pin",
+            lifetime.child(),
+            save,
+        );
+    } else {
+        save();
+    }
 }
 
 /// Publish the sidebar's tags if they changed: those pinned, else the

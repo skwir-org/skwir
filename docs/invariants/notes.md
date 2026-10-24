@@ -86,13 +86,15 @@ registered in `App::notes` by its plugin); all share one model,
   and the plugin's `index.rs`, kept in pieces by folder, bounded by
   `tags.index_mb`), checks what they name, and walks anyway.
 - The index learns from what providers read and from applied changes
-  (`Executor::observe`).
+  (`Executor::observe`), each remote's in its lane: a folder copied,
+  restored, or moved in from where no count covered is counted.
 - Renaming or removing a tag everywhere (`tags.rename`, `tags.delete`;
   several merge into one plan) takes its files from the search, as a plan
   for review. Under home, the tag's pin and color follow as a step of the
   same plan (`follow.rs`), so Undo restores them.
 - **Counting** (`count.rs`): a tag location teaches the index every
-  tagged file under its folder, covering the folder as of the count's
+  tagged file under its folder but the network mounts below it
+  (remote.md, "Walks"), covering the folder as of the count's
   start. Shown again, even after a restart, it lists the counts at once,
   then checks: only files (and companions) whose change time moved, plus
   folders not seen before (by device, inode and path) and filesystems
