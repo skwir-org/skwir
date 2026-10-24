@@ -508,7 +508,9 @@ fn a_listing_follows_its_folder_when_it_moves_and_says_when_it_is_gone() {
     wait(&app, pane, |l| l.is_empty() && l.error().is_some());
 }
 
-/// Wait until `done` holds of the pane, pumping it.
+/// Wait until `done` holds of the pane, pumping it. For the tests that
+/// move folders under inotify, Linux's alone.
+#[cfg(target_os = "linux")]
 fn wait_pane(
     app: &skwir_core::App,
     pane: skwir_core::workspace::PaneId,
