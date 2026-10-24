@@ -392,6 +392,8 @@ impl Shell {
         cx.notify();
     }
     pub fn reader_search(&mut self, cx: &mut Context<Self>) {
+        // Its helper reads the document where it is (ADR-077).
+        let lane = crate::shell::lane_of(self.preview.path());
         let reader = &mut self.preview.reader;
         let Some(session) = reader.session.clone() else {
             return;
@@ -405,6 +407,7 @@ impl Shell {
         let lifetime = reader.lifetime.clone();
         reader.search.ask(
             &self.app,
+            lane,
             &lifetime,
             Priority::Normal,
             "document-search",

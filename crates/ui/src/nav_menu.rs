@@ -260,7 +260,7 @@ impl Shell {
             .map_or(skwir_core::scheduler::Lane::SHARED, |path| {
                 skwir_core::fs::reach::lane(&path)
             });
-        self.off_thread_in(
+        self.off_thread(
             lane,
             "inside",
             move || app.places_in(&reading, along.as_ref(), hidden),

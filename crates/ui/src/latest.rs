@@ -6,12 +6,16 @@
 //! arrives: cancellation alone does not keep a stale result out (AGENTS.md,
 //! "Background work"). The worker leaves its answer and wakes the window,
 //! which takes it as the core wakes it (`take`).
+//!
+//! Each ask names its lane, as `Shell::off_thread` does: the lane of the
+//! path the work reads (`fs::reach::lane`, ADR-077), the shared one for
+//! work that reads none a remote holds.
 
 use std::sync::Arc;
 
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
-use skwir_core::scheduler::Priority;
+use skwir_core::scheduler::{Lane, Priority};
 
 pub struct Latest<T> {
     /// Advanced by each ask and each forget: an answer carries the one it
@@ -43,12 +47,14 @@ impl<T> Drop for Latest<T> {
 }
 
 impl<T: Send + 'static> Latest<T> {
-    /// Ask `work` of a worker, in place of what was asked before. It runs
-    /// with a token of `lifetime`'s that the next ask, `forget` or the drop
-    /// cancels; its answer is kept unless cancelled, and the window woken.
+    /// Ask `work` of a worker in `lane`, in place of what was asked before.
+    /// It runs with a token of `lifetime`'s that the next ask, `forget` or
+    /// the drop cancels; its answer is kept unless cancelled, and the
+    /// window woken.
     pub fn ask(
         &mut self,
         app: &Arc<App>,
+        lane: Lane,
         lifetime: &CancelToken,
         priority: Priority,
         name: &'static str,
@@ -61,7 +67,7 @@ impl<T: Send + 'static> Latest<T> {
         let tx = self.tx.clone();
         let wake = app.waker_handle();
         app.scheduler
-            .spawn(priority, name, cancel.clone(), move || {
+            .spawn_in(lane, priority, name, cancel.clone(), move || {
                 let answer = work(&cancel);
                 if !cancel.is_cancelled() {
                     let _ = tx.send((asked, answer));

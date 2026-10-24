@@ -568,7 +568,10 @@ impl Shell {
             _sub: sub,
         });
         let app = std::sync::Arc::clone(&self.app);
+        // The files' notes are read where they are (ADR-077).
+        let lane = crate::shell::lane_of(entries.iter().map(|entry| &entry.path));
         self.off_thread(
+            lane,
             "tags-selected",
             move || {
                 app.dispatch(&skwir_core::command::Invocation::with_args(

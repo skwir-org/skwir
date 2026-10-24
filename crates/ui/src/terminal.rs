@@ -257,7 +257,9 @@ impl Shell {
         let waker = self.app.waker_handle();
         self.terminal.opening = true;
         tracing::debug!("terminal: starting a shell");
+        // The shell starts in the folder: a remote's, in its lane.
         self.off_thread(
+            skwir_core::fs::reach::lane(&dir),
             "terminal-open",
             move || provider.open(spawn, waker),
             move |this, result, window, cx| {

@@ -14,6 +14,8 @@ use std::path::PathBuf;
 
 use gpui::{Context, Window};
 use skwir_core::command::Invocation;
+#[cfg(target_os = "linux")]
+use skwir_core::{CancelToken, Location, workspace::PaneId};
 
 use crate::shell::Shell;
 
@@ -71,9 +73,11 @@ impl Shell {
 
     /// Run `invocation` again with the files another application put on the
     /// system's clipboard as its `clipboard`: read off the UI thread, then
-    /// each read from the disk on a worker, as a drop from another
-    /// application is. The pane it was asked in is the one it pastes into,
-    /// whichever is active once that is done.
+    /// each read from the disk on a worker, in their lane, as a drop from
+    /// another application is. The pane it was asked in is the one it
+    /// pastes into, whichever is active once that is done, and only while
+    /// it shows what it showed: gone elsewhere meanwhile, nothing is
+    /// pasted.
     pub(crate) fn run_with_clipboard(
         &mut self,
         invocation: Invocation,
@@ -91,14 +95,18 @@ impl Shell {
             if !invocation.args.is_object() {
                 invocation.args = serde_json::json!({});
             }
-            if invocation.args.get("pane").is_none() {
-                invocation.args["pane"] = serde_json::json!(self.pane);
-            }
+            let pane = invocation
+                .args
+                .get("pane")
+                .and_then(|pane| serde_json::from_value(pane.clone()).ok())
+                .unwrap_or(self.pane);
+            invocation.args["pane"] = serde_json::json!(pane);
+            let asked = self.pane_lifetime(pane);
             let read = cx.read_files_from_clipboard();
             cx.spawn_in(window, async move |this, cx| {
                 let files = read.await;
                 this.update_in(cx, |shell, window, cx| {
-                    shell.paste_files(invocation, files, window, cx);
+                    shell.paste_files(invocation, pane, asked, files, window, cx);
                 })
                 .ok();
             })
@@ -106,16 +114,23 @@ impl Shell {
         }
     }
 
-    /// What was read of the system's clipboard, for `invocation`.
+    /// What was read of the system's clipboard, for `invocation` into
+    /// `pane`, asked while it showed what `asked` says.
     #[cfg(target_os = "linux")]
     fn paste_files(
         &mut self,
         invocation: Invocation,
+        pane: PaneId,
+        asked: (CancelToken, Option<Location>),
         files: Option<gpui::ClipboardFiles>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         use skwir_core::command::ClipboardArg;
+        let (cancel, shown) = asked;
+        if self.app.pane_location(pane) != shown {
+            return;
+        }
         let Some(files) = files else {
             self.set_status("Nothing to paste", false, cx);
             return;
@@ -128,8 +143,10 @@ impl Shell {
         let others = files.others;
         let cut = files.cut;
         let paths = files.paths;
-        self.off_thread(
+        self.off_thread_until(
+            crate::shell::lane_of(&paths),
             "clipboard-entries",
+            cancel,
             // Another application may name a file that is not there (Dolphin
             // writes a name that is no UTF-8 as another): said, not pasted.
             move || {
@@ -141,6 +158,9 @@ impl Shell {
                 (entries, gone)
             },
             move |shell, (entries, gone): (Vec<skwir_core::op::EntryRef>, usize), window, cx| {
+                if shell.app.pane_location(pane) != shown {
+                    return;
+                }
                 if entries.is_empty() {
                     shell.set_status("The copied items no longer exist", true, cx);
                     return;

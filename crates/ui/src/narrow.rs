@@ -295,6 +295,7 @@ impl Shell {
         };
         let app = Arc::clone(&self.app);
         let worker = Arc::clone(&self.app);
+        let lane = self.pane_lane(pane);
         let narrow = &mut self.ui_mut().narrow;
         // Another listing: what was offered for the one before is not its
         // own, even while its count runs.
@@ -307,6 +308,7 @@ impl Shell {
         narrow.recount = None;
         narrow.asked.ask(
             &app,
+            lane,
             &lifetime,
             skwir_core::scheduler::Priority::Visible,
             "narrow-count",

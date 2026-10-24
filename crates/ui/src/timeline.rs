@@ -211,8 +211,10 @@ impl Shell {
             );
             let app = std::sync::Arc::clone(&self.app);
             let worker = std::sync::Arc::clone(&self.app);
+            let lane = self.pane_lane(self.pane);
             self.timeline.asked.ask(
                 &app,
+                lane,
                 &lifetime,
                 skwir_core::scheduler::Priority::Visible,
                 "timeline-count",

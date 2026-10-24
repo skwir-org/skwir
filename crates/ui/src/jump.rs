@@ -115,6 +115,7 @@ impl Shell {
         let app = std::sync::Arc::clone(&self.app);
         let args = serde_json::json!({ "query": query, "limit": 30 });
         self.off_thread(
+            skwir_core::scheduler::Lane::SHARED,
             "jump-candidates",
             move || app.dispatch(&Invocation::with_args("jump.candidates", &args)),
             move |this, result, window, cx| {

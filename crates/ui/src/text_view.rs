@@ -269,7 +269,8 @@ impl TextView {
         {
             let (index, path, cancel) = (Arc::clone(&index), file.path.clone(), counting.clone());
             let wake = app.waker_handle();
-            app.scheduler.spawn(
+            app.scheduler.spawn_in(
+                skwir_core::fs::reach::lane(&path),
                 Priority::Normal,
                 "text-rows-count",
                 counting.clone(),
@@ -443,6 +444,7 @@ impl TextView {
         self.asking = Some(chunk);
         self.asked.ask(
             app,
+            skwir_core::fs::reach::lane(&self.file.path),
             &self.counting,
             Priority::Visible,
             "text-rows-read",
@@ -495,6 +497,7 @@ impl TextView {
         let (path, index) = (self.file.path.clone(), Arc::clone(&self.index));
         self.found.ask(
             app,
+            skwir_core::fs::reach::lane(&path),
             &self.counting,
             Priority::Visible,
             "text-rows-find",
@@ -525,6 +528,7 @@ impl TextView {
         let (path, index) = (self.file.path.clone(), Arc::clone(&self.index));
         self.found.ask(
             app,
+            skwir_core::fs::reach::lane(&path),
             &self.counting,
             Priority::Visible,
             "text-rows-line",
@@ -545,6 +549,7 @@ impl TextView {
         let (path, index) = (self.file.path.clone(), Arc::clone(&self.index));
         self.copied.ask(
             app,
+            skwir_core::fs::reach::lane(&path),
             &self.counting,
             Priority::Visible,
             "text-rows-copy",

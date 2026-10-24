@@ -12,6 +12,7 @@ use gpui::{
 use skwir_core::app::NotifyLevel;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::os_path::PathArg;
+use skwir_core::scheduler::Lane;
 use skwir_core::workspace::PaneId;
 use skwir_core::{App, Location, Plan};
 
@@ -959,72 +960,38 @@ impl Shell {
         self.panes.iter().map(|p| p.id).find(|id| *id != self.pane)
     }
 
-    /// Run `work` on a scheduler worker (it may block: a stat, a plugin
-    /// reading files) and hand its result to `then` on the UI thread. The
-    /// one way the shell waits for something without blocking a frame;
-    /// `then` decides whether the answer is still wanted.
+    /// Run `work` on a scheduler worker in `lane` (it may block: a stat, a
+    /// plugin reading files) and hand its result to `then` on the UI
+    /// thread. The one way the shell waits for something without blocking
+    /// a frame; `then` decides whether the answer is still wanted.
+    ///
+    /// Work that reads a path runs in that path's lane (`lane_of`,
+    /// `Shell::pane_lane`; ADR-077), so a server that stopped answering
+    /// holds only its own; `Lane::SHARED` is for work that reads nothing a
+    /// remote holds. Every caller names one, so none forgets.
     pub fn off_thread<T: Send + 'static>(
         &self,
+        lane: Lane,
         label: &'static str,
         work: impl FnOnce() -> T + Send + 'static,
         then: impl FnOnce(&mut Shell, T, &mut Window, &mut Context<Shell>) + 'static,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.off_thread_until(label, self.app.lifetime().child(), work, then, window, cx);
+        let cancel = self.app.lifetime().child();
+        self.off_thread_until(lane, label, cancel, work, then, window, cx);
     }
 
     /// [`Shell::off_thread`], the job stopped by `cancel`: not begun once
     /// it is cancelled, and what it calls asks
-    /// `scheduler::job_cancelled` to stop early.
+    /// `scheduler::job_cancelled` to stop early. Work that ends cancelled
+    /// hands `then` nothing: what it read stopping short (an empty folder)
+    /// is no answer. Work for a pane is stopped with what it shows
+    /// (`Shell::pane_lifetime`).
+    #[allow(clippy::too_many_arguments)] // reason: the token beside off_thread's own
     pub fn off_thread_until<T: Send + 'static>(
         &self,
-        label: &'static str,
-        cancel: skwir_core::CancelToken,
-        work: impl FnOnce() -> T + Send + 'static,
-        then: impl FnOnce(&mut Shell, T, &mut Window, &mut Context<Shell>) + 'static,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.off_thread_through(
-            skwir_core::scheduler::Lane::SHARED,
-            label,
-            cancel,
-            work,
-            then,
-            window,
-            cx,
-        );
-    }
-
-    /// [`Shell::off_thread`] for work that reads a path that may be a
-    /// remote's: in its lane (`fs::reach::lane`, ADR-077), so a server
-    /// that stopped answering holds only its own.
-    pub fn off_thread_in<T: Send + 'static>(
-        &self,
-        lane: skwir_core::scheduler::Lane,
-        label: &'static str,
-        work: impl FnOnce() -> T + Send + 'static,
-        then: impl FnOnce(&mut Shell, T, &mut Window, &mut Context<Shell>) + 'static,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.off_thread_through(
-            lane,
-            label,
-            self.app.lifetime().child(),
-            work,
-            then,
-            window,
-            cx,
-        );
-    }
-
-    /// [`Shell::off_thread_until`] in `lane`.
-    #[allow(clippy::too_many_arguments)] // reason: the lane beside off_thread_until's own
-    pub fn off_thread_through<T: Send + 'static>(
-        &self,
-        lane: skwir_core::scheduler::Lane,
+        lane: Lane,
         label: &'static str,
         cancel: skwir_core::CancelToken,
         work: impl FnOnce() -> T + Send + 'static,
@@ -1033,13 +1000,17 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let (tx, rx) = flume::bounded(1);
+        let stopped = cancel.clone();
         self.app.scheduler.spawn_in(
             lane,
             skwir_core::scheduler::Priority::Visible,
             label,
             cancel,
             move || {
-                let _ = tx.send(work());
+                let answer = work();
+                if !stopped.is_cancelled() {
+                    let _ = tx.send(answer);
+                }
             },
         );
         cx.spawn_in(window, async move |this, cx| {
@@ -1049,6 +1020,26 @@ impl Shell {
             }
         })
         .detach();
+    }
+
+    /// What work asked for `pane` ends with: a token that its navigation,
+    /// Back and closing cancel (`Pane::location_lifetime`), and the
+    /// location it shows now, which an answer compares with what it shows
+    /// by then. The app's lifetime for a pane gone.
+    pub fn pane_lifetime(&self, pane: PaneId) -> (skwir_core::CancelToken, Option<Location>) {
+        let ws = self.app.workspace.read();
+        match ws.pane(pane) {
+            Some(p) => (p.location_lifetime(), p.location().cloned()),
+            None => (self.app.lifetime().child(), None),
+        }
+    }
+
+    /// The lane of work that reads what `pane` shows: its folder's, else
+    /// that of the folder holding its selection (a search, the shelf).
+    pub fn pane_lane(&self, pane: PaneId) -> Lane {
+        self.app
+            .work_dir(pane)
+            .map_or(Lane::SHARED, |dir| skwir_core::fs::reach::lane(&dir))
     }
 
     /// Show `path` in `pane`: navigate to the folder that holds it and select
@@ -1083,8 +1074,12 @@ impl Shell {
         let asked = self.reveal_asked;
         let target = path.to_path_buf();
         let from = at.from.clone();
-        self.off_thread(
+        // Asked for the pane as it is: shown elsewhere since, it is left.
+        let (cancel, shown) = self.pane_lifetime(pane);
+        self.off_thread_until(
+            skwir_core::fs::reach::lane(&target),
             "reveal-stat",
+            cancel,
             move || {
                 let here = from
                     .as_deref()
@@ -1093,7 +1088,7 @@ impl Shell {
                 (target, is_dir)
             },
             move |this, (path, is_dir), window, cx| {
-                if this.reveal_asked != asked {
+                if this.reveal_asked != asked || this.app.pane_location(pane) != shown {
                     return;
                 }
                 let Some(is_dir) = is_dir else {
@@ -2962,7 +2957,15 @@ pub(crate) const SPLIT_SHARE: f32 = 0.5;
 #[derive(Clone)]
 pub struct SplitResize;
 
-/// The draggable edge a split's second pane has at its start: its left edge
+/// The lane of work that reads `paths` (`fs::reach::lane`, ADR-077): the
+/// first's, since what one action reads lies together (a folder's files,
+/// what was dropped or pasted), and the shared one when there is none.
+pub fn lane_of<P: AsRef<std::path::Path>>(paths: impl IntoIterator<Item = P>) -> Lane {
+    paths.into_iter().next().map_or(Lane::SHARED, |path| {
+        skwir_core::fs::reach::lane(path.as_ref())
+    })
+}
+
 /// Whether `window` turns 3D models (`Shell::draws_meshes`).
 fn turns_models(window: &Window) -> bool {
     window.draws_meshes()
@@ -2971,6 +2974,7 @@ fn turns_models(window: &Window) -> bool {
             .is_some_and(|specs| specs.is_software_emulated)
 }
 
+/// The draggable edge a split's second pane has at its start: its left edge
 /// side by side, its top edge stacked, over the border that tells the panes
 /// apart.
 fn split_edge(stacked: bool, cx: &mut Context<Shell>) -> gpui::AnyElement {

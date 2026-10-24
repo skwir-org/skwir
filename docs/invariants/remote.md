@@ -23,9 +23,12 @@ ADR-077 (which revises ADR-021).
 ## Lanes
 
 - Work that reads a path that may be remote runs in its lane:
-  `Scheduler::spawn_in(reach::lane(path), …)`, the UI's
-  `Shell::off_thread_in(lane, …)` (and `off_thread_through` with a
-  token). A lane runs at most `LANE_RUNS` jobs at once, and always one
+  `Scheduler::spawn_in(reach::lane(path), …)`; in the UI,
+  `Shell::off_thread(lane, …)`, `off_thread_until` and
+  `latest::Latest::ask` take the lane first, with no default, so every
+  caller names one: `reach::lane(path)`, `shell::lane_of(paths)` (the
+  first's), `Shell::pane_lane(pane)` (what the pane shows), or
+  `Lane::SHARED` for work that reads nothing a remote holds. A lane runs at most `LANE_RUNS` jobs at once, and always one
   fewer than the pool's workers; the rest wait their turn without
   holding a worker (cancelled ones are let go of as more park, and with
   the pool). A remote that stops answering holds its own jobs, never the

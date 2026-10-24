@@ -202,6 +202,7 @@ impl Shell {
         }
         let app = std::sync::Arc::clone(&self.app);
         self.off_thread_until(
+            self.pane_lane(self.pane),
             "rename-bulk-preview",
             cancel,
             move || match app.dispatch(&Invocation::with_args("rename_bulk.preview", &spec)) {

@@ -422,6 +422,7 @@ impl Shell {
         if held(modifiers).is_none() && self.drop_asks() {
             let position = window.mouse_position();
             self.off_thread(
+                crate::shell::lane_of(&paths),
                 "drop-entries",
                 move || Dropped::of_paths(&paths),
                 move |shell, dropped, window, cx| {
@@ -441,7 +442,8 @@ impl Shell {
         let how = drop_op(modifiers, None);
         // The drop belongs to the pane it landed on, whatever is active later.
         let pane = self.pane;
-        self.app.scheduler.spawn(
+        self.app.scheduler.spawn_in(
+            crate::shell::lane_of(&paths),
             Priority::Visible,
             "drop-plan",
             self.app.lifetime().child(),
@@ -537,6 +539,7 @@ impl Shell {
         let dest = dest.to_path_buf();
         let dest_dir = dest.clone();
         self.off_thread(
+            fs::reach::lane(&dest),
             "drop-device",
             move || fs::stat::id_of(&dest).map(|id| id.dev),
             move |shell, dev, window, cx| {

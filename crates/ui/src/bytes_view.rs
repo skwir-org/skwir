@@ -152,6 +152,7 @@ impl BytesView {
         self.asking = Some(chunk);
         self.asked.ask(
             app,
+            skwir_core::fs::reach::lane(&self.request.entry.path),
             app.lifetime(),
             Priority::Visible,
             "bytes-read",
@@ -191,6 +192,7 @@ impl BytesView {
         };
         self.found.ask(
             app,
+            skwir_core::fs::reach::lane(&self.request.entry.path),
             app.lifetime(),
             Priority::Visible,
             "bytes-find",

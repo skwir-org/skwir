@@ -145,6 +145,7 @@ impl Shell {
         if let Some(source) = source.filter(|_| !loaded) {
             let app = std::sync::Arc::clone(&self.app);
             self.off_thread(
+                skwir_core::scheduler::Lane::SHARED,
                 "choose-source",
                 move || app.dispatch(&source),
                 move |this, result, window, cx| {

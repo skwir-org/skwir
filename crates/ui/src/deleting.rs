@@ -526,7 +526,11 @@ impl Shell {
         let companions = Arc::clone(&self.app.companions);
         let (tx, rx) = flume::unbounded();
         let token = cancel.clone();
-        self.app.scheduler.spawn(
+        // In the lane of what it deletes: a server that stopped answering
+        // holds its own alone (ADR-077).
+        let lane = crate::shell::lane_of(paths.iter().map(|(_, path)| path));
+        self.app.scheduler.spawn_in(
+            lane,
             skwir_core::scheduler::Priority::Visible,
             "deleting",
             cancel,

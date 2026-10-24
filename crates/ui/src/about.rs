@@ -117,6 +117,7 @@ impl Shell {
             return;
         }
         self.off_thread(
+            skwir_core::scheduler::Lane::SHARED,
             "about",
             || {
                 (

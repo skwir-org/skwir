@@ -214,6 +214,7 @@ impl Shell {
         let previews = Arc::clone(&self.app.previews);
         pictures.asked.ask(
             &self.app,
+            skwir_core::fs::reach::lane(&request.entry.path),
             self.app.lifetime(),
             Priority::Visible,
             "preview-picture",

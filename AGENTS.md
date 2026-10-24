@@ -343,7 +343,7 @@ working in an area, also read that area's rules (see
 - **Remote paths (ADR-077).** A path may be on a server that stops
   answering, where `stat` waits for good. Work that reads one runs in its
   remote's lane (`fs::reach::lane`, `Scheduler::spawn_in`,
-  `Shell::off_thread_in`), never holding a lock other folders share
+  `Shell::off_thread`, whose lane comes first), never holding a lock other folders share
   across the call; whether a path is remote is asked of the mount table
   in memory (`fs::reach`), never by reading it. What is read unasked
   there (thumbnails, read-ahead, walks below a root, Usage) follows

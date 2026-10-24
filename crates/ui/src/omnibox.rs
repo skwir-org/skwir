@@ -40,6 +40,7 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::{Completions, Location, PATH_SCHEME};
 use skwir_core::os_path::PathArg;
+use skwir_core::scheduler::Lane;
 
 use crate::complete::{self, Resolved};
 use crate::elements::popover::PopoverAnchor;
@@ -269,6 +270,7 @@ impl Shell {
             let app = std::sync::Arc::clone(&self.app);
             let args = serde_json::json!({ "query": words, "limit": PLACES });
             self.off_thread(
+                Lane::SHARED,
                 "omnibox-places",
                 move || app.dispatch(&Invocation::with_args("jump.candidates", &args)),
                 move |shell, result, _, cx| {
@@ -389,7 +391,7 @@ impl Shell {
             let app = Arc::clone(&self.app);
             let asked = folder.clone();
             let stop = cancel.clone();
-            self.off_thread_through(
+            self.off_thread_until(
                 skwir_core::fs::reach::lane(&folder),
                 "address-complete",
                 cancel,
@@ -436,6 +438,7 @@ impl Shell {
             omni.offering = Some((text.to_owned(), cancel.clone()));
             let asked = text.to_owned();
             self.off_thread_until(
+                Lane::SHARED,
                 "address-complete-place",
                 cancel,
                 move || provider.complete(&rest),
@@ -727,7 +730,8 @@ impl Shell {
 
     /// Shift+Enter on a path: a folder is gone to, a file opened as Enter
     /// opens it in the files (`open`). Whether it is a folder, or there,
-    /// is asked on a worker.
+    /// is asked on a worker, in its lane, for the pane as it is: shown
+    /// elsewhere since, it is left.
     fn open_path(
         &mut self,
         pane: skwir_core::workspace::PaneId,
@@ -736,10 +740,14 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let asked = path.clone();
-        self.off_thread(
+        let (cancel, shown) = self.pane_lifetime(pane);
+        self.off_thread_until(
+            skwir_core::fs::reach::lane(&path),
             "address-open",
+            cancel,
             move || std::fs::metadata(&asked).map(|m| m.is_dir()),
             move |shell, is_dir, window, cx| match is_dir {
+                _ if shell.app.pane_location(pane) != shown => {}
                 Ok(true) => shell.run(
                     "navigate",
                     serde_json::json!({ "location": PathArg::from(path), "pane": pane }),

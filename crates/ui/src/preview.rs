@@ -1973,7 +1973,7 @@ impl Shell {
             });
             let asked = path.clone();
             let app = std::sync::Arc::clone(&self.app);
-            self.off_thread_in(
+            self.off_thread(
                 skwir_core::fs::reach::lane(&path),
                 "preview-here",
                 move || {
@@ -3252,6 +3252,7 @@ impl Shell {
         }
         self.preview.selection_drives.ask(
             &self.app,
+            crate::shell::lane_of(drives.values()),
             self.app.lifetime(),
             Priority::Visible,
             "properties-drives",
@@ -4283,6 +4284,7 @@ impl Shell {
         let previews = Arc::clone(&self.app.previews);
         self.preview.media.sharper.ask(
             &self.app,
+            skwir_core::fs::reach::lane(&request.entry.path),
             self.app.lifetime(),
             skwir_core::scheduler::Priority::Visible,
             "poster",

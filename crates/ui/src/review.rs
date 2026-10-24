@@ -149,14 +149,18 @@ pub struct ReviewFocus {
 }
 
 impl Shell {
-    /// Queue proposals and dry-run each on a worker.
+    /// Queue proposals and dry-run each on a worker, in the lane of what
+    /// its first step names (a proposal's steps lie together).
     pub fn add_reviews(&mut self, plans: Vec<Plan>, window: &mut Window, cx: &mut Context<Self>) {
         for plan in plans {
             let id = plan.id;
             let dry = plan.clone();
             let companions = std::sync::Arc::clone(&self.app.companions);
+            let first = plan.steps.first().map(|step| step.describe());
+            let lane = crate::shell::lane_of(first.iter().flat_map(skwir_core::op::Change::paths));
             self.reviews.push_back(Review::Plan { plan, diff: None });
             self.off_thread(
+                lane,
                 "review-diff",
                 move || Checked::of(dry.review(&companions)),
                 move |this, done, _, cx| {
