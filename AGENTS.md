@@ -527,11 +527,14 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
 ### Tests
 
 - Run tests through nextest (`just test`), never `cargo test`. nextest
-  runs `tools/test/isolate-xdg.sh` before every test
-  (`.config/nextest.toml`), giving each test process its own
-  `XDG_DATA_HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` under
-  `~/.cache/skwir-tests/xdg`, so a trashed fixture never lands in the
-  user's Trash.
+  runs `tools/test/isolate-xdg.sh` once per run (`.config/nextest.toml`),
+  pointing every test's `XDG_DATA_HOME`, `XDG_CONFIG_HOME`,
+  `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_RUNTIME_DIR` at
+  `~/.cache/skwir-tests/xdg`: one set of folders, shared by the tests of
+  every run (a test wanting folders of its own makes them), so on Linux
+  and under Wine a trashed fixture never lands in the user's Trash. On
+  macOS and Windows skwir's folders and the trash are the system's, which
+  these variables do not move (`docs/HELP-WANTED.md` says so to testers).
 - Tests that need a real filesystem feature (trash, xattrs) use a temp
   dir under `~/.cache/skwir-tests/`, never `/tmp` (tmpfs) and never real
   user files.

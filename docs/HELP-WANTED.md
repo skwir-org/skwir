@@ -33,9 +33,14 @@ cargo install cargo-nextest
 cargo nextest run -p skwir-core -p skwir-platform
 ```
 
-nextest first runs `tools/test/isolate-xdg.sh`, so tests never touch your
-Trash, settings or cache; on Windows Git's `sh` runs it, as in CI. A failing
-test is a finding: report which and what it printed.
+nextest first runs `tools/test/isolate-xdg.sh` (with `sh`: Git's on
+Windows, as in CI). On Linux that keeps the tests away from your Trash,
+settings and cache; on macOS and Windows it does not: skwir's folders and
+the trash there are the system's. Tests that trash a fixture put it in
+your Trash or Recycle Bin: on Windows they take theirs back out, on macOS
+they stay there (folders named `t-…`, from `~/.cache/skwir-tests`), to
+empty with the Trash. Run them in an account of your own if that matters.
+A failing test is a finding: report which and what it printed.
 
 **Report** in [the issue tracker](https://skwir.org/issues): open a new
 issue with its "macOS or Windows" form, naming the step (for example
@@ -108,7 +113,7 @@ new. Intel Macs have no build yet.
    are not done.
    Notarization needs an Apple developer identity: the project decides that
    with you.
-11. **CI** (code). The `native` job in `.github/workflows/ci.yml` builds,
+11. **CI** (code). The `native` job in `.github/workflows/full.yml` builds,
    lints and tests on `macos-latest`. It does not block merging until it
    passes.
 

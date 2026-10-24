@@ -3,7 +3,8 @@
 experimental = ["setup-scripts"]
 
 [scripts.setup.isolate-xdg]
-command = "tools/test/isolate-xdg.sh"
+# Through `sh`: Windows runs no script by its first line (Git's sh, as CI).
+command = "sh tools/test/isolate-xdg.sh"
 
 [[profile.default.scripts]]
 filter = "all()"
