@@ -1363,9 +1363,18 @@ impl Query {
         }
     }
 
+    /// The names the query asks for, every one of them as a substring: what
+    /// a locate database answers (`plocate`). One holding what plocate
+    /// reads as a glob (`*`, `?`, `[`, `\`) is not one, even where it does
+    /// not compile as a glob here and is searched for as written (`a[b`):
+    /// plocate would match it whole, as a glob.
     pub fn name_substrings(&self) -> Option<Vec<String>> {
         let substring = |e: &Expr| match e {
-            Expr::Term(Term::Name(p)) if p.glob.is_none() && !p.text.is_empty() => {
+            Expr::Term(Term::Name(p))
+                if p.glob.is_none()
+                    && !p.text.is_empty()
+                    && !p.text.contains(['*', '?', '[', '\\']) =>
+            {
                 Some(p.text.clone())
             }
             _ => None,
@@ -2067,6 +2076,10 @@ mod tests {
         assert_eq!(q("foo bar").name_substrings().unwrap(), ["foo", "bar"]);
         // A locate database ANDs its patterns: anything else needs the walk.
         for s in ["foo OR bar", "foo *.png", "foo ext:png", "NOT foo", "-foo"] {
+            assert!(q(s).name_substrings().is_none(), "{s}");
+        }
+        // Searched for as written here, a glob to plocate: the walk answers.
+        for s in ["a[b", "a\\b", "it's [x"] {
             assert!(q(s).name_substrings().is_none(), "{s}");
         }
     }
