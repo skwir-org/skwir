@@ -233,13 +233,8 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
                 .child(text),
         );
     }
-    // With nothing listed the pane itself explains the failure.
-    if let Some(e) = error.filter(|_| count > 0) {
-        bar = bar.child(crate::elements::clip::clipped(
-            div().id("listing-error").text_color(theme.error).truncate(),
-            e,
-        ));
-    }
+    // A listing's error is a message, not state: the banner says it beside
+    // the entries (`loading::message`), the pane itself with none.
     bar = bar
         .when_some(said, StatefulInteractiveElement::aria_label)
         .child(div().flex_1());
