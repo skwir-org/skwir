@@ -2452,7 +2452,7 @@ impl Shell {
         cx.set_global(theme);
         if now != was {
             tracing::info!(ui = %now.ui, reading = %now.reading, code = %now.code, "fonts");
-            self.preview.inspection.remeasure();
+            self.preview.remeasure();
             cx.refresh_windows();
         }
     }

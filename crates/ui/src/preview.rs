@@ -1041,6 +1041,21 @@ impl PreviewState {
         }
     }
 
+    /// Every row is a different height now (a font changed): the
+    /// inspection shown and every container's view kept above a member,
+    /// drawn again later as they stand, measured again.
+    pub(crate) fn remeasure(&self) {
+        self.inspection.remeasure();
+        for parked in self
+            .containers
+            .iter()
+            .flatten()
+            .chain(&self.container_asked)
+        {
+            parked.state.remeasure();
+        }
+    }
+
     /// Whether a preview result is for the track the player stepped to.
     fn autoplay_matches(&self) -> bool {
         let (Some(wanted), Some(key)) = (&self.autoplay, &self.key) else {
