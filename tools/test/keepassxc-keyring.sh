@@ -14,11 +14,8 @@
 #   tools/test/keepassxc-keyring.sh cargo nextest run -p skwir-platform \
 #       -p skwir-plugin-remote --run-ignored only -E 'test(secret) | test(password)'
 set -euo pipefail
-# The flake's own nixpkgs, as its lock pins it: the servers and tools
-# tried are the versions the tests were written against.
-root="$(cd "$(dirname "$0")/../.." && pwd)"
 
-tools=$(nix build --no-link --print-out-paths --inputs-from "git+file://$root" nixpkgs#keepassxc nixpkgs#xorg.xorgserver \
+tools=$(nix build --no-link --print-out-paths nixpkgs#keepassxc nixpkgs#xorg.xorgserver \
     nixpkgs#dbus)
 out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+$" <<< "$tools" | head -1; }
 keepassxc=$(out keepassxc)

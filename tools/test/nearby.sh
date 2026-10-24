@@ -9,13 +9,10 @@
 # system wsdd answers here). Never the user's network, bus or Avahi: what
 # is sent goes between the two namespaces, and everything ends with them.
 set -euo pipefail
-# The flake's own nixpkgs, as its lock pins it: the servers and tools
-# tried are the versions the tests were written against.
-root="$(cd "$(dirname "$0")/../.." && pwd)"
 
 if [ "${1:-}" != --inside ]; then
     tested=$(realpath "$1")
-    tools=$(nix build --no-link --print-out-paths --inputs-from "git+file://$root" nixpkgs#avahi nixpkgs#dbus nixpkgs#iproute2 \
+    tools=$(nix build --no-link --print-out-paths nixpkgs#avahi nixpkgs#dbus nixpkgs#iproute2 \
         nixpkgs#util-linux nixpkgs#wsdd nixpkgs#coreutils)
     out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(-bin)?$" <<< "$tools" | head -1; }
     path=""

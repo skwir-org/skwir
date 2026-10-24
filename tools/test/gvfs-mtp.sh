@@ -12,9 +12,6 @@
 # daemons and its bridge end with them. Never the session's bus or GVfs.
 # Skipped, saying why, without a phone.
 set -euo pipefail
-# The flake's own nixpkgs, as its lock pins it: the servers and tools
-# tried are the versions the tests were written against.
-root="$(cd "$(dirname "$0")/../.." && pwd)"
 
 if [ "${1:-}" != --inside ]; then
     tested=$(realpath "$1")
@@ -33,7 +30,7 @@ if [ "${1:-}" != --inside ]; then
         echo "skipped: no phone over MTP (plugged in, unlocked, in file transfer mode)"
         exit 0
     fi
-    tools=$(nix build --no-link --print-out-paths --inputs-from "git+file://$root" nixpkgs#gvfs 'nixpkgs#glib^bin' nixpkgs#dbus \
+    tools=$(nix build --no-link --print-out-paths nixpkgs#gvfs 'nixpkgs#glib^bin' nixpkgs#dbus \
         nixpkgs#coreutils nixpkgs#util-linux)
     out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(p[0-9]+)?(-bin)?$" <<< "$tools" | head -1; }
     path=""

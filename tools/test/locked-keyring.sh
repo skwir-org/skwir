@@ -9,11 +9,8 @@
 #   tools/test/locked-keyring.sh cargo nextest run -p skwir-platform \
 #       -p skwir-plugin-remote --run-ignored only -E 'test(locked_keyring)' -j 1
 set -euo pipefail
-# The flake's own nixpkgs, as its lock pins it: the servers and tools
-# tried are the versions the tests were written against.
-root="$(cd "$(dirname "$0")/../.." && pwd)"
 
-tools=$(nix build --no-link --print-out-paths --inputs-from "git+file://$root" nixpkgs#gnome-keyring nixpkgs#gcr_3 \
+tools=$(nix build --no-link --print-out-paths nixpkgs#gnome-keyring nixpkgs#gcr_3 \
     nixpkgs#xorg.xorgserver nixpkgs#xdotool nixpkgs#dbus)
 out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+$" <<< "$tools" | head -1; }
 keyring=$(out gnome-keyring)
