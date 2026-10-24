@@ -10,7 +10,16 @@ set -eu
 root="${HOME}/.cache/skwir-tests/xdg"
 mkdir -p "$root/data" "$root/config" "$root/cache" "$root/state" "$root/runtime"
 chmod 700 "$root/runtime"
+# Nor the user's session bus, where a test window would register a player
+# (MPRIS) or read the desktop's portal: an address nothing listens at, as
+# a session without a bus. A bus a harness made for its tests (a keyring's,
+# GVfs's) is kept.
+bus="${DBUS_SESSION_BUS_ADDRESS:-}"
+if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ "$bus" = "unix:path=$XDG_RUNTIME_DIR/bus" ]; then
+    bus="unix:path=$root/runtime/no-session-bus"
+fi
 {
+    [ -z "$bus" ] || echo "DBUS_SESSION_BUS_ADDRESS=$bus"
     echo "XDG_DATA_HOME=$root/data"
     echo "XDG_CONFIG_HOME=$root/config"
     echo "XDG_CACHE_HOME=$root/cache"

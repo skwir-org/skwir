@@ -63,6 +63,9 @@ class Window:
             XDG_STATE_HOME=str(self.root / "state"),
             XDG_DATA_HOME=str(self.root / "data"),
             XDG_RUNTIME_DIR=str(self.runtime),
+            # No session bus: the window registers no player (MPRIS) on the
+            # user's, nor reads the desktop's portal.
+            DBUS_SESSION_BUS_ADDRESS=f"unix:path={self.runtime}/no-session-bus",
         )
         return env
 
