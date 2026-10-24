@@ -759,9 +759,12 @@ pub fn register(app: &App, owner: &str) {
                     format!("Its ending says the format: {}", endings()),
                 )
             };
-            let paths: Vec<PathArg> = entries.iter().map(|e| PathArg(e.path.clone())).collect();
+            // Named by identity as well as path: accepted, the dialog's
+            // command resolves them without a stat each (on the window's
+            // thread), and a file renamed meanwhile is not another's.
+            let named: Vec<op::EntryArg> = entries.iter().cloned().map(op::EntryArg::from).collect();
             let args = Invocation::new("archive.compress")
-                .with("entries", paths)
+                .with("entries", named)
                 .with("dest", PathArg(dest))
                 .with("password", a.password)
                 .args;
