@@ -451,29 +451,13 @@ impl Shell {
                         (None, true) => (format!("Cancelled. {done}"), Tone::Info),
                         (None, false) => (done, Tone::Success),
                     };
-                    let mut actions = Vec::new();
-                    // Stopped by an error, what it had left runs again
-                    // (`Executor::retry`).
-                    if run == RunKind::Apply && self.app.executor.can_retry(plan) {
-                        actions.push(Action {
-                            label: "Retry".into(),
-                            command: "retry".into(),
-                            args: serde_json::json!({ "plan": plan }),
-                        });
-                    }
-                    if run == RunKind::Undo {
-                        actions.extend(self.app.executor.can_redo().then(|| Action {
-                            label: "Redo".into(),
-                            command: "redo".into(),
-                            args: serde_json::json!({}),
-                        }));
-                    } else if undoable && applied > 0 {
-                        actions.push(Action {
-                            label: "Undo".into(),
-                            command: "undo".into(),
-                            args: serde_json::json!({}),
-                        });
-                    }
+                    let actions = finished_actions(
+                        plan,
+                        run,
+                        undoable && applied > 0,
+                        run == RunKind::Apply && self.app.executor.can_retry(plan),
+                        run == RunKind::Undo && self.app.executor.can_redo(),
+                    );
                     self.toast(
                         Toast {
                             text,
@@ -489,6 +473,43 @@ impl Shell {
             cx.notify();
         }
     }
+}
+
+/// The buttons of the toast saying `plan` ended, in their order: Retry
+/// first for one a step's error stopped (`Executor::retry`), then Redo
+/// after an undo, else Undo of what it did. Undo names the plan it
+/// reports, never the last one asked (a rename beside a long copy): taken
+/// back alone when nothing asked after it touched what it did, else its
+/// run says why (`Executor::undo_of`).
+fn finished_actions(
+    plan: PlanId,
+    run: RunKind,
+    undoes: bool,
+    retries: bool,
+    redoes: bool,
+) -> Vec<Action> {
+    let mut actions = Vec::new();
+    if retries {
+        actions.push(Action {
+            label: "Retry".into(),
+            command: "retry".into(),
+            args: serde_json::json!({ "plan": plan }),
+        });
+    }
+    if run == RunKind::Undo {
+        actions.extend(redoes.then(|| Action {
+            label: "Redo".into(),
+            command: "redo".into(),
+            args: serde_json::json!({}),
+        }));
+    } else if undoes {
+        actions.push(Action {
+            label: "Undo".into(),
+            command: "undo".into(),
+            args: serde_json::json!({ "plan": plan }),
+        });
+    }
+    actions
 }
 
 /// What waits its turn, a line each under the cards of what runs (ADR-079,
@@ -822,9 +843,35 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 
 #[cfg(test)]
 mod tests {
-    use super::{bar, describe, failure, quit_question, waiting_lines};
+    use super::{bar, describe, failure, finished_actions, quit_question, waiting_lines};
     use skwir_core::op::{Change, RunKind, Transfer};
     use std::path::PathBuf;
+
+    /// A toast's Undo takes back the plan it reports, by its id, as the
+    /// core's `undo` takes it; Retry names it too, and Redo follows an undo.
+    #[test]
+    fn a_toasts_buttons_name_the_plan_it_reports() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let plan = skwir_core::op::Plan::new("rename “it's”").id;
+        let actions = finished_actions(plan, RunKind::Apply, true, true, false);
+        let named: Vec<(&str, &str)> = actions
+            .iter()
+            .map(|a| (a.label.as_str(), a.command.as_str()))
+            .collect();
+        assert_eq!(named, [("Retry", "retry"), ("Undo", "undo")]);
+        for action in &actions {
+            assert_eq!(action.args["plan"], serde_json::json!(plan));
+            let asked =
+                skwir_core::command::Invocation::with_args(action.command.as_str(), &action.args);
+            app.commands.check(&asked).expect("the command takes it");
+        }
+        // Nothing done: no Undo. After an undo: Redo, of the last undone.
+        assert!(finished_actions(plan, RunKind::Apply, false, false, false).is_empty());
+        let redo = finished_actions(plan, RunKind::Undo, true, false, true);
+        assert_eq!(redo.len(), 1);
+        assert_eq!(redo[0].command, "redo");
+    }
 
     #[test]
     fn what_waits_is_said_under_the_cards_the_first_three() {

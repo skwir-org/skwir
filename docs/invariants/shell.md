@@ -293,9 +293,11 @@ of bars, split or not.
 
 - **Every user action gets an answer** in `toast.rs`: a sentence built
   from the applied `Change`s ("Moved “a.txt” to Trash"), with Undo when
-  the journal can take it back, Redo after an undo, Retry first for a
-  plan a step's error stopped (ADR-080; a toast holds its buttons in
-  order, `Toast::actions`). Progress bars:
+  the journal can take it back (of the plan it reports, `undo {"plan"}`:
+  refused, saying why, once a plan asked after it touched what it did),
+  Redo after an undo, Retry first for a plan a step's error stopped
+  (ADR-080; a toast holds its buttons in order, `Toast::actions`).
+  Progress bars:
   [operations.md](operations.md); an answer said while plans run is drawn
   under their cards, never hidden by them. It names the file a step acts
   on as the user knows it: an item of a trash by the name it had, which
