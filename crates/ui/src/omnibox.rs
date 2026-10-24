@@ -1322,7 +1322,7 @@ pub fn dropdown(
 
 #[cfg(test)]
 mod tests {
-    use super::{scheme_of, scheme_start, uri_path};
+    use super::{scheme_of, scheme_start};
 
     #[test]
     fn schemes_are_told_from_words() {
@@ -1341,6 +1341,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_file_uri_is_the_path_it_names() {
+        use super::uri_path;
         assert_eq!(
             uri_path(" file:///data/it%27s%20%C3%A9t%C3%A9/ ").as_deref(),
             Some("/data/it's été/")
