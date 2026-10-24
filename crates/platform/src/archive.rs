@@ -815,9 +815,11 @@ fn create_with(
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         };
+        // What hands it bytes, or waits to (a paused plan), hears it gone,
+        // whether it was stopped or ended by itself: held, the feeder
+        // would wait for good.
+        stop.store(true, Ordering::Relaxed);
         if ended.is_err() {
-            // What hands it bytes, or waits to, hears it gone.
-            stop.store(true, Ordering::Relaxed);
             child.kill();
         }
         let handing = feeder
@@ -875,7 +877,11 @@ fn hand(
         while paused.load(Ordering::Relaxed) && !stop.load(Ordering::Relaxed) {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        anyhow::ensure!(!stop.load(Ordering::Relaxed), "stopped");
+        // Stopped, the helper is gone, as when the pipe breaks: what it
+        // said, or the cancel, is the reason, not this.
+        if stop.load(Ordering::Relaxed) {
+            return Err(std::io::Error::from(std::io::ErrorKind::BrokenPipe).into());
+        }
         Ok(())
     };
     if let Some(passphrase) = passphrase {
@@ -947,5 +953,56 @@ mod tests {
         assert_eq!(file("x./../y"), into.join("member"));
         assert_eq!(file("a.sh;rm -rf"), into.join("member"));
         assert_eq!(file(&format!("a.{}", "x".repeat(40))), into.join("member"));
+    }
+
+    /// A paused plan whose helper ends by itself (a full disk, a name the
+    /// format refuses) ends with what the helper said: the pause held
+    /// what hands it the files for good.
+    #[cfg(unix)]
+    #[test]
+    fn a_paused_archive_ends_when_its_helper_does() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let root = tempfile::Builder::new()
+            .prefix("archive-")
+            .tempdir_in(base)
+            .unwrap();
+        let helper = root.path().join("helper");
+        std::fs::write(&helper, "#!/bin/sh\necho 'No room left' >&2\nexit 1\n").unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let file = root.path().join("it's a café.txt");
+        std::fs::write(&file, "x".repeat(4096)).unwrap();
+        let into = root.path().join("made here");
+        std::fs::create_dir(&into).unwrap();
+        let parts = vec![Part {
+            name: "it's a café.txt".into(),
+            item: Item::File {
+                path: file.clone(),
+                size: 4096,
+                id: None,
+            },
+            mode: 0o644,
+            modified: None,
+            attributes: Vec::new(),
+        }];
+        let (said, ended) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let made = create_with(
+                &helper,
+                &parts,
+                Format::Zip,
+                None,
+                &into.join("made.zip"),
+                &CancelToken::new(),
+                |_| {},
+                || true,
+            );
+            let _ = said.send(made.map_err(|error| error.to_string()));
+        });
+        let made = ended
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("it ends though paused");
+        assert_eq!(made.unwrap_err(), "No room left");
     }
 }
