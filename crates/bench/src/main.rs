@@ -112,7 +112,10 @@ fn measure_all(
 fn main() -> Result<()> {
     // The allocator the application ships with (ADR-011).
     skwir_alloc::tune();
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    // Locations are absolute paths: a relative one is the folder shown's,
+    // which the bench has none of.
+    cli.root = std::path::absolute(&cli.root)?;
     match cli.cmd {
         Cmd::Gen { profiles } => {
             for p in profiles::or_all(profiles) {
