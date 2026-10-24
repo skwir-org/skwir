@@ -191,6 +191,13 @@ pub struct JournalEntry {
     /// Its place on its stack: on the undo stack its own `seq`, on the
     /// redo stack when the undo that put it there was asked.
     stacked: u64,
+    /// The runs that made it, as their events named them (a plan, its
+    /// retries, a redo of it): a toast's Undo takes back the one it
+    /// reports ([`Executor::undo_of`]).
+    asked: Vec<PlanId>,
+    /// What they touched: what a plan asked after it must not have
+    /// touched for it to be taken back alone.
+    touched: Arc<Footprint>,
 }
 
 impl JournalEntry {
@@ -291,7 +298,9 @@ enum Work {
         /// A retry: what it continues.
         continues: Option<Box<Continues>>,
     },
-    Replay(Direction),
+    /// An undo or a redo: of the latest entry, or of the one a plan named
+    /// made ([`Executor::undo_of`]).
+    Replay(Direction, Option<PlanId>),
 }
 
 /// What a retry continues (`Executor::retry`): the action that stopped,
@@ -335,6 +344,14 @@ struct Waits {
     tries: u32,
 }
 
+/// A plan's run: when it was asked, the entry a retry joins (its
+/// `seq`), and what it touches.
+struct Run {
+    seq: u64,
+    first: Option<u64>,
+    touched: Arc<Footprint>,
+}
+
 /// Where a step's error stopped a plan (`Executor::apply_plan`): its index,
 /// what a copy it cut short left, and the mount of the server the step
 /// reached, if it reached one.
@@ -364,8 +381,8 @@ impl Work {
     /// redo's inverse on the undo stack, an undo's on the redo stack.
     fn adds(&self) -> Direction {
         match self {
-            Work::Execute { .. } | Work::Replay(Direction::Redo) => Direction::Undo,
-            Work::Replay(Direction::Undo) => Direction::Redo,
+            Work::Execute { .. } | Work::Replay(Direction::Redo, _) => Direction::Undo,
+            Work::Replay(Direction::Undo, _) => Direction::Redo,
         }
     }
 }
@@ -380,11 +397,18 @@ struct Job {
     footprint: Option<Arc<Footprint>>,
     /// An undo's or a redo's entry (its `stacked`), once known.
     target: Option<u64>,
+    /// Why an undo of a plan named cannot be, said by its run, with the
+    /// title of the plan it names where known.
+    refused: Option<(Option<String>, String)>,
 }
 
 /// A job started, until it ends.
 struct Begun {
     seq: u64,
+    /// A plan's id, as its events name it.
+    plan: Option<PlanId>,
+    /// The entry a retry joins (`Continues::seq`).
+    joins: Option<u64>,
     /// A plan's title, which Undo names while it runs.
     title: Option<String>,
     /// What it is called, an undo's or a redo's too (`Executor::waiting`).
@@ -528,6 +552,16 @@ pub type ClashAsker = Arc<
         + Send
         + Sync,
 >;
+
+/// The entry an undo of a plan named takes (`Executor::entry_of`).
+enum Named {
+    /// That plan has not ended.
+    Waits,
+    /// It cannot be: the title of the plan named, where known, and why.
+    Refused(Option<String>, String),
+    /// Its place on the undo stack, and the steps that take it back.
+    Entry(u64, Vec<Box<dyn Operation>>),
+}
 
 /// What becomes of a plan with names taken where it copies or moves
 /// (`Executor::settle`).
@@ -1171,7 +1205,7 @@ impl Executor {
     pub fn undo(self: &Arc<Self>, cancel: CancelToken) -> bool {
         let available = self.is_busy() || self.can_undo();
         if available {
-            self.submit(Work::Replay(Direction::Undo), cancel);
+            self.submit(Work::Replay(Direction::Undo, None), cancel);
         }
         available
     }
@@ -1179,7 +1213,24 @@ impl Executor {
     /// Undo when its turn comes (module documentation), waiting for it.
     /// Returns `None` if nothing to undo.
     pub fn undo_blocking(&self, cancel: &CancelToken) -> Option<ExecResult> {
-        self.submit_blocking(Work::Replay(Direction::Undo), cancel)
+        self.submit_blocking(Work::Replay(Direction::Undo, None), cancel)
+    }
+
+    /// Undo the plan `plan`, as its events named it (a toast's Undo, of
+    /// the action it reports), rather than the last asked: when no plan
+    /// asked after it, its entry still in the history or under way,
+    /// touched what it did, since those share nothing and their inverses
+    /// give the same result in either order (ADR-079, 8); otherwise it
+    /// does nothing and says why, as an undo's error. A plan that has not
+    /// ended is waited for, as Undo does.
+    pub fn undo_of(self: &Arc<Self>, plan: PlanId, cancel: CancelToken) {
+        self.submit(Work::Replay(Direction::Undo, Some(plan)), cancel);
+    }
+
+    /// [`Executor::undo_of`] when its turn comes, waiting for it. `None`
+    /// when cancelled before it began.
+    pub fn undo_of_blocking(&self, plan: PlanId, cancel: &CancelToken) -> Option<ExecResult> {
+        self.submit_blocking(Work::Replay(Direction::Undo, Some(plan)), cancel)
     }
 
     /// Redo the most recently undone plan when its turn comes (module
@@ -1187,14 +1238,14 @@ impl Executor {
     pub fn redo(self: &Arc<Self>, cancel: CancelToken) -> bool {
         let available = self.is_busy() || self.can_redo();
         if available {
-            self.submit(Work::Replay(Direction::Redo), cancel);
+            self.submit(Work::Replay(Direction::Redo, None), cancel);
         }
         available
     }
 
     /// Redo when its turn comes, waiting for it.
     pub fn redo_blocking(&self, cancel: &CancelToken) -> Option<ExecResult> {
-        self.submit_blocking(Work::Replay(Direction::Redo), cancel)
+        self.submit_blocking(Work::Replay(Direction::Redo, None), cancel)
     }
 
     pub fn can_undo(&self) -> bool {
@@ -1225,7 +1276,7 @@ impl Executor {
             .iter()
             .filter_map(|job| match &job.work {
                 Work::Execute { plan, .. } => Some((job.seq, plan.title.clone())),
-                Work::Replay(_) => None,
+                Work::Replay(..) => None,
             })
             .chain(
                 lane.started
@@ -1268,7 +1319,7 @@ impl Executor {
                 None => match &job.work {
                     // An undo or a redo waits for the plan asked before it
                     // that may put its entry there.
-                    Work::Replay(_) => lane
+                    Work::Replay(..) => lane
                         .queue
                         .iter()
                         .take(i)
@@ -1327,7 +1378,7 @@ impl Executor {
     fn named(&self, job: &Job) -> String {
         let direction = match &job.work {
             Work::Execute { plan, .. } => return plan.title.clone(),
-            Work::Replay(direction) => *direction,
+            Work::Replay(direction, _) => *direction,
         };
         let verb = match direction {
             Direction::Undo => "undo",
@@ -1408,6 +1459,7 @@ impl Executor {
             reply,
             footprint: None,
             target: None,
+            refused: None,
         });
     }
 
@@ -1438,7 +1490,8 @@ impl Executor {
     /// a redo first finds its entry: the latest on its stack asked before
     /// it, unless a plan asked before it, which may put a later one there,
     /// has not ended (it waits for it); no entry and none to come, it
-    /// touches nothing.
+    /// touches nothing. An undo of a plan named takes that plan's entry
+    /// ([`Executor::undo_of`]).
     fn next_to_measure(&self) -> Option<(u64, Vec<Box<dyn Operation>>)> {
         let mut lane = self.lane.lock();
         if lane.measuring {
@@ -1455,7 +1508,26 @@ impl Executor {
                     lane.measuring = true;
                     return Some((seq, plan.steps.clone()));
                 }
-                Work::Replay(direction) => *direction,
+                Work::Replay(Direction::Undo, Some(of)) => {
+                    let of = *of;
+                    match self.entry_of(lane, i, of) {
+                        // Its plan has not ended: it waits for it.
+                        Named::Waits => {}
+                        Named::Refused(title, reason) => {
+                            let job = &mut lane.queue[i];
+                            job.refused = Some((title, reason));
+                            job.footprint = Some(Arc::new(Footprint::default()));
+                        }
+                        Named::Entry(stacked, steps) => {
+                            lane.targeted.push((Direction::Undo, stacked));
+                            lane.queue[i].target = Some(stacked);
+                            lane.measuring = true;
+                            return Some((seq, steps));
+                        }
+                    }
+                    continue;
+                }
+                Work::Replay(direction, _) => *direction,
             };
             let coming = lane
                 .queue
@@ -1500,6 +1572,81 @@ impl Executor {
         None
     }
 
+    /// The entry the undo queued at `i` takes, which the plan `of` made
+    /// (`JournalEntry::asked`), and its steps: unless that plan has not
+    /// ended (the undo waits for it, as Undo does, ADR-079, 9), or a plan
+    /// asked after it, its entry still in the history, running or
+    /// waiting, touched what it did (`Footprint::conflicts`): undone
+    /// first, in the order asked, it would put back each state; this one
+    /// alone may not. Then, or with no such entry, what it says.
+    fn entry_of(&self, lane: &Lane, i: usize, of: PlanId) -> Named {
+        let unended = |plan: Option<PlanId>, joins: Option<u64>, entry: Option<u64>| {
+            plan == Some(of) || joins.is_some_and(|joins| Some(joins) == entry)
+        };
+        let journal = self.journal.lock();
+        let entry = journal.undo.iter().find(|e| e.asked.contains(&of));
+        let at = entry.map(|e| e.stacked);
+        let queued = lane.queue.iter().take(i).any(|job| match &job.work {
+            Work::Execute {
+                plan, continues, ..
+            } => unended(Some(plan.id), continues.as_ref().map(|c| c.seq), at),
+            Work::Replay(..) => false,
+        });
+        if queued || lane.started.iter().any(|b| unended(b.plan, b.joins, at)) {
+            return Named::Waits;
+        }
+        let Some(entry) = entry else {
+            return match journal.redo.iter().find(|e| e.asked.contains(&of)) {
+                Some(undone) => Named::Refused(
+                    Some(undone.title.clone()),
+                    format!("“{}” is undone already", undone.title),
+                ),
+                None => Named::Refused(
+                    None,
+                    "that action is no longer in the history: nothing to undo".to_owned(),
+                ),
+            };
+        };
+        let refused = |reason: String| Named::Refused(Some(entry.title.clone()), reason);
+        if lane.targeted.contains(&(Direction::Undo, entry.stacked)) {
+            return refused(format!("“{}” is being undone already", entry.title));
+        }
+        let alone = |other: &str, how: &str| {
+            format!(
+                "“{}” cannot be undone alone: “{other}”, {how}, touched what it did; undo that first",
+                entry.title
+            )
+        };
+        if let Some(later) = journal
+            .undo
+            .iter()
+            .find(|e| e.stacked > entry.stacked && e.touched.conflicts(&entry.touched))
+        {
+            return refused(alone(&later.title, "asked after it"));
+        }
+        let under_way = lane
+            .started
+            .iter()
+            .filter(|b| b.seq > entry.seq && b.title.is_some())
+            .map(|b| (b.footprint.as_ref(), b.named.as_str(), "running"))
+            .chain(lane.queue.iter().take(i).filter_map(|job| match &job.work {
+                Work::Execute { plan, .. } if job.seq > entry.seq => {
+                    Some((job.footprint.as_deref()?, plan.title.as_str(), "waiting"))
+                }
+                _ => None,
+            }))
+            .find(|(footprint, _, _)| footprint.conflicts(&entry.touched));
+        if let Some((_, title, how)) = under_way {
+            return refused(alone(title, &format!("asked after it, {how}")));
+        }
+        let steps = entry
+            .plan
+            .as_ref()
+            .map(|p| p.steps.clone())
+            .unwrap_or_default();
+        Named::Entry(entry.stacked, steps)
+    }
+
     /// Take out of the queue each job that may start now (module
     /// documentation), in the order asked; a cancelled one at once, which
     /// does nothing.
@@ -1537,14 +1684,18 @@ impl Executor {
                 continue;
             }
             let job = lane.queue.remove(i).expect("in the queue");
-            let (direction, title) = match &job.work {
-                Work::Replay(direction) => (Some(*direction), None),
-                Work::Execute { plan, .. } => (None, Some(plan.title.clone())),
+            let (direction, plan, joins) = match &job.work {
+                Work::Replay(direction, _) => (Some(*direction), None, None),
+                Work::Execute {
+                    plan, continues, ..
+                } => (None, Some(plan), continues.as_ref().map(|c| c.seq)),
             };
             let named = self.named(&job);
             lane.started.push(Begun {
                 seq: job.seq,
-                title,
+                plan: plan.map(|p| p.id),
+                joins,
+                title: plan.map(|p| p.title.clone()),
                 named,
                 footprint: job.footprint.clone().unwrap_or_default(),
                 adds: job.work.adds(),
@@ -1586,6 +1737,8 @@ impl Executor {
 
     fn run_job(&self, job: Job) {
         let _ended = Ended(self, job.seq);
+        // What it touches, which its entry keeps.
+        let touched = job.footprint.clone().unwrap_or_default();
         // A cancelled plan is not checked whole: it stops at once.
         let result = match job.work {
             Work::Execute {
@@ -1594,17 +1747,25 @@ impl Executor {
                 continues,
             } => {
                 let plan = Arc::try_unwrap(plan).unwrap_or_else(|plan| (*plan).clone());
-                Some(self.execute_now(plan, whole, continues, &job.cancel, job.seq))
+                Some(self.execute_now(plan, whole, continues, &job.cancel, job.seq, touched))
             }
-            Work::Replay(direction) => self.replay(direction, job.target, job.seq, &job.cancel),
+            Work::Replay(direction, _) => self.replay(
+                direction,
+                job.target,
+                job.refused,
+                job.seq,
+                touched,
+                &job.cancel,
+            ),
         };
         if let Some(reply) = job.reply {
             let _ = reply.send(result);
         }
     }
 
-    /// Apply `plan`, asked as `seq`: unfolded, its names taken settled, and
-    /// `whole`, checked first; a retry, joining what it `continues`.
+    /// Apply `plan`, asked as `seq`, which `touched` what it says:
+    /// unfolded, its names taken settled, and `whole`, checked first; a
+    /// retry, joining what it `continues`.
     fn execute_now(
         &self,
         plan: Plan,
@@ -1612,6 +1773,7 @@ impl Executor {
         continues: Option<Box<Continues>>,
         cancel: &CancelToken,
         seq: u64,
+        touched: Arc<Footprint>,
     ) -> ExecResult {
         let whole = whole && !cancel.is_cancelled();
         let (first, partial, waits) = continues.map_or((None, None, Waits::default()), |c| {
@@ -1647,7 +1809,7 @@ impl Executor {
         match settled {
             Settling::Refused(reason) => {
                 kept(&plan, partial);
-                self.refuse(&plan, reason)
+                self.refuse(&plan, RunKind::Apply, reason)
             }
             Settling::Cancelled => {
                 kept(&plan, partial);
@@ -1670,24 +1832,28 @@ impl Executor {
                             .or_else(|| self.short_of_room(&plan, cancel))
                     })
                     .flatten();
-                match refused {
-                    Some(reason) => {
-                        kept(&plan, partial);
-                        self.refuse(&plan, reason)
-                    }
-                    None => self.run_execute(&plan, cancel, seq, first, partial, &waits),
+                if let Some(reason) = refused {
+                    kept(&plan, partial);
+                    return self.refuse(&plan, RunKind::Apply, reason);
                 }
+                let run = Run {
+                    seq,
+                    first,
+                    touched,
+                };
+                self.run_execute(&plan, cancel, &run, partial, &waits)
             }
         }
     }
 
-    /// A plan that will not be applied at all: say so with the usual events.
-    fn refuse(&self, plan: &Plan, error: String) -> ExecResult {
+    /// A plan that will not be applied at all, or taken back: say so with
+    /// the usual events.
+    fn refuse(&self, plan: &Plan, run: RunKind, error: String) -> ExecResult {
         self.emit(ExecEvent::Started {
             plan: plan.id,
             title: plan.title.clone(),
             total: plan.steps.len(),
-            run: RunKind::Apply,
+            run,
             items: None,
         });
         self.emit(ExecEvent::Finished {
@@ -1730,17 +1896,21 @@ impl Executor {
         }
     }
 
-    /// Apply `plan`, asked as `seq`, and journal it; a retry of the action
-    /// whose entry is at `first`, going on from `partial`.
+    /// Apply `plan` and journal it, as `run` says; a retry going on from
+    /// `partial`.
     fn run_execute(
         &self,
         plan: &Plan,
         cancel: &CancelToken,
-        seq: u64,
-        first: Option<u64>,
+        run: &Run,
         partial: Option<super::staging::Partial>,
         waits: &Waits,
     ) -> ExecResult {
+        let Run {
+            seq,
+            first,
+            ref touched,
+        } = *run;
         self.apply_plan(plan, cancel, RunKind::Apply, partial, |r, inverse, stop| {
             let mut j = self.journal.lock();
             // In its place in the order asked: plans that ran beside it
@@ -1767,6 +1937,10 @@ impl Executor {
                             entry.plan = Some(inverse);
                         }
                         entry.applied_at = SystemTime::now();
+                        entry.asked.push(plan.id);
+                        let mut both = (*entry.touched).clone();
+                        both.merge((**touched).clone());
+                        entry.touched = Arc::new(both);
                     }
                     None => j.put(
                         Direction::Undo,
@@ -1777,6 +1951,8 @@ impl Executor {
                             partial: Vec::new(),
                             seq: place,
                             stacked: place,
+                            asked: vec![plan.id],
+                            touched: Arc::clone(touched),
                         },
                     ),
                 }
@@ -1843,18 +2019,26 @@ impl Executor {
         }
     }
 
-    /// Take back the top entry of one stack and journal what takes that
-    /// back on the other. A run that stops partway stays on its stack to be
-    /// retried; its steps are idempotent.
+    /// Take back the entry `target` of one stack and journal what takes
+    /// that back on the other, the run `touched` what it says. A run that
+    /// stops partway stays on its stack to be retried; its steps are
+    /// idempotent. An undo of a plan named that cannot be says why it is
+    /// `refused`.
     fn replay(
         &self,
         direction: Direction,
         target: Option<u64>,
+        refused: Option<(Option<String>, String)>,
         seq: u64,
+        touched: Arc<Footprint>,
         cancel: &CancelToken,
     ) -> Option<ExecResult> {
         if cancel.is_cancelled() {
             return None;
+        }
+        if let Some((title, reason)) = refused {
+            let title = title.map_or_else(|| "undo".to_owned(), |t| format!("undo {t}"));
+            return Some(self.refuse(&Plan::new(title), RunKind::Undo, reason));
         }
         let mut entry = self.journal.lock().take(direction, target?)?;
         let title = match direction {
@@ -1893,6 +2077,7 @@ impl Executor {
         };
         let mut run = plan.clone();
         run.title = title;
+        let id = run.id;
         let r = self.apply_plan(&run, cancel, direction.into(), None, |r, back, _| {
             // This run's inverses come first: its steps were applied after
             // the ones an earlier, interrupted attempt already took back.
@@ -1909,6 +2094,8 @@ impl Executor {
                 };
                 let kept = direction == Direction::Redo || seq > j.redo_floor;
                 if !steps.is_empty() && kept {
+                    let mut asked = entry.asked;
+                    asked.push(id);
                     let other_entry = JournalEntry {
                         plan: Some(Plan::with_steps(entry.title.clone(), steps)),
                         title: entry.title,
@@ -1916,6 +2103,8 @@ impl Executor {
                         partial: Vec::new(),
                         seq: entry.seq,
                         stacked,
+                        asked,
+                        touched,
                     };
                     j.put(other, other_entry);
                 }
@@ -2631,6 +2820,62 @@ mod tests {
         assert!(logged(&log, "undid /stick/photos"));
     }
 
+    /// Undo of a plan named (a toast's) takes back that plan, not the last
+    /// asked, when nothing asked after it touched what it did, and waits
+    /// for it while it runs; else it takes nothing back and says what did,
+    /// asked after it in the history or running.
+    #[test]
+    fn undo_of_a_plan_named_takes_it_back_alone_or_says_why_not() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let copy = Gate::new("/stick/photos", true, true, &log).plan();
+        executor.execute_blocking(&copy, &CancelToken::new());
+        let rename = Gate::new("/disk/notes/it’s a.txt", false, true, &log).plan();
+        executor.execute_blocking(&rename, &CancelToken::new());
+        let r = executor
+            .undo_of_blocking(copy.id, &CancelToken::new())
+            .unwrap();
+        assert_eq!((r.applied, r.error), (1, None));
+        assert!(logged(&log, "undid /stick/photos"));
+        assert_eq!(executor.undo_titles(), ["/disk/notes/it’s a.txt"]);
+        let r = executor
+            .undo_of_blocking(copy.id, &CancelToken::new())
+            .unwrap();
+        let error = r.error.unwrap_or_default();
+        assert!(error.contains("undone already"), "{error}");
+
+        // The folder it renamed in, made again after it.
+        let folder = Gate::new("/disk/notes", false, true, &log).plan();
+        executor.execute_blocking(&folder, &CancelToken::new());
+        let r = executor
+            .undo_of_blocking(rename.id, &CancelToken::new())
+            .unwrap();
+        let error = r.error.unwrap_or_default();
+        assert_eq!(r.applied, 0);
+        assert!(
+            error.contains("“/disk/notes”, asked after it, touched what it did"),
+            "{error}"
+        );
+        // Running after it, in what it made.
+        let inside = Gate::new("/disk/notes/later", true, false, &log);
+        let later = inside.plan();
+        let later_id = later.id;
+        executor.execute(later, CancelToken::new());
+        assert!(logged(&log, "began /disk/notes/later"));
+        let r = executor
+            .undo_of_blocking(folder.id, &CancelToken::new())
+            .unwrap();
+        let error = r.error.unwrap_or_default();
+        assert!(error.contains("asked after it, running"), "{error}");
+        assert!(!log.lock().iter().any(|l| l.starts_with("undid /disk")));
+        // Itself running: taken back once it ends.
+        executor.undo_of(later_id, CancelToken::new());
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!log.lock().iter().any(|l| l == "undid /disk/notes/later"));
+        inside.opened();
+        assert!(logged(&log, "undid /disk/notes/later"));
+    }
+
     /// A step that cannot say what it touches runs alone (ADR-079).
     #[test]
     fn a_plan_that_cannot_say_what_it_touches_runs_alone() {
@@ -2739,6 +2984,8 @@ mod tests {
                 partial: Vec::new(),
                 seq: n,
                 stacked: n,
+                asked: Vec::new(),
+                touched: Arc::default(),
             });
         }
         big.bound();

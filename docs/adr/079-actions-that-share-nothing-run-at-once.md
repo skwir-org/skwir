@@ -122,6 +122,16 @@ one lane (`op::executor`) and operations.md's "Running".
    back, as today; its bar says so, and Cancel stays the way to stop
    it at once. Two Undos take the two latest entries, and run at once
    when those share nothing.
+
+   A toast's Undo takes back the action it reports, not the latest
+   (amended 2026-10-24, the user's choice): when no action asked after
+   it, still in the history, running or waiting, touched anything it
+   touched (their footprints, kept with each entry), it is taken back
+   alone: the two share nothing (5), so their inverses give the same
+   result in either order (8). Otherwise nothing is taken back, and
+   Undo says which action touched it, to be undone first. An action
+   that has not ended is waited for, as Undo does. The footer's Undo
+   still takes the latest.
 10. **Redo** offers what was undone since the last action asked: an
     action asked after an Undo drops that undo's redo, even when the
     undo ends after it.

@@ -1994,6 +1994,16 @@ pub struct PlanDiffArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct UndoArgs {
+    /// The plan to take back, as its progress named it (a toast's Undo,
+    /// of the action it reports): taken back alone when nothing asked
+    /// after it touched what it did, else refused, saying what did. The
+    /// last plan asked when omitted.
+    #[serde(default)]
+    pub plan: Option<op::PlanId>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct RetryArgs {
     /// The plan a step's error stopped, as its progress named it; the
     /// last one stopped when omitted.
@@ -2859,21 +2869,30 @@ mod builtin {
         )
         .plans();
 
-        c.register::<NoArgs, _>(
+        c.register::<UndoArgs, _>(
             "core",
             "undo",
             "Undo",
-            "Undo the most recent plan; asked from outside the window, says what it took back",
-            |_, app| {
+            "Undo the most recent plan, or the plan named when nothing asked after it touched what it did; asked from outside the window, says what it took back",
+            |a, app| {
                 if crate::scheduler::on_window_thread() {
-                    anyhow::ensure!(app.executor.undo(app.lifetime().child()), "nothing to undo");
+                    match a.plan {
+                        // Its run says what it did, or why it could not.
+                        Some(plan) => app.executor.undo_of(plan, app.lifetime().child()),
+                        None => anyhow::ensure!(
+                            app.executor.undo(app.lifetime().child()),
+                            "nothing to undo"
+                        ),
+                    }
                     return Ok(Outcome::Done);
                 }
                 // A script or an agent waits, and is told what it took back.
-                let result = app
-                    .executor
-                    .undo_blocking(&app.lifetime().child())
-                    .ok_or_else(|| anyhow::anyhow!("nothing to undo"))?;
+                let cancel = app.lifetime().child();
+                let result = match a.plan {
+                    Some(plan) => app.executor.undo_of_blocking(plan, &cancel),
+                    None => app.executor.undo_blocking(&cancel),
+                }
+                .ok_or_else(|| anyhow::anyhow!("nothing to undo"))?;
                 Ok(replayed(
                     "undone",
                     app.executor.last_redo_title().as_deref(),

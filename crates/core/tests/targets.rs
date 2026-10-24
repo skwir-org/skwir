@@ -202,6 +202,47 @@ fn an_undo_asked_from_outside_the_window_says_what_it_took_back() {
     );
 }
 
+/// The undo a toast runs names the plan it reports: that plan is taken
+/// back, not the one asked after it, when they touched nothing in common;
+/// one that touched it after keeps it, and the answer says which.
+#[test]
+fn an_undo_naming_its_plan_takes_back_that_plan_alone() {
+    let tmp = home_tempdir();
+    let (one, two) = (tmp.path().join("one"), tmp.path().join("two"));
+    std::fs::create_dir_all(&one).unwrap();
+    std::fs::create_dir_all(&two).unwrap();
+    let app = app(tmp.path());
+    let first = plan(&app, "mkdir", json!({ "name": "it’s first", "in": one }));
+    apply(&app, &first);
+    let second = plan(&app, "mkdir", json!({ "name": "second  one", "in": two }));
+    apply(&app, &second);
+    let undo = |plan| app.dispatch(&Invocation::with_args("undo", &json!({ "plan": plan })));
+    let undone = match undo(first.id).unwrap() {
+        skwir_core::command::Outcome::Value(value) => value,
+        other => panic!("expected what it undid, got {other:?}"),
+    };
+    assert_eq!(
+        (undone["applied"].as_u64(), &undone["error"]),
+        (Some(1), &json!(null))
+    );
+    assert!(!one.join("it’s first").exists());
+    assert!(two.join("second  one").is_dir(), "the later one stays");
+
+    let inside = plan(
+        &app,
+        "mkdir",
+        json!({ "name": "inner", "in": two.join("second  one") }),
+    );
+    apply(&app, &inside);
+    let refused = match undo(second.id).unwrap() {
+        skwir_core::command::Outcome::Value(value) => value,
+        other => panic!("expected why not, got {other:?}"),
+    };
+    let error = refused["error"].as_str().unwrap_or_default();
+    assert!(error.contains("touched what it did"), "{error}");
+    assert!(two.join("second  one/inner").is_dir());
+}
+
 #[test]
 fn a_location_is_listed_without_showing_it() {
     let tmp = home_tempdir();

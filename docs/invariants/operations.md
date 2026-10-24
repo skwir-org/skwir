@@ -103,7 +103,12 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   server; one of the four to end); a paused plan keeps what it holds. The journal keeps
   the order asked (`JournalEntry::seq`): Undo takes the last plan asked,
   waiting while it runs (`Executor::undo_target`, which the status bar
-  names), and a plan asked after an undo drops its redo. A step's
+  names), and a plan asked after an undo drops its redo. A toast's Undo
+  names the plan it reports (`undo`'s `plan`, `Executor::undo_of`):
+  taken back alone when no plan asked after it, its entry still in the
+  history, running or waiting, touched what it did
+  (`JournalEntry::touched`, the footprints its runs had), else refused,
+  saying which did, and nothing taken back. A step's
   footprint names what its `describe` and its companions touch: a new
   step kind says its own, or runs alone.
 - **Retry (ADR-080).** A plan a step's error stopped keeps the steps it
