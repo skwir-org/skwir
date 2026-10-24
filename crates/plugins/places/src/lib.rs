@@ -1811,12 +1811,6 @@ mod tests {
         assert!(error.contains("not a removable volume"), "{error}");
     }
 
-    /// Every rescan reads the bookmarks file. notify reports a file opened
-    /// too: a watcher counting it rescanned for as long as the file
-    /// existed, waking the window at every pass. Once the first scans have
-    /// published, the plugin is quiet; another program's edit still counts.
-    // GTK's bookmarks (step F, ADR-035).
-    #[cfg(target_os = "linux")]
     /// A bookmark asked anywhere but on the window's thread (another
     /// plugin's worker, an agent's call) is written before the command
     /// returns, and a refusal is the caller's: Add Server says nothing it
@@ -1876,6 +1870,12 @@ mod tests {
         assert!(said.text.contains("is not a folder"), "{}", said.text);
     }
 
+    /// Every rescan reads the bookmarks file. notify reports a file opened
+    /// too: a watcher counting it rescanned for as long as the file
+    /// existed, waking the window at every pass. Once the first scans have
+    /// published, the plugin is quiet; another program's edit still counts.
+    // GTK's bookmarks (step F, ADR-035).
+    #[cfg(target_os = "linux")]
     #[test]
     #[allow(unsafe_code)]
     fn reading_the_bookmarks_rescans_nothing() {
