@@ -6,9 +6,12 @@ and removes them when done, so what remains is what is left. Line numbers
 are omitted: search for the function named.
 
 Everything compiles for Windows and macOS (`just check-cross`, part of
-`just lint-all`), except `skwir-ui`, `skwir` and the native workers on
-macOS: gpui's Metal backend generates its bindings from Apple's SDK. The
-Windows build's tests run under Wine (`just test-windows`).
+`just lint-all`), except the Poppler, MuPDF and DjVuLibre helpers, which
+no package off Linux carries, and `skwir-ui` and `skwir` on macOS: gpui's
+Metal backend generates its bindings from Apple's SDK. The media helper
+is linted against GStreamer's own build for each system
+(`tools/cross/clippy-media.sh`). The Windows build's tests run under Wine
+(`just test-windows`).
 
 | Mark | Off Linux, the code... |
 | --- | --- |

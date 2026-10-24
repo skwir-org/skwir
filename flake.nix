@@ -189,7 +189,9 @@
             export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER="clang"
             export CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS="-C link-arg=-fuse-ld=mold"
           ''}
-          echo "skwir dev shell: $(rustc --version) | $(cargo --version)"
+          # On stderr: what `nix develop --command` prints is a command's
+          # answer, which a script may take (gstreamer.py prints a folder).
+          echo "skwir dev shell: $(rustc --version) | $(cargo --version)" >&2
         '';
       };
 
