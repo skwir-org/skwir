@@ -1825,6 +1825,17 @@ impl Shell {
                 let Some(target) = args["target"].as_str() else {
                     return;
                 };
+                // The member shown already (a click on its own row): not
+                // written out and opened again, its place in it kept.
+                if self.preview.descend.is_none()
+                    && self
+                        .preview
+                        .nested
+                        .last()
+                        .is_some_and(|shown| shown.target() == target)
+                {
+                    return;
+                }
                 let Some(mut parked) = self.preview.take_parked() else {
                     return;
                 };
