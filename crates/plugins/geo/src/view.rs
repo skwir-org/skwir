@@ -512,12 +512,10 @@ impl Scanner {
         let Some(shown) = self.update(pane, scan_id, |scan| scan.candidates = count) else {
             return;
         };
-        let candidates: Arc<Vec<(Candidate, Kind)>> = Arc::new(
-            candidates
-                .into_iter()
-                .filter(|(candidate, _)| !skip.contains(&candidate.id))
-                .collect(),
-        );
+        let candidates: Vec<(Candidate, Kind)> = candidates
+            .into_iter()
+            .filter(|(candidate, _)| !skip.contains(&candidate.id))
+            .collect();
         if shown {
             self.changed();
         }
@@ -525,23 +523,37 @@ impl Scanner {
             self.finish(pane, scan_id);
             return;
         }
-        let left = Arc::new(AtomicU64::new(WORKERS as u64));
         let Some(app) = self.app.upgrade() else {
             return;
         };
-        for worker in 0..WORKERS {
-            let (this, candidates, left, token) = (
-                Arc::clone(self),
-                Arc::clone(&candidates),
-                Arc::clone(&left),
-                cancel.clone(),
-            );
-            app.scheduler.spawn(
+        // Each remote's files are read in its lane (remote.md): a server
+        // that stops answering holds its own, never local work's or
+        // another's. Up to WORKERS jobs a lane, each a share of its files.
+        let jobs: Vec<(
+            skwir_core::scheduler::Lane,
+            Arc<Vec<(Candidate, Kind)>>,
+            usize,
+            usize,
+        )> = skwir_core::fs::reach::by_lane(candidates, |(candidate, _)| {
+            candidate.path.as_deref().unwrap_or(Path::new(""))
+        })
+        .into_iter()
+        .flat_map(|(lane, group)| {
+            let shares = WORKERS.min(group.len());
+            let group = Arc::new(group);
+            (0..shares).map(move |share| (lane, Arc::clone(&group), share, shares))
+        })
+        .collect();
+        let left = Arc::new(AtomicU64::new(jobs.len() as u64));
+        for (lane, candidates, worker, shares) in jobs {
+            let (this, left, token) = (Arc::clone(self), Arc::clone(&left), cancel.clone());
+            app.scheduler.spawn_in(
+                lane,
                 Priority::Normal,
                 "geo-positions",
                 cancel.clone(),
                 move || {
-                    for (candidate, kind) in candidates.iter().skip(worker).step_by(WORKERS) {
+                    for (candidate, kind) in candidates.iter().skip(worker).step_by(shares) {
                         if token.is_cancelled() {
                             return;
                         }
