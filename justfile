@@ -129,7 +129,7 @@ djvu-check:
 remote-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    tools=$(nix build --no-link --print-out-paths nixpkgs#sshfs nixpkgs#gvfs nixpkgs#rclone 'nixpkgs#glib^bin' nixpkgs#openssh nixpkgs#rsync nixpkgs#kdePackages.kio-fuse nixpkgs#kdePackages.kio nixpkgs#kdePackages.kio-extras nixpkgs#kdePackages.kde-cli-tools nixpkgs#samba nixpkgs#uid_wrapper nixpkgs#nss_wrapper)
+    tools=$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#sshfs nixpkgs#gvfs nixpkgs#rclone 'nixpkgs#glib^bin' nixpkgs#openssh nixpkgs#rsync nixpkgs#kdePackages.kio-fuse nixpkgs#kdePackages.kio nixpkgs#kdePackages.kio-extras nixpkgs#kdePackages.kde-cli-tools nixpkgs#samba nixpkgs#uid_wrapper nixpkgs#nss_wrapper)
     out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(p[0-9]+)?(-bin)?$" <<< "$tools" | head -1; }
     export PATH="$(out sshfs-fuse)/bin:$(out rclone)/bin:$(out glib)/bin:$(out openssh)/bin:$(out rsync)/bin:$(out kde-cli-tools)/bin:$PATH"
     export SKWIR_TEST_GVFS="$(out gvfs)"
@@ -145,7 +145,7 @@ remote-check:
     # Servers found nearby, on a network of the test's own (ADR-084).
     tools/test/nearby.sh "$binary"
     # Servers' passwords in a keyring of the tests' own (ADR-082).
-    keyring=$(nix build --no-link --print-out-paths nixpkgs#gnome-keyring)
+    keyring=$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#gnome-keyring)
     PATH="$keyring/bin:$PATH" tools/test/private-keyring.sh cargo nextest run \
         -p skwir-platform -p skwir-plugin-remote --run-ignored only \
         -E 'test(secret) | test(password)'
