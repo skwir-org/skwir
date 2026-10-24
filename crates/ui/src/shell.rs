@@ -347,9 +347,9 @@ pub struct Shell {
     /// Panes whose Map view spreads the files at one place
     /// (`ui.map_view_spread`).
     pub(crate) map_spread: std::collections::HashSet<PaneId>,
-    /// The area each pane's Map view drew last, for `ui.map_view_search_area`.
-    pub(crate) map_areas:
-        std::collections::HashMap<PaneId, std::rc::Rc<std::cell::Cell<Option<[f64; 4]>>>>,
+    /// What each pane's Map view drew last (its map's handles): the area,
+    /// for `ui.map_view_search_area`; the view, for the hints a map says.
+    pub(crate) map_drawn: std::collections::HashMap<PaneId, crate::elements::map::Handles>,
     /// The terminal under the panes (F4).
     pub terminal: crate::terminal::TerminalState,
     /// Panes side by side or stacked, the preview at the right or the bottom.
@@ -660,7 +660,7 @@ impl Shell {
             map_notes: crate::map_preview::Notes::default(),
             map_views: std::collections::HashSet::new(),
             map_spread: std::collections::HashSet::new(),
-            map_areas: std::collections::HashMap::new(),
+            map_drawn: std::collections::HashMap::new(),
             terminal: crate::terminal::TerminalState::new(cx.focus_handle()),
             layout: crate::layout::Layout::default(),
             toasts: crate::toast::ToastState::default(),

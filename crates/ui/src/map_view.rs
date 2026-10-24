@@ -483,9 +483,7 @@ impl PaneView for MapView {
                 .render(shell, cx),
             );
         }
-        shell
-            .map_areas
-            .insert(pane, Rc::clone(&self.handles.shown_area));
+        shell.map_drawn.insert(pane, self.handles.clone());
         let spread = shell.map_spread.contains(&pane);
         header = header.child(
             Button::new(
@@ -681,7 +679,8 @@ impl Shell {
             return;
         }
         let pane = self.pane;
-        let Some([south, west, north, east]) = self.map_areas.get(&pane).and_then(|a| a.get())
+        let Some([south, west, north, east]) =
+            self.map_drawn.get(&pane).and_then(|h| h.shown_area.get())
         else {
             return;
         };
@@ -716,7 +715,7 @@ impl Shell {
         // A pane keeps its choice to spread while it lives.
         let ws = self.app.workspace.read();
         self.map_spread.retain(|&pane| ws.pane(pane).is_some());
-        self.map_areas.retain(|pane, _| ws.pane(*pane).is_some());
+        self.map_drawn.retain(|pane, _| ws.pane(*pane).is_some());
         drop(ws);
         for pane in gone {
             self.map_views.remove(&pane);

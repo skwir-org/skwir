@@ -341,12 +341,20 @@ impl Shell {
         }
         // A file that holds its own tiles shows its streets where it has
         // them: the background's lack of them is not worth a word there.
+        // Said once, of the preview's map or a pane's Map view.
+        let close = |view: Option<View>| view.is_some_and(|view| view.zoom >= DETAIL_ZOOM);
+        let zoomed =
+            (self.map_shown().is_some() && !self.map_has_file_tiles() && close(self.map_view()))
+                || self.map_views.iter().any(|pane| {
+                    self.map_drawn
+                        .get(pane)
+                        .is_some_and(|handles| close(handles.shown.get()))
+                });
         if let Some(info) = info
             && let Some(setting) = &setting
             && !info.detailed
             && !self.map_notes.hinted
-            && !self.map_has_file_tiles()
-            && self.map_view().is_some_and(|view| view.zoom >= DETAIL_ZOOM)
+            && zoomed
         {
             self.map_notes.hinted = true;
             self.set_hint_about(
