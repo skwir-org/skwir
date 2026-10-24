@@ -34,7 +34,6 @@ mod native {
         fn archive_read_open_filename(a: *mut c_void, path: *const c_char, block: usize) -> c_int;
         #[cfg(windows)]
         fn archive_read_open_filename_w(a: *mut c_void, path: *const u16, block: usize) -> c_int;
-        #[cfg(windows)]
         fn archive_read_set_options(a: *mut c_void, options: *const c_char) -> c_int;
         fn archive_read_next_header(a: *mut c_void, entry: *mut *mut c_void) -> c_int;
         fn archive_entry_pathname_utf8(e: *mut c_void) -> *const c_char;
@@ -152,13 +151,21 @@ mod native {
     const UTF8_LOCALES: [&CStr; 3] = [c"C.UTF-8", c"C.utf8", c"UTF-8"];
     #[cfg(windows)]
     const UTF8_LOCALES: [&CStr; 1] = [c".UTF-8"];
-    /// What libarchive's defaults get wrong on Windows. A name an archive
-    /// does not say the charset of is read in the OEM code page there, as
-    /// Windows' own archivers write a ZIP's or a RAR's; but a tar or a cpio
-    /// archive comes from Unix's tools, whose names are UTF-8 (GNU tar's,
-    /// without a PAX header saying so), as they are read elsewhere.
+    /// What an archive is read with. An mtree file is a list of files on
+    /// disk: libarchive's reader opens and returns the files it names
+    /// (`contents=~/.ssh/id_rsa`) once asked to check them (`checkfs`), as
+    /// it is not by default. Not left to a default: an archive is read for
+    /// what it holds, never what it names.
+    #[cfg(not(windows))]
+    const READ_OPTIONS: &CStr = c"mtree:!checkfs";
+    /// And what libarchive's defaults get wrong on Windows. A name an
+    /// archive does not say the charset of is read in the OEM code page
+    /// there, as Windows' own archivers write a ZIP's or a RAR's; but a tar
+    /// or a cpio archive comes from Unix's tools, whose names are UTF-8
+    /// (GNU tar's, without a PAX header saying so), as they are read
+    /// elsewhere.
     #[cfg(windows)]
-    const READ_OPTIONS: &CStr = c"tar:hdrcharset=UTF-8,cpio:hdrcharset=UTF-8";
+    const READ_OPTIONS: &CStr = c"mtree:!checkfs,tar:hdrcharset=UTF-8,cpio:hdrcharset=UTF-8";
     /// And a ZIP made on Windows would name its members in the OEM code
     /// page, unflagged, where a name outside it is lost: in UTF-8, flagged
     /// so, as made elsewhere.
@@ -1021,7 +1028,6 @@ mod native {
                     Some(asked_passphrase),
                 ))?;
             }
-            #[cfg(windows)]
             reader.check(archive_read_set_options(reader.0, READ_OPTIONS.as_ptr()))?;
             reader.check(open_read(reader.0, path.as_ptr(), 64 * 1024))?;
         }
