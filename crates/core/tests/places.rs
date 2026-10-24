@@ -165,6 +165,34 @@ fn a_volume_let_go_of_takes_what_lists_a_folder_on_it_whatever_its_scheme() {
     assert_eq!(shows(&app, pane), Some(home));
 }
 
+/// A plugin turned off takes its locations from the panes: one showing
+/// it goes home, and nothing of it is kept open.
+#[test]
+fn a_location_no_plugin_opens_any_more_is_let_go_of() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = with_fake(tmp.path());
+    let pane = active(&app);
+    go(&app, "fake:/few");
+    let open = app
+        .workspace
+        .read()
+        .pane(pane)
+        .unwrap()
+        .open
+        .clone()
+        .unwrap();
+    app.unregister_owner("test");
+    let home = skwir_core::os_path::home().unwrap();
+    assert_eq!(app.pane_dir(pane).unwrap(), home);
+    assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+    app.keep_locations(pane, &[]);
+    assert_eq!(
+        std::sync::Arc::strong_count(&open),
+        1,
+        "nothing of the plugin's is held"
+    );
+}
+
 /// What an agent's call counts of a pane leaves out a file whose path the
 /// pane cannot say, as it does a private one; a place is no file.
 #[test]

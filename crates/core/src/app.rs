@@ -619,12 +619,53 @@ impl App {
         self.tiles.unregister_owner(owner);
         self.maps.unregister_owner(owner);
         self.registry.remove_owner(owner);
-        self.providers.write().retain(|_, (o, _)| &**o != owner);
+        let withdrawn: Vec<Arc<str>> = {
+            let mut providers = self.providers.write();
+            let withdrawn = providers
+                .iter()
+                .filter(|(_, (o, _))| &**o == owner)
+                .map(|(scheme, _)| Arc::clone(scheme))
+                .collect();
+            providers.retain(|_, (o, _)| &**o != owner);
+            withdrawn
+        };
+        if !withdrawn.is_empty() {
+            self.let_go_of_schemes(&withdrawn);
+        }
         for spec in self.settings.schema() {
             if spec.owner() == owner {
                 self.settings.undeclare(&spec.key);
             }
         }
+    }
+
+    /// Let go of what panes show and keep of `schemes`, which nothing opens
+    /// any more (their plugin turned off): a pane showing one goes home, as
+    /// one whose volume went does, and what one keeps beside it or opened in
+    /// place of one closes, the plugin's work with it. A dormant pane keeps
+    /// its history: shown again, it says why it cannot be opened.
+    fn let_go_of_schemes(&self, schemes: &[Arc<str>]) {
+        let gone = |location: &Location| schemes.iter().any(|s| **s == *location.scheme);
+        let showing: Vec<PaneId> = self
+            .workspace
+            .read()
+            .panes()
+            .iter()
+            .filter(|p| p.location().is_some_and(gone))
+            .map(|p| p.id)
+            .collect();
+        let home = Location::from_path(
+            crate::os_path::home().unwrap_or_else(|| PathBuf::from(std::path::MAIN_SEPARATOR_STR)),
+        );
+        for pane in showing {
+            if let Err(error) = self.navigate(pane, &home) {
+                tracing::warn!("cannot leave a location no plugin opens: {error:#}");
+            }
+        }
+        for p in self.workspace.write().panes_mut() {
+            p.release_where(gone);
+        }
+        self.wake();
     }
 
     // ------------------------------------------------------------ locations

@@ -1499,6 +1499,18 @@ impl Pane {
         self.opened_moved();
     }
 
+    /// Let go of the locations `gone` names (a scheme no plugin opens any
+    /// more) that it keeps beside the one shown, has opened in place (with
+    /// what is open inside them) or has just left. Each closes as it drops.
+    pub(crate) fn release_where(&mut self, gone: impl Fn(&Location) -> bool) {
+        self.close_where(|o| gone(&o.location));
+        if self.left.as_ref().is_some_and(|k| gone(&k.location)) {
+            self.left = None;
+        }
+        self.kept.retain(|k| !gone(&k.location));
+        self.opened_moved();
+    }
+
     /// Close every folder opened in place.
     pub fn collapse_all(&mut self) -> bool {
         if self.expanded.is_empty() {
