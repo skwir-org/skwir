@@ -13,8 +13,8 @@ use std::sync::Arc;
 use serde_json::json;
 use skwir_core::cache::CacheSlot;
 use skwir_core::document::{
-    Destination, DocumentInfo, DocumentPage, DocumentSession, Link, MAX_PAGE_SIZE, Outline,
-    PageContent, PixelOrder, Rect, SearchHit, TextChar, words,
+    Destination, DocumentInfo, DocumentPage, DocumentSession, Link, MAX_PAGE_SIZE, MAX_PAGES,
+    Outline, PageContent, PixelOrder, Rect, SearchHit, TextChar, words,
 };
 use skwir_core::permissions::Capability;
 use skwir_core::{CancelToken, FileId};
@@ -123,8 +123,10 @@ impl Pages {
         if contents.pages == 0 {
             return Ok(None);
         }
-        pages.info.pages = contents.pages;
-        pages.info.outlines = outline(contents.outline, contents.pages);
+        // Whatever the plugin says, the reader reads at most `MAX_PAGES`.
+        let count = contents.pages.min(MAX_PAGES);
+        pages.info.pages = count;
+        pages.info.outlines = outline(contents.outline, count);
         Ok(Some(pages))
     }
 
@@ -241,6 +243,11 @@ impl DocumentSession for Pages {
     }
 
     fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage> {
+        anyhow::ensure!(
+            (1..=self.info.pages).contains(&page),
+            "There is no page {page}: it has {}",
+            self.info.pages
+        );
         let side = side.clamp(64, 8192);
         let picture_key = self.key(&json!(["picture", page, side]))?;
         let words_key = self.key(&json!(["words", page]))?;
@@ -501,5 +508,64 @@ mod tests {
         again.search("page", &cancel).unwrap();
         assert_eq!(three.0.lock().len(), 5);
         assert!(again.render(4, 256, &cancel).is_err(), "no page 4");
+    }
+
+    /// A plugin that says a file has every page there can be.
+    struct Endless;
+    impl crate::call::Transport for Endless {
+        fn call(
+            &self,
+            _method: &str,
+            _params: serde_json::Value,
+            _call: &Call,
+        ) -> anyhow::Result<serde_json::Value> {
+            Ok(serde_json::to_value(PageAnswer {
+                pages: u32::MAX,
+                png: None,
+                width: None,
+                height: None,
+                text: Vec::new(),
+                links: Vec::new(),
+                outline: vec![OutlineEntry {
+                    title: "The last".into(),
+                    depth: 0,
+                    page: Some(u32::MAX),
+                }],
+            })?)
+        }
+        fn stop(&self) {}
+    }
+
+    #[test]
+    fn a_plugins_page_count_is_held_to_what_the_reader_reads() {
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("pages-")
+            .tempdir_in(base)
+            .unwrap();
+        let file = tmp.path().join("it's endless.doc");
+        std::fs::write(&file, "endless").unwrap();
+        let module = tmp.path().join("plugin.wasm");
+        std::fs::write(&module, "module").unwrap();
+        let runner = Arc::new(Runner::answered_by(&module, Arc::new(Endless)));
+        let cache = skwir_core::cache::Cache::new(tmp.path().join("cache"));
+        let id = skwir_core::op::EntryRef::from_path(&file).unwrap().id;
+        let pages = Pages::open(
+            runner,
+            cache.namespace("endless").within("pages"),
+            file,
+            id,
+            None,
+            &CancelToken::new(),
+        )
+        .unwrap()
+        .unwrap();
+        // Four billion items laid out on the window's thread: the reader's
+        // `ListState` hung, or ran out of memory.
+        assert_eq!(pages.info().pages, MAX_PAGES);
+        assert_eq!(pages.info().outlines[0].page, None, "past what is read");
+        let past = pages.render(MAX_PAGES + 1, 64, &CancelToken::new());
+        assert!(format!("{:#}", past.unwrap_err()).contains("no page"));
     }
 }

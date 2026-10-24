@@ -86,6 +86,13 @@ pub struct DocumentInfo {
     pub labels: Vec<String>,
 }
 
+/// The most pages of one document that are read (`DocumentInfo::pages`):
+/// the reader lays out an item for each, on the window's thread, and a
+/// search reads each in turn, so a count past it (a damaged file's, a
+/// plugin's four billion) is held to it where it is read, and a longer
+/// document shows its first pages. No document a person reads comes near.
+pub const MAX_PAGES: u32 = 100_000;
+
 /// The longest page label kept, in characters.
 const LABEL_CHARS: usize = 64;
 
