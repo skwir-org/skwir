@@ -1400,16 +1400,60 @@ impl super::Effect for Unmove {
 /// Whether an existing destination already holds the source, including
 /// what travels beside it. Size and time reject obvious differences; only
 /// reading the bytes proves content equality for unrelated files.
+///
+/// A plan asks it as it settles names, in its dry run and as it runs: its
+/// bytes are read once a plan while nothing of either tree, nor of what
+/// goes with them, changed (`StepContext::compared`, by `compared_state`).
 pub(super) fn same_tree(
     src: &Path,
     copy: &Path,
     preserve_attributes: bool,
     ctx: &StepContext,
 ) -> anyhow::Result<bool> {
+    let along = along(ctx, src, copy);
+    // Read before they are compared: a change meanwhile is a change since.
+    let state = compared_state(src, copy, &along);
+    let key = (src.to_path_buf(), copy.to_path_buf(), preserve_attributes);
+    if let Some(state) = state
+        && let Some(same) = ctx.compared().found(&key, state)
+    {
+        return Ok(same);
+    }
+    let same = same_trees(src, copy, preserve_attributes, &along, ctx)?;
+    if let Some(state) = state {
+        ctx.compared().note(key, state, same);
+    }
+    Ok(same)
+}
+
+/// What `src` and `copy` are, and each companion that goes with `src` and
+/// its place beside `copy` (`state_of`, whether there or not), in one
+/// digest: `None` where something of them cannot be read.
+fn compared_state(src: &Path, copy: &Path, along: &[Along]) -> Option<blake3::Hash> {
+    let mut digest = blake3::Hasher::new();
+    digest.update(state_of(src)?.as_bytes());
+    digest.update(state_of(copy)?.as_bytes());
+    for path in along.iter().flat_map(|a| [&a.from, &a.to]) {
+        match state_of(path) {
+            Some(state) => digest.update(state.as_bytes()),
+            None => digest.update(&[0]),
+        };
+    }
+    Some(digest.finalize())
+}
+
+/// [`same_tree`], read.
+fn same_trees(
+    src: &Path,
+    copy: &Path,
+    preserve_attributes: bool,
+    along: &[Along],
+    ctx: &StepContext,
+) -> anyhow::Result<bool> {
     if !same_node(src, copy, preserve_attributes, ctx)? {
         return Ok(false);
     }
-    for companion in along(ctx, src, copy) {
+    for companion in along {
         // Attribute containers are compared through their effective attributes,
         // as a copy can turn a container into native attributes or vice versa.
         if companion.attributes {
@@ -4479,6 +4523,35 @@ mod tests {
         assert!(super::super::Effect::apply(&restore, &StepContext::detached()).is_err());
         assert!(!restore.path.exists());
         assert_eq!(std::fs::read_dir(camera).unwrap().count(), 0);
+    }
+
+    /// A tree compared with what is there is read once a plan, while
+    /// nothing of either changed: changed since (a byte, its time given
+    /// back), it is read again.
+    #[cfg(unix)]
+    #[test]
+    fn a_tree_compared_once_is_read_again_only_once_changed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (src, copy) = (
+            tmp.path().join("it’s a.bin"),
+            tmp.path().join("copy  of it.bin"),
+        );
+        std::fs::write(&src, vec![7u8; 1 << 20]).unwrap();
+        std::fs::copy(&src, &copy).unwrap();
+        let when = std::fs::metadata(&src).unwrap().modified().unwrap();
+        let file = std::fs::File::options().write(true).open(&copy).unwrap();
+        file.set_modified(when).unwrap();
+        drop(file);
+        let ctx = StepContext::detached();
+        assert!(same_tree(&src, &copy, true, &ctx).unwrap());
+        let key = (src.clone(), copy.clone(), true);
+        let state = compared_state(&src, &copy, &[]).unwrap();
+        assert_eq!(ctx.compared().found(&key, state), Some(true), "kept");
+        let file = std::fs::File::options().write(true).open(&copy).unwrap();
+        std::os::unix::fs::FileExt::write_all_at(&file, b"X", 0).unwrap();
+        file.set_modified(when).unwrap();
+        drop(file);
+        assert!(!same_tree(&src, &copy, true, &ctx).unwrap(), "read again");
     }
 
     /// A move into the trash on another volume that failed leaves nothing

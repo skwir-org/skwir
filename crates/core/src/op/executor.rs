@@ -32,7 +32,7 @@ use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use parking_lot::{Condvar, Mutex};
 use serde::Serialize;
 
-use super::context::{Meter, Pause};
+use super::context::{Compared, Meter, Pause};
 use super::footprint::Footprint;
 use super::{Cancelled, Change, Operation, Plan, PlanId, StepContext, StepStatus};
 use crate::cancel::CancelToken;
@@ -94,6 +94,11 @@ pub enum ExecEvent {
         error: Option<String>,
         cancelled: bool,
         undoable: bool,
+        /// What the user asked for, as it was done, where the steps are
+        /// not its items (`Plan::items`: unfolded, names taken settled):
+        /// `Started` is told before the plan is checked, and says what
+        /// was asked.
+        items: Option<super::Items>,
     },
     /// The server the plan `plan` stopped on does not answer: it goes on
     /// by itself once it does (ADR-080, 9).
@@ -594,6 +599,17 @@ impl Drop for Running<'_> {
     }
 }
 
+/// A run told started and listed among those applied, so that Pause and
+/// Cancel reach it from its first check on ([`Executor::show`]); let go
+/// of before it is told finished.
+struct Shown<'a> {
+    pause: Arc<Pause>,
+    meter: Arc<Meter>,
+    /// What its checks and its steps found comparing trees, read once.
+    compared: Arc<Compared>,
+    _listed: Running<'a>,
+}
+
 /// Ends a started job however it leaves, a panic included: what waited
 /// for it may start.
 struct Ended<'a>(&'a Executor, u64);
@@ -685,15 +701,20 @@ impl Executor {
         plan: &Plan,
         companions: &Arc<crate::companions::Companions>,
         cancel: &CancelToken,
+        shown: &Shown<'_>,
     ) -> Settling {
         use super::clash::{Answer, settle};
-        let ctx = || dry_context(&plan.steps, companions, cancel);
+        let ctx = || dry_context(&plan.steps, companions, cancel, shown);
         let said = plan.on_conflict.map(Answer::all);
         let first = settle(
             &plan.steps,
             said.as_ref().unwrap_or(&Answer::default()),
             &ctx(),
         );
+        // Cancelled as it looked, what it found is not asked about.
+        if cancel.is_cancelled() {
+            return Settling::Cancelled;
+        }
         let settled = if first.clashes.is_empty() || said.is_some() {
             first
         } else {
@@ -726,9 +747,14 @@ impl Executor {
     /// Why `plan`, asked for as one action, does not go on for want of
     /// room: `None` when it has room, or the user said to go on. Waits for
     /// the answer, Cancel answering no.
-    fn short_of_room(&self, plan: &Plan, cancel: &CancelToken) -> Option<String> {
+    fn short_of_room(
+        &self,
+        plan: &Plan,
+        cancel: &CancelToken,
+        shown: &Shown<'_>,
+    ) -> Option<String> {
         let free = Arc::clone(&self.free.lock());
-        let ctx = dry_context(&plan.steps, &Arc::default(), cancel);
+        let ctx = dry_context(&plan.steps, &Arc::default(), cancel, shown);
         let short = super::room::short(&plan.steps, &ctx, &*free, cancel)?;
         let asker = self.room_asker.lock().clone();
         let Some(asker) = asker else {
@@ -1799,27 +1825,25 @@ impl Executor {
             (Some(c.seq), c.partial, c.waits)
         });
         let companions = Arc::clone(&self.companions.lock());
+        // Shown from here, as asked, Pause and Cancel reaching it: its
+        // checks may read whole trees (a paste onto what is there whole).
+        let shown = self.show(&plan, cancel, RunKind::Apply);
+        let checking =
+            || StepContext::new(cancel.clone(), Arc::clone(&shown.pause), Arc::default());
         // Each step as it will be done, before anything is settled or
         // checked.
         let plan = if cancel.is_cancelled() {
             plan
         } else {
-            plan.unfold(
-                &StepContext::with_cancel(cancel.clone()).with_companions(Arc::clone(&companions)),
-            )
+            plan.unfold(&checking().with_companions(Arc::clone(&companions)))
         };
         // Names taken are settled first: what the dry run checks is what
         // will be done. A step that panics as it is asked what it makes
         // refuses its plan, as a conflict does: before anything applies.
         let settled = super::guarded(|| {
             Ok(
-                if whole
-                    && super::clash::takes_names(
-                        &plan.steps,
-                        &StepContext::with_cancel(cancel.clone()),
-                    )
-                {
-                    self.settle(&plan, &companions, cancel)
+                if whole && super::clash::takes_names(&plan.steps, &checking()) {
+                    self.settle(&plan, &companions, cancel, &shown)
                 } else {
                     Settling::Steps(None)
                 },
@@ -1837,11 +1861,11 @@ impl Executor {
         match settled {
             Settling::Refused(reason) => {
                 kept(&plan, partial);
-                self.refuse(&plan, RunKind::Apply, reason)
+                self.refuse(&plan, RunKind::Apply, reason, Some(shown))
             }
             Settling::Cancelled => {
                 kept(&plan, partial);
-                self.cancelled(&plan)
+                self.cancelled(&plan, shown)
             }
             Settling::Steps(settled) => {
                 let plan = match settled {
@@ -1857,36 +1881,50 @@ impl Executor {
                 let refused = whole
                     .then(|| {
                         super::guarded(|| {
-                            Ok(first_conflict(&plan, &companions, cancel)
-                                .or_else(|| self.short_of_room(&plan, cancel)))
+                            Ok(first_conflict(&plan, &companions, cancel, &shown)
+                                .or_else(|| self.short_of_room(&plan, cancel, &shown)))
                         })
                         .unwrap_or_else(|e| Some(super::said(&e)))
                     })
                     .flatten();
+                // Cancelled in its checks, it applies nothing, and says so.
+                if whole && cancel.is_cancelled() {
+                    kept(&plan, partial);
+                    return self.cancelled(&plan, shown);
+                }
                 if let Some(reason) = refused {
                     kept(&plan, partial);
-                    return self.refuse(&plan, RunKind::Apply, reason);
+                    return self.refuse(&plan, RunKind::Apply, reason, Some(shown));
                 }
                 let run = Run {
                     seq,
                     first,
                     touched,
                 };
-                self.run_execute(&plan, cancel, &run, partial, &waits)
+                self.run_execute(&plan, cancel, &run, partial, &waits, shown)
             }
         }
     }
 
     /// A plan that will not be applied at all, or taken back: say so with
-    /// the usual events.
-    fn refuse(&self, plan: &Plan, run: RunKind, error: String) -> ExecResult {
-        self.emit(ExecEvent::Started {
-            plan: plan.id,
-            title: plan.title.clone(),
-            total: plan.steps.len(),
-            run,
-            items: None,
-        });
+    /// the usual events, told started unless it was `shown` already.
+    fn refuse(
+        &self,
+        plan: &Plan,
+        run: RunKind,
+        error: String,
+        shown: Option<Shown<'_>>,
+    ) -> ExecResult {
+        if shown.is_none() {
+            self.emit(ExecEvent::Started {
+                plan: plan.id,
+                title: plan.title.clone(),
+                total: plan.steps.len(),
+                run,
+                items: None,
+            });
+        }
+        drop(shown);
         self.emit(ExecEvent::Finished {
             plan: plan.id,
             applied: 0,
@@ -1894,6 +1932,7 @@ impl Executor {
             error: Some(error.clone()),
             cancelled: false,
             undoable: false,
+            items: plan.items.as_deref().cloned(),
         });
         ExecResult {
             applied: 0,
@@ -1905,10 +1944,10 @@ impl Executor {
         }
     }
 
-    /// A plan the user cancelled before it began (the names it found
-    /// taken, unanswered): whoever waits for it hears so; nothing started,
-    /// so nothing is shown.
-    fn cancelled(&self, plan: &Plan) -> ExecResult {
+    /// A plan the user cancelled before it applied anything (the names it
+    /// found taken, unanswered): told finished, cancelled.
+    fn cancelled(&self, plan: &Plan, shown: Shown<'_>) -> ExecResult {
+        drop(shown);
         self.emit(ExecEvent::Finished {
             plan: plan.id,
             applied: 0,
@@ -1916,6 +1955,7 @@ impl Executor {
             error: None,
             cancelled: true,
             undoable: false,
+            items: None,
         });
         ExecResult {
             applied: 0,
@@ -1936,13 +1976,14 @@ impl Executor {
         run: &Run,
         partial: Option<super::staging::Partial>,
         waits: &Waits,
+        shown: Shown<'_>,
     ) -> ExecResult {
         let Run {
             seq,
             first,
             ref touched,
         } = *run;
-        self.apply_plan(plan, cancel, RunKind::Apply, partial, |r, inverse, stop| {
+        self.apply_plan(plan, cancel, shown, partial, |r, inverse, stop| {
             let mut j = self.journal.lock();
             // In its place in the order asked: plans that ran beside it
             // touched nothing it did (ADR-079). A retry in the place of
@@ -2069,7 +2110,7 @@ impl Executor {
         }
         if let Some((title, reason)) = refused {
             let title = title.map_or_else(|| "undo".to_owned(), |t| format!("undo {t}"));
-            return Some(self.refuse(&Plan::new(title), RunKind::Undo, reason));
+            return Some(self.refuse(&Plan::new(title), RunKind::Undo, reason, None));
         }
         let mut entry = self.journal.lock().take(direction, target?)?;
         let title = match direction {
@@ -2096,6 +2137,7 @@ impl Executor {
                 error: Some(error.clone()),
                 cancelled: false,
                 undoable: false,
+                items: None,
             });
             return Some(ExecResult {
                 applied: 0,
@@ -2109,7 +2151,8 @@ impl Executor {
         let mut run = plan.clone();
         run.title = title;
         let id = run.id;
-        let r = self.apply_plan(&run, cancel, direction.into(), None, |r, back, _| {
+        let shown = self.show(&run, cancel, direction.into());
+        let r = self.apply_plan(&run, cancel, shown, None, |r, back, _| {
             // This run's inverses come first: its steps were applied after
             // the ones an earlier, interrupted attempt already took back.
             let mut steps = back.map(|p| p.steps).unwrap_or_default();
@@ -2148,6 +2191,33 @@ impl Executor {
         Some(r)
     }
 
+    /// Tell `plan` started, as it stands (`run`), and list it among the
+    /// plans applied, so Pause and Cancel reach it from its first check:
+    /// until the returned [`Shown`] is let go of.
+    fn show(&self, plan: &Plan, cancel: &CancelToken, run: RunKind) -> Shown<'_> {
+        let meter = Arc::new(Meter::new(self.waker.lock().clone()));
+        let pause = Arc::new(Pause::default());
+        self.running.lock().push(Active {
+            plan: plan.id,
+            cancel: cancel.clone(),
+            pause: Arc::clone(&pause),
+            meter: Arc::clone(&meter),
+        });
+        self.emit(ExecEvent::Started {
+            plan: plan.id,
+            title: plan.title.clone(),
+            total: plan.steps.len(),
+            run,
+            items: plan.items.as_deref().cloned(),
+        });
+        Shown {
+            pause,
+            meter,
+            compared: Arc::default(),
+            _listed: Running(self, plan.id),
+        }
+    }
+
     /// The core loop: check, skip if done, apply, collect inverses in reverse order.
     /// `record` journals what was applied, and its inverse, before the plan
     /// says it finished: whoever hears `Finished` (the toast's Undo, Redo
@@ -2158,33 +2228,24 @@ impl Executor {
         &self,
         plan: &Plan,
         cancel: &CancelToken,
-        run: RunKind,
+        shown: Shown<'_>,
         partial: Option<super::staging::Partial>,
         record: impl FnOnce(&ExecResult, Option<Plan>, Option<Stop>),
     ) -> ExecResult {
         let total = plan.steps.len();
-        let meter = Arc::new(Meter::new(self.waker.lock().clone()));
-        let pause = Arc::new(Pause::default());
-        self.running.lock().push(Active {
-            plan: plan.id,
-            cancel: cancel.clone(),
-            pause: Arc::clone(&pause),
-            meter: Arc::clone(&meter),
-        });
-        let listed = Running(self, plan.id);
+        let Shown {
+            pause,
+            meter,
+            compared,
+            _listed: listed,
+        } = shown;
         let ctx = StepContext::new(cancel.clone(), pause, Arc::clone(&meter))
+            .with_compared(compared)
             .with_companions(Arc::clone(&self.companions.lock()))
             .with_transfers(Arc::clone(&self.transfers.lock()))
             .with_under_way(self.under_way.lock().clone())
             .with_secret_asker(self.secret_asker.lock().clone())
             .with_partial(partial);
-        self.emit(ExecEvent::Started {
-            plan: plan.id,
-            title: plan.title.clone(),
-            total,
-            run,
-            items: plan.items.as_deref().cloned(),
-        });
         let mut inverses: Vec<Box<dyn Operation>> = Vec::new();
         let mut held = Vec::new();
         let mut applied = 0;
@@ -2364,6 +2425,7 @@ impl Executor {
             error: result.error.clone(),
             cancelled,
             undoable: result.undoable,
+            items: plan.items.as_deref().cloned(),
         });
         if !held.is_empty() {
             for observer in self.observers.all() {
@@ -2390,8 +2452,9 @@ fn first_conflict(
     plan: &Plan,
     companions: &Arc<crate::companions::Companions>,
     cancel: &CancelToken,
+    shown: &Shown<'_>,
 ) -> Option<String> {
-    let ctx = dry_context(&plan.steps, companions, cancel);
+    let ctx = dry_context(&plan.steps, companions, cancel, shown);
     super::dry_run_in(&plan.steps, ctx).find_map(|(_, status)| match status {
         StepStatus::Conflict { reason } => Some(reason),
         _ => None,
@@ -2399,16 +2462,19 @@ fn first_conflict(
 }
 
 /// A context for a dry run of `steps` before a plan the user asked for as
-/// one action runs: where a step names a remote, its folders' names are
-/// read once and its sources found ahead, at once (ADR-078), where a look
-/// at each would be a round trip to the server.
+/// one action runs, held by its Pause and comparing trees as its run will
+/// (`shown`): where a step names a remote, its folders' names are read
+/// once and its sources found ahead, at once (ADR-078), where a look at
+/// each would be a round trip to the server.
 fn dry_context(
     steps: &[Box<dyn Operation>],
     companions: &Arc<crate::companions::Companions>,
     cancel: &CancelToken,
+    shown: &Shown<'_>,
 ) -> StepContext {
-    let ctx = StepContext::with_cancel(cancel.clone())
+    let ctx = StepContext::new(cancel.clone(), Arc::clone(&shown.pause), Arc::default())
         .with_companions(Arc::clone(companions))
+        .with_compared(Arc::clone(&shown.compared))
         .listing_remotes();
     super::transfer::resolve_ahead(steps, &ctx);
     ctx
@@ -2983,6 +3049,71 @@ mod tests {
         assert_eq!(r.applied, 0);
         let error = r.error.unwrap_or_default();
         assert!(error.contains("failed unexpectedly"), "{error}");
+    }
+
+    /// A step whose check reads until its plan is cancelled, as one
+    /// comparing a large tree with what is there does.
+    #[derive(Debug, Clone)]
+    struct Reading;
+
+    impl Operation for Reading {
+        fn kind(&self) -> &'static str {
+            "reading"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn describe(&self) -> Change {
+            Change::Create {
+                path: "/example/it’s read".into(),
+                directory: false,
+                words: None,
+            }
+        }
+        fn check(&self, ctx: &StepContext) -> StepStatus {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while Instant::now() < deadline {
+                if ctx.check_cancelled().is_err() {
+                    return StepStatus::Conflict {
+                        reason: "cancelled as it read".into(),
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            StepStatus::Pending { reversible: false }
+        }
+        fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            Ok(None)
+        }
+        fn clone_box(&self) -> Box<dyn Operation> {
+            Box::new(self.clone())
+        }
+        fn footprint(&self, _: &super::super::footprint::Volumes) -> Option<Footprint> {
+            Some(Footprint::default().made(Path::new("/example/it’s read")))
+        }
+    }
+
+    /// A plan is told started before its checks, which may read whole
+    /// trees: Cancel reaches it there, and it applies nothing.
+    #[test]
+    fn a_plan_is_shown_and_cancelled_while_it_is_checked() {
+        let executor = Executor::new(Scheduler::new(1));
+        let plan = Plan::with_steps("read", vec![Box::new(Reading) as Box<dyn Operation>]);
+        let id = plan.id;
+        executor.execute_whole(plan, CancelToken::new());
+        events_until(
+            &executor,
+            |e| matches!(e, ExecEvent::Started { plan, .. } if *plan == id),
+        );
+        assert!(executor.cancel(id), "Cancel reaches it in its checks");
+        let ended = events_until(&executor, |e| matches!(e, ExecEvent::Finished { .. }));
+        assert!(
+            matches!(
+                ended.last(),
+                Some(ExecEvent::Finished { plan, applied: 0, cancelled: true, .. }) if *plan == id
+            ),
+            "{ended:?}"
+        );
     }
 
     /// A step that cannot say what it touches runs alone (ADR-079).

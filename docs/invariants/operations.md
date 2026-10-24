@@ -84,6 +84,14 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   (`Executor::pause`, `Executor::cancel`). Pausing waits where Cancel
   would be answered (`StepContext::check_cancelled`), so long steps call
   it between units of work.
+- A plan is told started (`ExecEvent::Started`, as asked) before its
+  checks (unfolding, names taken, the dry run, room), which may read
+  whole trees: Pause and Cancel reach it there (`Executor::show`), and
+  cancelled it applies nothing. What it did is counted as it ends
+  (`ExecEvent::Finished`'s `items`, settled). A tree compared with what
+  is there under its name (`builtin::same_tree`) is read once a plan,
+  its settling, dry run and run sharing the verdict while nothing of
+  either, nor of their companions, changed (`StepContext::compared`).
 - **At once (ADR-079).** Plans, undos and redos start in the order asked,
   except that one starts beside those running when nothing asked before
   it that has not ended conflicts with it (`op::footprint`: what each

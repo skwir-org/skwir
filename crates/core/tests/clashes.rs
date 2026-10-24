@@ -1290,9 +1290,10 @@ fn a_merge_carries_companions_with_their_files() {
     }
 }
 
-/// A plan settled says what the user asked for, item by item: two files
-/// replaced are two items copied, not four steps, and the first is named
-/// by its own step.
+/// A plan settled says what the user asked for, item by item, as it ends
+/// (told started before it is checked, it says what was asked then): two
+/// files replaced are two items copied, not four steps, and the first is
+/// named by its own step.
 #[test]
 fn a_plan_settled_says_what_was_asked() {
     // What was replaced, or a copy undone, goes to the trash.
@@ -1320,27 +1321,25 @@ fn a_plan_settled_says_what_was_asked() {
     answer.each.insert(question.clashes[2].key(), Choice::Skip);
     app.answer_clashes(question.id, Some(answer));
     let deadline = Instant::now() + Duration::from_secs(10);
-    let started = loop {
-        if let ExecEvent::Started { total, items, .. } =
-            app.executor.events().recv_deadline(deadline).unwrap()
-        {
-            break (total, items);
+    let mut total = None;
+    let items = loop {
+        match app.executor.events().recv_deadline(deadline).unwrap() {
+            ExecEvent::Step(progress) => total = Some(progress.total),
+            ExecEvent::Finished { items, .. } => break items,
+            _ => {}
         }
     };
+    assert_eq!(total, Some(4), "its steps, settled");
     assert_eq!(
-        started,
-        (
-            4,
-            Some(Items {
-                first: Change::Copy {
-                    from: root.join("a.txt"),
-                    to: root.join("dest/a.txt"),
-                },
-                count: 2,
-            })
-        )
+        items,
+        Some(Items {
+            first: Change::Copy {
+                from: root.join("a.txt"),
+                to: root.join("dest/a.txt"),
+            },
+            count: 2,
+        })
     );
-    finished(&app);
     assert_eq!(read(&root.join("dest/c.txt")), "kept");
 }
 

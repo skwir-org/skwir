@@ -249,6 +249,38 @@ pub struct StepContext {
     /// The folders a transfer wrote in or removed from beside the mount
     /// showing them (`transfer`): nothing watching them sees it.
     beside: RefCell<std::collections::BTreeSet<PathBuf>>,
+    /// What the plan found comparing trees, shared by its dry runs and
+    /// its run ([`Compared`]).
+    compared: Arc<Compared>,
+}
+
+/// What a plan found comparing a source with what is there under its name
+/// (`builtin::same_tree`), by the two and whether attributes count, with
+/// what they and their companions were then (`builtin::compared_state`):
+/// settling its names, its dry run and its run read the bytes once while
+/// nothing of them changed. One a plan's run (`Executor::show`).
+#[derive(Default)]
+pub(super) struct Compared(
+    parking_lot::Mutex<HashMap<(PathBuf, PathBuf, bool), (blake3::Hash, bool)>>,
+);
+
+impl Compared {
+    /// What was found comparing `key`'s two while they were `state`.
+    pub(super) fn found(
+        &self,
+        key: &(PathBuf, PathBuf, bool),
+        state: blake3::Hash,
+    ) -> Option<bool> {
+        self.0
+            .lock()
+            .get(key)
+            .and_then(|&(then, same)| (then == state).then_some(same))
+    }
+
+    /// `key`'s two, `state`, were found `same` or not.
+    pub(super) fn note(&self, key: (PathBuf, PathBuf, bool), state: blake3::Hash, same: bool) {
+        self.0.lock().insert(key, (state, same));
+    }
 }
 
 /// What a move's source was as a batch copied it (`builtin::state_of`:
@@ -411,6 +443,7 @@ impl StepContext {
             known: RefCell::default(),
             removing: RefCell::default(),
             beside: RefCell::default(),
+            compared: Arc::default(),
         }
     }
 
@@ -1249,6 +1282,19 @@ impl StepContext {
         let out = f();
         self.known.replace(before);
         out
+    }
+
+    /// The same context, comparing trees as `compared` found them: the
+    /// plan's dry runs and its run share one.
+    #[must_use]
+    pub(super) fn with_compared(mut self, compared: Arc<Compared>) -> Self {
+        self.compared = compared;
+        self
+    }
+
+    /// What this plan found comparing trees ([`Compared`]).
+    pub(super) fn compared(&self) -> &Compared {
+        &self.compared
     }
 
     /// The same context, for a dry run: whether a name is in a remote's
