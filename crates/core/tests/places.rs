@@ -165,6 +165,29 @@ fn a_volume_let_go_of_takes_what_lists_a_folder_on_it_whatever_its_scheme() {
     assert_eq!(shows(&app, pane), Some(home));
 }
 
+/// What an agent's call counts of a pane leaves out a file whose path the
+/// pane cannot say, as it does a private one; a place is no file.
+#[test]
+fn an_agent_counts_no_file_whose_path_is_unknown() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = with_fake(tmp.path());
+    let pane = active(&app);
+    let withheld = || {
+        skwir_core::permissions::as_agent(skwir_core::permissions::Privacy::folders([]), || {
+            app.withheld(pane)
+        })
+    };
+    go(&app, "fake:/");
+    assert!(withheld().is_empty(), "places are counted");
+    go(&app, "fake:/few");
+    let inside = {
+        let ws = app.workspace.read();
+        ws.pane(pane).unwrap().listing.ids().collect::<Vec<_>>()
+    };
+    assert_eq!(withheld().into_iter().collect::<Vec<_>>(), inside);
+    assert!(app.withheld(pane).is_empty(), "the user counts everything");
+}
+
 /// A folder shown through a link into a volume (`~/Music` on a drive) is
 /// let go of with the volume: the pane goes elsewhere, and nothing holds
 /// the volume once its listing closes.

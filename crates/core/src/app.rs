@@ -1333,13 +1333,15 @@ impl App {
     /// pane lists, shows or holds selected that are in a private folder; none
     /// otherwise, at no cost. A command that answers what it counted or
     /// gathered of a pane's entries (how many, their tags, their dates)
-    /// leaves these out. It reads markers from the disk, outside the
-    /// workspace's lock: ask before taking it.
+    /// leaves these out. A file whose path the pane cannot say is left
+    /// out too: what cannot be checked is never counted public. A place (a
+    /// tag) is no file and is counted. It reads markers from the disk,
+    /// outside the workspace's lock: ask before taking it.
     pub fn withheld(&self, pane: PaneId) -> std::collections::HashSet<EntryId> {
         let Some(privacy) = crate::permissions::agent_call() else {
             return std::collections::HashSet::new();
         };
-        let paths: Vec<(EntryId, PathBuf)> = {
+        let paths: Vec<(EntryId, Option<PathBuf>)> = {
             let ws = self.workspace.read();
             let Some(p) = ws.pane(pane) else {
                 return std::collections::HashSet::new();
@@ -1351,13 +1353,14 @@ impl App {
                 .chain(p.selection.iter())
                 .collect::<std::collections::HashSet<_>>()
                 .into_iter()
-                .filter_map(|id| Some((id, p.path_of(id)?)))
+                .filter(|id| !id.is_place())
+                .map(|id| (id, p.path_of(id)))
                 .collect()
         };
         let mut check = privacy.checker();
         paths
             .into_iter()
-            .filter(|(_, path)| check.holds(path))
+            .filter(|(_, path)| path.as_ref().is_none_or(|path| check.holds(path)))
             .map(|(id, _)| id)
             .collect()
     }
