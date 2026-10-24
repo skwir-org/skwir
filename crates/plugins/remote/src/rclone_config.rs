@@ -797,6 +797,16 @@ mod tests {
         assert!(!text.contains("s3cret"), "{text}");
     }
 
+    /// An rclone a test started, stopped however the test ends.
+    struct Serving(Child);
+
+    impl Drop for Serving {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
     /// On the loopback, rclone's remote control takes the login made for
     /// it alone: another is refused.
     #[test]
@@ -808,14 +818,16 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let at = crate::rc::At::loopback().unwrap();
         let (serving, login) = at.serving();
-        let mut child = crate::rclone::command(&rclone, Some(&folder.path().join("rclone.conf")))
-            .arg("rcd")
-            .args(serving)
-            .envs(login)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let _serving = Serving(
+            crate::rclone::command(&rclone, Some(&folder.path().join("rclone.conf")))
+                .arg("rcd")
+                .args(serving)
+                .envs(login)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
         let deadline = Instant::now() + Duration::from_secs(60);
         while !at.answers() {
             assert!(Instant::now() < deadline, "rclone never served");
@@ -839,8 +851,6 @@ mod tests {
             "{refused:#}"
         );
         let _ = crate::rc::call(&at, "core/quit", &json!({}), &cancel);
-        let _ = child.kill();
-        let _ = child.wait();
     }
 
     #[test]

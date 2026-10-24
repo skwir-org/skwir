@@ -269,10 +269,18 @@ fn request(
          {login}Content-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
-    stream.write_all(head.as_bytes())?;
-    stream.write_all(body)?;
+    // A server that refuses at once (a wrong login's 401) answers and
+    // closes before reading what it was sent, which the system may then
+    // reset: what it answered before is read all the same.
+    let wrote = stream
+        .write_all(head.as_bytes())
+        .and_then(|()| stream.write_all(body));
     let mut answer = Vec::new();
-    stream.read_to_end(&mut answer)?;
+    let read = stream.read_to_end(&mut answer);
+    if answer.is_empty() {
+        wrote?;
+        read?;
+    }
     let at = answer
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
