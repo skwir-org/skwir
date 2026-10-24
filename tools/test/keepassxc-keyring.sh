@@ -28,19 +28,16 @@ dir=$(mktemp -d "$base/x.XXXXXX")
 mkdir -p "$dir/home" "$dir/config" "$dir/cache" "$dir/data" "$dir/run" "$dir/tmp"
 chmod 700 "$dir/run"
 
-exec 3> "$dir/display"
-"$xvfb/bin/Xvfb" -displayfd 3 -screen 0 1024x768x24 -nolisten tcp > "$dir/xvfb.log" 2>&1 &
-xvfb_pid=$!
-for _ in $(seq 100); do
-    [ -s "$dir/display" ] && break
-    sleep 0.05
-done
-display=":$(head -1 "$dir/display")"
+xvfb_pid=
 cleanup() {
-    kill "$xvfb_pid" 2>/dev/null || true
+    [ -z "$xvfb_pid" ] || kill "$xvfb_pid" 2>/dev/null || true
     rm -rf "$dir"
 }
 trap cleanup EXIT
+# A display of its own (never :0, `own-display.sh`).
+# shellcheck source=tools/test/own-display.sh
+. "$(dirname "${BASH_SOURCE[0]}")/own-display.sh"
+own_display "$xvfb/bin/Xvfb" "$dir/xvfb.log"
 
 # The database: its root group exposed, by its UUID.
 cat > "$dir/db.xml" <<'EOF'
