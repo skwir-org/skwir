@@ -345,7 +345,14 @@ ADR-077 (which revises ADR-021).
   is not written. rclone's own questions are asked as it puts them; the
   plugin answers only that the browser is here and whether to sign in
   again (`config_is_local`, `config_refresh_token`).
-- A remote Skwir names is one its address holds (`rclone://name/`).
+- A remote of rclone's is named as rclone names one
+  (`address::rclone_name`: letters and digits of any alphabet, `_ - . +
+  @` and spaces, starting with neither `-` nor a space, ending with no
+  space; `config create`'s own rule), Skwir's Add Server's too. Its
+  address holds the name escaped (`rclone://my%20drive/`,
+  `Address::rclone`), reading back to it: an `@` there is the name's, an
+  rclone remote having no user. Built from a name, never from text with
+  the name in it.
 - rclone's remote control is reached through `rc::At`: a socket of the
   runtime folder on Unix (no login: no other user reaches it), the
   loopback on Windows behind a login made for each session or mount,

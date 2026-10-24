@@ -4568,3 +4568,18 @@ overnight: the review's remote items, then what the servers' work left.
   stops (`let_go_of_mounts`). Three such mounts from this night's runs
   (two of those tests', one of a run that failed before its Eject) were
   let go of by hand, their rclone processes ended by their pids.
+- **Any remote rclone takes opens by its address.** rclone takes remote
+  names of letters and digits of any alphabet, `_ - . + @` and spaces
+  (its `config create` took each of `my drive`, `me@nas`, `photos-é`,
+  `Фото`, `写真`, `.dot`, `@at` and refused `-dash`, ` lead`, `trail `,
+  `a%b`, `a'b`, `a,b`, `a:b`, `a/b`, 1.75.2), but an address's server
+  part held ASCII names alone: such a remote was not listed, `me@nas`
+  read as a user at a server, and Skwir's Add Server refused those names.
+  An rclone address is now its remote's name escaped
+  (`rclone://my%20drive/`), built from the name and read back to it, an
+  `@` the name's; Add Server takes what rclone takes. Checked by a unit
+  test of those names (taken, written ASCII, read back the same, the
+  refused ones refused), and `remote_configs`' new test: an alias remote
+  named `Мои фото @nas` (of a folder of the test's) listed in Settings,
+  opened by its escaped address, its file shown, the address kept as it
+  reads back, let go of after.

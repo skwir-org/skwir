@@ -873,6 +873,81 @@ fn a_remote_left_half_made_is_said_so_and_removed() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A remote of rclone's whose name holds what a server's name cannot (a
+/// space, an `@`, another alphabet: rclone takes them) opens by its
+/// address all the same, the name escaped: listed, mounted, its files
+/// shown, the address kept as it reads back. An alias of a folder of the
+/// test's: nothing leaves the machine.
+#[test]
+fn a_remote_named_with_spaces_and_other_alphabets_opens_by_its_address() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("odd-names");
+    let served = base.join("served");
+    std::fs::create_dir_all(&served).unwrap();
+    std::fs::write(served.join("it's here.txt"), "here").unwrap();
+    let name = "Мои фото @nas";
+    let config = base.join("rclone.conf");
+    std::fs::write(
+        &config,
+        format!("[{name}]\ntype = alias\nremote = {}\n", served.display()),
+    )
+    .unwrap();
+    let app = app_with_rclone(&base, &config, Arc::default());
+    let record = record_of(&app, name, 30);
+    assert_eq!(record["name"], name);
+    let address = Address::rclone(name, b"/").unwrap().to_string();
+    assert!(
+        address.is_ascii() && !address.contains(' '),
+        "escaped: {address}"
+    );
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &skwir_core::location::Location::parse(&address))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !app.pane_location(pane).is_some_and(|l| l.is_path()) {
+        app.pump();
+        assert!(Instant::now() < deadline, "{address} never opened");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(app.pump_until_complete(pane, Duration::from_secs(20)));
+    let names: Vec<String> = {
+        let ws = app.workspace.read();
+        ws.pane(pane)
+            .unwrap()
+            .listing
+            .iter()
+            .map(|e| e.name_str().into_owned())
+            .collect()
+    };
+    assert_eq!(names, ["it's here.txt"]);
+    let shown = app.pane_location(pane).unwrap();
+    assert_eq!(
+        app.address_of(&shown).map(|a| a.to_string()),
+        Some(address.clone()),
+        "kept by its address"
+    );
+    let point = skwir_core::fs::reach::of(&shown.path().unwrap())
+        .unwrap()
+        .point
+        .clone();
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point) {
+        app.pump();
+        assert!(Instant::now() < deadline, "let go of");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(app);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// A remote built on others: an encrypted one picks the remote (and the
 /// folder of it) it stands on among those there are, and what is written
 /// through it is encrypted there; a union stands on the remotes switched

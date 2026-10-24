@@ -202,7 +202,8 @@ impl Connector for Rclone {
             .split_once(':')
             .filter(|(name, _)| !name.is_empty())
             .and_then(|(name, path)| {
-                Address::parse(&format!("rclone://{name}/{}", path.trim_start_matches('/'))).ok()
+                let path = format!("/{}", path.trim_start_matches('/'));
+                Address::rclone(name, path.as_bytes()).ok()
             });
         Some(Recognised {
             label: remote.point.file_name().map_or_else(
@@ -478,7 +479,7 @@ fn remotes(listed: &str) -> Vec<Server> {
         .filter_map(|line| {
             let (name, kind) = line.split_once(':')?;
             let name = name.trim();
-            let address = Address::parse(&format!("rclone://{name}/")).ok()?;
+            let address = Address::rclone(name, b"/").ok()?;
             let kind = kind.trim();
             Some(Server {
                 label: if kind.is_empty() {

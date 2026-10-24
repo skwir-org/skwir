@@ -1505,8 +1505,6 @@ protocol is a scheme a connector maps, or a connector.
     connecting is opening it);
   - Keep as Server takes the bookmark out of the desktop's shared file,
     which other file managers read too: theirs goes as well;
-  - remotes whose names an address cannot hold (a space, `@`, other
-    alphabets) stay rclone's but open by no address;
   - Connect at Login never run by a real systemd, launchd or Task
     Scheduler here (systemd-analyze, the unit's command run as it would
     be, a stand-in systemctl; Wine's Task Scheduler does not start); on

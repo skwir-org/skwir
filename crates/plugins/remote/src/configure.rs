@@ -533,7 +533,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     });
                 }
                 in_form(&remotes_, app, "removed", move |flow, remotes, app| {
-                    let address = Address::parse(&format!("rclone://{}/", args.id))?;
+                    let address = Address::rclone(&args.id, b"/")?;
                     let mounted: Vec<std::path::PathBuf> = remotes
                         .mounted()
                         .into_iter()

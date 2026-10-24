@@ -154,6 +154,11 @@ impl Address {
             Some(at) => (&rest[..at], &rest[at..]),
             None => (rest, "/"),
         };
+        // An rclone remote is its name alone, which may hold a space, an
+        // `@` or another alphabet: written escaped (`rclone://my%20drive/`).
+        if scheme == Scheme::Rclone {
+            return Address::rclone(&decoded_text(authority), &decoded(path));
+        }
         let (userinfo, hostport) = match authority.rfind('@') {
             Some(at) => (Some(&authority[..at]), &authority[at + 1..]),
             None => (None, authority),
@@ -201,6 +206,29 @@ impl Address {
             domain,
             host: host.to_owned(),
             port,
+            path,
+        })
+    }
+
+    /// The address of rclone's remote `name` at `path`: a name as rclone
+    /// takes one ([`rclone_name`]), whatever an address's text could hold.
+    ///
+    /// # Errors
+    /// When rclone would take no remote of that name.
+    pub fn rclone(name: &str, path: &[u8]) -> Result<Address, NotAnAddress> {
+        if !rclone_name(name) {
+            return Err(NotAnAddress(format!("“{name}” is no remote's name")));
+        }
+        let mut path = without_dots(path);
+        if path.is_empty() {
+            path.push(b'/');
+        }
+        Ok(Address {
+            scheme: Scheme::Rclone,
+            user: None,
+            domain: None,
+            host: name.to_owned(),
+            port: None,
             path,
         })
     }
@@ -370,7 +398,11 @@ impl fmt::Display for Address {
             (None, Some(user)) => write!(f, "{}@", encoded(user))?,
             (None, None) => {}
         }
-        f.write_str(&self.host)?;
+        if self.scheme == Scheme::Rclone {
+            f.write_str(&remote_name_written(&self.host))?;
+        } else {
+            f.write_str(&self.host)?;
+        }
         if let Some(port) = self.port {
             write!(f, ":{port}")?;
         }
@@ -485,6 +517,36 @@ fn without_dots(path: &[u8]) -> Vec<u8> {
 
 fn decoded_text(text: &str) -> String {
     String::from_utf8_lossy(&decoded(text)).into_owned()
+}
+
+/// Whether rclone takes `name` for a remote's: letters and digits of any
+/// alphabet, `_ - . + @` and spaces, starting with neither `-` nor a space
+/// and ending with no space (rclone's own rule, its `config create`'s).
+pub fn rclone_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with(['-', ' '])
+        && !name.ends_with(' ')
+        && name
+            .chars()
+            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '+' | '@' | ' '))
+}
+
+/// An rclone remote's name written into an address: what a server's name
+/// does not hold (a space, an `@`, another alphabet) escaped, `%XX` of its
+/// bytes, so the address reads back to the name.
+fn remote_name_written(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '+') {
+            out.push(c);
+        } else {
+            let mut buf = [0u8; 4];
+            for b in c.encode_utf8(&mut buf).bytes() {
+                let _ = write!(out, "%{b:02X}");
+            }
+        }
+    }
+    out
 }
 
 /// A user or domain written into an address: what would end it escaped.

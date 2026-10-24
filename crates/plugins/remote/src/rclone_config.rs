@@ -200,24 +200,22 @@ impl Step {
     }
 }
 
-/// Whether `name` may name a remote Skwir adds: rclone takes more
-/// (spaces, `@`, letters of any alphabet), but its address must hold it
-/// (`rclone://name/`): ASCII letters, digits and `_ - . +`, starting with
-/// neither `-` nor `.`. Why not, where it may not.
+/// Whether `name` may name a remote Skwir adds: what rclone takes
+/// (`address::rclone_name`), which its address holds, escaped
+/// (`rclone://my%20drive/`). Why not, where it may not.
 pub fn name_refusal(name: &str) -> Option<&'static str> {
-    if name.is_empty() {
-        return Some("A remote needs a name");
+    if crate::address::rclone_name(name) {
+        return None;
     }
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || "_-.+".contains(c))
-    {
-        return Some("A remote's name holds letters a–z, digits and _ - . + only");
-    }
-    if name.starts_with(['-', '.']) {
-        return Some("A remote's name starts with neither - nor .");
-    }
-    None
+    Some(if name.is_empty() {
+        "A remote needs a name"
+    } else if name.starts_with(['-', ' ']) {
+        "A remote's name starts with neither - nor a space"
+    } else if name.ends_with(' ') {
+        "A remote's name ends with no space"
+    } else {
+        "A remote's name holds letters, digits, spaces and _ - . + @ only"
+    })
 }
 
 /// An `rclone rcd` serving the remote control on a socket of its own,
@@ -889,31 +887,59 @@ mod tests {
         assert_eq!(option.examples.len(), 2);
     }
 
+    /// A remote is named as rclone names one (its `config create` took
+    /// each of these, and refused the others, 1.75.2), and its address
+    /// holds the name, escaped, reading back to it.
     #[test]
-    fn a_remote_is_named_as_its_address_holds_it() {
-        assert_eq!(name_refusal("photos-2024.nas+old_one"), None);
-        for refused in [
-            "",
-            "a/b",
-            "a:b",
-            "-a",
-            ".a",
-            "my photos",
+    fn a_remote_is_named_as_rclone_takes_it_and_its_address_holds_it() {
+        for taken in [
+            "photos-2024.nas+old_one",
+            "my drive",
+            "x  y",
             "me@nas",
+            "@at",
             "photos-é",
+            "Фото",
+            "写真",
+            ".dot",
+            "2024",
+        ] {
+            assert_eq!(name_refusal(taken), None, "{taken}");
+            let address = crate::address::Address::rclone(taken, b"/Photos/it's 2024").unwrap();
+            let text = address.to_string();
+            let written = text["rclone://".len()..].split('/').next().unwrap();
+            assert!(
+                written.is_ascii() && !written.contains(['@', ' ']),
+                "{text}"
+            );
+            let back = crate::address::Address::parse(&text).unwrap();
+            assert_eq!(
+                (back.host.as_str(), back.path.as_slice()),
+                (taken, b"/Photos/it's 2024".as_slice())
+            );
+            assert_eq!(back, address, "{text}");
+        }
+        assert_eq!(
+            crate::address::Address::rclone("my drive", b"/")
+                .unwrap()
+                .to_string(),
+            "rclone://my%20drive/"
+        );
+        for refused in [
+            "", "a/b", "a:b", "-a", " lead", "trail ", "a%b", "a'b", "a,b",
         ] {
             assert!(name_refusal(refused).is_some(), "{refused}");
-            if !refused.is_empty() && !refused.contains([':', '/']) {
-                // What Skwir refuses is what its address cannot hold: none,
-                // or one naming another (a user at a server).
-                let address = crate::address::Address::parse(&format!("rclone://{refused}/"));
-                assert!(
-                    address.is_err() || address.unwrap().host != refused,
-                    "{refused}"
-                );
-            }
+            assert!(
+                crate::address::Address::rclone(refused, b"/").is_err(),
+                "{refused}"
+            );
         }
-        assert!(crate::address::Address::parse("rclone://photos-2024.nas+old_one/").is_ok());
+        // Typed, an `@` is the name's: an rclone remote has no user.
+        let typed = crate::address::Address::parse("rclone://me@nas/x").unwrap();
+        assert_eq!(
+            (typed.host.as_str(), typed.user.as_deref()),
+            ("me@nas", None)
+        );
     }
 
     #[test]
