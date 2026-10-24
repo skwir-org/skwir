@@ -1633,6 +1633,53 @@ fn nearby_lists_what_avahi_and_wsdd_find() {
             (names[2].clone(), "smb://10.89.0.2/".to_owned()),
         ]
     );
+    // One selected, Add as Server… adds it, its form filled in with what it
+    // announced; several, nothing.
+    let rows: Vec<(String, skwir_core::entry::EntryId)> = {
+        let ws = app.workspace.read();
+        let shown = ws.pane(pane).unwrap();
+        shown
+            .listing
+            .iter()
+            .map(|e| (e.name.to_string_lossy().into_owned(), e.id))
+            .collect()
+    };
+    let row = |name: &str| rows.iter().find(|(n, _)| n == name).unwrap().1;
+    let menu = |ids: Vec<skwir_core::entry::EntryId>| {
+        app.workspace
+            .write()
+            .pane_mut(pane)
+            .unwrap()
+            .selection
+            .set(ids);
+        let Outcome::Value(menu) = app
+            .dispatch(&Invocation::with_args(
+                "remote.nearby_menu",
+                &serde_json::json!({ "pane": pane }),
+            ))
+            .unwrap()
+        else {
+            panic!("a menu");
+        };
+        menu["items"].as_array().unwrap().clone()
+    };
+    let items = menu(vec![row(&names[0])]);
+    assert_eq!(items.len(), 1, "{items:?}");
+    assert_eq!(items[0]["title"], "Add as Server…");
+    assert_eq!(items[0]["command"]["name"], "remote.add_server");
+    assert_eq!(
+        items[0]["command"]["args"],
+        serde_json::json!({
+            "kind": "address:dav",
+            "options": { "host": "10.89.0.1", "port": "8080", "path": "dav", "title": "Test Files" },
+        })
+    );
+    let items = menu(vec![row(&names[2])]);
+    assert_eq!(
+        items[0]["command"]["args"],
+        serde_json::json!({ "kind": "address:smb", "options": { "host": "10.89.0.2", "title": "WINPC" } })
+    );
+    assert!(menu(vec![row(&names[0]), row(&names[1])]).is_empty());
     // Let go of: nothing is asked of the network any more.
     let discovering = || {
         std::fs::read_dir("/proc").unwrap().flatten().any(|p| {

@@ -313,7 +313,11 @@ ADR-077 (which revises ADR-021).
   else `wsdd --no-host --discovery` on a socket of the runtime folder);
   never a discovery protocol of Skwir's own. Each server is a place
   (`EntryId::place`) leading to its address, one row however often it is
-  seen.
+  seen, carrying the name it announced (`nearby::ANNOUNCED`). One
+  selected, where no server holds its address, its context menu adds it
+  (`remote.nearby_menu`: Add as Server…, `remote.add_server` given its
+  kind and its form's parts, its name the announced one), as Add Server
+  would with or without rclone.
 - Tested on a network of the test's own (`tools/test/nearby.sh`): user,
   network, mount and pid namespaces, a veth pair to a namespace standing
   for a PC, a system bus of its own with Avahi on it (its user mapped to

@@ -4516,3 +4516,16 @@ overnight: the review's remote items, then what the servers' work left.
   its line; kept again, staying while another server on it, as the same
   user, is removed; forgotten with the last one, its confirmation saying
   so.
+- **A server found nearby is added as one.** A row of the Nearby place
+  opened its server, and keeping it meant typing its address in Add
+  Server. One selected, where no server holds its address, its context
+  menu now has Add as Server…: Add Server's form for its kind, filled in
+  with its address's parts and the name it announced (Avahi's service
+  name, wsdd's host name), kept and opened as one typed. Found on the
+  way: without rclone installed, Add Server dropped what it was given and
+  asked the kind; it follows what is given now. Checked by the Nearby
+  test on a network of its own (`tools/test/nearby.sh`: the WebDAV and
+  the PC's SMB rows' items and arguments, none for two rows selected),
+  and `remote_configs`' new test, Add Server given those arguments
+  against `rclone serve webdav`: the form filled in, the server added
+  and listed under the name given.

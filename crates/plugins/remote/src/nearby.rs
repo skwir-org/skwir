@@ -30,6 +30,10 @@ use crate::address::{Address, Scheme};
 /// The scheme of the Nearby place.
 pub const SCHEME: &str = "nearby";
 
+/// The name a server listed announced itself by, a field of its row:
+/// what Add as Server names it.
+pub const ANNOUNCED: &str = "remote.announced";
+
 /// The Nearby place.
 pub fn location() -> Location {
     Location::parse("nearby:")
@@ -222,13 +226,17 @@ fn entry_of(found: &Found) -> (EntryId, Entry) {
         format!("{} ({})", found.name, found.kind),
         EntryKind::Directory,
     );
+    let by = || Provenance::Plugin {
+        name: crate::ID.into(),
+    };
     entry.metadata.set(
         keys::PLACE_KIND,
         Value::Text(format!("{} server", found.kind).into()),
-        Provenance::Plugin {
-            name: crate::ID.into(),
-        },
+        by(),
     );
+    entry
+        .metadata
+        .set(ANNOUNCED, Value::Text(found.name.clone().into()), by());
     (id, entry)
 }
 

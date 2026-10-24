@@ -1455,6 +1455,72 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A server found nearby is added as Nearby's Add as Server… asks
+/// (`remote.add_server` given its kind and parts, never a password): its
+/// form opens filled in with the name and address it announced, and the
+/// server added is kept and opened.
+#[test]
+fn a_server_given_its_parts_is_added_from_a_form_filled_in() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("given-parts");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(served_root.join("dav")).unwrap();
+    std::fs::write(served_root.join("dav/hello.txt"), "hello").unwrap();
+    let served = Served::start("webdav", &served_root, &[]);
+    // SAFETY: nextest runs each test in a process of its own, and this
+    // runs before the test starts an app, so no other thread reads the
+    // environment meanwhile.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", base.join("config"));
+        std::env::set_var("XDG_DATA_HOME", base.join("data"));
+    }
+    let app = app_with_rclone(&base, &base.join("rclone.conf"), Arc::default());
+    app.settings.set(
+        "remote.servers_kept_in",
+        toml::Value::String("skwir".into()),
+    );
+    let window = Window::new(&app);
+    let port = served.port.to_string();
+    app.dispatch(&Invocation::with_args(
+        "remote.add_server",
+        &serde_json::json!({
+            "kind": "address:dav",
+            "options": { "host": "127.0.0.1", "port": port, "path": "dav", "title": "Test Files" },
+        }),
+    ))
+    .unwrap();
+    let parts = window.form(30);
+    let value = |key: &str| {
+        parts
+            .form
+            .fields
+            .iter()
+            .find(|f| f.key == key)
+            .map(|f| f.value.clone())
+    };
+    assert_eq!(
+        (value("host"), value("port"), value("path"), value("title")),
+        (
+            Some("127.0.0.1".to_owned()),
+            Some(port.clone()),
+            Some("dav".to_owned()),
+            Some("Test Files".to_owned())
+        ),
+        "filled in"
+    );
+    window.accept(&parts, &[]);
+    until_said(&app, 30, "“Test Files” is added");
+    let address = format!("dav://127.0.0.1:{port}/dav");
+    assert_eq!(record_of(&app, &address, 30)["name"], "Test Files");
+    drop(app);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// The arguments of the rclone mounting `point`, read from the system's
 /// list of processes: the one whose line names the point.
 fn rclone_mounting(point: &Path) -> Vec<String> {

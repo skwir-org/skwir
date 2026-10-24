@@ -405,7 +405,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 };
                 // Without rclone, the servers added by their address alone.
                 if skwir_core::os_path::find_program("rclone").is_none() {
-                    return servers_alone(&remotes_, app);
+                    return servers_alone(&remotes_, app, prefill);
                 }
                 in_form(&remotes_, app, "added", move |flow, remotes, app| {
                     let made = flow.add(&prefill)?;
@@ -851,6 +851,50 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             replaces: Vec::new(),
         },
     );
+    // A server found nearby (ADR-084): added as one, its form filled in
+    // with what it announced.
+    let remotes_ = remotes.clone();
+    app.commands
+        .register::<PaneArg, _>(
+            ID,
+            "remote.nearby_menu",
+            "Nearby server's menu",
+            "The context menu's items for the one server selected in the Nearby place: Add as Server…, its form filled in with the name and address it announced, where no server holds that address. Answers from memory",
+            move |args, app| {
+                let pane = app.pane_or_active(args.pane);
+                let items: Vec<MenuItem> = nearby_selected(app, pane)
+                    .filter(|(address, _)| {
+                        !remotes_
+                            .state
+                            .lock()
+                            .servers
+                            .iter()
+                            .any(|s| s.address.below(address).is_some())
+                    })
+                    .map(|(address, name)| {
+                        MenuItem::new(
+                            "context",
+                            "Add as Server…",
+                            "",
+                            410,
+                            Invocation::with_args("remote.add_server", &add_found(&address, &name)),
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+                Ok(Outcome::Value(serde_json::json!({ "items": items })))
+            },
+        )
+        .data();
+    app.registry.menu_sources.add(
+        ID,
+        skwir_core::registry::MenuSource {
+            menu: "context".into(),
+            when: Some("place".into()),
+            command: Invocation::new("remote.nearby_menu"),
+            replaces: Vec::new(),
+        },
+    );
     let remotes_ = remotes.clone();
     app.commands
         .register::<KeepArgs, _>(
@@ -872,6 +916,51 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             },
         )
         .shows();
+}
+
+/// The one server selected in `pane` where it shows the Nearby place: its
+/// address and the name it announced (`nearby::ANNOUNCED`).
+fn nearby_selected(app: &App, pane: skwir_core::workspace::PaneId) -> Option<(Address, String)> {
+    let ws = app.workspace.read();
+    let p = ws.pane(pane)?;
+    if p.location()?.scheme.as_ref() != crate::nearby::SCHEME {
+        return None;
+    }
+    let mut selected = p.selection.iter().filter(|id| id.is_place());
+    let (id, None) = (selected.next()?, selected.next()) else {
+        return None;
+    };
+    let name = p
+        .entry(id)?
+        .metadata
+        .value(crate::nearby::ANNOUNCED)?
+        .as_str()?
+        .to_owned();
+    let address = Address::of_location(&p.location_of(id)?).ok()?;
+    Some((address, name))
+}
+
+/// `remote.add_server`'s arguments for a server found at `address`,
+/// announced as `name`: its kind, and its form's parts as it is reached.
+fn add_found(address: &Address, name: &str) -> serde_json::Value {
+    let mut options = serde_json::Map::new();
+    let path = String::from_utf8_lossy(&address.path);
+    for (key, value) in [
+        ("host", Some(address.host.clone())),
+        ("port", address.port.map(|p| p.to_string())),
+        ("path", Some(path.trim_start_matches('/').to_owned())),
+        ("user", address.user.clone()),
+        ("domain", address.domain.clone()),
+        ("title", Some(name.to_owned())),
+    ] {
+        if let Some(value) = value.filter(|v| !v.is_empty()) {
+            options.insert(key.to_owned(), value.into());
+        }
+    }
+    serde_json::json!({
+        "kind": format!("address:{}", address.scheme.name()),
+        "options": options,
+    })
 }
 
 /// Keep the remote folder at `address` as a server, named `name` or as its
@@ -940,9 +1029,29 @@ fn at_login(
 
 /// Add Server where rclone is not installed: the servers added by their
 /// address alone, on a thread of its own.
-fn servers_alone(remotes: &Remotes, app: &App) -> anyhow::Result<Outcome> {
-    on_form_thread(remotes, app, "added", |remotes, app, cancel| {
-        if let Some(name) = crate::servers_form::add_any(app, cancel)? {
+fn servers_alone(
+    remotes: &Remotes,
+    app: &App,
+    prefill: crate::rclone_forms::Prefill,
+) -> anyhow::Result<Outcome> {
+    on_form_thread(remotes, app, "added", move |remotes, app, cancel| {
+        // A kind given (Nearby's Add as Server), its form as given.
+        let given = prefill
+            .kind
+            .as_deref()
+            .and_then(crate::servers_form::scheme_of);
+        let added = match given {
+            Some(scheme) => {
+                match crate::servers_form::add(app, scheme, &prefill.options, false, cancel)? {
+                    crate::servers_form::Added::Done(name) => Some(name),
+                    crate::servers_form::Added::Back | crate::servers_form::Added::Cancelled => {
+                        None
+                    }
+                }
+            }
+            None => crate::servers_form::add_any(app, cancel)?,
+        };
+        if let Some(name) = added {
             remotes.refresh(app);
             app.notify(NotifyLevel::Info, format!("“{name}” is added"));
         }
