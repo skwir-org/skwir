@@ -202,55 +202,77 @@ fn follow(state: &Arc<Mutex<State>>, changes: &[Change], app: &App) {
     if moved.is_empty() {
         return;
     }
-    let state = Arc::clone(state);
-    app.scheduler.spawn(
-        Priority::Normal,
-        "shelf.follow",
-        app.lifetime().child(),
-        move || {
-            let found: Vec<(EntryId, PathBuf, Option<Entry>)> = moved
-                .into_iter()
-                .map(|(id, path)| {
-                    let entry = stat_path(&path);
-                    (id, path, entry)
-                })
-                .collect();
-            let mut s = state.lock();
-            let mut removed = Vec::new();
-            let mut added = Vec::new();
-            let mut lost = Vec::new();
-            for (old, path, entry) in found {
-                // Only items still on the shelf, still at that path.
-                if !s.items.iter().any(|i| i.id == old && i.path == path) {
-                    continue;
+    // Each remote's in its lane (ADR-077): a server that stops answering
+    // holds its own items' job, never the others'.
+    for (lane, moved) in by_lane(moved, |(_, path)| path) {
+        let state = Arc::clone(state);
+        app.scheduler.spawn_in(
+            lane,
+            Priority::Normal,
+            "shelf.follow",
+            app.lifetime().child(),
+            move || {
+                let found: Vec<(EntryId, PathBuf, Option<Entry>)> = moved
+                    .into_iter()
+                    .map(|(id, path)| {
+                        let entry = stat_path(&path);
+                        (id, path, entry)
+                    })
+                    .collect();
+                let mut s = state.lock();
+                let mut removed = Vec::new();
+                let mut added = Vec::new();
+                let mut lost = Vec::new();
+                for (old, path, entry) in found {
+                    // Only items still on the shelf, still at that path.
+                    if !s.items.iter().any(|i| i.id == old && i.path == path) {
+                        continue;
+                    }
+                    let Some(entry) = entry.filter(|e| e.id != old) else {
+                        continue;
+                    };
+                    if s.items.iter().any(|i| i.id == entry.id) {
+                        // Now the same file as another item: keep that one.
+                        lost.push(old);
+                        continue;
+                    }
+                    let item = s
+                        .items
+                        .iter_mut()
+                        .find(|i| i.id == old)
+                        .expect("checked above");
+                    item.id = entry.id;
+                    item.kind = entry.kind;
+                    removed.push(old);
+                    added.push(entry);
                 }
-                let Some(entry) = entry.filter(|e| e.id != old) else {
-                    continue;
-                };
-                if s.items.iter().any(|i| i.id == entry.id) {
-                    // Now the same file as another item: keep that one.
-                    lost.push(old);
-                    continue;
+                if !removed.is_empty() {
+                    s.broadcast(&ListingEvent::Removed(removed));
                 }
-                let item = s
-                    .items
-                    .iter_mut()
-                    .find(|i| i.id == old)
-                    .expect("checked above");
-                item.id = entry.id;
-                item.kind = entry.kind;
-                removed.push(old);
-                added.push(entry);
-            }
-            if !removed.is_empty() {
-                s.broadcast(&ListingEvent::Removed(removed));
-            }
-            if !added.is_empty() {
-                s.broadcast(&ListingEvent::Added(added));
-            }
-            s.forget(&lost);
-        },
-    );
+                if !added.is_empty() {
+                    s.broadcast(&ListingEvent::Added(added));
+                }
+                s.forget(&lost);
+            },
+        );
+    }
+}
+
+/// `items` grouped by the lane of their path (`fs::reach::lane`), in the
+/// order first met: a shelf holds files from anywhere.
+fn by_lane<T>(
+    items: impl IntoIterator<Item = T>,
+    path: impl Fn(&T) -> &Path,
+) -> Vec<(skwir_core::scheduler::Lane, Vec<T>)> {
+    let mut lanes: Vec<(skwir_core::scheduler::Lane, Vec<T>)> = Vec::new();
+    for item in items {
+        let lane = skwir_core::fs::reach::lane(path(&item));
+        match lanes.iter_mut().find(|(l, _)| *l == lane) {
+            Some((_, items)) => items.push(item),
+            None => lanes.push((lane, vec![item])),
+        }
+    }
+    lanes
 }
 
 fn selection_items(
@@ -389,34 +411,41 @@ impl OpenLocation for ShelfLocation {
         if items.is_empty() {
             return;
         }
-        // A job for each slice, side by side on the workers.
-        for items in items.chunks(skwir_core::fs::HYDRATE_JOB) {
-            let items = items.to_vec();
-            let sink = self.sink.clone();
-            let metadata = Arc::clone(&self.ctx.metadata);
-            let state = Arc::clone(&self.state);
-            let cancel = self.ctx.cancel.child();
-            self.ctx
-                .scheduler
-                .spawn(priority, "shelf.stat", cancel.clone(), move || {
-                    let gone = hydrate_paths(&items, &metadata, &sink, &cancel);
-                    if gone.is_empty() {
-                        return;
-                    }
-                    // Gone from where it was looked for, unless a change
-                    // moved it meanwhile: then the next hydration looks there.
-                    let mut s = state.lock();
-                    let vanished: Vec<EntryId> = gone
-                        .into_iter()
-                        .filter(|id| {
-                            let asked = items.iter().find(|(i, _)| i == id).map(|(_, p)| p);
-                            s.items
-                                .iter()
-                                .any(|i| i.id == *id && Some(&i.path) == asked)
-                        })
-                        .collect();
-                    s.forget(&vanished);
-                });
+        // A job for each slice, side by side on the workers, each remote's
+        // in its lane.
+        for (lane, items) in by_lane(items, |(_, path)| path) {
+            for items in items.chunks(skwir_core::fs::HYDRATE_JOB) {
+                let items = items.to_vec();
+                let sink = self.sink.clone();
+                let metadata = Arc::clone(&self.ctx.metadata);
+                let state = Arc::clone(&self.state);
+                let cancel = self.ctx.cancel.child();
+                self.ctx.scheduler.spawn_in(
+                    lane,
+                    priority,
+                    "shelf.stat",
+                    cancel.clone(),
+                    move || {
+                        let gone = hydrate_paths(&items, &metadata, &sink, &cancel);
+                        if gone.is_empty() {
+                            return;
+                        }
+                        // Gone from where it was looked for, unless a change
+                        // moved it meanwhile: then the next hydration looks there.
+                        let mut s = state.lock();
+                        let vanished: Vec<EntryId> = gone
+                            .into_iter()
+                            .filter(|id| {
+                                let asked = items.iter().find(|(i, _)| i == id).map(|(_, p)| p);
+                                s.items
+                                    .iter()
+                                    .any(|i| i.id == *id && Some(&i.path) == asked)
+                            })
+                            .collect();
+                        s.forget(&vanished);
+                    },
+                );
+            }
         }
     }
 
