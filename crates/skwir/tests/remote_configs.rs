@@ -1122,6 +1122,20 @@ fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
         ],
     );
     until_said(&app, 30, "“It's my files” is kept as a bookmark");
+    // Opened in the pane: the server's folder, mounted.
+    let pane = app.workspace.read().active_id();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let folder = loop {
+        app.pump();
+        if let Some(path) = app.pane_location(pane).and_then(|l| l.path()) {
+            break path;
+        }
+        assert!(Instant::now() < deadline, "never opened");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let point = skwir_core::fs::reach::of(&folder).unwrap().point.clone();
+    let _left = Unmounted(point.clone());
+    assert!(folder.join("hello.txt").exists());
     let uri = format!("dav://127.0.0.1:{}/sub%20folder", served.port);
     let bookmarks = skwir_core::xdg::config_home()
         .unwrap()
@@ -1138,20 +1152,6 @@ fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
         std::fs::read_to_string(&config).map_or(true, |c| c.is_empty()),
         "nothing of rclone's"
     );
-    // Opened in the pane: the server's folder, mounted.
-    let pane = app.workspace.read().active_id();
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let folder = loop {
-        app.pump();
-        if let Some(path) = app.pane_location(pane).and_then(|l| l.path()) {
-            break path;
-        }
-        assert!(Instant::now() < deadline, "never opened");
-        std::thread::sleep(Duration::from_millis(50));
-    };
-    let point = skwir_core::fs::reach::of(&folder).unwrap().point.clone();
-    let _left = Unmounted(point.clone());
-    assert!(folder.join("hello.txt").exists());
 
     app.dispatch(&Invocation::with_args(
         "places.unbookmark_address",
