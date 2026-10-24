@@ -41,6 +41,8 @@ pub const REVIEW: &str = "Review";
 pub const JUMP: &str = "Jump";
 /// `ui.choose`'s picker.
 pub const CHOOSE: &str = "Choose";
+/// A form a plugin asks the user to fill (`crate::form`).
+pub const FORM: &str = "Form";
 /// The tag editor (`tags.rs`).
 pub const TAG_EDITOR: &str = "TagEditor";
 /// The terminal panel: it takes every key the window binds, but these.
@@ -257,25 +259,25 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "up",
         "ui.list_move",
         r#"{"delta":-1}"#,
-        Some("palette|jump|choose|tag_editor|address|review|confirm|setting_choices"),
+        Some("palette|jump|choose|form|tag_editor|address|review|confirm|setting_choices"),
     ),
     (
         "down",
         "ui.list_move",
         r#"{"delta":1}"#,
-        Some("palette|jump|choose|tag_editor|address|review|confirm|setting_choices"),
+        Some("palette|jump|choose|form|tag_editor|address|review|confirm|setting_choices"),
     ),
     (
         "pageup",
         "ui.list_move",
         r#"{"to":"page_up"}"#,
-        Some("palette|jump|choose|tag_editor|address|review|confirm|setting_choices"),
+        Some("palette|jump|choose|form|tag_editor|address|review|confirm|setting_choices"),
     ),
     (
         "pagedown",
         "ui.list_move",
         r#"{"to":"page_down"}"#,
-        Some("palette|jump|choose|tag_editor|address|review|confirm|setting_choices"),
+        Some("palette|jump|choose|form|tag_editor|address|review|confirm|setting_choices"),
     ),
     // The cursor in the file list (`ui.cursor`): the arrows select what
     // they reach, Shift extends, Ctrl moves the cursor alone (and
@@ -1114,6 +1116,7 @@ pub(crate) const PLACES: &[Place] = &[
     inside("palette", PALETTE, "Command palette"),
     inside("jump", JUMP, "Jump"),
     inside("choose", CHOOSE, "Choosing from a list"),
+    inside("form", FORM, "Forms"),
     inside("tag_editor", TAG_EDITOR, "Tag editor"),
     inside("bulk", BULK, "Bulk rename"),
     inside("review", REVIEW, "Plan review"),

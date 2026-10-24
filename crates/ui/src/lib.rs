@@ -34,6 +34,7 @@ pub mod dock;
 mod dragicon;
 pub mod elements;
 pub mod fonts;
+pub mod form;
 pub mod format;
 mod fullscreen;
 pub mod icons;

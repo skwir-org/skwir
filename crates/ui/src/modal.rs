@@ -131,6 +131,12 @@ impl Shell {
                 stops: prompt.walk(cx),
             });
         }
+        if let Some(form) = &self.form {
+            walks.push(Walk {
+                home: None,
+                stops: form.walk(cx),
+            });
+        }
         if let Some(bulk) = &self.bulk {
             walks.push(Walk {
                 home: None,
@@ -166,6 +172,7 @@ impl Shell {
             || self.tag_editor.is_some()
             || self.bulk.is_some()
             || self.prompt.is_some()
+            || self.form.is_some()
             || self.confirm.is_some()
             || self.menu.is_some()
             || self.settings.is_some()
@@ -259,16 +266,22 @@ pub fn footer(
                 .child(hint.into()),
         )
         .children(buttons.into_iter().map(|button| {
-            button
-                .key_context(BUTTON)
-                // Taken here: the key's release on this button clicks it.
-                .on_action(|action: &RunCommand, _, cx| {
-                    if action.name != "ui.toolbar_activate" {
-                        cx.propagate();
-                    }
-                })
+            pressable(button)
                 .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
         }))
+}
+
+/// A control Enter and Space press while it has the keyboard, as a
+/// dialog's buttons are (a form's switch, its dropdown).
+pub fn pressable(control: Stateful<Div>) -> Stateful<Div> {
+    control
+        .key_context(BUTTON)
+        // Taken here: the key's release on this control clicks it.
+        .on_action(|action: &RunCommand, _, cx| {
+            if action.name != "ui.toolbar_activate" {
+                cx.propagate();
+            }
+        })
 }
 
 /// What a dialog lists, rows of one `height` (what a deletion takes, a

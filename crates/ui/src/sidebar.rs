@@ -1997,6 +1997,22 @@ impl Shell {
                 ));
             }
         }
+        // What the group's owners add to it (Add Server… in Network),
+        // registered for its menu (`MenuItem::menu`, `sidebar:<group>`):
+        // first, a group of their own.
+        if let Some(group) = group {
+            let menu = format!("sidebar:{group}");
+            let mut own: Vec<_> = self
+                .app
+                .registry
+                .menus
+                .all()
+                .into_iter()
+                .filter(|item| item.menu == menu)
+                .collect();
+            own.sort_by_key(|item| item.order);
+            items.splice(0..0, own);
+        }
         // Every group, checked while shown.
         for (i, g) in all.iter().enumerate() {
             let hidden = sections.hidden.contains(g);

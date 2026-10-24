@@ -489,6 +489,10 @@ impl SettingsView {
         let Some(row) = self.row(key) else {
             return;
         };
+        // What its owner keeps elsewhere keeps the owner's order.
+        if row.spec.constraints.record_source.is_some() {
+            return;
+        }
         if let Some(list) = moved(&records(&row.value), from, gap) {
             self.change(key, serde_json::to_string(&list).unwrap_or_default(), cx);
         }
@@ -651,6 +655,10 @@ impl SettingsView {
                 })),
             );
         }
+        // Kept by their owner elsewhere: its commands change them.
+        if let Some(source) = spec.constraints.record_source.clone() {
+            return self.sourced_row(key, &source, (title, detail), (id, edge, item), actions, theme, cx);
+        }
         let busy = self.drafts.contains_key(key);
         let (edit_focus, remove_focus) = (
             self.handle(&format!("edit:{key}:{id}"), cx),
@@ -740,6 +748,78 @@ impl SettingsView {
             // The gaps above and below, where a dragged record lands.
             .child(self.record_gap(key, index, count, true, theme, cx))
             .child(self.record_gap(key, index + 1, count, false, theme, cx))
+            .into_any_element()
+    }
+
+    /// A row of records their owner keeps elsewhere (`RecordSource`): its
+    /// Edit and Remove run the owner's commands, which ask what they need
+    /// themselves; it is not moved.
+    #[allow(clippy::too_many_arguments)] // a row of the list and its place in it
+    fn sourced_row(
+        &mut self,
+        key: &str,
+        source: &skwir_core::settings::RecordSource,
+        (title, detail): (String, String),
+        (id, edge, item): (&str, crate::settings_view::Edge, usize),
+        mut actions: gpui::Div,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        for (verb, command, style) in [
+            ("Edit", source.edit.clone(), ButtonStyle::Plain),
+            ("Remove", source.remove.clone(), ButtonStyle::Danger),
+        ] {
+            let focus = self.handle(&format!("{verb}:{key}:{id}"), cx);
+            self.stop(&focus, Some(item), None);
+            self.record_stops
+                .push((focus.clone(), key.to_owned(), id.to_owned()));
+            let args = serde_json::json!({ "id": id });
+            actions = actions.child(
+                controls::button(
+                    format!("{verb}-{key}-{id}"),
+                    verb,
+                    None,
+                    style,
+                    &focus,
+                    theme,
+                )
+                .on_click(cx.listener(move |this, _, _, _| {
+                    let invocation =
+                        skwir_core::command::Invocation::with_args(command.as_str(), &args);
+                    if let Err(error) = this.app.dispatch(&invocation) {
+                        this.app
+                            .notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}"));
+                    }
+                })),
+            );
+        }
+        crate::settings_view::card_row(theme, edge)
+            .key_context("SettingRecord")
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.))
+                    .child(crate::elements::clip::clipped(
+                        div()
+                            .id(gpui::SharedString::from(format!("record-title-{key}-{id}")))
+                            .truncate(),
+                        title,
+                    ))
+                    .child(crate::elements::clip::clipped(
+                        div()
+                            .id(gpui::SharedString::from(format!(
+                                "record-detail-{key}-{id}"
+                            )))
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .truncate(),
+                        detail,
+                    )),
+            )
+            .child(actions)
             .into_any_element()
     }
 

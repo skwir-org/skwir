@@ -168,6 +168,47 @@ pub struct RecordAction {
     pub command: String,
 }
 
+/// Records their owner keeps elsewhere (rclone's remotes, in rclone's own
+/// configuration, ADR-086): the dialog lists what `list` answers
+/// (`{ "records": [{ "id": …, <field>: … }] }`, dispatched on the window's
+/// thread, so answered from the owner's memory) and changes them only
+/// through the owner's commands, each run with `{ "id": <record id> }`
+/// (`add` with nothing): never edited in place, never moved. The setting's
+/// own value is never read nor saved. The dialog lists them again when
+/// `revision` moves ([`RecordSource::changed`]).
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct RecordSource {
+    pub list: String,
+    pub add: String,
+    pub edit: String,
+    pub remove: String,
+    #[serde(skip)]
+    pub revision: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl RecordSource {
+    pub fn new(list: &str, add: &str, edit: &str, remove: &str) -> Self {
+        RecordSource {
+            list: list.into(),
+            add: add.into(),
+            edit: edit.into(),
+            remove: remove.into(),
+            revision: std::sync::Arc::default(),
+        }
+    }
+
+    /// Say that what `list` answers changed: the dialog asks again.
+    pub fn changed(&self) {
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+
+    /// What `changed` has moved it to.
+    pub fn revision(&self) -> u64 {
+        self.revision.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
+
 /// The owner's own check of a value, after the kind's: what only it knows
 /// (a tile address needs `{z}`, `{x}` and `{y}`). Runs wherever a value is
 /// validated, in the dialog and in `settings.apply`, given the value
@@ -283,6 +324,9 @@ pub struct SettingConstraints {
     /// What one record is called ("tile server"), for "Add tile server".
     pub record_name: String,
     pub record_action: Option<RecordAction>,
+    /// Records their owner keeps elsewhere, changed by its commands (see
+    /// [`RecordSource`]).
+    pub record_source: Option<RecordSource>,
     /// The choices are what is known here and now: others may be found
     /// where skwir runs (the themes a user added to bat). A file's value
     /// outside them is noted by `Settings::check`, not refused.
@@ -424,6 +468,15 @@ impl SettingSpec {
             label: label.into(),
             command: command.into(),
         });
+        self
+    }
+
+    /// The records are kept by their owner elsewhere, listed and changed
+    /// through its commands (see [`RecordSource`]): the list is never the
+    /// settings'.
+    #[must_use]
+    pub fn records_kept_by(mut self, source: RecordSource) -> Self {
+        self.constraints.record_source = Some(source);
         self
     }
 

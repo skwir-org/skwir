@@ -435,6 +435,14 @@ impl SettingsView {
                 let focus = self.handle(&format!("control:{key}"), cx);
                 self.stop(&focus, Some(item), Some(&key));
                 let editing = self.drafts.contains_key(&key);
+                // Kept by their owner elsewhere: its command adds one,
+                // asking what it needs itself.
+                let add = row
+                    .spec
+                    .constraints
+                    .record_source
+                    .as_ref()
+                    .map(|source| source.add.clone());
                 controls::button(
                     format!("add-{key}"),
                     format!("Add {}", row.spec.constraints.record_name),
@@ -446,7 +454,13 @@ impl SettingsView {
                 .key_context("SettingControl")
                 .when(editing, |b| b.opacity(0.5))
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    if !this.drafts.contains_key(&key) {
+                    if let Some(add) = &add {
+                        let invocation = skwir_core::command::Invocation::new(add.as_str());
+                        if let Err(error) = this.app.dispatch(&invocation) {
+                            this.app
+                                .notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}"));
+                        }
+                    } else if !this.drafts.contains_key(&key) {
                         this.edit_record(&key, None, window, cx);
                     }
                 }))

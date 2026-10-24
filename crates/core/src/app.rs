@@ -233,6 +233,9 @@ pub struct App {
     secrets: parking_lot::Mutex<Vec<SecretQuestion>>,
     secret_replies:
         parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<Option<SecretAnswer>>>>,
+    /// The forms plugins ask the user to fill (ADR-086), until the window
+    /// takes them, and who waits for each answer.
+    pub(crate) forms: crate::form::Forms,
     /// Messages from background work for the UI to show.
     notifications: parking_lot::Mutex<Vec<Notification>>,
     /// Commands the window carries out (`ui.*`), dispatched from elsewhere
@@ -307,6 +310,7 @@ impl App {
             settled: parking_lot::Mutex::new(HashMap::new()),
             secrets: parking_lot::Mutex::new(Vec::new()),
             secret_replies: parking_lot::Mutex::new(HashMap::new()),
+            forms: crate::form::Forms::default(),
             front: parking_lot::Mutex::new(Vec::new()),
             shown: (parking_lot::Mutex::new(false), parking_lot::Condvar::new()),
             scheduler,

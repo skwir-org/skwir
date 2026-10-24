@@ -35,6 +35,7 @@ pub mod document;
 pub mod entry;
 pub mod fields;
 pub mod folders;
+pub mod form;
 pub mod fs;
 pub mod geo;
 pub mod hashing;

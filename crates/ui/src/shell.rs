@@ -308,6 +308,10 @@ pub struct Shell {
     pub tag_fields: Vec<String>,
     pub bulk: Option<BulkState>,
     pub prompt: Option<PromptState>,
+    /// The form a plugin asked shown, and those waiting their turn
+    /// (`ask_forms`).
+    pub form: Option<crate::form::FormState>,
+    pub forms: std::collections::VecDeque<skwir_core::form::Asked>,
     pub confirm: Option<ConfirmState>,
     pub menu: Option<MenuState>,
     pub toolbar_menu: Option<crate::toolbar::Popup>,
@@ -670,6 +674,8 @@ impl Shell {
             marquee: None,
             unlock: None,
             secrets: std::collections::VecDeque::new(),
+            form: None,
+            forms: std::collections::VecDeque::new(),
             nudges: crate::shortcuts::Nudges::default(),
             last_find: None,
             sequence: None,
@@ -1931,6 +1937,7 @@ impl Shell {
                 if self.confirm_move(mv, window, cx)
                     || self.clashes_move(mv, cx)
                     || self.review_move(mv, window, cx)
+                    || self.form_move(mv, cx)
                 {
                 } else if self.palette.is_some() {
                     self.palette_move(mv, cx);
@@ -2619,6 +2626,8 @@ impl Shell {
         }
         self.secrets.extend(self.app.take_secret_questions());
         self.ask_secrets(window, cx);
+        self.forms.extend(self.app.take_forms());
+        self.ask_forms(window, cx);
         self.sync_review_focus(window, cx);
         self.sync_map_tiles(window, cx);
         // Follow the workspace's tabs and active pane (commands change them).
@@ -3057,6 +3066,7 @@ impl Render for Shell {
             address::more_popup(self, cx),
             menu::render(self, cx),
             prompts::render_prompt(self, cx),
+            crate::form::render(self, window, cx),
             prompts::render_confirm(self, cx),
             jump::render(self, cx),
             crate::choose::render(self, cx),

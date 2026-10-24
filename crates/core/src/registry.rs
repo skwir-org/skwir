@@ -437,7 +437,10 @@ pub struct Aspect {
 /// it was dropped in: Extract Here, given an archive.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MenuItem {
-    /// `context`, `main`, `drop`, or a plugin-defined menu id.
+    /// `context`, `main`, `drop`, `sidebar:<group>` (the menu of a sidebar
+    /// group's heading: what its owners add there, Add Server… in
+    /// `network`; first, ordered -999 to -1, a group of their own before
+    /// Fold), or a plugin-defined menu id.
     pub menu: String,
     pub title: String,
     pub command: Invocation,

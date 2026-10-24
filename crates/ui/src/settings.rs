@@ -1133,6 +1133,10 @@ pub struct SettingsView {
     flash_generation: u64,
     settings_revision: u64,
     plugins_revision: u64,
+    /// The records each setting's owner keeps elsewhere (`RecordSource`),
+    /// as last listed, by key: the revision listed at and the records'
+    /// JSON.
+    sourced: HashMap<String, (u64, String)>,
     /// The settings file cannot be written (Home Manager's link): read
     /// when the dialog opens and at each wake, never while drawing.
     pub(crate) read_only: bool,
@@ -1204,6 +1208,7 @@ impl SettingsView {
             plugins: app.plugins.list(),
             settings_revision: app.settings.revision(),
             plugins_revision: app.plugins.revision(),
+            sourced: HashMap::new(),
             read_only: app.settings.read_only(),
             keys: crate::settings_keys_view::KeysPage::new(bound, cx),
             app,
@@ -1301,10 +1306,57 @@ impl SettingsView {
     // ------------------------------------------------------------ live state
 
     fn live(&self, spec: &SettingSpec) -> String {
+        if spec.constraints.record_source.is_some() {
+            return self
+                .sourced
+                .get(&spec.key)
+                .map_or_else(|| "[]".to_owned(), |(_, records)| records.clone());
+        }
         self.app
             .settings
             .text(&spec.key)
             .unwrap_or_else(|| SettingSpec::format_value(&spec.default))
+    }
+
+    /// List again the records whose owner keeps them elsewhere and says
+    /// they changed since (`RecordSource`), its command answering from
+    /// memory: whether any did.
+    fn list_sourced(&mut self) -> bool {
+        let mut changed = false;
+        let sources: Vec<(String, String, u64)> = self
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let source = row.spec.constraints.record_source.as_ref()?;
+                Some((row.spec.key.clone(), source.list.clone(), source.revision()))
+            })
+            .collect();
+        for (key, list, revision) in sources {
+            if self
+                .sourced
+                .get(&key)
+                .is_some_and(|(at, _)| *at == revision)
+            {
+                continue;
+            }
+            let records = match self.app.dispatch(&Invocation::new(list.as_str())) {
+                Ok(Outcome::Value(value)) => value
+                    .get("records")
+                    .filter(|records| records.is_array())
+                    .map_or_else(|| "[]".to_owned(), ToString::to_string),
+                Ok(_) => "[]".to_owned(),
+                Err(error) => {
+                    tracing::debug!(key, "records not listed: {error:#}");
+                    "[]".to_owned()
+                }
+            };
+            if let Some(row) = self.rows.iter_mut().find(|row| row.spec.key == key) {
+                row.value.clone_from(&records);
+            }
+            self.sourced.insert(key, (revision, records));
+            changed = true;
+        }
+        changed
     }
 
     fn pending(&self, key: &str) -> bool {
@@ -1473,6 +1525,7 @@ impl SettingsView {
             self.relist_choices(cx);
             changed = true;
         }
+        changed |= self.list_sourced();
         if let Some(found) = self.probe.lock().ok().and_then(|mut slot| slot.take()) {
             self.requirements = Some(found);
             changed = true;
