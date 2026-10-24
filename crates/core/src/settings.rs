@@ -52,8 +52,8 @@ pub mod page {
     pub const MEDIA: &str = "media";
     /// The terminal and the program commands run in.
     pub const TERMINAL: &str = "terminal";
-    /// Remote servers: rclone's remotes, and the tools that open an
-    /// address.
+    /// The servers of the sidebar's Network section, where those added by
+    /// their address are kept, and the tools that open an address.
     pub const NETWORK: &str = "network";
     pub const PRIVACY: &str = "privacy";
     pub const KEYBOARD: &str = "keyboard";

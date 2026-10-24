@@ -211,6 +211,7 @@ impl Connector for Fstab {
                         .map_or_else(|| e.source.clone(), |n| n.to_string_lossy().into_owned()),
                     address: e.address?,
                     kind: String::new(),
+                    kept: crate::servers::Kept::Tool("in the system's fstab"),
                 })
             })
             .collect()

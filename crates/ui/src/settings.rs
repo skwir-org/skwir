@@ -898,7 +898,7 @@ static BUILTIN: [Builtin; 12] = [
         owner: None,
         title: "Network",
         icon: "network",
-        intro: "Remote servers: rclone's remotes, which the sidebar's Network section lists, added, tested, edited and removed here as from their menus; and the tools that open an address.",
+        intro: "The servers of the sidebar's Network section, added, edited and removed here as from their menus, and where those added by their address are kept; then the tools that open an address.",
         when_used: true,
         sections: &["Servers", "Opening addresses"],
     },

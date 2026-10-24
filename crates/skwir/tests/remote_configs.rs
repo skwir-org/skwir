@@ -370,14 +370,12 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
         assert!(Instant::now() < deadline, "never listed");
         std::thread::sleep(Duration::from_millis(50));
     }
-    let records = app
-        .dispatch(&Invocation::new("remote.rclone_records"))
-        .unwrap();
-    let skwir_core::command::Outcome::Value(records) = records else {
-        panic!("records");
-    };
-    assert_eq!(records["records"][0]["id"], "nas-1");
-    assert_eq!(records["records"][0]["kind"], "webdav");
+    let record = record_of(&app, "nas-1", 30);
+    assert_eq!(
+        record["kind"], "webdav · in rclone's configuration",
+        "{record}"
+    );
+    assert_eq!(record["actions"][0]["label"], "Test");
 
     // Edited: its secret never shown, kept unless another is typed; what
     // changed alone given.
@@ -1064,12 +1062,51 @@ fn an_s3_address_opens_through_the_aws_configuration_keeping_nothing() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// The records Settings lists of the servers, by their id.
+fn server_records(app: &App) -> Vec<serde_json::Value> {
+    let skwir_core::command::Outcome::Value(records) = app
+        .dispatch(&Invocation::new("remote.server_records"))
+        .unwrap()
+    else {
+        panic!("records");
+    };
+    records["records"].as_array().unwrap().clone()
+}
+
+/// The record of the server `id`, once listed, within `seconds`.
+fn record_of(app: &App, id: &str, seconds: u64) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    loop {
+        app.pump();
+        if let Some(record) = server_records(app).into_iter().find(|r| r["id"] == id) {
+            return record;
+        }
+        assert!(Instant::now() < deadline, "{id} never listed");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The Network section's places, by their titles.
+fn network_titles(app: &App) -> Vec<String> {
+    app.registry
+        .places
+        .all()
+        .into_iter()
+        .filter(|p| p.group == "network")
+        .map(|p| p.title)
+        .collect()
+}
+
 /// One Add Server for every kind: a server added by its address (a
-/// WebDAV one here) is kept as a bookmark under the name given, in the
-/// desktop's shared bookmarks (the test's own), then opened; its password
-/// is asked by the connection, never by the form.
+/// WebDAV one here) is kept under the name given in Skwir's list, stands
+/// in the Network section and in Settings' list of servers, never among
+/// the bookmarks, and is opened; its password is asked by the connection,
+/// never by the form. Edited and removed where it is kept; kept in KDE's
+/// network folders when chosen, where Dolphin reads it; and a remote
+/// folder bookmarked made a server by Keep as Server, its bookmark taken
+/// out.
 #[test]
-fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
+fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
     if let Some(why) = Rclone::default().unavailable() {
         eprintln!("skipped: {why}");
         return;
@@ -1079,19 +1116,24 @@ fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
     std::fs::create_dir_all(served_root.join("sub folder")).unwrap();
     std::fs::write(served_root.join("sub folder/hello.txt"), "hello").unwrap();
     let served = Served::start("webdav", &served_root, &[]);
-    // The desktop's bookmarks of the test's own: the tests' shared file is
-    // rewritten by others that run beside it.
+    // The desktop's bookmarks and KDE's network folders of the test's own:
+    // the tests' shared folders are written by others that run beside it.
     // SAFETY: nextest runs each test in a process of its own, and this
     // runs before the test starts an app, so no other thread reads the
     // environment meanwhile.
     #[allow(unsafe_code)]
     unsafe {
         std::env::set_var("XDG_CONFIG_HOME", base.join("config"));
+        std::env::set_var("XDG_DATA_HOME", base.join("data"));
     }
     let config = base.join("rclone.conf");
     let app = app_with_rclone(&base, &config, Arc::default());
     app.plugins
         .add(Arc::new(skwir_plugin_places::PlacesPlugin::default()), &app);
+    app.settings.set(
+        "remote.servers_kept_in",
+        toml::Value::String("skwir".into()),
+    );
     let window = Window::new(&app);
 
     app.dispatch(&Invocation::new("remote.add_server")).unwrap();
@@ -1103,6 +1145,11 @@ fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
     window.accept(&kinds, &[("picked", "address:dav")]);
     let parts = window.form(30);
     assert!(parts.form.back, "Back to the kinds");
+    assert!(
+        parts.form.intro.contains("Skwir's list"),
+        "{}",
+        parts.form.intro
+    );
     assert!(
         !parts
             .form
@@ -1121,9 +1168,7 @@ fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
             ("title", "It's my files"),
         ],
     );
-    // Said by the places plugin once written, with its Undo: the remote
-    // plugin says nothing before.
-    until_said(&app, 30, "Bookmarked “It's my files”");
+    until_said(&app, 30, "“It's my files” is added");
     // Opened in the pane: the server's folder, mounted.
     let pane = app.workspace.read().active_id();
     let deadline = Instant::now() + Duration::from_secs(60);
@@ -1138,27 +1183,45 @@ fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
     let point = skwir_core::fs::reach::of(&folder).unwrap().point.clone();
     let _left = Unmounted(point.clone());
     assert!(folder.join("hello.txt").exists());
-    let uri = format!("dav://127.0.0.1:{}/sub%20folder", served.port);
-    let bookmarks = skwir_core::xdg::config_home()
+    let id = format!("dav://127.0.0.1:{}/sub folder", served.port);
+    let record = record_of(&app, &id, 30);
+    assert_eq!(record["name"], "It's my files");
+    assert!(
+        record["kind"]
+            .as_str()
+            .unwrap()
+            .ends_with("in Skwir's list"),
+        "{record}"
+    );
+    assert_eq!(record["fixed"], false);
+    let labels: Vec<&str> = record["actions"]
+        .as_array()
         .unwrap()
-        .join("gtk-3.0/bookmarks");
-    let line = format!("{uri} It's my files");
-    let kept = |bookmarks: &Path| {
-        std::fs::read_to_string(bookmarks).is_ok_and(|kept| kept.lines().any(|l| l == line))
-    };
-    assert!(kept(&bookmarks), "kept by its address and name");
+        .iter()
+        .map(|a| a["label"].as_str().unwrap())
+        .collect();
+    assert_eq!(labels, ["Mount Options…"], "no Test: rclone's alone");
+    // Mounted, its place in the Network section is the mount's, with the
+    // server's own Edit and Remove.
+    let mount = app
+        .registry
+        .places
+        .all()
+        .into_iter()
+        .find(|p| p.group == "network" && p.location.path().as_deref() == Some(point.as_path()))
+        .expect("its mount in the Network section");
+    let titles: Vec<&str> = mount.menu.iter().map(|i| i.title.as_str()).collect();
+    assert!(titles.contains(&"Edit Server…"), "{titles:?}");
+    assert!(titles.contains(&"Remove Server…"), "{titles:?}");
+    let bookmarks = base.join("config/gtk-3.0/bookmarks");
+    assert!(
+        !std::fs::read_to_string(&bookmarks).is_ok_and(|b| b.contains(&port)),
+        "no bookmark of it"
+    );
     assert!(
         std::fs::read_to_string(&config).map_or(true, |c| c.is_empty()),
         "nothing of rclone's"
     );
-
-    app.dispatch(&Invocation::with_args(
-        "places.unbookmark_address",
-        &serde_json::json!({ "address": uri }),
-    ))
-    .unwrap();
-    // Asked from no window's thread, the places plugin answers once done.
-    assert!(!kept(&bookmarks), "its bookmark gone");
     app.dispatch(&Invocation::with_args(
         "remote.disconnect",
         &serde_json::json!({ "path": point }),
@@ -1170,6 +1233,140 @@ fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
         assert!(Instant::now() < deadline, "never let go of");
         std::thread::sleep(Duration::from_millis(100));
     }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !network_titles(&app).contains(&"It's my files".to_owned()) {
+        app.pump();
+        assert!(
+            Instant::now() < deadline,
+            "the server in the Network section: {:?}",
+            network_titles(&app)
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // Edited in its form, filled in as kept: renamed, its folder changed.
+    app.dispatch(&Invocation::with_args(
+        "remote.edit_server",
+        &serde_json::json!({ "id": id }),
+    ))
+    .unwrap();
+    let edit = window.form(30);
+    assert_eq!(edit.form.title, "Edit “It's my files”");
+    let value = |key: &str| {
+        edit.form
+            .fields
+            .iter()
+            .find(|f| f.key == key)
+            .unwrap()
+            .value
+            .clone()
+    };
+    assert_eq!(
+        (value("host"), value("port"), value("path"), value("title")),
+        (
+            "127.0.0.1".to_owned(),
+            port.clone(),
+            "sub folder".to_owned(),
+            "It's my files".to_owned()
+        )
+    );
+    window.accept(&edit, &[("title", "Ünïcode files"), ("path", "")]);
+    until_said(&app, 30, "“Ünïcode files” is saved");
+    let moved = format!("dav://127.0.0.1:{}/", served.port);
+    assert_eq!(record_of(&app, &moved, 30)["name"], "Ünïcode files");
+    assert!(server_records(&app).iter().all(|r| r["id"] != id));
+
+    // Kept in KDE's network folders, as chosen: a desktop entry KDE reads.
+    app.settings
+        .set("remote.servers_kept_in", toml::Value::String("kde".into()));
+    app.dispatch(&Invocation::new("remote.add_server")).unwrap();
+    let kinds = window.form(30);
+    window.accept(&kinds, &[("picked", "address:dav")]);
+    let parts = window.form(30);
+    assert!(parts.form.intro.contains("KDE's network folders"));
+    window.accept(
+        &parts,
+        &[
+            ("host", "127.0.0.1"),
+            ("port", &port),
+            ("path", "sub folder"),
+            ("title", "Shared"),
+        ],
+    );
+    until_said(&app, 30, "“Shared” is added");
+    let entry = base.join("data/remoteview/Shared.desktop");
+    let text = std::fs::read_to_string(&entry).unwrap();
+    assert!(
+        text.contains(&format!(
+            "URL=webdav://127.0.0.1:{}/sub%20folder\n",
+            served.port
+        )),
+        "{text}"
+    );
+    let record = record_of(&app, &id, 30);
+    assert!(
+        record["kind"]
+            .as_str()
+            .unwrap()
+            .ends_with("in KDE's network folders"),
+        "{record}"
+    );
+    // Removed where it is kept, once confirmed.
+    app.dispatch(&Invocation::with_args(
+        "remote.remove_server",
+        &serde_json::json!({ "id": id }),
+    ))
+    .unwrap();
+    let confirm = window.form(30);
+    assert_eq!(confirm.form.title, "Remove “Shared”?");
+    window.accept(&confirm, &[]);
+    until_said(&app, 30, "“Shared” is removed");
+    assert!(!entry.exists(), "its desktop entry gone");
+
+    // A remote folder bookmarked (another file manager's) made a server:
+    // offered in its place's menu, its bookmark then taken out.
+    let other = format!("dav://127.0.0.1:{}/other", served.port);
+    std::fs::create_dir_all(bookmarks.parent().unwrap()).unwrap();
+    std::fs::write(&bookmarks, format!("{other} It's bookmarked\n")).unwrap();
+    let skwir_core::command::Outcome::Value(menu) = app
+        .dispatch(&Invocation::with_args(
+            "remote.keep_as_server_menu",
+            &serde_json::json!({ "location": other }),
+        ))
+        .unwrap()
+    else {
+        panic!("a menu");
+    };
+    let item = &menu["items"][0];
+    assert_eq!(item["title"], "Keep as Server");
+    app.dispatch(&Invocation::with_args(
+        "remote.keep_as_server",
+        &serde_json::json!({ "address": other }),
+    ))
+    .unwrap();
+    until_said(
+        &app,
+        30,
+        "“It's bookmarked” is a server of the Network section",
+    );
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while std::fs::read_to_string(&bookmarks).is_ok_and(|b| b.contains("/other")) {
+        app.pump();
+        assert!(Instant::now() < deadline, "its bookmark never went");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(record_of(&app, &other, 30)["name"], "It's bookmarked");
+    // A server already: offered no more.
+    let skwir_core::command::Outcome::Value(menu) = app
+        .dispatch(&Invocation::with_args(
+            "remote.keep_as_server_menu",
+            &serde_json::json!({ "location": other }),
+        ))
+        .unwrap()
+    else {
+        panic!("a menu");
+    };
+    assert_eq!(menu["items"], serde_json::json!([]));
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }

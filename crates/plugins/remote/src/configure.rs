@@ -1,11 +1,13 @@
-//! Adding, editing, testing, signing in again and removing the servers
-//! the tools keep (ADR-086): rclone's remotes, in rclone's own
-//! configuration, through forms the window draws (`rclone_forms`). Every
-//! surface runs the same commands: Add Server… in the Network section's
-//! menu and the palette, a remote's own menu, the list in Settings (its
-//! records kept by rclone, `RecordSource`), an agent or a script. A form
-//! is what the user reviews: a caller gives what it starts from, never a
-//! secret, which the user types in the window.
+//! Adding, editing, testing, signing in again and removing servers
+//! (ADR-086): rclone's remotes, in rclone's own configuration, through
+//! forms the window draws (`rclone_forms`), and the servers added by their
+//! address, in Skwir's list or KDE's network folders (`servers`,
+//! `servers_form`). Every surface runs the same commands: Add Server… in
+//! the Network section's menu and the palette, a server's own menu, the
+//! list in Settings (every server, each kept by its owner,
+//! `RecordSource`), an agent or a script. A form is what the user
+//! reviews: a caller gives what it starts from, never a secret, which the
+//! user types in the window.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -18,8 +20,9 @@ use skwir_core::settings::{RecordField, SettingSpec};
 use crate::address::{Address, Scheme};
 use crate::{ID, Remotes};
 
-/// The list of rclone's remotes in Settings, kept by rclone.
-pub(crate) const RECORDS: &str = "remote.rclone_remotes";
+/// Every server in Settings, each kept by its owner: rclone's remotes,
+/// those added by their address, those other programs name.
+pub(crate) const RECORDS: &str = "remote.servers";
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct AddArgs {
@@ -74,6 +77,116 @@ struct AtLoginArgs {
 struct NamedArgs {
     /// The remote's name in rclone's configuration.
     id: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ServerArgs {
+    /// The server: a remote's name in rclone's configuration (`photos`),
+    /// or the address of one added by its address (`sftp://me@nas/`).
+    id: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct LocationArgs {
+    /// The place's location, as the sidebar has it.
+    location: String,
+    /// The pane the menu opens in, which a menu gives every source.
+    #[serde(default, rename = "pane")]
+    _pane: Option<skwir_core::workspace::PaneId>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct KeepArgs {
+    /// The address of the remote folder to keep as a server.
+    address: String,
+    /// What the Network section calls it: the bookmark's name, else its
+    /// address's own.
+    #[serde(default)]
+    name: Option<String>,
+}
+
+/// The server an `id` names: an address for one added by its address,
+/// `None` for a remote of rclone's (its name).
+fn by_address(id: &str) -> anyhow::Result<Option<Address>> {
+    if id.contains("://") {
+        Ok(Some(Address::parse(id.trim())?))
+    } else {
+        Ok(None)
+    }
+}
+
+/// The items of a server added by its address in its menu: Edit, Remove.
+pub(crate) fn kept_items(address: &Address) -> Vec<MenuItem> {
+    let id = serde_json::json!({ "id": address.to_string() });
+    vec![
+        MenuItem::new(
+            "place",
+            "Edit Server…",
+            "settings",
+            410,
+            Invocation::with_args("remote.edit_server", &id),
+        ),
+        MenuItem::new(
+            "place",
+            "Remove Server…",
+            "trash",
+            310,
+            Invocation::with_args("remote.remove_server", &id),
+        ),
+    ]
+}
+
+/// What a server's line in Settings does beside Edit and Remove, as its
+/// menu does: Test (rclone's), Mount Options, Connect at Login, Set Up Key
+/// Login, Sign In Again.
+fn record_actions(
+    server: &crate::connector::Server,
+    at_login: &std::collections::HashSet<String>,
+) -> Vec<serde_json::Value> {
+    let action = |label: &str, command: &str, args: serde_json::Value| serde_json::json!({ "label": label, "command": command, "args": args });
+    let top = server.address.top();
+    let mut actions = Vec::new();
+    if let Some(name) = remote_name(&server.address) {
+        actions.push(action(
+            "Test",
+            "remote.test_server",
+            serde_json::json!({ "id": name }),
+        ));
+    }
+    if crate::options::takes_options(top.scheme) {
+        actions.push(action(
+            "Mount Options…",
+            "remote.mount_options",
+            serde_json::json!({ "address": top.to_string() }),
+        ));
+    }
+    if let Some(id) = login_id(&top) {
+        let on = at_login.contains(&id);
+        actions.push(action(
+            if on {
+                "Connect at Login ✓"
+            } else {
+                "Connect at Login"
+            },
+            "remote.connect_at_login",
+            serde_json::json!({ "address": top.to_string(), "on": !on }),
+        ));
+    }
+    if top.scheme == Scheme::Sftp {
+        actions.push(action(
+            "Set Up Key Login…",
+            "remote.setup_key_login",
+            serde_json::json!({ "address": top.to_string() }),
+        ));
+    }
+    if remote_name(&server.address).is_some() && signs_in(&server.kind) {
+        actions.push(action(
+            "Sign In Again…",
+            "remote.reconnect",
+            serde_json::json!({ "id": server.address.host }),
+        ));
+    }
+    actions
 }
 
 /// The items of an rclone remote's menu in the sidebar: Edit, Sign In
@@ -193,8 +306,8 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     app.settings.declare(
         SettingSpec::records(
             RECORDS,
-            "Remotes of rclone",
-            "The remotes of rclone's own configuration, where rclone in a terminal finds them too: Skwir keeps no copy.",
+            "Servers",
+            "The servers of the sidebar's Network section, each changed where it is kept. Those added by their address are in Skwir's list or KDE's network folders; rclone's remotes in rclone's own configuration, where rclone in a terminal finds them too.",
             "Server",
             vec![
                 RecordField::text("name", "Name", "", ""),
@@ -202,10 +315,10 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             ],
         )
         .records_kept_by(remotes.records.clone())
-        .record_action("Test", "remote.test_server")
         .page(skwir_core::settings::page::NETWORK)
         .section("Servers"),
     );
+    crate::servers::declare(app);
     // The Network section's own menu.
     app.registry.menus.add(
         ID,
@@ -221,22 +334,36 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     app.commands
         .register::<skwir_core::command::NoArgs, _>(
             ID,
-            "remote.rclone_records",
-            "rclone's remotes",
-            "rclone's remotes as Settings lists them: each one's name and kind",
+            "remote.server_records",
+            "Servers",
+            "Every server as Settings lists it: each one's name, kind and where it is kept, what its line does, and whether Skwir changes it (`fixed`: another program does)",
             move |_, _| {
-                let records: Vec<serde_json::Value> = remotes_
-                    .state
-                    .lock()
+                let state = remotes_.state.lock();
+                let records: Vec<serde_json::Value> = state
                     .servers
                     .iter()
-                    .filter_map(|server| {
-                        let name = remote_name(&server.address)?;
-                        Some(serde_json::json!({
-                            "id": name,
+                    .map(|server| {
+                        let (id, name, kind) = match remote_name(&server.address) {
+                            Some(name) => (
+                                name.to_owned(),
+                                name.to_owned(),
+                                format!("{} · {}", server.kind, server.kept.said()),
+                            ),
+                            None => (
+                                server.address.to_string(),
+                                server.label.clone(),
+                                format!("{} · {}", server.address, server.kept.said()),
+                            ),
+                        };
+                        let fixed =
+                            remote_name(&server.address).is_none() && !server.kept.by_address();
+                        serde_json::json!({
+                            "id": id,
                             "name": name,
-                            "kind": server.kind,
-                        }))
+                            "kind": kind,
+                            "actions": record_actions(server, &state.at_login),
+                            "fixed": fixed,
+                        })
                     })
                     .collect();
                 Ok(Outcome::Value(serde_json::json!({ "records": records })))
@@ -263,9 +390,13 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     return servers_alone(&remotes_, app);
                 }
                 in_form(&remotes_, app, "added", move |flow, remotes, app| {
-                    // A server kept as a bookmark is said so by the places
-                    // plugin, once written, with its Undo.
-                    if let Some(crate::rclone_forms::Made::Remote(name)) = flow.add(&prefill)? {
+                    let made = flow.add(&prefill)?;
+                    if let Some(crate::rclone_forms::Made::Server(name)) = &made {
+                        remotes.refresh(app);
+                        remotes.records.changed();
+                        app.notify(NotifyLevel::Info, format!("“{name}” is added"));
+                    }
+                    if let Some(crate::rclone_forms::Made::Remote(name)) = made {
                         remotes.refresh(app);
                         // What it keeps of its secrets is only obscured:
                         // encrypting the whole is offered.
@@ -293,13 +424,18 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .shows();
     let remotes_ = remotes.clone();
     app.commands
-        .register::<NamedArgs, _>(
+        .register::<ServerArgs, _>(
             ID,
             "remote.edit_server",
             "Edit server…",
-            "Change a remote of rclone's in its form",
+            "Change a server in its form: a remote of rclone's, or one added by its address",
             move |args, app| {
                 window_for_forms(app)?;
+                if let Some(address) = by_address(&args.id)? {
+                    return on_form_thread(&remotes_, app, "saved", move |remotes, app, cancel| {
+                        edit_kept(remotes, app, &address, cancel)
+                    });
+                }
                 in_form(&remotes_, app, "saved", move |flow, remotes, app| {
                     if flow.edit(&args.id)? {
                         remotes.refresh(app);
@@ -333,13 +469,18 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .shows();
     let remotes_ = remotes.clone();
     app.commands
-        .register::<NamedArgs, _>(
+        .register::<ServerArgs, _>(
             ID,
             "remote.remove_server",
             "Remove server…",
-            "Remove a remote from rclone's configuration, once the user confirms: what it holds stays where it is",
+            "Remove a server once the user confirms, where it is kept (rclone's configuration, Skwir's list, KDE's network folders), with its mount options and its entry connecting it at login: what it holds stays where it is",
             move |args, app| {
                 window_for_forms(app)?;
+                if let Some(address) = by_address(&args.id)? {
+                    return on_form_thread(&remotes_, app, "removed", move |remotes, app, cancel| {
+                        remove_kept(remotes, app, &address, cancel)
+                    });
+                }
                 in_form(&remotes_, app, "removed", move |flow, remotes, app| {
                     let address = Address::parse(&format!("rclone://{}/", args.id))?;
                     let mounted: Vec<std::path::PathBuf> = remotes
@@ -357,6 +498,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                         remotes.disconnect(app, point, false)?;
                     }
                     flow.session.delete(&args.id, flow.cancel)?;
+                    forget_kept_for(remotes, app, &address, flow.cancel);
                     remotes.refresh(app);
                     app.notify(NotifyLevel::Info, format!("“{}” is removed", args.id));
                     Ok(())
@@ -645,6 +787,110 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             Ok(Outcome::Done)
         },
     );
+    // A remote folder bookmarked (another file manager's, or one the user
+    // kept before it was a server) made a server of the Network section.
+    let remotes_ = remotes.clone();
+    app.commands
+        .register::<LocationArgs, _>(
+            ID,
+            "remote.keep_as_server_menu",
+            "Offer Keep as Server in a place's menu",
+            "A sidebar place's Keep as Server, for a remote folder's address that is no server yet (a bookmark's). Answers from memory",
+            move |args, _| {
+                let items: Vec<MenuItem> = Address::parse(&args.location)
+                    .ok()
+                    .filter(|a| !matches!(a.scheme, Scheme::Rclone | Scheme::S3))
+                    .filter(|a| {
+                        !remotes_
+                            .state
+                            .lock()
+                            .servers
+                            .iter()
+                            .any(|s| s.address == *a)
+                    })
+                    .map(|address| {
+                        MenuItem::new(
+                            "place",
+                            "Keep as Server",
+                            "",
+                            415,
+                            Invocation::new("remote.keep_as_server")
+                                .with("address", address.to_string()),
+                        )
+                    })
+                    .into_iter()
+                    .collect();
+                Ok(Outcome::Value(serde_json::json!({ "items": items })))
+            },
+        )
+        .data();
+    app.registry.menu_sources.add(
+        ID,
+        skwir_core::registry::MenuSource {
+            menu: "place".into(),
+            when: None,
+            command: Invocation::new("remote.keep_as_server_menu"),
+            replaces: Vec::new(),
+        },
+    );
+    let remotes_ = remotes.clone();
+    app.commands
+        .register::<KeepArgs, _>(
+            ID,
+            "remote.keep_as_server",
+            "Keep as server",
+            "Make a remote folder's address a server of the Network section, kept in Skwir's list or KDE's network folders, under its bookmark's name; its bookmark, if it has one, is taken out",
+            move |args, app| {
+                let address = Address::parse(args.address.trim())?;
+                anyhow::ensure!(
+                    !matches!(address.scheme, Scheme::Rclone | Scheme::S3),
+                    "{} is kept by rclone or the AWS tools",
+                    address.scheme.title()
+                );
+                let name = args.name;
+                on_form_thread(&remotes_, app, "kept", move |remotes, app, _| {
+                    keep_as_server(remotes, app, &address, name)
+                })
+            },
+        )
+        .shows();
+}
+
+/// Keep the remote folder at `address` as a server, named `name` or as its
+/// bookmark is, and take its bookmark out (the places plugin's): it is the
+/// Network section's from now on.
+fn keep_as_server(
+    remotes: &Remotes,
+    app: &App,
+    address: &Address,
+    name: Option<String>,
+) -> anyhow::Result<()> {
+    let bookmark = skwir_platform::places::remote_bookmarks()
+        .into_iter()
+        .find(|b| Address::parse(&b.address).is_ok_and(|a| a == *address));
+    let name = name
+        .or_else(|| bookmark.as_ref().map(|b| b.title.clone()))
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| address.label());
+    let kept = crate::servers::add(app, &name, address)?;
+    remotes.refresh(app);
+    // Its bookmark out first, which the places plugin says: what the user
+    // did is said last.
+    if let Some(bookmark) = bookmark {
+        app.dispatch(&Invocation::with_args(
+            "places.unbookmark_address",
+            &serde_json::json!({ "address": bookmark.address }),
+        ))
+        .map_err(|error| anyhow::anyhow!("its bookmark stays: {error:#}"))?;
+    }
+    app.notify(
+        NotifyLevel::Info,
+        format!(
+            "“{name}” is a server of the Network section, kept {}",
+            kept.said()
+        ),
+    );
+    Ok(())
 }
 
 /// Set the server at `top` to connect at login (`on`), or no longer: its
@@ -677,27 +923,169 @@ fn at_login(
 /// Add Server where rclone is not installed: the servers added by their
 /// address alone, on a thread of its own.
 fn servers_alone(remotes: &Remotes, app: &App) -> anyhow::Result<Outcome> {
+    on_form_thread(remotes, app, "added", |remotes, app, cancel| {
+        if let Some(name) = crate::servers_form::add_any(app, cancel)? {
+            remotes.refresh(app);
+            app.notify(NotifyLevel::Info, format!("“{name}” is added"));
+        }
+        Ok(())
+    })
+}
+
+/// Run `work`, which may fill forms in, on a thread of its own: what
+/// failed is said, as what was to be `done` that was not; Settings' list
+/// is read again after.
+fn on_form_thread(
+    remotes: &Remotes,
+    app: &App,
+    done: &'static str,
+    work: impl FnOnce(&Remotes, &App, &skwir_core::cancel::CancelToken) -> anyhow::Result<()>
+    + Send
+    + 'static,
+) -> anyhow::Result<Outcome> {
     let lifetime = remotes
         .lifetime()
         .ok_or_else(|| anyhow::anyhow!("remote folders are turned off"))?;
-    let weak = app.weak();
+    let (remotes, weak) = (remotes.clone(), app.weak());
     std::thread::Builder::new()
         .name("skwir-remote-form".into())
         .spawn(move || {
             let Some(app) = weak.upgrade() else { return };
             let cancel = lifetime.child();
-            // Kept, it is said so by the places plugin, with its Undo.
-            match crate::servers_form::add_any(&app, &cancel) {
-                Ok(_) => {}
-                Err(error) => {
-                    app.notify(
-                        NotifyLevel::Error,
-                        format!("The server was not added: {error:#}"),
-                    );
-                }
+            let result = work(&remotes, &app, &cancel);
+            remotes.records.changed();
+            if let Err(error) = result
+                && !cancel.is_cancelled()
+            {
+                app.notify(
+                    NotifyLevel::Error,
+                    format!("The server was not {done}: {error:#}"),
+                );
             }
         })?;
     Ok(Outcome::Done)
+}
+
+/// The server added by its address at `address`, as kept.
+fn kept_at(remotes: &Remotes, address: &Address) -> anyhow::Result<crate::connector::Server> {
+    remotes
+        .state
+        .lock()
+        .servers
+        .iter()
+        .find(|s| s.address == *address)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("no server is known at {address}"))
+        .and_then(|server| {
+            anyhow::ensure!(
+                server.kept.by_address(),
+                "“{}” is {}: change it there",
+                server.label,
+                server.kept.said()
+            );
+            Ok(server)
+        })
+}
+
+/// Change the server added by its address at `address` in its form,
+/// where it is kept: its mount options follow it to its new address; its
+/// entry connecting it at login, made for the old one, is taken out.
+fn edit_kept(
+    remotes: &Remotes,
+    app: &App,
+    address: &Address,
+    cancel: &skwir_core::cancel::CancelToken,
+) -> anyhow::Result<()> {
+    let server = kept_at(remotes, address)?;
+    let Some((name, new)) = crate::servers_form::edit(app, &server, cancel)? else {
+        return Ok(());
+    };
+    crate::servers::change(app, address, &name, &new)?;
+    let (old_top, new_top) = (address.top(), new.top());
+    if old_top != new_top {
+        let options = crate::options::of(app, &old_top);
+        crate::options::keep(app, &new_top, &options)?;
+        crate::options::keep(app, &old_top, &crate::options::MountOptions::default())?;
+        if login_off(remotes, &old_top, cancel)? {
+            app.notify(
+                NotifyLevel::Info,
+                format!("“{name}” no longer connects at login: its address changed"),
+            );
+        }
+    }
+    remotes.refresh(app);
+    app.notify(NotifyLevel::Info, format!("“{name}” is saved"));
+    Ok(())
+}
+
+/// Remove the server added by its address at `address`, once the user
+/// confirms, where it is kept, with what Skwir kept for it.
+fn remove_kept(
+    remotes: &Remotes,
+    app: &App,
+    address: &Address,
+    cancel: &skwir_core::cancel::CancelToken,
+) -> anyhow::Result<()> {
+    use skwir_core::form::{Answer, Form};
+    let server = kept_at(remotes, address)?;
+    let form = Form::new(format!("Remove “{}”?", server.label), "Remove").intro(format!(
+        "Skwir forgets the server, kept {}: what it holds stays where it is, and adding it again brings it back.",
+        server.kept.said()
+    ));
+    if !matches!(app.fill(form, cancel), Some(Answer::Accepted(_))) {
+        return Ok(());
+    }
+    crate::servers::remove(app, address)?;
+    forget_kept_for(remotes, app, address, cancel);
+    remotes.refresh(app);
+    app.notify(NotifyLevel::Info, format!("“{}” is removed", server.label));
+    Ok(())
+}
+
+/// What Skwir kept for the server at `address`, once it is removed: its
+/// mount options and its entry connecting it at login, where no other
+/// server kept shares its top. What fails is said, the removal done.
+fn forget_kept_for(
+    remotes: &Remotes,
+    app: &App,
+    address: &Address,
+    cancel: &skwir_core::cancel::CancelToken,
+) {
+    let top = address.top();
+    let shared = remotes
+        .state
+        .lock()
+        .servers
+        .iter()
+        .any(|s| s.address != *address && s.address.top() == top);
+    if shared {
+        return;
+    }
+    let forgot = crate::options::keep(app, &top, &crate::options::MountOptions::default())
+        .and_then(|()| login_off(remotes, &top, cancel).map(|_| ()));
+    if let Err(error) = forgot {
+        app.notify(
+            NotifyLevel::Warning,
+            format!("What Skwir kept for {} stays: {error:#}", top.label()),
+        );
+    }
+}
+
+/// Take out the entry connecting `top`'s server at login, where there is
+/// one: whether there was.
+fn login_off(
+    remotes: &Remotes,
+    top: &Address,
+    cancel: &skwir_core::cancel::CancelToken,
+) -> anyhow::Result<bool> {
+    let Some(id) = login_id(top) else {
+        return Ok(false);
+    };
+    if !remotes.state.lock().at_login.contains(&id) {
+        return Ok(false);
+    }
+    at_login(remotes, top, &id, false, cancel)?;
+    Ok(true)
 }
 
 /// Ask for the password to encrypt rclone's configuration with, and

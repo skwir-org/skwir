@@ -88,8 +88,9 @@ impl Device {
     }
 }
 
-/// A server the user can connect to, from the tool's configuration: an
-/// rclone remote, a network entry of fstab.
+/// A server the user can connect to, from the tool's configuration (an
+/// rclone remote, a network entry of fstab, one of Dolphin's places) or
+/// one added by its address (`servers`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Server {
     pub address: Address,
@@ -97,6 +98,8 @@ pub struct Server {
     /// What kind of storage its tool says it is (rclone's type: `drive`,
     /// `s3`), empty where it says none.
     pub kind: String,
+    /// Who keeps it, and changes it.
+    pub kept: crate::servers::Kept,
 }
 
 /// An installed tool that mounts remotes.

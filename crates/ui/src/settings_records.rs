@@ -660,6 +660,7 @@ impl SettingsView {
             return self.sourced_row(
                 key,
                 &source,
+                record,
                 (title, detail),
                 (id, edge, item),
                 actions,
@@ -761,22 +762,28 @@ impl SettingsView {
 
     /// A row of records their owner keeps elsewhere (`RecordSource`): its
     /// Edit and Remove run the owner's commands, which ask what they need
-    /// themselves; it is not moved.
+    /// themselves; it is not moved. The record may say what else its line
+    /// does (`actions`: each a `label`, a `command` and its `args`), drawn
+    /// under its words, and that another program changes it (`fixed`: no
+    /// Edit, no Remove).
     #[allow(clippy::too_many_arguments)] // a row of the list and its place in it
     fn sourced_row(
         &mut self,
         key: &str,
         source: &skwir_core::settings::RecordSource,
+        record: &Record,
         (title, detail): (String, String),
         (id, edge, item): (&str, crate::settings_view::Edge, usize),
         mut actions: gpui::Div,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        for (verb, command, style) in [
+        let fixed = record.get("fixed").and_then(serde_json::Value::as_bool) == Some(true);
+        let verbs = [
             ("Edit", source.edit.clone(), ButtonStyle::Plain),
             ("Remove", source.remove.clone(), ButtonStyle::Danger),
-        ] {
+        ];
+        for (verb, command, style) in verbs.into_iter().filter(|_| !fixed) {
             let focus = self.handle(&format!("{verb}:{key}:{id}"), cx);
             self.stop(&focus, Some(item), None);
             self.record_stops
@@ -800,6 +807,49 @@ impl SettingsView {
                     }
                 })),
             );
+        }
+        // What else the line does, as the owner says, after Edit and
+        // Remove for the keys: they stand above.
+        let mut own = div().flex().flex_wrap().gap(px(6.)).pt(px(4.));
+        let listed = record
+            .get("actions")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten();
+        let mut owns = false;
+        for (n, action) in listed.enumerate() {
+            let text = |field: &str| action.get(field).and_then(serde_json::Value::as_str);
+            let (Some(label), Some(command)) = (text("label"), text("command")) else {
+                continue;
+            };
+            let invocation = skwir_core::command::Invocation::with_args(
+                command,
+                &action
+                    .get("args")
+                    .cloned()
+                    .unwrap_or_else(|| serde_json::json!({})),
+            );
+            let focus = self.handle(&format!("own:{n}:{key}:{id}"), cx);
+            self.stop(&focus, Some(item), None);
+            self.record_stops
+                .push((focus.clone(), key.to_owned(), id.to_owned()));
+            own = own.child(
+                controls::button(
+                    format!("own-{n}-{key}-{id}"),
+                    label.to_owned(),
+                    None,
+                    ButtonStyle::Plain,
+                    &focus,
+                    theme,
+                )
+                .on_click(cx.listener(move |this, _, _, _| {
+                    if let Err(error) = this.app.dispatch(&invocation) {
+                        this.app
+                            .notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}"));
+                    }
+                })),
+            );
+            owns = true;
         }
         crate::settings_view::card_row(theme, edge)
             .key_context("SettingRecord")
@@ -825,7 +875,8 @@ impl SettingsView {
                             .text_color(theme.text_muted)
                             .truncate(),
                         detail,
-                    )),
+                    ))
+                    .when(owns, |d| d.child(own)),
             )
             .child(actions)
             .into_any_element()

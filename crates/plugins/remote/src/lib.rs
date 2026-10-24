@@ -39,6 +39,7 @@ pub mod rclone_features;
 pub mod rclone_forms;
 pub mod rsync;
 mod runs;
+pub mod servers;
 pub mod servers_form;
 pub mod sftp;
 mod ssh_mount;
@@ -234,7 +235,7 @@ impl Remotes {
             keyring: Arc::new(passwords::Desktop),
             publishing: Arc::default(),
             records: skwir_core::settings::RecordSource::new(
-                "remote.rclone_records",
+                "remote.server_records",
                 "remote.add_server",
                 "remote.edit_server",
                 "remote.remove_server",
@@ -553,11 +554,17 @@ impl Remotes {
                 };
                 this.publish(&app);
                 this.ask_alive(&app, &mounted, &lifetime);
+                // The servers kept (Skwir's list, KDE's network folders),
+                // then the tools' that are not those.
+                let mut servers = servers::listed(&app);
                 drop(app);
-                let mut servers = Vec::new();
                 for connector in this.connectors.iter() {
                     if connector.unavailable().is_none() {
-                        servers.extend(connector.servers(&lifetime));
+                        for server in connector.servers(&lifetime) {
+                            if !servers.iter().any(|s| s.address == server.address) {
+                                servers.push(server);
+                            }
+                        }
                     }
                 }
                 // Whether each server is near, for its thumbnails.
@@ -589,7 +596,7 @@ impl Remotes {
                     if !current(&state) {
                         return;
                     }
-                    if state.servers != servers {
+                    if state.servers != servers || state.at_login != at_login {
                         this.records.changed();
                     }
                     state.servers = servers;
@@ -804,6 +811,14 @@ impl Remotes {
                         .menu
                         .extend(configure::menu_items(name, configure::signs_in(kind)));
                 }
+            } else if let Some(kept) = address.and_then(|a| {
+                state
+                    .servers
+                    .iter()
+                    .find(|s| s.kept.by_address() && a.below(&s.address).is_some())
+            }) {
+                // A server kept, mounted: its own Edit and Remove.
+                place.menu.extend(configure::kept_items(&kept.address));
             }
             places.push(place);
         }
@@ -834,6 +849,8 @@ impl Remotes {
                     name,
                     configure::signs_in(&server.kind),
                 ));
+            } else if server.kept.by_address() {
+                place.menu.extend(configure::kept_items(&server.address));
             }
             places.push(place);
         }

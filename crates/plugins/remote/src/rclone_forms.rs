@@ -224,7 +224,7 @@ fn kind_form(backends: &[Backend], chosen: Option<&str>) -> Form {
     all.extend(choices);
     let choices = all;
     Form::new("Add Server", "Next")
-        .intro("A server kept as a bookmark, or a remote of rclone's, kept in rclone's own configuration where rclone in a terminal finds it too.")
+        .intro("A server by its address, kept in Skwir's list or KDE's network folders, or a remote of rclone's, kept in rclone's own configuration where rclone in a terminal finds it too.")
         .field(
             Field::new(PICKED, "Kind of storage", Kind::Pick { choices })
                 .value(chosen.unwrap_or_default())
@@ -504,12 +504,12 @@ impl Flow<'_> {
                     _ => return Ok(None),
                 }
             };
-            // A server kept as a bookmark, by its address.
+            // A server by its address, kept in Skwir's list or KDE's.
             if let Some(scheme) = crate::servers_form::scheme_of(chosen) {
                 let back = prefill.kind.is_none();
                 match crate::servers_form::add(self.app, scheme, &values, back, self.cancel)? {
                     crate::servers_form::Added::Done(name) => {
-                        return Ok(Some(Made::Bookmark(name)));
+                        return Ok(Some(Made::Server(name)));
                     }
                     crate::servers_form::Added::Back => {
                         kind = None;
@@ -969,8 +969,9 @@ enum Added {
 pub enum Made {
     /// A remote of rclone's configuration.
     Remote(String),
-    /// A server kept as a bookmark by its address.
-    Bookmark(String),
+    /// A server added by its address, kept in Skwir's list or KDE's
+    /// network folders.
+    Server(String),
 }
 
 #[derive(PartialEq, Eq)]

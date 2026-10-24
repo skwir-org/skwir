@@ -1,24 +1,24 @@
-//! A server added by its address (ADR-086): SFTP, SMB, WebDAV, FTP, NFS,
-//! AFP, picked in Add Server's list beside rclone's kinds of storage. Its
-//! parts asked in a form become an address, kept as a bookmark in the
-//! desktop's shared bookmarks under the name given (`places.bookmark_
-//! address`), as other file managers keep theirs; then it is opened, its
+//! A server added by its address (ADR-086, amended 2026-10-24): SFTP,
+//! SMB, WebDAV, FTP, NFS, AFP, picked in Add Server's list beside rclone's
+//! kinds of storage. Its parts asked in a form become an address, kept
+//! under the name given in Skwir's list or KDE's network folders
+//! (`servers`), shown in the Network section; then it is opened, its
 //! password asked at this first connection, which the window offers to
-//! keep in the keyring (ADR-082). Skwir keeps no store of its own.
+//! keep in the keyring (ADR-082). Edit asks the same form again, filled in.
 
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
-use skwir_core::command::Invocation;
 use skwir_core::form::{Answer, Choice, Field, Form, Kind, Values};
 
 use crate::address::{Address, Scheme};
+use crate::servers::Kept;
 
 /// What a kind of server picked by its address is named in Add Server's
 /// list: this, then the scheme's name.
 pub const KIND_PREFIX: &str = "address:";
 
-/// The heading of the kinds kept as bookmarks in Add Server's list.
-const SECTION: &str = "Servers, kept as bookmarks";
+/// The heading of the kinds added by their address in Add Server's list.
+const SECTION: &str = "Servers, by their address";
 
 /// The schemes a server is added by, in the list's order.
 const SCHEMES: [Scheme; 8] = [
@@ -41,10 +41,14 @@ const SCHEMES: [Scheme; 8] = [
 pub fn add_any(app: &App, cancel: &CancelToken) -> anyhow::Result<Option<String>> {
     loop {
         let pick = Form::new("Add Server", "Next")
-            .intro("Kept as a bookmark in the desktop's shared bookmarks. With rclone installed, seventy kinds of storage more.")
+            .intro("A server by its address. With rclone installed, seventy kinds of storage more.")
             .field(
-                Field::new("picked", "Kind of server", Kind::Pick { choices: choices() })
-                    .required(),
+                Field::new(
+                    "picked",
+                    "Kind of server",
+                    Kind::Pick { choices: choices() },
+                )
+                .required(),
             );
         let Some(Answer::Accepted(picked)) = app.fill(pick, cancel) else {
             return Ok(None);
@@ -86,7 +90,7 @@ pub fn choices() -> Vec<Choice> {
                 Scheme::Rclone | Scheme::S3 => ("", ""),
             };
             Choice::new(format!("{KIND_PREFIX}{}", scheme.name()), title)
-                .detail(format!("{detail}: its address kept as a bookmark"))
+                .detail(detail)
                 .section(SECTION)
         })
         .collect()
@@ -98,9 +102,9 @@ pub fn scheme_of(kind: &str) -> Option<Scheme> {
     Scheme::from_name(name).filter(|s| SCHEMES.contains(s))
 }
 
-/// The form of a server of `scheme`: its address's parts, then the name
-/// its bookmark goes by.
-pub fn form(scheme: Scheme, back: bool) -> Form {
+/// The form of a server of `scheme`, to be kept as `kept` says: its
+/// address's parts, then the name the Network section calls it by.
+pub fn form(scheme: Scheme, kept: Kept, back: bool) -> Form {
     let (folder, folder_help) = match scheme {
         Scheme::Smb => (
             "Share",
@@ -119,8 +123,14 @@ pub fn form(scheme: Scheme, back: bool) -> Form {
             "Where to open, on the server: empty for its top (SFTP: your home)",
         ),
     };
+    let kept = match kept {
+        Kept::Kde => "Kept in KDE's network folders, where Dolphin lists it too.",
+        _ => "Kept in Skwir's list of servers.",
+    };
     let mut form = Form::new(format!("Add {}", title(scheme)), "Add")
-        .intro("Kept as a bookmark in the desktop's shared bookmarks, which other file managers read too. Its password is asked when it first connects.")
+        .intro(format!(
+            "{kept} Its password is asked when it first connects."
+        ))
         .field(
             Field::text("host", "Server")
                 .help("Its name or address: nas.local, files.example.com, 192.168.1.20")
@@ -204,20 +214,20 @@ pub fn address_of(scheme: Scheme, values: &Values) -> anyhow::Result<Address> {
 
 /// What became of a server's form.
 pub enum Added {
-    /// Kept as a bookmark, by the name given, and opened.
+    /// Kept, by the name given, and opened.
     Done(String),
     Back,
     Cancelled,
 }
 
-/// Ask the parts of a server of `scheme` until they make an address, keep
-/// it as a bookmark and open it in the active pane: its password is asked
-/// then, by the connection. The form starts from `given` (a caller's,
-/// never a password: the form asks none).
+/// Ask the parts of a server of `scheme` until they make an address of no
+/// server kept yet, keep it (`servers::add`) and open it in the active
+/// pane: its password is asked then, by the connection. The form starts
+/// from `given` (a caller's, never a password: the form asks none).
 ///
 /// # Errors
-/// When `given` names no part of the form, or the bookmark was not kept
-/// (the places plugin turned off).
+/// When `given` names no part of the form, or the server could not be
+/// written where it is kept.
 pub fn add(
     app: &App,
     scheme: Scheme,
@@ -225,7 +235,7 @@ pub fn add(
     back: bool,
     cancel: &CancelToken,
 ) -> anyhow::Result<Added> {
-    let mut blank = form(scheme, back);
+    let mut blank = form(scheme, crate::servers::keeper(app, scheme), back);
     for (key, value) in given {
         let field = blank
             .fields
@@ -249,24 +259,91 @@ pub fn add(
                 continue;
             }
         };
-        let name = values.get("title").trim();
-        let name = if name.is_empty() {
-            address.label()
-        } else {
-            name.to_owned()
-        };
-        // Kept once it returns: asked from a worker, the places plugin
-        // writes it there, and says so.
-        app.dispatch(&Invocation::with_args(
-            "places.bookmark_address",
-            &serde_json::json!({ "address": address.uri(), "title": name }),
-        ))
-        .map_err(|error| anyhow::anyhow!("its address was not kept as a bookmark: {error:#}"))?;
+        if let Some(kept) = crate::servers::find(app, &address) {
+            asked = blank.clone().again(
+                &values,
+                format!("“{}” is a server already, at that address", kept.label),
+            );
+            continue;
+        }
+        let name = name_of(&values, &address);
+        crate::servers::add(app, &name, &address)?;
         let pane = app.pane_or_active(None);
         if let Err(error) = app.navigate(pane, &address.location()) {
             tracing::debug!("the server added was not opened: {error:#}");
         }
         return Ok(Added::Done(name));
+    }
+}
+
+/// The name a server's form gives it: its address's own where empty.
+fn name_of(values: &Values, address: &Address) -> String {
+    let name = values.get("title").trim();
+    if name.is_empty() {
+        address.label()
+    } else {
+        name.to_owned()
+    }
+}
+
+/// Ask the parts of `server`, added by its address, again, its form filled
+/// in as it is kept: its name and new address, `None` when the user gave
+/// up. Changing it where it is kept is the caller's.
+///
+/// # Errors
+/// None yet: the form refuses what makes no address, or one another
+/// server is kept at.
+pub fn edit(
+    app: &App,
+    server: &crate::connector::Server,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<(String, Address)>> {
+    let old = &server.address;
+    let mut blank = form(old.scheme, server.kept, false);
+    blank.title = format!("Edit “{}”", server.label);
+    "Save".clone_into(&mut blank.accept);
+    blank.intro = format!(
+        "Kept {}. Its mount options follow it to a new address.",
+        server.kept.said()
+    );
+    let path = String::from_utf8_lossy(&old.path);
+    let named = (server.label != old.label()).then(|| server.label.clone());
+    for (key, value) in [
+        ("host", Some(old.host.clone())),
+        ("path", Some(path.trim_start_matches('/').to_owned())),
+        ("user", old.user.clone()),
+        ("domain", old.domain.clone()),
+        ("port", old.port.map(|p| p.to_string())),
+        ("title", named),
+    ] {
+        if let (Some(field), Some(value)) = (blank.fields.iter_mut().find(|f| f.key == key), value)
+        {
+            field.value = value;
+            field.advanced = false;
+        }
+    }
+    let mut asked = blank.clone();
+    loop {
+        let Some(Answer::Accepted(values)) = app.fill(asked, cancel) else {
+            return Ok(None);
+        };
+        let address = match address_of(old.scheme, &values) {
+            Ok(address) => address,
+            Err(refused) => {
+                asked = blank.clone().again(&values, format!("{refused:#}"));
+                continue;
+            }
+        };
+        if address != *old
+            && let Some(other) = crate::servers::find(app, &address)
+        {
+            asked = blank.clone().again(
+                &values,
+                format!("“{}” is a server already, at that address", other.label),
+            );
+            continue;
+        }
+        return Ok(Some((name_of(&values, &address), address)));
     }
 }
 
@@ -319,13 +396,13 @@ mod tests {
         assert_eq!(scheme_of("sftp"), None, "rclone's own kind");
         assert_eq!(scheme_of("address:rclone"), None);
         assert!(
-            form(Scheme::Nfs, false)
+            form(Scheme::Nfs, Kept::Skwir, false)
                 .fields
                 .iter()
                 .any(|f| f.key == "path" && f.required)
         );
         assert!(
-            !form(Scheme::Nfs, false)
+            !form(Scheme::Nfs, Kept::Skwir, false)
                 .fields
                 .iter()
                 .any(|f| f.key == "user")

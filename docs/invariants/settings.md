@@ -11,7 +11,11 @@ the reasoning.
   `number`, `text`, `path`, `command`; `records` for a list the user
   builds in the dialog (tile servers: a record needs an id in the dialog,
   which edits it by it; a file's may leave it out, as what reads records
-  does); `data` for what the user makes
+  does), or one its owner keeps elsewhere (`records_kept_by`, a
+  `RecordSource`: its commands list, add, edit and remove; a record may
+  say what else its line does, `actions`, each a `label`, a `command` and
+  its `args`, and that another program changes it, `fixed`, which takes
+  Edit and Remove away); `data` for what the user makes
   through commands rather than the dialog (saved searches, pinned tags),
   kept in the data file (ADR-057); `state` for what skwir keeps of the
   window (ADR-056).

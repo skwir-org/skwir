@@ -87,10 +87,10 @@ secret.
     profile named in the address), by an rclone remote made of the
     address's parts (`env_auth`).
 11. **One Add Server for every kind.** A server added by its address
-    (SFTP, SMB, WebDAV, FTP, NFS, AFP) is kept as a bookmark in the
-    desktop's shared bookmarks under the name given, its password asked
-    by its first connection (ADR-082), never by the form; rclone's kinds
-    follow in the same list. KDE's network folders are known servers.
+    (SFTP, SMB, WebDAV, FTP, NFS, AFP) is kept under the name given, its
+    password asked by its first connection (ADR-082), never by the form;
+    rclone's kinds follow in the same list. (Amended 2026-10-24, below:
+    the first version kept it as a bookmark.)
 12. **Mount options are Skwir's data, given at connection.** Read only,
     rclone's file cache and bandwidth, sshfs's compression: kept by the
     server's address in the plugin's data, never in a tool's
@@ -120,4 +120,44 @@ secret.
   compiled only; rclone's Windows release is tried under Wine.
 - Skwir writes a tool's configuration only through the tool: rclone's
   file never by hand, the desktop's bookmarks through the places plugin's
-  commands.
+  commands. KDE's network folders, one desktop entry each, it writes as
+  KDE does (amended 2026-10-24).
+
+## Amendments
+
+### 2026-10-24: servers in the Network section, bookmarks the user's
+
+A server added by its address was kept as a bookmark: in the sidebar's
+Bookmarks, while a remote of rclone's added from the same list stood in
+the Network section. The user asked for the servers in the Network
+section, and Bookmarks kept for what they bookmarked, local or remote.
+
+- **Where a server added by its address is kept.** In Skwir's own list
+  (`remote.kept_servers`, the plugin's data), or in KDE's network folders
+  (a desktop entry of `$XDG_DATA_HOME/remoteview`, Dolphin's `remote:/`,
+  written as KDE's Add Network Folder writes one, through the platform's
+  `file::rewrite`), as `remote.servers_kept_in` says: Automatic is KDE's
+  on KDE's desktop, where KIO opens the kind, Skwir's elsewhere; the
+  user may choose either. A kind KIO does not open (FTPS, AFP) is always
+  Skwir's. Both are read whatever is chosen, and each server is edited
+  and removed where it is kept, KDE's network folders too, so Skwir may
+  be the user's file manager on KDE.
+- **The Network section is servers; Bookmarks are the user's.** Add
+  Server never writes a bookmark. A remote folder the user bookmarks
+  (Ctrl+D) stays a bookmark. A remote bookmark (another file manager's,
+  or one kept before) is made a server by **Keep as Server** in its
+  menu: kept as a server, its bookmark taken out. Dolphin's remote places
+  and fstab's network entries still stand in the Network section,
+  changed by their programs.
+- **Settings lists every server** (`remote.servers`, Network page), each
+  where it is kept, with what its menu does: Edit and Remove where Skwir
+  changes it (rclone's configuration, its list, KDE's network folders),
+  Test for rclone's remotes, Mount Options, Connect at Login, Set Up Key
+  Login, Sign In Again.
+- **Removing a server takes along what Skwir kept for it**: its mount
+  options and its entry connecting it at login, where no other server
+  kept shares its top. An address changed in Edit takes its mount
+  options along; its entry at login, made for the old address, is taken
+  out and said so.
+- Not migrated: adding by address was a day old and unreleased, so only
+  tests had kept a server as a bookmark.

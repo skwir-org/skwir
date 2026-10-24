@@ -190,7 +190,8 @@ fn every_setting_is_on_the_page_of_its_subject() {
     assert_eq!(page("core.preserve_attributes_on_copy"), Page::Notes);
     assert_eq!(page("terminal.program"), page("shell.program"));
     assert_eq!(page("documents.backend"), page("reading.continuous"));
-    assert_eq!(page("remote.rclone_remotes"), Page::Network);
+    assert_eq!(page("remote.servers"), Page::Network);
+    assert_eq!(page("remote.servers_kept_in"), Page::Network);
     assert_eq!(page("remote.connectors"), Page::Network);
 }
 

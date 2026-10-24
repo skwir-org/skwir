@@ -59,4 +59,6 @@ of their own manager.
   does not start). On Windows rclone's remotes do not connect at login
   yet (a mount there answers on a loopback login Skwir keeps beside it).
 - A remote set to connect at login and then removed from rclone's
-  configuration leaves its entry failing until turned off.
+  configuration outside Skwir leaves its entry failing until turned off;
+  removed from Skwir, it takes its entry along (ADR-086, amended
+  2026-10-24).

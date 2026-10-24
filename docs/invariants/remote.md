@@ -361,15 +361,27 @@ ADR-077 (which revises ADR-021).
   configuration, given when it next connects (`Connector::connect_with`),
   after Skwir's own arguments so they win. GVfs and KIO take none.
 - One Add Server for every kind: a server added by its address (SFTP,
-  SMB, WebDAV, FTP, NFS, AFP: `servers_form`) is kept as a bookmark in
-  the desktop's shared bookmarks under the name given
-  (`places.bookmark_address`, which asked from the form's worker writes
-  it before it returns and says so, with its Undo: the remote plugin
-  says nothing of it), then opened; its password is asked by
-  that first connection (with the window's Remember, ADR-082), never by
-  the form. Without rclone, Add Server offers these alone. KDE's network
-  folders (`$XDG_DATA_HOME/remoteview/*.desktop`) are known servers, as
-  its places are.
+  SMB, WebDAV, FTP, NFS, AFP: `servers_form`) is kept under the name
+  given (`servers`, ADR-086 amended), then opened; its password is asked
+  by that first connection (with the window's Remember, ADR-082), never
+  by the form. Without rclone, Add Server offers these alone.
+- **The Network section is servers; Bookmarks are the user's.** A server
+  added by its address is kept in Skwir's list (`remote.kept_servers`)
+  or KDE's network folders (`$XDG_DATA_HOME/remoteview/*.desktop`,
+  written as KDE writes them, through `file::rewrite`), as
+  `remote.servers_kept_in` says, and never as a bookmark. Both are read
+  whatever is chosen and whatever connector is installed, and each is
+  edited and removed where it is kept. Dolphin's remote places and
+  fstab's entries stand there too, changed by their programs (`Kept`).
+  A remote folder bookmarked stays a bookmark until Keep as Server
+  (its place's menu, a `place` menu source) makes it a server and takes
+  its bookmark out.
+- Settings' list of servers (`remote.servers`) is every server the
+  Network section knows, as `remote.server_records` answers from memory:
+  each line says where it is kept, and does what its menu does
+  (`actions`); Edit and Remove are left out where another program
+  changes it (`fixed`). Removing a server takes its mount options and its
+  entry at login along, where no other server kept shares its top.
 - The configuration's password: the keyring's (`rclone:configuration`)
   where the user kept it, else asked of the window (`ConfigAsk`, through
   rclone's `--password-command`); never asked for a listing nobody asked

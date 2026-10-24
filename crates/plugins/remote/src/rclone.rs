@@ -488,6 +488,7 @@ fn remotes(listed: &str) -> Vec<Server> {
                 },
                 address,
                 kind: kind.to_owned(),
+                kept: crate::servers::Kept::Tool("in rclone's configuration"),
             })
         })
         .collect()

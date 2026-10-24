@@ -4364,3 +4364,69 @@ same write, "Network, a page of its own" above).
   test of a server added by its address, which now reads the file right
   after "Bookmarked “It's my files”" and right after its removal (passed
   twice alone).
+
+### Servers in the Network section, bookmarks the user's (2026-10-24)
+
+The user asked for every server in the Network section, Bookmarks kept
+for what they bookmarked, and every server in Settings. Their choices:
+Skwir's own list by default, KDE's network folders on KDE (and a setting
+to choose); KDE's editable and removable from Skwir; Keep as Server for
+a bookmark (ADR-086 amended).
+
+- **Where a server added by its address is kept** (`servers`): Skwir's
+  list (`remote.kept_servers`, the plugin's data) or KDE's network
+  folders (a desktop entry in `remoteview`, written as KDE's Add Network
+  Folder writes one, its values escaped as the specification says,
+  through `file::rewrite`), as `remote.servers_kept_in` says: Automatic
+  is KDE's on KDE's desktop where KIO opens the kind. Both are read
+  whatever is chosen and whichever connector is installed (KDE's network
+  folders were read only with kio-fuse installed). Add Server writes no
+  bookmark, and says "“…” is added".
+- **One list in Settings** (`remote.servers`): every server the Network
+  section knows, each saying where it is kept, with the actions of its
+  menu on its line (a record's `actions`: Test for rclone's, Mount
+  Options, Connect at Login, Set Up Key Login, Sign In Again), and no
+  Edit or Remove where another program changes it (`fixed`: Dolphin's
+  places, fstab). Edit asks the address form again, filled in; Remove
+  asks first. Removing a server, rclone's too, takes its mount options
+  and its entry at login along where no other server shares its top; an
+  address changed takes its mount options along.
+- **Keep as Server**, a `place` menu source of the remote plugin: offered
+  on a place whose location is a remote address no server has; it keeps
+  the server under the bookmark's name, then takes the bookmark out.
+- **Found: no `place` menu source ever answered.** The shell gives every
+  menu source the pane, and the arguments of `tags.tag_menu` (a pinned
+  tag's menu in the sidebar) refused it: the tag pill's own items never
+  showed, unsaid (seen in the menu's debug log beside the new source's
+  same refusal). Both take it now, and `plugins_toggle` gives every
+  registered source what its menu gives, refusing an "invalid arguments".
+- Checked: the plugin's tests (KDE's entries read with their files, one
+  written and read back with a name of a leading space, a backslash, an
+  apostrophe, Unicode and a line break; file names; where a server is
+  kept on which desktop); `remote_configs`' test of a server added by its
+  address against `rclone serve webdav` (kept in Skwir's list, mounted
+  and opened, listed with Mount Options alone, its mount's menu with Edit
+  and Remove, no bookmark, then in the Network section once let go of;
+  edited, its form filled in, renamed with Unicode and moved to the top;
+  kept in KDE's network folders when chosen, its entry's URL KIO's,
+  removed once confirmed with its file; a bookmark made a server, its
+  bookmark gone, offered no more); rclone's remote's record; Settings'
+  tests (both keys on Network, sentences); `plugins_toggle`. On Xvfb:
+  a remote bookmark's menu offering Keep as Server, which moved it to the
+  Network section; Settings listing a server of Skwir's list, KDE's
+  network folder and two rclone remotes with their actions; KDE's edited
+  from Settings, its entry rewritten in place.
+- **Found by `test-windows`:** the places test added for "A bookmark is
+  said once it is kept" was put between another test and its
+  `#[cfg(target_os = "linux")]`: that test, Linux's by design, then ran
+  under Wine and failed (2 runs in 3), and the new one ran on Linux
+  alone. Put back; the new test passes under Wine too.
+- Final checks: `just release-check` passed whole (2195 tests);
+  `just remote-check` failed once on GVfs's SMB test, whose Disconnect
+  waits out the refusals of a 300 MB read, run right after it under a
+  load near 25, then passed whole (144 tests, keyrings 5, 5, 2);
+  `just test-windows` had a test of the core's thumbnails crash once
+  (SIGSEGV), a query test's assertion fail once and a UI test killed at
+  its end once, each in a different run under a load of 15 to 35, none in
+  code changed here, each passing three times alone, then passed whole
+  (1660 tests, 22 skipped); `just check-cross` passed.

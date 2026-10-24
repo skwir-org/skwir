@@ -1465,7 +1465,7 @@ protocol is a scheme a connector maps, or a connector.
   the keyring; what rclone says a storage can do (no made-up size, Copy
   Public Link, a cloud's trash named in a deletion's question and toast);
   `s3://` addresses through the user's AWS configuration, nothing kept;
-  one Add Server for every kind (an address kept as a bookmark, its
+  one Add Server for every kind (an address kept with its name, its
   password asked by its first connection), KDE's network folders read;
   mount options per server; key login set up from Skwir (the agent's
   keys, the default one, a new one); Connect at Login by the system's
@@ -1474,9 +1474,13 @@ protocol is a scheme a connector maps, or a connector.
   WinFsp in a folder
   and on macOS through `nfsmount` (compiled only); rclone's Windows
   release tried under Wine (its remote control on the loopback behind a
-  login). Settings lists rclone's remotes (records their owner keeps,
-  `RecordSource`) on a Network page of their own (ADR-072 amended); the
-  Network section's menu holds Add Server…. How
+  login). The Network section holds the servers, Bookmarks what the user
+  bookmarked (ADR-086 amended 2026-10-24): a server added by its address
+  is kept in Skwir's list or KDE's network folders (as chosen; KDE's on
+  KDE's desktop by default), edited and removed where it is kept; a
+  remote bookmark is made a server by Keep as Server. Settings lists
+  every server on a Network page of its own (ADR-072 amended), each with
+  what its menu does; the Network section's menu holds Add Server…. How
   each was checked is in `docs/STATUS-LOG.md`, "Servers configured from
   Skwir".
 - **G. Left** (each its own step):
@@ -1495,9 +1499,11 @@ protocol is a scheme a connector maps, or a connector.
     keyring's password alone opens one there;
   - a remote half made when Skwir ends mid-question (its sign-in, a
     crypt's) stays in rclone's configuration until removed;
-  - Settings' Network page lists rclone's remotes only: the servers kept
-    as bookmarks, and each server's mount options, Connect at Login and
-    key login, are reached from its menu alone;
+  - a server added by its address has no Test (rclone's lists its top
+    through rclone's remote control; Skwir speaks no protocol itself, and
+    connecting is opening it);
+  - Keep as Server takes the bookmark out of the desktop's shared file,
+    which other file managers read too: theirs goes as well;
   - remotes whose names an address cannot hold (a space, `@`, other
     alphabets) stay rclone's but open by no address;
   - Connect at Login never run by a real systemd, launchd or Task
