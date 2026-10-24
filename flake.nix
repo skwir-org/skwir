@@ -147,6 +147,7 @@
           vulkan-tools # vulkaninfo for the toolkit spike
           pandoc # Office documents read as text, without LibreOffice
           djvulibre # the DjVu checks' fixtures (cjb2, c44, djvused, djvm)
+          ffmpeg # the media and preview checks' clips (H.264, VP9, Opus, FLAC), pinned
           zig # the C compiler of the Windows and macOS checks
           cargo-zigbuild
           # The type database the macOS and Windows packages carry,
@@ -213,7 +214,8 @@
       in
         rustPlatform.buildRustPackage {
           pname = "skwir";
-          version = "0.1.0";
+          # The workspace's, as every package says it.
+          inherit ((builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package) version;
           src = self;
           cargoLock = {
             lockFile = ./Cargo.lock;
