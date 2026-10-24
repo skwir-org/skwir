@@ -366,17 +366,27 @@ fn share(part: u64, whole: u64) -> String {
     }
 }
 
+/// When each step of `age` begins, in seconds since 1970: a day, a week,
+/// a month and a year before `now`, as the user's calendar counts them
+/// (a day across a clock change, a month of its own length), never as
+/// fixed numbers of seconds. Far in the past where one cannot be told.
+fn age_limits(now: &jiff::Zoned) -> [i64; AGES - 1] {
+    use jiff::ToSpan;
+    [1.day(), 1.week(), 1.month(), 1.year()].map(|span| {
+        now.checked_sub(span)
+            .map_or(i64::MIN, |then| then.timestamp().as_second())
+    })
+}
+
 /// How long ago `modified` was, as `Theme::block_age` steps: within a
-/// day, a week, a month, a year, or longer (or unknown).
-fn age(modified: i64, now: i64) -> usize {
-    const DAY: i64 = 86_400;
+/// day, a week, a month, a year (`age_limits`), or longer (or unknown).
+fn age(modified: i64, limits: &[i64; AGES - 1]) -> usize {
     if modified <= 0 {
         return AGES - 1;
     }
-    let elapsed = now - modified;
-    [DAY, 7 * DAY, 31 * DAY, 365 * DAY]
+    limits
         .iter()
-        .position(|limit| elapsed < *limit)
+        .position(|limit| modified > *limit)
         .unwrap_or(AGES - 1)
 }
 
@@ -453,8 +463,9 @@ struct Build<'a> {
     levels: usize,
     scanning: bool,
     mode: Mode,
-    /// Now, in seconds since 1970, and as the user's calendar says it.
-    now: i64,
+    /// When each step of a block's age begins (`age_limits`).
+    ages: [i64; AGES - 1],
+    /// Now, as the user's calendar says it.
     zoned: &'a jiff::Zoned,
     /// The folder as the pane names it, and as the plugin does (it counts
     /// by canonical path): a block's path is read from one into the other.
@@ -490,7 +501,7 @@ impl Build<'_> {
     fn color(&self, node: &Node, hue: usize, depth: usize) -> gpui::Hsla {
         match self.mode {
             Mode::Size | Mode::Files => self.theme.block(hue, node.is_dir, depth),
-            Mode::Age => self.theme.block_age(age(node.modified, self.now), depth),
+            Mode::Age => self.theme.block_age(age(node.modified, &self.ages), depth),
             Mode::Types => {
                 let kinds = node.kinds();
                 let total: u64 = kinds.iter().map(|(_, bytes)| bytes).sum();
@@ -877,7 +888,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                 levels: shell.levels as usize,
                 scanning: status.is_some_and(|s| s.scanning),
                 mode,
-                now: zoned.timestamp().as_second(),
+                ages: age_limits(&zoned),
                 zoned: &zoned,
                 root,
                 tree: &node.path,
@@ -1307,6 +1318,12 @@ mod tests {
     /// A thousand days after 1970 began.
     const NOW: i64 = 1000 * 86_400;
 
+    fn now() -> jiff::Zoned {
+        jiff::Timestamp::from_second(NOW)
+            .unwrap()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+    }
+
     fn build_in(
         tree: &Node,
         show_hidden: bool,
@@ -1320,8 +1337,8 @@ mod tests {
             levels,
             scanning: false,
             mode,
-            now: NOW,
-            zoned: &jiff::Zoned::now(),
+            ages: age_limits(&now()),
+            zoned: &now(),
             root: Path::new("/shown"),
             tree: &tree.path,
             selected: &|_| false,
@@ -1478,12 +1495,27 @@ mod tests {
     #[test]
     fn age_and_kinds_color_the_blocks_and_their_legend_says_how() {
         const DAY: i64 = 86_400;
-        assert_eq!(age(NOW - 3600, NOW), 0);
-        assert_eq!(age(NOW - 3 * DAY, NOW), 1);
-        assert_eq!(age(NOW - 40 * DAY, NOW), 3);
-        assert_eq!(age(NOW - 400 * DAY, NOW), AGES - 1);
-        assert_eq!(age(0, NOW), AGES - 1, "unknown is drawn as old");
-        assert_eq!(age(NOW + 60, NOW), 0, "a clock ahead is new");
+        let limits = age_limits(&now());
+        assert_eq!(age(NOW - 3600, &limits), 0);
+        assert_eq!(age(NOW - 3 * DAY, &limits), 1);
+        assert_eq!(age(NOW - 40 * DAY, &limits), 3);
+        assert_eq!(age(NOW - 400 * DAY, &limits), AGES - 1);
+        assert_eq!(age(0, &limits), AGES - 1, "unknown is drawn as old");
+        assert_eq!(age(NOW + 60, &limits), 0, "a clock ahead is new");
+        // A month is the calendar's: thirty days before 15 March is
+        // older than a month (February is short), not within 31 days.
+        let march: jiff::Zoned = "2026-03-15T12:00[UTC]".parse().unwrap();
+        let limits = age_limits(&march);
+        let then = march.timestamp().as_second();
+        assert_eq!(age(then - 30 * DAY, &limits), 3);
+        assert_eq!(age(then - 27 * DAY, &limits), 2);
+        // A day across a clock change is the calendar's day: 23 hours in
+        // Paris the night summer time begins, and 23.5 hours is older.
+        let after: jiff::Zoned = "2026-03-29T12:00[Europe/Paris]".parse().unwrap();
+        let limits = age_limits(&after);
+        let then = after.timestamp().as_second();
+        assert_eq!(age(then - 23 * 3600 - 1800, &limits), 1);
+        assert_eq!(age(then - 22 * 3600, &limits), 0);
 
         let film = Node {
             kinds: [
