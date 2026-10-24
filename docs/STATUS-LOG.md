@@ -4161,3 +4161,97 @@ below), worked through in order, each committed after its checks.
   shares in SQLite URIs and its hidden marks (compiled only); macOS's
   watcher and clonefile (compiled only); a case-insensitive volume (the
   folding rule tested by its preset).
+
+### Servers configured from Skwir (2026-10-24)
+
+The goal the user set for the day (ADR-086): rclone's remotes and the
+other servers configured from Skwir, in the tools' own configurations.
+Built on main, one commit per item or step, none pushed.
+
+- **Tests kept away from the user's tools.** nextest's setup script gives
+  every test `RCLONE_CONFIG`, `SSH_AUTH_SOCK` (a socket nothing listens
+  at) and AWS's configuration and credentials of the tests' own;
+  `systemctl --user` is out of reach, the runtime folder being the
+  tests'. A test names its own configuration (`Rclone { config }`), its
+  own keyring, agent, browser and servers.
+- **Forms** (`skwir_core::form`, `crates/ui/src/form.rs`): text, numbers,
+  secrets (masked, said kept, never written back), switches, choices
+  among suggestions, a pick from a long list filtered as typed, a link;
+  advanced fields folded; a refusal kept in the form; Back; a form that
+  waits on its asker with Cancel alone. Checked on Xvfb: the Network
+  menu's Add Server…, the kinds filtered, WebDAV's options with ten
+  folded, Tab, masking, suggestions unfolded and folded by Escape, Edit
+  from Settings' list shown above Settings, rclone's own question and
+  the sign-in's waiting form. Found and fixed there: advanced options
+  holding their default were shown; Cancel had the keyboard in a form
+  with no field (Enter would have dropped a remote just added); forms
+  waited behind Settings; a form's controls were not pressed by Enter
+  and Space (gpui clicks no control whose key a binding took: every
+  dialog's buttons have it, recorded in PLAN, "Found 2026-10-24").
+- **rclone's configuration** (`rclone_config`, `rclone_forms`,
+  `configure`): a `rclone rcd` serving its remote control on a socket of
+  the runtime folder while a form needs it; the forms made from
+  `config/providers`; rclone's questions one form each; a remote listed
+  once made. Checked against `rclone serve webdav` with a password, a
+  configuration of the test's own: added through the pick and its form
+  (a name refused, the password kept obscured, defaults not written),
+  listed in the Network section and Settings, edited (its secret kept,
+  one option changed), a wrong password listed, gone back over and
+  fixed, tested, an agent's secret refused, its prefilled form shown,
+  removed. Encrypting the configuration offered after an add, the
+  password typed twice and kept in a test keyring, the configuration
+  then encrypted, listed and opened from the keyring, asked of the
+  window once forgotten. Google Drive's sign-in, with a browser of the
+  test's own (it notes the page, opens nothing): rclone's question asked,
+  its page waited for in a form, Cancel stopping it and dropping the
+  remote half made; Sign In Again on a remote holding a token reaching
+  the same page, the token left as it was. Remotes on remotes: a crypt
+  over a folder of an alias picked among the remotes, a file written
+  through it stored encrypted and read back; a union of two switched on.
+  A session a Skwir gone left serving stopped by the next (seen in the
+  window: its socket's process gone once Add Server was opened).
+- **What a storage can do** (`rclone_features`): asked once a mount
+  through its remote control. A memory remote (no `About`) showed no
+  size while rclone's mount says a petabyte, an alias of a folder its
+  own; a move within a WebDAV mount one `MOVE` on the server, no upload;
+  Copy Public Link and a cloud's trash read from a stand-in of rclone's
+  remote control (no storage here makes public links or keeps a trash);
+  the deletion's question and toast for a cloud's trash.
+- **`s3://`**: against `rclone serve s3` with AWS files of the test's own
+  (an endpoint in its config): a bucket's folder listed and read, a
+  profile's too, the rclone configuration given left empty.
+- **One Add Server**: a WebDAV server added by its address from the same
+  list, kept as a bookmark with its name in the test's bookmarks file,
+  then opened; KDE's network folders read from entries of a test folder.
+- **Mount options**: a bandwidth rclone refuses asked again; read only,
+  a full cache and 10M kept, then a write refused (EROFS) and the
+  mounting rclone's line holding them after Skwir's own.
+- **Windows and macOS** (`rc`, `winfsp`): rclone's Windows release
+  (1.75.2, its SHA-256 pinned, `tools/test/rclone-windows.sh`) tried
+  under Wine: no Unix socket there (`WSAEAFNOSUPPORT`), its remote
+  control on the loopback with a login in its environment works, a
+  wrong login refused (401); a configuration session's test passed under
+  Wine with it (its port said, never its password). A wrong login's 401
+  answered before a reset is now read (it failed 2 runs in 3 on Linux).
+  WinFsp's mount in a folder, its login kept beside it, the core told
+  the folder of mounts (`fs::reach::mounts_in`): compiled and unit-tested,
+  never mounted (a driver Wine lacks). macOS's `nfsmount`: compiled.
+  The plugin and the core linted for Windows and macOS.
+- **Key login** (`keys`, `keys_form`, written by an agent, wired in the
+  plugin): against an OpenSSH server run as the user (its home the
+  test's, by a `ForceCommand`) and rclone's SFTP server (a password, no
+  shell), with an agent and keys of the test's own: keys listed in ssh's
+  order, a new key encrypted by its passphrase given through the
+  askpass, keys put up once over one login, the host's and the password's
+  questions reaching the window, the form choosing the agent's key from
+  the server's menu.
+- **Connect at login** (`login`, ADR-087, written by an agent, wired in
+  the plugin): units read by `systemd-analyze verify` in test folders
+  (connecting to nothing); an rclone remote and an SFTP server mounted
+  as their units' commands run them, known as Skwir's own, stopped and
+  cleaned after a kill; installing through a stand-in `systemctl` with a
+  runtime folder of its own, taken back where it fails; turned on and off
+  from a remote's menu. A private systemd user manager was tried once from
+  a terminal: it moved that terminal's processes into its `init.scope`
+  (nothing killed, the user's manager not asked); none is run since.
+  Never a real systemd, launchd or Task Scheduler running an entry.

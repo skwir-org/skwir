@@ -166,6 +166,18 @@ on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
 
+**Found 2026-10-24** (building the servers' forms, ADR-086):
+- A dialog's buttons are not pressed by the keyboard: Tab to a prompt's
+  Cancel or Create, then Enter, does nothing (seen on Xvfb in New
+  Folder). gpui turns Enter or Space on a focused control into a click
+  only where no binding took the key, and every dialog's buttons bind
+  them (`ui.toolbar_activate`, `modal::pressable`) so that a dialog's
+  own Enter (a confirmation's `ui.accept`) cannot fire behind a focused
+  Cancel. A form answers the action itself by what has the keyboard
+  (`modal::keyed`, `Shell::form_activate`): each dialog (prompts,
+  confirmations, reviews, Rename several, the tag editor) does the same,
+  or gpui records the press of a control whose key a binding took.
+
 **From the review of 2026-10-23** (fixed 2026-10-24, "Review fixes"
 above; each with the design its fixer proposed):
 - A cut file dims another folder's name of it: `Pending` keeps each
@@ -1453,14 +1465,55 @@ protocol is a scheme a connector maps, or a connector.
   tried (locked, KeePassXC, Wine's Credential Manager), a connection no
   longer held by a keyring's prompt; copies within one rclone mount Skwir
   made, by rclone on the server through its remote control.
+- **Servers configured from Skwir** (2026-10-24, ADR-086, the goal the
+  user set for the night): rclone's remotes added, edited, tested,
+  signed in again and removed through rclone's remote control on a
+  private socket, in forms the plugin describes and the window draws
+  (`App::fill`, `skwir_core::form`), from what rclone describes of its
+  kinds; secrets typed in the window alone, never an argument; a
+  browser's sign-in rclone's own, waited for in a form with its page;
+  remotes on remotes (crypt, alias, union, combine) with a remote
+  picker; encrypting rclone's configuration offered, its password in
+  the keyring; what rclone says a storage can do (no made-up size, Copy
+  Public Link, a cloud's trash named in a deletion's question and toast);
+  `s3://` addresses through the user's AWS configuration, nothing kept;
+  one Add Server for every kind (an address kept as a bookmark, its
+  password asked by its first connection), KDE's network folders read;
+  mount options per server; key login set up from Skwir (the agent's
+  keys, the default one, a new one); Connect at Login by the system's
+  service manager (ADR-087: a systemd user unit, a launch agent, a logon
+  task, running Skwir's own mount command); rclone on Windows through
+  WinFsp in a folder
+  and on macOS through `nfsmount` (compiled only); rclone's Windows
+  release tried under Wine (its remote control on the loopback behind a
+  login). Settings lists rclone's remotes (records their owner keeps,
+  `RecordSource`); the Network section's menu holds Add Server…. How
+  each was checked is in `docs/STATUS-LOG.md`, "Servers configured from
+  Skwir".
 - **G. Left** (each its own step):
   - an iPhone's (AFC) ways chosen by requests counted against a
     stand-in, an iPhone's own pace not timed (no iPhone at hand);
   - on the machines (Phase 5b): Windows' and macOS's own shares (the
     `system` connector, compiled only), sshfs and rclone over macFUSE or
-    FUSE-T; rclone on Windows (WinFsp, run in the foreground, mounted
-    under a UNC name `fs::reach` knows), not built; NFS through Windows'
-    own client, not built;
+    FUSE-T; rclone through WinFsp on Windows and `nfsmount` on macOS,
+    built 2026-10-24 and compiled only (WinFsp is a driver Wine lacks);
+    NFS through Windows' own client, not built;
+  - a browser's sign-in (Google Drive's, Dropbox's…) checked up to the
+    page rclone serves, never signed in to a real provider; a cloud's
+    trash named by what rclone and its options say, never seen filling;
+  - on Windows, ssh's questions and an encrypted rclone configuration's
+    password reach no window (the askpass is a Unix socket): the
+    keyring's password alone opens one there;
+  - a remote half made when Skwir ends mid-question (its sign-in, a
+    crypt's) stays in rclone's configuration until removed;
+  - remotes whose names an address cannot hold (a space, `@`, other
+    alphabets) stay rclone's but open by no address;
+  - Connect at Login never run by a real systemd, launchd or Task
+    Scheduler here (systemd-analyze, the unit's command run as it would
+    be, a stand-in systemctl; Wine's Task Scheduler does not start); on
+    Windows rclone's remotes do not connect at login yet; key login never
+    tried against an OpenSSH server checking a password (rclone's SFTP
+    server stood in);
   - a GVfs mount made by another program is used, but its questions are
     the desktop's (Skwir's own connections offer Remember, ADR-082);
   - ADR-077's point 8, if asked: a helper of Skwir's serving SFTP
