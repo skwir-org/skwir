@@ -165,6 +165,13 @@ fn a_held_key_repeats_only_what_its_command_declares() {
 #[test]
 fn an_argument_a_command_does_not_take_is_refused_never_dropped() {
     use serde_json::json;
+    #[derive(serde::Deserialize, schemars::JsonSchema)]
+    #[serde(tag = "action", rename_all = "snake_case")]
+    #[allow(dead_code)] // Read by serde only.
+    enum Step {
+        Go { to: String },
+        Stop { now: bool },
+    }
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
     let refused = |name: &str, args: serde_json::Value| {
@@ -211,13 +218,6 @@ fn an_argument_a_command_does_not_take_is_refused_never_dropped() {
         .is_ok()
     );
     // Enum arguments: the names of every variant are taken.
-    #[derive(serde::Deserialize, schemars::JsonSchema)]
-    #[serde(tag = "action", rename_all = "snake_case")]
-    #[allow(dead_code)] // Read by serde only.
-    enum Step {
-        Go { to: String },
-        Stop { now: bool },
-    }
     app.commands
         .register_raw::<Step, _>("probe", "probe.step", "Step", "", |_, _| Ok(Outcome::Done));
     assert!(
