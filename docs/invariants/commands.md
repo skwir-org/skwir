@@ -124,6 +124,12 @@ control plugin's `run`:
   and a command that answers what it counted or gathered of a pane's
   entries (how many, their tags, dates, places) leaves out
   `App::withheld(pane)`, asked before taking the workspace's lock.
+- A window command that shows does nothing beyond the window for an
+  agent, whatever its arguments: what one would (`ui.inspect`'s copy, a
+  link to an address, a label typed) is refused where the call reaches
+  the window (`commands::reaches_out`), naming the command that does it
+  and asks (`ui.preview_copy`, `ui.open_url`). The window runs what it is
+  handed as the user's.
 - A script (`skwir cmd`) is the user's own.
 - **The endpoint determines trust (ADR-085).** The agent endpoint always
   proposes and enforces the permission layer, regardless of MCP metadata.

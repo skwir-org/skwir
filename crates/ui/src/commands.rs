@@ -586,6 +586,31 @@ const ACTS: &[&str] = &[
     "ui.quit",
 ];
 
+/// What a command that shows (`SHOWS`) would do beyond the window by its
+/// arguments, said with the command that does it and asks the user first:
+/// `ui.inspect`'s copy (the clipboard), a link to an address, and a label
+/// typed, which follows whichever link it labels. An agent's call of it is
+/// refused, so that showing never opens an address or writes the
+/// clipboard unasked. An address is told as the window tells it
+/// (`links::is_address`), so the two cannot disagree.
+fn reaches_out(name: &str, args: &serde_json::Value) -> Option<&'static str> {
+    if name != "ui.inspect" {
+        return None;
+    }
+    match args["action"].as_str()? {
+        "copy" => Some("copies through ui.preview_copy, which asks the user first"),
+        "link"
+            if args["target"]
+                .as_str()
+                .is_some_and(crate::links::is_address) =>
+        {
+            Some("opens an address through ui.open_url, which asks the user first")
+        }
+        "label_key" => Some("follows a link by its target (`link`), not by a label typed"),
+        _ => None,
+    }
+}
+
 /// What a window command does for an agent: every one in neither list
 /// answers a dialog or presses for the user's hand (a review's Apply, a
 /// menu's item, the focused button, a key in the sidebar or the
@@ -1100,6 +1125,13 @@ fn declare<A: DeserializeOwned + JsonSchema + 'static>(
     let declared =
         app.commands
             .register_raw::<A, _>(OWNER, name, title, description, move |args, app| {
+                // An agent's call runs here (`permissions::as_agent`), before
+                // the window, which runs what it is handed as the user's.
+                if skwir_core::permissions::agent_call().is_some()
+                    && let Some(instead) = reaches_out(name, &args)
+                {
+                    anyhow::bail!("for an agent, {name} {instead}");
+                }
                 app.request_front(Invocation {
                     name: name.into(),
                     args,
@@ -1934,6 +1966,57 @@ mod tests {
         }
         assert_eq!(effect("ui.cursor"), Effect::Shows);
         assert_eq!(effect("ui.open_url"), Effect::Acts);
+    }
+
+    /// What a command that shows would do beyond the window by its
+    /// arguments is refused to an agent, which is pointed at the command
+    /// that asks; the rest of it waits for the window, and the user's own
+    /// call does it all.
+    #[test]
+    fn an_agent_never_opens_an_address_or_copies_through_a_command_that_shows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        super::declare_all(&app);
+        let inspect = |args: serde_json::Value| Invocation::with_args("ui.inspect", &args);
+        let as_agent = |inv: &Invocation| {
+            skwir_core::permissions::as_agent(app.privacy(), || app.dispatch(inv))
+        };
+        for (args, instead) in [
+            (
+                serde_json::json!({"action": "link", "target": "https://example.org/it%27s%20here"}),
+                "ui.open_url",
+            ),
+            (
+                serde_json::json!({"action": "link", "target": "mailto:someone@example.org"}),
+                "ui.open_url",
+            ),
+            (serde_json::json!({"action": "copy"}), "ui.preview_copy"),
+            (
+                serde_json::json!({"action": "label_key", "key": "a"}),
+                "target",
+            ),
+        ] {
+            let error = as_agent(&inspect(args.clone())).expect_err(&args.to_string());
+            assert!(error.to_string().contains(instead), "{args}: {error}");
+        }
+        assert!(
+            app.take_front_requests().is_empty(),
+            "nothing reached the window"
+        );
+        // Within the document, or a file beside it: shown.
+        for target in ["#chapter’s end", "notes/it's here.html"] {
+            let args = serde_json::json!({"action": "link", "target": target});
+            as_agent(&inspect(args)).unwrap();
+        }
+        as_agent(&inspect(
+            serde_json::json!({"action": "scroll", "to": "down"}),
+        ))
+        .unwrap();
+        assert_eq!(app.take_front_requests().len(), 3);
+        // The user's own call (a key, a script) is the user's.
+        let address = serde_json::json!({"action": "link", "target": "https://example.org/"});
+        app.dispatch(&inspect(address)).unwrap();
+        assert_eq!(app.take_front_requests().len(), 1);
     }
 
     /// What the shell's keys run and the palette offers is declared, with
