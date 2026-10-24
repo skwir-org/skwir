@@ -287,11 +287,11 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
     assert_eq!(field("pass").kind, Kind::Secret { kept: false });
     assert!(field("url").required);
     assert!(field("pacer_min_sleep").advanced);
-    // A name rclone's address cannot hold is refused, the form kept.
+    // A name rclone takes no remote by is refused, the form kept.
     window.accept(
         &options,
         &[
-            ("remote.name", "my nas"),
+            ("remote.name", "my nas's"),
             ("url", &url),
             ("user", "me"),
             ("pass", secret),
@@ -304,7 +304,7 @@ fn an_rclone_remote_is_added_edited_tested_and_removed_through_its_forms() {
             .error
             .as_deref()
             .unwrap()
-            .contains("letters a–z")
+            .contains("letters, digits, spaces and _ - . + @ only")
     );
     assert_eq!(
         refused

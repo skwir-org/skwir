@@ -4602,3 +4602,11 @@ overnight: the review's remote items, then what the servers' work left.
   leftover rather than removing by a pattern. Checked: shellcheck clean;
   the test builds, and run without the script it skips at once. Not run
   against the user's manager: that is the user's.
+- **Found by `release-check`:** the forms test still expected Skwir to
+  refuse a remote named `my nas`, which rclone takes and Skwir now does
+  (my slip: after the change only the new test of that binary was run);
+  it types a name rclone refuses now (an apostrophe). The new test of a
+  half-made remote and the sign-in test both start rclone's browser
+  sign-in, whose page listens on one port (127.0.0.1:53682): run at once,
+  one could not bind it. They take turns now (a nextest test group,
+  `rclone-sign-in`, one at a time).

@@ -9,3 +9,12 @@ command = "sh tools/test/isolate-xdg.sh"
 [[profile.default.scripts]]
 filter = "all()"
 setup = "isolate-xdg"
+
+# rclone's browser sign-in listens on one port of its own (127.0.0.1:53682,
+# OAuth's redirect): the tests that start one take turns.
+[test-groups.rclone-sign-in]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'binary(remote_configs) & (test(=a_browser_s_sign_in_waits_with_its_page_and_is_cancelled) | test(=a_remote_left_half_made_is_said_so_and_removed))'
+test-group = 'rclone-sign-in'
