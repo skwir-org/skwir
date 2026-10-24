@@ -243,8 +243,10 @@ fn wait(
 fn pending_opens_report_errors_asynchronously_and_can_be_replaced() {
     use skwir_core::{App, app::AppConfig, cancel::CancelToken, command::Invocation};
     let tmp = tempfile::tempdir().unwrap();
+    // Held, its one worker is never stood in for: the open must wait.
     let config = AppConfig {
         workers: 1,
+        stand_ins: false,
         ..AppConfig::ephemeral(tmp.path())
     };
     let app = App::new(config).unwrap();

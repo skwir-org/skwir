@@ -143,6 +143,10 @@ pub struct AppConfig {
     pub data_path: Option<PathBuf>,
     /// Scheduler threads; 0 picks a default.
     pub workers: usize,
+    /// Whether a worker a job holds past `scheduler::STUCK` is stood in
+    /// for: always, but in a test that holds its workers to prove work
+    /// waits (`Scheduler::without_stand_ins`).
+    pub stand_ins: bool,
     /// Entries per `Added` event.
     pub batch_size: usize,
 }
@@ -155,6 +159,7 @@ impl Default for AppConfig {
             state_path: Settings::default_state_path(),
             data_path: Settings::default_data_path(),
             workers: 0,
+            stand_ins: true,
             batch_size: 1024,
         }
     }
@@ -169,6 +174,7 @@ impl AppConfig {
             state_path: None,
             data_path: None,
             workers: 0,
+            stand_ins: true,
             batch_size: 1024,
         }
     }
@@ -251,7 +257,11 @@ pub struct App {
 
 impl App {
     pub fn new(config: AppConfig) -> anyhow::Result<Arc<Self>> {
-        let scheduler = Scheduler::new(config.workers);
+        let scheduler = if config.stand_ins {
+            Scheduler::new(config.workers)
+        } else {
+            Scheduler::without_stand_ins(config.workers)
+        };
         let lifetime = CancelToken::new();
         let settings = match config.settings_path {
             Some(path) => {

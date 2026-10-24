@@ -860,6 +860,7 @@ mod tests {
     fn one_held_worker(root: &Path) -> (Arc<App>, std::sync::mpsc::Sender<()>) {
         let app = App::new(AppConfig {
             workers: 1,
+            stand_ins: false,
             ..AppConfig::ephemeral(root)
         })
         .unwrap();

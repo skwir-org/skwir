@@ -119,6 +119,9 @@ struct Queue {
     /// A look in `STUCK` at whether a worker is held is planned: work
     /// waits, no worker is free, none held long enough yet.
     looking: bool,
+    /// No worker is ever started in place of a held one
+    /// (`Scheduler::without_stand_ins`).
+    no_stand_ins: bool,
 }
 
 /// A lane's jobs running, and those waiting their turn.
@@ -207,6 +210,7 @@ impl Queue {
     /// stood in for yet.
     fn wants_a_look(&mut self, workers: usize) -> bool {
         if self.looking
+            || self.no_stand_ins
             || self.shutdown
             || self.waiting > 0
             || self.heap.is_empty()
@@ -219,7 +223,12 @@ impl Queue {
     }
 
     fn wants_another(&mut self, workers: usize) -> bool {
-        if self.shutdown || self.waiting > 0 || self.heap.is_empty() || self.extra >= workers {
+        if self.no_stand_ins
+            || self.shutdown
+            || self.waiting > 0
+            || self.heap.is_empty()
+            || self.extra >= workers
+        {
             return false;
         }
         let held = self
@@ -312,6 +321,18 @@ impl Scheduler {
     /// clamped to 2..=8": the work is I/O-bound stat and decode, and more
     /// threads mostly cost memory.
     pub fn new(workers: usize) -> Self {
+        Self::start(workers, false)
+    }
+
+    /// A pool whose held workers are never stood in for (`STUCK`): for a
+    /// test that holds its workers to prove work waits for one. With
+    /// stand-ins, a test thread stalled past `STUCK` (a loaded machine)
+    /// would see a stand-in run what it waits to see wait.
+    pub fn without_stand_ins(workers: usize) -> Self {
+        Self::start(workers, true)
+    }
+
+    fn start(workers: usize, no_stand_ins: bool) -> Self {
         let workers = if workers == 0 {
             std::thread::available_parallelism()
                 .map_or(2, |n| n.get().saturating_sub(1).clamp(2, 8))
@@ -321,6 +342,7 @@ impl Scheduler {
         let inner = Arc::new(Inner {
             queue: Mutex::new(Queue {
                 lane_runs: LANE_RUNS.min(workers.saturating_sub(1)).max(1),
+                no_stand_ins,
                 ..Queue::default()
             }),
             cv: Condvar::new(),
@@ -1095,6 +1117,29 @@ mod tests {
             assert!(Instant::now() < deadline, "the stand-in never ended");
             std::thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    /// Without stand-ins, a held pool runs nothing else until let go of,
+    /// however long it is held: what a test that holds it waits to see.
+    #[test]
+    fn a_pool_without_stand_ins_waits_for_its_held_worker() {
+        let scheduler = Scheduler::without_stand_ins(1);
+        let (release, held) = crossbeam_channel::bounded::<()>(0);
+        scheduler.spawn(Priority::Normal, "held", CancelToken::new(), move || {
+            let _ = held.recv();
+        });
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        scheduler.spawn(Priority::Normal, "next", CancelToken::new(), move || {
+            tx.send(()).unwrap();
+        });
+        assert!(
+            rx.recv_timeout(STUCK + Duration::from_millis(500)).is_err(),
+            "stood in for"
+        );
+        assert_eq!(scheduler.inner.queue.lock().extra, 0);
+        drop(release);
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("run once let go of");
     }
 
     #[test]
