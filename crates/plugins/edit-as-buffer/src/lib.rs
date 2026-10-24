@@ -592,7 +592,9 @@ fn start_session(
             // The reaper thread only hands the result to a worker.
             let Some(app) = weak.upgrade() else { return };
             let weak = app.weak();
-            app.scheduler.spawn(
+            // The diff stats names in the folder: in its lane.
+            app.scheduler.spawn_in(
+                skwir_core::fs::reach::lane(&dir),
                 Priority::Normal,
                 "edit-as-buffer.diff",
                 lifetime.clone(),

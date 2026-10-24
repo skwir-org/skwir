@@ -144,8 +144,11 @@ impl Shell {
         });
         if let Some(source) = source.filter(|_| !loaded) {
             let app = std::sync::Arc::clone(&self.app);
+            // What the source reads is the entries it names (Open With
+            // types them by their heads): in their lane.
+            let lane = crate::shell::lane_of(source_entries(&source.args));
             self.off_thread(
-                skwir_core::scheduler::Lane::SHARED,
+                lane,
                 "choose-source",
                 move || app.dispatch(&source),
                 move |this, result, window, cx| {
@@ -425,6 +428,18 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         .child(list)
         .children(option);
     Some(modal::modal(panel, 80., 4, Shell::close_choose, &theme, cx))
+}
+
+/// The paths a command's `entries` name, as a command takes them: a path,
+/// or an entry with its `path`.
+fn source_entries(args: &serde_json::Value) -> Vec<std::path::PathBuf> {
+    args.get("entries")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.as_str().or_else(|| entry.get("path")?.as_str()))
+        .map(std::path::PathBuf::from)
+        .collect()
 }
 
 #[cfg(test)]
