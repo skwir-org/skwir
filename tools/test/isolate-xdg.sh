@@ -18,6 +18,12 @@ bus="${DBUS_SESSION_BUS_ADDRESS:-}"
 if [ -n "${XDG_RUNTIME_DIR:-}" ] && [ "$bus" = "unix:path=$XDG_RUNTIME_DIR/bus" ]; then
     bus="unix:path=$root/runtime/no-session-bus"
 fi
+# Nor the user's tools' own configurations (ADR-086): rclone's remotes, the
+# ssh agent and its keys, AWS's credentials. A test wanting one makes its
+# own (a configuration file, an agent of its own) and names it. The user
+# manager of systemd is out of reach already: `systemctl --user` looks for
+# it in the runtime folder, the tests' own.
+mkdir -p "$root/config/rclone" "$root/config/aws"
 {
     [ -z "$bus" ] || echo "DBUS_SESSION_BUS_ADDRESS=$bus"
     echo "XDG_DATA_HOME=$root/data"
@@ -25,4 +31,8 @@ fi
     echo "XDG_CACHE_HOME=$root/cache"
     echo "XDG_STATE_HOME=$root/state"
     echo "XDG_RUNTIME_DIR=$root/runtime"
+    echo "RCLONE_CONFIG=$root/config/rclone/rclone.conf"
+    echo "SSH_AUTH_SOCK=$root/runtime/no-ssh-agent"
+    echo "AWS_CONFIG_FILE=$root/config/aws/config"
+    echo "AWS_SHARED_CREDENTIALS_FILE=$root/config/aws/credentials"
 } >> "$NEXTEST_ENV"
