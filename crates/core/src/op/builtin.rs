@@ -796,6 +796,9 @@ fn move_entry(
 /// holding what went. Its words are the error's, told as any.
 #[derive(Debug)]
 pub(super) struct OriginalStays {
+    // Read by a failed move into the trash on another volume, which only
+    // Linux's trash makes (`failed_across`).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub(super) whole: bool,
     said: String,
 }
@@ -809,6 +812,7 @@ impl std::fmt::Display for OriginalStays {
 impl OriginalStays {
     /// Whether `error` says the original stayed only in part (anyhow
     /// finds a context among an error's contexts).
+    #[cfg(target_os = "linux")]
     fn in_part(error: &anyhow::Error) -> bool {
         error.downcast_ref::<Self>().is_some_and(|s| !s.whole)
     }
