@@ -73,7 +73,7 @@ pub fn open_regular_unfollowed(path: &Path) -> io::Result<File> {
 /// then opened without waiting (`O_NONBLOCK`) and looked at again.
 #[cfg(unix)]
 fn open_looked_at(path: &Path, unfollowed: bool) -> io::Result<File> {
-    use rustix::fs::{Mode, OFlags};
+    use rustix::fs::OFlags;
     use std::os::unix::fs::OpenOptionsExt;
     let not_followed = if unfollowed {
         OFlags::NOFOLLOW
@@ -82,6 +82,7 @@ fn open_looked_at(path: &Path, unfollowed: bool) -> io::Result<File> {
     };
     #[cfg(target_os = "linux")]
     {
+        use rustix::fs::Mode;
         use std::os::fd::AsRawFd;
         let at = rustix::fs::open(
             path,
