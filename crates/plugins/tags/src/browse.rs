@@ -614,6 +614,9 @@ pub struct TagMenuArgs {
     pub tags: Vec<String>,
     #[serde(default)]
     pub location: Option<skwir_core::os_path::PathArg>,
+    /// The pane the menu opens in, which a menu gives every source.
+    #[serde(default, rename = "pane")]
+    pub _pane: Option<PaneId>,
 }
 
 /// `tags.tag_menu`: a tag's menu where it is shown outside a tag location:

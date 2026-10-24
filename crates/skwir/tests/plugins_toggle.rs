@@ -189,3 +189,42 @@ fn all_plugins_coexist_and_every_command_has_a_schema() {
     assert_eq!(ids.len(), all_plugins().len(), "duplicate plugin ids");
     assert_eq!(app.plugins.list().len(), ids.len());
 }
+
+/// Every menu source takes what its menu asks it with (`MenuSource`): the
+/// pane, which every menu gives, and a place's `location` or a tag's
+/// `tags`. One refusing them leaves its items out, saying nothing: the
+/// tag pill in the sidebar lost its tag's menu so.
+#[test]
+fn every_menu_source_takes_what_its_menu_gives() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+    for p in all_plugins() {
+        app.plugins.add(p, &app);
+    }
+    let pane = app.workspace.read().active_id();
+    let sources = app.registry.menu_sources.all();
+    assert!(sources.iter().any(|s| s.menu == "place"));
+    for source in sources {
+        let command = match source.menu.as_str() {
+            "place" => source
+                .command
+                .clone()
+                .with("location", "sftp://nas.example/srv"),
+            "tag" => source
+                .command
+                .clone()
+                .with("tags", serde_json::json!(["work"])),
+            _ => source.command.clone(),
+        }
+        .with("pane", pane);
+        if let Err(error) = app.dispatch(&command) {
+            let said = format!("{error:#}");
+            assert!(
+                !said.contains("invalid arguments"),
+                "{} in the {} menu: {said}",
+                command.name,
+                source.menu
+            );
+        }
+    }
+}

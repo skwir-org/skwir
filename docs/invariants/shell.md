@@ -263,7 +263,10 @@ of bars, split or not.
   offer an item to every file and let the command refuse.
 - Words that depend on the environment ("Open With Image Viewer") come
   from a `MenuSource`, answered from memory as the menu opens; the plain
-  items stay registered for the palette.
+  items stay registered for the palette. Its command takes what its menu
+  gives (`pane`, always; a place's `location`, a tag's `tags`): one that
+  refuses an argument answers nothing, unsaid
+  (`crates/skwir/tests/plugins_toggle.rs` gives every source its menu's).
 - Rare items set `submenu` (expanded in place). Give items an `icon`.
 
 ## Drag and drop
