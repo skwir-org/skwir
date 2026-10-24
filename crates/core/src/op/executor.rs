@@ -310,6 +310,9 @@ struct Continues {
     seq: u64,
     partial: Option<super::staging::Partial>,
     waits: Waits,
+    /// It goes on by itself, its server answering again (ADR-080, 9):
+    /// the action asked already, going on, not one asked now.
+    by_itself: bool,
 }
 
 /// A plan a step's error stopped, what Retry runs of it.
@@ -1056,15 +1059,20 @@ impl Executor {
     /// The work that retries `plan`, taken out of the stopped plans: asked
     /// for, its server's count of going on by itself starts again.
     fn retrying(&self, plan: PlanId) -> Option<Work> {
-        self.taken_to_retry(plan, |waits| Waits {
+        self.taken_to_retry(plan, false, |waits| Waits {
             server: waits.server,
             ..Waits::default()
         })
     }
 
     /// The work that retries `plan`, taken out of the stopped plans, what it
-    /// waits for made `waits`.
-    fn taken_to_retry(&self, plan: PlanId, waits: impl FnOnce(Waits) -> Waits) -> Option<Work> {
+    /// waits for made `waits`; going on `by_itself`, or asked.
+    fn taken_to_retry(
+        &self,
+        plan: PlanId,
+        by_itself: bool,
+        waits: impl FnOnce(Waits) -> Waits,
+    ) -> Option<Work> {
         let mut stopped = self.stopped.lock();
         let at = stopped.iter().position(|s| s.plan == plan)?;
         let Stopped {
@@ -1081,6 +1089,7 @@ impl Executor {
                 seq,
                 partial,
                 waits: waits(was),
+                by_itself,
             })),
         })
     }
@@ -1185,7 +1194,7 @@ impl Executor {
             self.emit(ExecEvent::WaitsForServer { plan });
         }
         for (plan, next, title) in going {
-            let Some(work) = self.taken_to_retry(plan, |waits| Waits {
+            let Some(work) = self.taken_to_retry(plan, true, |waits| Waits {
                 down: false,
                 tries: waits.tries + 1,
                 ..waits
@@ -1445,9 +1454,12 @@ impl Executor {
         }
         lane.next += 1;
         let seq = lane.next;
-        if matches!(work, Work::Execute { .. }) {
+        if let Work::Execute { continues, .. } = &work
+            && !continues.as_ref().is_some_and(|c| c.by_itself)
+        {
             // A plan asked after an undo drops that undo's redo, even one
-            // that ends after it (ADR-079, 10).
+            // that ends after it (ADR-079, 10); one going on by itself was
+            // asked before, and drops nothing (ADR-080, 9).
             let mut journal = self.journal.lock();
             journal.redo_floor = seq;
             journal.redo.clear();
@@ -1470,10 +1482,17 @@ impl Executor {
     /// under the lock; the others start what may start meanwhile.
     fn dispatch(&self) {
         while let Some((seq, steps)) = self.next_to_measure() {
-            let volumes = super::footprint::Volumes::now();
-            let footprint = Footprint::of_steps(steps.iter().map(|s| s.footprint(&volumes)))
-                .canonical()
-                .with_channels(&volumes);
+            // A step that panics saying what it touches cannot say: its
+            // plan runs alone, and the next is measured.
+            let footprint = super::guarded(|| {
+                let volumes = super::footprint::Volumes::now();
+                Ok(
+                    Footprint::of_steps(steps.iter().map(|s| s.footprint(&volumes)))
+                        .canonical()
+                        .with_channels(&volumes),
+                )
+            })
+            .unwrap_or_else(|_| Footprint::every());
             let mut lane = self.lane.lock();
             lane.measuring = false;
             if let Some(job) = lane.queue.iter_mut().find(|j| j.seq == seq) {
@@ -1790,14 +1809,23 @@ impl Executor {
             )
         };
         // Names taken are settled first: what the dry run checks is what
-        // will be done.
-        let settled = if whole
-            && super::clash::takes_names(&plan.steps, &StepContext::with_cancel(cancel.clone()))
-        {
-            self.settle(&plan, &companions, cancel)
-        } else {
-            Settling::Steps(None)
-        };
+        // will be done. A step that panics as it is asked what it makes
+        // refuses its plan, as a conflict does: before anything applies.
+        let settled = super::guarded(|| {
+            Ok(
+                if whole
+                    && super::clash::takes_names(
+                        &plan.steps,
+                        &StepContext::with_cancel(cancel.clone()),
+                    )
+                {
+                    self.settle(&plan, &companions, cancel)
+                } else {
+                    Settling::Steps(None)
+                },
+            )
+        })
+        .unwrap_or_else(|e| Settling::Refused(super::said(&e)));
         // A retry that applies nothing (its server not answering yet, the
         // question of a name taken cancelled) stays to be retried, under
         // the id it is told by now, with what it would go on from.
@@ -1828,8 +1856,11 @@ impl Executor {
                 // and the user not going on, applies nothing.
                 let refused = whole
                     .then(|| {
-                        first_conflict(&plan, &companions, cancel)
-                            .or_else(|| self.short_of_room(&plan, cancel))
+                        super::guarded(|| {
+                            Ok(first_conflict(&plan, &companions, cancel)
+                                .or_else(|| self.short_of_room(&plan, cancel)))
+                        })
+                        .unwrap_or_else(|e| Some(super::said(&e)))
                     })
                     .flatten();
                 if let Some(reason) = refused {
@@ -2316,7 +2347,9 @@ impl Executor {
             (Some(at), Some(_), false) => Some(Stop {
                 at,
                 partial: ctx.take_partial(),
-                server: server_of(plan.steps[at].as_ref()),
+                server: super::guarded(|| Ok(server_of(plan.steps[at].as_ref())))
+                    .ok()
+                    .flatten(),
             }),
             _ => None,
         };
@@ -2876,6 +2909,82 @@ mod tests {
         assert!(logged(&log, "undid /disk/notes/later"));
     }
 
+    /// A step that panics when asked what it touches, or what it makes.
+    #[derive(Debug, Clone)]
+    struct Unsaid {
+        makes: bool,
+    }
+
+    impl Operation for Unsaid {
+        fn kind(&self) -> &'static str {
+            "unsaid"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn describe(&self) -> Change {
+            Change::Create {
+                path: "/example/unsaid".into(),
+                directory: false,
+                words: None,
+            }
+        }
+        fn check(&self, _: &StepContext) -> StepStatus {
+            StepStatus::Pending { reversible: false }
+        }
+        fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            Ok(None)
+        }
+        fn clone_box(&self) -> Box<dyn Operation> {
+            Box::new(self.clone())
+        }
+        fn footprint(&self, _: &super::super::footprint::Volumes) -> Option<Footprint> {
+            assert!(self.makes, "what it touches is beyond it");
+            Some(Footprint::default().made(Path::new("/example/unsaid")))
+        }
+        fn makes(&self, _: &StepContext) -> Option<super::super::Made> {
+            assert!(!self.makes, "what it makes is beyond it");
+            None
+        }
+    }
+
+    /// A step that panics saying what it touches runs alone, and the plans
+    /// after it still start; one that panics saying what it makes refuses
+    /// its plan before anything applies, which says so.
+    #[test]
+    fn a_step_that_panics_before_it_runs_never_stops_the_executor() {
+        let executor = Executor::new(Scheduler::new(1));
+        let unsaid = |makes| {
+            Plan::with_steps(
+                "unsaid",
+                vec![Box::new(Unsaid { makes }) as Box<dyn Operation>],
+            )
+        };
+        let r = executor.execute_blocking(&unsaid(false), &CancelToken::new());
+        assert_eq!((r.applied, r.error), (1, None), "alone");
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let after = Gate::new("/elsewhere/it’s after", false, true, &log);
+        assert_eq!(
+            executor
+                .execute_blocking(&after.plan(), &CancelToken::new())
+                .applied,
+            1
+        );
+        let r = executor
+            .submit_blocking(
+                Work::Execute {
+                    plan: Arc::new(unsaid(true)),
+                    whole: true,
+                    continues: None,
+                },
+                &CancelToken::new(),
+            )
+            .expect("a result");
+        assert_eq!(r.applied, 0);
+        let error = r.error.unwrap_or_default();
+        assert!(error.contains("failed unexpectedly"), "{error}");
+    }
+
     /// A step that cannot say what it touches runs alone (ADR-079).
     #[test]
     fn a_plan_that_cannot_say_what_it_touches_runs_alone() {
@@ -3115,6 +3224,19 @@ mod tests {
             |e| matches!(e, ExecEvent::WaitsForServer { plan: p } if *p == plan.id),
         );
         assert!(executor.waits_for_server(plan.id));
+        // Meanwhile an action elsewhere, undone: its Redo stays once the
+        // plan goes on by itself, which was asked before it.
+        let elsewhere = tmp.path().join("elsewhere");
+        executor.execute_blocking(
+            &Plan::with_steps(
+                "make one here",
+                vec![Box::new(super::super::Mkdir { path: elsewhere })],
+            ),
+            &CancelToken::new(),
+        );
+        executor.undo_blocking(&CancelToken::new()).unwrap();
+        assert!(executor.can_redo());
+        executor.events().try_iter().for_each(drop);
         // Back: it goes on by itself.
         mode(0o755);
         let seen = events_until(&executor, |e| matches!(e, ExecEvent::Finished { .. }));
@@ -3131,6 +3253,7 @@ mod tests {
         ));
         assert!(served.join("a").is_dir() && served.join("b").is_dir());
         assert!(!executor.can_retry(plan.id) && !executor.can_retry(next));
+        assert!(executor.can_redo(), "going on dropped no Redo");
         let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
         assert_eq!(undone.applied, 2, "one action");
 
