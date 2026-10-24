@@ -310,7 +310,7 @@ impl Shell {
         if self.preview.reader.scroll.continuous == continuous {
             return;
         }
-        let count = session.info().pages as usize;
+        let count = crate::reader::page_count(session.as_ref()) as usize;
         let scroll = &mut self.preview.reader.scroll;
         scroll.continuous = continuous;
         scroll.cancel();
@@ -369,7 +369,7 @@ impl Shell {
     ) {
         let first = self.preview.reader.session.is_none();
         let reopened = std::mem::take(&mut self.preview.reader.reopened);
-        let count = session.info().pages as usize;
+        let count = crate::reader::page_count(session.as_ref()) as usize;
         self.preview.reader.session = Some(session);
         self.preview
             .reader

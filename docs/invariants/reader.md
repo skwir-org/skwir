@@ -85,6 +85,10 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   opens, never when a later page arrives.
 - A document whose file changes reopens at the same page, zoom and mode
   (`reader_reopen`).
+- The column is an item per page, built on the window's thread: every
+  count the reader reads of a session is `reader::page_count`, the
+  engine's held to `document::MAX_PAGES`, whichever engine or plugin
+  says it.
 - Pages are virtualized around a logical page/offset anchor. Size and
   fit/zoom changes are resolved in prepaint: they change every row's height,
   so rows reset to a new uniform estimate (old heights would mislead the

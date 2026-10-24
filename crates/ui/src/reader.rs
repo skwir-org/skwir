@@ -429,7 +429,7 @@ impl Shell {
             .reader
             .session
             .as_ref()
-            .map_or(1, |session| session.info().pages.max(1));
+            .map_or(1, |session| page_count(session.as_ref()).max(1));
         let text = page(self).map_or_else(String::new, |page| {
             let text: String = page.chars.iter().map(|c| c.text.as_str()).collect();
             text.split_whitespace()
@@ -452,7 +452,7 @@ impl Shell {
         let Some(session) = reader.session.clone() else {
             return;
         };
-        let count = session.info().pages.max(1);
+        let count = page_count(session.as_ref()).max(1);
         let near = ((anchor.at * count as f32).floor() as u32 + 1).min(count);
         reader.locating = reader.locating.wrapping_add(1);
         if !anchor.text.is_empty() {
@@ -756,6 +756,14 @@ fn page_named(labels: &[String], typed: &str) -> Option<u32> {
         .map(|index| index as u32 + 1)
 }
 
+/// How many pages of `session` the reader shows: what its engine says,
+/// held to `document::MAX_PAGES`. The continuous column lays out an item
+/// for each on the window's thread, so every count the reader reads of a
+/// session goes through here, whichever engine or plugin gave it.
+pub(crate) fn page_count(session: &dyn DocumentSession) -> u32 {
+    session.info().pages.min(skwir_core::document::MAX_PAGES)
+}
+
 /// Pages of the document shown, when it is one.
 pub(crate) fn pages(shell: &Shell) -> Option<u32> {
     let document = shell.preview.reader.session.is_some()
@@ -825,7 +833,7 @@ fn document_pages(shell: &Shell) -> u32 {
         .reader
         .session
         .as_ref()
-        .map(|s| s.info().pages)
+        .map(|s| page_count(s.as_ref()))
         .or({
             if let Some(PreviewContent::Image {
                 detail: Some(skwir_core::preview::PreviewInfo::Document { pages, .. }),
@@ -1038,6 +1046,41 @@ pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> 
 mod tests {
     use super::*;
     use skwir_core::document::TextChar;
+
+    /// Whatever an engine or a plugin says, the reader shows at most
+    /// `MAX_PAGES`: four billion would be as many list items.
+    #[test]
+    fn a_page_count_is_held_to_the_most_read() {
+        struct Claims(skwir_core::document::DocumentInfo);
+        impl DocumentSession for Claims {
+            fn info(&self) -> &skwir_core::document::DocumentInfo {
+                &self.0
+            }
+            fn render(
+                &self,
+                _: u32,
+                _: u32,
+                _: &CancelToken,
+            ) -> anyhow::Result<skwir_core::document::DocumentPage> {
+                anyhow::bail!("no pages")
+            }
+            fn search(&self, _: &str, _: &CancelToken) -> anyhow::Result<Vec<SearchHit>> {
+                Ok(Vec::new())
+            }
+        }
+        let claims = |pages| {
+            Claims(skwir_core::document::DocumentInfo {
+                pages,
+                outlines: Vec::new(),
+                reflowable: false,
+                labels: Vec::new(),
+            })
+        };
+        let most = skwir_core::document::MAX_PAGES;
+        assert_eq!(page_count(&claims(u32::MAX)), most);
+        assert_eq!(page_count(&claims(most + 1)), most);
+        assert_eq!(page_count(&claims(12)), 12);
+    }
 
     /// A page read out: in lines as the engine broke them, whatever it
     /// breaks them with, the last without its break.
