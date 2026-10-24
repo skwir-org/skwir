@@ -45,9 +45,13 @@ ADR-077 (which revises ADR-021).
 - A job that serves one request after another (a remote's thumbnails)
   says each begun with `scheduler::progress`: its lane is not taken for
   stalled however long the job runs.
+- A question that must be answered whether or not the server answers
+  (whether an agent may be handed a path: `permissions::Checker`) asks
+  it in the remote's lane and waits `reach::NOT_ANSWERING` at most; what
+  no answer came for is taken the safe way (private), never as asked.
 - Work that reads nothing of a remote (closing a folder: its watch, its
   descriptor) runs in the shared lane, never behind a held one.
-- A remote whose lane has run a job for `NOT_ANSWERING` (three seconds)
+- A remote whose lane has run a job for `reach::NOT_ANSWERING` (three seconds)
   while its folder is listed is said not to answer in the pane's banner
   (`Scheduler::stalled`, `ui/loading.rs`), looked at again each second
   while it is listed, never once it is.

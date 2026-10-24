@@ -164,7 +164,12 @@ control plugin's `run`:
   including aliases of configured private folders and marked ancestors.
   For a new name resolve its existing parent; a dangling link or another
   resolution failure is withheld, never treated as evidence of a public
-  path. Taking a `Privacy` snapshot itself does no filesystem work.
+  path. Taking a `Privacy` snapshot itself does no filesystem work. What
+  it reads of a path on a remote (by its name, or through a link on the
+  way into one) it reads in the remote's lane, waiting
+  `reach::NOT_ANSWERING` at most: past that the path is private and that
+  server is not asked again by the same checker (`App::privacy` gives it
+  the app's workers; a `Privacy` without them reads where it is asked).
 - Only `map-tiles` makes requests of its own (`AGENTS.md`, "Engineering
   rules"); the `remote` plugin reaches servers through the tools it starts
   (ADR-077), and connects an address an agent opens only once the user

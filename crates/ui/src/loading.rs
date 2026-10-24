@@ -15,9 +15,6 @@ pub struct State {
     remote: Option<Task<()>>,
 }
 
-/// How long a remote's lane runs a job before the banner says the remote
-/// is not answering (ADR-077).
-const NOT_ANSWERING: Duration = Duration::from_secs(3);
 impl Shell {
     pub fn sync_loading(&mut self, cx: &mut Context<Self>) {
         let pending: Vec<_> = {
@@ -138,7 +135,7 @@ pub fn message(shell: &Shell, pane: PaneId) -> Option<String> {
             .app
             .scheduler
             .stalled(remote.lane())
-            .is_some_and(|ran| ran >= NOT_ANSWERING)
+            .is_some_and(|ran| ran >= skwir_core::fs::reach::NOT_ANSWERING)
     {
         let name = known.map_or_else(|| remote.point.display().to_string(), |known| known.label);
         return Some(format!("{name} is not answering…"));

@@ -1368,9 +1368,10 @@ impl App {
     }
 
     /// The folders whose files never leave this machine, as the settings
-    /// say now (`permissions::Privacy`).
+    /// say now (`permissions::Privacy`), a path on a remote looked at in
+    /// its lane.
     pub fn privacy(&self) -> crate::permissions::Privacy {
-        crate::permissions::Privacy::of(&self.settings)
+        crate::permissions::Privacy::of(&self.settings).looked_at_by(self.scheduler.clone())
     }
 
     /// The entries of `pane` an agent's call must not count (ADR-044):

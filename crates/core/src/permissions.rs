@@ -15,11 +15,15 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::command::{CommandSpec, Effect};
+use crate::scheduler::{Lane, Priority, Scheduler};
 use crate::settings::{RecordField, SettingSpec, Settings};
 
 /// The settings' namespace: the Privacy page.
@@ -200,10 +204,22 @@ pub fn declare(settings: &Settings) {
 }
 
 /// The private folders, as the settings say them when read.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct Privacy {
     folders: Vec<PathBuf>,
     marker: bool,
+    /// Where a path on a remote is looked at, in its lane ([`Checker`]):
+    /// none, and it is looked at where it is asked.
+    workers: Option<Scheduler>,
+}
+
+impl std::fmt::Debug for Privacy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Privacy")
+            .field("folders", &self.folders)
+            .field("marker", &self.marker)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Privacy {
@@ -248,6 +264,7 @@ impl Privacy {
         Privacy {
             folders,
             marker: settings.get::<bool>(MARKER_KEY).unwrap_or(true),
+            workers: None,
         }
     }
 
@@ -256,7 +273,17 @@ impl Privacy {
         Privacy {
             folders: folders.into_iter().collect(),
             marker: false,
+            workers: None,
         }
+    }
+
+    /// These folders, a path on a remote looked at by `workers`, in its
+    /// lane: a server that stops answering never holds the one asking
+    /// longer than [`reach::NOT_ANSWERING`](crate::fs::reach::NOT_ANSWERING).
+    #[must_use]
+    pub fn looked_at_by(mut self, workers: Scheduler) -> Privacy {
+        self.workers = Some(workers);
+        self
     }
 
     /// The folders listed, as absolute paths.
@@ -268,8 +295,9 @@ impl Privacy {
     pub fn checker(&self) -> Checker<'_> {
         Checker {
             privacy: self,
-            marked: HashMap::new(),
+            marked: Arc::default(),
             resolved_folders: None,
+            unanswered: Vec::new(),
         }
     }
 
@@ -293,11 +321,22 @@ fn expand(text: &str, home: Option<&Path>) -> Option<PathBuf> {
 }
 
 /// Checks paths against a [`Privacy`], remembering the markers it read.
+///
+/// What it reads of a path on a remote (its links resolved, its folders'
+/// markers) is read in the remote's lane where the privacy has workers
+/// ([`Privacy::looked_at_by`]), waited for [`reach::NOT_ANSWERING`] at
+/// most: a server that does not answer by then keeps what it holds
+/// private, and is not asked again by this checker. What cannot be
+/// checked is never counted public.
+///
+/// [`reach::NOT_ANSWERING`]: crate::fs::reach::NOT_ANSWERING
 pub struct Checker<'a> {
     privacy: &'a Privacy,
-    marked: HashMap<PathBuf, bool>,
+    marked: Arc<Mutex<HashMap<PathBuf, bool>>>,
     /// Resolve lazily: taking a Privacy snapshot itself never reads disk.
-    resolved_folders: Option<Vec<PathBuf>>,
+    resolved_folders: Option<Arc<Vec<PathBuf>>>,
+    /// The lanes of the remotes that did not answer in time.
+    unanswered: Vec<Lane>,
 }
 
 impl Checker<'_> {
@@ -312,58 +351,86 @@ impl Checker<'_> {
         {
             return true;
         }
-        if self.marked(path) {
-            return true;
-        }
         if self.privacy.folders.is_empty() && !self.privacy.marker {
             return false;
         }
-        // A missing final name is normal for a proposed write. Resolve its
-        // existing parent too; other failures cannot establish a public path.
-        let Ok(resolved) = resolved_name(path) else {
-            return true;
-        };
-        // A folder that cannot be resolved (a link to a drive not
-        // mounted, a parent that cannot be read) holds what is under it as
-        // it is written, checked above: nothing reached through it could
-        // be resolved either. It never makes every path private.
-        let folders = self.resolved_folders.get_or_insert_with(|| {
-            self.privacy
-                .folders
-                .iter()
-                .filter_map(|folder| match resolved_name(folder) {
-                    Ok(resolved) => Some(resolved),
-                    Err(error) => {
+        let folders = self.resolved_folders();
+        let (privacy, marked, asked) = (
+            self.privacy.clone(),
+            Arc::clone(&self.marked),
+            path.to_owned(),
+        );
+        self.answered(path, move || {
+            looks_private(&privacy, &folders, &marked, &asked)
+        })
+        .unwrap_or(true)
+    }
+
+    /// The private folders resolved, each in its lane: one that cannot be
+    /// resolved (a link to a drive not mounted, a parent that cannot be
+    /// read, a server that does not answer) holds what is under it as it
+    /// is written, checked first: nothing reached through it could be
+    /// resolved either. It never makes every path private.
+    fn resolved_folders(&mut self) -> Arc<Vec<PathBuf>> {
+        if let Some(folders) = &self.resolved_folders {
+            return Arc::clone(folders);
+        }
+        let folders: Vec<PathBuf> = self
+            .privacy
+            .folders
+            .clone()
+            .into_iter()
+            .filter_map(|folder| {
+                let asked = folder.clone();
+                match self.answered(&folder, move || resolved_name(&asked)) {
+                    Some(Ok(resolved)) => Some(resolved),
+                    Some(Err(error)) => {
                         tracing::debug!("a private folder cannot be resolved: {error}");
                         None
                     }
-                })
-                .collect()
-        });
-        if folders.iter().any(|folder| resolved.starts_with(folder)) {
-            return true;
-        }
-        self.marked(&resolved)
+                    None => None,
+                }
+            })
+            .collect();
+        Arc::clone(self.resolved_folders.insert(Arc::new(folders)))
     }
 
-    fn marked(&mut self, path: &Path) -> bool {
-        if !self.privacy.marker {
-            return false;
+    /// What `look` says of `path`: here, where it is on no remote or the
+    /// privacy has no workers; else in its remote's lane, `None` when the
+    /// server did not answer in time.
+    fn answered<T: Send + 'static>(
+        &mut self,
+        path: &Path,
+        look: impl FnOnce() -> T + Send + 'static,
+    ) -> Option<T> {
+        let Some(workers) = self.privacy.workers.clone() else {
+            return Some(look());
+        };
+        let lane = lane_reached(path);
+        if lane == Lane::SHARED {
+            return Some(look());
         }
-        path.ancestors().any(|folder| {
-            if let Some(known) = self.marked.get(folder) {
-                return *known;
-            }
-            let marked = match std::fs::symlink_metadata(folder.join(MARKER)) {
-                Ok(_) => true,
-                Err(error) => !matches!(
-                    error.kind(),
-                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-                ),
-            };
-            self.marked.insert(folder.to_owned(), marked);
-            marked
-        })
+        if self.unanswered.contains(&lane) {
+            return None;
+        }
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let cancel = crate::cancel::CancelToken::new();
+        workers.spawn_in(
+            lane,
+            Priority::Normal,
+            "privacy",
+            cancel.clone(),
+            move || {
+                let _ = tx.send(look());
+            },
+        );
+        let answer = rx.recv_timeout(crate::fs::reach::NOT_ANSWERING).ok();
+        if answer.is_none() {
+            cancel.cancel();
+            tracing::debug!("a remote did not answer the privacy check: what it holds is private");
+            self.unanswered.push(lane);
+        }
+        answer
     }
 
     /// The first private path `value` names: a string that is a path, or
@@ -450,6 +517,89 @@ impl Checker<'_> {
             _ => false,
         }
     }
+}
+
+/// Whether `path` is private, as the disk says: under a folder holding a
+/// [`MARKER`] by its given name, or, resolved, under a private folder
+/// (`folders`, resolved) or a marked one.
+fn looks_private(
+    privacy: &Privacy,
+    folders: &[PathBuf],
+    marks: &Mutex<HashMap<PathBuf, bool>>,
+    path: &Path,
+) -> bool {
+    if marked(privacy, marks, path) {
+        return true;
+    }
+    // A missing final name is normal for a proposed write. Resolve its
+    // existing parent too; other failures cannot establish a public path.
+    let Ok(resolved) = resolved_name(path) else {
+        return true;
+    };
+    if folders.iter().any(|folder| resolved.starts_with(folder)) {
+        return true;
+    }
+    marked(privacy, marks, &resolved)
+}
+
+/// Whether a folder holding `path` holds a [`MARKER`], each folder read
+/// once (`marks`, never held while reading).
+fn marked(privacy: &Privacy, marks: &Mutex<HashMap<PathBuf, bool>>, path: &Path) -> bool {
+    if !privacy.marker {
+        return false;
+    }
+    path.ancestors().any(|folder| {
+        if let Some(known) = marks.lock().get(folder).copied() {
+            return known;
+        }
+        let marked = match std::fs::symlink_metadata(folder.join(MARKER)) {
+            Ok(_) => true,
+            Err(error) => !matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ),
+        };
+        marks.lock().insert(folder.to_owned(), marked);
+        marked
+    })
+}
+
+/// The lane of what reading `path` reaches: its remote's, by its text or
+/// through a link on the way into one (a folder of the home linked to a
+/// mount); the shared one elsewhere. What it reads is links on this
+/// machine, and none while no remote is mounted.
+fn lane_reached(path: &Path) -> Lane {
+    if let Some(remote) = crate::fs::reach::of(path) {
+        return remote.lane();
+    }
+    if crate::fs::reach::all().is_empty() {
+        return Lane::SHARED;
+    }
+    path.ancestors()
+        .find_map(|ancestor| {
+            let target = std::fs::read_link(ancestor).ok()?;
+            let target = ancestor
+                .parent()
+                .map_or_else(|| target.clone(), |parent| parent.join(&target));
+            crate::fs::reach::of(&lexical(&target)).map(|remote| remote.lane())
+        })
+        .unwrap_or(Lane::SHARED)
+}
+
+/// `path` with its `.` and `..` taken as written: to tell a link's target
+/// by its text, never to read it.
+fn lexical(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                out.pop();
+            }
+            part => out.push(part),
+        }
+    }
+    out
 }
 
 /// Resolve what exists without losing the name of a prospective file.
@@ -599,6 +749,7 @@ mod tests {
         let privacy = Privacy {
             folders: vec![keys.clone()],
             marker: true,
+            workers: None,
         };
         let mut check = privacy.checker();
         assert!(check.holds(&keys));
@@ -678,6 +829,7 @@ mod tests {
         let privacy = Privacy {
             folders: vec![],
             marker: true,
+            workers: None,
         };
         assert!(privacy.holds(&alias));
         let looped = tmp.path().join("loop");
@@ -707,6 +859,96 @@ mod tests {
         assert!(check.holds(&store.join("bank.gpg")));
         assert!(check.holds(&keys.join("id")));
         assert!(!check.holds(&open));
+    }
+
+    /// A server that stops answering never holds the one asking: a path
+    /// on it, by its name or through a link into it, is private once
+    /// `NOT_ANSWERING` passed (what cannot be checked is never public),
+    /// and its server is not asked again by that checker. Paths on this
+    /// machine are checked as ever, and the server answering again is
+    /// asked again.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_server_that_does_not_answer_keeps_its_paths_private_without_holding_the_asker() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::time::{Duration, Instant};
+
+        use crate::fs::reach::NOT_ANSWERING;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let point = tmp.path().join("server's share");
+        std::fs::create_dir(&point).unwrap();
+        std::fs::write(point.join("note"), "public").unwrap();
+        let link = tmp.path().join("linked share");
+        std::os::unix::fs::symlink(&point, &link).unwrap();
+        let local = tmp.path().join("local note");
+        std::fs::write(&local, "public").unwrap();
+        crate::fs::reach::pretend_remote(&point);
+
+        // The server holds every job its lane runs at once.
+        let workers = Scheduler::new(4);
+        let lane = crate::fs::reach::lane(&point);
+        let (began, released) = (
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        for _ in 0..crate::scheduler::LANE_RUNS {
+            let (began, released) = (Arc::clone(&began), Arc::clone(&released));
+            workers.spawn_in(
+                lane,
+                Priority::Normal,
+                "held",
+                crate::cancel::CancelToken::new(),
+                move || {
+                    began.fetch_add(1, Ordering::SeqCst);
+                    while !released.load(Ordering::SeqCst) {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                },
+            );
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while began.load(Ordering::SeqCst) < crate::scheduler::LANE_RUNS {
+            assert!(Instant::now() < deadline, "the held jobs began");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        let privacy = Privacy {
+            folders: vec![tmp.path().join("keys")],
+            marker: true,
+            workers: None,
+        }
+        .looked_at_by(workers.clone());
+        let mut check = privacy.checker();
+        let asked = Instant::now();
+        assert!(check.holds(&point.join("note")), "not checked, so private");
+        let waited = asked.elapsed();
+        assert!(
+            waited >= NOT_ANSWERING && waited < NOT_ANSWERING + Duration::from_secs(2),
+            "waited {waited:?}"
+        );
+        let again = Instant::now();
+        assert!(check.holds(&point.join("other note")));
+        assert!(
+            again.elapsed() < Duration::from_millis(500),
+            "not asked again"
+        );
+        assert!(!check.holds(&local), "this machine's paths are checked");
+
+        let mut through_link = privacy.checker();
+        let asked = Instant::now();
+        assert!(
+            through_link.holds(&link.join("note")),
+            "a link into it is its"
+        );
+        assert!(asked.elapsed() < NOT_ANSWERING + Duration::from_secs(2));
+
+        released.store(true, Ordering::SeqCst);
+        assert!(
+            !privacy.holds(&point.join("note")),
+            "answering, it is checked"
+        );
+        assert!(!privacy.holds(&link.join("note")));
     }
 
     /// The private folders as the settings say them: records, or paths

@@ -23,6 +23,11 @@ use crate::scheduler::Lane;
 /// How long the table read is taken as the system's.
 pub const FRESH: Duration = Duration::from_secs(1);
 
+/// How long a remote's lane runs a job before the remote is said not to
+/// answer: in a pane's banner, and to a question asked of it that waits
+/// no longer (ADR-077).
+pub const NOT_ANSWERING: Duration = Duration::from_secs(3);
+
 /// A mount that reaches a network.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Remote {

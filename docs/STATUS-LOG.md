@@ -4430,3 +4430,23 @@ a bookmark (ADR-086 amended).
   its end once, each in a different run under a load of 15 to 35, none in
   code changed here, each passing three times alone, then passed whole
   (1660 tests, 22 skipped); `just check-cross` passed.
+
+### Remote follow-ups (2026-10-25)
+
+The follow-ups to the remote arc the user agreed on 2026-10-24, run
+overnight: the review's remote items, then what the servers' work left.
+
+- **An agent's privacy check waits on no server.** What the check reads
+  of a path (its links resolved, its folders' `.private` markers) was
+  read where it was asked: on the agent's thread, a path on a server
+  that stopped answering held the call for good. `App::privacy` now
+  gives the check the app's workers: a path on a remote, by its name or
+  through a link on the way into one, is looked at in the remote's lane,
+  waited for `reach::NOT_ANSWERING` (three seconds, the banner's, moved
+  into the core) at most; past that it is private, what cannot be
+  checked never being public, and that server is not asked again by the
+  same checker. The private folders are resolved the same way. Checked
+  by a core test: a pretend remote whose lane two jobs hold answers
+  "private" after the wait, at once the second time, through a link
+  too; this machine's paths checked as before; once let go, checked
+  again.

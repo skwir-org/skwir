@@ -175,7 +175,6 @@ above; each with the design its fixer proposed):
 - Programs Skwir starts inherit `VK_LOADER_DRIVERS_DISABLE`: no one
   place starts them; a platform constructor would drop what Skwir set
   for itself.
-- An agent's privacy check resolves paths outside any remote's lane.
 - Extract Here of files dropped from another application types them
   on the window's thread.
 - A network plugin's sandbox shares the host's abstract sockets: a
