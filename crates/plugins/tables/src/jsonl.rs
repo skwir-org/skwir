@@ -85,11 +85,18 @@ pub fn table(
                 .keys()
                 .map(|column| {
                     let cell = match line {
-                        Line::Object(fields) => fields.get(*column).map(text),
-                        Line::Other(value) => (*column == VALUE).then(|| text(value)),
-                        Line::Invalid(raw) => (*column == VALUE).then(|| raw.clone()),
+                        Line::Object(fields) => fields.get(*column),
+                        Line::Other(cell) | Line::Invalid(cell) => {
+                            (*column == VALUE).then_some(cell)
+                        }
                     };
-                    crate::bounded_cell(&cell.unwrap_or_default(), &mut cut)
+                    match cell {
+                        Some(cell) => {
+                            cut += usize::from(cell.cut);
+                            cell.text.clone()
+                        }
+                        None => String::new(),
+                    }
                 })
                 .collect(),
             ..Row::default()
@@ -147,27 +154,48 @@ pub fn table(
     })
 }
 
+/// A line, kept as the cells it shows: a page holds `TABLE_ROWS` lines of
+/// up to `TEXT_INPUT` each, which kept parsed (an embedding's array of
+/// numbers a line) took gigabytes. Each value is cut as its line is read,
+/// as a CSV's cells are.
 enum Line {
     /// Its keys in the order the line gives them.
-    Object(IndexMap<String, Value>),
-    Other(Value),
-    Invalid(String),
+    Object(IndexMap<String, Cell>),
+    Other(Cell),
+    Invalid(Cell),
+}
+
+/// A cell's text, cut to `TABLE_CELL` characters, and whether it was.
+struct Cell {
+    text: String,
+    cut: bool,
+}
+
+impl Cell {
+    fn of(text: &str) -> Self {
+        let mut cut = 0;
+        let text = crate::bounded_cell(text, &mut cut);
+        Self { text, cut: cut > 0 }
+    }
 }
 
 impl Line {
     fn parse(line: &[u8]) -> Self {
-        /// An object is tried first, so that it keeps its keys' order.
-        #[derive(serde::Deserialize)]
-        #[serde(untagged)]
-        enum Parsed {
-            Object(IndexMap<String, Value>),
-            Other(Value),
-        }
-        match serde_json::from_slice(line) {
-            Ok(Parsed::Object(fields)) => Self::Object(fields),
-            Ok(Parsed::Other(value)) => Self::Other(value),
-            Err(_) => Self::Invalid(String::from_utf8_lossy(line).into_owned()),
-        }
+        // An object is read as one, so that it keeps its keys' order; the
+        // value it was is let go of once its cells are made.
+        let parsed = if line.first() == Some(&b'{') {
+            serde_json::from_slice::<IndexMap<String, Value>>(line).map(|fields| {
+                Self::Object(
+                    fields
+                        .into_iter()
+                        .map(|(key, value)| (key, Cell::of(&text(&value))))
+                        .collect(),
+                )
+            })
+        } else {
+            serde_json::from_slice::<Value>(line).map(|value| Self::Other(Cell::of(&text(&value))))
+        };
+        parsed.unwrap_or_else(|_| Self::Invalid(Cell::of(&String::from_utf8_lossy(line))))
     }
 }
 
@@ -209,6 +237,34 @@ mod tests {
         );
         assert_eq!(data.notice, "1 line not JSON");
         assert_eq!(data.title, "JSON Lines · rows 1–4");
+    }
+
+    #[test]
+    fn a_long_value_is_cut_as_its_line_is_read() {
+        // An embedding a line: kept parsed for the whole page, such lines
+        // took gigabytes; each is a cell of its first characters.
+        let numbers: Vec<String> = (0..20_000).map(|n| format!("0.{n:05}")).collect();
+        let lines = format!(
+            "{{\"id\": \"é1\", \"embedding\": [{}]}}\n[{}]\n",
+            numbers.join(","),
+            numbers.join(",")
+        );
+        let data = read(&lines, 0);
+        assert_eq!(data.columns, ["id", "embedding", "value"]);
+        let embedding = &data.rows[0].cells[1];
+        assert!(embedding.starts_with("[0.0,0.00001,"), "{embedding}");
+        assert_eq!(embedding.chars().count(), limits::TABLE_CELL + 1);
+        assert_eq!(
+            data.rows[1].cells[2].chars().count(),
+            limits::TABLE_CELL + 1
+        );
+        assert_eq!(
+            data.notice,
+            format!(
+                "2 cells longer than {} characters shortened",
+                limits::TABLE_CELL
+            )
+        );
     }
 
     #[test]
