@@ -1125,9 +1125,14 @@ mod tests {
     fn a_pool_without_stand_ins_waits_for_its_held_worker() {
         let scheduler = Scheduler::without_stand_ins(1);
         let (release, held) = crossbeam_channel::bounded::<()>(0);
+        let (started, running) = crossbeam_channel::bounded::<()>(1);
         scheduler.spawn(Priority::Normal, "held", CancelToken::new(), move || {
+            started.send(()).unwrap();
             let _ = held.recv();
         });
+        // The worker holds before the next job is queued: queued together,
+        // the later is taken first (as under Wine, whose threads start late).
+        running.recv_timeout(Duration::from_secs(5)).unwrap();
         let (tx, rx) = crossbeam_channel::bounded(1);
         scheduler.spawn(Priority::Normal, "next", CancelToken::new(), move || {
             tx.send(()).unwrap();
