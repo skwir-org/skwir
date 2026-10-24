@@ -207,8 +207,9 @@ impl Shell {
     }
 
     /// `ui.columns`: show or hide one detail column, from the header's menu.
-    /// It goes through `settings.apply` like any other preference, so the
-    /// dialog and the header always agree and the choice outlives the window.
+    /// It is saved as any other preference is (`settings::remember`: one
+    /// save at a time, the next waiting), so the dialog and the header
+    /// always agree and the choice outlives the window.
     pub fn toggle_column(&mut self, key: &str, cx: &mut Context<Self>) {
         let Some(column) = COLUMNS.iter().find(|column| column.setting == key) else {
             return;
@@ -216,15 +217,7 @@ impl Shell {
         let shown = !self.columns[column.detail];
         self.columns[column.detail] = shown;
         cx.notify();
-        if let Err(error) = self
-            .app
-            .dispatch(&skwir_core::command::Invocation::with_args(
-                "settings.apply",
-                &serde_json::json!({ "changes": { key: shown.to_string() } }),
-            ))
-        {
-            self.set_status(format!("{error:#}"), true, cx);
-        }
+        crate::settings::remember(self, column.setting, shown.to_string(), cx);
     }
 
     /// What the pane sorts by here, each with its column's label: Name,

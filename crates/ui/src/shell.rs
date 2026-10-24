@@ -1472,19 +1472,13 @@ impl Shell {
         }
     }
 
-    /// `ui.grid_fill`: a preference, so it goes through `settings.apply` like
-    /// the switch in the dialog.
+    /// `ui.grid_fill`: a preference, saved as the dialog's switch is
+    /// (`settings::remember`: one save at a time, the next waiting).
     fn toggle_grid_fill(&mut self, cx: &mut Context<Self>) {
         self.prefs.grid_fill = !self.prefs.grid_fill;
         cx.notify();
-        if let Err(error) = self.app.dispatch(&Invocation::with_args(
-            "settings.apply",
-            &serde_json::json!({
-                "changes": { crate::settings::GRID_FILL_KEY: self.prefs.grid_fill.to_string() }
-            }),
-        )) {
-            self.set_status(format!("{error:#}"), true, cx);
-        }
+        let on = self.prefs.grid_fill.to_string();
+        crate::settings::remember(self, crate::settings::GRID_FILL_KEY, on, cx);
     }
 
     /// `ui.narrow_folders`: the Narrow by bar over folders, a preference
@@ -1492,95 +1486,66 @@ impl Shell {
     fn toggle_narrow_folders(&mut self, cx: &mut Context<Self>) {
         self.prefs.narrow_folders = !self.prefs.narrow_folders;
         cx.notify();
-        if let Err(error) = self.app.dispatch(&Invocation::with_args(
-            "settings.apply",
-            &serde_json::json!({
-                "changes": {
-                    crate::settings::NARROW_FOLDERS_KEY: self.prefs.narrow_folders.to_string()
-                }
-            }),
-        )) {
-            self.set_status(format!("{error:#}"), true, cx);
-        }
+        let on = self.prefs.narrow_folders.to_string();
+        crate::settings::remember(self, crate::settings::NARROW_FOLDERS_KEY, on, cx);
     }
 
     /// `ui.printed_pages`: count a book by chapters or by printed pages. A
-    /// preference, so it goes through `settings.apply` like the dialog's
-    /// switch; the unit picker closes on its choice.
+    /// preference, saved as the dialog's switch is; the unit picker closes
+    /// on its choice.
     fn set_printed_pages(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(popup) = self.preview.menu.take_if(|popup| popup.kind == "unit") {
             popup.restore(window, cx);
         }
         self.prefs.printed_pages = on;
         cx.notify();
-        if let Err(error) = self.app.dispatch(&Invocation::with_args(
-            "settings.apply",
-            &serde_json::json!({
-                "changes": { crate::settings::PRINTED_PAGES_KEY: on.to_string() }
-            }),
-        )) {
-            self.set_status(format!("{error:#}"), true, cx);
-        }
+        crate::settings::remember(self, crate::settings::PRINTED_PAGES_KEY, on.to_string(), cx);
     }
 
     /// `ui.wrap_lines`: a text's long lines wrap to the panel, or go on
-    /// sideways. A preference, through `settings.apply` like the dialog's
-    /// switch.
+    /// sideways. A preference, saved as the dialog's switch is.
     fn set_wrap_lines(&mut self, on: bool, cx: &mut Context<Self>) {
         self.prefs.wrap_lines = on;
         cx.notify();
-        if let Err(error) = self.app.dispatch(&Invocation::with_args(
-            "settings.apply",
-            &serde_json::json!({
-                "changes": { crate::settings::WRAP_LINES_KEY: on.to_string() }
-            }),
-        )) {
-            self.set_status(format!("{error:#}"), true, cx);
-        }
+        crate::settings::remember(self, crate::settings::WRAP_LINES_KEY, on.to_string(), cx);
     }
 
     /// `ui.contents_pin`: the contents stay open beside what is read, or
-    /// close once an entry is chosen. A preference, through
-    /// `settings.apply` like the dialog's switch.
+    /// close once an entry is chosen. A preference, saved as the dialog's
+    /// switch is.
     fn set_contents_pinned(&mut self, on: bool, cx: &mut Context<Self>) {
         self.prefs.contents_pinned = on;
         cx.notify();
-        if let Err(error) = self.app.dispatch(&Invocation::with_args(
-            "settings.apply",
-            &serde_json::json!({
-                "changes": { crate::settings::CONTENTS_PINNED_KEY: on.to_string() }
-            }),
-        )) {
-            self.set_status(format!("{error:#}"), true, cx);
-        }
+        crate::settings::remember(
+            self,
+            crate::settings::CONTENTS_PINNED_KEY,
+            on.to_string(),
+            cx,
+        );
     }
 
     /// `ui.model_perspective`, `ui.model_smooth`: how a 3D model is drawn.
-    /// Preferences, through `settings.apply` like the dialog's switches.
+    /// Preferences, saved together as the dialog's switches are.
     fn set_model_look(&mut self, look: crate::elements::model::Look, cx: &mut Context<Self>) {
         self.prefs.model_look = look;
         cx.notify();
-        if let Err(error) = self.app.dispatch(&Invocation::with_args(
-            "settings.apply",
-            &serde_json::json!({
-                "changes": {
-                    crate::settings::MODEL_PERSPECTIVE_KEY: look.perspective.to_string(),
-                    crate::settings::MODEL_SMOOTH_KEY: look.smooth.to_string(),
-                }
-            }),
-        )) {
-            self.set_status(format!("{error:#}"), true, cx);
-        }
+        self.unsaved.insert(
+            crate::settings::MODEL_PERSPECTIVE_KEY,
+            look.perspective.to_string(),
+        );
+        crate::settings::remember(
+            self,
+            crate::settings::MODEL_SMOOTH_KEY,
+            look.smooth.to_string(),
+            cx,
+        );
     }
 
     /// `ui.full_width`: the reading column takes the whole panel, or goes
-    /// back to the width it had. The Reading width preference, so it goes
-    /// through `settings.apply` like the choice in the dialog.
+    /// back to the width it had. The Reading width preference, saved as
+    /// the choice in the dialog is.
     fn toggle_full_width(&mut self, cx: &mut Context<Self>) {
-        let current = self
-            .app
-            .settings
-            .get::<String>(crate::settings::READING_WIDTH_KEY)
+        let current = crate::settings::preference(self, crate::settings::READING_WIDTH_KEY)
             .unwrap_or_else(|| "comfortable".into());
         let next = if current == "full" {
             self.reading_width_before
@@ -1592,14 +1557,7 @@ impl Shell {
         };
         self.reading_measure = crate::markdown::measure(&next);
         cx.notify();
-        if let Err(error) = self.app.dispatch(&Invocation::with_args(
-            "settings.apply",
-            &serde_json::json!({
-                "changes": { crate::settings::READING_WIDTH_KEY: next }
-            }),
-        )) {
-            self.set_status(format!("{error:#}"), true, cx);
-        }
+        crate::settings::remember(self, crate::settings::READING_WIDTH_KEY, next, cx);
     }
 
     /// Ctrl and the wheel over what zooms (`elements::zoom_wheel`): the step
@@ -1805,6 +1763,14 @@ impl Shell {
         } else {
             true
         }
+    }
+
+    /// A switch as it stands: the change waiting to be saved, else the
+    /// stored one (`settings::preference`), else `default`.
+    fn switch(&self, key: &str, default: bool) -> bool {
+        crate::settings::preference(self, key)
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(default)
     }
 
     /// A user-initiated plan applies immediately (it is undoable), as a
@@ -2553,16 +2519,10 @@ impl Shell {
                 .settings
                 .get::<String>(crate::settings::DATES_KEY)
                 .is_none_or(|format| format != "iso");
-            self.prefs.grid_fill = self
-                .app
-                .settings
-                .get::<bool>(crate::settings::GRID_FILL_KEY)
-                .unwrap_or(false);
-            self.prefs.narrow_folders = self
-                .app
-                .settings
-                .get::<bool>(crate::settings::NARROW_FOLDERS_KEY)
-                .unwrap_or(false);
+            // What the window saves itself is read as it stands, a change
+            // still waiting its turn included (`settings::remember`).
+            self.prefs.grid_fill = self.switch(crate::settings::GRID_FILL_KEY, false);
+            self.prefs.narrow_folders = self.switch(crate::settings::NARROW_FOLDERS_KEY, false);
             self.prefs.single_tab = self
                 .app
                 .settings
@@ -2592,52 +2552,26 @@ impl Shell {
                 .filter(|theme| theme != crate::settings::ICON_THEME_AUTO);
             self.icons.set_theme(icon_theme);
             self.reading_measure = crate::markdown::measure(
-                &self
-                    .app
-                    .settings
-                    .get::<String>(crate::settings::READING_WIDTH_KEY)
+                &crate::settings::preference(self, crate::settings::READING_WIDTH_KEY)
                     .unwrap_or_default(),
             );
-            self.prefs.printed_pages = self
-                .app
-                .settings
-                .get::<bool>(crate::settings::PRINTED_PAGES_KEY)
-                .unwrap_or(false);
-            self.prefs.wrap_lines = self
-                .app
-                .settings
-                .get::<bool>(crate::settings::WRAP_LINES_KEY)
-                .unwrap_or(true);
+            self.prefs.printed_pages = self.switch(crate::settings::PRINTED_PAGES_KEY, false);
+            self.prefs.wrap_lines = self.switch(crate::settings::WRAP_LINES_KEY, true);
             self.prefs.read_ahead = self
                 .app
                 .settings
                 .get::<bool>(crate::settings::READ_AHEAD_KEY)
                 .unwrap_or(true);
             self.prefs.model_look = crate::elements::model::Look {
-                perspective: self
-                    .app
-                    .settings
-                    .get::<bool>(crate::settings::MODEL_PERSPECTIVE_KEY)
-                    .unwrap_or(false),
-                smooth: self
-                    .app
-                    .settings
-                    .get::<bool>(crate::settings::MODEL_SMOOTH_KEY)
-                    .unwrap_or(false),
+                perspective: self.switch(crate::settings::MODEL_PERSPECTIVE_KEY, false),
+                smooth: self.switch(crate::settings::MODEL_SMOOTH_KEY, false),
             };
-            self.prefs.contents_pinned = self
-                .app
-                .settings
-                .get::<bool>(crate::settings::CONTENTS_PINNED_KEY)
-                .unwrap_or(false);
+            self.prefs.contents_pinned = self.switch(crate::settings::CONTENTS_PINNED_KEY, false);
             self.read_player_prefs();
             self.columns = crate::views::list::PerColumn(
-                crate::views::list::COLUMNS.each_ref().map(|column| {
-                    self.app
-                        .settings
-                        .get::<bool>(column.setting)
-                        .unwrap_or(column.shown)
-                }),
+                crate::views::list::COLUMNS
+                    .each_ref()
+                    .map(|column| self.switch(column.setting, column.shown)),
             );
         }
         if self.type_names.absorb() | self.icons.absorb() {
