@@ -204,7 +204,7 @@ fn follow(state: &Arc<Mutex<State>>, changes: &[Change], app: &App) {
     }
     // Each remote's in its lane (ADR-077): a server that stops answering
     // holds its own items' job, never the others'.
-    for (lane, moved) in by_lane(moved, |(_, path)| path) {
+    for (lane, moved) in skwir_core::fs::reach::by_lane(moved, |(_, path)| path) {
         let state = Arc::clone(state);
         app.scheduler.spawn_in(
             lane,
@@ -256,23 +256,6 @@ fn follow(state: &Arc<Mutex<State>>, changes: &[Change], app: &App) {
             },
         );
     }
-}
-
-/// `items` grouped by the lane of their path (`fs::reach::lane`), in the
-/// order first met: a shelf holds files from anywhere.
-fn by_lane<T>(
-    items: impl IntoIterator<Item = T>,
-    path: impl Fn(&T) -> &Path,
-) -> Vec<(skwir_core::scheduler::Lane, Vec<T>)> {
-    let mut lanes: Vec<(skwir_core::scheduler::Lane, Vec<T>)> = Vec::new();
-    for item in items {
-        let lane = skwir_core::fs::reach::lane(path(&item));
-        match lanes.iter_mut().find(|(l, _)| *l == lane) {
-            Some((_, items)) => items.push(item),
-            None => lanes.push((lane, vec![item])),
-        }
-    }
-    lanes
 }
 
 fn selection_items(
@@ -413,7 +396,7 @@ impl OpenLocation for ShelfLocation {
         }
         // A job for each slice, side by side on the workers, each remote's
         // in its lane.
-        for (lane, items) in by_lane(items, |(_, path)| path) {
+        for (lane, items) in skwir_core::fs::reach::by_lane(items, |(_, path)| path) {
             for items in items.chunks(skwir_core::fs::HYDRATE_JOB) {
                 let items = items.to_vec();
                 let sink = self.sink.clone();

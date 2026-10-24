@@ -420,6 +420,15 @@ fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuIt
     MenuItem::new("context", title, icon, order, command).when("selection !place")
 }
 
+/// The lane of `refs`' files where they share one (ADR-077), else the
+/// shared one: what reads them all in one job runs there.
+fn one_lane(refs: &[EntryRef]) -> skwir_core::scheduler::Lane {
+    match reach::by_lane(refs, |r| &r.path).as_slice() {
+        [(lane, _)] => *lane,
+        _ => skwir_core::scheduler::Lane::SHARED,
+    }
+}
+
 /// Record a tag's color (`None`: the one its name gives it) in the
 /// settings: on a worker from the window's thread, else before answering
 /// (a script's, an agent's or a `skwir cmd` without a window, which ends
@@ -712,16 +721,7 @@ impl Plugin for TagsPlugin {
                     };
                     // Each remote's files are read in its lane: a plan's
                     // files may be on several (ADR-077).
-                    let mut lanes: Vec<(skwir_core::scheduler::Lane, Vec<std::path::PathBuf>)> =
-                        Vec::new();
-                    for path in paths {
-                        let lane = reach::lane(&path);
-                        match lanes.iter_mut().find(|(l, _)| *l == lane) {
-                            Some((_, paths)) => paths.push(path),
-                            None => lanes.push((lane, vec![path])),
-                        }
-                    }
-                    for (lane, paths) in lanes {
+                    for (lane, paths) in reach::by_lane(paths, |p| p) {
                         let (index, weak, places) =
                             (Arc::clone(&index), weak.clone(), Arc::clone(&places));
                         let job = lifetime.child();
@@ -961,6 +961,7 @@ impl Plugin for TagsPlugin {
                     anyhow::bail!("which tag?");
                 };
                 let refs = app.targets(a.pane, a.entries)?;
+                let lane = one_lane(&refs);
                 // What the pane knows of each first: a key's toggle reads
                 // a file only where its listing has not.
                 let pane = app.pane_or_active(a.pane);
@@ -973,24 +974,50 @@ impl Plugin for TagsPlugin {
                         })
                         .collect()
                 };
-                let all = refs.iter().zip(known).all(|(r, known)| {
-                    known.unwrap_or_else(|| notes_of(app, &r.path).tag(&tag).is_some())
-                });
-                let (add, remove) = if all {
-                    (Vec::new(), vec![tag])
-                } else {
-                    (vec![tag], Vec::new())
+                let unread = known.iter().any(Option::is_none);
+                let v = Arc::clone(&v);
+                let toggle = move |app: &App| {
+                    let all = refs.iter().zip(known).all(|(r, known)| {
+                        known.unwrap_or_else(|| notes_of(app, &r.path).tag(&tag).is_some())
+                    });
+                    let (add, remove) = if all {
+                        (Vec::new(), vec![tag])
+                    } else {
+                        (vec![tag], Vec::new())
+                    };
+                    edit_plan(
+                        app,
+                        &v,
+                        EditArgs {
+                            add,
+                            remove,
+                            entries: refs.into_iter().map(Into::into).collect(),
+                            pane: a.pane,
+                        },
+                    )
                 };
-                edit_plan(
-                    app,
-                    &v,
-                    EditArgs {
-                        add,
-                        remove,
-                        entries: refs.into_iter().map(Into::into).collect(),
-                        pane: a.pane,
+                if !unread || !skwir_core::scheduler::on_window_thread() {
+                    return toggle(app);
+                }
+                // Files to read, from the window's thread: on a worker in
+                // their lane, the plan then applied as the window applies
+                // a user's own.
+                let weak = app.weak();
+                app.scheduler.spawn_in(
+                    lane,
+                    Priority::Visible,
+                    "tags.toggle",
+                    app.lifetime().child(),
+                    move || {
+                        let Some(app) = weak.upgrade() else { return };
+                        match toggle(&app) {
+                            Ok(Outcome::Plan(plan)) => app.apply_whole(plan),
+                            Ok(_) => {}
+                            Err(error) => app.notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}")),
+                        }
                     },
-                )
+                );
+                Ok(Outcome::Done)
             },
         )
         .plans();
@@ -2031,6 +2058,33 @@ mod tests {
             ))
             .is_err()
         );
+    }
+
+    /// From the window's thread, a toggle of files the pane has not read
+    /// reads them on a worker, then applies its plan as the user's own.
+    #[cfg(unix)]
+    #[test]
+    fn a_toggle_from_the_window_reads_off_its_thread() {
+        let tmp = home_tempdir();
+        let file = tmp.path().join("it's Été.txt");
+        std::fs::write(&file, b"x").unwrap();
+        write_tags(&file, &["Keep".into()]).unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins.add(Arc::new(TagsPlugin::default()), &app);
+        skwir_core::scheduler::mark_window_thread(&app.scheduler);
+        let entries = serde_json::json!([EntryRef::from_path(&file).unwrap()]);
+        let answered = app
+            .dispatch(&Invocation::with_args(
+                "tags.toggle",
+                &serde_json::json!({ "tag": "todo", "entries": entries }),
+            ))
+            .unwrap();
+        assert!(matches!(answered, Outcome::Done), "nothing read here");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while read_tags(&file) != ["Keep", "todo"] {
+            assert!(std::time::Instant::now() < deadline, "never tagged");
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     // Extended attributes: Unix's.

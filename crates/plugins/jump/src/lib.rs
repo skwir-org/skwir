@@ -512,7 +512,7 @@ impl RecentLocation {
                     batch_size,
                 };
                 let mut here = Vec::new();
-                for (lane, items) in by_lane(items, |r| &r.path) {
+                for (lane, items) in skwir_core::fs::reach::by_lane(items, |r| &r.path) {
                     let items: Vec<PathBuf> = items.into_iter().map(|r| r.path).collect();
                     if lane.is_shared() {
                         here = items;
@@ -553,23 +553,6 @@ impl RecentLocation {
     }
 }
 
-/// `items` grouped by the lane of their path (`fs::reach::lane`), in the
-/// order first met.
-fn by_lane<T>(
-    items: impl IntoIterator<Item = T>,
-    path: impl Fn(&T) -> &Path,
-) -> Vec<(skwir_core::scheduler::Lane, Vec<T>)> {
-    let mut lanes: Vec<(skwir_core::scheduler::Lane, Vec<T>)> = Vec::new();
-    for item in items {
-        let lane = skwir_core::fs::reach::lane(path(&item));
-        match lanes.iter_mut().find(|(l, _)| *l == lane) {
-            Some((_, items)) => items.push(item),
-            None => lanes.push((lane, vec![item])),
-        }
-    }
-    lanes
-}
-
 /// One listing of the recent files, shared by its lanes' jobs.
 #[derive(Clone)]
 struct Listed {
@@ -600,7 +583,8 @@ impl Listed {
             self.paths.lock().insert(e.id, path.clone());
             batch.push(e);
             if batch.len() >= self.batch_size {
-                self.tx.send(ListingEvent::Added(std::mem::take(&mut batch)));
+                self.tx
+                    .send(ListingEvent::Added(std::mem::take(&mut batch)));
             }
         }
         let asked: std::collections::HashSet<&PathBuf> = items.iter().collect();
@@ -648,7 +632,7 @@ impl OpenLocation for RecentLocation {
         }
         // A job for each slice, side by side on the workers, each remote's
         // in its lane.
-        for (lane, wanted) in by_lane(wanted, |(_, path)| path) {
+        for (lane, wanted) in skwir_core::fs::reach::by_lane(wanted, |(_, path)| path) {
             for wanted in wanted.chunks(skwir_core::fs::HYDRATE_JOB) {
                 let wanted = wanted.to_vec();
                 let tx = self.tx.clone();
