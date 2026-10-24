@@ -165,6 +165,14 @@ fn scheme_of(text: &str) -> Option<&str> {
     .then_some(scheme)
 }
 
+/// The path a `file://` URI names on this machine, as the field writes it;
+/// `None` for any other text, another machine's URI, or a path the field
+/// could only write approximately (not UTF-8).
+fn uri_path(text: &str) -> Option<String> {
+    let path = skwir_platform::uri::path_of(text.trim())?;
+    path.to_str().map(str::to_owned)
+}
+
 /// Words that may start a scheme's name (`tr` for `trash:`): one lowercase
 /// word, two letters at least.
 fn scheme_start(text: &str) -> Option<&str> {
@@ -240,7 +248,15 @@ impl Shell {
     /// The field's text changed: the dropdown follows, the folder typed is
     /// read, Jump is asked for places, and `>` goes to the palette.
     pub fn omnibox_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = self.ui().address.read(cx).text().to_owned();
+        let mut text = self.ui().address.read(cx).text().to_owned();
+        // A `file://` URI (pasted from a browser, a terminal's link) is the
+        // path it names here: written as that path, where editing starts
+        // again, and read as one.
+        if let Some(path) = uri_path(&text) {
+            let address = self.ui().address.clone();
+            address.update(cx, |input, cx| input.set_text(path.clone(), cx));
+            text = path;
+        }
         if let Some(rest) = text.strip_prefix('>') {
             let rest = rest.trim_start().to_owned();
             self.omnibox_cancel(window, cx);
@@ -669,6 +685,16 @@ impl Shell {
                 Some(path) => {
                     self.reveal_path(pane, &path, window, cx);
                 }
+                // A path read from nothing shown (`../` over a search, a
+                // tag, the trash) is never the process's working folder's.
+                None if complete::is_path(&text) => {
+                    let why = if text.starts_with('~') {
+                        "The home folder is not known".to_owned()
+                    } else {
+                        format!("“{text}” starts from the folder shown, and no folder is shown")
+                    };
+                    self.set_status(why, true, cx);
+                }
                 None => self.run(
                     "navigate",
                     serde_json::json!({ "location": text, "pane": pane }),
@@ -936,8 +962,12 @@ impl Shell {
                 shared = common.map(|common| format!("{dir}{common}"));
             }
         }
-        // `.` and `..` name a folder themselves.
-        if (typed.is_empty() && !guessed) || rows.is_empty() || matches!(typed, "." | "..") {
+        // `.` and `..` name a folder themselves. A path that names none
+        // here (`../` with no folder shown) goes nowhere.
+        let goes = self.typed_folder(text).is_some();
+        if goes
+            && ((typed.is_empty() && !guessed) || rows.is_empty() || matches!(typed, "." | ".."))
+        {
             rows.insert(0, Suggestion::Go);
         }
         (rows, shared)
@@ -1295,7 +1325,7 @@ pub fn dropdown(
 
 #[cfg(test)]
 mod tests {
-    use super::{scheme_of, scheme_start};
+    use super::{scheme_of, scheme_start, uri_path};
 
     #[test]
     fn schemes_are_told_from_words() {
@@ -1307,5 +1337,23 @@ mod tests {
         assert_eq!(scheme_start("t"), None);
         assert_eq!(scheme_start("Trash"), None);
         assert_eq!(scheme_start("two words"), None);
+    }
+
+    /// A `file://` URI typed or pasted is the path it names here; another
+    /// machine's, or a word that says `file`, is not.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_uri_is_the_path_it_names() {
+        assert_eq!(
+            uri_path(" file:///data/it%27s%20%C3%A9t%C3%A9/ ").as_deref(),
+            Some("/data/it's été/")
+        );
+        assert_eq!(uri_path("file://localhost/data").as_deref(), Some("/data"));
+        assert_eq!(uri_path("file:///").as_deref(), Some("/"));
+        assert_eq!(uri_path("file://elsewhere.example/data"), None);
+        assert_eq!(uri_path("file: notes"), None);
+        assert_eq!(uri_path("/data/a.txt"), None);
+        // Not text: the field could not write it.
+        assert_eq!(uri_path("file:///data/lat%E9"), None);
     }
 }

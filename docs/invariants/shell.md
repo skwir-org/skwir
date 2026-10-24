@@ -201,7 +201,10 @@ of bars, split or not.
     says, though the field can only write it approximately.
 - Enter on a path stats it on a worker (`reveal_path`): a folder is gone
   to, a file shown selected in its folder (hidden files then shown, and
-  said), one not there said. Shift+Enter opens a file (`open`).
+  said), one not there said. Shift+Enter opens a file (`open`). A
+  `file://` URI typed or pasted is written as the path it names here
+  (`uri::path_of`). A relative path with no folder shown (a search, a
+  tag, the trash) goes nowhere, and says why.
 - A search is `query.search` with `expr` and `root`: the UI knows no query
   syntax.
 - Words typed over a folder filter it at once (the core's `filter`,
