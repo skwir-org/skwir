@@ -700,6 +700,7 @@ pub enum Page {
     Reading,
     Media,
     Terminal,
+    Network,
     Privacy,
     Plugins,
     Keyboard,
@@ -806,7 +807,7 @@ pub(crate) struct Builtin {
 
 /// The dialog's own pages, by subject, in the sidebar's order; plugins'
 /// follow.
-static BUILTIN: [Builtin; 11] = [
+static BUILTIN: [Builtin; 12] = [
     Builtin {
         page: Page::General,
         name: page::GENERAL,
@@ -890,6 +891,16 @@ static BUILTIN: [Builtin; 11] = [
         intro: "The terminal panel, and the shell that runs a command on the selection.",
         when_used: true,
         sections: &["Terminal", "Commands"],
+    },
+    Builtin {
+        page: Page::Network,
+        name: page::NETWORK,
+        owner: None,
+        title: "Network",
+        icon: "network",
+        intro: "Remote servers: rclone's remotes, which the sidebar's Network section lists, added, tested, edited and removed here as from their menus; and the tools that open an address.",
+        when_used: true,
+        sections: &["Servers", "Opening addresses"],
     },
     Builtin {
         page: Page::Privacy,
@@ -2546,6 +2557,7 @@ mod tests {
             page::READING,
             page::MEDIA,
             page::TERMINAL,
+            page::NETWORK,
             page::PRIVACY,
             page::KEYBOARD,
         ] {
@@ -2573,6 +2585,7 @@ mod tests {
         assert_eq!(Page::parse("tags"), Page::Plugin("tags".into()));
         assert_eq!(Page::parse("views"), Page::Views);
         assert_eq!(Page::parse("terminal"), Page::Terminal);
+        assert_eq!(Page::parse("network"), Page::Network);
         assert_eq!(Page::of_owner(skwir_core::keymap::OWNER), Page::Keyboard);
         assert!(Page::Plugin("tags".into()).builtin().is_none());
     }

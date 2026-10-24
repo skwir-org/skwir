@@ -203,8 +203,8 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         )
         .records_kept_by(remotes.records.clone())
         .record_action("Test", "remote.test_server")
-        .page(skwir_core::settings::page::GENERAL)
-        .section("Remote folders"),
+        .page(skwir_core::settings::page::NETWORK)
+        .section("Servers"),
     );
     // The Network section's own menu.
     app.registry.menus.add(

@@ -4315,3 +4315,28 @@ fixed one on Xvfb, did nothing on Enter on a focused view button.
   back). They now take a display from :90 up with no lock and no socket
   (`tools/test/own-display.sh`, as `smoke.py`); both passed again (5 of
   5, 2 of 2) and left the session's sockets as they were.
+
+### Network, a page of its own in Settings (2026-10-24)
+
+The user asked whether remote folders' settings belonged on General;
+they moved to a page of their own (ADR-072 amended).
+
+- **Network** (`page::NETWORK`), after Terminal, shown while a setting
+  is on it: Servers holds rclone's remotes, with Add Server and each
+  remote's Test, Edit and Remove; Opening addresses holds the tools
+  tried, in order. Its glyph is drawn for it (`toolbar/network.svg`, a
+  server on a line). Thumbnails in remote folders stay on Folders and
+  views, beside the other thumbnails.
+- **Found by the release check:** the test of a server added by its
+  address read the bookmarks file as soon as the server's folder opened,
+  and failed once with no file: the places plugin writes it on a worker
+  after its command returns, and the folder opened first (its line was
+  in the plugin's temporary file, not yet put in place, when the test's
+  process ended). The test now waits for the line, and for its removal
+  before deleting its folder; passed three times alone.
+- Checked: the dialog's tests (every page a setting names is drawn, a
+  page named by its word), `crates/skwir/tests/settings.rs` (both keys on
+  Network, none on a plugin's own page, the short view's budget),
+  `plugins_toggle`; on Xvfb, Settings listing Network after Terminal,
+  its page with the two remotes of a test configuration and the tools'
+  order.

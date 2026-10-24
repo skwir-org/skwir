@@ -1120,8 +1120,8 @@ impl Plugin for RemotePlugin {
                 "The tools that mount an sftp://, smb:// or other address, tried in this order among those installed: sshfs, gvfs, kio, rclone, fstab. On KDE's desktop, kio comes before gvfs.",
                 default_order(),
             )
-            .page(skwir_core::settings::page::GENERAL)
-            .section("Remote folders"),
+            .page(skwir_core::settings::page::NETWORK)
+            .section("Opening addresses"),
         );
         app.settings.declare(
             SettingSpec::choice(

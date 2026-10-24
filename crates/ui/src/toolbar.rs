@@ -78,6 +78,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "keyboard",
         "appearance",
         "sliders",
+        "network",
         "external",
         "chevron-right",
         "sort",

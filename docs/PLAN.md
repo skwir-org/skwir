@@ -1475,7 +1475,8 @@ protocol is a scheme a connector maps, or a connector.
   and on macOS through `nfsmount` (compiled only); rclone's Windows
   release tried under Wine (its remote control on the loopback behind a
   login). Settings lists rclone's remotes (records their owner keeps,
-  `RecordSource`); the Network section's menu holds Add Server…. How
+  `RecordSource`) on a Network page of their own (ADR-072 amended); the
+  Network section's menu holds Add Server…. How
   each was checked is in `docs/STATUS-LOG.md`, "Servers configured from
   Skwir".
 - **G. Left** (each its own step):
@@ -1494,6 +1495,12 @@ protocol is a scheme a connector maps, or a connector.
     keyring's password alone opens one there;
   - a remote half made when Skwir ends mid-question (its sign-in, a
     crypt's) stays in rclone's configuration until removed;
+  - a server added by its address is said "kept as a bookmark" when the
+    places plugin was asked, which writes it on a worker: a write that
+    fails says so after (found by the bookmark test racing the write);
+  - Settings' Network page lists rclone's remotes only: the servers kept
+    as bookmarks, and each server's mount options, Connect at Login and
+    key login, are reached from its menu alone;
   - remotes whose names an address cannot hold (a space, `@`, other
     alphabets) stay rclone's but open by no address;
   - Connect at Login never run by a real systemd, launchd or Task

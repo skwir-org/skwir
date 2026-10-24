@@ -89,3 +89,24 @@ says of it. A fold says where more is, on the page it is on.
   budget.
 - A user who unfolds every page sees what the dialog showed before, by
   subject.
+
+## Amendments
+
+### 2026-10-24: Network, a twelfth page
+
+Remote folders' settings stood on General, in a section of their own,
+when they were one setting: the tools that open an address. Configuring
+servers from Skwir (ADR-086) added rclone's remotes there, a list
+managed in place (Add Server, Test, Edit, Remove), which is not what
+General is about (startup, tabs, the split, the address, drag and drop).
+The user asked whether they deserved a page of their own.
+
+- **Network**, after Terminal: rclone's remotes (section Servers), then
+  the tools that open an address, in the order tried (Opening
+  addresses). Named as the sidebar's section where those servers stand.
+  Shown only while a setting is on it, so it goes with the remote
+  plugin.
+- Thumbnails in remote folders stay with the other thumbnails, on
+  Folders and views: a page is its subject's, and thumbnails were one
+  of the subjects this decision gathered.
+- Twelve entries in the sidebar; none is a page of a single setting.
