@@ -108,6 +108,19 @@ pub fn path_of(uri: &str) -> Option<PathBuf> {
     here.then(|| PathBuf::from(skwir_core::os_path::from_bytes(percent_decode(path))))
 }
 
+/// [`path_of`] for a file of this machine only: a URI naming another host,
+/// or a share in its path, is none. For a link a program wrote, which no
+/// one chose to follow to a server: on Windows `path_of` makes another
+/// host its share (`\\host\share`), which opening would connect to.
+pub fn local_path_of(uri: &str) -> Option<PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    let host = &rest[..rest.find('/')?];
+    let here = host.is_empty()
+        || host.eq_ignore_ascii_case("localhost")
+        || hostname().is_some_and(|name| host.eq_ignore_ascii_case(name));
+    path_of(uri).filter(|path| here && !path.to_string_lossy().starts_with(r"\\"))
+}
+
 /// [`path_of`] on Windows, for a URI's `host` and `path` (`/C:/a%20b`):
 /// a drive's path here, a share's elsewhere. Tested everywhere.
 #[cfg(any(windows, test))]
@@ -224,6 +237,24 @@ mod tests {
         let uri = file_uri(path);
         assert_eq!(uri, "file:///x/caf%E9");
         assert_eq!(path_of(&uri).as_deref(), Some(path));
+    }
+
+    #[test]
+    fn a_file_of_another_machine_is_no_local_path() {
+        #[cfg(unix)]
+        {
+            assert_eq!(
+                local_path_of("file:///tmp/it%27s%20here"),
+                Some(PathBuf::from("/tmp/it's here"))
+            );
+            assert_eq!(
+                local_path_of("file://localhost/tmp/x"),
+                Some(PathBuf::from("/tmp/x"))
+            );
+        }
+        // A program's link to a server is never followed to it.
+        assert_eq!(local_path_of("file://server.example/share/x"), None);
+        assert_eq!(local_path_of("https://example.org/"), None);
     }
 
     #[test]

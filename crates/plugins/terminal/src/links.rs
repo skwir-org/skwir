@@ -109,12 +109,20 @@ impl Stamps {
     pub fn target(&self, link: &Hyperlink) -> Option<(Target, bool)> {
         if !link.id().starts_with(STAMP) {
             let uri = link.uri();
-            let target = match skwir_platform::uri::path_of(uri) {
+            // A file a program names is followed only on this machine:
+            // another host's is a server it would connect to.
+            let target = match skwir_platform::uri::local_path_of(uri) {
                 Some(path) => Target::Path {
                     path,
                     line: None,
                     column: None,
                 },
+                None if uri
+                    .get(..7)
+                    .is_some_and(|s| s.eq_ignore_ascii_case("file://")) =>
+                {
+                    return None;
+                }
                 None => Target::Uri(uri.to_owned()),
             };
             return Some((target, true));
@@ -254,8 +262,8 @@ impl Finder {
                 continue;
             }
             let id = match path {
-                None => match skwir_platform::uri::path_of(&text) {
-                    // An address of a file is the file.
+                None => match skwir_platform::uri::local_path_of(&text) {
+                    // An address of a file is the file, of this machine.
                     Some(file) => stamps.add(
                         text.clone(),
                         Leads::Path {
