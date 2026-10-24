@@ -182,7 +182,8 @@ The key is the owner's; the page is the subject's (ADR-072).
   choices on click, text and numbers on Enter or blur. The core accepts
   one save at a time, so the view queues later changes and sends them as
   one batch when the running save ends; it waits the same way for a save
-  started elsewhere.
+  started elsewhere. The window's own changes do too, its toggles and a
+  `settings.apply` run from a menu or the palette (`settings::remember`).
 - Without a window, `settings.apply` completes persistence and settings
   callbacks before returning; a failure is a command error. A headless
   caller must also refuse a save when startup fell back to memory after a
