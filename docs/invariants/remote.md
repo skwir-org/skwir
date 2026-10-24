@@ -259,6 +259,14 @@ ADR-077 (which revises ADR-021).
   second finds the first's mount. A mount at the point Skwir would make
   is let go of only when it answers "not connected"; a live one is never
   unmounted under what uses it.
+- An address's top is what one mount of it holds (`Address::top`): the
+  server for SFTP, FTP, WebDAV and rclone's remotes, a share for SMB, a
+  volume for AFP. An NFS export may be of several parts (`/srv/photos`),
+  which only the server says: an NFS address keeps its whole path, and
+  the connector says the export from what it mounted
+  (`Connected::address`: GVfs's mount spec). An address's path holds no
+  `.` or `..` (`Address::parse`), and what it names below a mount is
+  joined to its point name by name, never above it.
 - A remote folder is named by its address where the user reads or keeps
   it: its Network place roots its trail; a path said to the user is
   written as its address (`remotes::address_below`, the deletion's
@@ -300,8 +308,12 @@ ADR-077 (which revises ADR-021).
 - One trait (`remote::connector::Connector`): connect an address's top
   to a mount, recognise mounts of its tool, disconnect, list the servers
   its configuration names. The order tried is `remote.connectors`; a
-  mount already there is used first. Adding a protocol is a scheme a
-  connector maps, or a connector.
+  mount already there is used first. A connector that fails without
+  asking anything (GVfs finding no NFS export holding the path, fstab
+  naming none) leaves the address to the next one installed; one that
+  asked the user speaks for the attempt, which no other asks again.
+  Failures are said together, each by its tool. Adding a protocol is a
+  scheme a connector maps, or a connector.
 - GVfs is the session's: its bridge is `$XDG_RUNTIME_DIR/gvfs` alone
   (`Gvfs::bridge`), never another the mount table lists (another
   user's, or the user's own while a window runs with a runtime folder of
@@ -359,7 +371,9 @@ ADR-077 (which revises ADR-021).
   publishes before its folder is shown (`Remotes::publish_mounted`), so
   F5 there finds what its program is told (`Known::forget`). Nothing is
   published once the plugin is disabled.
-- A mount Skwir makes is under `$XDG_RUNTIME_DIR/skwir/remote/`, named by
+- A mount Skwir makes is under `$XDG_RUNTIME_DIR/skwir/remote/` (on
+  macOS and Windows, the user's temporary folder: never the cache, which
+  a start sweeps), named by
   `connector::point_name` so its address reads back from it: nothing else
   is kept. It outlives Skwir, as GVfs's do.
 - A tool that daemonizes is run until it has mounted

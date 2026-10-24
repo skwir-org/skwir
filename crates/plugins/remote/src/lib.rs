@@ -358,6 +358,7 @@ impl Remotes {
             }
         }
         let mut why_not = Vec::new();
+        let mut failed: Vec<(&'static str, anyhow::Error)> = Vec::new();
         for connector in self.ordered(app) {
             if !connector.schemes().contains(&address.scheme) {
                 continue;
@@ -366,13 +367,40 @@ impl Remotes {
                 why_not.push(reason);
                 continue;
             }
-            let connected = self.connect_keyed(app, &connector, address, ask, cancel)?;
+            let heard = Arc::new(Heard {
+                ask: Arc::clone(ask),
+                asked: std::sync::atomic::AtomicBool::new(false),
+            });
+            let asked: Arc<dyn Ask> = heard.clone();
+            let connected = match self.connect_keyed(app, &connector, address, &asked, cancel) {
+                Ok(connected) => connected,
+                // Stopped, or refused once the user was asked: that answer
+                // stands, never asked again by the next tool.
+                Err(error) if cancel.is_cancelled() || heard.asked() => return Err(error),
+                // A tool that could not reach it without asking (GVfs
+                // finding no NFS export where fstab names one) leaves it
+                // to the next one installed.
+                Err(error) => {
+                    failed.push((connector.title(), error));
+                    continue;
+                }
+            };
             reach::changed();
             self.publish_mounted(app);
             let below = connected.address.below(address).unwrap_or_default();
             let path = join(&connected.point, below);
             self.refresh(app);
             return Ok(path);
+        }
+        if failed.len() == 1 {
+            return Err(failed.remove(0).1);
+        }
+        if !failed.is_empty() {
+            let said: Vec<String> = failed
+                .iter()
+                .map(|(tool, error)| format!("{tool}: {error:#}"))
+                .collect();
+            anyhow::bail!("{}", said.join("; "));
         }
         if why_not.is_empty() {
             anyhow::bail!(
@@ -763,12 +791,28 @@ fn lost(error: &std::io::Error) -> bool {
     error.kind() == std::io::ErrorKind::NotConnected
 }
 
-/// `point` joined with `below`, the bytes of a server's path.
+/// `point` joined with `below`, the bytes of a server's path: name by
+/// name, never above `point` (an address's path holds no `..`, but a
+/// mount's address read from elsewhere might), so what it leads to is
+/// the mount's.
 fn join(point: &Path, below: &[u8]) -> PathBuf {
-    if below.is_empty() {
-        return point.to_path_buf();
+    let below = PathBuf::from(skwir_core::os_path::from_bytes(below.to_vec()));
+    let mut path = point.to_path_buf();
+    let mut depth = 0usize;
+    for part in below.components() {
+        match part {
+            std::path::Component::Normal(name) => {
+                path.push(name);
+                depth += 1;
+            }
+            std::path::Component::ParentDir if depth > 0 => {
+                path.pop();
+                depth -= 1;
+            }
+            _ => {}
+        }
     }
-    point.join(skwir_core::os_path::from_bytes(below.to_vec()))
+    path
 }
 
 /// The plugin.
@@ -981,30 +1025,37 @@ impl Plugin for RemotePlugin {
                     "a rule is automatic, never, small or always"
                 );
                 let (remotes, weak) = (remotes.clone(), app.weak());
-                // Kept in the settings file, written on a worker.
-                app.scheduler.spawn(
-                    skwir_core::scheduler::Priority::Normal,
-                    "remote.thumbnails",
-                    app.lifetime().child(),
-                    move || {
-                        let Some(app) = weak.upgrade() else { return };
-                        let mut chosen: toml::map::Map<String, toml::Value> =
-                            app.settings.get(CHOSEN).unwrap_or_default();
-                        if args.rule == "automatic" {
-                            chosen.remove(&args.remote);
-                        } else {
-                            chosen.insert(args.remote, toml::Value::String(args.rule));
-                        }
-                        app.settings.set(CHOSEN, toml::Value::Table(chosen));
-                        if let Err(error) = app.settings.save() {
-                            app.notify(
-                                NotifyLevel::Error,
-                                format!("The remote's thumbnails were not saved: {error:#}"),
-                            );
-                        }
-                        remotes.refresh(&app);
-                    },
-                );
+                // Kept in the settings file: written on a worker from the
+                // window's thread, else before answering (a `skwir cmd`
+                // without a window ends once answered).
+                let save = move || {
+                    let Some(app) = weak.upgrade() else { return };
+                    let mut chosen: toml::map::Map<String, toml::Value> =
+                        app.settings.get(CHOSEN).unwrap_or_default();
+                    if args.rule == "automatic" {
+                        chosen.remove(&args.remote);
+                    } else {
+                        chosen.insert(args.remote, toml::Value::String(args.rule));
+                    }
+                    app.settings.set(CHOSEN, toml::Value::Table(chosen));
+                    if let Err(error) = app.settings.save() {
+                        app.notify(
+                            NotifyLevel::Error,
+                            format!("The remote's thumbnails were not saved: {error:#}"),
+                        );
+                    }
+                    remotes.refresh(&app);
+                };
+                if skwir_core::scheduler::on_window_thread() {
+                    app.scheduler.spawn(
+                        skwir_core::scheduler::Priority::Normal,
+                        "remote.thumbnails",
+                        app.lifetime().child(),
+                        save,
+                    );
+                } else {
+                    save();
+                }
                 Ok(Outcome::Done)
             },
         );
@@ -1158,6 +1209,41 @@ const LOOK: Duration = Duration::from_millis(100);
 /// How long letting go of a mount waits for what showed it and what read
 /// it there to let go first.
 const LET_GO: Duration = Duration::from_secs(10);
+
+/// What one connector asks, passed on, noting whether it asked anything
+/// (`Remotes::reach`): a tool that failed once the user answered it is not
+/// followed by another asking again.
+struct Heard {
+    ask: Arc<dyn Ask>,
+    asked: std::sync::atomic::AtomicBool,
+}
+
+impl Heard {
+    fn asked(&self) -> bool {
+        self.asked.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn noted(&self) -> &dyn Ask {
+        self.asked.store(true, std::sync::atomic::Ordering::Relaxed);
+        &*self.ask
+    }
+}
+
+impl Ask for Heard {
+    fn secret(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<String> {
+        self.noted().secret(title, accept, cancel)
+    }
+    fn confirm(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool {
+        self.noted().confirm(title, detail, cancel)
+    }
+    fn password(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<Password> {
+        self.noted().password(title, accept, cancel)
+    }
+    // Asked of no one.
+    fn kept_password(&self) -> Option<String> {
+        self.ask.kept_password()
+    }
+}
 
 /// What a connection asks of the window: a password in its masked
 /// prompt, a server it cannot vouch for as a question.
@@ -1336,6 +1422,120 @@ mod tests {
         fn confirm(&self, _: &str, _: &str, _: &CancelToken) -> bool {
             false
         }
+    }
+
+    /// Fails as told, asking the window first when `asks`; or connects.
+    struct Tool {
+        id: &'static str,
+        fails: Option<&'static str>,
+        asks: bool,
+        tried: AtomicUsize,
+    }
+
+    impl Tool {
+        fn new(id: &'static str, fails: Option<&'static str>, asks: bool) -> Arc<Tool> {
+            Arc::new(Tool {
+                id,
+                fails,
+                asks,
+                tried: AtomicUsize::new(0),
+            })
+        }
+    }
+
+    impl Connector for Tool {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+        fn title(&self) -> &'static str {
+            self.id
+        }
+        fn schemes(&self) -> &'static [Scheme] {
+            &[Scheme::Nfs]
+        }
+        fn unavailable(&self) -> Option<String> {
+            None
+        }
+        fn connect(
+            &self,
+            address: &Address,
+            ask: &Arc<dyn Ask>,
+            cancel: &CancelToken,
+        ) -> anyhow::Result<Connected> {
+            self.tried.fetch_add(1, Ordering::SeqCst);
+            if self.asks {
+                ask.confirm("Trust it?", "", cancel);
+            }
+            if let Some(why) = self.fails {
+                anyhow::bail!("{why}");
+            }
+            Ok(Connected {
+                point: PathBuf::from("/mounted"),
+                address: address.top(),
+            })
+        }
+        fn recognises(&self, _: &Remote) -> Option<Recognised> {
+            None
+        }
+        fn disconnect(&self, _: &Remote, _: &Recognised, _: &CancelToken) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// What an address names below a mount is the mount's: never a folder
+    /// of this machine above it.
+    #[test]
+    fn a_path_below_a_mount_stays_in_it() {
+        let point = Path::new("/run/user/1/skwir/remote/sftp-h");
+        assert_eq!(super::join(point, b""), point);
+        assert_eq!(
+            super::join(point, b"it's/a b/./c"),
+            point.join("it's").join("a b").join("c")
+        );
+        assert_eq!(super::join(point, b"../../../../home"), point.join("home"));
+        assert_eq!(super::join(point, b"a/../../b"), point.join("b"));
+    }
+
+    /// The connectors installed are tried in their order: one that fails
+    /// without asking anything leaves the address to the next; one the
+    /// user answered speaks for the attempt.
+    #[test]
+    fn a_tool_that_fails_unasked_leaves_the_address_to_the_next() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let ask: Arc<dyn Ask> = Arc::new(Nobody);
+        let address = Address::parse("nfs://nas/srv/it's photos").unwrap();
+        let reach = |tools: &[&Arc<Tool>]| {
+            let remotes = Remotes::with(
+                tools
+                    .iter()
+                    .map(|t| Arc::clone(t) as Arc<dyn Connector>)
+                    .collect(),
+            );
+            remotes.reach(&app, &address, &ask, &CancelToken::new())
+        };
+
+        let (unasked, next) = (
+            Tool::new("first", Some("Mount point does not exist"), false),
+            Tool::new("second", None, false),
+        );
+        assert_eq!(reach(&[&unasked, &next]).unwrap(), Path::new("/mounted"));
+        assert_eq!(next.tried.load(Ordering::SeqCst), 1);
+
+        let (answered, next) = (
+            Tool::new("first", Some("refused"), true),
+            Tool::new("second", None, false),
+        );
+        let error = reach(&[&answered, &next]).unwrap_err();
+        assert_eq!(format!("{error:#}"), "refused");
+        assert_eq!(next.tried.load(Ordering::SeqCst), 0, "never asked again");
+
+        let (one, other) = (
+            Tool::new("first", Some("no export"), false),
+            Tool::new("second", Some("no entry"), false),
+        );
+        let error = reach(&[&one, &other]).unwrap_err();
+        assert_eq!(format!("{error:#}"), "first: no export; second: no entry");
     }
 
     /// Two panes opening one server at once connect one after the other,

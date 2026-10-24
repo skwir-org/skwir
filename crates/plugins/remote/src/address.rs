@@ -185,7 +185,7 @@ impl Address {
                 return Err(NotAnAddress(format!("“{part}” is no user's name")));
             }
         }
-        let mut path = decoded(path);
+        let mut path = without_dots(&decoded(path));
         if path.is_empty() {
             path.push(b'/');
         }
@@ -225,8 +225,12 @@ impl Address {
 
     /// The server's address, at its top: what one mount of it holds,
     /// for the protocols whose mount is of the whole server (SFTP, FTP,
-    /// WebDAV, rclone's remote). An SMB share and an NFS export are
-    /// mounted one at a time: their first part stays.
+    /// WebDAV, rclone's remote). An SMB share and an AFP volume are
+    /// mounted one at a time: their first part stays. An NFS export may
+    /// be of several parts (`/srv/photos`), which only the server says:
+    /// the whole path stays, and what a connector mounted for it (GVfs:
+    /// the export holding it; the system: that folder of it) says the
+    /// export ([`Connected::address`](crate::connector::Connected)).
     pub fn top(&self) -> Address {
         let mut top = self.clone();
         top.path = match self.scheme {
@@ -238,6 +242,8 @@ impl Address {
                     [b"/".as_slice(), share, b"/"].concat()
                 }
             }
+            Scheme::Nfs if !self.path.ends_with(b"/") => [self.path.as_slice(), b"/"].concat(),
+            Scheme::Nfs => self.path.clone(),
             _ => b"/".to_vec(),
         };
         top
@@ -430,6 +436,38 @@ pub fn decoded(text: &str) -> Vec<u8> {
     skwir_core::location::unescape(text)
 }
 
+/// `path` without its `.` and `..` parts (RFC 3986's dot segments), never
+/// above the server's top: a folder of the server, which the path below a
+/// mount's point joins as it is, where `..` would leave the mount for a
+/// folder of this machine. Read once decoded: `%2E%2E` is `..` too.
+fn without_dots(path: &[u8]) -> Vec<u8> {
+    let parts: Vec<&[u8]> = path.split(|b| *b == b'/').collect();
+    let mut kept: Vec<&[u8]> = Vec::with_capacity(parts.len());
+    let mut folder = false;
+    for (i, part) in parts.iter().enumerate() {
+        let last = i + 1 == parts.len();
+        match *part {
+            b"." => folder = last,
+            b".." => {
+                // The first part is the empty one before the top's `/`.
+                if kept.len() > 1 {
+                    kept.pop();
+                }
+                folder = last;
+            }
+            part => {
+                kept.push(part);
+                folder = false;
+            }
+        }
+    }
+    let mut out = kept.join(&b'/');
+    if folder && !out.ends_with(b"/") {
+        out.push(b'/');
+    }
+    out
+}
+
 fn decoded_text(text: &str) -> String {
     String::from_utf8_lossy(&decoded(text)).into_owned()
 }
@@ -527,6 +565,11 @@ mod tests {
         assert_eq!(a.first_part(), b"photos");
         assert_eq!(a.top().path, b"/photos/");
         assert_eq!(a.label(), "photos on nas");
+        // An NFS export may be of several parts: the server says which.
+        let nfs = Address::parse("nfs://nas/srv/photos").unwrap();
+        assert_eq!(nfs.top().path, b"/srv/photos/");
+        assert_eq!(nfs.top().below(&nfs), Some(b"".as_slice()));
+        assert_eq!(Address::parse("nfs://nas/").unwrap().top().path, b"/");
         // A port not the usual one is said; the usual one is not.
         let label = |text: &str| Address::parse(text).unwrap().label();
         assert_eq!(label("dav://127.0.0.1:8080/"), "127.0.0.1:8080");
@@ -534,6 +577,20 @@ mod tests {
         assert_eq!(label("smb://nas:4450/photos"), "photos on nas:4450");
         assert_eq!(label("sftp://me@[fe80::1]:2200/srv"), "me@[fe80::1]:2200");
         assert_eq!(a.to_string(), "smb://WORK;me@nas/photos/2024");
+    }
+
+    #[test]
+    fn a_path_never_goes_above_the_server_s_top() {
+        let path = |text: &str| String::from_utf8(Address::parse(text).unwrap().path).unwrap();
+        assert_eq!(path("sftp://h/a/../../etc"), "/etc");
+        assert_eq!(path("sftp://h/../.."), "/");
+        assert_eq!(path("sftp://h/%2E%2E/%2e%2e/x"), "/x");
+        assert_eq!(path("sftp://h/a/./b/.."), "/a/");
+        assert_eq!(path("smb://nas/photos/2024/"), "/photos/2024/");
+        assert_eq!(path("sftp://h/it's ..x/.y"), "/it's ..x/.y");
+        let mount = Address::parse("sftp://me@h/").unwrap();
+        let above = Address::parse("sftp://me@h/srv/../../../home").unwrap();
+        assert_eq!(mount.below(&above), Some(b"home".as_slice()));
     }
 
     #[test]

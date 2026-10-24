@@ -89,23 +89,23 @@ impl Gvfs {
         )
     }
 
-    /// The folder of the bridge that holds `top`'s mount: its spec says
-    /// the same server. Reads the bridge's folder, which GVfs answers from
-    /// its list of mounts, never from a server.
-    fn find_mount(&self, top: &Address) -> Option<PathBuf> {
+    /// The folder of the bridge that holds `top`'s mount, with the
+    /// address of that mount's top as its spec says it (an NFS export
+    /// GVfs found holding the path asked for): the same server, at or
+    /// above `top`. Reads the bridge's folder, which GVfs answers from its
+    /// list of mounts, never from a server.
+    fn find_mount(&self, top: &Address) -> Option<(PathBuf, Address)> {
         let bridge = self.bridge()?;
         std::fs::read_dir(&bridge)
             .ok()?
             .filter_map(Result::ok)
-            .find(|entry| {
-                entry
-                    .file_name()
-                    .to_str()
-                    .and_then(Spec::parse)
-                    .and_then(|spec| spec.address())
-                    .is_some_and(|mounted| mounted.below(top).is_some())
+            .find_map(|entry| {
+                let mounted = Spec::parse(entry.file_name().to_str()?)?.address()?;
+                mounted
+                    .below(top)
+                    .is_some()
+                    .then(|| (bridge.join(entry.file_name()), mounted))
             })
-            .map(|entry| bridge.join(entry.file_name()))
     }
 }
 
@@ -169,13 +169,10 @@ impl Connector for Gvfs {
             );
         }
         skwir_core::fs::reach::changed();
-        let point = self
+        let (point, address) = self
             .find_mount(&top)
             .ok_or_else(|| anyhow::anyhow!("GVfs mounted {top} but its folder is not there"))?;
-        Ok(Connected {
-            point,
-            address: top,
-        })
+        Ok(Connected { point, address })
     }
 
     fn recognises(&self, remote: &Remote) -> Option<Recognised> {
