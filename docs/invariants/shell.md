@@ -293,9 +293,10 @@ of bars, split or not.
   the journal can take it back, Redo after an undo, Retry first for a
   plan a step's error stopped (ADR-080; a toast holds its buttons in
   order, `Toast::actions`). Progress bars:
-  [operations.md](operations.md). It names the file a step acts on as the
-  user knows it: an item of a trash by the name it had, which the
-  executor reads from its record before the step takes it away
+  [operations.md](operations.md); an answer said while plans run is drawn
+  under their cards, never hidden by them. It names the file a step acts
+  on as the user knows it: an item of a trash by the name it had, which
+  the executor reads from its record before the step takes it away
   (`Progress::named`), never by the trash's (`a.txt.2`, `$R…`).
 - `Shell::set_status` is a toast; `set_status_about` (core:
   `App::notify_about_setting`) links to the setting that fixes it.

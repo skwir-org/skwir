@@ -1,7 +1,8 @@
 //! Toasts: what just happened, with the way back. One message at a time sits
 //! above the panes' footers; a running operation shows its progress there with
 //! Pause and Cancel buttons and turns into its result ("Moved 3 items to
-//! Trash", Undo).
+//! Trash", Undo). A message said while operations run is drawn under their
+//! cards, never behind them.
 //!
 //! The only animation is a short entrance that ends by itself; nothing here
 //! keeps the UI awake.
@@ -83,6 +84,8 @@ pub struct ToastState {
     action_focus: Vec<gpui::FocusHandle>,
     /// Pause and Resume, one button: its focus stays as its label changes.
     pause_focus: Option<gpui::FocusHandle>,
+    /// The first card's Cancel.
+    cancel_focus: Option<gpui::FocusHandle>,
     /// The Pause and Cancel buttons of the cards after the first, one pair
     /// a card, kept across frames: plans that share nothing run at once
     /// (ADR-079).
@@ -681,12 +684,13 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
             (running.total > 1 || transfer.total > 0).then(|| (running.clone(), transfer))
         })
         .collect();
-    let content = if progress.is_empty() {
-        let toast = shell.toasts.current.clone()?;
+    // What was said: alone, or under the cards of what runs, never hidden
+    // by them (a rename beside a long copy, an error).
+    let said = shell.toasts.current.clone().map(|toast| {
         // Said as it appears: a failure at once, the rest after what is
         // being said.
         let error = matches!(toast.tone, Tone::Error);
-        let mut card = card(toast.tone, 0)
+        let mut card = card(toast.tone, 6)
             .role(if error {
                 gpui::Role::Alert
             } else {
@@ -729,6 +733,9 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .aria_live(gpui::Live::Off)
                 .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx))),
         )
+    });
+    let content = if progress.is_empty() {
+        said?
     } else {
         // What the user did meanwhile waits behind what it meets, and
         // paused, for as long as it stays paused: said under the cards,
@@ -748,7 +755,11 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                         .pause_focus
                         .get_or_insert_with(|| cx.focus_handle())
                         .clone(),
-                    close.clone(),
+                    shell
+                        .toasts
+                        .cancel_focus
+                        .get_or_insert_with(|| cx.focus_handle())
+                        .clone(),
                 )
             } else {
                 while shell.toasts.card_focus.len() < n {
@@ -773,7 +784,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         if !waiting.is_empty() {
             cards = cards.child(
                 // The last of a generation's eight: the cards are the first
-                // four.
+                // four (`op::ACTIONS_AT_ONCE`), what was said the seventh.
                 card(Tone::Info, 7)
                     .role(gpui::Role::Status)
                     .when(a11y, |d| d.aria_label(waiting.join(". ")))
@@ -790,7 +801,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                     ),
             );
         }
-        cards
+        cards.children(said)
     };
     Some(
         div()
