@@ -71,7 +71,9 @@ impl PreviewProvider for Provider {
 mod folds;
 
 /// JSON that parsed, printed again as `serde_json::to_string_pretty` lays
-/// it out (two spaces, an object's keys sorted, the last of a key kept),
+/// it out (two spaces; an object's keys in the file's order, a key written
+/// twice keeping its first place and its last value, as the program's
+/// `serde_json` reads them with `preserve_order`),
 /// each number and string as the file writes it: printed from a parsed
 /// value, a number went through `f64` (a 256-bit amount, `1e2` as
 /// `100.0`, digits past the 17th), misstating the data.
@@ -80,7 +82,7 @@ fn laid_out(source: &str) -> anyhow::Result<String> {
     enum Raw<'a> {
         Scalar(&'a str),
         Array(Vec<Raw<'a>>),
-        Object(std::collections::BTreeMap<String, (&'a str, Raw<'a>)>),
+        Object(Vec<(String, &'a str, Raw<'a>)>),
     }
     struct Reader<'a> {
         text: &'a str,
@@ -131,7 +133,7 @@ fn laid_out(source: &str) -> anyhow::Result<String> {
                 }
                 b'{' => {
                     self.at += 1;
-                    let mut items = std::collections::BTreeMap::new();
+                    let mut items: Vec<(String, &'a str, Raw<'a>)> = Vec::new();
                     loop {
                         self.blank();
                         match self.peek()? {
@@ -143,7 +145,10 @@ fn laid_out(source: &str) -> anyhow::Result<String> {
                                 self.at += 1; // `:`
                                 let value = self.value()?;
                                 let name = serde_json::from_str::<String>(key).ok()?;
-                                items.insert(name, (key, value));
+                                match items.iter_mut().find(|(n, _, _)| *n == name) {
+                                    Some(item) => item.2 = value,
+                                    None => items.push((name, key, value)),
+                                }
                             }
                         }
                     }
@@ -181,7 +186,7 @@ fn laid_out(source: &str) -> anyhow::Result<String> {
             }
             Raw::Object(items) => {
                 out.push_str("{\n");
-                for (i, (key, value)) in items.values().enumerate() {
+                for (i, (_, key, value)) in items.iter().enumerate() {
                     indent(out, depth + 1);
                     out.push_str(key);
                     out.push_str(": ");
@@ -345,17 +350,18 @@ mod tests {
     fn json_numbers_are_printed_as_the_file_writes_them() {
         let source = r#"{"e":1e2,"big":115792089237316195423570985008687907853269984665640564039457584007913129639935,"d":0.10000000000000000555,"s":"caf\u00e9","b":[],"o":{},"e":-0.0}"#;
         let data = code(source, "json", false, Bounds::QUICK, &CancelToken::new()).unwrap();
+        // The file's order; a key written twice keeps its place, its last
+        // value, as the program's serde_json (`preserve_order`) reads it.
         assert_eq!(
             data.plain_text(),
-            "{\n  \"b\": [],\n  \"big\": 115792089237316195423570985008687907853269984665640564039457584007913129639935,\n  \"d\": 0.10000000000000000555,\n  \"e\": -0.0,\n  \"o\": {},\n  \"s\": \"caf\\u00e9\"\n}"
+            "{\n  \"e\": -0.0,\n  \"big\": 115792089237316195423570985008687907853269984665640564039457584007913129639935,\n  \"d\": 0.10000000000000000555,\n  \"s\": \"caf\\u00e9\",\n  \"b\": [],\n  \"o\": {}\n}"
         );
-        // Laid out as serde_json lays out the value it parses.
+        // Laid out as serde_json's pretty printer lays out a value.
         let plain = r#"{"z":[1,{"a":true,"n":null}],"a":"x y"}"#;
         let data = code(plain, "json", false, Bounds::QUICK, &CancelToken::new()).unwrap();
-        let value: serde_json::Value = serde_json::from_str(plain).unwrap();
         assert_eq!(
             data.plain_text(),
-            serde_json::to_string_pretty(&value).unwrap()
+            "{\n  \"z\": [\n    1,\n    {\n      \"a\": true,\n      \"n\": null\n    }\n  ],\n  \"a\": \"x y\"\n}"
         );
     }
 
