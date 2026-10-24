@@ -757,6 +757,7 @@ mod tests {
     use super::*;
 
     /// Files from anywhere are stat-ed a lane each: a remote's alone.
+    #[cfg(target_os = "linux")]
     #[test]
     fn paths_are_grouped_by_their_lane_in_the_order_met() {
         let point = Path::new("/example/by lane/nas");

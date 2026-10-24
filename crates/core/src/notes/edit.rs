@@ -747,7 +747,6 @@ impl Operation for RestoreNotes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::EntryId;
     use crate::notes::{Holds, Kept, NotesStore};
 
     fn home_tempdir() -> tempfile::TempDir {
@@ -919,6 +918,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn what_skwir_wrote_is_found_however_its_file_is_named() {
+        use crate::EntryId;
         let tmp = home_tempdir();
         let cache = crate::cache::Cache::new(tmp.path().join("cache"));
         let dir = tmp.path().join("l'été");

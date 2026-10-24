@@ -453,10 +453,20 @@ mod imp {
         watcher
             .watch(dir, RecursiveMode::NonRecursive)
             .map_err(std::io::Error::other)?;
-        let dir: Arc<PathBuf> = Arc::new(dir.to_path_buf());
+        // As opened, and as the system resolves it: macOS's FSEvents says
+        // the resolved path of what it reports (`/private/tmp/x` for
+        // `/tmp/x`, a folder reached through a link), Windows the one
+        // given.
+        let mut dirs = vec![dir.to_path_buf()];
+        if let Ok(resolved) = crate::os_path::canonical(dir)
+            && resolved != dir
+        {
+            dirs.push(resolved);
+        }
+        let dirs: Arc<[PathBuf]> = dirs.into();
         std::thread::Builder::new()
             .name("skwir-watch".into())
-            .spawn(move || coalesce(&raw_rx, &deliver, &dir, window, &cancel))?;
+            .spawn(move || coalesce(&raw_rx, &deliver, &dirs, window, &cancel))?;
         Ok(WatchHandle {
             _inner: Box::new(watcher),
         })
@@ -465,17 +475,17 @@ mod imp {
     fn coalesce(
         raw: &Receiver<notify::Result<notify::Event>>,
         deliver: &Deliver,
-        dir: &Path,
+        dirs: &[PathBuf],
         window: Duration,
         cancel: &CancelToken,
     ) {
         // Ends when the watcher is dropped: its sender with it.
         while let Ok(first) = raw.recv() {
             let mut changes = Changes::default();
-            absorb(&mut changes, first, dir);
+            absorb(&mut changes, first, dirs);
             let deadline = std::time::Instant::now() + window;
             while let Ok(ev) = raw.recv_deadline(deadline) {
-                absorb(&mut changes, ev, dir);
+                absorb(&mut changes, ev, dirs);
             }
             if cancel.is_cancelled() {
                 return;
@@ -484,7 +494,8 @@ mod imp {
         }
     }
 
-    fn absorb(changes: &mut Changes, ev: notify::Result<notify::Event>, dir: &Path) {
+    /// What `ev` says of the folder watched, known by any of `dirs`.
+    fn absorb(changes: &mut Changes, ev: notify::Result<notify::Event>, dirs: &[PathBuf]) {
         let Ok(ev) = ev else {
             changes.rescan = true;
             return;
@@ -496,12 +507,13 @@ mod imp {
         if matches!(ev.kind, EventKind::Access(_)) {
             return;
         }
+        let watched = |path: Option<&Path>| path.is_some_and(|p| dirs.iter().any(|d| d == p));
         for p in ev.paths {
-            if p.parent() == Some(dir)
+            if watched(p.parent())
                 && let Some(name) = p.file_name()
             {
                 changes.names.insert(name.to_os_string());
-            } else if p == dir {
+            } else if watched(Some(&p)) {
                 if matches!(
                     ev.kind,
                     EventKind::Modify(notify::event::ModifyKind::Metadata(_))
