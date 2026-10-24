@@ -1107,22 +1107,25 @@ impl OpenLocation for Open {
         if items.is_empty() {
             return;
         }
-        // A job for each slice, side by side on the workers; what is gone
-        // is sent as removed by the hydration itself.
-        for items in items.chunks(skwir_core::fs::HYDRATE_JOB) {
-            let items = items.to_vec();
-            let sink = self.sink.clone();
-            let metadata = Arc::clone(&self.ctx.metadata);
-            let cancel = self.ctx.cancel.child();
-            self.ctx.scheduler.spawn_in(
-                reach::lane(&self.root),
-                priority,
-                "tags.location.stat",
-                cancel.clone(),
-                move || {
-                    skwir_core::fs::hydrate_paths(&items, &metadata, &sink, &cancel);
-                },
-            );
+        // A job for each slice, side by side on the workers, each remote's
+        // in its lane (a tag's files are from anywhere under its folder);
+        // what is gone is sent as removed by the hydration itself.
+        for (lane, items) in reach::by_lane(items, |(_, path)| path) {
+            for items in items.chunks(skwir_core::fs::HYDRATE_JOB) {
+                let items = items.to_vec();
+                let sink = self.sink.clone();
+                let metadata = Arc::clone(&self.ctx.metadata);
+                let cancel = self.ctx.cancel.child();
+                self.ctx.scheduler.spawn_in(
+                    lane,
+                    priority,
+                    "tags.location.stat",
+                    cancel.clone(),
+                    move || {
+                        skwir_core::fs::hydrate_paths(&items, &metadata, &sink, &cancel);
+                    },
+                );
+            }
         }
     }
 
