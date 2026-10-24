@@ -4,7 +4,8 @@
 # Wine answers for the logic, never for Windows itself.
 #
 # Nothing reaches the user's own: a Wine prefix of its own under
-# ~/.cache/skwir-tests, no display (Wine opens no window in the session),
+# ~/.cache/skwir-tests that writes nothing into the desktop's menus or
+# types (wine-env.sh), no display (Wine opens no window in the session),
 # and nextest's XDG isolation (Wine's Recycle Bin is the freedesktop trash
 # of XDG_DATA_HOME). Arguments go to nextest (`-p skwir-core`, a filter).
 set -eu
@@ -14,9 +15,7 @@ fi
 scratch="$HOME/.cache/skwir-tests/wine"
 mkdir -p "$scratch"
 export WINEPREFIX="$scratch/prefix"
-export WINEDEBUG=-all
-# No Mono or Gecko: their installers would ask on first start.
-export WINEDLLOVERRIDES="mscoree,mshtml="
+. tools/cross/wine-env.sh
 unset DISPLAY WAYLAND_DISPLAY
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine
 # Tests that need what Wine lacks (its shell does not trash) skip, saying so.

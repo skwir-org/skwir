@@ -118,9 +118,13 @@ def install_windows(installer, into, work):
                    and not pathlib.Path(f"/tmp/.X{n}-lock").exists())
     xvfb = subprocess.Popen(["Xvfb", f":{display}", "-screen", "0", "1024x768x24", "-nolisten", "tcp"],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    # As tools/cross/wine-env.sh: no Mono or Gecko, no winemenubuilder (it
+    # writes the prefix's menus and types into the user's desktop), XDG
+    # data and config beside the prefix.
     env = {"PATH": f"{wine}:{os.environ['PATH']}", "HOME": str(pathlib.Path.home()),
            "WINEPREFIX": str(work / "prefix"), "WINEDEBUG": "-all",
-           "WINEDLLOVERRIDES": "mscoree,mshtml=", "DISPLAY": f":{display}"}
+           "WINEDLLOVERRIDES": "mscoree,mshtml=;winemenubuilder.exe=d", "DISPLAY": f":{display}",
+           "XDG_DATA_HOME": str(work / "xdg" / "data"), "XDG_CONFIG_HOME": str(work / "xdg" / "config")}
     try:
         for _ in range(100):
             if pathlib.Path(f"/tmp/.X11-unix/X{display}").exists():

@@ -21,9 +21,8 @@ xvfb=$!
 unset WAYLAND_DISPLAY
 export DISPLAY="$display"
 export __EGL_VENDOR_LIBRARY_FILENAMES="$mesa/share/glvnd/egl_vendor.d/50_mesa.json"
-export WINEPREFIX="$HOME/.cache/skwir-tests/wine/gpui-prefix" WINEDEBUG="${WINEDEBUG:--all}"
-# No Mono or Gecko: their installers would ask on first start.
-export WINEDLLOVERRIDES="mscoree,mshtml="
+export WINEPREFIX="$HOME/.cache/skwir-tests/wine/gpui-prefix"
+. "$root/tools/cross/wine-env.sh"
 trap 'wineserver -k; kill "$xvfb"' EXIT
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER=wine CARGO_INCREMENTAL=0
 cd "$HOME/.cache/skwir-tests/gpui-check/zed"

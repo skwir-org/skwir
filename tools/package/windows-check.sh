@@ -32,9 +32,8 @@ done
 scratch="$HOME/.cache/skwir-tests/windows-check"
 rm -rf "${scratch:?}"
 mkdir -p "$scratch"
-export WINEPREFIX="$HOME/.cache/skwir-tests/wine/package-prefix" WINEDEBUG=-all
-# No Mono or Gecko: their installers would ask on first start.
-export WINEDLLOVERRIDES="mscoree,mshtml="
+export WINEPREFIX="$HOME/.cache/skwir-tests/wine/package-prefix"
+. tools/cross/wine-env.sh
 # The dev shell's, for Linux: a Windows program must not see them.
 unset SKWIR_PDFIUM_LIBRARY XDG_DATA_DIRS DISPLAY WAYLAND_DISPLAY
 trap 'wineserver -k 2>/dev/null || true' EXIT
