@@ -61,6 +61,140 @@ impl PreviewProvider for Provider {
 
 mod folds;
 
+/// JSON that parsed, printed again as `serde_json::to_string_pretty` lays
+/// it out (two spaces, an object's keys sorted, the last of a key kept),
+/// each number and string as the file writes it: printed from a parsed
+/// value, a number went through `f64` (a 256-bit amount, `1e2` as
+/// `100.0`, digits past the 17th), misstating the data.
+fn laid_out(source: &str) -> anyhow::Result<String> {
+    /// A value of the source: a scalar as written, or what it holds.
+    enum Raw<'a> {
+        Scalar(&'a str),
+        Array(Vec<Raw<'a>>),
+        Object(std::collections::BTreeMap<String, (&'a str, Raw<'a>)>),
+    }
+    struct Reader<'a> {
+        text: &'a str,
+        at: usize,
+    }
+    impl<'a> Reader<'a> {
+        fn blank(&mut self) {
+            let rest = &self.text[self.at..];
+            self.at += rest.len() - rest.trim_start_matches([' ', '\t', '\n', '\r']).len();
+        }
+        fn peek(&self) -> Option<u8> {
+            self.text.as_bytes().get(self.at).copied()
+        }
+        /// A string's source, quotes and escapes as written.
+        fn string(&mut self) -> Option<&'a str> {
+            let start = self.at;
+            let bytes = self.text.as_bytes();
+            self.at += 1;
+            loop {
+                match *bytes.get(self.at)? {
+                    b'\\' => self.at += 2,
+                    b'"' => {
+                        self.at += 1;
+                        return Some(&self.text[start..self.at]);
+                    }
+                    _ => self.at += 1,
+                }
+            }
+        }
+        /// The value at `at`; nesting is bounded by the parse that came
+        /// first (`serde_json`'s limit, then `limits::NESTING`).
+        fn value(&mut self) -> Option<Raw<'a>> {
+            self.blank();
+            match self.peek()? {
+                b'[' => {
+                    self.at += 1;
+                    let mut items = Vec::new();
+                    loop {
+                        self.blank();
+                        match self.peek()? {
+                            b']' => break,
+                            b',' => self.at += 1,
+                            _ => items.push(self.value()?),
+                        }
+                    }
+                    self.at += 1;
+                    Some(Raw::Array(items))
+                }
+                b'{' => {
+                    self.at += 1;
+                    let mut items = std::collections::BTreeMap::new();
+                    loop {
+                        self.blank();
+                        match self.peek()? {
+                            b'}' => break,
+                            b',' => self.at += 1,
+                            _ => {
+                                let key = self.string()?;
+                                self.blank();
+                                self.at += 1; // `:`
+                                let value = self.value()?;
+                                let name = serde_json::from_str::<String>(key).ok()?;
+                                items.insert(name, (key, value));
+                            }
+                        }
+                    }
+                    self.at += 1;
+                    Some(Raw::Object(items))
+                }
+                b'"' => self.string().map(Raw::Scalar),
+                _ => {
+                    let start = self.at;
+                    while self.peek().is_some_and(|b| {
+                        !matches!(b, b',' | b']' | b'}') && !b.is_ascii_whitespace()
+                    }) {
+                        self.at += 1;
+                    }
+                    Some(Raw::Scalar(&self.text[start..self.at]))
+                }
+            }
+        }
+    }
+    fn print(raw: &Raw<'_>, depth: usize, out: &mut String) {
+        let indent = |out: &mut String, depth: usize| out.push_str(&"  ".repeat(depth));
+        match raw {
+            Raw::Scalar(text) => out.push_str(text),
+            Raw::Array(items) if items.is_empty() => out.push_str("[]"),
+            Raw::Object(items) if items.is_empty() => out.push_str("{}"),
+            Raw::Array(items) => {
+                out.push_str("[\n");
+                for (i, item) in items.iter().enumerate() {
+                    indent(out, depth + 1);
+                    print(item, depth + 1, out);
+                    out.push_str(if i + 1 < items.len() { ",\n" } else { "\n" });
+                }
+                indent(out, depth);
+                out.push(']');
+            }
+            Raw::Object(items) => {
+                out.push_str("{\n");
+                for (i, (key, value)) in items.values().enumerate() {
+                    indent(out, depth + 1);
+                    out.push_str(key);
+                    out.push_str(": ");
+                    print(value, depth + 1, out);
+                    out.push_str(if i + 1 < items.len() { ",\n" } else { "\n" });
+                }
+                indent(out, depth);
+                out.push('}');
+            }
+        }
+    }
+    let raw = Reader {
+        text: source,
+        at: 0,
+    }
+    .value()
+    .ok_or_else(|| anyhow::anyhow!("The JSON could not be printed again"))?;
+    let mut out = String::with_capacity(source.len() * 2);
+    print(&raw, 0, &mut out);
+    Ok(out)
+}
+
 fn code(
     source: &str,
     language: &str,
@@ -117,7 +251,7 @@ fn code(
                 _ => {}
             }
         }
-        serde_json::to_string_pretty(&value)?
+        laid_out(source)?
     } else {
         source.to_owned()
     };
@@ -196,6 +330,24 @@ mod tests {
         assert!(raw.folds.is_empty());
         assert_eq!(raw.title, "JSON");
         assert!(data.source_available && raw.source_available);
+    }
+
+    #[test]
+    fn json_numbers_are_printed_as_the_file_writes_them() {
+        let source = r#"{"e":1e2,"big":115792089237316195423570985008687907853269984665640564039457584007913129639935,"d":0.10000000000000000555,"s":"caf\u00e9","b":[],"o":{},"e":-0.0}"#;
+        let data = code(source, "json", false, Bounds::QUICK, &CancelToken::new()).unwrap();
+        assert_eq!(
+            data.plain_text(),
+            "{\n  \"b\": [],\n  \"big\": 115792089237316195423570985008687907853269984665640564039457584007913129639935,\n  \"d\": 0.10000000000000000555,\n  \"e\": -0.0,\n  \"o\": {},\n  \"s\": \"caf\\u00e9\"\n}"
+        );
+        // Laid out as serde_json lays out the value it parses.
+        let plain = r#"{"z":[1,{"a":true,"n":null}],"a":"x y"}"#;
+        let data = code(plain, "json", false, Bounds::QUICK, &CancelToken::new()).unwrap();
+        let value: serde_json::Value = serde_json::from_str(plain).unwrap();
+        assert_eq!(
+            data.plain_text(),
+            serde_json::to_string_pretty(&value).unwrap()
+        );
     }
 
     #[test]
