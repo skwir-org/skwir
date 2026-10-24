@@ -385,6 +385,22 @@ pub struct Export {
     pub copies: Vec<(PathBuf, PathBuf, std::ffi::OsString)>,
 }
 
+/// The name of the folder a tag is exported as: its leaf, one name in
+/// its folder, whatever it holds. A path's separator in it is `_`, and a
+/// leaf of dots alone (`.`, `..`), which would name the folder it is in or
+/// the one above, starts with `_`.
+fn folder_named(leaf: &str) -> String {
+    let name: String = leaf
+        .chars()
+        .map(|c| if std::path::is_separator(c) { '_' } else { c })
+        .collect();
+    if name.chars().all(|c| c == '.') {
+        format!("_{name}")
+    } else {
+        name
+    }
+}
+
 /// The export of `address`'s tag (narrowed as it is) into `dest`, from
 /// the tagged files under its folder; `taken` says whether a name is
 /// taken in `dest` already (the folder made gets another).
@@ -396,8 +412,8 @@ pub fn export(
 ) -> Option<Export> {
     let tag = address.tag.as_deref()?;
     let mut out = Export::default();
-    let name = tag_leaf(tag);
-    let mut top = dest.join(name);
+    let name = folder_named(tag_leaf(tag));
+    let mut top = dest.join(&name);
     let mut n = 2;
     while taken(&top) {
         top = dest.join(format!("{name} ({n})"));
@@ -431,8 +447,8 @@ pub fn export(
             out.copies.push((file, folder.clone(), unique));
         }
         for (child, _) in contents.places.into_iter().rev() {
-            let leaf = tag_leaf(&child).to_owned();
-            stack.push((child, folder.join(leaf)));
+            let name = folder_named(tag_leaf(&child));
+            stack.push((child, folder.join(name)));
         }
     }
     Some(out)
@@ -1347,6 +1363,32 @@ mod tests {
             ]
         );
         assert!(export(&at(None), &files, Path::new("/out"), |_| false).is_none());
+
+        // A tag of dots names no folder above, nor the one it is in.
+        let files = [
+            file("/p/up.jpg", &["Odd/.."]),
+            file("/p/here.jpg", &["Odd/."]),
+            file("/p/it's.jpg", &["Odd"]),
+        ];
+        let out = export(&at(Some("Odd")), &files, Path::new("/out"), |_| false).unwrap();
+        let mut folders = out.folders.clone();
+        folders.sort();
+        assert_eq!(
+            folders,
+            [
+                PathBuf::from("/out/Odd"),
+                PathBuf::from("/out/Odd/_."),
+                PathBuf::from("/out/Odd/_.."),
+            ]
+        );
+        assert!(
+            out.copies
+                .iter()
+                .all(|(_, to, _)| to.starts_with("/out/Odd")),
+            "{:?}",
+            out.copies
+        );
+        assert_eq!(folder_named("a/b"), "a_b");
     }
 
     /// Empty, the top of a folder's tags says no file there has one, a
