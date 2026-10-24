@@ -288,7 +288,12 @@ mod tests {
         ));
         // Found there respelled, on a case-insensitive volume: itself, as
         // its rename's check tells; another file under that name is not.
-        let upper = |p: &Path| p.to_string_lossy().to_lowercase() == "/d/é’s a.txt";
+        // By its parts: Windows joins with `\`.
+        let upper = |p: &Path| {
+            p.parent() == Some(Path::new("/d"))
+                && p.file_name()
+                    .is_some_and(|name| name.to_string_lossy().to_lowercase() == "é’s a.txt")
+        };
         let respelled = [request(1, "/d/É’s A.txt", "é’s a.txt")];
         let steps = order_renames(&respelled, upper).unwrap();
         assert_eq!(steps.len(), 1);
