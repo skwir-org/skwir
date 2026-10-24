@@ -18,7 +18,7 @@ use crate::location::{
 use crate::scheduler::{Lane, Priority};
 
 use super::dir::Dir;
-use super::stat::stat_entry;
+use super::stat::{Stated, stat_entry_as};
 use super::watch;
 
 /// Provider for filesystem paths.
@@ -547,10 +547,11 @@ impl Shared {
                 continue;
             };
             let mut e = Entry::new(id, name, EntryKind::Unknown);
-            if stat_entry(&self.folder, &mut e) {
-                stated.push((id, e));
-            } else {
-                gone.push(id);
+            match stat_entry_as(&self.folder, &mut e) {
+                Stated::Found => stated.push((id, e)),
+                Stated::Gone => gone.push(id),
+                // There, unread: its row stays as listed.
+                Stated::Unread => {}
             }
         }
         let (mut updated, mut rekeyed): (Vec<Entry>, Vec<Entry>) = (Vec::new(), Vec::new());
@@ -692,9 +693,13 @@ impl Shared {
                 return;
             }
             let mut e = Entry::new(EntryId::UNKNOWN, name.clone(), EntryKind::Unknown);
-            let exists = stat_entry(&self.folder, &mut e);
+            let stated = stat_entry_as(&self.folder, &mut e);
+            if stated == Stated::Unread {
+                // There, unread: what is listed of it stays.
+                continue;
+            }
             let mut names = self.names.lock();
-            if exists {
+            if stated == Stated::Found {
                 // A rename onto this name leaves the id it replaced stale.
                 if let Some(stale) = names.insert(e.id, name) {
                     removed.push(stale);

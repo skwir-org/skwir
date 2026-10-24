@@ -293,6 +293,25 @@ pub fn lane(path: &Path) -> Lane {
     of(path).map_or(Lane::SHARED, |remote| remote.lane())
 }
 
+/// `items` grouped by the lane of their path (`lane`), in the order first
+/// met: what a location of files from anywhere (the shelf, a tag, Recent)
+/// stats, a job for each lane, so a server that stopped answering holds
+/// its own alone. From memory: nothing is read.
+pub fn by_lane<T>(
+    items: impl IntoIterator<Item = T>,
+    path: impl Fn(&T) -> &Path,
+) -> Vec<(Lane, Vec<T>)> {
+    let mut lanes: Vec<(Lane, Vec<T>)> = Vec::new();
+    for item in items {
+        let lane = lane(path(&item));
+        match lanes.iter_mut().find(|(l, _)| *l == lane) {
+            Some((_, items)) => items.push(item),
+            None => lanes.push((lane, vec![item])),
+        }
+    }
+    lanes
+}
+
 /// The number of the mount holding `device`'s files where its program
 /// makes their inode numbers up for as long as it is mounted (FUSE:
 /// sshfs, GVfs, rclone, and a FUSE mount on this machine alike), which
@@ -736,6 +755,24 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Files from anywhere are stat-ed a lane each: a remote's alone.
+    #[test]
+    fn paths_are_grouped_by_their_lane_in_the_order_met() {
+        let point = Path::new("/example/by lane/nas");
+        pretend_remote(point);
+        let paths = [
+            PathBuf::from("/example/here/a.txt"),
+            point.join("l'été.jpg"),
+            PathBuf::from("/example/here/b.txt"),
+            point.join("c.txt"),
+        ];
+        let lanes = by_lane(paths.iter(), |path| path.as_path());
+        assert_eq!(lanes.len(), 2);
+        assert_eq!((lanes[0].0, lanes[0].1.len()), (Lane::SHARED, 2));
+        assert_eq!(lanes[1].0, lane(point));
+        assert_eq!(lanes[1].1, [&paths[1], &paths[3]]);
+    }
 
     /// Reads the user made from a server onto this machine prove it fast
     /// (10 MB/s and more) or slow again (under 5), this session, by its

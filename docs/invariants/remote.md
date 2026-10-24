@@ -34,8 +34,8 @@ ADR-077 (which revises ADR-021).
   the pool). A remote that stops answering holds its own jobs, never the
   window, local work, or another remote's.
 - Work on files from many places (the shelf, the recent files, what a
-  plan touched, which the tags index learns) is split by lane, a job
-  each: a server that stops answering holds its own files' job, never
+  plan touched, which the tags index learns) is split by lane
+  (`reach::by_lane`), a job each: a server that stops answering holds its own files' job, never
   the others'. What it ranks without reading (Jump's recent files) is
   not read there at all.
 - A worker busy past `STUCK` while work waits is replaced, up to the

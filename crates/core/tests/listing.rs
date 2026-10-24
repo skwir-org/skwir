@@ -563,6 +563,43 @@ fn a_folder_shown_that_moves_is_shown_where_it_went() {
     assert_eq!(listed(&app, pane, "f").id, f);
 }
 
+/// An entry that cannot be stat-ed (here a folder that lets its names be
+/// read but not looked up) stays listed: only one gone leaves.
+#[cfg(unix)]
+#[test]
+fn an_entry_that_cannot_be_stat_ed_stays_listed() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = home_tempdir();
+    let dir = tmp.path().join("no lookups");
+    std::fs::create_dir(&dir).unwrap();
+    for name in ["it's a.txt", "b é.txt"] {
+        std::fs::write(dir.join(name), b"x").unwrap();
+    }
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &dir);
+    let ids: Vec<_> = {
+        let ws = app.workspace.read();
+        ws.pane(pane).unwrap().listing.ids().collect()
+    };
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o444)).unwrap();
+    // Root looks up anything: then there is nothing to test.
+    if std::fs::symlink_metadata(dir.join("b é.txt")).is_ok() {
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+    app.dispatch(&skwir_core::command::Invocation::with_args(
+        "hydrate",
+        &serde_json::json!({ "ids": ids }),
+    ))
+    .unwrap();
+    assert!(app.scheduler.wait_idle_here(Duration::from_secs(5)));
+    app.pump();
+    let listed = app.workspace.read().pane(pane).unwrap().listing.len();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(listed, 2, "rows that cannot be read stay");
+}
+
 /// `./` and `../` are the folder shown's, never the process's: a path
 /// location is opened only absolute.
 #[test]

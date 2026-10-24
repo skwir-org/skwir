@@ -553,18 +553,49 @@ pub fn content_path(path: &Path) -> Option<Cow<'_, Path>> {
     meta.is_file().then_some(content)
 }
 
+/// What a stat of an entry found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stated {
+    /// It is there: the entry is filled in.
+    Found,
+    /// Nothing is there under its name.
+    Gone,
+    /// Something may be there, which cannot be stat-ed: a share that
+    /// refuses its attributes, a damaged file, a remote's program passing
+    /// on its error. Its row stays as it was.
+    Unread,
+}
+
 /// Stat `name` relative to `dir`; fill `entry` in place. Returns false if
-/// gone.
+/// it is not found, gone or not read (see [`stat_entry_as`]).
 ///
 /// The entry is the link itself (its identity, its kind), but what it says
 /// of size, times, owner and permissions is what it leads to, as a link
 /// opens that: a link that leads nowhere says its own.
 pub fn stat_entry(dir: &Dir, entry: &mut Entry) -> bool {
+    stat_entry_as(dir, entry) == Stated::Found
+}
+
+/// [`stat_entry`], saying whether what was not found is gone, or is there
+/// and cannot be read: only the first takes a row out of a listing.
+pub fn stat_entry_as(dir: &Dir, entry: &mut Entry) -> Stated {
     // Owned: the entry is filled while the name is used.
     let name = entry.name.clone();
     let name = name.as_os_str();
-    let Ok(own) = stat_at(dir, name, false, true) else {
-        return false;
+    let own = match stat_at(dir, name, false, true) {
+        Ok(own) => own,
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            return Stated::Gone;
+        }
+        Err(error) => {
+            tracing::debug!("an entry cannot be stat-ed: {error}");
+            return Stated::Unread;
+        }
     };
     // Which of the file's names this is: this one, in this folder.
     let folder = dir.identity().unwrap_or(FileId::new(own.id.dev, 0));
@@ -608,7 +639,7 @@ pub fn stat_entry(dir: &Dir, entry: &mut Entry) -> bool {
             p,
         );
     }
-    true
+    Stated::Found
 }
 
 /// Stat a full path into a fresh entry (used by the watcher and by operations).

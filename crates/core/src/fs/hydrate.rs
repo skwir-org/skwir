@@ -12,7 +12,7 @@ use crate::location::{EventSink, ListingEvent};
 use crate::metadata::MetadataProviders;
 
 use super::dir::Dir;
-use super::stat::{stat_entry, stat_path};
+use super::stat::{Stated, stat_entry_as, stat_path};
 
 /// One path read as a listing reads its entries: stat-ed, then filled by
 /// the metadata providers (its tags, its rating), so what describes a
@@ -38,7 +38,10 @@ pub const HYDRATE_JOB: usize = 512;
 const SENT_EVERY: usize = 256;
 
 /// Stat `items` and run the metadata providers over them, one folder at a
-/// time so each folder is opened once and providers get a batch. Sends
+/// time so each folder is opened once and providers get a batch. Its
+/// caller runs it in the lane of the items' paths, which share one
+/// (`reach::by_lane`, ADR-077): one remote that stopped answering would
+/// hold the files of every other folder behind it. Sends
 /// `Updated` for what was found as it goes (under the ids given, which the
 /// location listed them by) and one `Removed` for what is gone, and
 /// returns the gone ids so the caller can forget their paths. Worker-only:
@@ -65,18 +68,31 @@ pub fn hydrate_paths(
         if cancel.is_cancelled() {
             return Vec::new();
         }
-        let Ok(folder) = Dir::open(dir) else {
-            gone.extend(names.into_iter().map(|(id, _)| id));
-            continue;
+        let folder = match Dir::open(dir) {
+            Ok(folder) => folder,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                gone.extend(names.into_iter().map(|(id, _)| id));
+                continue;
+            }
+            // A folder that cannot be read: its rows stay as they were.
+            Err(_) => continue,
         };
         let mut found = Vec::with_capacity(names.len());
         for (id, name) in names {
             let mut e = Entry::new(id, name, EntryKind::Unknown);
-            if stat_entry(&folder, &mut e) {
-                e.id = id;
-                found.push(e);
-            } else {
-                gone.push(id);
+            match stat_entry_as(&folder, &mut e) {
+                Stated::Found => {
+                    e.id = id;
+                    found.push(e);
+                }
+                Stated::Gone => gone.push(id),
+                // There, unread: its row stays as it was.
+                Stated::Unread => {}
             }
         }
         metadata.fill(dir, &mut found);
