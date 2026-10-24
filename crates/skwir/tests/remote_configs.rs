@@ -1079,6 +1079,15 @@ fn a_server_added_by_its_address_is_a_bookmark_opened_at_once() {
     std::fs::create_dir_all(served_root.join("sub folder")).unwrap();
     std::fs::write(served_root.join("sub folder/hello.txt"), "hello").unwrap();
     let served = Served::start("webdav", &served_root, &[]);
+    // The desktop's bookmarks of the test's own: the tests' shared file is
+    // rewritten by others that run beside it.
+    // SAFETY: nextest runs each test in a process of its own, and this
+    // runs before the test starts an app, so no other thread reads the
+    // environment meanwhile.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("XDG_CONFIG_HOME", base.join("config"));
+    }
     let config = base.join("rclone.conf");
     let app = app_with_rclone(&base, &config, Arc::default());
     app.plugins
@@ -1259,5 +1268,21 @@ fn mount_options_chosen_for_a_server_shape_its_next_mount() {
         std::thread::sleep(Duration::from_millis(100));
     }
     drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// A command asking a form says so where no window is there to fill it
+/// (a script's, an agent's call before the window is up): never nothing.
+#[test]
+fn a_form_asked_with_no_window_says_it_needs_one() {
+    let base = fixture("no-window");
+    let app = app_with_rclone(&base, &base.join("rclone.conf"), Arc::default());
+    let refused = app
+        .dispatch(&Invocation::new("remote.add_server"))
+        .unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("open it first"),
+        "{refused:#}"
+    );
     std::fs::remove_dir_all(&base).unwrap();
 }

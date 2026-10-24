@@ -193,7 +193,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     app.settings.declare(
         SettingSpec::records(
             RECORDS,
-            "rclone remotes",
+            "Remotes of rclone",
             "The remotes of rclone's own configuration, where rclone in a terminal finds them too: Skwir keeps no copy.",
             "Server",
             vec![
@@ -251,6 +251,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             "Add server…",
             "Add a server: a remote of rclone's (cloud storage, S3, WebDAV, SFTP and seventy more), in a form the user fills; what it starts from may be given, never a secret",
             move |args, app| {
+                window_for_forms(app)?;
                 let prefill = crate::rclone_forms::Prefill {
                     kind: args.kind,
                     provider: args.provider,
@@ -300,6 +301,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             "Edit server…",
             "Change a remote of rclone's in its form",
             move |args, app| {
+                window_for_forms(app)?;
                 in_form(&remotes_, app, "saved", move |flow, remotes, app| {
                     if flow.edit(&args.id)? {
                         remotes.refresh(app);
@@ -319,6 +321,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             "Sign in again…",
             "Sign a remote of rclone's in again through the browser, its access having expired or been revoked",
             move |args, app| {
+                window_for_forms(app)?;
                 in_form(&remotes_, app, "signed in", move |flow, remotes, app| {
                     if flow.reconnect(&args.id)? {
                         remotes.refresh(app);
@@ -338,6 +341,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             "Remove server…",
             "Remove a remote from rclone's configuration, once the user confirms: what it holds stays where it is",
             move |args, app| {
+                window_for_forms(app)?;
                 in_form(&remotes_, app, "removed", move |flow, remotes, app| {
                     let address = Address::parse(&format!("rclone://{}/", args.id))?;
                     let mounted: Vec<std::path::PathBuf> = remotes
@@ -371,6 +375,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             "Encrypt rclone's configuration…",
             "Encrypt rclone's configuration file, which keeps its remotes' secrets only obscured, with a password the user types and may keep in the keyring",
             move |_, app| {
+                window_for_forms(app)?;
                 let remotes = remotes_.clone();
                 let rclone = skwir_core::os_path::find_program("rclone")
                     .ok_or_else(|| anyhow::anyhow!("rclone is not installed"))?;
@@ -495,6 +500,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             "Mount options…",
             "Choose how a server is mounted when it next connects: read only, rclone's file cache and bandwidth, sshfs's compression",
             move |args, app| {
+                window_for_forms(app)?;
                 let top = Address::parse(args.address.trim())?.top();
                 anyhow::ensure!(
                     crate::options::takes_options(top.scheme),
@@ -596,6 +602,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             "Set up key login…",
             "Let ssh log in to an SFTP server by key, no password: a key the ssh agent holds, the user's default one, or a new one, its public half added to the server's authorized keys once the user chose it",
             move |args, app| {
+                window_for_forms(app)?;
                 let top = Address::parse(args.address.trim())?.top();
                 anyhow::ensure!(top.scheme == Scheme::Sftp, "key login is ssh's: SFTP servers alone");
                 let (remotes, weak) = (remotes_.clone(), app.weak());
@@ -743,6 +750,16 @@ fn encrypt_in_form(
     }
     crate::rclone_config::encrypt(rclone, &remotes.rclone, password, cancel)?;
     app.notify(NotifyLevel::Info, "rclone's configuration is encrypted");
+    Ok(())
+}
+
+/// Whether the window is there to fill a form in: a command that asks one
+/// without it would do nothing and say nothing.
+fn window_for_forms(app: &App) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        app.window_shown(),
+        "this is asked in a form, filled in Skwir's window: open it first"
+    );
     Ok(())
 }
 

@@ -926,7 +926,13 @@ fn connect_at_login_is_turned_on_and_off_from_a_remote_s_menu() {
     app.dispatch(&item("Connect at Login").unwrap().command)
         .unwrap();
     let id = login::id_of("rclone", &Address::parse("rclone://disk/").unwrap());
-    until(&app, 60, "its unit was set up", || manager.installed(&id));
+    // Set up once it says so: enabled before it is started.
+    let mut heard = Vec::new();
+    until(&app, 60, "its unit was set up", || {
+        heard.extend(app.take_notifications().into_iter().map(|n| n.text));
+        heard.iter().any(|t| t.contains("connects at login"))
+    });
+    assert!(manager.installed(&id), "{heard:?}");
     let name = login::unit_name(&id);
     let said = asked(&base);
     assert!(
