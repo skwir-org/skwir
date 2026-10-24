@@ -36,10 +36,19 @@ fn over(a: Rect, b: Rect) -> bool {
 /// text layer that places its lines and not their words gives each word
 /// its line's box (a scan's text, in `DjVu`): side by side, their
 /// characters would cover one another, and a selection over them darken
-/// with each word it took.
+/// with each word it took. No more is placed than a page keeps
+/// (`MAX_PAGE_CHARS`, what joins two runs counted), whatever an engine
+/// sends: a run of a plugin from outside skwir may be as long as its
+/// message.
 fn placed(runs: &[Run]) -> Vec<Run> {
-    let mut placed: Vec<Run> = Vec::with_capacity(runs.len());
+    let mut placed: Vec<Run> = Vec::new();
+    let mut room = MAX_PAGE_CHARS;
     for run in runs {
+        if room == 0 {
+            break;
+        }
+        let (text, taken) = within(&run.text, room);
+        room = room.saturating_sub(taken + 1);
         if let Some(last) = placed.last_mut()
             && over(last.bounds, run.bounds)
         {
@@ -52,14 +61,32 @@ fn placed(runs: &[Run]) -> Vec<Run> {
                 height: (a.y + a.height).max(b.y + b.height) - top,
             };
             last.text.push(' ');
-            last.text.push_str(&run.text);
+            last.text.push_str(text);
             // Where each character starts is no longer what either said.
             last.edges.clear();
             continue;
         }
-        placed.push(run.clone());
+        // Its edges, if it gave one a character, for the characters kept.
+        let edges = if run.edges.is_empty() || run.edges.len() != run.text.chars().count() {
+            Vec::new()
+        } else {
+            run.edges[..taken].to_vec()
+        };
+        placed.push(Run {
+            text: text.to_owned(),
+            bounds: run.bounds,
+            edges,
+        });
     }
     placed
+}
+
+/// `text`'s first `room` characters at most, and how many they are.
+fn within(text: &str, room: usize) -> (&str, usize) {
+    match text.char_indices().nth(room) {
+        Some((end, _)) => (&text[..end], room),
+        None => (text, text.chars().count()),
+    }
 }
 
 /// A page's runs as the reader's characters: each where its run's edges
@@ -217,6 +244,30 @@ mod tests {
             }]);
             assert!((chars[1].bounds.x - 0.3).abs() < 1e-6);
         }
+    }
+
+    /// No more is made of a page than it keeps, however long its runs: one
+    /// run as long as a message, or many lying over one another.
+    #[test]
+    fn a_page_s_runs_are_cut_before_they_are_made_characters() {
+        let long = "é".repeat(MAX_PAGE_CHARS * 3);
+        let edges: Vec<f32> = (0..MAX_PAGE_CHARS * 3).map(|_| 0.5).collect();
+        let one = Run {
+            edges,
+            ..run(&long, 0., 0., 1.)
+        };
+        let kept = placed(std::slice::from_ref(&one));
+        assert_eq!(kept[0].text.chars().count(), MAX_PAGE_CHARS);
+        assert_eq!(kept[0].edges.len(), MAX_PAGE_CHARS, "its edges kept");
+        assert_eq!(chars(&[one]).len(), MAX_PAGE_CHARS);
+        let piece = "x".repeat(1000);
+        let over: Vec<Run> = (0..MAX_PAGE_CHARS)
+            .map(|_| run(&piece, 0.1, 0.1, 0.5))
+            .collect();
+        let joined = placed(&over);
+        assert_eq!(joined.len(), 1);
+        assert!(joined[0].text.chars().count() <= MAX_PAGE_CHARS);
+        assert!(chars(&over).len() <= MAX_PAGE_CHARS);
     }
 
     #[test]
