@@ -207,18 +207,22 @@ def export(dir):
     commits = [line.split(" ", 1) for line in log]
     if not commits or not commits[0][1].endswith(BASELINE):
         sys.exit(f"{dir} does not start with the baseline commit")
-    for old in patch_files():
-        old.unlink()
+    if not (VENDOR / "UPSTREAM-COMMIT").is_file():
+        sys.exit(f"{VENDOR} is not a vendored Zed tree")
+    # Every patch made before one is replaced: a commit misnamed stops the
+    # export with vendor/patches as it was.
+    made = []
     for sha, subject in commits[1:]:
         match = re.match(r"^(\d{4}) ([a-z0-9-]+)", subject)
         if not match:
             sys.exit(f"commit {sha[:12]} is not named \"NNNN name: ...\": {subject}")
         diff = git(dir, "diff", "--no-color", f"{sha}^", sha, capture=True)
-        out = PATCHES / f"{match.group(1)}-{match.group(2)}.patch"
-        out.write_text(f"{subject}\n\n{diff}")
+        made.append((PATCHES / f"{match.group(1)}-{match.group(2)}.patch", f"{subject}\n\n{diff}"))
+    for old in patch_files():
+        old.unlink()
+    for out, text in made:
+        out.write_text(text)
         print(f"wrote {out.relative_to(ROOT)}")
-    if not (VENDOR / "UPSTREAM-COMMIT").is_file():
-        sys.exit(f"{VENDOR} is not a vendored Zed tree")
     readme = (VENDOR / README).read_text()
     for entry in VENDOR.iterdir():
         if entry.name in KEPT:
