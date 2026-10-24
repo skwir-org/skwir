@@ -323,7 +323,25 @@ fn target_dir(pane: PaneId, app: &App) -> anyhow::Result<std::path::PathBuf> {
 
 fn open_terminal(pane: Option<PaneId>, app: &App) -> anyhow::Result<Outcome> {
     let dir = target_dir(app.pane_or_active(pane), app)?;
-    skwir_platform::open::open_terminal(&dir)?;
+    // A program started in a folder waits on its disk (the spawn returns
+    // once the child is in it), a server's for a remote folder: from the
+    // window, on a worker in the folder's lane, a failure said.
+    if skwir_core::scheduler::on_window_thread() {
+        let lane = skwir_core::fs::reach::lane(&dir);
+        spawn_in(
+            app,
+            lane,
+            "open-with.terminal",
+            app.lifetime().child(),
+            move |app| {
+                if let Err(e) = skwir_platform::open::open_terminal(&dir) {
+                    app.notify(NotifyLevel::Error, format!("{e:#}"));
+                }
+            },
+        );
+    } else {
+        skwir_platform::open::open_terminal(&dir)?;
+    }
     Ok(Outcome::Done)
 }
 

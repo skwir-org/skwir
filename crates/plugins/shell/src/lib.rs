@@ -174,7 +174,27 @@ fn run(
         .unwrap_or_else(default_program);
     let argv = run_argv(&program, command, &paths);
     // The terminal outlives the command; the platform's reaper collects it.
-    skwir_platform::open::open_terminal_watched(&dir, &argv, |_| {})?;
+    // Started in a folder, it waits on its disk, a server's for a remote
+    // folder: from the window, on a worker in the folder's lane, a failure
+    // said.
+    if skwir_core::scheduler::on_window_thread() {
+        let weak = app.weak();
+        app.scheduler.spawn_in(
+            skwir_core::fs::reach::lane(&dir),
+            skwir_core::scheduler::Priority::Visible,
+            "shell.run",
+            app.lifetime().child(),
+            move || {
+                if let Err(e) = skwir_platform::open::open_terminal_watched(&dir, &argv, |_| {})
+                    && let Some(app) = weak.upgrade()
+                {
+                    app.notify(skwir_core::app::NotifyLevel::Error, format!("{e:#}"));
+                }
+            },
+        );
+    } else {
+        skwir_platform::open::open_terminal_watched(&dir, &argv, |_| {})?;
+    }
     Ok(Outcome::Done)
 }
 

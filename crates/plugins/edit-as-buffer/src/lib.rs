@@ -583,40 +583,67 @@ fn start_session(
     );
     let file = buffer_file(&buffer)?;
     let argv = editor_argv(&editor(), &file);
+    let start_dir = dir.clone();
     let weak = app.weak();
     let cwd = dir.clone();
-    skwir_platform::open::open_terminal_watched(&cwd, &argv, move |status| {
-        // The reaper thread only hands the result to a worker.
-        let Some(app) = weak.upgrade() else { return };
-        let weak = app.weak();
-        app.scheduler.spawn(
-            Priority::Normal,
-            "edit-as-buffer.diff",
-            lifetime.clone(),
-            move || {
-                let result = match status {
-                    Ok(status) if status.success() => match std::fs::read_to_string(&file) {
-                        Ok(text) => diff_buffer(&original, &text, &dir).map_err(|e| e.to_string()),
-                        Err(e) => Err(format!("cannot read the edited buffer: {e}")),
-                    },
-                    Ok(status) => Err(format!("editor exited with {status}")),
-                    Err(e) => Err(format!("editor failed: {e}")),
-                };
-                drop(file);
-                let Some(app) = weak.upgrade() else { return };
-                if lifetime.is_cancelled() {
-                    return;
-                }
-                match result {
-                    Ok(plan) if plan.is_empty() => {
-                        app.notify(NotifyLevel::Info, "edit as text: no changes");
+    let started = lifetime.clone();
+    let start = move || {
+        skwir_platform::open::open_terminal_watched(&cwd, &argv, move |status| {
+            // The reaper thread only hands the result to a worker.
+            let Some(app) = weak.upgrade() else { return };
+            let weak = app.weak();
+            app.scheduler.spawn(
+                Priority::Normal,
+                "edit-as-buffer.diff",
+                lifetime.clone(),
+                move || {
+                    let result = match status {
+                        Ok(status) if status.success() => match std::fs::read_to_string(&file) {
+                            Ok(text) => {
+                                diff_buffer(&original, &text, &dir).map_err(|e| e.to_string())
+                            }
+                            Err(e) => Err(format!("cannot read the edited buffer: {e}")),
+                        },
+                        Ok(status) => Err(format!("editor exited with {status}")),
+                        Err(e) => Err(format!("editor failed: {e}")),
+                    };
+                    drop(file);
+                    let Some(app) = weak.upgrade() else { return };
+                    if lifetime.is_cancelled() {
+                        return;
                     }
-                    Ok(plan) => app.propose(plan),
-                    Err(e) => app.notify(NotifyLevel::Error, format!("edit as text: {e}")),
+                    match result {
+                        Ok(plan) if plan.is_empty() => {
+                            app.notify(NotifyLevel::Info, "edit as text: no changes");
+                        }
+                        Ok(plan) => app.propose(plan),
+                        Err(e) => app.notify(NotifyLevel::Error, format!("edit as text: {e}")),
+                    }
+                },
+            );
+        })
+    };
+    // The editor started in the pane's folder waits on its disk, a
+    // server's for a remote folder: from the window, on a worker in the
+    // folder's lane, a failure said.
+    if skwir_core::scheduler::on_window_thread() {
+        let weak = app.weak();
+        app.scheduler.spawn_in(
+            skwir_core::fs::reach::lane(&start_dir),
+            Priority::Visible,
+            "edit-as-buffer.start",
+            started,
+            move || {
+                if let Err(e) = start()
+                    && let Some(app) = weak.upgrade()
+                {
+                    app.notify(NotifyLevel::Error, format!("edit as text: {e:#}"));
                 }
             },
         );
-    })?;
+    } else {
+        start()?;
+    }
     Ok(Outcome::Done)
 }
 
