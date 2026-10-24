@@ -202,8 +202,8 @@ of bars, split or not.
 - Enter on a path stats it on a worker (`reveal_path`): a folder is gone
   to, a file shown selected in its folder (hidden files then shown, and
   said), one not there said. Shift+Enter opens a file (`open`). A
-  `file://` URI typed or pasted is written as the path it names here
-  (`uri::path_of`). A relative path with no folder shown (a search, a
+  `file://` URI typed or pasted is read as the path it names here
+  (`uri::path_of`, `Shell::omni_text`), the field keeping what was typed. A relative path with no folder shown (a search, a
   tag, the trash) goes nowhere, and says why.
 - A search is `query.search` with `expr` and `root`: the UI knows no query
   syntax.

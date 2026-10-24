@@ -248,15 +248,7 @@ impl Shell {
     /// The field's text changed: the dropdown follows, the folder typed is
     /// read, Jump is asked for places, and `>` goes to the palette.
     pub fn omnibox_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mut text = self.ui().address.read(cx).text().to_owned();
-        // A `file://` URI (pasted from a browser, a terminal's link) is the
-        // path it names here: written as that path, where editing starts
-        // again, and read as one.
-        if let Some(path) = uri_path(&text) {
-            let address = self.ui().address.clone();
-            address.update(cx, |input, cx| input.set_text(path.clone(), cx));
-            text = path;
-        }
+        let text = self.omni_text(cx);
         if let Some(rest) = text.strip_prefix('>') {
             let rest = rest.trim_start().to_owned();
             self.omnibox_cancel(window, cx);
@@ -478,7 +470,7 @@ impl Shell {
     /// Work out the dropdown's rows for the text as it is, what Tab fills
     /// in, and what is drawn after the text; the field is asked to draw.
     fn refresh_rows(&mut self, cx: &mut Context<Self>) {
-        let text = self.ui().address.read(cx).text().to_owned();
+        let text = self.omni_text(cx);
         let (rows, shared) = self.omni_rows(&text);
         let one_shown = self.one_shown(text.trim());
         let Some(omni) = self.ui_mut().omni.as_mut() else {
@@ -551,7 +543,7 @@ impl Shell {
     /// the text it makes, as an edit Ctrl+Z takes back: a folder ends with
     /// its separator, and its names are listed in turn.
     pub fn omnibox_complete(&mut self, cx: &mut Context<Self>) {
-        let text = self.ui().address.read(cx).text().to_owned();
+        let text = self.omni_text(cx);
         let Some(omni) = self.ui().omni.as_ref() else {
             return;
         };
@@ -650,7 +642,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let raw = self.ui().address.read(cx).text().to_owned();
+        let raw = self.omni_text(cx);
         let text = raw.trim().to_owned();
         let suggestions = if text == self.ui().address_shown.trim() {
             vec![Suggestion::Go]
@@ -838,6 +830,14 @@ impl Shell {
             .map_or(&[], |o| o.rows.as_slice())
     }
 
+    /// The active pane's field's text as it is read: a `file://` URI typed
+    /// or pasted (from a browser, a terminal's link) as the path it names
+    /// here, everything else as written. The field keeps what was typed.
+    fn omni_text(&self, cx: &gpui::App) -> String {
+        let text = self.ui().address.read(cx).text();
+        uri_path(text).unwrap_or_else(|| text.to_owned())
+    }
+
     /// Whether Tab completes the active pane's text (the `completes` key
     /// context): a completion is offered, or words leave one name shown.
     pub fn omnibox_completes(&self, cx: &gpui::App) -> bool {
@@ -846,10 +846,7 @@ impl Shell {
         };
         omni.one_shown.is_some()
             || omni.rows.iter().any(|r| r.completion().is_some())
-            || matches!(
-                self.ui().address.read(cx).text().trim_start(),
-                "~" | "." | ".."
-            )
+            || matches!(self.omni_text(cx).trim_start(), "~" | "." | "..")
     }
 
     /// What `text` offers, first what Enter runs, and what Tab fills in.
@@ -1099,7 +1096,7 @@ pub fn dropdown(
     }
     let omni = shell.ui().omni.as_ref()?;
     let theme = cx.global::<Theme>().clone();
-    let text = shell.ui().address.read(cx).text().trim().to_owned();
+    let text = shell.omni_text(cx).trim().to_owned();
     let root = shell.omni_root();
     let pane = shell.pane;
     let a11y = shell.a11y;
