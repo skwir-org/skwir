@@ -239,6 +239,10 @@ fn as_now(names: &Names, event: ListingEvent) -> Vec<ListingEvent> {
 pub struct PathLocation {
     location: Location,
     dir: PathBuf,
+    /// The folder held open as the system resolved it once opened (a link
+    /// on the way followed): what is compared with a volume's mount point
+    /// (`OpenLocation::holds`).
+    held: Arc<std::sync::OnceLock<PathBuf>>,
     ctx: OpenContext,
     tx: EventSink,
     shared: Arc<Mutex<Option<Arc<Shared>>>>,
@@ -252,6 +256,7 @@ impl PathLocation {
         let this = Arc::new(Self {
             location,
             dir,
+            held: Arc::default(),
             ctx,
             tx,
             rx,
@@ -271,6 +276,7 @@ impl PathLocation {
         let tx = self.tx.clone();
         let slot = Arc::clone(&self.shared);
         let opening = Arc::clone(&self.opening);
+        let held = Arc::clone(&self.held);
         // A remote that stopped answering holds its own lane (ADR-077):
         // told by the path here, by the folder's device once opened.
         let lane = super::reach::lane(&dir);
@@ -296,8 +302,11 @@ impl PathLocation {
                     } else {
                         lane
                     };
+                    // Where it is held, by the folder's path the system
+                    // knows: `~/Music` a link into a drive is held there.
+                    let at = held.get_or_init(|| folder.path_now().unwrap_or_else(|| dir.clone()));
                     let shared = Arc::new(Shared {
-                        _held: Held::new(&dir),
+                        _held: Held::new(&dir, at),
                         dir: RwLock::new(dir.clone()),
                         folder,
                         id,
@@ -359,21 +368,28 @@ impl PathLocation {
     }
 }
 
-/// The folders held open by their listings, by where they were opened:
-/// a listing closed lets go of its folder a moment later, on a worker
-/// (`OpenLocation::close`), and what unmounts a volume waits for that
-/// ([`wait_let_go`]).
-static HELD: parking_lot::Mutex<Vec<PathBuf>> = parking_lot::Mutex::new(Vec::new());
+/// The folders held open by their listings, each by where it was opened
+/// and where the system says it is (a link on the way followed: `~/Music`
+/// into a drive): a listing closed lets go of its folder a moment later,
+/// on a worker (`OpenLocation::close`), and what unmounts a volume waits
+/// for that ([`wait_let_go`]).
+static HELD: parking_lot::Mutex<Vec<[PathBuf; 2]>> = parking_lot::Mutex::new(Vec::new());
 static LET_GO: parking_lot::Condvar = parking_lot::Condvar::new();
 
 /// A folder counted in [`HELD`] while it lives.
-struct Held(PathBuf);
+struct Held([PathBuf; 2]);
 
 impl Held {
-    fn new(path: &Path) -> Self {
-        HELD.lock().push(path.to_path_buf());
-        Held(path.to_path_buf())
+    fn new(opened: &Path, at: &Path) -> Self {
+        let paths = [opened.to_path_buf(), at.to_path_buf()];
+        HELD.lock().push(paths.clone());
+        Held(paths)
     }
+}
+
+/// Whether a folder held by `paths` is at or below `path`.
+fn held_under(paths: &[PathBuf; 2], path: &Path) -> bool {
+    paths.iter().any(|p| p.starts_with(path))
 }
 
 impl Drop for Held {
@@ -393,9 +409,9 @@ impl Drop for Held {
 pub fn wait_let_go(path: &Path, at_most: Duration) -> bool {
     let deadline = std::time::Instant::now() + at_most;
     let mut held = HELD.lock();
-    while held.iter().any(|p| p.starts_with(path)) {
+    while held.iter().any(|paths| held_under(paths, path)) {
         if LET_GO.wait_until(&mut held, deadline).timed_out() {
-            return !held.iter().any(|p| p.starts_with(path));
+            return !held.iter().any(|paths| held_under(paths, path));
         }
     }
     true
@@ -812,7 +828,7 @@ impl OpenLocation for PathLocation {
     }
 
     fn holds(&self) -> Option<&Path> {
-        Some(&self.dir)
+        Some(self.held.get().unwrap_or(&self.dir))
     }
 
     fn events(&self) -> &Receiver<ListingEvent> {

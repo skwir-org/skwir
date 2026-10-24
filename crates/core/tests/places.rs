@@ -165,6 +165,33 @@ fn a_volume_let_go_of_takes_what_lists_a_folder_on_it_whatever_its_scheme() {
     assert_eq!(shows(&app, pane), Some(home));
 }
 
+/// A folder shown through a link into a volume (`~/Music` on a drive) is
+/// let go of with the volume: the pane goes elsewhere, and nothing holds
+/// the volume once its listing closes.
+#[cfg(unix)]
+#[test]
+fn a_folder_shown_through_a_link_is_let_go_of_with_its_volume() {
+    let tmp = home_tempdir();
+    let volume = tmp.path().join("volume");
+    let music = volume.join("l'été");
+    std::fs::create_dir_all(&music).unwrap();
+    let home = tmp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let link = home.join("Music");
+    std::os::unix::fs::symlink(&music, &link).unwrap();
+    let app = app(tmp.path());
+    let pane = active(&app);
+    navigate(&app, &link);
+    assert!(
+        !skwir_core::fs::wait_let_go(&volume, Duration::ZERO),
+        "held through the link"
+    );
+    app.release(&volume, &Location::from_path(&home)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    assert_eq!(app.pane_dir(pane).unwrap(), home);
+    assert!(skwir_core::fs::wait_let_go(&volume, Duration::from_secs(5)));
+}
+
 #[test]
 fn a_place_leads_somewhere_and_up_walks_its_trail_back_to_its_folder() {
     let tmp = tempfile::tempdir().unwrap();

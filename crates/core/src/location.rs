@@ -339,8 +339,10 @@ pub trait OpenLocation: Send + Sync {
 
     /// The folder it lists, and so holds open (its directory, its
     /// watches), when it lists one: a folder's own listing, and one a
-    /// location lists through it (a trashed folder's). What `App::release`
-    /// lets go of before a volume is unmounted, whatever its scheme.
+    /// location lists through it (a trashed folder's). As the system
+    /// resolved it once opened, a link on the way followed: what
+    /// `App::release` compares with a volume's mount point, and lets go of
+    /// before it is unmounted, whatever its scheme.
     fn holds(&self) -> Option<&Path> {
         None
     }
@@ -844,8 +846,11 @@ impl Delta {
         Delta {
             any: old != new,
             name,
-            // Folders sort first, and a link sorts as what it leads to.
-            order: name || old.is_dir() != new.is_dir(),
+            // Folders sort first, and a link sorts as what it leads to. A
+            // file the system hides now, or no longer (a Mac's UF_HIDDEN
+            // found by its stat, `attrib +h`), is shown or not: the order
+            // is made again, as `shows` says.
+            order: name || old.is_dir() != new.is_dir() || old.hidden != new.hidden,
             size,
             modified,
             rewritten,
@@ -1176,6 +1181,9 @@ impl Listing {
                     e.metadata = old.metadata.clone();
                     e.kind = old.kind;
                     e.target.clone_from(&old.target);
+                    // What its stat said hides it, which a listing may not
+                    // tell (a Mac's UF_HIDDEN): it is stat-ed again after.
+                    e.hidden = old.hidden;
                 }
                 let d = Delta::between(old, &e);
                 if !d.any {
@@ -1856,6 +1864,46 @@ mod tests {
                 .metadata
                 .is_hydrated()
         );
+    }
+
+    /// A file the system comes to hide (a Mac's UF_HIDDEN its stat finds,
+    /// `attrib +h`) leaves what is drawn as it leaves what is shown, and a
+    /// re-listing that cannot tell keeps it hidden.
+    #[test]
+    fn a_file_hidden_while_listed_leaves_the_order() {
+        let file = |ino, name: &str, hidden: bool| {
+            let mut e = Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            );
+            e.hidden = hidden;
+            e
+        };
+        let spec = SortSpec::default();
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![
+            file(1, "Library", false),
+            file(2, "it's shown", false),
+        ]));
+        assert_eq!(listing.sorted(spec).len(), 2);
+        let mut hidden = stat(file(1, "Library", true), 7);
+        hidden.hidden = true;
+        listing.apply(ListingEvent::Updated(vec![hidden.clone()]));
+        assert_eq!(&*listing.sorted(spec), [file(2, "", false).id]);
+        assert!(!listing.shows(spec)(hidden.id));
+        // Listed again bare, as a listing says it (no UF_HIDDEN): still
+        // hidden until stat-ed again.
+        listing.apply(ListingEvent::Added(vec![file(1, "Library", false)]));
+        assert_eq!(listing.sorted(spec).len(), 1);
+        // No longer hidden: shown again.
+        let mut shown = hidden;
+        shown.hidden = false;
+        listing.apply(ListingEvent::Updated(vec![shown]));
+        assert_eq!(listing.sorted(spec).len(), 2);
     }
 
     #[test]
