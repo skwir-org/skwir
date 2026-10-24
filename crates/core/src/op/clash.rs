@@ -472,10 +472,20 @@ impl Walk<'_> {
                 if builtin::keeps_no_trash(&src)
                     && let Some(copy) = EntryRef::from_path(&target)
                 {
+                    let entry = transfer.entry();
+                    // Its companions are there whole too (`same_tree`):
+                    // they go with it.
+                    let beside = self
+                        .ctx
+                        .companions()
+                        .existing_as(&src, &|at| self.ctx.exists(at))
+                        .into_iter()
+                        .map(|found| found.path);
                     return self.push(Box::new(Uncopy {
-                        entry: transfer.entry().clone(),
-                        source: copy,
                         made_as: builtin::made_state(&src),
+                        beside: builtin::MadeBeside::now(beside),
+                        entry: EntryRef::new(entry.id, src).with_only_name(entry.only_name),
+                        source: copy,
                         preserve_attributes: true,
                     }));
                 }

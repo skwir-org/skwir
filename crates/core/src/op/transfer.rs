@@ -508,13 +508,39 @@ fn removal(step: &dyn Operation) -> Option<&super::EntryRef> {
         .or_else(|| any.downcast_ref::<Uncopy>().map(|u| &u.entry))
 }
 
+/// The companions `step`, a [`removal`] of what is at `path`, removes with
+/// it, as `there` says which are there: a deletion, all of them; a copy
+/// taken back, those it placed (`Uncopy::beside_at`), its check having
+/// found nothing else beside it.
+fn removed_beside(
+    step: &dyn Operation,
+    path: &Path,
+    there: &dyn Fn(&Path) -> bool,
+    ctx: &StepContext,
+) -> Vec<PathBuf> {
+    match step.as_any().and_then(|any| any.downcast_ref::<Uncopy>()) {
+        Some(uncopy) => uncopy
+            .beside_at(path, ctx)
+            .into_iter()
+            .filter(|at| there(at))
+            .collect(),
+        None => ctx
+            .companions()
+            .existing_as(path, there)
+            .into_iter()
+            .map(|found| found.path)
+            .collect(),
+    }
+}
+
 /// Look, before the step `i` of `steps` is checked, at the run of
 /// removals from it (`removal`), and remove at once those in a remote's
 /// folder where a plugin's transfer removes (`Transfer::removes`), with
-/// the files beside them that go with them (their companions, as the
-/// folder's names listed once say): through the mount, each name is a
-/// round trip to the server under its folder's lock. Only those whose
-/// checks pass now, as their steps would check them: a removal is not
+/// the files beside them that go with them (a deletion's companions, a
+/// copy's those it placed: [`removed_beside`], as the folder's names
+/// listed once say): through the mount, each name is a round trip to the
+/// server under its folder's lock. Only those whose checks pass now, as
+/// their steps would check them, from those names too: a removal is not
 /// taken back. Each step then says it removed its own
 /// (`StepContext::take_removed_ahead`). Once for a run.
 ///
@@ -582,20 +608,33 @@ pub(super) fn remove_ahead(
         }) else {
             continue;
         };
+        // In the folder, as its names say; below a folder of it (`.ts`),
+        // looked at only where that folder is.
+        let there = |at: &Path| match at.strip_prefix(&folder).map(Path::components) {
+            Ok(mut parts) => {
+                parts
+                    .next()
+                    .is_some_and(|first| listed.contains(first.as_os_str()))
+                    && (parts.next().is_none() || std::fs::symlink_metadata(at).is_ok())
+            }
+            Err(_) => std::fs::symlink_metadata(at).is_ok(),
+        };
         let mut names: Vec<OsString> = Vec::new();
         let mut taken: Vec<(&super::EntryRef, PathBuf)> = Vec::new();
         for (entry, step, path) in steps {
-            if !matches!(step.check(ctx), super::StepStatus::Pending { .. }) {
+            // Checked as its step would, what it asks of the folder
+            // answered from its names.
+            let pending = ctx.knowing(&folder, &listed, || {
+                matches!(step.check(ctx), super::StepStatus::Pending { .. })
+            });
+            if !pending {
                 continue;
             }
-            let companions = ctx.companions().existing_as(&path, &|at| {
-                at.parent() == Some(folder.as_path())
-                    && at.file_name().is_some_and(|name| listed.contains(name))
-            });
+            let companions = removed_beside(step, &path, &there, ctx);
             // One beside elsewhere is left to its step.
             if companions
                 .iter()
-                .any(|c| c.path.parent() != Some(folder.as_path()))
+                .any(|c| c.parent() != Some(folder.as_path()))
             {
                 continue;
             }
@@ -606,7 +645,7 @@ pub(super) fn remove_ahead(
             names.extend(
                 companions
                     .iter()
-                    .filter_map(|c| c.path.file_name().map(ToOwned::to_owned)),
+                    .filter_map(|c| c.file_name().map(ToOwned::to_owned)),
             );
             taken.push((entry, path));
         }
@@ -2479,6 +2518,64 @@ mod tests {
         let error = undone.error.unwrap_or_default();
         assert!(error.contains("changed since it was made"), "{error}");
         assert_eq!(names(&dest), ["kept.txt"], "the changed one stays");
+    }
+
+    /// Undo of copies onto a volume that keeps no trash removes what they
+    /// placed, a companion included, and nothing else: a sidecar written
+    /// beside a copy since (an editor's), or one there before it, keeps the
+    /// copy too, and Undo says so; together (a transfer removing) or each
+    /// by its step.
+    #[test]
+    fn undo_of_copies_onto_a_remote_removes_only_what_they_placed() {
+        for together in [true, false] {
+            let tmp = home_tempdir();
+            let src = tmp.path().join("here");
+            std::fs::create_dir(&src).unwrap();
+            for name in ["one’s.jpg", "two é.jpg", "three  3.jpg"] {
+                file(&src.join(name), name, 0o644);
+            }
+            file(&src.join("._one’s.jpg"), "its own", 0o644);
+            let dest = tmp.path().join("there");
+            std::fs::create_dir_all(dest.join(".notes")).unwrap();
+            file(&dest.join("._three  3.jpg"), "there before", 0o644);
+            crate::fs::reach::pretend_remote(&dest);
+            let removals = Arc::new(Mutex::new(Vec::new()));
+            let executor = if together {
+                fake_removing(&removals)
+            } else {
+                Executor::new(Scheduler::new(2))
+            };
+            let companions = crate::companions::Companions::default();
+            companions.register("test", Arc::new(crate::companions::tests::Rules));
+            executor.set_companions(Arc::new(companions));
+            // Undone last to first: each by its step stops at the first
+            // that stays.
+            let order: &[&str] = if together {
+                &["two é.jpg", "three  3.jpg", "one’s.jpg"]
+            } else {
+                &["two é.jpg", "one’s.jpg"]
+            };
+            let entries: Vec<PathBuf> = order.iter().map(|n| src.join(n)).collect();
+            let r = executor.execute_blocking(&copies(&entries, &dest), &CancelToken::new());
+            assert!(r.error.is_none(), "{:?}", r.error);
+            assert_eq!(std::fs::read(dest.join("._one’s.jpg")).unwrap(), b"its own");
+            // An editor writes its sidecar beside a copy.
+            file(&dest.join(".notes/two é.jpg.note"), "edits", 0o644);
+            let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
+            let error = undone.error.unwrap_or_default();
+            assert!(
+                error.contains("was not made with it"),
+                "{together}: {error}"
+            );
+            let mut left = vec![".notes", "._three  3.jpg", "two é.jpg"];
+            if together {
+                left.push("three  3.jpg");
+                assert_eq!(removals.lock().len(), 1, "taken back in one call");
+            }
+            left.sort_unstable();
+            assert_eq!(names(&dest), left, "{together}");
+            assert_eq!(names(&dest.join(".notes")), ["two é.jpg.note"]);
+        }
     }
 
     /// The trash of a network folder a program mounts is none: a step

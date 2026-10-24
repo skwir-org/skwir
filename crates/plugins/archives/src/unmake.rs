@@ -1,8 +1,10 @@
 //! The undo of an archive extracted or made where its volume keeps no
 //! trash (a network folder a program mounts, ADR-077); elsewhere the trash
 //! takes it. What was made is removed for good only while it is as it was
-//! made (`op::made_stays`): changed since, it stays, and Undo says so.
-//! Redo makes it again.
+//! made (`op::made_stays`): changed since, or with a file beside it that
+//! goes with it (a sidecar written since), it stays, and Undo says so. An
+//! archive places nothing beside what it makes, so nothing beside it is
+//! removed. Redo makes it again.
 
 use skwir_core::App;
 use skwir_core::op::{self, Change, EntryRef, Operation, ResolveError, StepContext, StepStatus};
@@ -38,6 +40,11 @@ impl Unmake {
             again,
         }
     }
+
+    /// Why what was made, now at `path`, stays (`op::made_stays`).
+    fn stays(&self, path: &std::path::Path, ctx: &StepContext) -> Option<String> {
+        op::made_stays(path, &self.entry.path, self.made_as.as_deref(), &[], ctx)
+    }
 }
 
 impl op::Kind for Unmake {
@@ -60,9 +67,9 @@ impl op::Effect for Unmake {
         }
     }
 
-    fn check(&self, _ctx: &StepContext) -> StepStatus {
+    fn check(&self, ctx: &StepContext) -> StepStatus {
         match self.entry.resolve() {
-            Ok(path) => match op::made_stays(&path, self.made_as.as_deref()) {
+            Ok(path) => match self.stays(&path, ctx) {
                 Some(reason) => StepStatus::Conflict { reason },
                 None => StepStatus::Pending { reversible: true },
             },
@@ -75,10 +82,10 @@ impl op::Effect for Unmake {
 
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let path = self.entry.resolve()?;
-        if let Some(why) = op::made_stays(&path, self.made_as.as_deref()) {
+        if let Some(why) = self.stays(&path, ctx) {
             anyhow::bail!("{why}");
         }
-        op::remove_made(&path, ctx)?;
+        op::remove_made(&path, &self.entry.path, &[], ctx)?;
         Ok(Some(match &self.again {
             Again::Extract(extract) => Box::new(extract.clone()),
             Again::Compress(compress) => Box::new(compress.clone()),

@@ -239,6 +239,9 @@ pub struct StepContext {
     lists_remotes: bool,
     /// Those names, by folder; `None` where the folder could not be read.
     listed: RefCell<HashMap<PathBuf, Option<HashSet<std::ffi::OsString>>>>,
+    /// The names of a folder read a moment ago, which the checks run
+    /// meanwhile answer from ([`StepContext::knowing`]).
+    known: RefCell<Option<(PathBuf, HashSet<std::ffi::OsString>)>>,
     /// The originals of moves a batch copied from a remote, removed at the
     /// plan's end (`transfer::remove_deferred`), each with what it was as
     /// copied and where its copy went.
@@ -405,6 +408,7 @@ impl StepContext {
             resolved: RefCell::default(),
             lists_remotes: false,
             listed: RefCell::default(),
+            known: RefCell::default(),
             removing: RefCell::default(),
             beside: RefCell::default(),
         }
@@ -1194,9 +1198,23 @@ impl StepContext {
         foreseen.made.contains(path) || !foreseen.went(path) && self.there(path)
     }
 
-    /// Whether something is at `path` now: for a dry run, in a remote's
-    /// folder, as its names listed once say ([`Self::listing_remotes`]).
+    /// Whether something is at `path` now: in a folder whose names were
+    /// read a moment ago ([`Self::knowing`]), or for a dry run in a
+    /// remote's folder, as its names listed once say
+    /// ([`Self::listing_remotes`]).
     fn there(&self, path: &Path) -> bool {
+        if let Some((folder, names)) = &*self.known.borrow()
+            && let Ok(rest) = path.strip_prefix(folder)
+            && let Some(first) = rest.components().next()
+        {
+            // Below a folder of it, looked at only where that folder is.
+            if !names.contains(first.as_os_str()) {
+                return false;
+            }
+            if rest.components().nth(1).is_none() {
+                return true;
+            }
+        }
         if self.lists_remotes
             && let (Some(folder), Some(name)) = (path.parent(), path.file_name())
             && crate::fs::reach::of(folder).is_some()
@@ -1212,6 +1230,24 @@ impl StepContext {
             }
         }
         std::fs::symlink_metadata(path).is_ok()
+    }
+
+    /// Run `f` (checks, which change nothing) answering whether a name is
+    /// in `folder` from its `names`, read a moment ago: through a remote's
+    /// mount, each look for a name that is not there is a round trip to
+    /// the server (`transfer::remove_ahead`).
+    pub(super) fn knowing<T>(
+        &self,
+        folder: &Path,
+        names: &HashSet<std::ffi::OsString>,
+        f: impl FnOnce() -> T,
+    ) -> T {
+        let before = self
+            .known
+            .replace(Some((folder.to_path_buf(), names.clone())));
+        let out = f();
+        self.known.replace(before);
+        out
     }
 
     /// The same context, for a dry run: whether a name is in a remote's

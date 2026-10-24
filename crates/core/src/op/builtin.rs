@@ -682,7 +682,7 @@ fn move_entry(ctx: &StepContext, src: &Path, target: &Path, along: &[Along]) -> 
                     _ => (p.to_path_buf(), state_of(p)),
                 })
                 .collect();
-            let through = copy_entry(src, target, dest_dir, true, along, ctx)?;
+            let through = copy_entry(src, target, dest_dir, true, along, ctx)?.through;
             let dest_dir = dest_dir.to_path_buf();
             if let Some(copied_as) = batched
                 && !through
@@ -948,7 +948,7 @@ impl super::Effect for Copy {
         let src = ctx.resolve(&self.entry)?;
         let target = self.target(&src);
         let along = along(ctx, &src, &target);
-        copy_entry(
+        let made = copy_entry(
             &src,
             &target,
             &self.dest_dir,
@@ -963,13 +963,14 @@ impl super::Effect for Copy {
             )
         })?;
         // Where its volume keeps no trash, Undo removes the copy itself,
-        // only while it is as it was made; its look is the one just made,
-        // kept by the kernel a moment.
+        // and what it placed beside it, only while all is as it was made;
+        // its look is the one just made, kept by the kernel a moment.
         if keeps_no_trash(&target) {
             return Ok(Some(Box::new(Uncopy {
                 entry: r,
                 source: EntryRef::new(self.entry.id, src).with_only_name(self.entry.only_name),
                 made_as: made_state(&target),
+                beside: MadeBeside::now(made.beside),
                 preserve_attributes: self.preserve_attributes,
             })));
         }
@@ -995,34 +996,122 @@ pub fn made_state(path: &Path) -> Option<String> {
     state_of(path).map(|state| state.to_hex().to_string())
 }
 
-/// Why what a step made at `path`, `made_as` then ([`made_state`]), stays
-/// rather than its undo removing it: changed since (or never read whole),
-/// or holding where a drive or a remote is mounted.
-pub fn made_stays(path: &Path, made_as: Option<&str>) -> Option<String> {
+/// A companion (ADR-028) a step placed beside what it made where its volume
+/// keeps no trash, and what it was then ([`made_state`]): its undo removes
+/// it with its file, only while it is so ([`made_stays`]). Only what the
+/// step placed is one: a sidecar there before, or written since (an
+/// editor's), is not the step's to remove.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct MadeBeside {
+    #[serde(with = "crate::os_path")]
+    #[schemars(with = "PathArg")]
+    pub path: PathBuf,
+    /// `None` where it could not all be read: then nothing is removed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_as: Option<String>,
+}
+
+impl MadeBeside {
+    /// Each of `paths`, as it is now.
+    pub fn now(paths: impl IntoIterator<Item = PathBuf>) -> Vec<Self> {
+        paths
+            .into_iter()
+            .map(|path| MadeBeside {
+                made_as: made_state(&path),
+                path,
+            })
+            .collect()
+    }
+}
+
+/// Where each of `beside`, placed beside what a step made at `was_at`, is
+/// for it now at `path`: renamed with it, as a companion goes with its file.
+fn beside_now<'a>(
+    path: &Path,
+    was_at: &Path,
+    beside: &'a [MadeBeside],
+    rules: &crate::companions::Companions,
+) -> Vec<(PathBuf, &'a MadeBeside)> {
+    if path == was_at {
+        return beside.iter().map(|b| (b.path.clone(), b)).collect();
+    }
+    let found = rules.existing_as(was_at, &|at| beside.iter().any(|b| b.path == at));
+    beside
+        .iter()
+        .filter_map(|b| {
+            let found = found.iter().find(|f| f.path == b.path)?;
+            Some((rules.place(found, path)?, b))
+        })
+        .collect()
+}
+
+/// Why what a step made at `was_at`, `made_as` then ([`made_state`]) with
+/// `beside` placed beside it, stays rather than its undo removing it from
+/// `path`, where it is now: changed since (or never read whole), holding
+/// where a drive or a remote is mounted, or a companion beside it that is
+/// not as the step placed it: changed, or not the step's (there before it,
+/// written since). The step's own and the others go together or not at
+/// all: a sidecar is never left without its file.
+pub fn made_stays(
+    path: &Path,
+    was_at: &Path,
+    made_as: Option<&str>,
+    beside: &[MadeBeside],
+    ctx: &StepContext,
+) -> Option<String> {
     if let Some(why) = mounted_there(path) {
         return Some(why);
     }
     let now = made_state(path);
-    (made_as.is_none() || now.as_deref() != made_as).then(|| {
-        format!(
+    if made_as.is_none() || now.as_deref() != made_as {
+        return Some(format!(
             "“{}” changed since it was made: Undo leaves it",
             display_name(path)
-        )
-    })
+        ));
+    }
+    let rules = ctx.companions();
+    let made = beside_now(path, was_at, beside, rules);
+    rules
+        .existing_as(path, &|at| ctx.exists(at))
+        .into_iter()
+        .find_map(|found| {
+            let Some((at, b)) = made.iter().find(|(at, _)| *at == found.path) else {
+                return Some(format!(
+                    "“{}” is beside “{}” and was not made with it: Undo leaves them",
+                    display_name(&found.path),
+                    display_name(path)
+                ));
+            };
+            (b.made_as.is_none() || made_state(at) != b.made_as).then(|| {
+                format!(
+                    "“{}” changed since it was made: Undo leaves it and “{}”",
+                    display_name(at),
+                    display_name(path)
+                )
+            })
+        })
 }
 
-/// Remove for good what a step made at `path`, and the files beside it
-/// that go with it (its companions): the undo of a step that made it where
-/// its volume keeps no trash, once [`made_stays`] said nothing.
+/// Remove for good what a step made at `was_at`, now at `path`, and the
+/// companions it placed beside it (`beside`), none other: the undo of a
+/// step that made it where its volume keeps no trash, once [`made_stays`]
+/// said nothing.
 ///
 /// # Errors
 /// What could not be removed.
-pub fn remove_made(path: &Path, ctx: &StepContext) -> anyhow::Result<()> {
-    let companions = ctx.companions().existing(path);
+pub fn remove_made(
+    path: &Path,
+    was_at: &Path,
+    beside: &[MadeBeside],
+    ctx: &StepContext,
+) -> anyhow::Result<()> {
+    let companions = beside_now(path, was_at, beside, ctx.companions());
     remove_recursive(path)
         .with_context(|| format!("“{}” could not all be removed", display_name(path)))?;
-    for companion in companions {
-        let _ = remove_recursive(&companion.path);
+    for (companion, _) in companions {
+        if exists(&companion) {
+            let _ = remove_recursive(&companion);
+        }
     }
     Ok(())
 }
@@ -1031,9 +1120,10 @@ pub fn remove_made(path: &Path, ctx: &StepContext) -> anyhow::Result<()> {
 
 /// Take back a copy made where its volume keeps no trash (a network folder
 /// a program mounts): the undo of [`Copy`] there, which elsewhere puts the
-/// copy in the trash. The copy is removed for good only while it is as it
-/// was made (`state_of`): one changed since stays, and its step says so.
-/// Redo copies its original again.
+/// copy in the trash. The copy is removed for good, with the companions
+/// it placed beside it, only while all of it is as it was made
+/// (`state_of`, [`made_stays`]): one changed since stays, and its step
+/// says so. Redo copies its original again.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Uncopy {
     /// The copy.
@@ -1044,8 +1134,32 @@ pub struct Uncopy {
     /// it could not all be read, and then it is never removed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub made_as: Option<String>,
+    /// The companions the copy placed beside it, as they were then.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub beside: Vec<MadeBeside>,
     #[serde(default = "preserve_attributes_default")]
     pub preserve_attributes: bool,
+}
+
+impl Uncopy {
+    /// Why the copy, now at `path`, stays ([`made_stays`]).
+    pub(super) fn stays(&self, path: &Path, ctx: &StepContext) -> Option<String> {
+        made_stays(
+            path,
+            &self.entry.path,
+            self.made_as.as_deref(),
+            &self.beside,
+            ctx,
+        )
+    }
+
+    /// Where the companions it removes with the copy, now at `path`, are.
+    pub(super) fn beside_at(&self, path: &Path, ctx: &StepContext) -> Vec<PathBuf> {
+        beside_now(path, &self.entry.path, &self.beside, ctx.companions())
+            .into_iter()
+            .map(|(at, _)| at)
+            .collect()
+    }
 }
 
 impl super::Kind for Uncopy {
@@ -1072,9 +1186,9 @@ impl super::Effect for Uncopy {
     fn check(&self, ctx: &StepContext) -> StepStatus {
         match ctx.resolve(&self.entry) {
             Ok(path) if ctx.was_removed_ahead(&path) => pending(true),
-            Ok(path) => {
-                made_stays(&path, self.made_as.as_deref()).map_or_else(|| pending(true), conflict)
-            }
+            Ok(path) => self
+                .stays(&path, ctx)
+                .map_or_else(|| pending(true), conflict),
             Err(ResolveError::Gone(_)) => StepStatus::AlreadyDone,
             Err(e) => conflict(e.to_string()),
         }
@@ -1082,10 +1196,10 @@ impl super::Effect for Uncopy {
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         let path = ctx.resolve(&self.entry)?;
         if !ctx.take_removed_ahead(&path) {
-            if let Some(why) = made_stays(&path, self.made_as.as_deref()) {
+            if let Some(why) = self.stays(&path, ctx) {
                 anyhow::bail!("{why}");
             }
-            remove_made(&path, ctx)?;
+            remove_made(&path, &self.entry.path, &self.beside, ctx)?;
         }
         let (Some(dest_dir), Some(name)) = (path.parent(), path.file_name()) else {
             return Ok(None);
@@ -1256,7 +1370,7 @@ fn copy_entry(
     preserve_attributes: bool,
     along: &[Along],
     ctx: &StepContext,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<CopyMade> {
     match transfer_target(src, target)? {
         TransferTarget::SameEntry => anyhow::bail!("it would be copied onto itself"),
         TransferTarget::InsideSource => anyhow::bail!("a folder cannot be copied into itself"),
@@ -1268,7 +1382,7 @@ fn copy_entry(
     } else {
         std::rc::Rc::new(Pace::at_once())
     };
-    copy_staged(
+    let beside = copy_staged(
         src,
         target,
         dest_dir,
@@ -1277,7 +1391,16 @@ fn copy_entry(
         &pace,
         ctx,
     )?;
-    Ok(through)
+    Ok(CopyMade { through, beside })
+}
+
+/// What [`copy_entry`] did.
+struct CopyMade {
+    /// It wrote through to a drive the user can unplug (`op::pace`).
+    through: bool,
+    /// The companions it placed beside the copy, and none other: the
+    /// undo of a copy where no trash is kept removes those alone.
+    beside: Vec<PathBuf>,
 }
 
 /// Copy `src` to `target` through a private staging directory inside
@@ -1288,7 +1411,9 @@ fn copy_entry(
 /// Its companions (`along`; the ones not holding attributes, which are
 /// converted with the file's) are staged with it and placed after it: one
 /// that cannot be copied or placed takes the copy back out, so a copy is
-/// never left without what goes with it, and without an Undo.
+/// never left without what goes with it, and without an Undo. What it
+/// placed beside the copy is returned: a batch places none (it takes no
+/// file with a companion, ADR-078).
 fn copy_staged(
     src: &Path,
     target: &Path,
@@ -1297,7 +1422,7 @@ fn copy_staged(
     along_src: &[Along],
     pace: &Pace,
     ctx: &StepContext,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<PathBuf>> {
     // A batch made it already, or counted it (ADR-078).
     let batched = ctx.take_batched(src);
     if batched.is_none() {
@@ -1309,7 +1434,7 @@ fn copy_staged(
         if let Some(super::transfer::Batched::Placed(at, _)) = &batched
             && at == target
         {
-            return Ok(());
+            return Ok(Vec::new());
         }
         return copy_in_place(
             src,
@@ -1327,7 +1452,7 @@ fn copy_staged(
     ctx.copy_begins();
     let (staged, made) = match batched {
         // At its target already: nothing to place.
-        Some(super::transfer::Batched::Placed(at, _)) if at == target => return Ok(()),
+        Some(super::transfer::Batched::Placed(at, _)) if at == target => return Ok(Vec::new()),
         Some(super::transfer::Batched::Made(made)) => (made, true),
         // Cut short by the run this one retries: it goes on from there.
         _ => (
@@ -1370,40 +1495,43 @@ fn copy_staged(
         // from the staging folder.
         rename_along(&beside).inspect_err(|_| {
             let _ = sys::rename_noreplace(target, &staged);
-        })
+        })?;
+        Ok(beside.into_iter().map(|a| a.to).collect())
     });
-    if let Err(error) = result {
-        // What this copy staged goes; the folder stays for the plan's
-        // other copies, and goes with the plan. A large file a failure
-        // cut short (not Cancel: a server gone, a drive pulled out) stays
-        // for Retry to go on from, and the folder with it.
-        let kept = !error.is::<super::Cancelled>() && ctx.keep_partial(src, dest_dir, &staged);
-        let made = along(ctx, &staged, target)
-            .into_iter()
-            .map(|a| a.from)
-            .chain((!kept).then_some(staged))
-            .chain(staged_along);
-        for path in made {
-            if std::fs::symlink_metadata(&path).is_err() {
-                continue;
-            }
-            if let Err(cleanup) = super::staging::remove_tree(&path) {
-                return Err(error.context(format!(
-                    "a part of the copy is left in “{}” ({})",
-                    path.display(),
-                    super::io_words(&cleanup)
-                )));
-            }
+    let error = match result {
+        Ok(placed) => return Ok(placed),
+        Err(error) => error,
+    };
+    // What this copy staged goes; the folder stays for the plan's other
+    // copies, and goes with the plan. A large file a failure cut short
+    // (not Cancel: a server gone, a drive pulled out) stays for Retry to go
+    // on from, and the folder with it.
+    let kept = !error.is::<super::Cancelled>() && ctx.keep_partial(src, dest_dir, &staged);
+    let made = along(ctx, &staged, target)
+        .into_iter()
+        .map(|a| a.from)
+        .chain((!kept).then_some(staged))
+        .chain(staged_along);
+    for path in made {
+        if std::fs::symlink_metadata(&path).is_err() {
+            continue;
         }
-        return Err(error);
+        if let Err(cleanup) = super::staging::remove_tree(&path) {
+            return Err(error.context(format!(
+                "a part of the copy is left in “{}” ({})",
+                path.display(),
+                super::io_words(&cleanup)
+            )));
+        }
     }
-    Ok(())
+    Err(error)
 }
 
 /// [`copy_staged`] where `dest_dir` moves nothing between its folders (a
 /// camera, ADR-083): the copy written at `target` itself, never over what
 /// is there (each file and folder made new), its companions beside it,
-/// all taken back where it fails: a retry makes it again.
+/// all taken back where it fails: a retry makes it again. What it placed
+/// beside the copy is returned.
 fn copy_in_place(
     src: &Path,
     target: &Path,
@@ -1412,7 +1540,7 @@ fn copy_in_place(
     along_src: &[Along],
     pace: &Pace,
     ctx: &StepContext,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<PathBuf>> {
     let placed_in = || {
         format!(
             "“{}” could not be placed in “{}”",
@@ -1426,6 +1554,16 @@ fn copy_in_place(
                 .context(placed_in()),
         );
     }
+    // The companion that holds attributes, written beside the copy where
+    // the volume keeps none: one there before it (left on the card by
+    // another) is never the copy's.
+    let holding = || {
+        ctx.companions()
+            .existing_holding_attributes(target)
+            .into_iter()
+            .map(|found| found.path)
+    };
+    let before: Vec<PathBuf> = holding().collect();
     ctx.copy_begins();
     let mut made = vec![target.to_path_buf()];
     let result = copy_recursive_with_attributes(src, target, preserve_attributes, pace, ctx)
@@ -1441,29 +1579,24 @@ fn copy_in_place(
             }
             Ok(())
         });
-    if let Err(error) = result {
-        // What it made goes, the companion that holds the attributes it
-        // wrote beside it (on a volume that keeps none) too.
-        let beside = ctx
-            .companions()
-            .existing_as(target, &|at| std::fs::symlink_metadata(at).is_ok())
-            .into_iter()
-            .map(|found| found.path);
-        for path in made.into_iter().chain(beside) {
-            if std::fs::symlink_metadata(&path).is_err() {
-                continue;
-            }
-            if let Err(cleanup) = super::staging::remove_tree(&path) {
-                return Err(error.context(format!(
-                    "a part of the copy is left in “{}” ({})",
-                    path.display(),
-                    super::io_words(&cleanup)
-                )));
-            }
+    made.extend(holding().filter(|at| !before.contains(at)));
+    let Err(error) = result else {
+        return Ok(made.split_off(1));
+    };
+    // What it made goes, and nothing else.
+    for path in made {
+        if std::fs::symlink_metadata(&path).is_err() {
+            continue;
         }
-        return Err(error);
+        if let Err(cleanup) = super::staging::remove_tree(&path) {
+            return Err(error.context(format!(
+                "a part of the copy is left in “{}” ({})",
+                path.display(),
+                super::io_words(&cleanup)
+            )));
+        }
     }
-    Ok(())
+    Err(error)
 }
 
 /// Bytes of regular files under `path`, so progress has a total: a file
@@ -4138,6 +4271,49 @@ mod tests {
         assert!(super::super::Effect::apply(&restore, &StepContext::detached()).is_err());
         assert!(!restore.path.exists());
         assert_eq!(std::fs::read_dir(camera).unwrap().count(), 0);
+    }
+
+    /// A copy onto a camera that fails takes back what it made, never the
+    /// sidecars that were there before it: one where its own was to go
+    /// (why it failed), an orphan beside its name.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_failed_copy_onto_a_camera_leaves_what_was_there() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let src = tmp.path().join("here");
+        std::fs::create_dir_all(src.join(".notes")).unwrap();
+        std::fs::write(src.join("it’s a.jpg"), "picture").unwrap();
+        std::fs::write(src.join(".notes/it’s a.jpg.note"), "mine").unwrap();
+        let camera = tmp.path().join("gphoto2:synthetic");
+        std::fs::create_dir_all(camera.join(".notes")).unwrap();
+        std::fs::write(camera.join("._it’s a.jpg"), "orphan").unwrap();
+        std::fs::write(camera.join(".notes/it’s a.jpg.note"), "theirs").unwrap();
+        crate::fs::reach::pretend_camera(&camera);
+        let companions = crate::companions::Companions::default();
+        companions.register("test", std::sync::Arc::new(crate::companions::tests::Rules));
+        let ctx = StepContext::detached().with_companions(std::sync::Arc::new(companions));
+        let copy = Copy {
+            entry: EntryRef::from_path(src.join("it’s a.jpg")).unwrap(),
+            dest_dir: camera.clone(),
+            new_name: None,
+            preserve_attributes: false,
+        };
+        let error = super::super::Effect::apply(&copy, &ctx).unwrap_err();
+        assert!(format!("{error:#}").contains("already there"), "{error:#}");
+        assert!(
+            !camera.join("it’s a.jpg").exists(),
+            "what it made taken back"
+        );
+        assert_eq!(
+            std::fs::read(camera.join("._it’s a.jpg")).unwrap(),
+            b"orphan"
+        );
+        assert_eq!(
+            std::fs::read(camera.join(".notes/it’s a.jpg.note")).unwrap(),
+            b"theirs"
+        );
     }
 
     /// A copy of a file is finished when it has its length and time:

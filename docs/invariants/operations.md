@@ -139,8 +139,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   archives. Except where the destination moves nothing between its
   folders (`fs::reach::writes_in_place`: a camera through GVfs's
   gPhoto2, ADR-083): a copy there is written in place under its name,
-  never over what is there, and taken back whole when it fails
-  (`builtin::copy_in_place`); a batch there writes in place too, by a
+  never over what is there, and taken back whole when it fails, what it
+  made and nothing else (`builtin::copy_in_place`: a sidecar there before
+  it stays); a batch there writes in place too, by a
   transfer that does (`Transfer::writes_in_place`) or Skwir's own
   (`transfer::batch_in_place`); anything else staged is refused there.
 - A copy holds a lock on its staging folder while it runs. Unlocked
@@ -251,9 +252,11 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   through a mount the kernel removes a folder's names one at a time.
   The same way, before a removal is checked (a `Delete`, an `Uncopy`),
   the run of removals from it in a remote's folder is removed at once
-  (`transfer::remove_ahead`): those whose checks pass then, with the
-  companions the folder's names listed once show beside them; each step
-  then says it removed its own (`StepContext::take_removed_ahead`). A
+  (`transfer::remove_ahead`): those whose checks pass then, answered
+  from the folder's names listed once (`StepContext::knowing`), with
+  the companions those names show beside them (a copy's undo, those it
+  placed); each step then says it removed its own
+  (`StepContext::take_removed_ahead`). A
   removal is not taken back: a plan that stops before steps whose
   removal was made ahead counts them done, with their inverses.
   What a transfer writes or removes beside a mount, no watch sees: it
@@ -458,8 +461,11 @@ The trash plugin reads ([locations.md](locations.md)); the core acts.
   machine's trash to be trashed. A `Trash` step there conflicts in its
   check. What would put something in a trash there does without: a
   copy's undo is an `Uncopy` (removed while it is as it was made, its
-  state kept as `op::made_state`; Redo copies again), a plugin's step
-  that makes something does the same (`op::made_stays`,
+  state kept as `op::made_state`, with the companions the copy placed
+  beside it, `op::MadeBeside`, each as it was placed: never one it did
+  not place, and one there it did not place, written since or there
+  before, keeps the copy as a change does; Redo copies again), a
+  plugin's step that makes something does the same (`op::made_stays`,
   `op::remove_made`: the archives' `archive_unmake`), Replace deletes
   for good (`clash::replaces_for_good`, said by the question), and a
   move whose item is there whole removes its original by an `Uncopy`.
