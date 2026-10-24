@@ -569,7 +569,11 @@ impl Thumbnails {
 
     /// A worker of `lane` ends: another may start for it.
     fn worker_ended(&self, lane: Lane) {
-        let mut s = self.state.lock();
+        Self::count_out(&mut self.state.lock(), lane);
+    }
+
+    /// A worker of `lane` counted out of `s`.
+    fn count_out(s: &mut State, lane: Lane) {
         if lane.is_shared() {
             s.running = s.running.saturating_sub(1);
         } else if let Some(running) = s.remote.get_mut(&lane) {
@@ -637,9 +641,11 @@ impl Thumbnails {
                 .filter(|(_, q)| q.lane == lane)
                 .min_by_key(|(_, q)| (in_flight[&q.key].priority, std::cmp::Reverse(q.seq)))
                 .map(|(i, _)| i);
+            // Counted out under the lock that found nothing: a request
+            // queued once it is let go of starts a worker of its own
+            // (`spawn_worker`), where a remote's lane has one at most.
             let Some(i) = best else {
-                drop(s);
-                self.worker_ended(lane);
+                Self::count_out(&mut s, lane);
                 return false;
             };
             let q = s.queue.swap_remove(i);
