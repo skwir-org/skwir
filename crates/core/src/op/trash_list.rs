@@ -14,6 +14,8 @@ use std::path::{Path, PathBuf};
 
 use crate::fs::volume::Mounted;
 
+use super::records::home_trash;
+
 /// The mounts, the longest point first, and which trashes were read.
 pub(super) struct Listed {
     mounts: Vec<Mounted>,
@@ -29,8 +31,8 @@ impl Listed {
             mounts: mounts(),
             read: HashSet::new(),
         };
-        let mut items: Vec<trash::TrashItem> = crate::xdg::data_home()
-            .map(|data| read(&data.join("Trash"), None))
+        let mut items: Vec<trash::TrashItem> = home_trash()
+            .map(|home| read(&home, None))
             .unwrap_or_default();
         let here: Vec<PathBuf> = listed
             .mounts
@@ -83,10 +85,7 @@ pub fn items_here() -> Vec<trash::TrashItem> {
 /// them (what the trash place lists). Asks each volume: call it from a
 /// worker.
 pub fn folders_here() -> Vec<PathBuf> {
-    let mut found: Vec<PathBuf> = crate::xdg::data_home()
-        .map(|data| data.join("Trash"))
-        .into_iter()
-        .collect();
+    let mut found: Vec<PathBuf> = home_trash().into_iter().collect();
     for mount in mounts().iter().filter(|m| own(m)) {
         for trash in volume_trashes(&mount.point) {
             if !found.contains(&trash) {

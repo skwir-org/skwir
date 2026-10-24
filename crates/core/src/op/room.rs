@@ -47,16 +47,19 @@ fn name(path: &Path) -> String {
 /// The first volume `steps` would write more to than it has free, if one.
 /// Each step says what it writes, counted as the copy counts it (a file of
 /// several names once, in one context for the plan); volumes are told apart
-/// by their device, and `free` says what one has free. Reads what would be
-/// copied: on the plan's thread. `None` once cancelled.
+/// by their device, and `free` says what one has free. A folder the plan
+/// makes itself (a merge's, a new folder's) is on the volume of the
+/// nearest folder above it that is there. Reads what would be copied: on
+/// the plan's thread. `None` once cancelled.
 pub fn short(
     steps: &[Box<dyn Operation>],
     ctx: &StepContext,
     free: &dyn Fn(&Path) -> Option<u64>,
     cancel: &CancelToken,
 ) -> Option<Short> {
-    // (device, the first folder written into there, bytes)
-    let mut volumes: Vec<(u64, PathBuf, u64)> = Vec::new();
+    // (device, the first folder written into there, the folder there it
+    // is on, bytes)
+    let mut volumes: Vec<(u64, PathBuf, PathBuf, u64)> = Vec::new();
     for step in steps {
         if cancel.is_cancelled() {
             return None;
@@ -64,16 +67,19 @@ pub fn short(
         let Some((dest, bytes)) = step.writes(ctx) else {
             continue;
         };
-        let Some(device) = crate::fs::stat::id_of(&dest).map(|f| f.dev) else {
+        let Some((on, device)) = dest
+            .ancestors()
+            .find_map(|folder| Some((folder.to_path_buf(), crate::fs::stat::id_of(folder)?.dev)))
+        else {
             continue;
         };
         match volumes.iter_mut().find(|(d, ..)| *d == device) {
-            Some((_, _, sum)) => *sum = sum.saturating_add(bytes),
-            None => volumes.push((device, dest, bytes)),
+            Some((.., sum)) => *sum = sum.saturating_add(bytes),
+            None => volumes.push((device, dest, on, bytes)),
         }
     }
-    volumes.into_iter().find_map(|(_, dest, needs)| {
-        let free = free(&dest)?;
+    volumes.into_iter().find_map(|(_, dest, on, needs)| {
+        let free = free(&on)?;
         (needs > free).then_some(Short { dest, needs, free })
     })
 }
@@ -133,6 +139,30 @@ mod tests {
             with(1000).unwrap().said(),
             "Not enough room in “dest”: 1.1 KB needed, 1000 B free"
         );
+    }
+
+    /// What a plan copies into a folder it makes itself (a merge's) needs
+    /// room on the volume of the folder above it.
+    #[test]
+    fn a_folder_the_plan_makes_has_its_volume_s_room() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("it’s a.bin"), [0u8; 900]).unwrap();
+        let made = tmp.path().join("dest/new  folder");
+        std::fs::create_dir(tmp.path().join("dest")).unwrap();
+        let asked = std::sync::Mutex::new(Vec::new());
+        let found = short(
+            &[copy(&src.join("it’s a.bin"), &made)],
+            &StepContext::detached(),
+            &|at| {
+                asked.lock().unwrap().push(at.to_path_buf());
+                Some(100)
+            },
+            &CancelToken::new(),
+        );
+        assert_eq!(found.map(|s| (s.dest, s.needs)), Some((made, 900)));
+        assert_eq!(*asked.lock().unwrap(), [tmp.path().join("dest")]);
     }
 
     /// Two names of one file copied together need its bytes once

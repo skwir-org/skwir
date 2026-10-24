@@ -102,11 +102,13 @@ impl EntryRef {
     }
 
     /// The entry this names, as a listing of its folder names it (the
-    /// file, under this name: `EntryId::in_folder`). Reads the folder's
-    /// identity: blocking.
+    /// file, under this name: `EntryId::in_folder`): the folder is the one
+    /// its path leads to, a link to it followed, as a listing opened there
+    /// has it (`Dir::identity`). Reads the folder's identity: blocking.
     pub fn entry(&self) -> Option<crate::entry::EntryId> {
         let (dir, name) = (self.path.parent()?, self.path.file_name()?);
-        Some(crate::entry::EntryId::in_folder(self.id, id_of(dir)?, name))
+        let folder = crate::fs::stat::identity(dir, &std::fs::metadata(dir).ok()?)?;
+        Some(crate::entry::EntryId::in_folder(self.id, folder, name))
     }
 
     /// Where the entry is right now. The hint is trusted only if its
@@ -246,6 +248,22 @@ impl EntryArg {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file named through a link to its folder is the entry its folder's
+    /// listing has, as named directly.
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_through_a_link_to_its_folder_is_its_folder_s() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real  photos");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::write(real.join("it’s a.jpg"), "a").unwrap();
+        std::os::unix::fs::symlink(&real, tmp.path().join("to photos")).unwrap();
+        let through = EntryRef::from_path(tmp.path().join("to photos/it’s a.jpg")).unwrap();
+        let direct = EntryRef::from_path(real.join("it’s a.jpg")).unwrap();
+        assert!(direct.entry().is_some());
+        assert_eq!(through.entry(), direct.entry());
+    }
 
     #[test]
     fn a_number_a_mount_made_up_tells_nothing_and_the_path_is_taken() {

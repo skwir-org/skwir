@@ -2,7 +2,9 @@
 //! freedesktop.org's trash (`files/x` and `info/x.trashinfo`, text) and,
 //! on Windows, the Recycle Bin (`$Rxxxxxx.ext` and `$Ixxxxxx.ext` beside
 //! it in `$Recycle.Bin\<SID>`, a binary record). Read from paths alone,
-//! but what a record says, which is read from its bytes.
+//! but what a record says, which is read from its bytes: a volume's trash
+//! by its names (`.Trash-<uid>`, `.Trash/<uid>`), the home trash by where
+//! it is (`$XDG_DATA_HOME/Trash`), never a folder merely named `Trash`.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -71,8 +73,35 @@ pub fn read(record: &Path, bytes: &[u8], top: Option<&Path>) -> Option<Said> {
     })
 }
 
-/// freedesktop: a trash is `$XDG_DATA_HOME/Trash`, or on another volume
-/// `.Trash/<uid>` or `.Trash-<uid>` at its top.
+/// The home trash, `$XDG_DATA_HOME/Trash` as `xdg::data_home` says it (a
+/// relative value ignored), whether it exists yet or not: where a plan
+/// puts in it is where the trash is read from and known by.
+pub(crate) fn home_trash() -> Option<PathBuf> {
+    crate::xdg::data_home().map(|data| data.join("Trash"))
+}
+
+/// Whether `trash` is the home trash: as named, or as its links resolve
+/// (`/home` a link to `/var/home`), which is looked up once.
+fn is_home_trash(trash: &Path) -> bool {
+    static HOME: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let Some(named) = home_trash() else {
+            return Vec::new();
+        };
+        let resolved = named
+            .parent()
+            .and_then(|data| std::fs::canonicalize(data).ok())
+            .map(|data| data.join("Trash"))
+            .filter(|resolved| *resolved != named);
+        std::iter::once(named).chain(resolved).collect()
+    })
+    .iter()
+    .any(|home| home == trash)
+}
+
+/// freedesktop: a trash is the home trash (`$XDG_DATA_HOME/Trash`), or
+/// on another volume `.Trash/<uid>` or `.Trash-<uid>`, by its name (its
+/// place at the volume's top is not looked up: a path is all there is).
 fn freedesktop_record_of(path: &Path) -> Option<PathBuf> {
     let name = path.file_name()?;
     let files = path.parent()?;
@@ -81,12 +110,12 @@ fn freedesktop_record_of(path: &Path) -> Option<PathBuf> {
     }
     let trash = files.parent()?;
     let named = trash.file_name()?.to_str()?;
-    let is_trash = named == "Trash"
-        || named
-            .strip_prefix(".Trash-")
-            .is_some_and(|uid| uid.parse::<u32>().is_ok())
+    let is_trash = named
+        .strip_prefix(".Trash-")
+        .is_some_and(|uid| uid.parse::<u32>().is_ok())
         || (named.parse::<u32>().is_ok()
-            && trash.parent().and_then(Path::file_name) == Some(".Trash".as_ref()));
+            && trash.parent().and_then(Path::file_name) == Some(".Trash".as_ref()))
+        || named == "Trash" && is_home_trash(trash);
     if !is_trash {
         return None;
     }

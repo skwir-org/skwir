@@ -4377,16 +4377,17 @@ mod tests {
     }
 
     /// Where a trash keeps what it says of a file, from the file's path:
-    /// the home trash's and a volume's two kinds, nothing elsewhere.
+    /// the home trash's and a volume's two kinds, nothing elsewhere, not
+    /// a folder merely named `Trash`.
     #[test]
     fn a_file_of_a_trash_is_known_by_its_path() {
         let info = |p: &str| trash_info_of(Path::new(p));
+        let home = super::super::records::home_trash().unwrap();
         assert_eq!(
-            info("/home/u/.local/share/Trash/files/a b.txt"),
-            Some(PathBuf::from(
-                "/home/u/.local/share/Trash/info/a b.txt.trashinfo"
-            ))
+            trash_info_of(&home.join("files/a b.txt")),
+            Some(home.join("info/a b.txt.trashinfo"))
         );
+        assert_eq!(info("/home/u/projects/Trash/files/a b.txt"), None);
         assert_eq!(
             info("/media/stick/.Trash-1000/files/a"),
             Some(PathBuf::from("/media/stick/.Trash-1000/info/a.trashinfo"))
@@ -4396,7 +4397,7 @@ mod tests {
             Some(PathBuf::from("/media/stick/.Trash/1000/info/a.trashinfo"))
         );
         // Inside a folder of the trash, or a folder merely named so.
-        assert_eq!(info("/home/u/.local/share/Trash/files/dir/a"), None);
+        assert_eq!(trash_info_of(&home.join("files/dir/a")), None);
         assert_eq!(info("/home/u/projects/files/a"), None);
         assert_eq!(info("/media/stick/.Trash-me/files/a"), None);
         assert_eq!(info("/media/stick/1000/files/a"), None);

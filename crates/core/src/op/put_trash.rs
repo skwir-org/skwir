@@ -138,7 +138,7 @@ impl Known {
             folders: HashMap::new(),
             trashes: HashMap::new(),
         };
-        known.home = home_trash()
+        known.home = super::records::home_trash()
             .and_then(|home| resolved_or_above(&home).ok())
             .map(|home| {
                 let top = known.top_of(&home);
@@ -155,15 +155,6 @@ impl Known {
             .cloned()
             .unwrap_or_else(|| PathBuf::from("/"))
     }
-}
-
-/// The home trash, where the crate takes it: `$XDG_DATA_HOME/Trash`, else
-/// `~/.local/share/Trash`.
-fn home_trash() -> Option<PathBuf> {
-    let set = |name| std::env::var_os(name).filter(|value| !value.is_empty());
-    set("XDG_DATA_HOME")
-        .map(|data| PathBuf::from(data).join("Trash"))
-        .or_else(|| set("HOME").map(|home| PathBuf::from(home).join(".local/share/Trash")))
 }
 
 /// `path` with its links and dots resolved, the part that does not exist

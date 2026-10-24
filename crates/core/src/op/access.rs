@@ -1526,7 +1526,16 @@ mod tests {
     fn a_file_of_the_trash_or_of_someone_else_is_not_changed() {
         let tmp = Scratch::new();
         let ctx = StepContext::detached();
-        let trash = tmp.path().join("Trash");
+        // A folder merely named so is no trash.
+        let named = tmp.path().join("Trash");
+        std::fs::create_dir_all(named.join("files")).unwrap();
+        std::fs::write(named.join("files/mine.txt"), b"x").unwrap();
+        assert!(matches!(
+            Effect::check(&step(&named.join("files/mine.txt"), "u+x", false), &ctx),
+            StepStatus::Pending { .. }
+        ));
+        assert!(!is_a_trash(&named));
+        let trash = tmp.path().join(".Trash-1000");
         std::fs::create_dir_all(trash.join("files")).unwrap();
         std::fs::create_dir_all(trash.join("info")).unwrap();
         let item = trash.join("files/old.txt");

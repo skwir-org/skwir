@@ -42,10 +42,25 @@ fn key(path: &Path) -> Key<'_> {
     )
 }
 
+/// Whether two names differ only by case. On a case-insensitive volume a
+/// look at one finds the other: an item respelled finds itself, which
+/// only its rename's own check tells apart from another file there (by
+/// identity and the folder's listing, `Rename::classify`).
+fn respelled(a: &OsStr, b: &OsStr) -> bool {
+    match (a.to_str(), b.to_str()) {
+        (Some(a), Some(b)) => a.to_lowercase() == b.to_lowercase(),
+        _ => a
+            .as_encoded_bytes()
+            .eq_ignore_ascii_case(b.as_encoded_bytes()),
+    }
+}
+
 /// The renames of `requests` in an order that never renames onto an
 /// occupied name. A request whose name does not change produces no step,
 /// and its name stays taken. `exists` says whether a path not held by any
 /// request is taken; it is asked only about targets and temporary names.
+/// A target that respells its item's own name ([`respelled`]) is left to
+/// the rename's check: `exists` may find the item itself there.
 ///
 /// # Errors
 /// An invalid name, two requests with the same target, or a target taken by
@@ -104,7 +119,9 @@ pub fn order_renames(
                 wants[i] = Some(j);
                 wanted_by[j] = Some(i);
             }
-            None if exists(&targets[i]) => {
+            None if !respelled(key(&requests[i].entry.path).1, &requests[i].new_name)
+                && exists(&targets[i]) =>
+            {
                 return Err(RenameOrderError::Conflict {
                     item: i,
                     target: targets[i].clone(),
@@ -267,6 +284,16 @@ mod tests {
         let outside = [request(1, "/d/a", "b")];
         assert!(matches!(
             order_renames(&outside, |p| p == Path::new("/d/b")),
+            Err(RenameOrderError::Conflict { item: 0, .. })
+        ));
+        // Found there respelled, on a case-insensitive volume: itself, as
+        // its rename's check tells; another file under that name is not.
+        let upper = |p: &Path| p.to_string_lossy().to_lowercase() == "/d/é’s a.txt";
+        let respelled = [request(1, "/d/É’s A.txt", "é’s a.txt")];
+        let steps = order_renames(&respelled, upper).unwrap();
+        assert_eq!(steps.len(), 1);
+        assert!(matches!(
+            order_renames(&[request(1, "/d/other.txt", "é’s a.txt")], upper),
             Err(RenameOrderError::Conflict { item: 0, .. })
         ));
         for bad in ["", ".", "..", "x/y", "nul\0"] {
