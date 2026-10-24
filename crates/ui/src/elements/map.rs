@@ -838,7 +838,11 @@ pub struct Colors {
 #[derive(Clone, Default)]
 pub struct Handles {
     /// The view the user chose by panning or zooming; `None` fits the map
-    /// to what it shows, at whatever size it is drawn.
+    /// to what it shows, at whatever size it is drawn. Always within what
+    /// can be shown (`View::clamp`): the element's own moves are clamped
+    /// as they are made, any other at the next prepaint. A raw one built
+    /// up past the pole had to be undone before the map moved again, and
+    /// zoomed around a centre not shown.
     pub view: Rc<Cell<Option<View>>>,
     /// The view drawn last, for a key to zoom from.
     pub shown: Rc<Cell<Option<View>>>,
@@ -1352,16 +1356,20 @@ impl Element for Map {
         );
         let origin = bounds.origin;
         // Fitted to the bounds it really has, until the user moves it.
-        let view = self
-            .handles
-            .view
-            .get()
+        let chosen = self.handles.view.get();
+        let view = chosen
             .unwrap_or_else(|| {
                 self.shapes
                     .bounds
                     .map_or_else(|| View::world(size), |rect| math::fit(rect, size))
             })
             .clamp(size.1);
+        // What is kept is what is shown (`Handles::view`): a view set
+        // from outside at another size, or before the map was drawn,
+        // is held to this one.
+        if chosen.is_some_and(|chosen| chosen != view) {
+            self.handles.view.set(Some(view));
+        }
         self.handles.shown.set(Some(view));
         self.handles.shown_area.set(Some(math::area(&view, size)));
         let offset = self
@@ -2257,7 +2265,8 @@ impl Element for Map {
             let view = handles.view.get().unwrap_or(shown);
             let moved = event.position - last;
             handles.view.set(Some(
-                view.pan(f64::from(f32::from(moved.x)), f64::from(f32::from(moved.y))),
+                view.pan(f64::from(f32::from(moved.x)), f64::from(f32::from(moved.y)))
+                    .clamp(size.1),
             ));
             handles.drag.set(Some(event.position));
             window.refresh();
@@ -2321,10 +2330,13 @@ impl Element for Map {
                 let wide = rect.x1 - rect.x0 > 1e-12 || rect.y1 - rect.y0 > 1e-12;
                 if wide && view.zoom < MAX_ZOOM - 0.5 {
                     let fitted = math::fit(*rect, size);
-                    handles.view.set(Some(View {
-                        zoom: fitted.zoom.max(view.zoom + 1.),
-                        ..fitted
-                    }));
+                    handles.view.set(Some(
+                        View {
+                            zoom: fitted.zoom.max(view.zoom + 1.),
+                            ..fitted
+                        }
+                        .clamp(size.1),
+                    ));
                 } else {
                     *handles.opened.borrow_mut() = files.iter().copied().collect();
                 }
@@ -2337,9 +2349,9 @@ impl Element for Map {
             if picked == Pick::Nothing && clicks == 2 {
                 // A double click on the map itself zooms in there.
                 let view = handles.view.get().unwrap_or(shown);
-                handles
-                    .view
-                    .set(Some(view.zoom_at(1., local(event.position), size)));
+                handles.view.set(Some(
+                    view.zoom_at(1., local(event.position), size).clamp(size.1),
+                ));
                 return;
             }
             if let Some(on_pick) = &on_pick {
@@ -2363,9 +2375,10 @@ impl Element for Map {
                 return;
             }
             let view = handles.view.get().unwrap_or(shown);
-            handles
-                .view
-                .set(Some(view.zoom_at(levels, local(event.position), size)));
+            handles.view.set(Some(
+                view.zoom_at(levels, local(event.position), size)
+                    .clamp(size.1),
+            ));
             cx.stop_propagation();
             window.refresh();
         });
@@ -2601,6 +2614,24 @@ mod tests {
         }
         .clamp(600.);
         assert_eq!(small.y, 0.5);
+    }
+
+    #[test]
+    fn a_drag_past_the_pole_comes_back_at_once() {
+        // Each step clamped as the element keeps it: nothing builds up
+        // past the north edge to be undone before the map moves again.
+        let height = 600.;
+        let mut view = View {
+            x: 0.5,
+            y: 0.5,
+            zoom: 4.,
+        };
+        for _ in 0..50 {
+            view = view.pan(0., 400.).clamp(height);
+        }
+        let edge = view;
+        assert_eq!(edge, edge.clamp(height));
+        assert!(view.pan(0., -100.).clamp(height).y > edge.y);
     }
 
     #[test]
