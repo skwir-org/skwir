@@ -448,3 +448,34 @@ fn an_edit_renaming_onto_a_name_taken_does_nothing() {
         assert_eq!(attribute(&path(n)), None);
     }
 }
+
+/// From the window's thread, nothing is read there: the plan is made on a
+/// worker, then applied as the user's own action.
+#[cfg(unix)]
+#[test]
+fn from_the_window_tags_go_into_names_off_its_thread() {
+    let tmp = home_tempdir();
+    let used = tmp.path().join("it's a location");
+    std::fs::create_dir_all(used.join(".ts")).unwrap();
+    let file = used.join("Été.jpg");
+    std::fs::write(&file, b"x").unwrap();
+    let app = app(tmp.path());
+    app.register_notes_store("test", Arc::new(Attributes));
+    skwir_core::fs::xattr::set(&file, "user.test.tags", b"alps").unwrap();
+    skwir_core::scheduler::mark_window_thread(&app.scheduler);
+    let entries = serde_json::json!([EntryRef::from_path(&file).unwrap()]);
+    let answered = app
+        .dispatch(&Invocation::with_args(
+            "names.tag",
+            &serde_json::json!({ "entries": entries }),
+        ))
+        .unwrap();
+    assert!(matches!(answered, Outcome::Done), "no plan made here");
+    let renamed = used.join("Été[alps].jpg");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !renamed.exists() {
+        assert!(std::time::Instant::now() < deadline, "never renamed");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!file.exists());
+}

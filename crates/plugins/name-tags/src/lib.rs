@@ -17,12 +17,12 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::Arc;
 
-use skwir_core::app::App;
+use skwir_core::app::{App, NotifyLevel};
 use skwir_core::command::Outcome;
 use skwir_core::metadata::{Listed, same_tag};
 use skwir_core::notes::raw::RawKey;
 use skwir_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote};
-use skwir_core::op::{Plan, Rename, RenameOrderError, RenameRequest, order_renames};
+use skwir_core::op::{EntryRef, Plan, Rename, RenameOrderError, RenameRequest, order_renames};
 use skwir_core::plugin::{Category, Plugin};
 use skwir_core::registry::MenuItem;
 use skwir_core::workspace::PaneId;
@@ -269,16 +269,20 @@ fn listed_tags(e: &skwir_core::Entry) -> Vec<String> {
     }
 }
 
-/// "Tags into Name": each entry renamed to hold its tags (all stores'),
-/// those the convention can hold.
-fn tag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
+/// Make the plan `make` makes of the targets, which reads their notes and
+/// stats the names they would take: where the command runs, answering the
+/// plan, off the window's thread (a script's, an agent's); on it, on a
+/// worker in the targets' lane (ADR-077), the plan then applied as the
+/// window applies a user's own (`App::apply_whole`), or what refused it
+/// said. What the pane knows is taken where the command runs, with the
+/// targets.
+fn planned(
+    app: &App,
+    a: NameArgs,
+    make: fn(&App, Vec<EntryRef>, Vec<Option<Vec<String>>>, Convention) -> anyhow::Result<Plan>,
+) -> anyhow::Result<Outcome> {
     let refs = app.targets(a.pane, a.entries)?;
-    let mut plan = Plan::new("put tags in names");
-    let mut renames: Vec<RenameRequest> = Vec::new();
-    let mut left_out: Vec<String> = Vec::new();
-    let policy = app.notes.policy();
-    // What the pane knows of each file's tags, read here only where its
-    // listing has not: the command runs on the thread it is dispatched on.
+    // What the pane knows of each file's tags, read for the others only.
     let known: Vec<Option<Vec<String>>> = {
         let pane = app.pane_or_active(a.pane);
         let ws = app.workspace.read();
@@ -289,23 +293,71 @@ fn tag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
             })
             .collect()
     };
+    if !skwir_core::scheduler::on_window_thread() {
+        return make(app, refs, known, a.convention).map(Outcome::Plan);
+    }
+    let lane = match refs.split_first() {
+        Some((first, rest)) => {
+            let lane = skwir_core::fs::reach::lane(&first.path);
+            if rest
+                .iter()
+                .all(|r| skwir_core::fs::reach::lane(&r.path) == lane)
+            {
+                lane
+            } else {
+                skwir_core::scheduler::Lane::SHARED
+            }
+        }
+        None => skwir_core::scheduler::Lane::SHARED,
+    };
+    let weak = app.weak();
+    let convention = a.convention;
+    app.scheduler.spawn_in(
+        lane,
+        skwir_core::scheduler::Priority::Visible,
+        "names.plan",
+        app.lifetime().child(),
+        move || {
+            let Some(app) = weak.upgrade() else { return };
+            match make(&app, refs, known, convention) {
+                Ok(plan) => app.apply_whole(plan),
+                Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
+            }
+        },
+    );
+    Ok(Outcome::Done)
+}
+
+/// "Tags into Name": each entry renamed to hold its tags (all stores'),
+/// those the convention can hold. `known`: what the pane knows of each
+/// one's tags; the others' are read.
+fn tag_names(
+    app: &App,
+    refs: Vec<EntryRef>,
+    known: Vec<Option<Vec<String>>>,
+    convention: Convention,
+) -> anyhow::Result<Plan> {
+    let mut plan = Plan::new("put tags in names");
+    let mut renames: Vec<RenameRequest> = Vec::new();
+    let mut left_out: Vec<String> = Vec::new();
+    let policy = app.notes.policy();
     for (r, known) in refs.into_iter().zip(known) {
         let Some(name) = r.path.file_name().and_then(OsStr::to_str) else {
             continue;
         };
         let names = known.unwrap_or_else(|| app.notes.read_path(&r.path, &policy).tag_names());
-        let (base, _, ext) = a.convention.split(name);
+        let (base, _, ext) = convention.split(name);
         let tags: Vec<String> = names
             .into_iter()
             .filter(|t| {
-                let held = a.convention.holds(t);
+                let held = convention.holds(t);
                 if !held && !left_out.iter().any(|l| same_tag(l, t)) {
                     left_out.push(t.clone());
                 }
                 held
             })
             .collect();
-        let new_name = a.convention.join(&base, &tags, ext.as_deref());
+        let new_name = convention.join(&base, &tags, ext.as_deref());
         if new_name != name {
             renames.push(RenameRequest {
                 entry: r,
@@ -322,21 +374,25 @@ fn tag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
             left_out.join(", ")
         ));
     }
-    Ok(Outcome::Plan(plan))
+    Ok(plan)
 }
 
 /// "Tags out of Name": each entry renamed without its tags, which the
 /// other stores keep first (a step before the rename), so none is lost.
-fn untag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
-    let refs = app.targets(a.pane, a.entries)?;
+fn untag_names(
+    app: &App,
+    refs: Vec<EntryRef>,
+    _known: Vec<Option<Vec<String>>>,
+    convention: Convention,
+) -> anyhow::Result<Plan> {
     let mut plan = Plan::new("take tags out of names");
     let mut renames: Vec<RenameRequest> = Vec::new();
-    let name_store = store_id(a.convention);
+    let name_store = store_id(convention);
     for r in refs {
         let Some(name) = r.path.file_name().and_then(OsStr::to_str) else {
             continue;
         };
-        let (base, tags, ext) = a.convention.split(name);
+        let (base, tags, ext) = convention.split(name);
         if tags.is_empty() {
             continue;
         }
@@ -354,14 +410,14 @@ fn untag_names(app: &App, a: NameArgs) -> anyhow::Result<Outcome> {
         plan.push(keep);
         renames.push(RenameRequest {
             entry: r,
-            new_name: a.convention.join(&base, &[], ext.as_deref()).into(),
+            new_name: convention.join(&base, &[], ext.as_deref()).into(),
         });
     }
     // Every file's tags are kept before any name changes.
     for rename in ordered(&renames)? {
         plan.push(rename);
     }
-    Ok(Outcome::Plan(plan))
+    Ok(plan)
 }
 
 /// The renames in an order that never renames onto a name still taken,
@@ -427,7 +483,7 @@ impl Plugin for NameTagsPlugin {
             "names.tag",
             "Tags into name",
             "Rename the entries given, or the selection, to hold their tags in their names (`convention`: `tagspaces`, name[a b].ext, or `filetags`, name -- a b.ext) (plan)",
-            |a, app| tag_names(app, a),
+            |a, app| planned(app, a, tag_names),
         )
         .plans();
         app.commands.register::<NameArgs, _>(
@@ -435,7 +491,7 @@ impl Plugin for NameTagsPlugin {
             "names.untag",
             "Tags out of name",
             "Rename the entries given, or the selection, without the tags in their names, the other stores keeping them first (plan)",
-            |a, app| untag_names(app, a),
+            |a, app| planned(app, a, untag_names),
         )
         .plans();
         app.registry
