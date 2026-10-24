@@ -324,7 +324,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   taken in between still fails its step (`rename_noreplace`, staging).
 - Never asked: a copy or a link into its own folder and two items of one
   name keep both (`clash::copy_name`, GNOME's `name (copy).ext`; a link's
-  `name (link).ext`, `clash::kept_name`); an item there whole
+  `name (link).ext`, `clash::kept_name`; two names one case apart are one
+  name in a folder that tells no case apart, `StepContext::made`, known by
+  an entry there found under its other case); an item there whole
   (`same_tree`: matching kinds, names, link targets, permissions,
   requested attributes and companions, with regular-file bytes compared
   in bounded, cancellable reads) is skipped by a copy and put in the
