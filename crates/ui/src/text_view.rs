@@ -13,7 +13,7 @@
 //! writes are found as a chunk is colored, never before its text shows
 //! (`links::WrittenPaths`: each a lookup on the disk).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -190,6 +190,8 @@ pub struct TextView {
     asked: Latest<Reply>,
     /// The chunk asked for, while it is.
     asking: Option<u64>,
+    /// The chunks a read failed for (`unread`).
+    failed: HashSet<u64>,
     pub(crate) scroll: Scroll,
     /// Where the match a find landed on was drawn, for the rows to bring
     /// it into view (`RowScroll::reveal_spot`).
@@ -216,6 +218,15 @@ pub(crate) fn around(laid: &Range<u64>, rows: u64, per: u64) -> (Vec<u64>, u64) 
     wanted.extend((end < last).then_some(end + 1));
     wanted.extend(first.checked_sub(1));
     (wanted, middle)
+}
+
+/// Whether `chunk` is still to be read: not read, and no read of it
+/// failed. A failed one is not asked again while the view lasts: asked at
+/// once, it fails at once, and each answer wakes the window to draw, a
+/// loop with nothing new (a file made unreadable while shown, a bad
+/// sector). A change to the file replaces the view.
+pub(crate) fn unread<T>(chunk: u64, chunks: &HashMap<u64, T>, failed: &HashSet<u64>) -> bool {
+    !chunks.contains_key(&chunk) && !failed.contains(&chunk)
 }
 
 /// Past `KEPT`, the chunks farthest from `middle` that are not wanted go.
@@ -307,6 +318,7 @@ impl TextView {
             laid: 0..0,
             asked: Latest::default(),
             asking: None,
+            failed: HashSet::new(),
             scroll: scroll.unwrap_or_default(),
             spot: Seen::default(),
             found: Latest::default(),
@@ -422,11 +434,14 @@ impl TextView {
                 .wanted
                 .iter()
                 .copied()
-                .filter(|chunk| !self.chunks.contains_key(chunk))
+                .filter(|chunk| unread(*chunk, &self.chunks, &self.failed))
                 .find_map(|chunk| Some((chunk, place(chunk)?, false)));
             missing
                 .or_else(|| {
                     self.wanted.iter().copied().find_map(|chunk| {
+                        if self.failed.contains(&chunk) {
+                            return None;
+                        }
                         let read = self.chunks.get(&chunk)?;
                         let stale =
                             !read.colored || (!read.exact && self.starts.contains_key(&chunk));
@@ -486,7 +501,10 @@ impl TextView {
                     self.chunks.insert(chunk, Rc::new(read));
                 }
             }
-            Err(error) => tracing::debug!(%error, chunk, "reading a text's rows"),
+            Err(error) => {
+                tracing::debug!(%error, chunk, "reading a text's rows");
+                self.failed.insert(chunk);
+            }
         }
         true
     }

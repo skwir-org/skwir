@@ -11,7 +11,7 @@
 //! Find asks the same provider to search the file from a byte, and goes to
 //! the row of the match; Jump to offset goes to its row.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -25,7 +25,7 @@ use skwir_platform::inspection::HEX_ROW;
 use crate::elements::rows::Scroll;
 use crate::latest::Latest;
 use crate::shell::Shell;
-use crate::text_view::{around, let_go};
+use crate::text_view::{around, let_go, unread};
 
 const ROW: u64 = HEX_ROW as u64;
 
@@ -54,6 +54,8 @@ pub struct BytesView {
     asked: Latest<Reply>,
     /// The chunk asked for, while it is.
     asking: Option<u64>,
+    /// The pages a read failed for: not asked again (`text_view::unread`).
+    failed: HashSet<u64>,
     pub(crate) scroll: Scroll,
     found: Latest<Found>,
     /// The last match: a search for the same goes on after it.
@@ -97,6 +99,7 @@ impl BytesView {
             laid: 0..0,
             asked: Latest::default(),
             asking: None,
+            failed: HashSet::new(),
             scroll: scroll.unwrap_or_default(),
             found: Latest::default(),
             last: None,
@@ -139,7 +142,7 @@ impl BytesView {
             .wanted
             .iter()
             .copied()
-            .find(|chunk| !self.chunks.contains_key(chunk))
+            .find(|chunk| unread(*chunk, &self.chunks, &self.failed))
         else {
             return;
         };
@@ -175,7 +178,10 @@ impl BytesView {
             Ok(rows) => {
                 self.chunks.insert(chunk, Rc::new(rows));
             }
-            Err(error) => tracing::debug!(%error, chunk, "reading a page of bytes"),
+            Err(error) => {
+                tracing::debug!(%error, chunk, "reading a page of bytes");
+                self.failed.insert(chunk);
+            }
         }
         true
     }
