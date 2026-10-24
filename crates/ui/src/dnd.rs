@@ -20,11 +20,11 @@ use gpui::{
 };
 use skwir_core::EntryId;
 use skwir_core::command::Invocation;
-use skwir_core::op::{self, EntryRef};
+use skwir_core::fs;
+use skwir_core::op::EntryRef;
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::MenuItem;
 use skwir_core::workspace::PaneId;
-use skwir_core::{Plan, app::NotifyLevel, fs, scheduler::Priority, settings::Settings};
 
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -162,41 +162,6 @@ pub fn drop_op(modifiers: gpui::Modifiers, same_device: Option<bool>) -> DropOp 
     } else {
         DropOp::Copy
     })
-}
-
-/// The plan for foreign paths dropped into `dest`. Entries are identified
-/// by device and inode and the plan is checked before anything applies,
-/// both of which stat every path: call this on a worker.
-fn dropped_plan(
-    paths: &[PathBuf],
-    dest: &Path,
-    how: DropOp,
-    settings: &Settings,
-    companions: &std::sync::Arc<skwir_core::companions::Companions>,
-) -> Result<Plan, &'static str> {
-    let steps: Vec<Box<dyn op::Operation>> = paths
-        .iter()
-        .filter_map(|p| {
-            let entry = EntryRef::from_path(p.clone())?;
-            let dest_dir = dest.to_path_buf();
-            Some(match how {
-                DropOp::Copy => Box::new(op::Copy::from_settings(entry, dest_dir, settings))
-                    as Box<dyn op::Operation>,
-                DropOp::Move => Box::new(op::Move::new(entry, dest_dir)),
-                DropOp::Link => Box::new(op::Link::new(entry, dest_dir)),
-            })
-        })
-        .collect();
-    if steps.is_empty() {
-        return Err("dropped items no longer exist");
-    }
-    let n = steps.len();
-    let plan = Plan::with_steps(format!("{} {n} dropped items", how.command()), steps);
-    if plan.is_applicable(companions) {
-        Ok(plan)
-    } else {
-        Err("dropped items conflict with existing ones")
-    }
 }
 
 /// What a drag carries: only the pane it started in. Rows are made
@@ -396,8 +361,10 @@ impl Shell {
     /// copied.
     ///
     /// Only the own-drag check (a path comparison) runs here. Identifying the
-    /// dropped entries and checking the plan stat every path, possibly on a
-    /// sleeping disk, so they run on a worker that applies the result itself.
+    /// dropped entries stats every path, possibly on a sleeping disk, so a
+    /// worker does, in their lane. What it found then runs as a drop from a
+    /// pane does: the command with the entries named, its plan applied
+    /// whole, a name taken there asked about (ADR-054).
     pub fn drop_paths_into(
         &mut self,
         paths: &[PathBuf],
@@ -407,6 +374,10 @@ impl Shell {
     ) {
         if self.is_own_drag(paths) {
             self.drop_into(self.pane, dest, None, window, cx);
+            return;
+        }
+        // A folder dropped on itself: no drop.
+        if paths.iter().any(|p| p == dest) {
             return;
         }
         let paths: Vec<PathBuf> = paths
@@ -419,43 +390,29 @@ impl Shell {
         }
         let dest = dest.to_path_buf();
         let modifiers = window.modifiers();
-        if held(modifiers).is_none() && self.drop_asks() {
-            let position = window.mouse_position();
-            self.off_thread(
-                crate::shell::lane_of(&paths),
-                "drop-entries",
-                move || Dropped::of_paths(&paths),
-                move |shell, dropped, window, cx| {
-                    if dropped.entries.is_empty() {
-                        shell.set_status("The dropped items no longer exist", true, cx);
-                        return;
-                    }
-                    // Unasked, another application's files are copied.
-                    shell.ask_drop(position, &dropped, &dest, DropOp::Copy, window, cx);
-                },
-                window,
-                cx,
-            );
-            return;
-        }
-        let app = self.app.clone();
+        let asks = held(modifiers).is_none() && self.drop_asks();
+        let position = window.mouse_position();
+        // Unasked, another application's files are copied.
         let how = drop_op(modifiers, None);
         // The drop belongs to the pane it landed on, whatever is active later.
         let pane = self.pane;
-        self.app.scheduler.spawn_in(
+        self.off_thread(
             crate::shell::lane_of(&paths),
-            Priority::Visible,
-            "drop-plan",
-            self.app.lifetime().child(),
-            // As a whole, as a drop from a pane is: a conflict applies
-            // nothing and says why, never some of the files.
-            move || match dropped_plan(&paths, &dest, how, &app.settings, &app.companions) {
-                Ok(plan) => {
-                    tracing::debug!(?pane, steps = plan.steps.len(), "apply dropped paths");
-                    app.apply_whole(plan);
+            "drop-entries",
+            move || Dropped::of_paths(&paths),
+            move |shell, dropped, window, cx| {
+                let Some(args) = dropped.args(&dest, Some(pane)) else {
+                    shell.set_status("The dropped items no longer exist", true, cx);
+                    return;
+                };
+                if asks {
+                    shell.ask_drop(position, &dropped, &dest, how, window, cx);
+                } else {
+                    shell.run(how.command(), args, window, cx);
                 }
-                Err(reason) => app.notify(NotifyLevel::Error, reason),
             },
+            window,
+            cx,
         );
     }
 
@@ -476,12 +433,17 @@ impl Shell {
         // A place dragged into a folder is copied there as its location
         // says (`Verbs::export`: a tag's, a folder of its files); files go
         // as files do.
-        // Dropped back on the folder that holds them: nothing to do.
+        // Dropped back on the folder that holds them, or on a folder among
+        // them (its own row): nothing to do.
         let home = {
             let ws = self.app.workspace.read();
             ws.pane(from).is_some_and(|p| {
-                let dest = skwir_core::Location::from_path(dest);
-                !p.selection.is_empty() && p.selection.iter().all(|id| p.holder(id) == Some(&dest))
+                let location = skwir_core::Location::from_path(dest);
+                !p.selection.is_empty()
+                    && (p.selection.iter().all(|id| p.holder(id) == Some(&location))
+                        || p.selection
+                            .iter()
+                            .any(|id| p.path_of(id).as_deref() == Some(dest)))
             })
         };
         if home {
@@ -892,13 +854,32 @@ impl Shell {
         let Some(drop) = self.app.verbs(place).drop else {
             return false;
         };
-        let entries: Vec<EntryRef> = paths.iter().filter_map(EntryRef::from_path).collect();
-        let mut args = drop.args.clone();
-        if !args.is_object() {
-            args = serde_json::json!({});
-        }
-        args["entries"] = serde_json::json!(entries);
-        self.run(&drop.name, args, window, cx);
+        // Who each is, read from the disk on a worker in their lane, as a
+        // drop into a folder reads them.
+        let paths = paths.to_vec();
+        self.off_thread(
+            crate::shell::lane_of(&paths),
+            "drop-on-place",
+            move || {
+                let entries: Vec<EntryRef> = paths.iter().filter_map(EntryRef::from_path).collect();
+                entries
+            },
+            move |shell, entries, window, cx| {
+                // None named would take the selection.
+                if entries.is_empty() {
+                    shell.set_status("The dropped items no longer exist", true, cx);
+                    return;
+                }
+                let mut args = drop.args.clone();
+                if !args.is_object() {
+                    args = serde_json::json!({});
+                }
+                args["entries"] = serde_json::json!(entries);
+                shell.run(&drop.name, args, window, cx);
+            },
+            window,
+            cx,
+        );
         true
     }
 }
@@ -1107,57 +1088,45 @@ mod tests {
         base
     }
 
+    /// Another application's files dropped run the command a drop from a
+    /// pane runs: a path gone drops nothing, and a name taken where they
+    /// go is asked about (ADR-054), never refused whole nor replaced.
     #[test]
-    fn dropped_paths_become_a_checked_copy_plan() {
+    fn dropped_paths_ask_what_becomes_of_a_name_taken() {
         let base = scratch("plan");
-        let src = base.join("from");
-        let dest = base.join("into");
+        let (src, dest) = (base.join("from"), base.join("into"));
         std::fs::create_dir_all(&src).unwrap();
         std::fs::create_dir_all(&dest).unwrap();
         let file = src.join("it's a file.txt");
         std::fs::write(&file, b"hello").unwrap();
-        let settings = Settings::in_memory();
+        let taken = dest.join("it's a file.txt");
+        std::fs::write(&taken, b"other contents").unwrap();
+        let gone = Dropped::of_paths(&[src.join("not there ‘any more’")]);
+        assert!(gone.args(&dest, None).is_none());
 
-        let copy = DropOp::Copy;
-        let plan = dropped_plan(
-            std::slice::from_ref(&file),
-            &dest,
-            copy,
-            &settings,
-            &std::sync::Arc::default(),
-        )
-        .expect("plan");
-        assert_eq!(plan.steps.len(), 1);
-        assert!(plan.title.starts_with("copy"));
-        let plan = dropped_plan(
-            std::slice::from_ref(&file),
-            &dest,
-            DropOp::Move,
-            &settings,
-            &std::sync::Arc::default(),
-        )
-        .expect("plan");
-        assert!(plan.title.starts_with("move"));
-
-        // A vanished source contributes no step; nothing is left to apply.
-        assert_eq!(
-            dropped_plan(
-                &[base.join("missing")],
-                &dest,
-                copy,
-                &settings,
-                &std::sync::Arc::default()
-            )
-            .err(),
-            Some("dropped items no longer exist")
-        );
-
-        // A different file under the same name conflicts instead of applying.
-        std::fs::write(dest.join("it's a file.txt"), b"other contents").unwrap();
-        assert_eq!(
-            dropped_plan(&[file], &dest, copy, &settings, &std::sync::Arc::default()).err(),
-            Some("dropped items conflict with existing ones")
-        );
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(base.join("config")))
+            .unwrap();
+        app.set_window_shown();
+        let args = Dropped::of_paths(std::slice::from_ref(&file))
+            .args(&dest, None)
+            .expect("named");
+        let outcome = app.dispatch(&Invocation::with_args("copy", &args)).unwrap();
+        let skwir_core::command::Outcome::Plan(plan) = outcome else {
+            panic!("a plan");
+        };
+        app.apply_whole(plan);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let asked = loop {
+            let asked = app.take_clash_questions();
+            if !asked.is_empty() {
+                break asked;
+            }
+            assert!(std::time::Instant::now() < deadline, "never asked");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert_eq!(asked.len(), 1);
+        assert_eq!(std::fs::read(&taken).unwrap(), b"other contents");
+        drop(app);
         let _ = std::fs::remove_dir_all(&base);
     }
 }
