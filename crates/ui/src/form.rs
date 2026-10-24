@@ -19,7 +19,7 @@ use skwir_core::form::{Answer, Asked, Choice, Field, Form, Kind, Values};
 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
-use crate::keymap;
+use crate::keymap::{self, RunCommand};
 use crate::modal::{self, FocusReturn, ListMove, Picker};
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -532,6 +532,47 @@ impl Shell {
         }
     }
 
+    /// Enter or Space on what has the keyboard (`ui.toolbar_activate`): a
+    /// switch turned, a choice unfolded or chosen, a link opened, a button
+    /// pressed.
+    fn form_activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(form) = self.form.as_ref() else {
+            return;
+        };
+        if form.cancel_focus.is_focused(window) {
+            self.close_form(window, cx);
+        } else if form.accept_focus.is_focused(window) {
+            self.form_answer(false, window, cx);
+        } else if form.back_focus.is_focused(window) {
+            self.form_answer(true, window, cx);
+        } else if form.more_focus.is_focused(window) {
+            self.form_more(cx);
+        } else if let Some((at, control)) =
+            form.controls
+                .iter()
+                .enumerate()
+                .find(|(_, control)| match control {
+                    Control::Toggle { focus, .. }
+                    | Control::Choice { focus, .. }
+                    | Control::Link { focus } => focus.is_focused(window),
+                    _ => false,
+                })
+        {
+            match control {
+                Control::Toggle { .. } => self.form_toggle(at, cx),
+                Control::Choice { input: None, .. } if form.open == Some(at) => {
+                    self.form_choose(None, window, cx);
+                }
+                Control::Choice { .. } => self.form_unfold(at, cx),
+                Control::Link { .. } => {
+                    let url = form.form.fields[at].value.clone();
+                    self.open_address(&url, cx);
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn form_more(&mut self, cx: &mut Context<Self>) {
         if let Some(form) = self.form.as_mut() {
             form.more = !form.more;
@@ -566,10 +607,11 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         body = body.child(
             div()
                 .flex()
-                .items_center()
+                .items_start()
                 .gap_2()
                 .child(controls::glyph("busy", theme.text_muted, 16.))
-                .child(waiting.clone()),
+                // Wraps, beside its glyph.
+                .child(div().flex_1().min_w_0().child(waiting.clone())),
         );
     }
     for (at, (field, control)) in form.fields.iter().zip(&state.controls).enumerate() {
@@ -591,7 +633,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         };
         body = body.child(
             div().flex().child(
-                modal::pressable(
+                modal::keyed(
                     controls::button(
                         "form-more",
                         label,
@@ -669,7 +711,14 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
                 .text_color(theme.error)
                 .child(refusal)
         }))
-        .child(modal::footer(hint, buttons, &theme));
+        .child(modal::footer_keyed(hint, buttons, &theme))
+        .on_action(cx.listener(|this, action: &RunCommand, window, cx| {
+            if action.name == "ui.toolbar_activate" {
+                this.form_activate(window, cx);
+            } else {
+                cx.propagate();
+            }
+        }));
     Some(modal::modal(panel, 80., 3, Shell::form_cancel, &theme, cx))
 }
 
@@ -715,7 +764,7 @@ fn field_row(
                     .items_center()
                     .gap_2()
                     .child(
-                        modal::pressable(controls::switch(
+                        modal::keyed(controls::switch(
                             SharedString::from(format!("form-switch-{at}")),
                             *on,
                             focus,
@@ -752,7 +801,7 @@ fn field_row(
                         .gap_1()
                         .child(controls::field(input, None, focused, false, None, theme))
                         .child(
-                            modal::pressable(
+                            modal::keyed(
                                 controls::icon_button(
                                     SharedString::from(format!("form-suggest-{at}")),
                                     "chevron",
@@ -766,7 +815,7 @@ fn field_row(
                         )
                         .into_any_element()
                 }
-                None => modal::pressable(
+                None => modal::keyed(
                     controls::dropdown(
                         SharedString::from(format!("form-choice-{at}")),
                         if shown.is_empty() {
@@ -812,7 +861,7 @@ fn field_row(
             let url = field.value.clone();
             row = row.child(
                 div().flex().child(
-                    modal::pressable(controls::button(
+                    modal::keyed(controls::button(
                         SharedString::from(format!("form-link-{at}")),
                         field.title.clone(),
                         Some("link"),

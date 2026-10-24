@@ -259,6 +259,26 @@ pub fn footer(
     buttons: impl IntoIterator<Item = Stateful<Div>>,
     theme: &Theme,
 ) -> Div {
+    footer_of(hint, buttons, pressable, theme)
+}
+
+/// [`footer`] for a dialog that presses its focused control itself on
+/// `ui.toolbar_activate` (a form): its buttons say they are buttons to
+/// the keys ([`keyed`]) and leave the action to it.
+pub fn footer_keyed(
+    hint: impl Into<gpui::SharedString>,
+    buttons: impl IntoIterator<Item = Stateful<Div>>,
+    theme: &Theme,
+) -> Div {
+    footer_of(hint, buttons, keyed, theme)
+}
+
+fn footer_of(
+    hint: impl Into<gpui::SharedString>,
+    buttons: impl IntoIterator<Item = Stateful<Div>>,
+    wrap: fn(Stateful<Div>) -> Stateful<Div>,
+    theme: &Theme,
+) -> Div {
     div()
         .flex()
         .items_center()
@@ -272,13 +292,19 @@ pub fn footer(
                 .child(hint.into()),
         )
         .children(buttons.into_iter().map(|button| {
-            pressable(button)
-                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+            wrap(button).on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
         }))
 }
 
+/// A control Enter and Space reach as a button's (`ui.toolbar_activate`),
+/// which its dialog answers by what has the keyboard (a form's switch, its
+/// dropdown, its buttons): gpui clicks no control whose key a binding took.
+pub fn keyed(control: Stateful<Div>) -> Stateful<Div> {
+    control.key_context(BUTTON)
+}
+
 /// A control Enter and Space press while it has the keyboard, as a
-/// dialog's buttons are (a form's switch, its dropdown).
+/// dialog's buttons are.
 pub fn pressable(control: Stateful<Div>) -> Stateful<Div> {
     control
         .key_context(BUTTON)
