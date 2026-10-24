@@ -39,15 +39,21 @@ impl Wiki {
     /// above it: on a worker.
     pub fn new(note: &std::path::Path) -> Option<Self> {
         let dir = note.parent().filter(|dir| dir.is_absolute())?.to_path_buf();
+        // Looked up as `find` looks, only where `Here` holds it
+        // (previews.md).
+        let here = skwir_core::fs::volume::Here::now();
         let top = dir
             .ancestors()
             .enumerate()
-            .find(|(_, folder)| folder.join(".obsidian").is_dir())
+            .find(|(_, folder)| {
+                let marker = folder.join(".obsidian");
+                here.holds(&marker, &dir) && marker.is_dir()
+            })
             .map(|(up, folder)| (folder.to_path_buf(), "../".repeat(up)));
         Some(Self {
             dir,
             top,
-            here: skwir_core::fs::volume::Here::now(),
+            here,
             known: std::collections::HashMap::new(),
         })
     }
