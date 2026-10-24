@@ -23,7 +23,7 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 
 use crate::cache::CacheSlot;
-use crate::entry::EntryId;
+use crate::entry::{EntryId, FileId};
 use crate::metadata::{Listed, same_tag};
 pub use edit::{RestoreNotes, SetNotes, TagChange};
 use raw::RawKey;
@@ -468,12 +468,29 @@ pub fn write_key(store: &str) -> String {
 /// A snapshot is a name's (ADR-049): what is kept beside a file is the
 /// name's, and what is kept in its attributes, the same under each name,
 /// is merged as an edit made elsewhere when read under another, which is
-/// what it is there. None is kept of a file whose number a mount made up
-/// (`FileId::lasts`): its notes are merged as when none was kept.
-fn snapshot_key(id: EntryId) -> Option<Vec<u8>> {
+/// what it is there. The name is the file under its name in the folder
+/// holding it (`EntryId::in_folder`), whatever its reader knows it by (a
+/// listing's entry, a tag's or the shelf's by its path): every view of a
+/// file finds what skwir wrote. None is kept of a file whose number a
+/// mount made up (`FileId::lasts`): its notes are merged as when none was
+/// kept.
+fn snapshot_key(file: FileId, folder: FileId, name: &OsStr) -> Option<Vec<u8>> {
+    let id = EntryId::in_folder(file, folder, name);
     id.file
         .lasts()
         .then(|| format!("{}:{}:{:x}", id.file.dev, id.file.ino, id.at).into_bytes())
+}
+
+/// The folder at `dir` as its listing knows it, a link to it followed
+/// (`Dir::identity`). Reads the disk: on a worker.
+fn folder_of(dir: &Path) -> Option<FileId> {
+    let meta = std::fs::metadata(dir).ok()?;
+    crate::fs::stat::identity(dir, &meta)
+}
+
+/// The key of `path`'s snapshot, its file being `file`. Reads the disk.
+fn snapshot_key_at(file: FileId, path: &Path) -> Option<Vec<u8>> {
+    snapshot_key(file, folder_of(path.parent()?)?, path.file_name()?)
 }
 
 /// What the notes' snapshots may take in the cache.
@@ -551,21 +568,23 @@ impl NoteStores {
         *self.snapshots.write() = Some(slot);
     }
 
-    fn snapshot(&self, id: EntryId) -> Option<Snapshot> {
-        let bytes = self.snapshots.read().as_ref()?.get(&snapshot_key(id)?)?;
+    fn snapshot(&self, key: &[u8]) -> Option<Snapshot> {
+        let bytes = self.snapshots.read().as_ref()?.get(key)?;
         serde_json::from_slice(&bytes).ok()
     }
 
-    /// Remember what skwir just wrote for the file `id`.
+    /// Remember what skwir just wrote for the file `file` at `path`.
     /// Kept within `SNAPSHOT_BYTES`, the oldest let go of first: a file
     /// was kept for every file ever edited. One let go of says nothing of
     /// which store skwir wrote last: the stores' notes are merged as when
     /// none was kept.
-    pub(crate) fn remember(&self, id: EntryId, snapshot: &Snapshot) {
+    pub(crate) fn remember(&self, file: FileId, path: &Path, snapshot: &Snapshot) {
         let slot = self.snapshots.read().clone();
-        if let (Some(slot), Some(key), Ok(bytes)) =
-            (slot, snapshot_key(id), serde_json::to_vec(snapshot))
-        {
+        if let (Some(slot), Some(key), Ok(bytes)) = (
+            slot,
+            snapshot_key_at(file, path),
+            serde_json::to_vec(snapshot),
+        ) {
             match slot.put(&key, &bytes) {
                 Ok(()) => slot.trim_soon(bytes.len() as u64, SNAPSHOT_BYTES),
                 Err(error) => tracing::debug!(%error, "notes: the snapshot was not kept"),
@@ -573,10 +592,12 @@ impl NoteStores {
         }
     }
 
-    /// Forget what skwir wrote for the file `id` (an undo put back what
-    /// was there before).
-    pub(crate) fn forget(&self, id: EntryId) {
-        if let (Some(slot), Some(key)) = (self.snapshots.read().as_ref(), snapshot_key(id)) {
+    /// Forget what skwir wrote for the file `file` at `path` (an undo put
+    /// back what was there before).
+    pub(crate) fn forget(&self, file: FileId, path: &Path) {
+        if let (Some(slot), Some(key)) =
+            (self.snapshots.read().as_ref(), snapshot_key_at(file, path))
+        {
             let _ = slot.remove(&key);
         }
     }
@@ -655,16 +676,32 @@ impl NoteStores {
                 }
             }
         }
+        // Snapshots are a name's in its folder, however `files` name
+        // theirs: asked only of a file whose stores disagree.
+        let folder = std::cell::OnceCell::new();
         each.into_iter()
             .zip(files)
-            .map(|(each, (_, id, _))| self.merge(each, *id))
+            .map(|(each, (name, id, _))| {
+                let key = || {
+                    snapshot_key(
+                        id.as_ref()?.file,
+                        (*folder.get_or_init(|| folder_of(dir)))?,
+                        name,
+                    )
+                };
+                self.merge(each, key)
+            })
             .collect()
     }
 
     /// Merge what each store says of one file: all together when they agree
     /// (each saying what it can of the union), else against what skwir
     /// wrote last, when it remembers.
-    fn merge(&self, each: Vec<(&'static str, Notes)>, id: Option<EntryId>) -> Read {
+    fn merge(
+        &self,
+        each: Vec<(&'static str, Notes)>,
+        key: impl FnOnce() -> Option<Vec<u8>>,
+    ) -> Read {
         let mut union = Notes::default();
         for (_, notes) in &each {
             union.merge(notes.clone());
@@ -688,7 +725,7 @@ impl NoteStores {
                 differ,
             };
         }
-        let Some(snapshot) = id.and_then(|id| self.snapshot(id)) else {
+        let Some(snapshot) = key().and_then(|key| self.snapshot(&key)) else {
             return Read {
                 notes: union,
                 each,
@@ -739,17 +776,15 @@ mod tests {
 
     #[test]
     fn no_snapshot_is_kept_of_a_file_whose_number_a_mount_made_up() {
-        let lasting = EntryId {
-            file: crate::entry::FileId::new(5, 7),
-            at: 0x1f,
-        };
-        assert_eq!(snapshot_key(lasting).unwrap(), b"5:7:1f", "as before");
+        let (file, folder, name) = (FileId::new(5, 7), FileId::new(5, 2), OsStr::new("it's.txt"));
+        let at = EntryId::in_folder(file, folder, name).at;
+        assert_eq!(
+            snapshot_key(file, folder, name).unwrap(),
+            format!("5:7:{at:x}").into_bytes(),
+            "as before"
+        );
         crate::fs::reach::pretend_made_up(6, 1 << 40);
-        let made_up = EntryId {
-            file: crate::entry::FileId::new(6, 7),
-            ..lasting
-        };
-        assert_eq!(snapshot_key(made_up), None);
+        assert_eq!(snapshot_key(FileId::new(6, 7), folder, name), None);
     }
 
     #[test]

@@ -56,6 +56,10 @@ registered in `App::notes` by its plugin); all share one model,
   snapshot in the cache): another application's later edit wins; an
   emptied store is not an edit. Properties shows where notes are and which
   stores differ; `notes.agree` aligns them.
+- A snapshot is the file's under its name in the folder holding it, that
+  folder as its listing opens it (a link to it followed): the notes keep
+  it so (`snapshot_key`), whatever id a reader holds, so a tag's, the
+  shelf's and a folder's rows of one file merge alike.
 
 ## Tags
 

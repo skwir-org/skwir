@@ -568,15 +568,14 @@ impl Operation for SetNotes {
             .collect();
         // The name the notes were written under, which may be another
         // than the one referenced (renamed since).
-        if let Some(id) = EntryRef::new(self.entry.id, &path).entry() {
-            stores.remember(
-                id,
-                &super::Snapshot {
-                    written: target,
-                    each,
-                },
-            );
-        }
+        stores.remember(
+            self.entry.id,
+            &path,
+            &super::Snapshot {
+                written: target,
+                each,
+            },
+        );
         let (_, _, field) = self.words();
         Ok(Some(Box::new(RestoreNotes {
             entry: EntryRef::new(self.entry.id, path).with_only_name(self.entry.only_name),
@@ -732,10 +731,8 @@ impl Operation for RestoreNotes {
         );
         raw::restore(&path, &self.before)
             .map_err(|e| anyhow::anyhow!("put back the notes of {}: {e}", path.display()))?;
-        if let Some(stores) = &self.stores
-            && let Some(id) = EntryRef::new(self.entry.id, &path).entry()
-        {
-            stores.forget(id);
+        if let Some(stores) = &self.stores {
+            stores.forget(self.entry.id, &path);
         }
         Ok(Some(Box::new(RestoreNotes {
             entry: EntryRef::new(self.entry.id, path).with_only_name(self.entry.only_name),
@@ -750,6 +747,7 @@ impl Operation for RestoreNotes {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EntryId;
     use crate::notes::{Holds, Kept, NotesStore};
 
     fn home_tempdir() -> tempfile::TempDir {
@@ -912,6 +910,53 @@ mod tests {
             std::fs::read(&b_at).unwrap(),
             br#"{"tags":[{"name":"theirs"}]}"#
         );
+    }
+
+    /// What skwir wrote is found however its file is named: by the listing
+    /// of its folder, of a link to the folder, or by its path (a tag's,
+    /// the shelf's entries). Another application's later edit of one store
+    /// then wins over the others alike (notes.md).
+    #[cfg(unix)]
+    #[test]
+    fn what_skwir_wrote_is_found_however_its_file_is_named() {
+        let tmp = home_tempdir();
+        let cache = crate::cache::Cache::new(tmp.path().join("cache"));
+        let dir = tmp.path().join("l'été");
+        std::fs::create_dir(&dir).unwrap();
+        let file = dir.join("it's a.jpg");
+        std::fs::write(&file, b"x").unwrap();
+        let (a, b) = (Beside("a", Write::Create), Beside("b", Write::Create));
+        let b_at = b.at(&file);
+        let stores = stores(vec![Arc::new(a), Arc::new(b)]);
+        stores.keep_snapshots(cache.namespace("notes"));
+        let entry = EntryRef::from_path(&file).unwrap();
+        stores
+            .edit(entry.clone())
+            .tags(vec!["x".into()])
+            .apply(&StepContext::detached())
+            .unwrap();
+        // Another application takes "x" off what it keeps.
+        std::fs::write(&b_at, br#"{"tags":[]}"#).unwrap();
+        let link = tmp.path().join("linked");
+        std::os::unix::fs::symlink(&dir, &link).unwrap();
+        let folder = crate::fs::stat::id_of(&dir).unwrap();
+        let name = file.file_name().unwrap();
+        let listed = EntryId::in_folder(entry.id, folder, name);
+        let policy = stores.policy();
+        for (dir, id) in [
+            (&dir, listed),
+            (&link, listed),
+            (&dir, EntryId::at_path(entry.id, &file)),
+            (&link, EntryId::at_path(entry.id, &link.join(name))),
+        ] {
+            let read = stores.read(dir, &[(name, Some(id), false)], &policy, None);
+            assert!(
+                read[0].notes.tag_names().is_empty(),
+                "{} {id:?}: {:?}",
+                dir.display(),
+                read[0].notes
+            );
+        }
     }
 
     #[test]
