@@ -16,7 +16,9 @@
 //! system's line wrapper, once per change of the listing, the order or the
 //! zoom, never per frame. The label is then clamped to that count, so a
 //! wrapper that disagrees with the shaper by a word costs an ellipsis, not a
-//! name drawn over the next row.
+//! name drawn over the next row. A name cut keeps its first lines whole and
+//! its end on the last (vendored patch 0037: Zed's gpui cuts a clamped text
+//! in the middle to a single line).
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -132,16 +134,24 @@ impl GridView {
                     return *lines;
                 }
                 wrapped_now += 1;
-                let name = entry.name_str();
-                let breaks = wrapper
-                    .wrap_line(
-                        &[gpui::LineFragment::text(&name)],
-                        width,
-                        gpui::IndentAdjustment::default(),
-                    )
-                    .take(usize::from(MAX_LINES) - 1)
-                    .count();
-                let lines = breaks as u8 + 1;
+                // As the label wraps: a newline ends a line, and no line that
+                // goes on is indented.
+                let lines = entry
+                    .name_str()
+                    .split('\n')
+                    .map(|line| {
+                        wrapper
+                            .wrap_line(
+                                &[gpui::LineFragment::text(line)],
+                                width,
+                                gpui::IndentAdjustment::NoIndent,
+                            )
+                            .take(usize::from(MAX_LINES) - 1)
+                            .count()
+                            + 1
+                    })
+                    .sum::<usize>()
+                    .min(usize::from(MAX_LINES)) as u8;
                 counted.insert(*id, (hash, lines));
                 lines
             })

@@ -4890,3 +4890,41 @@ shows its folder.
   folder (a test window's trash on the home volume is the machine's);
   a drag with the pointer (a drop runs the command Shift+F5 does);
   `just release-check`.
+
+### Grid names on up to three lines again (2026-10-25)
+
+Since gpui came from Zed's main branch (61597287), every long name in the
+grid took one line and an ellipsis, a two-line name included. Skwir's
+gpui patch 0005 had been dropped as answered by Zed's
+`truncate_wrapped_line`, which cuts a text with a middle ellipsis to one
+line's width whatever its `line_clamp`; the grid clamps its label to the
+lines it counted, so the label showed one.
+
+- **Vendored patch 0037** (`middle-ellipsis-over-clamped-lines`):
+  `truncate_wrapped_line_middle` keeps the lines before the last as they
+  wrap and cuts the middle of the last one, the front up to half of what
+  the ellipsis leaves, the end the rest. A newline ends a line, as in
+  `shape_text`; newlines with only whitespace after them show nothing.
+  Whitespace beside the ellipsis is kept (0005 trimmed it): a space seen
+  there is the name's own, and none is ever added. One line, and
+  truncation from the start or the end, stay upstream's.
+  The series was rebuilt from `vendor/zed` (every patch reversed, the
+  tree compared identical, then applied again): the local Zed clone lacks
+  the vendored commit.
+- **The grid counts lines as the label wraps them**: a newline ends a
+  line, and no line that goes on is indented (`IndentAdjustment::NoIndent`,
+  as the shaped layout has it; the default indented the lines of a name
+  starting with spaces).
+- **Checked:** `just gpui-check gpui` (105 tests, the new
+  `test_multiline_truncation_middle` among them); `just lint`; `just test`
+  (2195 passed, without fail-fast: a first run under load failed two
+  remote tests, `connect_at_login_is_turned_on_and_off_from_a_remote_s_menu`
+  and `what_rclone_says_a_storage_can_do_shapes_its_mount`, which then
+  passed alone and in the full run). In a window (debug build, Xvfb
+  :91) on eight synthetic names (spaces, a newline, leading spaces,
+  accents and an apostrophe, one word of 70 characters): before, every
+  long name on one line; after, names on up to three lines, the last
+  ending as the name does (`…st 2024.jpg`, `…nal_v2.png`), a row as tall
+  as its longest name, at 64, 128 and 256 px.
+- **Not checked:** `just release-check`, `check-cross` (nothing
+  system-specific changed).

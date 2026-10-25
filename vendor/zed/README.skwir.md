@@ -66,6 +66,7 @@ at the vendored commit.
 | `0034-windows-shaders-at-start` | Built for Windows on another system, the shaders are compiled as the renderer starts | — |
 | `0035-apple-shaders-at-start` | Built for macOS on another system, the shader bindings are made and the shaders compiled as the renderer starts | — |
 | `0036-no-icu` | A jump list's removed entries are read without ICU's `u_strlen`, so gpui needs no icuuc.dll | — |
+| `0037-middle-ellipsis-over-clamped-lines` | A clamped text cut in the middle keeps its first lines, and its last ends as the text does | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -79,7 +80,8 @@ Zed's main branch has its own answer to each of these patches:
 - **0004** (list item height hints): `ListItem::Unmeasured`'s `size_hint`, and
   a list remeasures an item whose height changed.
 - **0005** (clamped truncation, middle ellipsis): `TruncateFrom::Middle` and
-  `truncate_wrapped_line`.
+  `truncate_wrapped_line`, except a middle ellipsis over several lines, which
+  Zed cuts to one: 0037.
 - **0007** (a keyboard click needs its key-down): an activation key clicks only
   in the focus generation it went down in.
 - **0009** (image formats): Zed's workspace takes `image` without its default
@@ -542,6 +544,25 @@ Wine has none, so no test program of Skwir's window started under Wine
 (exit 53 as nextest listed them). The NUL is now looked for in the buffer
 itself, which also never reads past it. Checked: `just test-windows` lists
 and runs the tests of `skwir` and `skwir-ui` under Wine.
+
+### 0037: Middle ellipsis over clamped lines
+
+`truncate_wrapped_line` cut a text with a middle ellipsis to the width of one
+line, whatever its `line_clamp`, so a clamped label showed a single line.
+Skwir's grid clamps a name to the lines it counted (up to three): every long
+name took one line and an ellipsis, as with 0.2.2 before 0005.
+
+`truncate_wrapped_line_middle` keeps the lines before the last as they wrap,
+and cuts the middle of the last one: the front takes up to half of what the
+affix leaves, the end the rest, as the earlier lines already show how the text
+begins. A newline ends a line, as in `shape_text`: the last line then ends as
+the text's last line does, and newlines followed by whitespace alone leave
+nothing to show (as end truncation has it). Whitespace beside the affix is
+kept, as upstream keeps it on one line: a space seen there is the text's own,
+and none is ever added (unlike 0005, which trimmed it; chosen 2026-10-25). One
+line, and truncation from the start or the end, are upstream's.
+`test_multiline_truncation_middle` covers one word, two and three lines, runs
+and newlines.
 
 ## Adding or changing a patch
 

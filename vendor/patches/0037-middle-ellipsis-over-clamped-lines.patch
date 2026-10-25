@@ -1,0 +1,224 @@
+0037 middle-ellipsis-over-clamped-lines: a text cut in the middle keeps its first lines, and its last ends as the text does
+
+diff --git a/crates/gpui/src/text_system/line_wrapper.rs b/crates/gpui/src/text_system/line_wrapper.rs
+index 8116227..b97e2a6 100644
+--- a/crates/gpui/src/text_system/line_wrapper.rs
++++ b/crates/gpui/src/text_system/line_wrapper.rs
+@@ -362,7 +362,8 @@ impl LineWrapper {
+     /// truncation point simultaneously. When text overflows on the last
+     /// allowed line, it truncates there and appends the affix.
+     ///
+-    /// For `max_lines == 1`, this delegates to `truncate_line`.
++    /// For `max_lines == 1`, this delegates to `truncate_line`. Over more lines, middle
++    /// truncation keeps the end of the text on the last one (`truncate_wrapped_line_middle`).
+     pub fn truncate_wrapped_line<'a>(
+         &mut self,
+         text: SharedString,
+@@ -382,7 +383,13 @@ impl LineWrapper {
+             );
+         }
+         if truncate_from == TruncateFrom::Middle {
+-            return self.truncate_line(text, wrap_width, truncation_affix, runs, truncate_from);
++            return self.truncate_wrapped_line_middle(
++                text,
++                wrap_width,
++                max_lines,
++                truncation_affix,
++                runs,
++            );
+         }
+ 
+         let affix_width: Pixels = truncation_affix
+@@ -501,6 +508,112 @@ impl LineWrapper {
+         (text, Cow::Borrowed(runs))
+     }
+ 
++    /// Middle truncation within `max_lines` (two or more) wrapped lines: the lines before the
++    /// last stay as they wrap, and the affix takes the middle of the last one, which ends as
++    /// the text does (a long file name keeps its extension). Truncated to a single line's
++    /// width instead, the text would leave the other lines empty.
++    ///
++    /// A newline ends a line, as in `shape_text`: when one follows, the last line begins as its
++    /// own line does and ends as the text's last line does.
++    fn truncate_wrapped_line_middle<'a>(
++        &mut self,
++        text: SharedString,
++        wrap_width: Pixels,
++        max_lines: usize,
++        truncation_affix: &str,
++        runs: &'a [TextRun],
++    ) -> (SharedString, Cow<'a, [TextRun]>) {
++        // Where the last allowed line begins. The shaped layout indents no continuation line.
++        let mut lines_left = max_lines;
++        let mut line_start = 0;
++        let mut last_line_start = None;
++        for line in text.split('\n') {
++            let (wraps, last_wrap) = self
++                .wrap_line(
++                    &[LineFragment::text(line)],
++                    wrap_width,
++                    IndentAdjustment::NoIndent,
++                )
++                .take(lines_left - 1)
++                .fold((0, 0), |(count, _), boundary| (count + 1, boundary.ix));
++            if wraps == lines_left - 1 {
++                last_line_start = Some(line_start + last_wrap);
++                break;
++            }
++            lines_left -= wraps + 1;
++            line_start += line.len() + 1;
++        }
++        // Fewer lines than allowed: nothing to cut.
++        let Some(start) = last_line_start else {
++            return (text, Cow::Borrowed(runs));
++        };
++        let head_end = text[start..].find('\n').map_or(text.len(), |ix| start + ix);
++        // Newlines with nothing after them but whitespace leave nothing to show.
++        let end = head_end.max(text.trim_end().len());
++        let tail_start = text[start..end]
++            .rfind('\n')
++            .map_or(start, |ix| start + ix + 1);
++        if end == head_end
++            && text[start..head_end]
++                .chars()
++                .map(|c| self.width_for_char(c))
++                .sum::<Pixels>()
++                <= wrap_width
++        {
++            return (text, Cow::Borrowed(runs));
++        }
++
++        // The earlier lines already say how the text begins: the front takes up to half of
++        // what the affix leaves, and the end the rest.
++        let affix_width: Pixels = truncation_affix
++            .chars()
++            .map(|c| self.width_for_char(c))
++            .sum();
++        let budget = wrap_width - affix_width;
++        let mut front_width = px(0.);
++        let mut front_end_ix = start;
++        for (ix, c) in text[start..head_end].char_indices() {
++            let char_width = self.width_for_char(c);
++            if front_width + char_width > budget / 2. {
++                break;
++            }
++            front_width += char_width;
++            front_end_ix = start + ix + c.len_utf8();
++        }
++        let back_from = tail_start.max(front_end_ix);
++        let mut back_width = px(0.);
++        let mut back_start_ix = end;
++        for (ix, c) in text[back_from..end].char_indices().rev() {
++            let char_width = self.width_for_char(c);
++            if front_width + back_width + char_width > budget {
++                break;
++            }
++            back_width += char_width;
++            back_start_ix = back_from + ix;
++        }
++
++        let result = SharedString::from(format!(
++            "{}{truncation_affix}{}",
++            &text[..front_end_ix],
++            &text[back_start_ix..end]
++        ));
++        // What follows `end` goes, and its runs with it.
++        let mut runs = runs.to_vec();
++        let mut kept = end;
++        runs.retain_mut(|run| {
++            run.len = run.len.min(kept);
++            kept -= run.len;
++            run.len > 0
++        });
++        update_runs_after_middle_truncation(
++            truncation_affix,
++            &mut runs,
++            front_end_ix,
++            back_start_ix,
++        );
++        (result, Cow::Owned(runs))
++    }
++
+     /// Any character in this list should be treated as a word character,
+     /// meaning it can be part of a word that should not be wrapped.
+     pub(crate) fn is_word_char(c: char) -> bool {
+@@ -1628,6 +1741,79 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn test_multiline_truncation_middle() {
++        let mut wrapper = build_wrapper();
++        let wrap_width = px(72.);
++        let mut elide = |text: &'static str, run_lens: &[usize], max_lines: usize| {
++            let runs = generate_test_runs(run_lens);
++            let (result, result_runs) = wrapper.truncate_wrapped_line(
++                text.into(),
++                wrap_width,
++                max_lines,
++                "…",
++                &runs,
++                TruncateFrom::Middle,
++            );
++            assert_eq!(
++                result_runs.iter().map(|run| run.len).sum::<usize>(),
++                result.len()
++            );
++            // Lines with nothing to show are not counted.
++            let lines = result
++                .trim_end()
++                .split('\n')
++                .map(|line| {
++                    wrapper
++                        .wrap_line(
++                            &[LineFragment::text(line)],
++                            wrap_width,
++                            IndentAdjustment::NoIndent,
++                        )
++                        .count()
++                        + 1
++                })
++                .sum::<usize>();
++            assert!(lines <= max_lines, "'{result}' takes {lines} lines");
++            let runs = result_runs.iter().map(|run| run.len).collect::<Vec<_>>();
++            (result.to_string(), runs)
++        };
++
++        // 72 px holds seven characters: the last line is three, the ellipsis, three.
++        assert_eq!(elide("aa bbb cccc ddddd.zip", &[21], 2).0, "aa bbb ccc…zip");
++        assert_eq!(
++            elide("aa bbb cccc ddddd eeee.zip", &[26], 3).0,
++            "aa bbb cccc ddd…zip"
++        );
++        // One word, broken where it overflows.
++        assert_eq!(
++            elide("abcdefghijklmnopqrstuvwxyz.zip", &[30], 2).0,
++            "abcdefghij…zip"
++        );
++        // It fits: untouched, and so are its runs.
++        assert_eq!(
++            elide("aa bbb cccc", &[3, 8], 2),
++            ("aa bbb cccc".into(), vec![3, 8])
++        );
++        // The runs lose what was removed; the ellipsis joins the run it began in.
++        assert_eq!(
++            elide("aa bbb cccc ddddd.zip", &[7, 6, 8], 2),
++            ("aa bbb ccc…zip".into(), vec![7, 3 + "…".len(), 3])
++        );
++        // A newline ends a line: the last one ends as the text does.
++        assert_eq!(
++            elide("hello\nworld\nmore.zip", &[20], 2).0,
++            "hello\nwor…zip"
++        );
++        assert_eq!(elide("hello\nworld", &[11], 2).0, "hello\nworld");
++        // Nothing to show after a newline: it fits, or its own line keeps its end.
++        assert_eq!(elide("hello\nworld\n", &[12], 2).0, "hello\nworld\n");
++        assert_eq!(
++            elide("hello\nworld.zip\n ", &[6, 11], 2),
++            ("hello\nwor…zip".into(), vec![6, 3 + "…".len(), 3])
++        );
++    }
++
+     #[test]
+     fn test_multiline_truncation_trailing_newline() {
+         let mut wrapper = build_wrapper();

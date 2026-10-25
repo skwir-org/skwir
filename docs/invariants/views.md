@@ -178,8 +178,9 @@ around the views is in [shell.md](shell.md).
 
 ## Names and zoom
 
-- A name too long keeps both ends (`text_ellipsis_middle`, vendored patch
-  0005), in every view: the extension tells files apart.
+- A name too long keeps both ends (`text_ellipsis_middle`), in every view:
+  the extension tells files apart. A grid label clamped to several lines
+  keeps its first lines whole and its end on the last (vendored patch 0037).
 - Ctrl+wheel zooms through a capture-phase listener
   (`elements::zoom_wheel`, `Zoomed::View`: grid, list, columns and Usage;
   previews.md for the panel), keeping the first visible item in place;
