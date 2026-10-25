@@ -4224,7 +4224,11 @@ fn a_server_that_stops_answering_holds_no_more_than_its_lane() {
             .pane(pane)
             .is_some_and(|p| p.listing.is_complete())
     });
-    assert!(waiting_on_fuse().is_empty(), "nothing waits on it yet");
+    // What the listing asked of it answered (under load, a read may
+    // still be on its way).
+    until(&app, 30, "nothing waits on it yet", || {
+        waiting_on_fuse().is_empty()
+    });
 
     let sessions = sshd.descendants();
     signal("-STOP", &sessions);
