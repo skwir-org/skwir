@@ -471,18 +471,42 @@ impl Rclone {
     }
 }
 
-/// Let go of the mount Skwir made at `point` on Windows: rclone asked to
-/// quit through its remote control, which unmounts first.
+/// Let go of the mount Skwir made at `point` on Windows, or a logon task
+/// did (ADR-087): rclone asked to quit through its remote control, which
+/// unmounts first. The task's login is forgotten with the mount where no
+/// task is there any more (turned off while it was mounted).
 #[cfg(windows)]
 fn unmount_on_windows(point: &Path, cancel: &CancelToken) -> anyhow::Result<()> {
-    let at = crate::winfsp::rc_of(point)
-        .ok_or_else(|| anyhow::anyhow!("Skwir did not mount it, so it cannot let go of it"))?;
-    crate::rc::call(&at, "core/quit", &serde_json::json!({}), cancel)?;
+    let controls = crate::winfsp::controls_of(point);
+    anyhow::ensure!(
+        !controls.is_empty(),
+        "Skwir did not mount it, so it cannot let go of it"
+    );
+    // A login kept from a mount gone is refused: the next is asked.
+    let mut refused = None;
+    let asked = controls.iter().any(|at| {
+        crate::rc::call(at, "core/quit", &serde_json::json!({}), cancel)
+            .inspect_err(|error| refused = Some(format!("{error:#}")))
+            .is_ok()
+    });
+    if !asked {
+        anyhow::bail!(
+            "rclone was not reached to let go of it: {}",
+            refused.unwrap_or_default()
+        );
+    }
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         skwir_core::fs::reach::changed();
         if skwir_core::fs::reach::of(point).is_none_or(|r| r.point != point) {
             crate::winfsp::forget(point);
+            let task = point
+                .file_name()
+                .and_then(|name| crate::connector::of_point_name(name.to_str()?))
+                .map(|(by, address)| crate::login::id_of(by, &address));
+            if task.is_none_or(|id| !crate::login::installed(&id)) {
+                crate::winfsp::forget_at_login(point);
+            }
             return Ok(());
         }
         anyhow::ensure!(

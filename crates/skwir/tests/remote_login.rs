@@ -260,6 +260,7 @@ fn a_login_unit_is_read_by_systemd_as_written() {
             folders: vec![base.join("sockets 'q'")],
             leftovers: vec![base.join("sockets 'q'/a $x.sock")],
             notifies: false,
+            control: None,
         };
         let unit = login::systemd_unit(&at);
         if let Some(verdict) = verified(&base, &login::unit_name(&at.id), &unit) {
@@ -498,6 +499,7 @@ fn installing_sets_the_unit_up_and_takes_it_back_where_it_fails() {
         folders: Vec::new(),
         leftovers: Vec::new(),
         notifies: true,
+        control: None,
     };
     let name = login::unit_name(&at.id);
     let cancel = CancelToken::new();

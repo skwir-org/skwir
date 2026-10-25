@@ -46,6 +46,52 @@ impl std::fmt::Debug for At {
 /// browser's sign-in waited for.
 const PATIENCE: Duration = Duration::from_secs(3600);
 
+/// A login made for a remote control on the loopback.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Login {
+    pub user: String,
+    pub pass: String,
+}
+
+impl std::fmt::Debug for Login {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Never its password.
+        f.debug_struct("Login")
+            .field("user", &self.user)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Login {
+    /// A login no one guesses.
+    ///
+    /// # Errors
+    /// When the system gives no randomness.
+    pub fn made() -> std::io::Result<Login> {
+        Ok(Login {
+            user: format!("skwir-{}", random_hex(4)?),
+            pass: random_hex(24)?,
+        })
+    }
+
+    /// Its line of an htpasswd file, which rclone reads as it starts
+    /// (`--rc-htpasswd`) where nothing can be given in its environment:
+    /// the password's SHA-1, never the password.
+    pub fn htpasswd(&self) -> String {
+        let digest = sha1_smol::Sha1::from(self.pass.as_bytes()).digest().bytes();
+        format!("{}:{{SHA}}{}\n", self.user, base64(&digest))
+    }
+
+    /// Where it is taken, at `port`.
+    pub fn at(&self, port: u16) -> At {
+        At::Loopback {
+            port,
+            user: self.user.clone(),
+            pass: self.pass.clone(),
+        }
+    }
+}
+
 impl At {
     /// A port of the loopback free now, and a login made for it.
     ///
@@ -55,11 +101,7 @@ impl At {
         let port = std::net::TcpListener::bind(("127.0.0.1", 0))?
             .local_addr()?
             .port();
-        Ok(At::Loopback {
-            port,
-            user: format!("skwir-{}", random_hex(4)?),
-            pass: random_hex(24)?,
-        })
+        Ok(Login::made()?.at(port))
     }
 
     /// What rclone serving here is given: its arguments, and what goes in
@@ -342,6 +384,17 @@ fn dechunk(mut chunked: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_login_s_htpasswd_line_holds_its_password_s_sha1_as_rclone_reads_it() {
+        // Checked against rclone 1.75.2's `--rc-htpasswd`.
+        let login = Login {
+            user: "u2".into(),
+            pass: "secretpass".into(),
+        };
+        assert_eq!(login.htpasswd(), "u2:{SHA}NkvfLtd6hUTTtxGgO2nurcxjydc=\n");
+        assert!(!format!("{login:?}").contains("secretpass"));
+    }
 
     #[test]
     fn a_login_is_written_as_http_s_basic_one() {

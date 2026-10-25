@@ -357,7 +357,9 @@ ADR-077 (which revises ADR-021).
   runtime folder on Unix (no login: no other user reaches it), the
   loopback on Windows behind a login made for each session or mount,
   given to rclone in its environment alone, never on its command line or
-  in a log (`At`'s `Debug` says the port alone). On Windows rclone mounts
+  in a log (`At`'s `Debug` says the port alone); a logon task's rclone,
+  given no environment, reads the login's SHA-1 from an htpasswd file
+  kept with it (`rc::Login::htpasswd`). On Windows rclone mounts
   through WinFsp in a folder of Skwir's (`winfsp`), its login kept beside
   it while it lives, and lets go when asked to quit.
 - Key login (`keys`, `keys_form`, ADR-086): the keys offered are the
@@ -378,6 +380,11 @@ ADR-077 (which revises ADR-021).
   one Skwir made, Eject letting go of it and its point, the next mount
   there of what it leaves otherwise (`mounter::point_for`, rclone's
   socket). Nothing relies on a unit's commands once it is turned off.
+  On Windows rclone's logon task serves its remote control on a port it
+  chooses, read back from its log, behind a login made with the task and
+  kept beside the mounts while the task is (`winfsp::keep_at_login`,
+  rclone checking its SHA-1 in an htpasswd file); Eject forgets it once
+  no task is there.
   Tests read units with `systemd-analyze verify` in
   their own folders, run a unit's command as it would be run, and install
   through a stand-in `systemctl` given a runtime folder of its own: never

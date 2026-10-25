@@ -58,6 +58,10 @@ pub struct AtLogin {
     pub leftovers: Vec<PathBuf>,
     /// It tells its manager once mounted (`sd_notify`: rclone does).
     pub notifies: bool,
+    /// The login its remote control serves behind, kept beside the mounts
+    /// as long as the entry is (`winfsp`: on Windows, where rclone is
+    /// given nothing in its environment).
+    pub control: Option<crate::rc::Login>,
 }
 
 /// What names the entry of `connector` mounting `address` at login: the
@@ -94,13 +98,18 @@ impl AtLogin {
         address: &Address,
         cancel: &CancelToken,
     ) -> anyhow::Result<AtLogin> {
+        let (program, config, top) = rclone_checked(with, address, cancel)?;
         #[cfg(unix)]
         {
-            rclone_on_unix(with, address, cancel)
+            rclone_on_unix(with, program, config, &top)
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            let _ = (with, address, cancel);
+            rclone_on_windows(with, program, config, &top, cancel)
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (program, config, top);
             Err(skwir_core::system::not_yet("Mounting rclone's remotes").into())
         }
     }
@@ -155,6 +164,7 @@ impl AtLogin {
                 .collect(),
             leftovers: control.into_iter().collect(),
             notifies: false,
+            control: None,
         }
         .checked()
     }
@@ -183,12 +193,14 @@ impl AtLogin {
     }
 }
 
-#[cfg(unix)]
-fn rclone_on_unix(
+/// rclone, the whole path of its configuration and `address`'s top, where
+/// its mount may run at login: a remote of a configuration kept plain,
+/// which names it. Reads the configuration.
+fn rclone_checked(
     with: &crate::rclone::Rclone,
     address: &Address,
     cancel: &CancelToken,
-) -> anyhow::Result<AtLogin> {
+) -> anyhow::Result<(PathBuf, PathBuf, Address)> {
     let top = address.top();
     anyhow::ensure!(
         top.scheme == Scheme::Rclone,
@@ -218,8 +230,18 @@ fn rclone_on_unix(
         "rclone's configuration names no remote “{}”",
         top.host
     );
-    let remote = crate::rclone::remote_of(&top)?;
-    let point = point_of(with.id(), &top)?;
+    Ok((program, config, top))
+}
+
+#[cfg(unix)]
+fn rclone_on_unix(
+    with: &crate::rclone::Rclone,
+    program: PathBuf,
+    config: PathBuf,
+    top: &Address,
+) -> anyhow::Result<AtLogin> {
+    let remote = crate::rclone::remote_of(top)?;
+    let point = point_of(with.id(), top)?;
     let mut args: Vec<OsString> = vec!["--config".into(), config.into()];
     args.extend(foreground(crate::rclone::mount_arguments(&remote, &point)));
     // Its remote control, as the connector gives it (`rclone_copy`).
@@ -232,7 +254,7 @@ fn rclone_on_unix(
         leftovers.push(socket);
     }
     AtLogin {
-        id: id_of(with.id(), &top),
+        id: id_of(with.id(), top),
         title: top.label(),
         program,
         args,
@@ -240,6 +262,43 @@ fn rclone_on_unix(
         folders,
         leftovers,
         notifies: true,
+        control: None,
+    }
+    .checked()
+}
+
+/// On Windows, through `WinFsp`, its remote control behind a login of its
+/// own, its port said in its log (`winfsp`). rclone's log kept from
+/// growing where the installed rclone rotates it.
+#[cfg(windows)]
+fn rclone_on_windows(
+    with: &crate::rclone::Rclone,
+    program: PathBuf,
+    config: PathBuf,
+    top: &Address,
+    cancel: &CancelToken,
+) -> anyhow::Result<AtLogin> {
+    let remote = crate::rclone::remote_of(top)?;
+    let point = point_of(with.id(), top)?;
+    let mut flags = crate::rclone::command(&program, None);
+    flags.args(["help", "flags"]);
+    let rotates = skwir_platform::process::run(&mut flags, cancel, Duration::from_secs(10))
+        .is_ok_and(|said| String::from_utf8_lossy(&said).contains("--log-file-max-size"));
+    let mut args: Vec<OsString> = vec!["--config".into(), config.into()];
+    args.extend(
+        crate::winfsp::at_login_arguments(&remote, &point, rotates)
+            .ok_or_else(|| anyhow::anyhow!("there is no folder to mount in"))?,
+    );
+    AtLogin {
+        id: id_of(with.id(), top),
+        title: top.label(),
+        program,
+        args,
+        folders: point.parent().map(|f| f.join(".rc")).into_iter().collect(),
+        point,
+        leftovers: Vec::new(),
+        notifies: false,
+        control: Some(crate::rc::Login::made()?),
     }
     .checked()
 }
@@ -857,7 +916,14 @@ impl Manager {
         }
         #[cfg(windows)]
         {
-            self.uninstall_task(&task_name(id), mounted(point), cancel)
+            let keep = mounted(point);
+            self.uninstall_task(&task_name(id), keep, cancel)?;
+            // A mount it carries is let go of through its remote control,
+            // whose login goes with it (Eject).
+            if !keep {
+                crate::winfsp::forget_at_login(point);
+            }
+            Ok(())
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         {
@@ -1060,6 +1126,10 @@ impl Manager {
                 .as_nanos()
         ));
         std::fs::write(&file, bytes)?;
+        // Its remote control's login, which its rclone reads as it starts.
+        if let Some(login) = &at.control {
+            crate::winfsp::keep_at_login(&at.point, login)?;
+        }
         let created = self.ask(
             vec![
                 "/Create".into(),
@@ -1072,6 +1142,9 @@ impl Manager {
             cancel,
         );
         let _ = std::fs::remove_file(&file);
+        if created.is_err() && at.control.is_some() && !mounted(&at.point) {
+            crate::winfsp::forget_at_login(&at.point);
+        }
         created?;
         if mounted(&at.point) {
             return Ok(());
@@ -1081,6 +1154,7 @@ impl Manager {
             cancel,
         ) {
             let _ = self.uninstall_task(&name, false, &CancelToken::new());
+            crate::winfsp::forget_at_login(&at.point);
             return Err(error);
         }
         Ok(())
@@ -1138,6 +1212,7 @@ mod tests {
             folders: vec![PathBuf::from("/run/user/1000/skwir/rc")],
             leftovers: vec![PathBuf::from("/run/user/1000/skwir/rc/0123.sock")],
             notifies: true,
+            control: None,
         }
     }
 

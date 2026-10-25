@@ -12,8 +12,10 @@ skwir-core.workspace = true
 skwir-platform.workspace = true
 anyhow.workspace = true
 crossbeam-channel.workspace = true
-# The login of rclone's remote control on Windows' loopback (`rc`).
+# The login of rclone's remote control on Windows' loopback (`rc`), and
+# its SHA-1 for a logon task's rclone (`--rc-htpasswd`, ADR-087).
 getrandom = "0.3"
+sha1_smol = "1"
 parking_lot.workspace = true
 roxmltree.workspace = true
 schemars.workspace = true

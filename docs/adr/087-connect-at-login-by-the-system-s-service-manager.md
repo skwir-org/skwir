@@ -56,8 +56,8 @@ of their own manager.
 - No real systemd, launchd or Task Scheduler has run one of these
   entries here: Linux's checked as described, macOS's compiled and its
   agent's file tested, Windows' task's file tested (Wine's Task Scheduler
-  does not start). On Windows rclone's remotes do not connect at login
-  yet (a mount there answers on a loopback login Skwir keeps beside it).
+  does not start). (Amended 2026-10-25: on Windows rclone's remotes
+  connect at login, below.)
 - A remote set to connect at login and then removed from rclone's
   configuration outside Skwir leaves its entry failing until turned off;
   removed from Skwir, it takes its entry along (ADR-086, amended
@@ -76,3 +76,19 @@ of their own manager.
   point, the next mount there lets go of what it leaves otherwise, and
   it is not started again. The check ejects as Skwir does, and asks the
   unit's own clean-up only of a unit still set up.
+- 2026-10-25: on Windows a remote of rclone's configuration connects at
+  login by a logon task too. A mount there is let go of through its
+  remote control on the loopback (ADR-086, 13), and a task's program is
+  given nothing in its environment: its rclone serves on a port it
+  chooses as it starts (a port fixed when the task is made may be taken
+  by then, and reserved ranges move between boots), which its log says
+  and Skwir reads back, behind a login made with the task and kept beside
+  the mounts as long as the task is, rclone checking it by its SHA-1 in
+  an htpasswd file (`--rc-htpasswd`): the password itself is never on
+  its command line. Its log rotates where the installed rclone can
+  (`--log-file-max-size`); no console is shown and nothing is asked.
+  Nothing runs before or after it: WinFsp makes its folder and takes it
+  away. Turned off while it carries a mount, its login stays for Eject,
+  which forgets it once no task is there. The task's file and its remote
+  control are tried (under Wine, with rclone's own Windows release); no
+  Task Scheduler ran the task and no WinFsp mounted it.

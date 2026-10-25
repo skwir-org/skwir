@@ -1513,10 +1513,13 @@ protocol is a scheme a connector maps, or a connector.
     (`tools/test/login-user-systemd.sh`): its first run, 2026-10-25,
     started, mounted and restarted the unit, and showed systemd forgets a
     unit turned off while mounted (ADR-087 amended); run again after the
-    change, it passed whole; launchd and the Task Scheduler still never; on
-    Windows rclone's remotes do not connect at login yet; key login never
-    tried against an OpenSSH server checking a password (rclone's SFTP
-    server stood in);
+    change, it passed whole; launchd and the Task Scheduler still never;
+    on Windows rclone's remotes connect at login by a logon task since
+    2026-10-25 (ADR-087 amended), its file and its remote control tried
+    under Wine, never run by the Task Scheduler nor mounted by WinFsp
+    (whether WinFsp takes its folder away after a crash is its
+    documentation's word); key login never tried against an OpenSSH
+    server checking a password (rclone's SFTP server stood in);
   - a GVfs mount made by another program is used, but its questions are
     the desktop's (Skwir's own connections offer Remember, ADR-082);
   - ADR-077's point 8, if asked: a helper of Skwir's serving SFTP
