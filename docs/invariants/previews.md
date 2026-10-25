@@ -712,7 +712,13 @@ is still to come are in `docs/preview-frame.md`.
     its end names the file; in the trash, where it was), the owner and
     the mode, when it changed, what More holds, the drive and its free
     room, a digest's first digits. A row that says nothing new folded
-    (Device, On disk) has no gist.
+    (Device, On disk) has no gist. Where the heading has room for all
+    of it, each part first says what it is where its words alone do
+    not (`Row::lead`, `Group::gist_led`: "Modified" before the date,
+    "Tagged", "Comment:", a field's name, "Downloaded from", "Deleted
+    from", "Owned by", "On" before the drive, "Lasts"); else the parts
+    alone, cut. The heading draws the first that fits as it is laid
+    out (`adaptive::Fit` with `cuts`), never by counting characters.
   - A row's links (Change…, Edit…, Copy) show while the pointer is on
     it, over the end of its last line: hidden, they take no room, and
     nothing moves when they show. Those that are all a row says (Count,
@@ -757,6 +763,14 @@ is still to come are in `docs/preview-frame.md`.
   whose metadata could not be read (`Count::unknown`). With several
   selected, the folders among them count as folders. A click copies a
   value.
+- **Times**: Deleted (the trash's), Modified, Changed, Created,
+  Accessed, each as the entry's stat says it. Changed is the inode's
+  change time (`keys::CHANGED`, Windows' `ChangeTime`): what a chmod,
+  a rename or a tag moves and Modified does not; read with every stat
+  like the others, so it is never stale beside them. Each row says in a
+  tooltip which time it is (`Row::tip`), a folder's Modified and
+  Accessed in a folder's terms (a name added, removed or renamed; a
+  listing).
 - What the file takes on its drive, its flags (`stat::flags`) and the
   drive it is on (the Volume group, kept a few seconds per device) are
   read on the fields worker with the rest, for the one entry shown.

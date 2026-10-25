@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Properties** show when anything about a file last changed (Changed:
+  a new name, permissions or tags move it, Modified only its contents),
+  and each time says which it is in a tooltip. A folded group says more
+  where its heading has room: "Modified 2026-10-25 14:02", "Owned by…",
+  "Tagged…", "Downloaded from…", rather than the bare value.
 - **Encrypted drives**: the passphrase question offers to remember it in
   your keyring, as for a server's password; the drive then opens without
   asking, until its passphrase changes. Forget Passphrase is in its menu.

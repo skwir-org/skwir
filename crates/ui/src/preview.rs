@@ -789,7 +789,7 @@ impl VolumeFacts {
         let mut rows = Vec::new();
         if let Some(mount) = &self.mount {
             let name = app.location_title(&skwir_core::Location::from_path(&mount.path));
-            rows.push(Row::new("Volume", name).in_gist());
+            rows.push(Row::new("Volume", name).in_gist().led("On"));
             if !mount.source.is_empty() {
                 rows.push(Row::new("Device", mount.source.clone()));
             }

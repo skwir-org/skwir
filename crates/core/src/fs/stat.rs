@@ -23,6 +23,7 @@ struct Stat {
     modified: Option<SystemTime>,
     accessed: Option<SystemTime>,
     created: Option<SystemTime>,
+    changed: Option<SystemTime>,
     /// Marked hidden by the system (a Mac's `UF_HIDDEN`, Windows' hidden
     /// attribute).
     hidden: bool,
@@ -257,6 +258,7 @@ mod sys {
             gid: Some(st.stx_gid),
             modified: time(st.stx_mtime.tv_sec, i64::from(st.stx_mtime.tv_nsec)),
             accessed: time(st.stx_atime.tv_sec, i64::from(st.stx_atime.tv_nsec)),
+            changed: time(st.stx_ctime.tv_sec, i64::from(st.stx_ctime.tv_nsec)),
             created: (st.stx_mask & StatxFlags::BTIME.bits() != 0)
                 .then(|| time(st.stx_btime.tv_sec, i64::from(st.stx_btime.tv_nsec)))
                 .flatten(),
@@ -365,6 +367,7 @@ mod sys {
             gid: Some(st.st_gid),
             modified: time(st.st_mtime, st.st_mtime_nsec),
             accessed: time(st.st_atime, st.st_atime_nsec),
+            changed: time(st.st_ctime, st.st_ctime_nsec),
             #[cfg(target_os = "macos")]
             created: time(st.st_birthtime, st.st_birthtime_nsec),
             #[cfg(not(target_os = "macos"))]
@@ -426,6 +429,7 @@ mod sys {
             modified: info.modified,
             accessed: info.accessed,
             created: info.created,
+            changed: info.changed,
             hidden: info.hidden,
         })
     }
@@ -447,6 +451,7 @@ mod sys {
             modified: info.modified,
             accessed: info.accessed,
             created: info.created,
+            changed: info.changed,
             hidden: info.hidden,
         })
     }
@@ -630,6 +635,9 @@ pub fn stat_entry_as(dir: &Dir, entry: &mut Entry) -> Stated {
     if let Some(t) = st.created {
         m.set(keys::CREATED, Value::Time(t), p.clone());
     }
+    if let Some(t) = st.changed {
+        m.set(keys::CHANGED, Value::Time(t), p.clone());
+    }
     if entry.kind == EntryKind::Symlink
         && let Some(target) = sys::read_link_at(dir, name)
     {
@@ -706,7 +714,35 @@ pub fn named(path: &Path) -> Option<(FileId, bool)> {
 #[cfg(test)]
 mod tests {
     use super::{id_of, stat_path};
+    use crate::entry::{Value, keys};
     use std::path::Path;
+
+    /// A stat says when anything about the file last changed, as
+    /// `stat::changed` does, which setting its modification time back
+    /// does not move back.
+    #[test]
+    fn a_stat_says_when_the_file_changed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("it's changed.txt");
+        std::fs::write(&path, "a").unwrap();
+        let past = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
+        let entry = stat_path(&path).unwrap();
+        let time = |key: &str| entry.metadata.value(key).and_then(Value::as_time);
+        assert_eq!(time(keys::MODIFIED), Some(past));
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(time(keys::CHANGED), super::changed(&path, &meta));
+        #[cfg(unix)]
+        assert!(
+            time(keys::CHANGED).unwrap() > past,
+            "no program sets it back"
+        );
+    }
 
     #[test]
     fn a_statter_says_what_stat_path_says() {

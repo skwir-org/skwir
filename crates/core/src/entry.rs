@@ -361,6 +361,11 @@ pub mod keys {
     pub const MODIFIED: &str = "modified";
     pub const CREATED: &str = "created";
     pub const ACCESSED: &str = "accessed";
+    /// When anything about the file last changed, its bytes or what is
+    /// said of it (its names, mode, owner, attributes), `Value::Time`: its
+    /// inode's change time on Unix, which no program sets back, its
+    /// `ChangeTime` on Windows.
+    pub const CHANGED: &str = "changed";
     pub const MODE: &str = "mode";
     pub const NLINK: &str = "nlink";
     pub const UID: &str = "uid";

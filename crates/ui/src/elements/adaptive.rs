@@ -125,14 +125,19 @@ impl Element for AdaptiveRow {
 ///
 /// It is a flex item that knows its sizes before the line is laid out:
 /// each version is measured in `request_layout`, and the measured layout
-/// gives the widest as its natural width and the narrowest as its minimum.
-/// A neighbour with a minimum of its own (`flex_1().min_w(..)`) then takes
-/// what the widest leaves, or the control shrinks towards the narrowest;
-/// `prepaint` draws the richest version that fits the width it got,
-/// against its right edge. Like `AdaptiveRow`, versions share element ids,
-/// so focus survives a change of version.
+/// gives the widest as its natural width and the narrowest as its minimum
+/// (nothing, where it `cuts`). A neighbour with a minimum of its own
+/// (`flex_1().min_w(..)`) then takes what the widest leaves, or the
+/// control shrinks towards the narrowest; `prepaint` draws the richest
+/// version that fits the width it got, against its right edge. Like
+/// `AdaptiveRow`, versions share element ids, so focus survives a change
+/// of version.
 pub struct Fit {
     pub variants: Vec<AnyElement>,
+    /// Where even the narrowest does not fit, it is drawn narrower still,
+    /// cut as its own style says (a text's ellipsis): a folded group's
+    /// gist. Else the narrowest is the least it takes.
+    pub cuts: bool,
 }
 
 impl IntoElement for Fit {
@@ -173,7 +178,11 @@ impl Element for Fit {
             })
             .collect();
         let widest = sizes.iter().map(|s| s.width).fold(px(0.), Pixels::max);
-        let narrowest = sizes.iter().map(|s| s.width).fold(widest, Pixels::min);
+        let narrowest = if self.cuts {
+            px(0.)
+        } else {
+            sizes.iter().map(|s| s.width).fold(widest, Pixels::min)
+        };
         let height = sizes.iter().map(|s| s.height).fold(px(0.), Pixels::max);
         let style = Style {
             flex_grow: 0.,

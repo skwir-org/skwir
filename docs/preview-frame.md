@@ -50,10 +50,11 @@ changed during the build:
   it repeated the header. With no preview (folders, several entries
   selected) Properties is always open.
 - **Properties groups.** General · Location (path, link target) ·
-  Permissions (owner, group, mode in words) · Times (modified, created,
-  accessed) · Tags · then what the format knows. The draft had preview
-  plugins publish format facts as metadata fields (`MetadataProvider`);
-  as built, a provider fills `Inspection::details` from its own parse.
+  Permissions (owner, group, mode in words) · Times (modified, changed,
+  created, accessed) · Tags · then what the format knows. The draft had
+  preview plugins publish format facts as metadata fields
+  (`MetadataProvider`); as built, a provider fills `Inspection::details`
+  from its own parse.
 - **Archive members are real previews.** A member is written out
   (`PreviewProvider::extract`: `skwir-archive-worker` for an archive, at
   most 16 MiB; the parsed message for an attachment) and previewed like

@@ -78,6 +78,13 @@ pub struct Row {
     /// What it says in short on its group's heading while the group is
     /// folded (`Group::gist`); most rows say nothing there.
     pub gist: Option<Gist>,
+    /// What its gist follows where the heading has room for all of it
+    /// (`Group::gist_led`): what the gist is, where its words alone do not
+    /// say ("Modified" before a date, "Tagged" before tags).
+    pub lead: Option<SharedString>,
+    /// What its label means, in a tooltip while the pointer rests on the
+    /// row: which of a file's times it is.
+    pub tip: Option<SharedString>,
 }
 
 /// A row's part of its folded group's heading.
@@ -110,6 +117,8 @@ impl Row {
             edits_access: false,
             copies: true,
             gist: None,
+            lead: None,
+            tip: None,
         }
     }
 
@@ -123,6 +132,19 @@ impl Row {
     pub(crate) fn in_gist(self) -> Self {
         let value = self.value.clone();
         self.gist(value)
+    }
+
+    /// Its gist follows `words` where the folded heading has room for it
+    /// all (`Row::lead`).
+    pub(crate) fn led(mut self, words: impl Into<SharedString>) -> Self {
+        self.lead = Some(words.into());
+        self
+    }
+
+    /// Its label explained in a tooltip (`Row::tip`).
+    fn tip(mut self, words: &'static str) -> Self {
+        self.tip = Some(words.into());
+        self
     }
 
     /// A path, said as text: one that is not text is said lossily, and
@@ -197,25 +219,46 @@ impl Group {
     /// (`render` adds some), so a count says how far it went. Cut at its
     /// start when a path is part of it.
     pub fn gist(&self) -> Option<Gist> {
-        let parts: Vec<&Gist> = self
+        self.said(false)
+    }
+
+    /// Its gist with each part after its lead (`Row::lead`), said instead
+    /// where the heading has room for all of it; `None` when no part has
+    /// one, so it would say no more.
+    pub fn gist_led(&self) -> Option<Gist> {
+        self.rows
+            .iter()
+            .any(|row| row.gist.is_some() && row.lead.is_some())
+            .then(|| self.said(true))
+            .flatten()
+    }
+
+    /// Its rows' gists in their order, each after its lead when `leads`.
+    fn said(&self, leads: bool) -> Option<Gist> {
+        let parts: Vec<(Option<&SharedString>, &Gist)> = self
             .rows
             .iter()
-            .filter_map(|row| row.gist.as_ref())
+            .filter_map(|row| Some((row.lead.as_ref().filter(|_| leads), row.gist.as_ref()?)))
             .collect();
         if parts.is_empty() {
             return None;
         }
         let words: SharedString = parts
             .iter()
-            .map(|part| part.words().as_ref())
+            .map(|(lead, part)| match lead {
+                Some(lead) => format!("{lead} {}", part.words()),
+                None => part.words().to_string(),
+            })
             .collect::<Vec<_>>()
             .join(" · ")
             .into();
-        Some(if parts.iter().any(|part| matches!(part, Gist::Path(_))) {
-            Gist::Path(words)
-        } else {
-            Gist::Said(words)
-        })
+        Some(
+            if parts.iter().any(|(_, part)| matches!(part, Gist::Path(_))) {
+                Gist::Path(words)
+            } else {
+                Gist::Said(words)
+            },
+        )
     }
 }
 
@@ -305,9 +348,10 @@ fn label_of(key: &str) -> String {
 }
 
 /// The fields Properties names itself; any other is shown under More.
-const CORE: [&str; 19] = [
+const CORE: [&str; 20] = [
     keys::SIZE,
     keys::MODIFIED,
+    keys::CHANGED,
     keys::CREATED,
     keys::ACCESSED,
     keys::MODE,
@@ -353,19 +397,18 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
         .filter_map(|t| {
             let field = skwir_core::metadata::exclusive_category(t, fields)?;
             let value = skwir_core::metadata::tag_under(t, field)?.trim_start_matches('/');
+            let name = skwir_core::metadata::tag_leaf(field);
             Some(
-                Row::new(
-                    skwir_core::metadata::tag_leaf(field).to_owned(),
-                    value.to_owned(),
-                )
-                .in_gist()
-                .action(
-                    "Change…",
-                    Invocation::with_args(
-                        "ui.tags_prompt",
-                        &serde_json::json!({ "entries": target, "text": format!("{field}/") }),
+                Row::new(name.to_owned(), value.to_owned())
+                    .in_gist()
+                    .led(format!("{name}:"))
+                    .action(
+                        "Change…",
+                        Invocation::with_args(
+                            "ui.tags_prompt",
+                            &serde_json::json!({ "entries": target, "text": format!("{field}/") }),
+                        ),
                     ),
-                ),
             )
         })
         .collect();
@@ -378,6 +421,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
             .get(keys::TAGS)
             .and_then(|f| note_source(&f.provenance)),
         gist: (!tags.is_empty()).then(|| Gist::Said(tags.join(", ").into())),
+        lead: Some("Tagged".into()),
         ..Row::new("Tags", tags.join(", "))
     };
     tags_row = tags_row.action(
@@ -414,6 +458,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
             .as_deref()
             .and_then(|c| c.lines().map(str::trim).find(|line| !line.is_empty()))
             .map(|line| Gist::Said(line.to_owned().into())),
+        lead: Some("Comment:".into()),
         source: comment
             .as_ref()
             .and(meta.get(keys::COMMENT))
@@ -431,7 +476,9 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
     // A URL is opened only when asked, in the browser: skwir fetches
     // nothing a file names (ADR-020).
     let link = |label: &'static str, url: String| {
-        let row = Row::new(label, url.clone()).gist(host_of(&url).to_owned());
+        let row = Row::new(label, url.clone())
+            .gist(host_of(&url).to_owned())
+            .led(label);
         let row = if url.starts_with("https://") || url.starts_with("http://") {
             row.action(
                 "Open",
@@ -521,10 +568,14 @@ pub fn entry_groups(
     let mut location = Vec::new();
     // A file of the trash: where restoring it puts it back.
     if let Some(from) = meta.value(keys::TRASHED_FROM).and_then(Value::as_str) {
-        location.push(Row::new("Deleted from", from.to_owned()).action(
-            "Show",
-            Invocation::with_args("navigate", &serde_json::json!({ "location": from })),
-        ));
+        location.push(
+            Row::new("Deleted from", from.to_owned())
+                .led("Deleted from")
+                .action(
+                    "Show",
+                    Invocation::with_args("navigate", &serde_json::json!({ "location": from })),
+                ),
+        );
     }
     // The whole path, to copy with a click; a place (a tag's) has none.
     if !entry.is_place() && path.is_absolute() {
@@ -552,7 +603,11 @@ pub fn entry_groups(
         // A mode alone, or an owner alone: what is known, read-only.
         let mut rows = Vec::new();
         if let Some(uid) = uint(keys::UID) {
-            rows.push(Row::new("Owner", owner_named(uid)).gist(owner_gist(uid)));
+            rows.push(
+                Row::new("Owner", owner_named(uid))
+                    .gist(owner_gist(uid))
+                    .led("Owned by"),
+            );
         }
         if let Some(gid) = uint(keys::GID) {
             rows.push(Row::new("Group", group_named(gid)));
@@ -566,19 +621,52 @@ pub fn entry_groups(
         permissions.push(Row::new("Hard links", links.to_string()));
     }
 
+    // Each says which time it is over its row: they are easily confused,
+    // a folder's most of all.
+    let (modified, accessed) = if entry.is_dir() {
+        (
+            "When a name in it was last added, removed or renamed; not when \
+             a file in it changed.",
+            "When it was last listed, as far as the system notes it: most \
+             note it seldom or never, to spare the drive.",
+        )
+    } else {
+        (
+            "When its contents last changed. A copy, or a file unpacked, may \
+             keep the original's.",
+            "When it was last read, as far as the system notes it: most note \
+             it seldom or never, to spare the drive.",
+        )
+    };
     let times = [
-        ("Deleted", keys::TRASHED),
-        ("Modified", keys::MODIFIED),
-        ("Created", keys::CREATED),
-        ("Accessed", keys::ACCESSED),
+        (
+            "Deleted",
+            keys::TRASHED,
+            "When it was put in the trash, as the trash noted it.",
+        ),
+        ("Modified", keys::MODIFIED, modified),
+        (
+            "Changed",
+            keys::CHANGED,
+            "When anything about it last changed: its contents, or what is \
+             said of it (its name, permissions, owner, tags).",
+        ),
+        (
+            "Created",
+            keys::CREATED,
+            "When it was made on this drive: a copy's is when it was copied, \
+             which may be later than Modified.",
+        ),
+        ("Accessed", keys::ACCESSED, accessed),
     ]
     .into_iter()
-    .filter_map(|(label, key)| {
+    .filter_map(|(label, key, tip)| {
         let at = time(key)?;
-        let row = Row::new(label, crate::format::exact_time(at));
-        // Folded, it says when the file last changed, to the minute.
+        let row = Row::new(label, crate::format::exact_time(at)).tip(tip);
+        // Folded, it says when the contents last changed, to the minute,
+        // and which time that is where there is room.
         Some(if key == keys::MODIFIED {
-            row.gist(crate::format::time(at))
+            row.gist(crate::format::time(at)).led(label)
         } else {
             row
         })
@@ -983,6 +1071,7 @@ pub fn access_rows(
     let owner = shared(&|s| s.uid);
     let mut rows = vec![Row {
         gist: owner.map(|uid| Gist::Said(owner_gist(uid).into())),
+        lead: Some("Owned by".into()),
         ..Row::new("Owner", owner.map_or_else(mixed, owner_named))
     }];
     let mut group = Row::new("Group", shared(&|s| s.gid).map_or_else(mixed, group_named));
@@ -1282,7 +1371,11 @@ fn preview_group(shell: &Shell) -> Option<Group> {
             }
         }
         if let Some(duration) = state.duration {
-            rows.push(Row::new("Duration", crate::media::time(duration)).in_gist());
+            rows.push(
+                Row::new("Duration", crate::media::time(duration))
+                    .in_gist()
+                    .led("Lasts"),
+            );
         }
         rows.extend(
             state
@@ -1576,14 +1669,15 @@ pub fn render(
         .text_xs();
     for (g, group) in groups.into_iter().enumerate() {
         let folded = preview.properties_folds.folded(&group.title, group.folded);
-        list = list.child(heading(
-            g,
-            &group.title,
-            folded,
-            folded.then(|| group.gist()).flatten(),
-            theme,
-            cx,
-        ));
+        let gists = if folded {
+            [group.gist_led(), group.gist()]
+                .into_iter()
+                .flatten()
+                .collect()
+        } else {
+            Vec::new()
+        };
+        list = list.child(heading(g, &group.title, folded, gists, theme, cx));
         if folded {
             continue;
         }
@@ -1615,27 +1709,36 @@ pub fn render(
 /// A group's heading: a heading, not one more label (in the text's own
 /// color and weight where the labels are muted), ruled off from the group
 /// above it; a click folds the group or unfolds it (saying which, as the
-/// heading shows it). While folded, its gist at its right, cut at its
-/// end, or at its start when it holds a path.
+/// heading shows it). While folded, its gist at its right: the first of
+/// `gists` that fits (`Group::gist_led`, then `Group::gist`), measured
+/// as it is laid out (`adaptive::Fit`); where none does, the last, cut at
+/// its end, or at its start when it holds a path.
 fn heading(
     g: usize,
     title: &SharedString,
     folded: bool,
-    gist: Option<Gist>,
+    gists: Vec<Gist>,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> gpui::Div {
-    let gist = gist.map(|gist| {
-        let cut = div()
-            .ml_auto()
-            .min_w_0()
-            .overflow_hidden()
-            .whitespace_nowrap()
-            .text_color(theme.text_muted);
-        match gist {
-            Gist::Said(words) => cut.text_ellipsis().child(words),
-            Gist::Path(words) => cut.text_ellipsis_start().child(words),
-        }
+    let gist = (!gists.is_empty()).then(|| crate::elements::adaptive::Fit {
+        variants: gists
+            .into_iter()
+            .map(|gist| {
+                // As wide as it is given, so the last is cut there.
+                let cut = div()
+                    .w_full()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_color(theme.text_muted);
+                match gist {
+                    Gist::Said(words) => cut.text_ellipsis().child(words),
+                    Gist::Path(words) => cut.text_ellipsis_start().child(words),
+                }
+                .into_any_element()
+            })
+            .collect(),
+        cuts: true,
     });
     let fold = title.clone();
     div()
@@ -1648,6 +1751,7 @@ fn heading(
                 .id(crate::elements::known_by("properties-heading", title))
                 .flex()
                 .items_center()
+                .justify_between()
                 .gap_1()
                 .py(px(3.))
                 .rounded_sm()
@@ -1762,6 +1866,9 @@ fn row_element(
             cx.write_to_clipboard(gpui::ClipboardItem::new_string(value.to_string()));
             this.set_status(format!("Copied {}", label.to_lowercase()), false, cx);
         }))
+        .when_some(row.tip, |d, tip| {
+            d.tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+        })
         .child(
             div()
                 .w(px(84.))
@@ -2386,6 +2493,35 @@ mod tests {
             "when it changed, to the minute"
         );
         assert_eq!(gist(&groups, "More"), said(&label_of("vision.subject")));
+        // With room, each part says what it is where its words do not.
+        let led = |groups: &[Group], title: &str| {
+            groups
+                .iter()
+                .find(|group| group.title == title)
+                .and_then(Group::gist_led)
+        };
+        assert_eq!(
+            led(&groups, "Times"),
+            said(&format!("Modified {}", format::time(modified)))
+        );
+        assert_eq!(
+            led(&groups, "Notes"),
+            said("Tagged work · 3½ stars · Comment: First line")
+        );
+        assert_eq!(
+            led(&groups, "Source"),
+            said("Downloaded from example.org:8080")
+        );
+        assert_eq!(
+            led(&groups, "Permissions"),
+            said(&format!(
+                "Owned by {} · rw-r----- (640)",
+                owner_gist(4_000_000)
+            ))
+        );
+        for title in ["General", "Location", "More"] {
+            assert_eq!(led(&groups, title), None, "{title} would say no more");
+        }
 
         // A file of the trash says where it was.
         file.metadata.set(
@@ -2395,6 +2531,10 @@ mod tests {
         );
         let trashed = entry_groups(&file, path, None, &User::default());
         assert_eq!(gist(&trashed, "Location"), Some(Gist::Path(FOLDER.into())));
+        assert_eq!(
+            led(&trashed, "Location"),
+            Some(Gist::Path(format!("Deleted from {FOLDER}").into()))
+        );
 
         // A folder says its size once counted; the selection, how many
         // and what they weigh; what they share, unless it is mixed.
@@ -2439,12 +2579,13 @@ mod tests {
         let volume = Group::new(
             "Volume",
             vec![
-                Row::new("Volume", "Data").in_gist(),
-                Row::new("Device", "/dev/sdz1"),
+                Row::new("Volume", "Data").in_gist().led("On"),
+                Row::new("Device", "/dev/sdz1").led("A lead without a gist"),
                 Row::new("Free", "1 GB of 2 GB").gist("1 GB free"),
             ],
         );
         assert_eq!(volume.gist(), said("Data · 1 GB free"));
+        assert_eq!(volume.gist_led(), said("On Data · 1 GB free"));
         let mixed = Group::new(
             "Location",
             vec![
@@ -2459,6 +2600,61 @@ mod tests {
             mixed.gist(),
             Some(Gist::Path(format!("1 B · {FILE}").into()))
         );
+    }
+
+    #[test]
+    fn times_say_which_is_which() {
+        let at = |secs| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        let mut file = entry(30, "it's a café.txt", EntryKind::File, 1000, None);
+        for (key, secs) in [
+            (keys::ACCESSED, 1_700_000_400),
+            (keys::CREATED, 1_700_000_100),
+            (keys::CHANGED, 1_700_000_300),
+            (keys::MODIFIED, 1_700_000_200),
+            (keys::TRASHED, 1_700_000_500),
+        ] {
+            file.metadata
+                .set(key, Value::Time(at(secs)), Provenance::Filesystem);
+        }
+        let path = std::path::Path::new(FILE);
+        let times = |entry: &Entry| {
+            entry_groups(entry, path, None, &User::default())
+                .into_iter()
+                .find(|group| group.title == "Times")
+                .unwrap()
+                .rows
+        };
+        let rows = times(&file);
+        let labels: Vec<&str> = rows.iter().map(|row| row.label.as_ref()).collect();
+        assert_eq!(
+            labels,
+            ["Deleted", "Modified", "Changed", "Created", "Accessed"],
+            "the change time beside the modification time"
+        );
+        assert_eq!(rows[2].value, format::exact_time(at(1_700_000_300)));
+        assert!(
+            rows.iter().all(|row| row.tip.is_some()),
+            "each says which time it is"
+        );
+        assert!(
+            entry_groups(&file, path, None, &User::default())
+                .iter()
+                .all(|group| group.title != "More"),
+            "the change time is not a field of its own"
+        );
+        // A folder's modification time is when a name in it changed.
+        let mut folder = entry(31, "a folder", EntryKind::Directory, 1000, None);
+        folder
+            .metadata
+            .set(keys::MODIFIED, Value::Time(at(1)), Provenance::Filesystem);
+        let modified = |rows: &[Row]| {
+            rows.iter()
+                .find(|r| r.label == "Modified")
+                .unwrap()
+                .tip
+                .clone()
+        };
+        assert_ne!(modified(&times(&folder)), modified(&rows));
     }
 
     #[test]
