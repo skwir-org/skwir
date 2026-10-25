@@ -33,6 +33,7 @@ impl Shell {
             Some("view_buttons") => VIEW_BUTTONS,
             Some(crate::map_view::BACKGROUNDS) => crate::map_view::BACKGROUNDS,
             Some(crate::dock::MENU) => crate::dock::MENU,
+            Some(crate::timeline::DATES_MENU) => crate::timeline::DATES_MENU,
             _ => MORE,
         };
         if self.toggle_popup(kind, args, window, cx) {

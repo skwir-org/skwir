@@ -43,7 +43,9 @@ use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
 use skwir_core::scheduler::Priority;
 use skwir_core::workspace::PaneId;
-use skwir_platform::calendar::{Calendar, Period, civil_from_days, date_string, days_from_civil};
+use skwir_platform::calendar::{
+    Calendar, Period, civil_day, civil_from_days, date_string, days_from_civil,
+};
 
 const ID: &str = "timeline";
 /// 9999-12-31T23:59:59Z: later times (a bogus mtime) count as that instant.
@@ -83,6 +85,67 @@ impl Bucket {
     }
 }
 
+/// Which of a file's times the bars count.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Date {
+    #[default]
+    Modified,
+    Created,
+    Accessed,
+    /// When a picture or a video was taken, as its camera's clock said
+    /// (`keys::TAKEN`): read from each file, in the background.
+    Taken,
+}
+
+impl Date {
+    /// Its word in the query language (`modified:2026-07`), which is also
+    /// the facet a search refines.
+    pub fn word(self) -> &'static str {
+        match self {
+            Date::Modified => "modified",
+            Date::Created => "created",
+            Date::Accessed => "accessed",
+            Date::Taken => "taken",
+        }
+    }
+
+    /// What a listing knows of it; `None` for what is read from the file.
+    fn listed(self) -> Option<&'static str> {
+        match self {
+            Date::Modified => Some(keys::MODIFIED),
+            Date::Created => Some(keys::CREATED),
+            Date::Accessed => Some(keys::ACCESSED),
+            Date::Taken => None,
+        }
+    }
+
+    /// What a stat says of it.
+    fn of_stat(self, m: &std::fs::Metadata) -> Option<SystemTime> {
+        match self {
+            Date::Modified => m.modified().ok(),
+            Date::Created => m.created().ok(),
+            Date::Accessed => m.accessed().ok(),
+            Date::Taken => None,
+        }
+    }
+}
+
+/// The civil day of a camera's clock (`keys::TAKEN`: `20260701083000`), in
+/// no zone: the day it shows.
+fn clock_day(clock: u64) -> Option<i64> {
+    let (y, m, d) = (
+        clock / 10_000_000_000,
+        clock / 100_000_000 % 100,
+        clock / 1_000_000 % 100,
+    );
+    civil_day(
+        i64::try_from(y).ok()?,
+        u32::try_from(m).ok()?,
+        u32::try_from(d).ok()?,
+    )
+}
+
 /// Seconds since the epoch of the instant civil day `day` begins at.
 fn day_start_secs(day: i64, cal: &Calendar) -> u64 {
     cal.day_start(day)
@@ -99,6 +162,9 @@ pub struct Bar {
     pub end: u64,
     pub count: u64,
     pub bytes: u64,
+    /// Of them, those the pane has selected, and their bytes.
+    pub selected: u64,
+    pub selected_bytes: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -109,7 +175,10 @@ pub struct Histogram {
     /// outside) at once; a finer one shows a window of [`MAX_BARS`] bars.
     pub fits: Bucket,
     pub bars: Vec<Bar>,
-    /// Entries without a modification time (not hydrated yet).
+    /// The time the bars count.
+    pub date: Date,
+    /// Entries without that time (not hydrated yet, or a file that says
+    /// none: no picture's clock).
     pub unknown: u64,
     /// Dated entries before the first bar and after the last, outside the
     /// window shown: a window moved along reaches them.
@@ -144,12 +213,25 @@ impl Default for Window {
 struct Tally {
     count: u64,
     bytes: u64,
+    selected: u64,
+    selected_bytes: u64,
 }
 
 impl Tally {
     fn add(&mut self, other: Tally) {
         self.count += other.count;
         self.bytes = self.bytes.saturating_add(other.bytes);
+        self.selected += other.selected;
+        self.selected_bytes = self.selected_bytes.saturating_add(other.selected_bytes);
+    }
+
+    fn one(bytes: u64, selected: bool) -> Tally {
+        Tally {
+            count: 1,
+            bytes,
+            selected: u64::from(selected),
+            selected_bytes: if selected { bytes } else { 0 },
+        }
     }
 }
 
@@ -178,16 +260,25 @@ impl Days {
     }
 
     pub fn add(&mut self, t: SystemTime, bytes: u64) {
+        self.add_on(self.day_of(t), bytes, false);
+    }
+
+    /// Count a file of `bytes` on civil day `day`, `selected` or not.
+    fn add_on(&mut self, day: i64, bytes: u64, selected: bool) {
+        self.days
+            .entry(day)
+            .or_default()
+            .add(Tally::one(bytes, selected));
+    }
+
+    /// The civil day `t` falls on, a bogus time far ahead the last there is.
+    fn day_of(&self, t: SystemTime) -> i64 {
         let secs = t
             .duration_since(UNIX_EPOCH)
             .unwrap_or(Duration::ZERO)
             .as_secs()
             .min(LAST_SECOND);
-        let day = self.calendar.day_of(UNIX_EPOCH + Duration::from_secs(secs));
-        self.days
-            .entry(day)
-            .or_default()
-            .add(Tally { count: 1, bytes });
+        self.calendar.day_of(UNIX_EPOCH + Duration::from_secs(secs))
     }
 
     fn merge(&mut self, other: Days) {
@@ -204,6 +295,7 @@ impl Days {
         let mut h = Histogram {
             bucket: bucket.unwrap_or_default(),
             fits: Bucket::default(),
+            date: Date::default(),
             bars: Vec::new(),
             unknown,
             before: 0,
@@ -250,6 +342,8 @@ impl Days {
                 end: day_start_secs(end, cal),
                 count: tally.count,
                 bytes: tally.bytes,
+                selected: tally.selected,
+                selected_bytes: tally.selected_bytes,
             });
             s = end;
         }
@@ -431,6 +525,11 @@ pub struct HistogramArgs {
     /// Walk the whole subtree in the background instead of the listing.
     #[serde(default)]
     pub subtree: bool,
+    /// Which time the bars count: by default when files were modified.
+    /// A picture's clock (`taken`) is read from each file in the
+    /// background, as a subtree is walked.
+    #[serde(default)]
+    pub date: Date,
 }
 
 impl HistogramArgs {
@@ -448,6 +547,7 @@ impl HistogramArgs {
 pub struct SelectArgs {
     /// A bar's start, seconds since the epoch: the first instant of a day.
     pub start: u64,
+    /// The first instant after it (several bars: after the last).
     pub end: u64,
     #[serde(default)]
     pub pane: Option<PaneId>,
@@ -455,6 +555,9 @@ pub struct SelectArgs {
     /// the pane's last histogram counted.
     #[serde(default)]
     pub subtree: Option<bool>,
+    /// Which time; by default, the one the pane's last histogram counted.
+    #[serde(default)]
+    pub date: Option<Date>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
@@ -463,6 +566,8 @@ pub struct StatusArgs {
     pub pane: Option<PaneId>,
 }
 
+/// What a count in the background says: a walk of the subtree, or the
+/// clocks of the pictures a pane lists.
 #[derive(Clone, Debug, Default, Serialize, JsonSchema)]
 pub struct SubtreeStatus {
     pub root: Option<PathArg>,
@@ -470,20 +575,38 @@ pub struct SubtreeStatus {
     pub histogram: Option<Histogram>,
 }
 
-/// One subtree walk: of which folder, with or without hidden entries.
+/// What a count in the background counts.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Counted {
+    /// Every entry below a folder, with or without the hidden ones.
+    Subtree {
+        dir: PathBuf,
+        hidden: bool,
+        date: Date,
+    },
+    /// The files a pane lists, each read (a picture's clock), told apart
+    /// by what they are and which are selected (`Listed::signature`).
+    Listing { files: u64 },
+}
+
+/// One count in the background.
 struct Walk {
-    dir: PathBuf,
-    hidden: bool,
+    what: Counted,
     generation: u64,
-    /// Ends with the pane's visit to the folder and with the plugin.
+    /// Ends with the pane's visit and with the plugin.
     cancel: CancelToken,
-    days: Option<Arc<Days>>,
+    /// Its days, once counted, and the entries it could not date.
+    days: Option<(Arc<Days>, u64)>,
+    /// What the count it took over from had: the same files, another
+    /// selection or a file more, shown until it is counted.
+    before: Option<(Arc<Days>, u64)>,
 }
 
 #[derive(Default)]
 struct PaneState {
     /// What the last histogram counted, for `timeline.select`.
     subtree: bool,
+    date: Date,
     /// The bars it was asked for, which the walk's answer draws.
     bucket: Option<Bucket>,
     window: Window,
@@ -495,13 +618,22 @@ impl PaneState {
         let Some(walk) = &self.walk else {
             return SubtreeStatus::default();
         };
+        let root = match &walk.what {
+            Counted::Subtree { dir, .. } => Some(PathArg::from(dir.as_path())),
+            Counted::Listing { .. } => None,
+        };
         SubtreeStatus {
-            root: Some(PathArg::from(walk.dir.as_path())),
+            root,
             scanning: walk.days.is_none() && !walk.cancel.is_cancelled(),
             histogram: walk
                 .days
                 .as_ref()
-                .map(|d| d.histogram(self.bucket, self.window, 0)),
+                .or(walk.before.as_ref())
+                .map(|(d, unknown)| {
+                    let mut h = d.histogram(self.bucket, self.window, *unknown);
+                    h.date = self.date;
+                    h
+                }),
         }
     }
 }
@@ -531,17 +663,50 @@ fn pane_view(app: &App, pane: PaneId) -> anyhow::Result<(PathBuf, bool, CancelTo
     Ok((dir, p.sort.show_hidden, p.location_lifetime()))
 }
 
-/// Every entry below `root` (not `root` itself), folded by day, as a search
-/// walks: never into a network mount below it (ADR-077). `None` when
+/// A picture's clock as a civil day, read on demand (`keys::TAKEN`):
+/// remembered by the core's fields, read once per file until it changes.
+/// `known` is the file's identity when the caller has it (a listing's
+/// file, a walk's stat), so it is not stat-ed again.
+fn taken_day(
+    fields: &skwir_core::fields::Fields,
+    path: &Path,
+    known: Option<skwir_core::fields::Identity>,
+    cancel: &CancelToken,
+) -> Option<i64> {
+    fields
+        .get_all(&[keys::TAKEN], path, known, cancel)
+        .pop()
+        .flatten()
+        .as_ref()
+        .and_then(Value::as_u64)
+        .and_then(clock_day)
+}
+
+/// Nanoseconds since 1970 of a time, as a file's identity holds it.
+fn nanos(t: SystemTime) -> u64 {
+    t.duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
+}
+
+/// Every entry below `root` (not `root` itself), folded by the day of its
+/// `date`, as a search walks: never into a network mount below it
+/// (ADR-077). A picture's clock is read from each file. `None` when
 /// cancelled. Run in `root`'s lane: a remote's folder is walked there one
 /// after the other, never on rayon's threads, which no lane holds.
-fn walk_days(root: &Path, hidden: bool, cancel: &CancelToken) -> Option<Days> {
+fn walk_days(
+    root: &Path,
+    hidden: bool,
+    date: Date,
+    fields: &skwir_core::fields::Fields,
+    cancel: &CancelToken,
+) -> Option<(Days, u64)> {
     use rayon::prelude::*;
-    fn one(dir: &Path, hidden: bool, cancel: &CancelToken) -> (Days, Vec<PathBuf>) {
+    type Level = (Days, u64, Vec<PathBuf>);
+    let one = |dir: &Path| -> Level {
         let mut days = Days::default();
-        let mut subdirs = Vec::new();
+        let (mut unknown, mut subdirs) = (0, Vec::new());
         if cancel.is_cancelled() {
-            return (days, subdirs);
+            return (days, unknown, subdirs);
         }
         if let Ok(rd) = std::fs::read_dir(dir) {
             for e in rd.flatten() {
@@ -555,115 +720,179 @@ fn walk_days(root: &Path, hidden: bool, cancel: &CancelToken) -> Option<Days> {
                 // `DirEntry::metadata` does not follow links: a link is
                 // counted by its own date, and never walked into.
                 let Ok(m) = e.metadata() else { continue };
-                if let Ok(t) = m.modified() {
-                    days.add(t, if m.is_dir() { 0 } else { m.len() });
+                let bytes = if m.is_dir() { 0 } else { m.len() };
+                let day = if date == Date::Taken {
+                    // A file's own clock; a link's, through the link.
+                    let path = e.path();
+                    let known = m
+                        .is_file()
+                        .then(|| skwir_core::fs::stat::identity(&path, &m))
+                        .flatten()
+                        .map(|id| (id, m.len(), m.modified().map_or(0, nanos)));
+                    (!m.is_dir())
+                        .then(|| taken_day(fields, &path, known, cancel))
+                        .flatten()
+                } else {
+                    date.of_stat(&m).map(|t| days.day_of(t))
+                };
+                match day {
+                    Some(day) => days.add_on(day, bytes, false),
+                    None => unknown += 1,
                 }
                 if m.is_dir() {
                     subdirs.push(e.path());
                 }
             }
         }
-        (days, subdirs)
-    }
-    let fold = |(mut a, mut a_dirs): (Days, Vec<PathBuf>), (b, b_dirs): (Days, Vec<PathBuf>)| {
+        (days, unknown, subdirs)
+    };
+    let fold = |(mut a, au, mut a_dirs): Level, (b, bu, b_dirs): Level| {
         a.merge(b);
         a_dirs.extend(b_dirs);
-        (a, a_dirs)
+        (a, au + bu, a_dirs)
     };
     let remote = reach::of(root).is_some();
-    let mut days = Days::default();
+    let (mut days, mut unknown) = (Days::default(), 0);
     let mut level = vec![root.to_path_buf()];
     while !level.is_empty() {
         if cancel.is_cancelled() {
             return None;
         }
-        let (d, next) = if remote {
+        let (d, u, next) = if remote {
             level
                 .iter()
-                .map(|dir| one(dir, hidden, cancel))
-                .fold((Days::default(), Vec::new()), fold)
+                .map(|dir| one(dir))
+                .fold((Days::default(), 0, Vec::new()), fold)
         } else {
             level
                 .par_iter()
-                .map(|dir| one(dir, hidden, cancel))
-                .reduce(|| (Days::default(), Vec::new()), fold)
+                .map(|dir| one(dir))
+                .reduce(|| (Days::default(), 0, Vec::new()), fold)
         };
         days.merge(d);
+        unknown += u;
         level = next;
     }
-    (!cancel.is_cancelled()).then_some(days)
+    (!cancel.is_cancelled()).then_some((days, unknown))
+}
+
+/// A file a pane lists, as a count reads it.
+struct Listed {
+    path: Option<PathBuf>,
+    /// Its identity, for a file the listing stat-ed (no link).
+    known: Option<skwir_core::fields::Identity>,
+    bytes: u64,
+    selected: bool,
+}
+
+impl Listed {
+    /// What tells one list of files from another: the files, where they
+    /// are, and which are selected.
+    fn signature(files: &[Listed]) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        for f in files {
+            (&f.path, f.known, f.selected).hash(&mut h);
+        }
+        h.finish()
+    }
 }
 
 impl TimelinePlugin {
-    fn listing_histogram(
-        &self,
+    /// The pane's shown entries (`Pane::order`: hidden files and
+    /// companions as it shows them, filtered by name, narrowed), read a
+    /// slice at a time, each under a hold of the lock of its own: the
+    /// window's thread applies what the core sends meanwhile. `each` is
+    /// told an entry, whether it is selected, and where it is.
+    fn each_shown(
         app: &App,
         pane: PaneId,
-        bucket: Option<Bucket>,
-        window: Window,
-    ) -> anyhow::Result<Histogram> {
-        let mut unknown = 0;
-        let mut days = Days::default();
+        with_path: bool,
+        mut each: impl FnMut(&skwir_core::Entry, bool, Option<PathBuf>),
+    ) -> anyhow::Result<()> {
         let withheld = app.withheld(pane);
-        // What the pane shows (`Pane::order`): hidden files and companions
-        // as it shows them, filtered by name, narrowed.
         let order = app
             .workspace
             .read()
             .pane(pane)
             .ok_or_else(|| anyhow::anyhow!("no such pane"))?
             .order();
-        // Read a slice at a time, each under a hold of the lock of its
-        // own: the window's thread applies what the core sends meanwhile.
-        // The days are told after the slice lets the lock go.
-        let mut dated: Vec<(SystemTime, u64)> = Vec::new();
         for slice in order.chunks(SLICE) {
-            dated.clear();
-            {
-                let ws = app.workspace.read();
-                let p = ws
-                    .pane(pane)
-                    .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-                for e in slice
-                    .iter()
-                    .filter(|id| !withheld.contains(id))
-                    .filter_map(|id| p.entry(*id))
-                {
-                    match e.metadata.value(keys::MODIFIED).and_then(Value::as_time) {
-                        Some(t) => dated.push((
-                            t,
-                            e.metadata
-                                .value(keys::SIZE)
-                                .and_then(Value::as_u64)
-                                .unwrap_or(0),
-                        )),
-                        None => unknown += 1,
-                    }
+            let ws = app.workspace.read();
+            let p = ws
+                .pane(pane)
+                .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+            for id in slice.iter().filter(|id| !withheld.contains(id)) {
+                if let Some(e) = p.entry(*id) {
+                    // `path_of` answers from memory, under the lock by
+                    // contract (`OpenLocation`).
+                    let path = with_path.then(|| p.path_of(*id)).flatten();
+                    each(e, p.selection.contains(*id), path);
                 }
             }
-            for &(t, bytes) in &dated {
-                days.add(t, bytes);
+        }
+        Ok(())
+    }
+
+    fn listing_histogram(
+        &self,
+        app: &App,
+        pane: PaneId,
+        date: Date,
+        bucket: Option<Bucket>,
+        window: Window,
+    ) -> anyhow::Result<Histogram> {
+        let key = date.listed().unwrap_or(keys::MODIFIED);
+        let mut unknown = 0;
+        let mut dated: Vec<(SystemTime, u64, bool)> = Vec::new();
+        Self::each_shown(app, pane, false, |e, selected, _| {
+            // A folder weighs nothing here, as in a walk: its files do.
+            let bytes = if e.is_dir() {
+                0
+            } else {
+                e.metadata
+                    .value(keys::SIZE)
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            match e.metadata.value(key).and_then(Value::as_time) {
+                Some(t) => dated.push((t, bytes, selected)),
+                None => unknown += 1,
             }
+        })?;
+        // The days are told after the lock is let go.
+        let mut days = Days::default();
+        for &(t, bytes, selected) in &dated {
+            days.add_on(days.day_of(t), bytes, selected);
         }
         let mut state = self.state.lock();
         let ps = state.panes.entry(pane).or_default();
         ps.subtree = false;
+        ps.date = date;
         ps.bucket = bucket;
         ps.window = window;
-        Ok(days.histogram(bucket, window, unknown))
+        let mut h = days.histogram(bucket, window, unknown);
+        h.date = date;
+        Ok(h)
     }
 
-    /// Start walking the pane's folder unless a walk of it (running or
-    /// done) is already there for this visit: the UI asks again whenever
-    /// the listing changes, and that must not restart it.
-    fn subtree(
+    /// Count `what` in the background for the pane, unless a count of it
+    /// (running or done) is already there for this visit: the UI asks again
+    /// whenever the listing changes, and that must not restart a walk.
+    /// `work` counts, in `lane`, with the walk's token.
+    // What is counted, how it is drawn, and where and how it is read: one
+    // call for both kinds of count.
+    #[allow(clippy::too_many_arguments)]
+    fn in_background(
         &self,
         app: &App,
         pane: PaneId,
-        bucket: Option<Bucket>,
-        window: Window,
+        what: Counted,
+        (date, bucket, window): (Date, Option<Bucket>, Window),
+        visit: &CancelToken,
+        lane: skwir_core::scheduler::Lane,
+        work: impl FnOnce(&CancelToken) -> Option<(Days, u64)> + Send + 'static,
     ) -> anyhow::Result<SubtreeStatus> {
-        let (dir, hidden, visit) = pane_view(app, pane)?;
         let mut state = self.state.lock();
         let Some(lifetime) = state.lifetime.clone() else {
             anyhow::bail!("the timeline is disabled");
@@ -682,46 +911,55 @@ impl TimelinePlugin {
         state.generation += 1;
         let generation = state.generation;
         let ps = state.panes.entry(pane).or_default();
-        ps.subtree = true;
+        ps.subtree = matches!(what, Counted::Subtree { .. });
+        ps.date = date;
         ps.bucket = bucket;
         ps.window = window;
         let current = ps
             .walk
             .as_ref()
-            .is_some_and(|w| w.dir == dir && w.hidden == hidden && !w.cancel.is_cancelled());
+            .is_some_and(|w| w.what == what && !w.cancel.is_cancelled());
         if !current {
-            if let Some(old) = ps.walk.take() {
+            // The same visit's listing, counted again: what it had stays
+            // shown meanwhile. Another folder's never is.
+            let before = ps.walk.take().and_then(|old| {
+                let same = matches!(
+                    (&old.what, &what),
+                    (Counted::Listing { .. }, Counted::Listing { .. })
+                ) && !old.cancel.is_cancelled();
                 old.cancel.cancel();
-            }
-            let cancel = lifetime.linked(&visit);
+                if same { old.days.or(old.before) } else { None }
+            });
+            let cancel = lifetime.linked(visit);
             ps.walk = Some(Walk {
-                dir: dir.clone(),
-                hidden,
+                what,
                 generation,
                 cancel: cancel.clone(),
                 days: None,
+                before,
             });
             let shared = Arc::clone(&self.state);
             let wake = app.waker_handle();
             let task_cancel = cancel.clone();
             app.scheduler.spawn_in(
-                reach::lane(&dir),
+                lane,
                 Priority::Background,
                 "timeline.walk",
                 cancel,
                 move || {
-                    let Some(days) = walk_days(&dir, hidden, &task_cancel) else {
+                    let Some((days, unknown)) = work(&task_cancel) else {
                         return;
                     };
                     let mut s = shared.lock();
-                    // Only the walk this pane still waits for may answer.
+                    // Only the count this pane still waits for may answer.
                     if let Some(walk) = s
                         .panes
                         .get_mut(&pane)
                         .and_then(|ps| ps.walk.as_mut())
                         .filter(|w| w.generation == generation)
                     {
-                        walk.days = Some(Arc::new(days));
+                        walk.days = Some((Arc::new(days), unknown));
+                        walk.before = None;
                         drop(s);
                         wake();
                     }
@@ -729,6 +967,86 @@ impl TimelinePlugin {
             );
         }
         Ok(ps.status())
+    }
+
+    /// Walk the pane's folder.
+    fn subtree(
+        &self,
+        app: &App,
+        pane: PaneId,
+        asked: (Date, Option<Bucket>, Window),
+    ) -> anyhow::Result<SubtreeStatus> {
+        let (dir, hidden, visit) = pane_view(app, pane)?;
+        let date = asked.0;
+        let what = Counted::Subtree {
+            dir: dir.clone(),
+            hidden,
+            date,
+        };
+        let fields = Arc::clone(&app.fields);
+        let lane = reach::lane(&dir);
+        self.in_background(app, pane, what, asked, &visit, lane, move |cancel| {
+            walk_days(&dir, hidden, date, &fields, cancel)
+        })
+    }
+
+    /// Read the clock of each picture the pane lists.
+    fn listing_taken(
+        &self,
+        app: &App,
+        pane: PaneId,
+        asked: (Date, Option<Bucket>, Window),
+    ) -> anyhow::Result<SubtreeStatus> {
+        let mut files = Vec::new();
+        Self::each_shown(app, pane, true, |e, selected, path| {
+            let size = e.metadata.value(keys::SIZE).and_then(Value::as_u64);
+            let modified = e
+                .metadata
+                .value(keys::MODIFIED)
+                .and_then(Value::as_time)
+                .map(nanos);
+            files.push(Listed {
+                path: path.filter(|_| !e.is_dir()),
+                known: size
+                    .zip(modified)
+                    .filter(|_| e.kind == skwir_core::EntryKind::File)
+                    .map(|(len, modified)| (e.file(), len, modified)),
+                bytes: if e.is_dir() { 0 } else { size.unwrap_or(0) },
+                selected,
+            });
+        })?;
+        let visit = app
+            .workspace
+            .read()
+            .pane(pane)
+            .ok_or_else(|| anyhow::anyhow!("no such pane"))?
+            .location_lifetime();
+        let what = Counted::Listing {
+            files: Listed::signature(&files),
+        };
+        // A remote's files are read in its lane, one after the other.
+        let lane = files
+            .iter()
+            .find_map(|f| f.path.as_deref())
+            .map_or_else(|| reach::lane(Path::new("/")), reach::lane);
+        let fields = Arc::clone(&app.fields);
+        self.in_background(app, pane, what, asked, &visit, lane, move |cancel| {
+            let (mut days, mut unknown) = (Days::default(), 0);
+            for f in &files {
+                if cancel.is_cancelled() {
+                    return None;
+                }
+                match f
+                    .path
+                    .as_deref()
+                    .and_then(|path| taken_day(&fields, path, f.known, cancel))
+                {
+                    Some(day) => days.add_on(day, f.bytes, f.selected),
+                    None => unknown += 1,
+                }
+            }
+            Some((days, unknown))
+        })
     }
 }
 
@@ -766,14 +1084,17 @@ impl Plugin for TimelinePlugin {
                 ID,
                 "timeline.histogram",
                 "Timeline",
-                "Histogram of modification times for the listing, or the subtree in the background",
+                "Histogram of the listing's modification times (or creation, access, or pictures' clocks), or of the subtree's in the background",
                 move |a, app| {
-                    let (bucket, window) = (a.bucket, a.window());
+                    let asked = (a.date, a.bucket, a.window());
                     let pane = app.pane_or_active(a.pane);
                     let value = if a.subtree {
-                        serde_json::to_value(t.subtree(app, pane, bucket, window)?)?
+                        serde_json::to_value(t.subtree(app, pane, asked)?)?
+                    } else if a.date == Date::Taken {
+                        serde_json::to_value(t.listing_taken(app, pane, asked)?)?
                     } else {
-                        serde_json::to_value(t.listing_histogram(app, pane, bucket, window)?)?
+                        let (date, bucket, window) = asked;
+                        serde_json::to_value(t.listing_histogram(app, pane, date, bucket, window)?)?
                     };
                     Ok(Outcome::Value(value))
                 },
@@ -805,9 +1126,16 @@ impl Plugin for TimelinePlugin {
                 ID,
                 "timeline.select",
                 "Show files from a period",
-                "Navigate to a query for files modified in [start, end), or narrow the pane's search to them",
+                "Navigate to a query for files modified (or created, accessed, taken) in [start, end), or narrow the pane's search to them",
                 move |a, app| {
                     let pane = app.pane_or_active(a.pane);
+                    let (last_subtree, last_date) = t
+                        .state
+                        .lock()
+                        .panes
+                        .get(&pane)
+                        .map_or((false, Date::default()), |ps| (ps.subtree, ps.date));
+                    let date = a.date.unwrap_or(last_date);
                     // A bar starts at the first instant of a day of the user's
                     // calendar, the one the query's dates are read on.
                     let cal = Calendar::system();
@@ -819,19 +1147,21 @@ impl Plugin for TimelinePlugin {
                         return app.dispatch(&Invocation::try_with_args(
                             "query.refine",
                             &serde_json::json!({
-                                "facet": "modified",
+                                "facet": date.word(),
                                 "value": period_words(day(a.start), day(a.end)),
                                 "pane": pane,
                             }),
                         )?);
                     };
-                    let subtree = a.subtree.unwrap_or_else(|| {
-                        t.state.lock().panes.get(&pane).is_some_and(|ps| ps.subtree)
-                    });
+                    let subtree = a.subtree.unwrap_or(last_subtree);
                     // One term, which a bar of the search then replaces
                     // (`query.refine`): never two that a refine would
                     // leave one of.
-                    let mut expr = format!("modified:{}", period_words(day(a.start), day(a.end)));
+                    let mut expr = format!(
+                        "{}:{}",
+                        date.word(),
+                        period_words(day(a.start), day(a.end))
+                    );
                     if !subtree {
                         expr.push_str(" depth:1");
                     }
@@ -1096,14 +1426,147 @@ mod tests {
         std::fs::write(tmp.path().join(".git/x"), b"333").unwrap();
         let count = |d: &Days| d.days.values().map(|t| t.count).sum::<u64>();
         let bytes = |d: &Days| d.days.values().map(|t| t.bytes).sum::<u64>();
+        let fields = skwir_core::fields::Fields::default();
+        let walk = |hidden, cancel: &CancelToken| {
+            walk_days(tmp.path(), hidden, Date::Modified, &fields, cancel)
+        };
         // a, a/b, a/b/f1, f2: folders count, hidden entries do not.
-        let d = walk_days(tmp.path(), false, &CancelToken::new()).unwrap();
-        assert_eq!((count(&d), bytes(&d)), (4, 3));
-        let d = walk_days(tmp.path(), true, &CancelToken::new()).unwrap();
+        let (d, unknown) = walk(false, &CancelToken::new()).unwrap();
+        assert_eq!((count(&d), bytes(&d), unknown), (4, 3, 0));
+        let (d, _) = walk(true, &CancelToken::new()).unwrap();
         assert_eq!((count(&d), bytes(&d)), (6, 6));
         let cancelled = CancelToken::new();
         cancelled.cancel();
-        assert!(walk_days(tmp.path(), false, &cancelled).is_none());
+        assert!(walk(false, &cancelled).is_none());
+    }
+
+    /// Answers a picture's clock from the digits the file holds.
+    struct Clocks;
+
+    impl skwir_core::fields::FieldProvider for Clocks {
+        fn id(&self) -> &'static str {
+            "test-clocks"
+        }
+        fn keys(&self) -> &'static [&'static str] {
+            &[keys::TAKEN]
+        }
+        fn accepts(&self, _: &str, name: &std::ffi::OsStr) -> bool {
+            name.to_string_lossy().ends_with(".jpg")
+        }
+        fn read(&self, _: &str, path: &Path, _: &CancelToken) -> anyhow::Result<Option<Value>> {
+            Ok(std::fs::read_to_string(path)?
+                .trim()
+                .parse()
+                .ok()
+                .map(Value::UInt))
+        }
+    }
+
+    #[test]
+    fn a_walk_counts_pictures_by_the_day_their_camera_says() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("trip")).unwrap();
+        std::fs::write(tmp.path().join("trip/one.jpg"), b"20230415083000").unwrap();
+        std::fs::write(tmp.path().join("trip/two.jpg"), b"20230415233000").unwrap();
+        std::fs::write(tmp.path().join("no clock.jpg"), b"").unwrap();
+        std::fs::write(tmp.path().join("notes.txt"), b"20990101000000").unwrap();
+        let fields = skwir_core::fields::Fields::default();
+        fields.register("test", Arc::new(Clocks));
+        let (d, unknown) =
+            walk_days(tmp.path(), false, Date::Taken, &fields, &CancelToken::new()).unwrap();
+        // The day its digits say, in no zone; the folder, the text and the
+        // picture without a clock have no such date.
+        assert_eq!(
+            d.days.keys().copied().collect::<Vec<_>>(),
+            [days_from_civil(2023, 4, 15)]
+        );
+        assert_eq!((d.days.values().next().unwrap().count, unknown), (2, 3));
+        assert_eq!(clock_day(20_230_231_000_000), None, "no such day");
+    }
+
+    #[test]
+    fn bars_count_the_selection_and_pictures_clocks_of_a_listing() {
+        use skwir_core::app::AppConfig;
+        use skwir_core::location::Location;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("r");
+        std::fs::create_dir_all(&root).unwrap();
+        for (name, clock) in [("a.jpg", "20230415083000"), ("b.jpg", "20230416083000")] {
+            std::fs::write(root.join(name), clock).unwrap();
+        }
+        std::fs::write(root.join("c.txt"), b"text").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins.add(Arc::new(TimelinePlugin::default()), &app);
+        app.fields.register("test", Arc::new(Clocks));
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        let ids = app.workspace.read().pane(pane).unwrap().order();
+        app.dispatch(&Invocation::with_args(
+            "hydrate",
+            &serde_json::json!({ "ids": ids, "pane": pane }),
+        ))
+        .unwrap();
+        let ask = |name: &str, args: serde_json::Value| -> serde_json::Value {
+            match app.dispatch(&Invocation::with_args(name, &args)).unwrap() {
+                Outcome::Value(v) => v,
+                other => panic!("{name}: {other:?}"),
+            }
+        };
+        let a = {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            p.listing.iter().find(|e| e.name == "a.jpg").unwrap().id
+        };
+        app.workspace
+            .write()
+            .pane_mut(pane)
+            .unwrap()
+            .selection
+            .set([a]);
+        // Modified: all three today, one of them selected.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let h = loop {
+            let h = ask("timeline.histogram", serde_json::json!({}));
+            if h["unknown"] == 0 {
+                break h;
+            }
+            assert!(std::time::Instant::now() < deadline, "never hydrated");
+            app.pump();
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let bars = h["bars"].as_array().unwrap();
+        assert_eq!(
+            (bars.len(), &bars[0]["count"], &bars[0]["selected"]),
+            (1, &3.into(), &1.into())
+        );
+        assert_eq!(bars[0]["selected_bytes"], 14);
+        // Taken: two days, the text without a clock, read in the background.
+        let first = ask("timeline.histogram", serde_json::json!({ "date": "taken" }));
+        assert!(first.get("scanning").is_some(), "{first}");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let done = loop {
+            let s = ask("timeline.status", serde_json::json!({}));
+            if !s["histogram"].is_null() && s["scanning"] == false {
+                break s;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the clocks were never read"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let h = &done["histogram"];
+        assert_eq!(
+            (h["date"].as_str(), h["unknown"].as_u64()),
+            (Some("taken"), Some(1))
+        );
+        let bars = h["bars"].as_array().unwrap();
+        assert_eq!(bars.len(), 2);
+        assert_eq!(
+            (&bars[0]["count"], &bars[0]["selected"]),
+            (&1.into(), &1.into())
+        );
     }
 
     #[test]

@@ -168,3 +168,97 @@ fn a_bar_of_a_search_refines_it() {
         BTreeSet::from(["first.jpg".into(), "second.jpg".into()])
     );
 }
+
+/// Answers a picture's clock from the digits the file holds.
+struct Clocks;
+
+impl skwir_core::fields::FieldProvider for Clocks {
+    fn id(&self) -> &'static str {
+        "test-clocks"
+    }
+    fn keys(&self) -> &'static [&'static str] {
+        &[skwir_core::entry::keys::TAKEN]
+    }
+    fn accepts(&self, _: &str, name: &std::ffi::OsStr) -> bool {
+        name.to_string_lossy().ends_with(".jpg")
+    }
+    fn read(
+        &self,
+        _: &str,
+        path: &std::path::Path,
+        _: &skwir_core::CancelToken,
+    ) -> anyhow::Result<Option<skwir_core::entry::Value>> {
+        Ok(std::fs::read_to_string(path)?
+            .trim()
+            .parse()
+            .ok()
+            .map(skwir_core::entry::Value::UInt))
+    }
+}
+
+/// A bar of when pictures were taken lists the pictures its camera dated
+/// then, whatever their files' times.
+#[test]
+fn a_bar_of_pictures_clocks_lists_what_was_taken_then() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    app.plugins.add(
+        Arc::new(skwir_plugin_timeline::TimelinePlugin::default()),
+        &app,
+    );
+    app.fields.register("test", Arc::new(Clocks));
+    let pane = app.workspace.read().active_id();
+    let root = tmp.path().join("trip 'photos'");
+    std::fs::create_dir_all(&root).unwrap();
+    for (name, clock) in [
+        ("april.jpg", "20230415083000"),
+        ("late april.jpg", "20230430235959"),
+        ("may.jpg", "20230501000000"),
+        ("no clock.jpg", ""),
+    ] {
+        std::fs::write(root.join(name), clock).unwrap();
+    }
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    let cal = skwir_platform::calendar::Calendar::system();
+    let secs = |y, m, d| {
+        cal.day_start(skwir_platform::calendar::days_from_civil(y, m, d))
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    app.dispatch(&Invocation::with_args(
+        "timeline.select",
+        &serde_json::json!({
+            "start": secs(2023, 4, 1),
+            "end": secs(2023, 5, 1),
+            "date": "taken",
+            "subtree": false,
+        }),
+    ))
+    .unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let names = loop {
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        let names: BTreeSet<String> = {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            p.listing
+                .iter()
+                .map(|e| e.name_str().into_owned())
+                .collect()
+        };
+        if names.len() >= 2 || std::time::Instant::now() > deadline {
+            break names;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(
+        names,
+        BTreeSet::from(["april.jpg".into(), "late april.jpg".into()])
+    );
+    let location = app.pane_location(pane).unwrap();
+    assert!(location.rest.contains("taken:2023-04"), "{}", location.rest);
+}

@@ -112,10 +112,24 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   room, each bar's count above it when there is room for all. Pick day,
   week, month or year for this place; when there are too many bars for
   the strip, a part of them shows, and the wheel over the bars or the
-  arrows move along. Click a bar to list its files; in that list, a bar
-  narrows it further (a year, then a day), and Back goes back up. A few
-  files dated far from all the others (a camera's clock set wrong) are
-  counted aside rather than stretching the bars.
+  arrows move along. Click a bar to list its files, or drag across bars
+  to list them all; in that list, a bar narrows it further (a year, then
+  a day), and Back goes back up. A few files dated far from all the
+  others (a camera's clock set wrong) are counted aside rather than
+  stretching the bars.
+  - **files** or **size**: bars as tall as their number of files, or as
+    what they weigh, to see when the space went.
+  - The time menu counts files by when they were modified, created, last
+    opened, or **taken**: a picture's or a video's own clock, read from
+    each file (once; later visits are quick), so photos copied last week
+    still fall in the summer they were taken.
+  - The files selected show at the foot of their bars, and today's bar
+    is underlined.
+  - With the keyboard: `F6` reaches the strip; `Left` and `Right` go from
+    bar to bar, `Shift` extends, `Home` and `End` go to the ends,
+    `PageUp` and `PageDown` move a window of bars, `Enter` lists the bars
+    chosen, `Escape` goes back to the files. A screen reader hears each
+    bar's period and what it holds.
 
 ## Selecting and acting
 
@@ -221,7 +235,8 @@ the text can be typed as is:
 | `kind:image,video`, `mime:application/pdf` | by kind or type |
 | `type:dir`, `type:file` | folders or files only |
 | `size>10M`, `size<1.5G` | by size |
-| `modified>=2026-01-01`, `modified<7d`, `modified:this-week` | by date |
+| `modified>=2026-01-01`, `modified<7d`, `modified:this-week` | by date (`created:`, `accessed:` too) |
+| `taken:2023-04`, `taken:2023-04-15..2023-04-17`, `taken>=last-year` | pictures and videos by when they were taken, as the camera's clock says |
 | `tag:Places/France`, `-tag:draft` | with a tag, or without |
 | `rating>=3`, `comment:holiday` | by rating or comment |
 | `content:"it's here"`, `content:/re+gex/i` | files containing text or a regex |

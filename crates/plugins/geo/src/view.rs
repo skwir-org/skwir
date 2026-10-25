@@ -650,12 +650,7 @@ impl Scanner {
                 .map(|(len, modified)| (candidate.id.file, len, modified));
             let mut said = app
                 .fields
-                .get_all(
-                    &[keys::POSITION, crate::position::CLOCK],
-                    path,
-                    known,
-                    cancel,
-                )
+                .get_all(&[keys::POSITION, keys::TAKEN], path, known, cancel)
                 .into_iter();
             let (at, clock) = (said.next().flatten(), said.next().flatten());
             if cancel.is_cancelled() {

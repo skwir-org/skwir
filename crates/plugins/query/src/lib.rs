@@ -122,8 +122,9 @@ struct PaneOnly {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct NarrowArgs {
-    /// A facet as `query.refine` takes it (`kind`, `modified`, `also_tag`,
-    /// `not_tag`, `drop_tag`…); omitted, the folder shows everything again.
+    /// A facet as `query.refine` takes it (`kind`, `modified`, `created`,
+    /// `accessed`, `also_tag`, `not_tag`, `drop_tag`…); omitted, the
+    /// folder shows everything again.
     #[serde(default)]
     facet: Option<String>,
     /// What to set it to, as `query.refine` takes it; omitted, the facet
@@ -169,8 +170,8 @@ struct LocationArgs {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct RefineArgs {
-    /// A chip's id: `words`, `kind`, `modified`, `size`, `tag`, `content`,
-    /// `where` or `advanced`.
+    /// A chip's id: `words`, `kind`, `modified`, `created`, `accessed`,
+    /// `taken`, `size`, `tag`, `content`, `where` or `advanced`.
     facet: String,
     /// What to set it to (a kind toggles, `where` takes `subtree`, `here`
     /// or `hidden`, `advanced` the index of the part to remove); omitted,
@@ -528,7 +529,7 @@ impl Plugin for QueryPlugin {
             ID,
             "query.search",
             "Search",
-            "Search, shown in the pane (then `entries` lists what it found): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `depth:2` bounds it. `root` (or `in:`) is where it looks",
+            "Search, shown in the pane (then `entries` lists what it found): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`; `created`, `accessed`, and `taken` for a picture's camera clock), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `depth:2` bounds it. `root` (or `in:`) is where it looks",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 lang::parse(&a.expr).map_err(|e| anyhow::anyhow!("query: {e}"))?;
@@ -656,7 +657,7 @@ impl Plugin for QueryPlugin {
             ID,
             "query.describe",
             "Describe search",
-            "The search's chips for the designer: each facet (words, kind, modified, size, tag, content, where) with its value and the invocation every choice runs, then the parts no facet holds",
+            "The search's chips for the designer: each facet (words, kind, modified, taken, size, tag, content, where; created and accessed once set) with its value and the invocation every choice runs, then the parts no facet holds",
             |a, app| {
                 let expr = match a.expr {
                     Some(expr) => expr,
@@ -1489,6 +1490,10 @@ mod tests {
             narrow("content", "needle").is_err(),
             "what a file contains is a search's"
         );
+        assert!(
+            narrow("taken", "2001").is_err(),
+            "so is when a picture was taken"
+        );
         app.dispatch(&Invocation::new("query.narrow")).unwrap();
         assert_eq!(shown(), set(&["cat.png", "dog.JPG", "list.txt"]));
     }
@@ -1551,6 +1556,82 @@ mod tests {
         app.dispatch(&clear).unwrap();
         assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
         assert_eq!(names(), set(&["cat.png", "dog.JPG"]));
+    }
+
+    /// Answers `taken` from a text file holding the clock's digits.
+    struct Clocked;
+    impl skwir_core::fields::FieldProvider for Clocked {
+        fn id(&self) -> &'static str {
+            "clocked"
+        }
+        fn keys(&self) -> &'static [&'static str] {
+            &[skwir_core::entry::keys::TAKEN]
+        }
+        fn accepts(&self, _: &str, _: &std::ffi::OsStr) -> bool {
+            true
+        }
+        fn read(
+            &self,
+            _: &str,
+            path: &Path,
+            _: &skwir_core::CancelToken,
+        ) -> anyhow::Result<Option<skwir_core::entry::Value>> {
+            let text = std::fs::read_to_string(path)?;
+            Ok(text.trim().parse().ok().map(skwir_core::entry::Value::UInt))
+        }
+    }
+
+    /// The timeline's path: a month, then a day of it, refine a search
+    /// started on a folder by when its pictures were taken, read from
+    /// them as the search walks.
+    #[test]
+    fn a_search_refined_by_when_pictures_were_taken() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("it's taken");
+        std::fs::create_dir(&root).unwrap();
+        for (name, clock) in [
+            ("a morning's.jpg", "20230415083000"),
+            ("the day after.jpg", "20230416090000"),
+            ("may day.mp4", "20230501000000"),
+            ("no clock.txt", ""),
+        ] {
+            std::fs::write(root.join(name), clock).unwrap();
+        }
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        app.fields.register("test", Arc::new(Clocked));
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        let refine = |value: &str| {
+            app.dispatch(&Invocation::with_args(
+                "query.refine",
+                &serde_json::json!({ "facet": "taken", "value": value }),
+            ))
+            .unwrap();
+            assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        };
+        let names = || -> BTreeSet<String> {
+            let ws = app.workspace.read();
+            ws.pane(pane)
+                .unwrap()
+                .listing
+                .iter()
+                .map(|e| e.name_str().into_owned())
+                .collect()
+        };
+        refine("2023-04");
+        assert_eq!(names(), set(&["a morning's.jpg", "the day after.jpg"]));
+        refine("2023-04-15");
+        assert_eq!(names(), set(&["a morning's.jpg"]));
+        let search = lang::parse(&app.pane_location(pane).unwrap().rest).unwrap();
+        assert_eq!(search.root, root);
+        assert_eq!(
+            search.expr.unwrap().to_string(),
+            "taken:2023-04-15",
+            "the day took the month's place"
+        );
+        refine("2023-05");
+        assert_eq!(names(), set(&["may day.mp4"]));
     }
 
     /// A search's folder is named as the sidebar names it: its title and

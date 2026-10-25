@@ -16,6 +16,7 @@ settings or Trash: everything lives under ~/.cache/skwir-tests/a11y-*.
 """
 
 import argparse
+import datetime
 import json
 import os
 import pathlib
@@ -555,6 +556,25 @@ def run(w):
           and w.focused().get_parent().get_name() == "Sidebar")
     w.keys("Down")
     check("Down: its first place", hears(w, "tree item 'Home' focused"))
+
+    # The fixture's files were all made today: one bar, a day, in words.
+    months = ["January", "February", "March", "April", "May", "June", "July",
+              "August", "September", "October", "November", "December"]
+    today = datetime.date.today()
+    day = f"{today.day} {months[today.month - 1]} {today.year}"
+    # Out of the empty folder, back to the fixture's files.
+    w.cmd("back")
+    w.keys("ctrl+shift+l", "F6", "F6")
+    check("Ctrl+Shift+L, F6 twice: the timeline, a list of its bars, once counted",
+          hears(w, "list box 'Timeline' focused")
+          and (until(lambda: options_of(w, "Timeline") == [day])
+               or print("  options:", options_of(w, "Timeline"))))
+    w.keys("Right")
+    check("a key: the bar it is on, said as focused",
+          hears(w, f"list item {day!r} 1 of 1 selected focused")
+          and w.focused().get_parent().get_name() == "Timeline")
+    check("and what it holds as its description",
+          "files" in (w.focused().get_description() or ""))
 
 
 def main():

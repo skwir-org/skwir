@@ -606,8 +606,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 
 - The last window's shape (view, split and share, sidebar width and
   sections, preview place and size, archive-member placement, Properties'
-  folds, the types shown as their source, timeline, zoom, Usage's levels
-  and mode, column widths) is application data, not preference:
+  folds, the types shown as their source, timeline and what it measures
+  and counts, zoom, Usage's levels and mode, column widths) is
+  application data, not preference:
   `session.rs` keeps it under one key, written only when it changes. A
   new pane opens in the current pane's view.
 - **Edges** dragged to size an area are one element (`elements/edge.rs`):
@@ -644,11 +645,29 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   are chosen in prepaint from each bar's rank, the finest level whose
   labels all have room. Bars are dated on the plugin's calendar
   (`Calendar::system`), so a label is the bar's period.
-- A bar's click searches its period in one `modified:` term
-  (`timeline.select`); in a search, it refines that term
+- A bar's click, or a drag across bars, searches their period in one
+  term of the time counted (`modified:`, `created:`, `accessed:`,
+  `taken:`; `timeline.select`); in a search, it refines that term
   (`query.refine`), so a bar of a bar's files is a click away and Back
   returns. Only a folder's subtree is walked: a search lists what it
   lists.
+- What the strip keeps of a visit (`timeline::Visit`, ending with
+  `location_lifetime`): the width picked, its window, the keys' bar and
+  where a range began, bars kept by their first instant so a count again
+  or a moved window finds them. What it measures (files, size) and the
+  time it counts are the window's, remembered (`session.rs`).
+- The selection is the plugin's to count (`Bar::selected`): the pane's
+  selection revision is a recount's, throttled with the dates
+  (`RECOUNT`). A picture's clock (`keys::TAKEN`) is read in the plugin's
+  background count, as a subtree is walked (`Counted::Listing`), through
+  the core's fields; a count again of the same visit shows the last one
+  meanwhile.
+- The bars take the keyboard (`keymap::TIMELINE`, in F6's round between
+  the files and the preview); its keys are steps that repeat when held.
+  To a screen reader the chart is a list box whose bars are elements of
+  no size built under `shell.a11y`, the keys' one claiming the active
+  descendant: gpui moves the focus only to a real element's claim, never
+  to a synthetic child's.
 
 ## The terminal panel (ADR-019)
 

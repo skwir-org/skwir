@@ -45,8 +45,9 @@ like `AGENTS.md`.
   web's combobox: a reader hears the option the keys reach, and echoes
   what is typed.
 - **Every part takes the keyboard** without the pointer: F6 goes round
-  the sidebar, the files and the preview (`ui.focus_next_part`,
-  shell.md), F4 in and out of the terminal, Tab along the toolbars.
+  the sidebar, the files, the timeline and the preview
+  (`ui.focus_next_part`, shell.md), F4 in and out of the terminal, Tab
+  along the toolbars.
 - The window is named by the active pane's location ("‹location› —
   skwir", `Shell::sync_title`).
 
@@ -145,6 +146,7 @@ like `AGENTS.md`.
 | the media player | group; its seek bar a slider of seconds | "Player: ‹file›"; "Position", "0:02 of 0:03" |
 | terminal | terminal: its screen as text, the cursor as the caret | "Terminal"; the program's title |
 | footer | status line, never announced | what it shows: the count, the selection |
+| timeline | list box of its bars, the keys' bar the active descendant | "Timeline", described by what it counts and its keys; each bar its period ("Week of 9 March 2026"), described by what it holds |
 | search chips | buttons; a tag's category a link | their titles |
 
 Not yet: a scanned page's text (no engine reads it).

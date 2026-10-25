@@ -78,6 +78,9 @@ pub const SIDEBAR: &str = "Sidebar";
 /// A pane's view buttons, one of which has the keyboard: the Menu key
 /// says which views have one (`address::view_control`).
 pub const VIEW_BUTTONS: &str = "ViewButtons";
+/// The timeline's bars, once clicked or reached by F6: the arrows go
+/// from bar to bar, Enter lists the bars chosen (`timeline.rs`).
+pub const TIMELINE: &str = "Timeline";
 
 /// A binding as the palette shows it: keys and command name. Only the
 /// bindings that can run are hints: one a later layer hides is not.
@@ -155,6 +158,8 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // The keyboard into the sidebar, and back to the files.
     ("f6", "ui.focus_next_part", None),
     ("escape", "ui.focus_pane", Some("sidebar")),
+    ("escape", "ui.focus_pane", Some("timeline")),
+    ("enter", "ui.timeline_list", Some("timeline")),
     ("tab", "ui.toolbar_next", None),
     ("shift-tab", "ui.toolbar_prev", None),
     // Tab completes a path or a place typed in the address, while there
@@ -253,6 +258,68 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
 
 /// Builtin bindings that carry arguments (`keys, command, args json, when`).
 const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
+    // The timeline's bars: one at a time, Shift extending what is chosen,
+    // the page keys a window of them.
+    (
+        "left",
+        "ui.timeline_cursor",
+        r#"{"by":-1}"#,
+        Some("timeline"),
+    ),
+    (
+        "right",
+        "ui.timeline_cursor",
+        r#"{"by":1}"#,
+        Some("timeline"),
+    ),
+    (
+        "shift-left",
+        "ui.timeline_cursor",
+        r#"{"by":-1,"extend":true}"#,
+        Some("timeline"),
+    ),
+    (
+        "shift-right",
+        "ui.timeline_cursor",
+        r#"{"by":1,"extend":true}"#,
+        Some("timeline"),
+    ),
+    (
+        "home",
+        "ui.timeline_cursor",
+        r#"{"to":"first"}"#,
+        Some("timeline"),
+    ),
+    (
+        "end",
+        "ui.timeline_cursor",
+        r#"{"to":"last"}"#,
+        Some("timeline"),
+    ),
+    (
+        "shift-home",
+        "ui.timeline_cursor",
+        r#"{"to":"first","extend":true}"#,
+        Some("timeline"),
+    ),
+    (
+        "shift-end",
+        "ui.timeline_cursor",
+        r#"{"to":"last","extend":true}"#,
+        Some("timeline"),
+    ),
+    (
+        "pageup",
+        "ui.timeline_pan",
+        r#"{"toward":"earlier"}"#,
+        Some("timeline"),
+    ),
+    (
+        "pagedown",
+        "ui.timeline_pan",
+        r#"{"toward":"later"}"#,
+        Some("timeline"),
+    ),
     // The lists one picks from while typing (the palette, a choice, Jump,
     // the tag editor, the address's suggestions, a long list of choices in
     // Settings): one command, the same
@@ -1130,6 +1197,7 @@ pub(crate) const PLACES: &[Place] = &[
     place("slideshow", SLIDESHOW, "Picture on the whole screen"),
     place("player", PLAYER, "Pinned player"),
     place("terminal", TERMINAL, "Terminal"),
+    place("timeline", TIMELINE, "Timeline"),
     inside("palette", PALETTE, "Command palette"),
     inside("jump", JUMP, "Jump"),
     inside("choose", CHOOSE, "Choosing from a list"),

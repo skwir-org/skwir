@@ -3,9 +3,10 @@
 //! hydration (ADR-020). Pictures by their EXIF, videos by their MP4 or
 //! `QuickTime` location; the answer is kept by the file's identity in the
 //! core's fields cache. And `geo.place`, the words for that position
-//! (`places::describe`), which Properties shows as "Place", and `geo.clock`,
-//! the camera's clock, which orders the pictures taken at one place on
-//! the Map. Asked together (`Fields::get_all`), they are one read.
+//! (`places::describe`), which Properties shows as "Place", and `taken`,
+//! the camera's clock (`keys::TAKEN`), which orders the pictures taken at
+//! one place on the Map and dates them on the timeline. Asked together
+//! (`Fields::get_all`), they are one read.
 use std::ffi::OsStr;
 use std::path::Path;
 
@@ -18,8 +19,6 @@ pub struct Positions;
 
 /// The words for where a picture or a video was made.
 pub const PLACE: &str = "geo.place";
-/// A picture's camera clock (`skwir_platform::exif::Taken::clock`).
-pub const CLOCK: &str = "geo.clock";
 
 /// What a file of this name is, if its position can be read.
 fn kind(name: &OsStr) -> Option<Kind> {
@@ -38,7 +37,7 @@ impl FieldProvider for Positions {
         1
     }
     fn keys(&self) -> &'static [&'static str] {
-        &[keys::POSITION, PLACE, CLOCK]
+        &[keys::POSITION, PLACE, keys::TAKEN]
     }
     fn label(&self, key: &str) -> Option<&'static str> {
         (key == PLACE).then_some("Place")
@@ -83,7 +82,7 @@ impl FieldProvider for Positions {
                         .at
                         .and_then(crate::places::describe)
                         .map(|words| Value::Text(words.into())),
-                    CLOCK => taken.clock.map(Value::UInt),
+                    keys::TAKEN => taken.clock.map(Value::UInt),
                     _ => taken.at.map(skwir_core::geo::LatLon::to_value),
                 })
             })

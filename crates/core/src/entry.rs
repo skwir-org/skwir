@@ -404,6 +404,11 @@ pub mod keys {
     /// `Value::List` of two `Value::Float` (latitude, longitude, degrees).
     /// Read on demand (`crate::fields`), never at hydration (ADR-020).
     pub const POSITION: &str = "position";
+    /// When a picture or a video was taken, as its camera's clock said:
+    /// the civil date and time as digits (`20260701083000`), `Value::UInt`,
+    /// in no zone, since a picture rarely says its own. Read on demand
+    /// (`crate::fields`), never at hydration (ADR-020).
+    pub const TAKEN: &str = "taken";
     /// How many files a place holds (`EntryId::is_place`), `Value::UInt`:
     /// what its row says where a folder's size would be, and what sorting
     /// by size orders places by. A place's is known when it is listed.

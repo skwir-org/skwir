@@ -1,4 +1,4 @@
-//! Timeline strip: a histogram of modification times under the file area.
+//! Timeline strip: a histogram of when files changed, under the file area.
 //! The plugin counts it (`timeline.histogram`), on a worker: a count reads
 //! every file the pane shows, which the window's thread does not wait for.
 //!
@@ -7,10 +7,19 @@
 //! showed then: each place opens on its whole span. A width too fine for
 //! every date shows a window of bars, which the wheel and the strip's
 //! arrows move (`ui.timeline_pan`). The width pressed is the width shown.
+//!
+//! The bars measure files or their bytes (`ui.timeline_measure`), by the
+//! time the user chose (`ui.timeline_date`: modified, created, accessed,
+//! or a picture's clock), and mark the files selected and today's bar.
+//! The strip takes the keyboard (F6, a click): the arrows go from bar to
+//! bar, Shift extends, Enter lists the bars chosen, as a drag across them
+//! does (`ui.timeline_cursor`, `ui.timeline_list`). To a screen reader it
+//! is a list of its bars.
 
+use std::fmt::Write as _;
 use std::rc::Rc;
 
-use gpui::{AnyElement, Context, div, prelude::*, px};
+use gpui::{AnyElement, Context, FocusHandle, Window, div, prelude::*, px};
 use serde::Deserialize;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
@@ -19,18 +28,44 @@ use skwir_core::workspace::PaneId;
 use skwir_platform::calendar::{Calendar, civil_from_days};
 
 use crate::elements::bars::{self, BarColors, bar_chart};
+use crate::elements::popover::PopoverAnchor;
 use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
-use crate::toolbar::Button;
+use crate::toolbar::{self, Button};
 
 pub const BUCKETS: [&str; 4] = ["day", "week", "month", "year"];
 const PLURALS: [&str; 4] = ["days", "weeks", "months", "years"];
 const DAY: usize = 0;
+/// The times the bars can count, as the plugin and the query language
+/// name them, and how the strip's menu says them.
+pub const DATES: [(&str, &str); 4] = [
+    ("modified", "When modified"),
+    ("created", "When created"),
+    ("accessed", "When last opened"),
+    ("taken", "When taken (pictures and videos)"),
+];
+const TAKEN: usize = 3;
+/// The popup choosing the time (`ui.toolbar_menu`'s `kind`).
+pub const DATES_MENU: &str = "timeline_dates";
 /// The chart under the strip's controls: bars, their counts and labels.
 const CHART_H: f32 = 84.0;
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+const MONTH_NAMES: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
 
 #[derive(Clone, Debug, Deserialize)]
@@ -39,6 +74,11 @@ pub struct Bar {
     pub end: u64,
     pub count: u64,
     pub bytes: u64,
+    /// Of them, the files the pane has selected, and their bytes.
+    #[serde(default)]
+    pub selected: u64,
+    #[serde(default)]
+    pub selected_bytes: u64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -81,10 +121,17 @@ impl Histogram {
     pub fn windowed(&self) -> bool {
         matches!((self.shown(), self.fits()), (Some(shown), Some(fits)) if shown < fits)
     }
+
+    /// The bar holding instant `t`, or the one at the end it lies past.
+    fn bar_of(&self, t: u64) -> Option<usize> {
+        let last = self.bars.len().checked_sub(1)?;
+        Some(self.bars.partition_point(|b| b.end <= t).min(last))
+    }
 }
 
-/// What `timeline.histogram {subtree}` and `timeline.status` answer: the
-/// walk runs in the plugin, which says whether it still does.
+/// What a count in the background answers (`timeline.histogram` of the
+/// subtree or of pictures' clocks, and `timeline.status`): the plugin says
+/// whether it still counts.
 #[derive(Clone, Debug, Default, Deserialize)]
 struct SubtreeStatus {
     #[serde(default)]
@@ -101,20 +148,34 @@ enum Anchor {
     Until(u64),
 }
 
-/// A width the user picked, for what a pane shows while it shows it.
-struct Zoom {
-    pane: PaneId,
-    /// Ends when the pane shows something else.
-    visit: CancelToken,
-    bucket: usize,
-    /// Where its window was moved, if it is one.
-    anchor: Option<Anchor>,
+/// What the bars measure.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Measure {
+    #[default]
+    Files,
+    Size,
 }
 
-/// What a count was asked of: the subtree or not, and its window.
+/// What the strip keeps of a pane's visit to a place, which ends when the
+/// pane shows something else: the width picked, where its window was
+/// moved, the bar the keys are on and the one a range of bars began at.
+/// Bars are kept by their first instant: a count again or a window moved
+/// finds them where they are.
+struct Visit {
+    pane: PaneId,
+    /// Ends when the pane shows something else.
+    lifetime: CancelToken,
+    bucket: Option<usize>,
+    anchor: Option<Anchor>,
+    cursor: Option<u64>,
+    from: Option<u64>,
+}
+
+/// What a count was asked of: counted in the background (the subtree, or
+/// pictures' clocks) or not, and its window.
 #[derive(Clone, Copy)]
 struct Asked {
-    subtree: bool,
+    background: bool,
     anchor: Option<Anchor>,
 }
 
@@ -124,20 +185,27 @@ pub struct TimelineState {
     /// Whether the subtree is counted, in a pane that shows a folder.
     pub subtree: bool,
     pub scanning: bool,
+    pub measure: Measure,
+    /// The time counted, an index into `DATES`.
+    pub date: usize,
     pub histogram: Option<Histogram>,
     pub hover: Option<usize>,
-    /// The widths picked, a pane each.
-    zooms: Vec<Zoom>,
-    /// The histogram's bars as the chart draws them, made once for each:
-    /// the chart lays out again only for new ones.
+    /// The chart's, once the strip was open: where its keys go.
+    focus: Option<FocusHandle>,
+    /// Where the time's popup hangs.
+    dates: PopoverAnchor,
+    visits: Vec<Visit>,
+    /// The histogram's bars as the chart draws them, made once for each
+    /// and each measure: the chart lays out again only for new ones.
     chart: Option<Rc<Vec<bars::Bar>>>,
-    computed_for: Option<(PaneId, u64, Option<usize>, Option<Anchor>, bool)>,
+    computed_for: Option<(PaneId, u64, Option<usize>, Option<Anchor>, bool, usize)>,
     /// Which files it counted: the listing, its names, and what the pane
     /// shows of them (hidden files, the filter and the narrowing, the
     /// folders opened in place). Sorted again, they are the same files.
     counted: Option<(u64, u64, bool, u64, u64)>,
-    /// When it last counted: while the dates come in batches, at most
-    /// every `RECOUNT`, the last batch counted by a wake of its own.
+    /// When it last counted: while the dates come in batches (or the
+    /// selection moves), at most every `RECOUNT`, the last batch counted
+    /// by a wake of its own.
     counted_at: Option<std::time::Instant>,
     recount: Option<gpui::Task<()>>,
     /// Bars the window was moved since the bars shown were asked for: the
@@ -177,14 +245,29 @@ fn labels(bucket: usize, starts: &[(i64, u32, u32)]) -> Vec<(String, u8)> {
                     .map_or(4, |(_, rank)| rank);
                 (y.to_string(), rank)
             } else if new_month {
-                let name = MONTHS[(m as usize).clamp(1, 12) - 1];
-                (name.to_owned(), if m % 3 == 1 { 3 } else { 2 })
+                (MONTHS[month(m)].to_owned(), if m % 3 == 1 { 3 } else { 2 })
             } else {
                 let weekly = bucket == DAY && matches!(d, 8 | 15 | 22);
                 (d.to_string(), u8::from(weekly))
             }
         })
         .collect()
+}
+
+/// A month's index into `MONTHS`.
+fn month(m: u32) -> usize {
+    (m as usize).clamp(1, 12) - 1
+}
+
+/// What a bar is to a screen reader: its period in words.
+fn period_words(bucket: usize, (y, m, d): (i64, u32, u32)) -> String {
+    let name = MONTH_NAMES[month(m)];
+    match bucket {
+        DAY => format!("{d} {name} {y}"),
+        1 => format!("Week of {d} {name} {y}"),
+        2 => format!("{name} {y}"),
+        _ => y.to_string(),
+    }
 }
 
 /// `999`, `1.2k`, `12k`, `1.2M`: a count said in the room of a bar.
@@ -202,28 +285,55 @@ fn short_count(n: u64) -> String {
     }
 }
 
-/// The bars of `h` as the chart draws them, dated on the user's calendar,
-/// the plugin's.
-fn chart_of(h: &Histogram) -> Rc<Vec<bars::Bar>> {
+/// The civil dates the bars of `h` begin on, on the user's calendar, the
+/// plugin's.
+fn starts(h: &Histogram) -> Vec<(i64, u32, u32)> {
     let cal = Calendar::system();
-    let starts: Vec<(i64, u32, u32)> = h
-        .bars
+    h.bars
         .iter()
         .map(|b| civil_from_days(cal.day_of(epoch(b.start))))
-        .collect();
-    let labels = labels(h.shown().unwrap_or(DAY), &starts);
+        .collect()
+}
+
+/// The bars of `h` as the chart draws them, measuring `measure`.
+fn chart_of(h: &Histogram, measure: Measure) -> Rc<Vec<bars::Bar>> {
+    let labels = labels(h.shown().unwrap_or(DAY), &starts(h));
     Rc::new(
         h.bars
             .iter()
             .zip(labels)
-            .map(|(b, (label, rank))| bars::Bar {
-                count: b.count,
-                label: label.into(),
-                rank,
-                tally: short_count(b.count).into(),
+            .map(|(b, (label, rank))| {
+                let (value, marked, tally) = match measure {
+                    Measure::Files => (b.count, b.selected, short_count(b.count)),
+                    Measure::Size => (b.bytes, b.selected_bytes, format::size(b.bytes)),
+                };
+                bars::Bar {
+                    value,
+                    marked,
+                    label: label.into(),
+                    rank,
+                    tally: tally.into(),
+                }
             })
             .collect(),
     )
+}
+
+/// `25 files, 1.2 MB, 3 selected`: what a bar holds.
+fn holds(b: &Bar) -> String {
+    let mut words = format!(
+        "{}, {}",
+        format::count(usize::try_from(b.count).unwrap_or(usize::MAX), "file"),
+        format::size(b.bytes)
+    );
+    if b.selected > 0 {
+        let _ = write!(
+            words,
+            ", {} selected",
+            format::thousands(usize::try_from(b.selected).unwrap_or(usize::MAX))
+        );
+    }
+    words
 }
 
 impl Shell {
@@ -236,6 +346,12 @@ impl Shell {
         }
         self.remember_session();
         cx.notify();
+    }
+
+    /// Where the chart's keys go, while the strip is open: a part F6 goes
+    /// round (`focus_next_part`).
+    pub fn timeline_focus(&self) -> Option<FocusHandle> {
+        self.timeline.focus.clone().filter(|_| self.timeline.open)
     }
 
     /// Ask for the metadata of every entry the timeline cannot date yet.
@@ -258,27 +374,36 @@ impl Shell {
             .is_some()
     }
 
-    /// The width picked for what the pane shows, if one was.
-    fn timeline_zoom(&self) -> Option<&Zoom> {
+    /// What the strip keeps of the pane's visit, if anything.
+    fn timeline_visit(&self) -> Option<&Visit> {
         self.timeline
-            .zooms
+            .visits
             .iter()
-            .find(|z| z.pane == self.pane && !z.visit.is_cancelled())
+            .find(|v| v.pane == self.pane && !v.lifetime.is_cancelled())
+    }
+
+    /// The same, kept from now on.
+    fn timeline_visit_mut(&mut self) -> Option<&mut Visit> {
+        let pane = self.pane;
+        self.timeline.visits.retain(|v| !v.lifetime.is_cancelled());
+        if !self.timeline.visits.iter().any(|v| v.pane == pane) {
+            let lifetime = self.app.workspace.read().pane(pane)?.location_lifetime();
+            self.timeline.visits.push(Visit {
+                pane,
+                lifetime,
+                bucket: None,
+                anchor: None,
+                cursor: None,
+                from: None,
+            });
+        }
+        self.timeline.visits.iter_mut().find(|v| v.pane == pane)
     }
 
     /// Show bars of `bucket` for what the pane shows, until it shows
     /// something else.
     pub fn timeline_set_bucket(&mut self, bucket: &str, cx: &mut Context<Self>) {
         let Some(i) = BUCKETS.iter().position(|b| *b == bucket) else {
-            return;
-        };
-        let Some(visit) = self
-            .app
-            .workspace
-            .read()
-            .pane(self.pane)
-            .map(skwir_core::workspace::Pane::location_lifetime)
-        else {
             return;
         };
         // A window moved along: the new bars end where it does.
@@ -289,24 +414,49 @@ impl Shell {
             .filter(|h| h.windowed())
             .and_then(|h| h.bars.last())
             .map(|b| Anchor::Until(b.start));
-        let pane = self.pane;
-        self.timeline
-            .zooms
-            .retain(|z| z.pane != pane && !z.visit.is_cancelled());
-        self.timeline.zooms.push(Zoom {
-            pane,
-            visit,
-            bucket: i,
-            anchor,
-        });
-        self.timeline.panned = 0;
-        cx.notify();
+        if let Some(visit) = self.timeline_visit_mut() {
+            visit.bucket = Some(i);
+            visit.anchor = anchor;
+            self.timeline.panned = 0;
+            cx.notify();
+        }
     }
 
     pub fn timeline_toggle_subtree(&mut self, cx: &mut Context<Self>) {
         self.timeline.subtree = !self.timeline.subtree;
         self.timeline.computed_for = None;
         cx.notify();
+    }
+
+    /// `ui.timeline_measure`: bars of files or of their bytes.
+    pub fn timeline_set_measure(&mut self, by: &str, cx: &mut Context<Self>) {
+        let measure = match by {
+            "size" => Measure::Size,
+            "files" => Measure::Files,
+            _ => return,
+        };
+        if measure != self.timeline.measure {
+            self.timeline.measure = measure;
+            self.timeline.chart = self
+                .timeline
+                .histogram
+                .as_ref()
+                .map(|h| chart_of(h, measure));
+            self.remember_session();
+            cx.notify();
+        }
+    }
+
+    /// `ui.timeline_date`: which time the bars count.
+    pub fn timeline_set_date(&mut self, date: &str, cx: &mut Context<Self>) {
+        if let Some(i) = DATES.iter().position(|(word, _)| *word == date)
+            && i != self.timeline.date
+        {
+            self.timeline.date = i;
+            self.timeline.computed_for = None;
+            self.remember_session();
+            cx.notify();
+        }
     }
 
     /// Move a window of bars `by` bars later (negative: earlier), as far
@@ -330,15 +480,10 @@ impl Shell {
         } else {
             Anchor::Until(at(n + shift))
         };
-        let pane = self.pane;
-        if let Some(zoom) = self
-            .timeline
-            .zooms
-            .iter_mut()
-            .find(|z| z.pane == pane && !z.visit.is_cancelled())
-            && zoom.anchor != Some(anchor)
+        if let Some(visit) = self.timeline_visit_mut()
+            && visit.anchor != Some(anchor)
         {
-            zoom.anchor = Some(anchor);
+            visit.anchor = Some(anchor);
             self.timeline.panned = shift;
             cx.notify();
         }
@@ -358,22 +503,138 @@ impl Shell {
         }
     }
 
+    /// `ui.timeline_cursor`: the keys' bar `by` bars on, or the first or
+    /// the last, extending the bars chosen with `extend`. Past an end of a
+    /// window, the window moves half its length.
+    pub fn timeline_cursor(
+        &mut self,
+        by: i64,
+        to: Option<&str>,
+        extend: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(h) = &self.timeline.histogram else {
+            return;
+        };
+        let Some(last) = h.bars.len().checked_sub(1) else {
+            return;
+        };
+        let current = self
+            .timeline_visit()
+            .and_then(|v| v.cursor)
+            .and_then(|t| h.bar_of(t));
+        let index = |i: usize| i64::try_from(i).unwrap_or(i64::MAX);
+        let target = match (to, current) {
+            (Some("first"), _) => 0,
+            (Some("last"), _) => index(last),
+            // The first key lands on the bar under the pointer, else the last.
+            (_, None) => index(self.timeline.hover.unwrap_or(last)),
+            (_, Some(at)) => index(at) + by,
+        };
+        let clamped = usize::try_from(target.max(0)).unwrap_or(0).min(last);
+        let starts = (current.map(|i| h.bars[i].start), h.bars[clamped].start);
+        let past = if !h.windowed() || target == index(clamped) {
+            None
+        } else if target < 0 {
+            (h.before > 0).then_some("earlier")
+        } else {
+            (h.after > 0).then_some("later")
+        };
+        if let Some(visit) = self.timeline_visit_mut() {
+            visit.from = if extend {
+                visit.from.or(starts.0).or(Some(starts.1))
+            } else {
+                None
+            };
+            visit.cursor = Some(starts.1);
+        }
+        if let Some(toward) = past {
+            self.timeline_pan_toward(toward, cx);
+        }
+        cx.notify();
+    }
+
+    /// The bars chosen, first and last: from where a range began to the
+    /// keys' bar, or that bar alone.
+    fn timeline_chosen(&self) -> Option<(usize, usize)> {
+        let h = self.timeline.histogram.as_ref()?;
+        let visit = self.timeline_visit()?;
+        let cursor = h.bar_of(visit.cursor?)?;
+        let from = visit.from.and_then(|t| h.bar_of(t)).unwrap_or(cursor);
+        Some((from.min(cursor), from.max(cursor)))
+    }
+
+    /// `ui.timeline_list`: show the files of the bars chosen.
+    pub fn timeline_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((first, last)) = self.timeline_chosen() else {
+            return;
+        };
+        let Some(h) = &self.timeline.histogram else {
+            return;
+        };
+        let (start, end) = (h.bars[first].start, h.bars[last].end);
+        let args = serde_json::json!({
+            "start": start,
+            "end": end,
+            "pane": self.pane,
+            "subtree": self.timeline.subtree && self.timeline_in_folder(),
+            "date": DATES[self.timeline.date].0,
+        });
+        self.run("timeline.select", args, window, cx);
+    }
+
+    /// The pointer pressed on bar `i`: the strip takes the keyboard, and
+    /// the bars chosen begin there.
+    fn timeline_press(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(focus) = self.timeline_focus() {
+            window.focus(&focus, cx);
+        }
+        let Some(start) = self.bar_start(i) else {
+            return;
+        };
+        if let Some(visit) = self.timeline_visit_mut() {
+            visit.from = Some(start);
+            visit.cursor = Some(start);
+        }
+        cx.notify();
+    }
+
+    /// Dragged to bar `i`: the bars chosen reach it.
+    fn timeline_drag(&mut self, i: usize, cx: &mut Context<Self>) {
+        let Some(start) = self.bar_start(i) else {
+            return;
+        };
+        if let Some(visit) = self.timeline_visit_mut() {
+            visit.cursor = Some(start);
+        }
+        cx.notify();
+    }
+
+    fn bar_start(&self, i: usize) -> Option<u64> {
+        Some(self.timeline.histogram.as_ref()?.bars.get(i)?.start)
+    }
+
     /// Recompute when the listing changed (hydration lands as events), and
-    /// poll the subtree walk while it runs.
+    /// poll a count in the background while it runs.
     pub fn sync_timeline(&mut self, cx: &mut Context<Self>) {
         if !self.timeline.open {
             return;
         }
+        if self.timeline.focus.is_none() {
+            self.timeline.focus = Some(cx.focus_handle());
+        }
         if let Some((asked, answer)) = self.timeline.asked.take() {
             self.take_histogram(asked, answer, cx);
         }
-        // What the bars count: the files' dates and names, never every
-        // batch of other metadata.
+        // What the bars count: the files' dates and names and which are
+        // selected, never every batch of other metadata.
         let Some((version, shown, lifetime)) = ({
             let ws = self.app.workspace.read();
             ws.pane(self.pane).map(|p| {
                 (
-                    p.listing.modified_version() ^ p.listing.names_version().rotate_left(32),
+                    p.listing.modified_version()
+                        ^ p.listing.names_version().rotate_left(32)
+                        ^ p.selection.revision().rotate_left(16),
                     (
                         p.listing.id(),
                         p.listing.names_version(),
@@ -387,20 +648,21 @@ impl Shell {
         }) else {
             return;
         };
-        self.timeline.zooms.retain(|z| !z.visit.is_cancelled());
+        self.timeline.visits.retain(|v| !v.lifetime.is_cancelled());
         let (bucket, anchor) = self
-            .timeline_zoom()
-            .map_or((None, None), |z| (Some(z.bucket), z.anchor));
+            .timeline_visit()
+            .map_or((None, None), |v| (v.bucket, v.anchor));
         let subtree = self.timeline.subtree && self.timeline_in_folder();
-        let key = (self.pane, version, bucket, anchor, subtree);
+        let date = self.timeline.date;
+        let key = (self.pane, version, bucket, anchor, subtree, date);
         let other_files = self.timeline.counted != Some(shown);
-        // Dates arriving batch after batch: counted at most every
-        // `RECOUNT`, and once more after the last.
+        // Dates arriving batch after batch, or the selection moving:
+        // counted at most every `RECOUNT`, and once more after the last.
         let dates_only =
             self.timeline
                 .computed_for
-                .is_some_and(|(pane, _, bucket, anchor, subtree)| {
-                    (pane, bucket, anchor, subtree) == (key.0, key.2, key.3, key.4)
+                .is_some_and(|(pane, _, bucket, anchor, subtree, date)| {
+                    (pane, bucket, anchor, subtree, date) == (key.0, key.2, key.3, key.4, key.5)
                 })
                 && !other_files;
         if dates_only
@@ -428,7 +690,11 @@ impl Shell {
             if !dates_only {
                 self.hydrate_for_timeline();
             }
-            let mut args = serde_json::json!({ "subtree": subtree, "pane": self.pane });
+            let mut args = serde_json::json!({
+                "subtree": subtree,
+                "pane": self.pane,
+                "date": DATES[date].0,
+            });
             if let Some(bucket) = bucket {
                 args["bucket"] = BUCKETS[bucket].into();
             }
@@ -441,7 +707,10 @@ impl Shell {
             let app = std::sync::Arc::clone(&self.app);
             let worker = std::sync::Arc::clone(&self.app);
             let lane = self.pane_lane(self.pane);
-            let asked = Asked { subtree, anchor };
+            let asked = Asked {
+                background: subtree || date == TAKEN,
+                anchor,
+            };
             self.timeline.asked.ask(
                 &app,
                 lane,
@@ -459,8 +728,7 @@ impl Shell {
             );
             self.timeline.computed_for = Some(key);
         }
-        if subtree
-            && self.timeline.scanning
+        if self.timeline.scanning
             && let Some(v) = self.query_value(
                 "timeline.status",
                 serde_json::json!({ "pane": self.pane }),
@@ -485,12 +753,12 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         // The bars of the window moved to: moves count from them now.
-        if self.timeline_zoom().and_then(|z| z.anchor) == asked.anchor {
+        if self.timeline_visit().and_then(|v| v.anchor) == asked.anchor {
             self.timeline.panned = 0;
         }
         match answer {
-            Ok(Some(v)) if asked.subtree => {
-                // The walk runs in the plugin; `timeline.status` follows it.
+            Ok(Some(v)) if asked.background => {
+                // The count runs in the plugin; `timeline.status` follows it.
                 match serde_json::from_value::<SubtreeStatus>(v) {
                     Ok(status) => {
                         self.timeline.scanning = status.scanning;
@@ -516,7 +784,7 @@ impl Shell {
     }
 
     fn set_histogram(&mut self, h: Option<Histogram>) {
-        self.timeline.chart = h.as_ref().map(chart_of);
+        self.timeline.chart = h.as_ref().map(|h| chart_of(h, self.timeline.measure));
         if h.as_ref()
             .is_none_or(|h| self.timeline.hover.is_some_and(|i| i >= h.bars.len()))
         {
@@ -526,13 +794,18 @@ impl Shell {
     }
 }
 
-/// What the strip says beside its controls: the bar under the pointer, or
-/// what the bars show.
-fn info(t: &TimelineState) -> String {
+/// What the strip says beside its controls: the bar under the pointer (or
+/// the keys'), or what the bars show.
+fn info(t: &TimelineState, focused_bar: Option<usize>) -> String {
     let Some(h) = &t.histogram else {
-        return "no data".into();
+        return if t.scanning {
+            "counting…".into()
+        } else {
+            "no data".into()
+        };
     };
     let files = |n: u64| format::count(usize::try_from(n).unwrap_or(usize::MAX), "file");
+    let number = |n: u64| format::thousands(usize::try_from(n).unwrap_or(usize::MAX));
     // `end` is the first instant of the day after a bar's last: its last
     // day holds the instant before.
     let days = |start: u64, end: u64| {
@@ -546,27 +819,31 @@ fn info(t: &TimelineState) -> String {
             format!("{first} → {last}")
         }
     };
-    if let Some(b) = t.hover.and_then(|i| h.bars.get(i)) {
-        return format!(
+    if let Some(b) = t.hover.or(focused_bar).and_then(|i| h.bars.get(i)) {
+        let mut said = format!(
             "{} · {} · {}",
             days(b.start, b.end),
             files(b.count),
             format::size(b.bytes)
         );
+        if b.selected > 0 {
+            let _ = write!(said, " · {} selected", number(b.selected));
+        }
+        return said;
     }
     let mut parts = Vec::new();
+    if t.scanning {
+        parts.push("counting…".to_owned());
+    }
     if let (Some(first), Some(last)) = (h.bars.first(), h.bars.last()) {
         parts.push(days(first.start, last.end));
     }
     parts.push(format!(
         "{} dated",
-        format::thousands(usize::try_from(h.total - h.unknown.min(h.total)).unwrap_or(0))
+        number(h.total - h.unknown.min(h.total))
     ));
     if h.unknown > 0 {
-        parts.push(format!(
-            "{} without a date",
-            format::thousands(usize::try_from(h.unknown).unwrap_or(0))
-        ));
+        parts.push(format!("{} without a date", number(h.unknown)));
     }
     if h.before > 0 {
         parts.push(format!("{} earlier", files(h.before)));
@@ -575,25 +852,25 @@ fn info(t: &TimelineState) -> String {
         parts.push(format!("{} later", files(h.after)));
     }
     if h.outside > 0 {
-        parts.push(format!(
-            "{} far outside",
-            format::thousands(usize::try_from(h.outside).unwrap_or(0))
-        ));
+        parts.push(format!("{} far outside", number(h.outside)));
     }
-    parts.push("click a bar to list its files".to_owned());
+    parts.push("click or drag across bars to list their files".to_owned());
     parts.join(" · ")
 }
 
-pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    if !shell.timeline.open {
-        return None;
-    }
-    let theme = cx.global::<Theme>().clone();
+/// The strip's controls: its widths, the arrows of a window, the subtree,
+/// what the bars measure, the time they count, and what they say.
+fn controls(
+    shell: &Shell,
+    folder: bool,
+    focused_bar: Option<usize>,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> gpui::Div {
     let t = &shell.timeline;
     let shown = t.histogram.as_ref().and_then(Histogram::shown);
     let fits = t.histogram.as_ref().and_then(Histogram::fits);
     let windowed = t.histogram.as_ref().is_some_and(Histogram::windowed);
-    let folder = shell.timeline_in_folder();
     let mut controls = div()
         .h(px(26.))
         .px_2()
@@ -624,19 +901,15 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     }
     if windowed && let (Some(h), Some(shown)) = (&t.histogram, shown) {
         let plural = PLURALS[shown];
-        for (toward, icon, more) in [("earlier", "left", h.before), ("later", "right", h.after)] {
+        for (toward, icon, title, more) in [
+            ("earlier", "left", "Earlier", h.before),
+            ("later", "right", "Later", h.after),
+        ] {
             controls = controls.child(
                 Button::new(
                     format!("tl-{toward}"),
                     icon,
-                    format!(
-                        "{} {plural}",
-                        if toward == "earlier" {
-                            "Earlier"
-                        } else {
-                            "Later"
-                        }
-                    ),
+                    format!("{title} {plural}"),
                     "ui.timeline_pan",
                 )
                 .args(serde_json::json!({ "toward": toward }))
@@ -653,77 +926,208 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             "Count the files of the folders inside too",
             "ui.timeline_subtree",
         )
-        .label(format!(
-            "subtree{}",
-            if t.scanning && folder {
-                " (scanning…)"
-            } else {
-                ""
-            }
-        ))
+        .label("subtree")
         .active(t.subtree && folder)
         .enabled(folder)
         .render(shell, cx)
         .h(px(22.)),
     );
-    controls = controls
+    for (by, measure, title) in [
+        (
+            "files",
+            Measure::Files,
+            "Bars as tall as their number of files",
+        ),
+        ("size", Measure::Size, "Bars as tall as their files' size"),
+    ] {
+        controls = controls.child(
+            Button::new(format!("tl-by-{by}"), "", title, "ui.timeline_measure")
+                .args(serde_json::json!({ "by": by }))
+                .label(by)
+                .active(t.measure == measure)
+                .render(shell, cx)
+                .h(px(22.)),
+        );
+    }
+    let open = shell
+        .toolbar_menu
+        .as_ref()
+        .is_some_and(|menu| menu.kind == DATES_MENU);
+    controls = controls.child(
+        Button::new(
+            "tl-date",
+            "",
+            "Which time the bars count",
+            "ui.toolbar_menu",
+        )
+        .args(serde_json::json!({ "kind": DATES_MENU }))
+        .label(DATES[t.date].0)
+        .anchor_if(&t.dates, true)
+        .active(open)
+        .dropdown()
+        .render(shell, cx)
+        .h(px(22.)),
+    );
+    controls
         .child(div().flex_1())
         .child(crate::elements::clip::clipped(
             div()
                 .id("timeline-info")
                 .text_color(theme.text_muted)
                 .truncate(),
-            info(t),
-        ));
+            info(t, focused_bar),
+        ))
+}
 
-    let mut chart_area = div().h(px(CHART_H)).w_full();
+/// The popup choosing the time the bars count.
+fn dates_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    let popup = shell
+        .toolbar_menu
+        .as_ref()
+        .filter(|menu| menu.kind == DATES_MENU)?;
+    let mut rows = div().flex().flex_col().gap_1();
+    for (i, (word, label)) in DATES.iter().enumerate() {
+        let chosen = i == shell.timeline.date;
+        rows = rows.child(
+            Button::new(
+                format!("tl-date-{word}"),
+                if chosen { "check" } else { "" },
+                *label,
+                "ui.timeline_date",
+            )
+            .args(serde_json::json!({ "date": word }))
+            .label(*label)
+            .active(chosen)
+            .menu()
+            .render(shell, cx),
+        );
+    }
+    let panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx).child(rows);
+    // The strip is at the foot of the window: no room below it.
+    Some(shell.timeline.dates.popup_above_for(
+        &crate::elements::adaptive::Chosen::default(),
+        vec![panel.into_any_element()],
+    ))
+}
+
+pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    if !shell.timeline.open {
+        return None;
+    }
+    let theme = cx.global::<Theme>().clone();
+    let t = &shell.timeline;
+    let folder = shell.timeline_in_folder();
+    let focus = t.focus.clone();
+    let focused = focus.as_ref().is_some_and(|f| f.is_focused(window));
+    let chosen = shell.timeline_chosen();
+    let ranging = shell.timeline_visit().is_some_and(|v| v.from.is_some());
+    let cursor = t
+        .histogram
+        .as_ref()
+        .zip(shell.timeline_visit().and_then(|v| v.cursor))
+        .and_then(|(h, t)| h.bar_of(t));
+    let focused_bar = cursor.filter(|_| focused);
+    let controls = controls(shell, folder, focused_bar, &theme, cx);
+
+    let mut chart_area = div()
+        .id("timeline-chart")
+        .role(gpui::Role::ListBox)
+        .aria_label("Timeline")
+        .relative()
+        .h(px(CHART_H))
+        .w_full()
+        .key_context(crate::keymap::TIMELINE);
+    if let Some(focus) = &focus {
+        chart_area = chart_area.track_focus(focus);
+    }
     if let (Some(h), Some(chart)) = (&t.histogram, &t.chart) {
-        let entity = cx.entity();
-        let clicked = entity.clone();
-        let (pane, subtree) = (shell.pane, t.subtree && folder);
-        let periods: Vec<(u64, u64)> = h.bars.iter().map(|b| (b.start, b.end)).collect();
+        let pane = shell.pane;
         let colors = BarColors {
             bar: theme.chart,
-            hover: theme.accent,
+            marked: theme.accent,
             column: theme.hover,
+            chosen: theme.selection_bg,
+            cursor: theme.accent,
             text: theme.text_muted,
             tick: theme.border,
         };
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let today = h.bars.iter().position(|b| b.start <= now && now < b.end);
+        let (hovered, pressed, dragged, released) =
+            (cx.entity(), cx.entity(), cx.entity(), cx.entity());
         let mut chart = bar_chart(
             ("timeline-bars", pane.0 as usize),
             Rc::clone(chart),
             colors,
             move |i, _, cx| {
-                entity.update(cx, |shell, cx| {
+                hovered.update(cx, |shell, cx| {
                     shell.timeline.hover = i;
                     cx.notify();
                 });
             },
             move |i, window, cx| {
-                let Some(&(start, end)) = periods.get(i) else {
-                    return;
-                };
-                clicked.update(cx, |shell, cx| {
-                    shell.run(
-                        "timeline.select",
-                        serde_json::json!({
-                            "start": start,
-                            "end": end,
-                            "pane": pane,
-                            "subtree": subtree,
-                        }),
-                        window,
-                        cx,
-                    );
+                pressed.update(cx, |shell, cx| {
+                    shell.with_pane(pane, |shell| shell.timeline_press(i, window, cx));
+                });
+            },
+            move |i, _, cx| {
+                dragged.update(cx, |shell, cx| {
+                    shell.with_pane(pane, |shell| shell.timeline_drag(i, cx));
+                });
+            },
+            move |window, cx| {
+                released.update(cx, |shell, cx| {
+                    shell.with_pane(pane, |shell| shell.timeline_list(window, cx));
                 });
             },
         )
-        .hovered(t.hover);
-        if windowed {
+        .hovered(t.hover)
+        // A range is shown while it is chosen; one bar is the keys',
+        // ringed while they are here.
+        .chosen(chosen.filter(|_| ranging))
+        .cursor(focused_bar)
+        .today(today);
+        if h.windowed() {
             let entity = cx.entity();
             chart = chart.on_pan(move |by, _, cx| {
-                entity.update(cx, |shell, cx| shell.timeline_pan(by, cx));
+                entity.update(cx, |shell, cx| {
+                    shell.with_pane(pane, |shell| shell.timeline_pan(by, cx));
+                });
             });
+        }
+        // To a screen reader: what the bars count and how to go through
+        // them, then each bar, the keys' one said as focused (it claims
+        // the active descendant, as a list's entry does). Elements of no
+        // size, built only while a reader listens.
+        if shell.a11y {
+            let bucket = h.shown().unwrap_or(DAY);
+            let mut said = div().absolute().size_0().overflow_hidden();
+            for (i, (b, start)) in h.bars.iter().zip(starts(h)).enumerate() {
+                said = said.child(
+                    div()
+                        .id(("timeline-bar", i))
+                        .role(gpui::Role::ListBoxOption)
+                        .aria_label(period_words(bucket, start))
+                        .aria_description(holds(b))
+                        .aria_position_in_set(i)
+                        .aria_selected(chosen.is_some_and(|(a, b)| (a..=b).contains(&i)))
+                        .when(
+                            cursor == Some(i),
+                            StatefulInteractiveElement::aria_active_descendant,
+                        ),
+                );
+            }
+            chart_area = chart_area
+                .aria_size_of_set(h.bars.len())
+                .aria_description(format!(
+                    "{} by {}, {}. Left and Right go from bar to bar, Shift extends, Enter lists the files",
+                    DATES[t.date].1,
+                    BUCKETS[bucket],
+                    info(t, None)
+                ))
+                .child(said);
         }
         chart_area = chart_area.child(chart);
     }
@@ -738,6 +1142,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .bg(theme.surface)
             .child(controls)
             .child(chart_area)
+            .children(dates_popup(shell, &theme, cx))
             .into_any_element(),
     )
 }
@@ -745,6 +1150,17 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bar(start: u64, end: u64) -> Bar {
+        Bar {
+            start,
+            end,
+            count: 0,
+            bytes: 0,
+            selected: 0,
+            selected_bytes: 0,
+        }
+    }
 
     #[test]
     fn labels_say_the_period_each_bar_begins() {
@@ -781,6 +1197,25 @@ mod tests {
     }
 
     #[test]
+    fn a_bar_said_in_words() {
+        assert_eq!(period_words(DAY, (2026, 3, 9)), "9 March 2026");
+        assert_eq!(period_words(1, (2026, 3, 9)), "Week of 9 March 2026");
+        assert_eq!(period_words(2, (2026, 3, 1)), "March 2026");
+        assert_eq!(period_words(3, (2026, 1, 1)), "2026");
+        let b = Bar {
+            count: 25,
+            bytes: 2048,
+            selected: 3,
+            selected_bytes: 10,
+            ..bar(0, 1)
+        };
+        assert_eq!(
+            holds(&b),
+            format!("25 files, {}, 3 selected", format::size(2048))
+        );
+    }
+
+    #[test]
     fn counts_said_in_a_bars_room() {
         assert_eq!(short_count(0), "0");
         assert_eq!(short_count(999), "999");
@@ -803,5 +1238,39 @@ mod tests {
         assert!(!h("month", "month").windowed());
         assert!(!h("year", "month").windowed());
         assert!(!Histogram::default().windowed());
+    }
+
+    #[test]
+    fn an_instant_finds_its_bar_or_the_end_it_lies_past() {
+        let h = Histogram {
+            bars: vec![bar(10, 20), bar(20, 30), bar(30, 40)],
+            ..Histogram::default()
+        };
+        assert_eq!(h.bar_of(20), Some(1));
+        assert_eq!(h.bar_of(39), Some(2));
+        assert_eq!(h.bar_of(5), Some(0));
+        assert_eq!(h.bar_of(99), Some(2));
+        assert_eq!(Histogram::default().bar_of(5), None);
+    }
+
+    #[test]
+    fn bars_measure_files_or_bytes_and_mark_the_selected() {
+        let h = Histogram {
+            bucket: Some("year".into()),
+            bars: vec![Bar {
+                count: 4,
+                bytes: 3_000,
+                selected: 1,
+                selected_bytes: 1_000,
+                ..bar(1_767_225_600, 1_798_761_600)
+            }],
+            ..Histogram::default()
+        };
+        let files = chart_of(&h, Measure::Files);
+        assert_eq!((files[0].value, files[0].marked), (4, 1));
+        assert_eq!(&*files[0].tally, "4");
+        let size = chart_of(&h, Measure::Size);
+        assert_eq!((size[0].value, size[0].marked), (3_000, 1_000));
+        assert_eq!(&*size[0].tally, format::size(3_000));
     }
 }

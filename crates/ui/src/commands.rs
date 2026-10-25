@@ -255,6 +255,32 @@ mod args {
     }
 
     #[derive(Deserialize, JsonSchema)]
+    pub(super) struct Measure {
+        /// `files` or `size`.
+        by: String,
+    }
+
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct TimelineDate {
+        /// `modified`, `created`, `accessed` or `taken` (a picture's or a
+        /// video's clock).
+        date: String,
+    }
+
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct TimelineCursor {
+        /// Bars on, negative for earlier ones.
+        #[serde(default)]
+        by: Option<i64>,
+        /// `first` or `last`, in place of `by`.
+        #[serde(default)]
+        to: Option<String>,
+        /// Extend the bars chosen rather than choose this one.
+        #[serde(default)]
+        extend: bool,
+    }
+
+    #[derive(Deserialize, JsonSchema)]
     pub(super) struct Split {
         /// `other` splits the other way, for this split only.
         #[serde(default)]
@@ -436,7 +462,7 @@ use args::{
     Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold, Folders,
     History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player,
     Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submit, TagsPrompt, TerminalPaste, Text,
-    Toward, Url, UsageMode, View, ViewButton,
+    TimelineCursor, TimelineDate, Toward, Url, UsageMode, View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -504,6 +530,10 @@ const SHOWS: &[&str] = &[
     "ui.timeline_bucket",
     "ui.timeline_pan",
     "ui.timeline_subtree",
+    "ui.timeline_measure",
+    "ui.timeline_date",
+    "ui.timeline_cursor",
+    "ui.timeline_list",
     "ui.terminal",
     "ui.terminal_page",
     "ui.terminal_links",
@@ -647,6 +677,33 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
         "A page down the list",
     ),
     ("ui.review_choose", r#"{"delta":-1}"#, "Previous choice"),
+    // The timeline's bars.
+    ("ui.timeline_cursor", r#"{"by":-1}"#, "Previous bar"),
+    ("ui.timeline_cursor", r#"{"by":1}"#, "Next bar"),
+    (
+        "ui.timeline_cursor",
+        r#"{"by":-1,"extend":true}"#,
+        "Choose the previous bar too",
+    ),
+    (
+        "ui.timeline_cursor",
+        r#"{"by":1,"extend":true}"#,
+        "Choose the next bar too",
+    ),
+    ("ui.timeline_cursor", r#"{"to":"first"}"#, "First bar"),
+    ("ui.timeline_cursor", r#"{"to":"last"}"#, "Last bar"),
+    (
+        "ui.timeline_cursor",
+        r#"{"to":"first","extend":true}"#,
+        "Choose the bars back to the first",
+    ),
+    (
+        "ui.timeline_cursor",
+        r#"{"to":"last","extend":true}"#,
+        "Choose the bars up to the last",
+    ),
+    ("ui.timeline_pan", r#"{"toward":"earlier"}"#, "Earlier bars"),
+    ("ui.timeline_pan", r#"{"toward":"later"}"#, "Later bars"),
     ("ui.review_choose", r#"{"delta":1}"#, "Next choice"),
     // The file list.
     (
@@ -1008,7 +1065,9 @@ fn repeats_of(name: &str) -> Option<Repeats> {
         | "ui.map_pan"
         | "ui.map_point"
         | "ui.model_turn"
-        | "ui.model_pan" => always,
+        | "ui.model_pan"
+        | "ui.timeline_cursor"
+        | "ui.timeline_pan" => always,
         // Pick, then the next: held, it picks a run of files.
         "ui.cursor_pick" => {
             |args| args.get("advance").and_then(serde_json::Value::as_bool) != Some(false)
@@ -1563,6 +1622,29 @@ pub fn declare_all(app: &App) {
         "ui.timeline_pan",
         "Timeline: move along",
         "Show the timeline's earlier or later bars, when there are too many of them to show at once",
+    );
+    declare::<args::Measure>(
+        app,
+        "ui.timeline_measure",
+        "Timeline: files or size",
+        "Make the timeline's bars as tall as their number of files, or as their size",
+    );
+    declare::<TimelineDate>(
+        app,
+        "ui.timeline_date",
+        "Timeline: which time",
+        "Count files on the timeline by when they were modified, created, last opened, or taken (a picture's or a video's clock)",
+    );
+    declare::<TimelineCursor>(
+        app,
+        "ui.timeline_cursor",
+        "Timeline: go to a bar",
+        "Move the timeline's keyboard bar, or extend the bars chosen",
+    );
+    none(
+        "ui.timeline_list",
+        "Timeline: list the bars chosen",
+        "Show the files of the timeline's bars chosen",
     );
     none(
         "ui.timeline_subtree",

@@ -1,7 +1,8 @@
 //! A query as the designer shows it: chips.
 //!
 //! A query's top-level terms (the ones it requires together) are sorted into
-//! facets: its words, the kinds of file, when they were modified, their
+//! facets: its words, the kinds of file, when they were modified, created
+//! or last opened and when a picture was taken (one term each), their
 //! size, the tags every match has and those none has, what they contain,
 //! and where the search looks.
 //!
@@ -11,8 +12,10 @@
 //! adds nothing. Each is a chip of its own whose segments go up to its
 //! categories (`Places › France`: `Places` goes back to `Places`), so a
 //! search of tags reads, and walks, like a path. What no
-//! facet holds (an OR across terms, a NOT, another field, a second period)
-//! stays as text in a chip of its own, so nothing a person typed is lost.
+//! facet holds (an OR across terms, a NOT, another field, a second period
+//! of one time) stays as text in a chip of its own, so nothing a person
+//! typed is lost. Modified and Taken are offered while not set; Created
+//! and Accessed are chips once a search has them (the timeline's).
 //!
 //! [`describe`] says what a search is, with the invocation every choice
 //! runs, so the UI draws chips without knowing the language; [`refine`]
@@ -25,11 +28,22 @@ use skwir_core::command::Invocation;
 use skwir_core::metadata::{TAG_SEPARATOR, TagRef, clean_tag, same_tag, tag_leaf, tag_within};
 use skwir_platform::mime::Kind;
 
-use crate::lang::{self, ContentPat, Expr, Query, Term, TimeField, quote};
+use crate::lang::{self, ContentPat, Expr, Query, Term, quote};
 
-/// When, as the Modified chip offers it: a label and what follows
-/// `modified` in the query (`:` is implied before a word).
-pub const MODIFIED: [(&str, &str); 9] = [
+/// The times a search can be narrowed to: when files were modified,
+/// created, last opened, and when a picture or a video was taken. Each is
+/// a facet named as its term's key, with its chip's title and whether the
+/// chip is offered while not set.
+const WHEN: [(&str, &str, bool); 4] = [
+    ("modified", "Modified", true),
+    ("created", "Created", false),
+    ("accessed", "Accessed", false),
+    ("taken", "Taken", true),
+];
+
+/// When, as the chips of [`WHEN`] offer it: a label and what follows the
+/// key in the query (`:` is implied before a word).
+pub const PERIODS: [(&str, &str); 9] = [
     ("Today", "today"),
     ("Yesterday", "yesterday"),
     ("This week", "this-week"),
@@ -54,8 +68,9 @@ pub const SIZE: [(&str, &str); 6] = [
 /// A chip: a facet of the search, or a part of it no facet holds.
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct Chip {
-    /// `words`, `kind`, `modified`, `size`, `tag`, `content`, `where`, or
-    /// `advanced` for a part no facet holds.
+    /// `words`, `kind`, `modified`, `created`, `accessed`, `taken`,
+    /// `size`, `tag`, `content`, `where`, or `advanced` for a part no
+    /// facet holds.
     pub id: String,
     pub title: String,
     /// What the facet is set to, in words; `None` while it is not.
@@ -105,7 +120,8 @@ pub struct Description {
 struct Parts {
     words: Vec<String>,
     kinds: Vec<Kind>,
-    modified: Option<String>,
+    /// A term for each of [`WHEN`].
+    when: [Option<String>; 4],
     size: Option<String>,
     /// Every match has each, or one within it.
     tags: Vec<String>,
@@ -124,6 +140,16 @@ fn items(q: &Query) -> Vec<&Expr> {
     }
 }
 
+/// Which of [`WHEN`] a time term is.
+fn when_of(t: &Term) -> Option<usize> {
+    let key = match t {
+        Term::Time { field, .. } => field.name(),
+        Term::Taken { .. } => "taken",
+        _ => return None,
+    };
+    WHEN.iter().position(|(w, ..)| *w == key)
+}
+
 /// A term on its own, as a part of an AND prints it.
 fn print(e: &Expr) -> String {
     match e {
@@ -136,15 +162,18 @@ impl Parts {
     fn of(q: &Query) -> Parts {
         let mut p = Parts::default();
         for e in items(q) {
+            // The first term of each time; a second is text.
+            if let Expr::Term(t) = e
+                && let Some(i) = when_of(t)
+                && p.when[i].is_none()
+            {
+                p.when[i] = Some(t.to_string());
+                continue;
+            }
             match e {
                 // A name prints as typed: `invoice`, not `name:invoice`.
                 Expr::Term(Term::Name(n)) => p.words.push(quote(&n.text)),
                 Expr::Term(Term::Kind(k)) if p.kinds.is_empty() => p.kinds.clone_from(k),
-                Expr::Term(Term::Time {
-                    field: TimeField::Modified,
-                    text,
-                    ..
-                }) if p.modified.is_none() => p.modified = Some(text.clone()),
                 Expr::Term(Term::Size { text, .. }) if p.size.is_none() => {
                     p.size = Some(text.clone());
                 }
@@ -172,11 +201,10 @@ impl Parts {
         } else if !other.kinds.is_empty() {
             self.advanced.push(kind_term(&other.kinds));
         }
-        for (mine, theirs) in [
-            (&mut self.modified, other.modified),
+        for (mine, theirs) in self.when.iter_mut().zip(other.when).chain([
             (&mut self.size, other.size),
             (&mut self.content, other.content),
-        ] {
+        ]) {
             match (mine.is_none(), theirs) {
                 (true, theirs) if theirs.is_some() => *mine = theirs,
                 (_, Some(theirs)) => self.advanced.push(theirs),
@@ -222,7 +250,7 @@ impl Parts {
         if !self.kinds.is_empty() {
             out.push(kind_term(&self.kinds));
         }
-        out.extend(self.modified.iter().cloned());
+        out.extend(self.when.iter().flatten().cloned());
         out.extend(self.size.iter().cloned());
         out.extend(self.tags.iter().map(|t| tag_term(t)));
         out.extend(
@@ -251,7 +279,7 @@ fn tag_term(tag: &str) -> String {
     Term::Tag(tag.to_owned()).to_string()
 }
 
-/// `modified` or `size` with what the chip gives: a word follows a colon
+/// A time or `size` with what the chip gives: a word follows a colon
 /// (`modified:today`), a comparison stands as it is (`size>1G`).
 fn with_key(key: &str, value: &str) -> String {
     let value = value.trim();
@@ -277,6 +305,18 @@ fn check(term: &str, is: impl Fn(&Term) -> bool) -> Result<(), String> {
 pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, String> {
     let mut q = lang::parse(expr).map_err(|e| e.to_string())?;
     let mut p = Parts::of(&q);
+    // A time: set to a term of its own key, or cleared.
+    if let Some(i) = WHEN.iter().position(|(w, ..)| *w == facet) {
+        p.when[i] = match value {
+            None => None,
+            Some(v) => {
+                let term = with_key(facet, v);
+                check(&term, |t| when_of(t) == Some(i))?;
+                Some(term)
+            }
+        };
+        return Ok(p.write(&q));
+    }
     match (facet, value) {
         ("words", value) => {
             p.words.clear();
@@ -294,20 +334,6 @@ pub fn refine(expr: &str, facet: &str, value: Option<&str>) -> Result<String, St
             } else {
                 p.kinds.push(kind);
             }
-        }
-        ("modified", None) => p.modified = None,
-        ("modified", Some(v)) => {
-            let term = with_key("modified", v);
-            check(&term, |t| {
-                matches!(
-                    t,
-                    Term::Time {
-                        field: TimeField::Modified,
-                        ..
-                    }
-                )
-            })?;
-            p.modified = Some(term);
         }
         ("size", None) => p.size = None,
         ("size", Some(v)) => {
@@ -547,15 +573,16 @@ pub fn parts(expr: &str) -> Result<(Vec<Part>, Vec<String>), String> {
         parts.push(part(kind.title().to_owned(), "kind", Some(kind.name())));
         set.push("kind".to_owned());
     }
-    if let Some(term) = &p.modified {
-        let when = label_of(term, "modified", &MODIFIED);
+    for ((facet, ..), term) in WHEN.iter().zip(&p.when) {
+        let Some(term) = term else { continue };
+        let when = label_of(term, facet, &PERIODS);
         let label = if when.chars().all(|c| c.is_ascii_digit()) {
-            format!("modified in {when}")
+            format!("{facet} in {when}")
         } else {
-            format!("modified {}", when.to_lowercase())
+            format!("{facet} {}", when.to_lowercase())
         };
-        parts.push(part(label, "modified", None));
-        set.push("modified".to_owned());
+        parts.push(part(label, facet, None));
+        set.push((*facet).to_owned());
     }
     if let Some(term) = &p.size {
         let size = label_of(term, "size", &SIZE).to_lowercase();
@@ -655,17 +682,22 @@ pub fn describe(
         segments: Vec::new(),
     });
 
-    chips.push(preset_chip(
-        "modified",
-        "Modified",
-        "calendar",
-        p.modified.as_ref(),
-        &MODIFIED,
-        (
-            "Modified",
-            "A date, a range or a period: 2026-05, 2026-01-01..2026-03-31, <30d",
-        ),
-    ));
+    for ((facet, title, offered), term) in WHEN.iter().zip(&p.when) {
+        if term.is_none() && !offered {
+            continue;
+        }
+        chips.push(preset_chip(
+            facet,
+            title,
+            "calendar",
+            term.as_ref(),
+            &PERIODS,
+            (
+                title,
+                "A date, a range or a period: 2026-05, 2026-01-01..2026-03-31, <30d",
+            ),
+        ));
+    }
     chips.push(preset_chip(
         "size",
         "Size",
@@ -973,6 +1005,67 @@ mod tests {
         assert!(refine(base, "size", Some("huge")).is_err());
         assert!(refine(base, "kind", Some("pdf")).is_err());
         assert!(refine(base, "nope", None).is_err());
+    }
+
+    /// Each time is a facet of its own, as the timeline refines them: a
+    /// day takes the place of a month, and the others keep theirs.
+    #[test]
+    fn each_time_is_a_facet_of_its_own() {
+        let r = |q: &str, facet, value| refine(q, facet, value).unwrap();
+        let april = r("kind:image in:/d", "taken", Some("2023-04"));
+        assert_eq!(april, "kind:image taken:2023-04 in:/d");
+        let day = r(&april, "taken", Some("2023-04-15"));
+        assert_eq!(day, "kind:image taken:2023-04-15 in:/d");
+        assert_eq!(
+            r(&day, "taken", Some("2023-04-14")),
+            "kind:image taken:2023-04-14 in:/d"
+        );
+        assert_eq!(r(&day, "taken", None), "kind:image in:/d");
+        assert_eq!(
+            r("modified:2026 in:/d", "created", Some("2026-07")),
+            "modified:2026 created:2026-07 in:/d"
+        );
+        assert_eq!(
+            r(
+                "created:2026-07 modified:2026 in:/d",
+                "created",
+                Some("2026-07-02")
+            ),
+            "modified:2026 created:2026-07-02 in:/d"
+        );
+        assert_eq!(
+            r("accessed<7d in:/d", "accessed", Some(">=last-week")),
+            "accessed>=last-week in:/d"
+        );
+        assert_eq!(r("accessed<7d in:/d", "accessed", None), "in:/d");
+        // A value is a time of the facet's own key, nothing else.
+        assert!(refine("in:/d", "taken", Some("kind:image")).is_err());
+        assert!(refine("in:/d", "created", Some("2026-02-30")).is_err());
+        // Their pills: “Taken: 2023-04” in the address field.
+        let d = describe(&april, false, None).unwrap();
+        let taken = chip(&d, "taken");
+        assert_eq!(
+            (taken.title.as_str(), taken.value.as_deref()),
+            ("Taken", Some("2023-04"))
+        );
+        assert_eq!(taken.clear, Some(refine_invocation("taken", None)));
+        assert!(d.chips.iter().all(|c| c.id != "advanced"));
+        let d = describe("created:this-week accessed:2026 in:/d", false, None).unwrap();
+        assert_eq!(chip(&d, "created").value.as_deref(), Some("This week"));
+        assert_eq!(chip(&d, "accessed").value.as_deref(), Some("2026"));
+        // Offered while not set: Modified and Taken.
+        let d = describe("in:/d", false, None).unwrap();
+        let offered: Vec<&str> = d.chips.iter().map(|c| c.id.as_str()).collect();
+        assert!(offered.contains(&"modified") && offered.contains(&"taken"));
+        assert!(!offered.contains(&"created") && !offered.contains(&"accessed"));
+        // A second period of one time is text; so is a time ORed.
+        let d = describe("taken:2023 taken:2024 in:/d", false, None).unwrap();
+        assert_eq!(chip(&d, "advanced").value.as_deref(), Some("taken:2024"));
+        // A folder narrowed by when its files were created reads so.
+        let (parts, set) = parts("created:2026 accessed:this-week").unwrap();
+        let labels: Vec<&str> = parts.iter().map(|p| p.label.as_str()).collect();
+        assert_eq!(labels, ["created in 2026", "accessed this week"]);
+        assert_eq!(set, ["created", "accessed"]);
     }
 
     #[test]

@@ -10,6 +10,7 @@
 //! unary   := "NOT" unary | "-" unary | "(" or_expr ")" | term
 //! term    := word | "name:" pat | "ext:" list | "type:" kind | "mime:" glob
 //!          | "kind:" kinds | "size" cmp | "modified" cmp | "created" cmp | "accessed" cmp
+//!          | "taken" cmp
 //!          | "tag:" word | "tag:*" (any tag) | "comment:" text | "rating" cmp
 //!          | "content:" text | "content:/" regex "/" flags?
 //!          | "near:" lat "," lon ("~" distance)? | "inside:" south "," west "," north "," east
@@ -30,6 +31,16 @@
 //! same days): `modified:this-week` is within it, `modified<today` before
 //! it. Durations are counted back on the calendar too: `modified<7d` is
 //! within the last seven days, this time of day; `modified>7d` older.
+//!
+//! `taken` is when a picture or a video was taken, as its camera's clock
+//! said (the field `taken`, read on demand from its content, so decided
+//! last, as a place is). The clock says no zone, so its date is read as
+//! it is written, a day of the user's calendar never moved by a zone:
+//! `taken:2023-04-15` holds a picture of that morning wherever it was
+//! taken. It takes what the other times take
+//! (`taken:2023-04`, `taken>=last-year`, `taken<30d`, from the clock the
+//! user's calendar shows now); a file whose content says no such clock
+//! (not a picture, or none written) is never taken.
 //!
 //! `kind:` takes what the desktop's MIME database groups files into
 //! (`image`, `video`, `audio`, `document`, `spreadsheet`, `presentation`,
@@ -78,7 +89,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use globset::{Glob, GlobMatcher};
 use grep_regex::RegexMatcher;
 use skwir_core::entry::{EntryKind, Metadata, Value, keys};
-use skwir_platform::calendar::{Calendar, Period, civil_day};
+use skwir_platform::calendar::{Calendar, Period, civil_day, civil_from_days};
 
 /// A parsed query: the boolean expression plus walk options.
 #[derive(Clone, Debug)]
@@ -118,7 +129,8 @@ impl TimeField {
             TimeField::Accessed => keys::ACCESSED,
         }
     }
-    fn name(self) -> &'static str {
+    /// Its key in the query, and the facet it sets.
+    pub fn name(self) -> &'static str {
         match self {
             TimeField::Modified => "modified",
             TimeField::Created => "created",
@@ -233,6 +245,15 @@ pub enum Term {
         changes: Option<SystemTime>,
         text: String,
     },
+    /// Taken (`keys::TAKEN`) in `[after, before)`, clocks written as the
+    /// field writes them (`20260701083000`): civil, in no zone.
+    Taken {
+        after: Option<u64>,
+        before: Option<u64>,
+        /// When the term means another period, as for [`Term::Time`].
+        changes: Option<SystemTime>,
+        text: String,
+    },
     Tag(String),
     /// Any tag: `tag:*`, the star unquoted (`tag:"*"` is a tag named so).
     AnyTag,
@@ -277,9 +298,9 @@ impl std::error::Error for ParseError {}
 
 /// The keys a word can start with. Only these open a quote after their
 /// colon; any other word with a colon (`http://x`, `a:'b`) is a name.
-const KEYS: [&str; 19] = [
+const KEYS: [&str; 20] = [
     "name", "ext", "type", "mime", "kind", "tag", "comment", "rating", "content", "size",
-    "modified", "created", "accessed", "in", "depth", "hidden", "case", "near", "inside",
+    "modified", "created", "accessed", "taken", "in", "depth", "hidden", "case", "near", "inside",
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -636,6 +657,11 @@ impl Parser<'_> {
                         return parse_time(field, rest, self.now, self.calendar);
                     }
                 }
+                if let Some(rest) = v.strip_prefix("taken")
+                    && rest.starts_with(['<', '>', '='])
+                {
+                    return parse_taken(rest, self.now, self.calendar);
+                }
             }
             return Ok(Term::Name(NamePat::new(v, cs)));
         };
@@ -691,6 +717,7 @@ impl Parser<'_> {
             "near" => parse_near(v),
             "inside" => parse_inside(v),
             "size" => parse_size(&format!(":{v}")),
+            "taken" => parse_taken(&format!(":{v}"), self.now, self.calendar),
             _ => {
                 let field = TimeField::ALL
                     .into_iter()
@@ -1000,24 +1027,17 @@ fn named_period(s: &str, today: i64, cal: &Calendar) -> Option<(Days, i64)> {
 enum TimeLit {
     /// An instant in the past, `now - duration`.
     Ago(SystemTime),
-    /// A calendar period `[start, end)`, and when it changes (named
-    /// periods only).
-    Period(SystemTime, SystemTime, Option<SystemTime>),
+    /// A calendar period `[start, end)` in civil days, and the day it
+    /// means another (named periods only).
+    Period(Days, Option<i64>),
 }
 
 fn parse_time_lit(s: &str, now: SystemTime, cal: &Calendar) -> Result<TimeLit, ParseError> {
-    let period = |(a, b): Days, changes: Option<i64>| {
-        TimeLit::Period(
-            cal.day_start(a),
-            cal.day_start(b),
-            changes.map(|day| cal.day_start(day)),
-        )
-    };
     if let Some(days) = parse_date(s, cal) {
-        return Ok(period(days, None));
+        return Ok(TimeLit::Period(days, None));
     }
     if let Some((days, changes)) = named_period(s, cal.day_of(now), cal) {
-        return Ok(period(days, Some(changes)));
+        return Ok(TimeLit::Period(days, Some(changes)));
     }
     // On the calendar (`7d` across a clock change is seven days), else as
     // humantime reads it (`1month`), an exact length.
@@ -1032,52 +1052,132 @@ fn parse_time_lit(s: &str, now: SystemTime, cal: &Calendar) -> Result<TimeLit, P
     )))
 }
 
-/// `rest` is what follows the field's name: an operator and a value.
-fn parse_time(
-    field: TimeField,
-    rest: &str,
-    now: SystemTime,
-    cal: &Calendar,
-) -> Result<Term, ParseError> {
+/// An end of a time term's span: the start of a civil day, or an instant
+/// (a duration back from now).
+#[derive(Clone, Copy)]
+enum Bound {
+    Day(i64),
+    At(SystemTime),
+}
+
+/// What a time term's comparison names, whatever time it compares:
+/// `[after, before)`, and the day it means another (named periods only).
+struct Span {
+    after: Option<Bound>,
+    before: Option<Bound>,
+    changes: Option<i64>,
+}
+
+/// `rest` is what follows a time's key: an operator and a value.
+fn parse_span(rest: &str, now: SystemTime, cal: &Calendar) -> Result<Span, ParseError> {
+    use Bound::{At, Day};
     let (op, v) = split_cmp(rest)?;
-    let text = format!("{}{rest}", field.name());
-    let mk = |after, before, changes| Term::Time {
-        field,
+    let span = |after, before, changes| Span {
         after,
         before,
         changes,
-        text: text.clone(),
     };
     let changes = |lit: &TimeLit| match lit {
-        TimeLit::Period(_, _, changes) => *changes,
+        TimeLit::Period(_, changes) => *changes,
         TimeLit::Ago(_) => None,
     };
     if let Some((a, b)) = v.split_once("..") {
         let (a, b) = (parse_time_lit(a, now, cal)?, parse_time_lit(b, now, cal)?);
         let first = [changes(&a), changes(&b)].into_iter().flatten().min();
         let start = match a {
-            TimeLit::Ago(t) | TimeLit::Period(t, _, _) => t,
+            TimeLit::Ago(t) => At(t),
+            TimeLit::Period((s, _), _) => Day(s),
         };
         let end = match b {
-            TimeLit::Ago(t) => t,
-            TimeLit::Period(_, e, _) => e,
+            TimeLit::Ago(t) => At(t),
+            TimeLit::Period((_, e), _) => Day(e),
         };
-        return Ok(mk(Some(start), Some(end), first));
+        return Ok(span(Some(start), Some(end), first));
     }
     let lit = parse_time_lit(v, now, cal)?;
     let changes = changes(&lit);
     Ok(match (op, lit) {
         // "within the last 7d" / "before the date"
-        ("<", TimeLit::Period(s, _, _)) => mk(None, Some(s), changes),
-        ("<=", TimeLit::Period(_, e, _)) => mk(None, Some(e), changes),
+        ("<", TimeLit::Period((s, _), _)) => span(None, Some(Day(s)), changes),
+        ("<=", TimeLit::Period((_, e), _)) => span(None, Some(Day(e)), changes),
         // "older than 7d" / "after the date"
-        (">" | ">=", TimeLit::Ago(t)) => mk(None, Some(t), None),
-        (">", TimeLit::Period(_, e, _)) => mk(Some(e), None, changes),
-        (">=", TimeLit::Period(s, _, _)) => mk(Some(s), None, changes),
-        (_, TimeLit::Period(s, e, _)) => mk(Some(s), Some(e), changes),
+        (">" | ">=", TimeLit::Ago(t)) => span(None, Some(At(t)), None),
+        (">", TimeLit::Period((_, e), _)) => span(Some(Day(e)), None, changes),
+        (">=", TimeLit::Period((s, _), _)) => span(Some(Day(s)), None, changes),
+        (_, TimeLit::Period((s, e), _)) => span(Some(Day(s)), Some(Day(e)), changes),
         // "within the last 7d" (also the bare `modified:7d` form)
-        (_, TimeLit::Ago(t)) => mk(Some(t), None, None),
+        (_, TimeLit::Ago(t)) => span(Some(At(t)), None, None),
     })
+}
+
+/// `rest` is what follows the field's name: an operator and a value. A
+/// day starts at its first instant in the user's zone.
+fn parse_time(
+    field: TimeField,
+    rest: &str,
+    now: SystemTime,
+    cal: &Calendar,
+) -> Result<Term, ParseError> {
+    let span = parse_span(rest, now, cal)?;
+    let instant = |bound| match bound {
+        Bound::Day(day) => cal.day_start(day),
+        Bound::At(t) => t,
+    };
+    Ok(Term::Time {
+        field,
+        after: span.after.map(instant),
+        before: span.before.map(instant),
+        changes: span.changes.map(|day| cal.day_start(day)),
+        text: format!("{}{rest}", field.name()),
+    })
+}
+
+/// `rest` is what follows `taken`: an operator and a value, as clocks. A
+/// day starts at its midnight on the clock, whatever the zone; a duration
+/// goes back from the clock the user's calendar shows now.
+fn parse_taken(rest: &str, now: SystemTime, cal: &Calendar) -> Result<Term, ParseError> {
+    let span = parse_span(rest, now, cal)?;
+    let clock = |bound| match bound {
+        Bound::Day(day) => day_clock(day),
+        Bound::At(t) => clock_at(t, cal),
+    };
+    Ok(Term::Taken {
+        after: span.after.map(clock),
+        before: span.before.map(clock),
+        // What it lists is listed again at the user's midnight.
+        changes: span.changes.map(|day| cal.day_start(day)),
+        text: format!("taken{rest}"),
+    })
+}
+
+/// A civil date and time as the camera's clock is kept (`keys::TAKEN`):
+/// year, month, day, hour, minute and second as digits
+/// (`20260701083000`), which order as the clocks do.
+fn clock(parts: [i64; 6]) -> u64 {
+    u64::try_from(parts.iter().fold(0, |n, p| n * 100 + p)).unwrap_or(0)
+}
+
+/// The clock at the midnight that starts civil day `day`.
+fn day_clock(day: i64) -> u64 {
+    let (y, m, d) = civil_from_days(day);
+    clock([y, m.into(), d.into(), 0, 0, 0])
+}
+
+/// The clock the user's calendar showed at `t`, in their zone.
+fn clock_at(t: SystemTime, cal: &Calendar) -> u64 {
+    let Ok(timestamp) = t.try_into() else {
+        // Before what a calendar holds: before every clock.
+        return 0;
+    };
+    let civil = cal.time_zone().to_datetime(timestamp);
+    clock([
+        civil.year().into(),
+        civil.month().into(),
+        civil.day().into(),
+        civil.hour().into(),
+        civil.minute().into(),
+        civil.second().into(),
+    ])
 }
 
 // ---------------------------------------------------------------- printing
@@ -1098,6 +1198,7 @@ impl fmt::Display for Term {
             Term::Size { text, .. }
             | Term::Rating { text, .. }
             | Term::Time { text, .. }
+            | Term::Taken { text, .. }
             | Term::Near { text, .. }
             | Term::Inside { text, .. } => f.write_str(text),
             Term::Tag(t) if t == "*" => f.write_str("tag:\"*\""),
@@ -1150,6 +1251,7 @@ fn is_plain(s: &str) -> bool {
         && !comparison("size")
         && !comparison("rating")
         && !TimeField::ALL.iter().any(|f| comparison(f.name()))
+        && !comparison("taken")
 }
 
 /// `bytes` in double quotes: `\` and `"` escaped, bytes that are not UTF-8
@@ -1300,9 +1402,14 @@ impl Query {
     pub fn next_change(&self) -> Option<SystemTime> {
         fn visit(e: &Expr, first: &mut Option<SystemTime>) {
             match e {
-                Expr::Term(Term::Time {
-                    changes: Some(t), ..
-                }) => *first = Some(first.map_or(*t, |f| f.min(*t))),
+                Expr::Term(
+                    Term::Time {
+                        changes: Some(t), ..
+                    }
+                    | Term::Taken {
+                        changes: Some(t), ..
+                    },
+                ) => *first = Some(first.map_or(*t, |f| f.min(*t))),
                 Expr::Term(_) => {}
                 Expr::Not(e) => visit(e, first),
                 Expr::And(v) | Expr::Or(v) => v.iter().for_each(|e| visit(e, first)),
@@ -1333,13 +1440,14 @@ impl Query {
         self.any(&|t| matches!(t, Term::Content(_)))
     }
 
-    /// Terms that read the file itself: what it contains, where it says
-    /// it was made. What a listing knows of a file cannot decide them.
+    /// Terms that read the file itself: what it contains, where and when
+    /// it says it was taken. What a listing knows of a file cannot decide
+    /// them.
     pub fn reads_files(&self) -> bool {
         self.any(&|t| {
             matches!(
                 t,
-                Term::Content(_) | Term::Near { .. } | Term::Inside { .. }
+                Term::Content(_) | Term::Near { .. } | Term::Inside { .. } | Term::Taken { .. }
             )
         })
     }
@@ -1389,7 +1497,8 @@ impl Query {
 // ---------------------------------------------------------------- matching
 
 /// What the late terms read with: the fields a file gives when asked
-/// (`near:`, `inside:`), on the search's worker, and the search's token.
+/// (`near:`, `inside:`, `taken`), on the search's worker, and the search's
+/// token.
 #[derive(Clone, Copy)]
 pub struct Late<'a> {
     pub fields: &'a skwir_core::fields::Fields,
@@ -1410,7 +1519,7 @@ pub struct Candidate<'a> {
     /// stays `Symlink` for a link that leads nowhere. `None` for a link
     /// not yet stat-ed: those terms wait for the stat.
     opens: Option<(EntryKind, &'a OsStr)>,
-    /// Without it, a place term is never decided.
+    /// Without it, a place or `taken` term is never decided.
     late: Option<Late<'a>>,
     /// The name as text, and lowercased, computed once for all the terms.
     text: Cow<'a, str>,
@@ -1458,6 +1567,15 @@ impl<'a> Candidate<'a> {
             .get(keys::POSITION, self.path, late.cancel)
             .as_ref()
             .and_then(skwir_core::geo::LatLon::from_value)
+    }
+
+    /// When the file says it was taken, read now: its camera's clock.
+    fn taken(&self) -> Option<u64> {
+        let late = self.late?;
+        late.fields
+            .get(keys::TAKEN, self.path, late.cancel)
+            .as_ref()
+            .and_then(Value::as_u64)
     }
 
     /// The verdict of a term that reads a file, for what is not one (or
@@ -1619,6 +1737,19 @@ impl Term {
                     return Verdict::Unknown;
                 }
                 yes_no(c.position().is_some_and(|at| self.holds(at)))
+            }
+            // The clock as it reads: digits order as the clocks do, and a
+            // day's bounds are its midnights on the clock.
+            Term::Taken { after, before, .. } => {
+                if let Some(verdict) = c.unless_file() {
+                    return verdict;
+                }
+                if !content {
+                    return Verdict::Unknown;
+                }
+                yes_no(c.taken().is_some_and(|clock| {
+                    after.is_none_or(|a| clock >= a) && before.is_none_or(|b| clock < b)
+                }))
             }
         }
     }
@@ -1846,6 +1977,189 @@ mod tests {
         let blind = Candidate::new(OsStr::new("here.jpg"), EntryKind::File, &here, None);
         assert_eq!(
             q("near:10.12,20.12").expr.unwrap().eval(&blind, true),
+            Verdict::No
+        );
+    }
+
+    /// Answers `taken` from a text file holding the clock's digits; an
+    /// empty one says no clock.
+    struct Clocked;
+    impl skwir_core::fields::FieldProvider for Clocked {
+        fn id(&self) -> &'static str {
+            "clocked"
+        }
+        fn keys(&self) -> &'static [&'static str] {
+            &[keys::TAKEN]
+        }
+        fn accepts(&self, _: &str, _: &OsStr) -> bool {
+            true
+        }
+        fn read(
+            &self,
+            _: &str,
+            path: &Path,
+            _: &skwir_core::CancelToken,
+        ) -> anyhow::Result<Option<Value>> {
+            let text = std::fs::read_to_string(path)?;
+            Ok(text.trim().parse().ok().map(Value::UInt))
+        }
+    }
+
+    /// The clocks a `taken` term holds, `[after, before)`.
+    fn clocks(expr: &str, now: SystemTime, cal: &Calendar) -> (Option<u64>, Option<u64>) {
+        match parse_in(expr, now, cal).unwrap().expr {
+            Some(Expr::Term(Term::Taken { after, before, .. })) => (after, before),
+            other => panic!("{expr}: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn taken_takes_what_the_other_times_take() {
+        let utc = Calendar::utc();
+        let span = |expr: &str| clocks(expr, now(), &utc);
+        let day = |y, m, d| Some(day_clock(days_from_civil(y, m, d)));
+        // Dates, and a range whose end date is included.
+        assert_eq!(span("taken:2023"), (day(2023, 1, 1), day(2024, 1, 1)));
+        assert_eq!(span("taken:2023-04"), (day(2023, 4, 1), day(2023, 5, 1)));
+        assert_eq!(
+            span("taken:2023-04-15"),
+            (Some(20_230_415_000_000), Some(20_230_416_000_000))
+        );
+        assert_eq!(
+            span("taken:2023-04-15..2023-04-17"),
+            (day(2023, 4, 15), day(2023, 4, 18))
+        );
+        // Comparisons, bare or after a colon.
+        assert_eq!(span("taken>=2023-04"), (day(2023, 4, 1), None));
+        assert_eq!(span("taken>2023-04"), (day(2023, 5, 1), None));
+        assert_eq!(span("taken<2023-04"), (None, day(2023, 4, 1)));
+        assert_eq!(span("taken<=2023-04"), (None, day(2023, 5, 1)));
+        // Periods named from now (Friday 2026-09-18, noon).
+        assert_eq!(span("taken:today"), (day(2026, 9, 18), day(2026, 9, 19)));
+        assert_eq!(
+            span("taken:this-week"),
+            (day(2026, 9, 14), day(2026, 9, 21))
+        );
+        assert_eq!(span("taken:last-year"), (day(2025, 1, 1), day(2026, 1, 1)));
+        assert_eq!(
+            span("taken:last-month..yesterday"),
+            (day(2026, 8, 1), day(2026, 9, 18))
+        );
+        // Durations, from the clock now.
+        assert_eq!(span("taken<7d"), (Some(20_260_911_120_000), None));
+        assert_eq!(span("taken>1y"), (None, Some(20_250_918_120_000)));
+        // Printed as written, and read back to the same.
+        for text in [
+            "taken:2023-04",
+            "taken>=last-month",
+            "taken<7d",
+            "kind:image taken:2023-04-15..2023-04-17",
+        ] {
+            assert_eq!(q(text).to_string(), text);
+        }
+        assert_eq!(q("-taken:2023").to_string(), "NOT taken:2023");
+        // A word that merely starts so is a name; one that compares is quoted.
+        assert!(matches!(q("taken").expr, Some(Expr::Term(Term::Name(_)))));
+        assert_eq!(quote("taken<x"), "\"taken<x\"");
+        for bad in [
+            "taken:2023-02-30",
+            "taken:",
+            "taken<someday",
+            "taken:next-week",
+        ] {
+            assert!(parse_at(bad, now()).is_err(), "{bad}");
+        }
+        // Read from the file, so decided last; `today` moves on at midnight.
+        let today = q("taken:today");
+        assert!(today.reads_files() && !today.needs_stat() && !today.needs_metadata());
+        assert_eq!(today.next_change(), Some(civil_to_time(2026, 9, 19)));
+        assert_eq!(q("taken:2023").next_change(), None);
+    }
+
+    /// A camera's clock says no zone: its date is the day it reads in any
+    /// zone, while a duration counts back from the user's clock.
+    #[test]
+    fn a_taken_clock_is_read_as_it_reads() {
+        let cal = paris(Weekday::Monday);
+        // 23:30 UTC on the 25th: 01:30 on the 26th in Paris.
+        let late = civil_to_time(2026, 9, 25) + Duration::from_mins(23 * 60 + 30);
+        let span = |expr: &str| clocks(expr, late, &cal);
+        assert_eq!(
+            span("taken:2023-04-30"),
+            (Some(20_230_430_000_000), Some(20_230_501_000_000)),
+            "midnights on the clock, whatever the zone"
+        );
+        assert_eq!(
+            span("taken:today"),
+            (Some(20_260_926_000_000), Some(20_260_927_000_000)),
+            "the user's day"
+        );
+        assert_eq!(span("taken<7d"), (Some(20_260_919_013_000), None));
+        assert_eq!(
+            parse_in("taken:today", late, &cal).unwrap().next_change(),
+            Some(civil_to_time(2026, 9, 26) + Duration::from_hours(22)),
+            "their next midnight"
+        );
+    }
+
+    #[test]
+    fn taken_holds_the_files_whose_clock_says_so() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fields = skwir_core::fields::Fields::default();
+        fields.register("test", std::sync::Arc::new(Clocked));
+        let cancel = skwir_core::CancelToken::new();
+        let late = Late {
+            fields: &fields,
+            cancel: &cancel,
+        };
+        let file = |name: &str, clock: &str| {
+            let path = tmp.path().join(name);
+            std::fs::write(&path, clock).unwrap();
+            path
+        };
+        let morning = file("a morning's.jpg", "20230415083000");
+        let last = file("last of april.jpg", "20230430235959");
+        let may = file("may day.mp4", "20230501000000");
+        let none = file("no clock.jpg", "");
+        let decide = |query: &str, path: &Path| {
+            let c = Candidate::new(path.file_name().unwrap(), EntryKind::File, path, None)
+                .with_late(late);
+            let expr = q(query).expr.unwrap();
+            // Nothing is read before the late pass.
+            assert_eq!(expr.eval(&c, false), Verdict::Unknown, "{query}");
+            expr.eval(&c, true)
+        };
+        for (query, path, verdict) in [
+            ("taken:2023-04", &morning, Verdict::Yes),
+            ("taken:2023-04", &last, Verdict::Yes),
+            ("taken:2023-04", &may, Verdict::No),
+            ("taken:2023-04", &none, Verdict::No),
+            ("taken:2023-04-15", &morning, Verdict::Yes),
+            ("taken:2023-04-16", &morning, Verdict::No),
+            ("taken:2023-04-14..2023-04-15", &morning, Verdict::Yes),
+            ("taken:2023-04-30..2023-05-01", &may, Verdict::Yes),
+            ("taken<2023-04-15", &morning, Verdict::No),
+            ("taken<=2023-04-15", &morning, Verdict::Yes),
+            ("taken>=2023-04-15", &morning, Verdict::Yes),
+            ("taken>2023-04-15", &morning, Verdict::No),
+            ("taken>2023-04-15", &may, Verdict::Yes),
+            ("NOT taken:2023", &none, Verdict::Yes),
+        ] {
+            assert_eq!(decide(query, path), verdict, "{query} of {path:?}");
+        }
+        // A folder, or a candidate that cannot read fields, was never taken.
+        let dir = Candidate::new(OsStr::new("d"), EntryKind::Directory, tmp.path(), None);
+        assert_eq!(q("taken:2023").expr.unwrap().eval(&dir, true), Verdict::No);
+        let blind = Candidate::new(OsStr::new("a.jpg"), EntryKind::File, &morning, None);
+        assert_eq!(
+            q("taken:2023").expr.unwrap().eval(&blind, true),
+            Verdict::No
+        );
+        // What the name says is decided first: no clock is read for it.
+        let c =
+            Candidate::new(OsStr::new("may day.mp4"), EntryKind::File, &may, None).with_late(late);
+        assert_eq!(
+            q("ext:jpg taken:2023").expr.unwrap().eval(&c, false),
             Verdict::No
         );
     }
@@ -2486,7 +2800,7 @@ mod tests {
         /// the same name: keywords, dashes, keys, quotes, backslashes.
         #[test]
         fn quote_round_trips(
-            s in "(OR|NOT|-|in:|name:|content:/|size>|modified<|~|\"|'|\\\\|\\\\x41|\\\\xff|\\(|\\)| |\t|\n|a|é|\\*|/){1,8}"
+            s in "(OR|NOT|-|in:|name:|content:/|size>|modified<|taken>|~|\"|'|\\\\|\\\\x41|\\\\xff|\\(|\\)| |\t|\n|a|é|\\*|/){1,8}"
         ) {
             let parsed = parse_at(&quote(&s), now()).unwrap();
             let Some(Expr::Term(Term::Name(p))) = parsed.expr else {

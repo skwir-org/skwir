@@ -834,6 +834,13 @@ impl Shell {
             self.player.height = session.player_height;
         }
         self.timeline.open = session.timeline;
+        if session.timeline_size {
+            self.timeline.measure = timeline::Measure::Size;
+        }
+        self.timeline.date = timeline::DATES
+            .iter()
+            .position(|(word, _)| *word == session.timeline_date)
+            .unwrap_or(0);
         // Its shell starts on a worker at the first sync.
         self.terminal.open = session.terminal && self.app.terminals.provider().is_some();
         if session.terminal_height > 0. {
@@ -1508,7 +1515,12 @@ impl Shell {
             .sidebar_shown(window)
             .then(|| self.sidebar_keys.focus.clone());
         let preview = self.preview.open.then(|| self.shown_focus()).flatten();
-        let parts = [sidebar, Some(self.ui().focus.clone()), preview];
+        let parts = [
+            sidebar,
+            Some(self.ui().focus.clone()),
+            self.timeline_focus(),
+            preview,
+        ];
         let here = parts
             .iter()
             .position(|part| {
@@ -2366,6 +2378,28 @@ impl Shell {
                     self.timeline_pan_toward(&toward, cx);
                 }
             }
+            "timeline_measure" => {
+                if let Some(by) = arg("by") {
+                    self.timeline_set_measure(&by, cx);
+                }
+            }
+            "timeline_date" => {
+                if let Some(date) = arg("date") {
+                    self.timeline_set_date(&date, cx);
+                }
+            }
+            "timeline_cursor" => {
+                let by = args
+                    .get("by")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0);
+                let extend = args
+                    .get("extend")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                self.timeline_cursor(by, arg("to").as_deref(), extend, cx);
+            }
+            "timeline_list" => self.timeline_list(window, cx),
             "split" => self.split_command(args, window, cx),
             "layout" => self.layout_command(args, cx),
             "focus_other_pane" => self.focus_other_pane(window, cx),
@@ -3064,7 +3098,7 @@ impl Shell {
         let narrow = crate::narrow::render(self, cx);
         let file_area = self.pane_container(body, said, cx);
         let strip = if active {
-            timeline::render(self, cx)
+            timeline::render(self, window, cx)
         } else {
             None
         };

@@ -4,7 +4,7 @@
 //! [`facets::refine`]; the core keeps them (`workspace::Narrowed`) with
 //! the pills they read as and a test of each file, which reads what the
 //! listing knows of the file, never the file: what needs it read (what it
-//! contains, where it was made) is a search's.
+//! contains, where and when it was taken) is a search's.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,7 +25,7 @@ pub fn narrowed(expr: &str, root: PathBuf) -> Result<Option<Narrowed>, String> {
     };
     if q.reads_files() {
         return Err(
-            "a folder is narrowed by what is known of its files: search for what they contain"
+            "a folder is narrowed by what is known of its files: search for what is read from them (what they contain, where or when they were taken)"
                 .into(),
         );
     }

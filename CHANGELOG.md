@@ -11,6 +11,16 @@
   further (a year, then a day) instead of failing. A file dated far from
   all the others no longer squeezes the rest into a few bars: it is
   counted aside.
+- **Timeline, more to it**: bars of **size** as well as of files; a menu
+  for which time they count, modified, created, last opened, or when a
+  picture or a video was **taken** (its camera's clock, so photos copied
+  later still fall when they were shot); drag across bars to list them
+  all; the files selected marked at the foot of their bars, today's bar
+  underlined. The strip takes the keyboard (`F6`: arrows, `Shift`,
+  `Enter`), and a screen reader hears each bar.
+- **Search** by when a picture was taken: `taken:2023-04`,
+  `taken:2023-04-15..2023-04-17`, `taken>=last-year`, with a Taken
+  filter; Created and Accessed filters too.
 - **View buttons**: choose which views have a button beside the
   address. Right-click the buttons (or press Menu on one, or View ›
   Buttons…) and check the views you switch to, the tree, the board,

@@ -4,9 +4,11 @@
 //! those of coarser and coarser periods: a bar's `rank`), and each bar's
 //! count above it when every count has room.
 //!
-//! The pointer over a bar reads it (`on_hover`), a click on it chooses it
-//! (`on_click`), and the wheel moves along, a bar for each bar's width it
-//! turned (`on_pan`).
+//! The pointer over a bar reads it (`on_hover`); pressed on a bar and
+//! dragged across others, it chooses them (`on_press`, `on_drag`,
+//! `on_release`); the wheel moves along, a bar for each bar's width it
+//! turned (`on_pan`). What is chosen, the bar the keys are on and today's
+//! are the caller's, drawn here.
 
 use std::cell::Cell;
 use std::collections::HashMap;
@@ -15,13 +17,16 @@ use std::rc::Rc;
 use gpui::{
     App, Bounds, ContentMask, CursorStyle, DispatchPhase, Element, ElementId, GlobalElementId,
     Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton,
-    MouseDownEvent, MouseExitEvent, MouseMoveEvent, Pixels, ScrollWheelEvent, ShapedLine,
-    SharedString, Style, TextRun, Window, point, px, relative, size,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent,
+    ShapedLine, SharedString, Style, TextRun, Window, point, px, relative, size,
 };
 
 /// One bar.
 pub struct Bar {
-    pub count: u64,
+    /// What it measures: its files, or their bytes.
+    pub value: u64,
+    /// Of it, what is marked (the files selected), drawn over its foot.
+    pub marked: u64,
     /// Said under it where there is room.
     pub label: SharedString,
     /// The coarsest level it is labelled at: at level 0 every bar is, at
@@ -36,17 +41,22 @@ pub struct Bar {
 #[derive(Clone, Copy)]
 pub struct BarColors {
     pub bar: Hsla,
-    /// The bar under the pointer.
-    pub hover: Hsla,
+    /// The part of a bar that is marked.
+    pub marked: Hsla,
     /// Behind the bar under the pointer, its whole height.
     pub column: Hsla,
+    /// Behind the bars chosen.
+    pub chosen: Hsla,
+    /// Around the bar the keys are on, and under today's.
+    pub cursor: Hsla,
     pub text: Hsla,
     /// The marks where a label's period begins.
     pub tick: Hsla,
 }
 
 type HoverFn = Rc<dyn Fn(Option<usize>, &mut Window, &mut App)>;
-type ClickFn = Rc<dyn Fn(usize, &mut Window, &mut App)>;
+type BarFn = Rc<dyn Fn(usize, &mut Window, &mut App)>;
+type ReleaseFn = Rc<dyn Fn(&mut Window, &mut App)>;
 type PanFn = Rc<dyn Fn(i64, &mut Window, &mut App)>;
 
 pub struct BarChart {
@@ -56,25 +66,40 @@ pub struct BarChart {
     bars: Rc<Vec<Bar>>,
     colors: BarColors,
     hovered: Option<usize>,
+    chosen: Option<(usize, usize)>,
+    cursor: Option<usize>,
+    today: Option<usize>,
     on_hover: HoverFn,
-    on_click: ClickFn,
+    on_press: BarFn,
+    on_drag: BarFn,
+    on_release: ReleaseFn,
     on_pan: Option<PanFn>,
 }
 
+/// A chart of `bars`. A press on a bar is told with it (`on_press`), each
+/// other bar the pointer is dragged to while pressed (`on_drag`), then the
+/// release (`on_release`).
 pub fn bar_chart(
     id: impl Into<ElementId>,
     bars: Rc<Vec<Bar>>,
     colors: BarColors,
     on_hover: impl Fn(Option<usize>, &mut Window, &mut App) + 'static,
-    on_click: impl Fn(usize, &mut Window, &mut App) + 'static,
+    on_press: impl Fn(usize, &mut Window, &mut App) + 'static,
+    on_drag: impl Fn(usize, &mut Window, &mut App) + 'static,
+    on_release: impl Fn(&mut Window, &mut App) + 'static,
 ) -> BarChart {
     BarChart {
         id: id.into(),
         bars,
         colors,
         hovered: None,
+        chosen: None,
+        cursor: None,
+        today: None,
         on_hover: Rc::new(on_hover),
-        on_click: Rc::new(on_click),
+        on_press: Rc::new(on_press),
+        on_drag: Rc::new(on_drag),
+        on_release: Rc::new(on_release),
         on_pan: None,
     }
 }
@@ -83,6 +108,24 @@ impl BarChart {
     /// The bar under the pointer, as the last hover callback said.
     pub fn hovered(mut self, index: Option<usize>) -> Self {
         self.hovered = index;
+        self
+    }
+
+    /// The bars chosen, first and last.
+    pub fn chosen(mut self, range: Option<(usize, usize)>) -> Self {
+        self.chosen = range;
+        self
+    }
+
+    /// The bar the keys are on, ringed while the chart has the keyboard.
+    pub fn cursor(mut self, index: Option<usize>) -> Self {
+        self.cursor = index;
+        self
+    }
+
+    /// Today's bar, underlined.
+    pub fn today(mut self, index: Option<usize>) -> Self {
+        self.today = index;
         self
     }
 
@@ -181,6 +224,8 @@ struct Laid {
     /// and the bar drawn in it.
     slots: Vec<Bounds<Pixels>>,
     bars: Vec<Bounds<Pixels>>,
+    /// The marked part of each bar that has one.
+    marks: Vec<Bounds<Pixels>>,
     /// Labels with where they are drawn, and the ticks of those that
     /// begin at their bar.
     labels: Vec<(gpui::Point<Pixels>, ShapedLine)>,
@@ -199,11 +244,14 @@ struct Kept {
     laid: Rc<Laid>,
     /// Wheel turned by less than a bar, kept for the next turn.
     wheel: Rc<Cell<f32>>,
+    /// While pressed: the bar the pointer was last told on.
+    pressed: Rc<Cell<Option<usize>>>,
 }
 
 pub struct Prepaint {
     laid: Rc<Laid>,
     wheel: Rc<Cell<f32>>,
+    pressed: Rc<Cell<Option<usize>>>,
     hitbox: Hitbox,
 }
 
@@ -246,7 +294,7 @@ fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Win
     // Counts are said when every one has room above its bar.
     let tallies: Vec<Option<ShapedLine>> = bars
         .iter()
-        .map(|b| (b.count > 0).then(|| shape(&b.tally, colors.text, window, &mut tallies_shaped)))
+        .map(|b| (b.value > 0).then(|| shape(&b.tally, colors.text, window, &mut tallies_shaped)))
         .collect();
     let say_tallies = tallies
         .iter()
@@ -255,9 +303,10 @@ fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Win
     let top = bounds.origin.y + px(if say_tallies { TALLY } else { 4. });
     let floor = bounds.origin.y + bounds.size.height - px(AXIS);
     let high = f32::from(floor - top).max(1.);
-    let heights = bar_heights(bars.iter().map(|b| b.count), high);
+    let heights = bar_heights(bars.iter().map(|b| b.value), high);
     let mut slots = Vec::with_capacity(bars.len());
     let mut drawn = Vec::with_capacity(bars.len());
+    let mut marks = Vec::new();
     let mut said = Vec::new();
     for (i, h) in heights.iter().enumerate() {
         let (from, to) = (x(i), x(i + 1));
@@ -267,6 +316,14 @@ fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Win
             size(px(w), floor - bounds.origin.y),
         );
         let bar = Bounds::new(point(slot.origin.x, floor - px(*h)), size(px(w), px(*h)));
+        let b = &bars[i];
+        if b.marked > 0 && b.value > 0 {
+            let part = (h * (b.marked.min(b.value) as f32 / b.value as f32)).max(1.);
+            marks.push(Bounds::new(
+                point(slot.origin.x, floor - px(part)),
+                size(px(w), px(part)),
+            ));
+        }
         if say_tallies && let Some(tally) = &tallies[i] {
             let at = point(
                 bar.origin.x + (bar.size.width - tally.width) / 2.,
@@ -310,6 +367,7 @@ fn lay_out(bars: &[Bar], colors: BarColors, bounds: Bounds<Pixels>, window: &Win
     Laid {
         slots,
         bars: drawn,
+        marks,
         labels,
         ticks,
         tallies: said,
@@ -359,11 +417,11 @@ impl Element for BarChart {
             window.scale_factor().to_bits(),
         );
         let (bars, colors) = (Rc::clone(&self.bars), self.colors);
-        let (laid, wheel) = match id {
+        let (laid, wheel, pressed) = match id {
             Some(id) => window.with_element_state(id, |kept: Option<Kept>, window| {
-                let wheel = kept
-                    .as_ref()
-                    .map_or_else(Rc::default, |kept| Rc::clone(&kept.wheel));
+                let (wheel, pressed) = kept.as_ref().map_or_else(Default::default, |kept| {
+                    (Rc::clone(&kept.wheel), Rc::clone(&kept.pressed))
+                });
                 let laid = match kept.filter(|kept| kept.from == from) {
                     Some(kept) => kept.laid,
                     None => Rc::new(lay_out(&bars, colors, bounds, window)),
@@ -372,11 +430,13 @@ impl Element for BarChart {
                     from,
                     laid: Rc::clone(&laid),
                     wheel: Rc::clone(&wheel),
+                    pressed: Rc::clone(&pressed),
                 };
-                ((laid, wheel), kept)
+                ((laid, wheel, pressed), kept)
             }),
             None => (
                 Rc::new(lay_out(&bars, colors, bounds, window)),
+                Rc::default(),
                 Rc::default(),
             ),
         };
@@ -384,6 +444,7 @@ impl Element for BarChart {
         Prepaint {
             laid,
             wheel,
+            pressed,
             hitbox,
         }
     }
@@ -401,22 +462,48 @@ impl Element for BarChart {
         let colors = self.colors;
         let laid = Rc::clone(&prepaint.laid);
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            let span = |(a, b): (usize, usize)| {
+                let (first, last) = (laid.slots.get(a)?, laid.slots.get(b)?);
+                Some(Bounds::new(
+                    first.origin,
+                    size(
+                        first
+                            .size
+                            .width
+                            .max(last.origin.x + last.size.width - first.origin.x),
+                        first.size.height,
+                    ),
+                ))
+            };
+            if let Some(chosen) = self.chosen.and_then(span) {
+                window.paint_quad(gpui::fill(chosen, colors.chosen).corner_radii(px(2.)));
+            }
             if let Some(slot) = self.hovered.and_then(|i| laid.slots.get(i)) {
                 window.paint_quad(gpui::fill(*slot, colors.column).corner_radii(px(2.)));
             }
-            for (i, bar) in laid.bars.iter().enumerate() {
-                if bar.size.height > px(0.) {
-                    let color = if self.hovered == Some(i) {
-                        colors.hover
-                    } else {
-                        colors.bar
-                    };
-                    let radius = if bar.size.width >= px(4.) { 2. } else { 0. };
-                    window.paint_quad(gpui::fill(*bar, color).corner_radii(px(radius)));
-                }
+            for bar in laid.bars.iter().filter(|bar| bar.size.height > px(0.)) {
+                let radius = if bar.size.width >= px(4.) { 2. } else { 0. };
+                window.paint_quad(gpui::fill(*bar, colors.bar).corner_radii(px(radius)));
+            }
+            for mark in &laid.marks {
+                window.paint_quad(gpui::fill(*mark, colors.marked));
             }
             for tick in &laid.ticks {
                 window.paint_quad(gpui::fill(*tick, colors.tick));
+            }
+            if let Some(slot) = self.today.and_then(|i| laid.slots.get(i)) {
+                let under = point(slot.origin.x, slot.origin.y + slot.size.height);
+                window.paint_quad(gpui::fill(
+                    Bounds::new(under, size(slot.size.width, px(2.))),
+                    colors.cursor,
+                ));
+            }
+            if let Some(slot) = self.cursor.and_then(|i| laid.slots.get(i)) {
+                window.paint_quad(gpui::outline(
+                    *slot,
+                    colors.cursor,
+                    gpui::BorderStyle::Solid,
+                ));
             }
             let lines = (laid.labels.iter().map(|l| (l, AXIS - 2.)))
                 .chain(laid.tallies.iter().map(|t| (t, TALLY)));
@@ -460,7 +547,10 @@ impl Element for BarChart {
                 on_hover(None, window, cx);
             }
         });
-        let on_click = Rc::clone(&self.on_click);
+        // Pressed on a bar, dragged to others, released: what was crossed
+        // is chosen. Dragged past an end, the end bar is.
+        let pressed = Rc::clone(&prepaint.pressed);
+        let on_press = Rc::clone(&self.on_press);
         let hb = hitbox.clone();
         window.on_mouse_event(move |ev: &MouseDownEvent, phase, window, cx| {
             if phase == DispatchPhase::Bubble
@@ -468,7 +558,32 @@ impl Element for BarChart {
                 && hb.is_hovered(window)
                 && let Some(i) = bar_at(ev.position)
             {
-                on_click(i, window, cx);
+                pressed.set(Some(i));
+                on_press(i, window, cx);
+            }
+        });
+        let pressed = Rc::clone(&prepaint.pressed);
+        let on_drag = Rc::clone(&self.on_drag);
+        window.on_mouse_event(move |ev: &MouseMoveEvent, phase, window, cx| {
+            let Some(last) = pressed.get() else { return };
+            if phase != DispatchPhase::Bubble || ev.pressed_button != Some(MouseButton::Left) {
+                return;
+            }
+            let i = (f32::from(ev.position.x - left) / pitch).floor();
+            let i = (i.max(0.) as usize).min(count.saturating_sub(1));
+            if i != last {
+                pressed.set(Some(i));
+                on_drag(i, window, cx);
+            }
+        });
+        let pressed = Rc::clone(&prepaint.pressed);
+        let on_release = Rc::clone(&self.on_release);
+        window.on_mouse_event(move |ev: &MouseUpEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble
+                && ev.button == MouseButton::Left
+                && pressed.take().is_some()
+            {
+                on_release(window, cx);
             }
         });
         if let Some(on_pan) = self.on_pan.clone() {

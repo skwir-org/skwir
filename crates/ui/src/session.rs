@@ -71,6 +71,10 @@ pub struct Session {
     /// The types whose models open turned in 3D, or by their picture.
     pub turned_types: crate::preview::TurnedTypes,
     pub timeline: bool,
+    /// Whether its bars measure sizes rather than files.
+    pub timeline_size: bool,
+    /// The time they count (`timeline::DATES`); modified when empty.
+    pub timeline_date: String,
     /// How tall the pinned player's dock was dragged.
     pub player_height: f32,
     /// Whether the terminal was open under the panes.
@@ -112,6 +116,8 @@ impl Shell {
             source_types: self.preview.source_types.clone(),
             turned_types: self.preview.turned_types.clone(),
             timeline: self.timeline.open,
+            timeline_size: self.timeline.measure == crate::timeline::Measure::Size,
+            timeline_date: crate::timeline::DATES[self.timeline.date].0.to_owned(),
             player_height: self.player.height,
             terminal: self.terminal.open,
             terminal_height: self.terminal.height.unwrap_or(0.),
