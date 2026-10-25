@@ -249,6 +249,12 @@ mod args {
     }
 
     #[derive(Deserialize, JsonSchema)]
+    pub(super) struct Toward {
+        /// `earlier` or `later`.
+        toward: String,
+    }
+
+    #[derive(Deserialize, JsonSchema)]
     pub(super) struct Split {
         /// `other` splits the other way, for this split only.
         #[serde(default)]
@@ -430,7 +436,7 @@ use args::{
     Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold, Folders,
     History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player,
     Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submit, TagsPrompt, TerminalPaste, Text,
-    Url, UsageMode, View, ViewButton,
+    Toward, Url, UsageMode, View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -496,6 +502,7 @@ const SHOWS: &[&str] = &[
     "ui.layout",
     "ui.timeline",
     "ui.timeline_bucket",
+    "ui.timeline_pan",
     "ui.timeline_subtree",
     "ui.terminal",
     "ui.terminal_page",
@@ -1549,7 +1556,13 @@ pub fn declare_all(app: &App) {
         app,
         "ui.timeline_bucket",
         "Timeline bars",
-        "What each bar of the timeline counts: a day, a week, a month or a year",
+        "What each bar of the timeline counts, a day, a week, a month or a year, while the pane shows what it shows: by default the finest that shows every date",
+    );
+    declare::<Toward>(
+        app,
+        "ui.timeline_pan",
+        "Timeline: move along",
+        "Show the timeline's earlier or later bars, when there are too many of them to show at once",
     );
     none(
         "ui.timeline_subtree",

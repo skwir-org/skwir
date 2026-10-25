@@ -2361,6 +2361,11 @@ impl Shell {
                 self.timeline_set_bucket(&b, cx);
             }
             "timeline_subtree" => self.timeline_toggle_subtree(cx),
+            "timeline_pan" => {
+                if let Some(toward) = arg("toward") {
+                    self.timeline_pan_toward(&toward, cx);
+                }
+            }
             "split" => self.split_command(args, window, cx),
             "layout" => self.layout_command(args, cx),
             "focus_other_pane" => self.focus_other_pane(window, cx),

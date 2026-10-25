@@ -108,7 +108,14 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   tiles (OpenStreetMap, a server you add) is used only once you choose it
   in Settings › Pictures and media › Maps.
 - **Timeline** (`Ctrl+Shift+L`) shows when files changed, one bar per
-  period; click a bar to search it.
+  period: the finest that shows every date, labelled where there is
+  room, each bar's count above it when there is room for all. Pick day,
+  week, month or year for this place; when there are too many bars for
+  the strip, a part of them shows, and the wheel over the bars or the
+  arrows move along. Click a bar to list its files; in that list, a bar
+  narrows it further (a year, then a day), and Back goes back up. A few
+  files dated far from all the others (a camera's clock set wrong) are
+  counted aside rather than stretching the bars.
 
 ## Selecting and acting
 

@@ -82,3 +82,89 @@ fn timeline_selection_preserves_paths_and_filters_the_period() {
         );
     }
 }
+
+/// A bar of a search's timeline narrows that search: a month of a folder,
+/// then a day of that month, its root and depth kept.
+#[test]
+fn a_bar_of_a_search_refines_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    app.plugins.add(
+        Arc::new(skwir_plugin_timeline::TimelinePlugin::default()),
+        &app,
+    );
+    let pane = app.workspace.read().active_id();
+    let cal = skwir_platform::calendar::Calendar::system();
+    let day = |y, m, d| skwir_platform::calendar::days_from_civil(y, m, d);
+    let secs = |day: i64| {
+        cal.day_start(day)
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let root = tmp.path().join("d'Example (2)");
+    std::fs::create_dir_all(root.join("inner")).unwrap();
+    for (name, modified) in [
+        ("june.jpg", secs(day(2026, 6, 30))),
+        ("first.jpg", secs(day(2026, 7, 1))),
+        ("second.jpg", secs(day(2026, 7, 2)) + 60),
+        ("inner/deep.jpg", secs(day(2026, 7, 1)) + 60),
+    ] {
+        std::fs::File::create(root.join(name))
+            .unwrap()
+            .set_modified(UNIX_EPOCH + Duration::from_secs(modified))
+            .unwrap();
+    }
+    let names = || -> BTreeSet<String> {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        p.listing
+            .iter()
+            .map(|e| e.name_str().into_owned())
+            .collect()
+    };
+    let select = |start: i64, end: i64| {
+        app.dispatch(&Invocation::with_args(
+            "timeline.select",
+            &serde_json::json!({ "start": secs(start), "end": secs(end), "subtree": false }),
+        ))
+        .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    };
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    // July, in the folder: what it holds itself.
+    select(day(2026, 7, 1), day(2026, 8, 1));
+    assert_eq!(
+        names(),
+        BTreeSet::from(["first.jpg".into(), "second.jpg".into()])
+    );
+    // Its first day, in that search.
+    select(day(2026, 7, 1), day(2026, 7, 2));
+    assert_eq!(names(), BTreeSet::from(["first.jpg".into()]));
+    let location = app.pane_location(pane).unwrap();
+    assert_eq!(location.scheme.as_ref(), "query");
+    let query = skwir_plugin_query::lang::parse(&location.rest).unwrap();
+    assert_eq!(query.root, root);
+    // The day in place of the month, not beside it.
+    assert!(
+        location.rest.contains("modified:2026-07-01") && !location.rest.contains("2026-07 "),
+        "{}",
+        location.rest
+    );
+    assert_eq!(
+        location.rest.matches("modified").count(),
+        1,
+        "{}",
+        location.rest
+    );
+    // Back is the month again.
+    app.dispatch(&Invocation::new("back")).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    assert_eq!(
+        names(),
+        BTreeSet::from(["first.jpg".into(), "second.jpg".into()])
+    );
+}

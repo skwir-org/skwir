@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Timeline**: the period pressed is the one shown, and each place opens
+  on the finest that shows all its dates. Day or week can still be
+  picked over years: part of the bars shows, and the wheel or the new
+  arrows move along. Bars are labelled with their months and years (or
+  days) where there is room, and say their count above them when they
+  are wide enough. Clicking a bar in the list a bar opened narrows it
+  further (a year, then a day) instead of failing. A file dated far from
+  all the others no longer squeezes the rest into a few bars: it is
+  counted aside.
 - **View buttons**: choose which views have a button beside the
   address. Right-click the buttons (or press Menu on one, or View ›
   Buttons…) and check the views you switch to, the tree, the board,

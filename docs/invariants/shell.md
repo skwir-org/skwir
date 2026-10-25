@@ -627,6 +627,29 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   its split, by any route, starts even again (`sync_tabs`);
   only the shown tab's share is remembered.
 
+## The timeline strip (`timeline.rs`)
+
+- The width pressed is the width shown (`Histogram::bucket`). Unpicked,
+  the bars are the finest that show every date (`fits`); a width picked
+  holds while the pane shows what it showed then (a `Zoom` ends with
+  `location_lifetime`), so each place opens on its whole span. A width
+  finer than `fits` is a window of `MAX_BARS` bars, moved by the wheel
+  over the bars and the arrows (`ui.timeline_pan`), anchored to a bar's
+  instant (`from`, `until`) the plugin places; a width picked over a
+  moved window ends where it did.
+- Dates far from all the others (`outside`) never decide the width: the
+  plugin leaves out strays (a hundredth of the files at most, further
+  from the rest than it spans and by more than a year).
+- The bars are one element (`elements/bars.rs`): labels, ticks and counts
+  are chosen in prepaint from each bar's rank, the finest level whose
+  labels all have room. Bars are dated on the plugin's calendar
+  (`Calendar::system`), so a label is the bar's period.
+- A bar's click searches its period in one `modified:` term
+  (`timeline.select`); in a search, it refines that term
+  (`query.refine`), so a bar of a bar's files is a click away and Back
+  returns. Only a folder's subtree is walked: a search lists what it
+  lists.
+
 ## The terminal panel (ADR-019)
 
 - It draws core's `terminal::Screen` and sends `terminal::Input`; the VT
