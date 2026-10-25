@@ -67,20 +67,33 @@ impl Calendar {
 
     /// The civil day `t` falls on in the zone.
     pub fn day_of(&self, t: SystemTime) -> i64 {
+        self.clock_of(t).0
+    }
+
+    /// What the clock in the zone shows at `t`: the civil day, and the
+    /// seconds since its midnight the clock reads (an hour a clock change
+    /// skips is never shown, one it repeats is shown twice), as a camera's
+    /// clock keeps a time. Beyond what a calendar holds, the nearest
+    /// instant it does.
+    pub fn clock_of(&self, t: SystemTime) -> (i64, u32) {
         let Ok(ts) = Timestamp::try_from(t) else {
-            // Beyond what a calendar holds: the nearest day it does.
             return if t < UNIX_EPOCH {
-                days_from_civil(-9999, 1, 1)
+                (days_from_civil(-9999, 1, 1), 0)
             } else {
-                days_from_civil(9999, 12, 31)
+                (days_from_civil(9999, 12, 31), 86_399)
             };
         };
-        let date = ts.to_zoned(self.tz.clone()).date();
-        days_from_civil(
+        let shown = ts.to_zoned(self.tz.clone()).datetime();
+        let (date, time) = (shown.date(), shown.time());
+        let day = days_from_civil(
             i64::from(date.year()),
             u32::from(date.month().unsigned_abs()),
             u32::from(date.day().unsigned_abs()),
-        )
+        );
+        let seconds = u32::from(time.hour().unsigned_abs()) * 3600
+            + u32::from(time.minute().unsigned_abs()) * 60
+            + u32::from(time.second().unsigned_abs());
+        (day, seconds)
     }
 
     /// The first instant of civil day `day` in the zone: its midnight, or
@@ -324,6 +337,37 @@ mod tests {
 
     fn utc(y: i64, m: u32, d: u32, h: u64) -> SystemTime {
         shift(UNIX_EPOCH, days_from_civil(y, m, d) * 86_400) + Duration::from_secs(h * 3600)
+    }
+
+    /// The clock as Paris reads it: 23:30 UTC on 2026-09-25 is 01:30 on
+    /// the 26th in summer, 00:30 once the clocks went back; the second
+    /// 01:30 of the day they go back reads as the first.
+    #[test]
+    fn a_clock_reads_the_zones_day_and_time() {
+        let paris = paris();
+        let at = |y, m, d, secs: u64| {
+            shift(UNIX_EPOCH, days_from_civil(y, m, d) * 86_400) + Duration::from_secs(secs)
+        };
+        let late = 23 * 3600 + 30 * 60;
+        assert_eq!(
+            paris.clock_of(at(2026, 9, 25, late)),
+            (days_from_civil(2026, 9, 26), 5400)
+        );
+        assert_eq!(
+            paris.clock_of(at(2026, 11, 25, late)),
+            (days_from_civil(2026, 11, 26), 1800)
+        );
+        // 2026-10-25: 00:30 and 01:30 UTC are both 02:30 in Paris.
+        let twice = days_from_civil(2026, 10, 25);
+        assert_eq!(paris.clock_of(at(2026, 10, 25, 1800)), (twice, 9000));
+        assert_eq!(paris.clock_of(at(2026, 10, 25, 5400)), (twice, 9000));
+        assert_eq!(
+            paris.day_of(at(2026, 9, 25, late)),
+            days_from_civil(2026, 9, 26)
+        );
+        // Beyond what a calendar holds: its ends.
+        let before = UNIX_EPOCH - Duration::from_secs(400_000_000_000);
+        assert_eq!(paris.clock_of(before), (days_from_civil(-9999, 1, 1), 0));
     }
 
     #[test]

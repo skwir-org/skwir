@@ -1163,20 +1163,19 @@ fn day_clock(day: i64) -> u64 {
     clock([y, m.into(), d.into(), 0, 0, 0])
 }
 
-/// The clock the user's calendar showed at `t`, in their zone.
+/// The clock the user's calendar showed at `t`, in their zone. Before
+/// what a calendar holds, before every clock.
 fn clock_at(t: SystemTime, cal: &Calendar) -> u64 {
-    let Ok(timestamp) = t.try_into() else {
-        // Before what a calendar holds: before every clock.
-        return 0;
-    };
-    let civil = cal.time_zone().to_datetime(timestamp);
+    let (day, seconds) = cal.clock_of(t);
+    let (y, m, d) = civil_from_days(day);
+    let seconds = i64::from(seconds);
     clock([
-        civil.year().into(),
-        civil.month().into(),
-        civil.day().into(),
-        civil.hour().into(),
-        civil.minute().into(),
-        civil.second().into(),
+        y,
+        m.into(),
+        d.into(),
+        seconds / 3600,
+        seconds / 60 % 60,
+        seconds % 60,
     ])
 }
 
