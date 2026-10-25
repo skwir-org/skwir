@@ -4623,3 +4623,10 @@ overnight: the review's remote items, then what the servers' work left.
   (they take a second; a mount under a load of twelve, more). It waits
   for that folder to open now, and lets go until none of its server's
   mounts is left.
+- Final checks: `just release-check` passed whole at `a84ca275` (2205
+  tests, smoke, accessibility, the readers, bench budgets, release
+  tools), after the three fixes above; `just remote-check` passed whole
+  at `e671d424` (150 tests, NFS and AFP, the stand-in iPhone, Nearby,
+  keyrings 5, 5 and 2), no test mount left after; `just test-windows`
+  passed whole at `e671d424` on its first run (1664 tests, 22 skipped).
+  Not run: `tools/test/login-user-systemd.sh`, the user's to run.
