@@ -342,10 +342,10 @@ impl Shell {
                     state.selected = Some((byte / ROW) as usize);
                     // "Match at 0x…", or that there is none further.
                     if !said.is_empty() {
-                        self.set_status(said, false, cx);
+                        self.find_said(said, false, cx);
                     }
                 }
-                Err(error) => self.set_status(format!("{error:#}"), true, cx),
+                Err(error) => self.find_said(format!("{error:#}"), true, cx),
             }
         }
         if changed {
@@ -369,7 +369,7 @@ impl Shell {
         };
         match action {
             "find" if args["back"].as_bool() == Some(true) => {
-                self.set_status("The hex view searches forward only", false, cx);
+                self.find_said("The hex view searches forward only", false, cx);
             }
             "find" => {
                 let query = args["value"].as_str().unwrap_or("").to_owned();

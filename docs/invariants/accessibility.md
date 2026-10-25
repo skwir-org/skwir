@@ -70,11 +70,12 @@ like `AGENTS.md`.
 - **A dialog** is `modal::panel`: a modal dialog with an id of its own,
   named by its caller; a question asked before acting is an alert dialog.
 - **What is announced** is a live region (`aria_live`, patch 0031): a
-  toast, polite, or assertive for a failure, named by its message. Its
-  buttons are `Live::Off`, or they are announced with it. A running
-  plan's toast is a progress indicator, never live: it would speak at
-  every step. A status that changes with every key (the footer) is a
-  status line read when asked, never live.
+  toast, polite, or assertive for a failure, named by its message, and
+  an answer said where it was asked, the same way (a preview's find:
+  `preview_bar::find_popup`). Its buttons are `Live::Off`, or they are
+  announced with it. A running plan's toast is a progress indicator,
+  never live: it would speak at every step. A status that changes with
+  every key (the footer) is a status line read when asked, never live.
 
 ## Previews and the terminal
 

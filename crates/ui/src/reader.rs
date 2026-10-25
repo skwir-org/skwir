@@ -402,6 +402,7 @@ impl Shell {
             return;
         };
         let query = find.text(cx);
+        find.hush();
         reader.hits.clear();
         reader.active_hit = None;
         let lifetime = reader.lifetime.clone();
@@ -498,16 +499,26 @@ impl Shell {
         }
         if let Some(result) = self.preview.reader.search.take() {
             cx.notify();
+            // Said in the find field: closing it forgets its search.
+            let find = self.preview.reader.find.as_ref();
             match result {
                 Ok(hits) => {
                     let first = hits.first().map(|h| h.page);
+                    if first.is_none()
+                        && let Some(find) = find
+                    {
+                        find.say("No match", false);
+                    }
                     self.preview.reader.hits = hits;
                     self.preview.reader.active_hit = first.map(|_| 0);
                     if let Some(first) = first {
                         self.preview_go_page(first, cx);
                     }
                 }
-                Err(error) => self.set_status(error, true, cx),
+                Err(error) => match find {
+                    Some(find) => find.say(error, true),
+                    None => self.set_status(error, true, cx),
+                },
             }
         }
     }

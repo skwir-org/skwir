@@ -556,6 +556,9 @@ pub struct Field {
     /// Where its popup was last drawn (`find_popup`): what it hides of
     /// what the preview shows under it.
     pub drawn: Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+    /// What the last thing asked of it came to, and whether that is a
+    /// failure (`say`), until its text changes.
+    said: Rc<std::cell::RefCell<Option<(String, bool)>>>,
     _subscription: gpui::Subscription,
 }
 
@@ -569,6 +572,8 @@ impl Field {
     ) -> Self {
         use crate::input::{InputEvent, TextInput};
         let input = cx.new(|cx| TextInput::new(placeholder, cx));
+        let said: Rc<std::cell::RefCell<Option<(String, bool)>>> = Rc::default();
+        let heard = Rc::clone(&said);
         let subscription = cx.subscribe_in(
             &input,
             window,
@@ -576,7 +581,11 @@ impl Field {
                 let (command, args) = match event {
                     InputEvent::Submit => split(submit),
                     InputEvent::Cancel => split(cancel),
-                    InputEvent::Changed => return cx.notify(),
+                    InputEvent::Changed => {
+                        // What was said was about the text before.
+                        heard.take();
+                        return cx.notify();
+                    }
                 };
                 this.run(command, args, window, cx);
             },
@@ -584,12 +593,25 @@ impl Field {
         Field {
             input,
             drawn: Rc::default(),
+            said,
             _subscription: subscription,
         }
     }
 
     pub fn text(&self, cx: &gpui::App) -> String {
         self.input.read(cx).text().to_owned()
+    }
+
+    /// Say in its popup what the last thing asked came to instead of what
+    /// was looked for (no match, why it was not looked for, a failure):
+    /// the answer stays where the question was (shell.md, "Feedback").
+    pub fn say(&self, text: impl Into<String>, error: bool) {
+        *self.said.borrow_mut() = Some((text.into(), error));
+    }
+
+    /// Asked again: what was said of the last time goes.
+    pub fn hush(&self) {
+        self.said.take();
     }
 
     pub fn is_focused(&self, window: &gpui::Window, cx: &gpui::App) -> bool {
@@ -606,10 +628,11 @@ fn split(command: &'static str) -> (&'static str, serde_json::Value) {
 }
 
 /// The find field under its button, the same in the reader and in a
-/// structured preview: the field, a line saying where the search stands,
-/// and the buttons that step through the matches and close it. `context`
-/// names its keys (`keymap::PREVIEW_FIND`). The field is told where it was
-/// drawn (`Field::drawn`).
+/// structured preview: the field, a line saying where the search stands
+/// (`status`) or what the last find came to (`Field::say`), and the
+/// buttons that step through the matches and close it. `context` names
+/// its keys (`keymap::PREVIEW_FIND`). The field is told where it was drawn
+/// (`Field::drawn`).
 pub fn find_popup(
     field: &Field,
     context: &'static str,
@@ -619,6 +642,29 @@ pub fn find_popup(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
+    let line = match field.said.borrow().clone() {
+        // Announced as a toast is: a failure at once, the rest after what
+        // is being said (accessibility.md).
+        Some((said, error)) => div()
+            .id("preview-find-status")
+            .role(if error {
+                gpui::Role::Alert
+            } else {
+                gpui::Role::Status
+            })
+            .aria_live(if error {
+                gpui::Live::Assertive
+            } else {
+                gpui::Live::Polite
+            })
+            .when(shell.a11y, |d| d.aria_label(said.clone()))
+            .text_color(if error { theme.error } else { theme.text })
+            .child(said),
+        None => div()
+            .id("preview-find-status")
+            .text_color(theme.text_muted)
+            .child(status),
+    };
     div()
         .tab_group()
         .key_context(context)
@@ -648,7 +694,7 @@ pub fn find_popup(
                 .items_center()
                 .gap_1()
                 .text_xs()
-                .child(div().flex_1().text_color(theme.text_muted).child(status))
+                .child(line.flex_1().min_w_0())
                 .children(buttons.into_iter().map(|button| button.render(shell, cx))),
         )
         .child({

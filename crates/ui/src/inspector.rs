@@ -1420,6 +1420,12 @@ impl Shell {
             Some(PreviewContent::Inspection(display)) => Some(display.data.kind),
             _ => None,
         };
+        // A find asked again: what its field said of the last one goes.
+        if action == "find"
+            && let Some(find) = &self.preview.inspection.find
+        {
+            find.hush();
+        }
         // A text or bytes read where they are shown find, copy and scroll
         // the file.
         if matches!(action, "find" | "copy" | "select_all" | "scroll")
@@ -1680,8 +1686,7 @@ impl Shell {
                     if args["back"].as_bool() == Some(true)
                         && State::hex_file(display.data.kind) =>
                 {
-                    self.set_status("The hex view searches forward only", false, cx);
-                    return;
+                    return self.find_said("The hex view searches forward only", false, cx);
                 }
                 "find"
                     if !State::hex_file(display.data.kind)
@@ -1710,11 +1715,9 @@ impl Shell {
                         let none = if book {
                             "No earlier match in this chapter"
                         } else {
-                            "No match in this preview section"
+                            "No match in this section"
                         };
-                        self.set_status(none, false, cx);
-                        cx.notify();
-                        return;
+                        return self.find_said(none, false, cx);
                     }
                 }
                 _ => {}
@@ -2137,6 +2140,24 @@ impl Shell {
         });
         self.preview.inspection.section_input = Some(field);
         cx.notify();
+    }
+
+    /// What a find came to instead of a match, or why it did not look:
+    /// said in its field, where it was asked (`Field::say`). A find asked
+    /// with no field open (a script's `ui.inspect`) is answered by a toast.
+    pub(crate) fn find_said(
+        &mut self,
+        text: impl Into<String>,
+        error: bool,
+        cx: &mut Context<Self>,
+    ) {
+        match &self.preview.inspection.find {
+            Some(find) => {
+                find.say(text, error);
+                cx.notify();
+            }
+            None => self.set_status(text, error, cx),
+        }
     }
 
     fn inspect_find_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {

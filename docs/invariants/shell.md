@@ -304,12 +304,19 @@ of bars, split or not.
 
 ## Feedback
 
-- **Every user action gets an answer** in `toast.rs`: a sentence built
-  from the applied `Change`s ("Moved “a.txt” to Trash"), with Undo when
-  the journal can take it back (of the plan it reports, `undo {"plan"}`:
-  refused, saying why, once a plan asked after it touched what it did),
-  Redo after an undo, Retry first for a plan a step's error stopped
-  (ADR-080; a toast holds its buttons in order, `Toast::actions`).
+- **An answer is said where it was asked**, where the user is looking.
+  A field or popup that asks something answers in itself: a find's "No
+  match", why it did not look, its failure, are its popup's status line
+  (`preview_bar::Field::say`, gone when the text changes), announced as
+  a toast is. A toast is for an answer with no place of its own in view,
+  and for one whose place is gone (a script's find, no field open).
+- **Every user action gets an answer**, with no place of its own in
+  `toast.rs`: a sentence built from the applied `Change`s ("Moved
+  “a.txt” to Trash"), with Undo when the journal can take it back (of
+  the plan it reports, `undo {"plan"}`: refused, saying why, once a plan
+  asked after it touched what it did), Redo after an undo, Retry first
+  for a plan a step's error stopped (ADR-080; a toast holds its buttons
+  in order, `Toast::actions`).
   Progress bars:
   [operations.md](operations.md); an answer said while plans run is drawn
   under their cards, never hidden by them. It names the file a step acts

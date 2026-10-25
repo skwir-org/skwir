@@ -26,6 +26,9 @@
   book's contents no longer list the chapter's own headings again above
   its chapters: those its contents leave out stand under the chapter
   you are reading.
+- **Find in a preview** says that nothing matches in its own popup, under
+  what you typed, rather than in a message at the bottom of the window;
+  so does the hex view's "Match at 0x…".
 - **Scripts and agents**: a file selected, a folder opened or a sort
   changed by `skwir cmd` or an agent shows in the window at once, not at
   the next move of the mouse.

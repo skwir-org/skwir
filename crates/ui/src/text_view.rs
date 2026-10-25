@@ -165,6 +165,13 @@ struct Reply {
 pub(crate) enum Found {
     Match(u64, Range<usize>),
     Row(u64),
+    /// What a search came to instead, said in its field: no match, or a
+    /// failure.
+    Missed {
+        said: String,
+        error: bool,
+    },
+    /// What a line a link names came to instead.
     Nothing(String),
 }
 
@@ -519,11 +526,15 @@ impl TextView {
             &self.counting,
             Priority::Visible,
             "text-rows-find",
-            move |cancel| match text_rows::find(&path, &index, &query, from, back, cancel) {
-                Ok(Some((row, found))) => Found::Match(row, found),
-                Ok(None) if index.read().done() => Found::Nothing("No match in the file".into()),
-                Ok(None) => Found::Nothing("No match in what is counted so far".into()),
-                Err(error) => Found::Nothing(format!("{error:#}")),
+            move |cancel| {
+                let (said, error) = match text_rows::find(&path, &index, &query, from, back, cancel)
+                {
+                    Ok(Some((row, found))) => return Found::Match(row, found),
+                    Ok(None) if index.read().done() => ("No match in the file".into(), false),
+                    Ok(None) => ("No match in what is counted so far".into(), false),
+                    Err(error) => (format!("{error:#}"), true),
+                };
+                Found::Missed { said, error }
             },
         );
     }
@@ -746,6 +757,7 @@ impl Shell {
                     state.selected = Some(row as usize);
                     state.selection = None;
                 }
+                Found::Missed { said, error } => self.find_said(said, error, cx),
                 Found::Nothing(said) => self.set_status(said, false, cx),
             }
         }

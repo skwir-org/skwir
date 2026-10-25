@@ -876,7 +876,10 @@ is still to come are in `docs/preview-frame.md`.
 
 - **Find** is a field under its button with Enter and F3, the same in the
   reader and in structured previews (`preview_bar::find_popup`, key
-  context `PreviewFind`).
+  context `PreviewFind`). What a find comes to instead of a match (none,
+  none further, why it did not look, a failure; the hex view's "Match at
+  0x…") is said in its popup's status line (`Field::say`, `find_said`),
+  never in a toast (shell.md, "Feedback").
 - **A find marks what it finds** in a structured preview's text, while
   its field is open: every match of what it looks for in the text drawn
   (`Theme::find_match`), the one it is on more strongly (`find_current`),
