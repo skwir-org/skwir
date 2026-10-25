@@ -205,8 +205,7 @@ above; each with the design its fixer proposed):
   unsandboxed); a tag of a name Windows refuses fails its export.
 - Not exercised in a window: the drops, bulk rename, front requests
   while a dialog is open, the queued toggles, the zoom wheel's pane,
-  the rubber band's pane, the map's clamp, the printed-page steps; NFS
-  through Skwir's own connector (GVfs's source read only).
+  the rubber band's pane, the map's clamp, the printed-page steps.
 
 **Gates not closed:**
 - Maps: idle CPU after panning on geotagged pictures (`images10k` has

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # GVfs's NFS and AFP mounts against servers on this machine (ADR-078, 15),
-# for `remote_folders`'s gvfs_nfs_and_afp_take_by_gio_what_it_does_better:
+# for `remote_folders`'s gvfs_opens_an_nfs_address_below_its_export, then
+# gvfs_nfs_and_afp_take_by_gio_what_it_does_better:
 #   tools/test/gvfs-nfs-afp.sh <remote_folders test binary>
 # Their servers run as root (unfs3 with rpcbind, netatalk), so everything
 # runs in user, network, mount and pid namespaces of its own: root mapped
@@ -120,12 +121,16 @@ EOF
 exec 3< <(dbus-daemon --config-file=/run/bus.conf --nofork --print-address=1 2>/run/bus.log)
 read -r address <&3
 export DBUS_SESSION_BUS_ADDRESS="$address"
+mkdir -p /run/xdg/config /run/xdg/cache /run/xdg/data
+export XDG_CONFIG_HOME=/run/xdg/config XDG_CACHE_HOME=/run/xdg/cache XDG_DATA_HOME=/run/xdg/data
+# Before anything is mounted: an address below the export, opened through
+# Skwir's own GVfs connector.
+SKWIR_TEST_NFS_EXPORT="$FIXTURE/export" \
+    "$TEST_BINARY" --exact gvfs_opens_an_nfs_address_below_its_export --nocapture
 gio mount "nfs://127.0.0.1$FIXTURE/export"
 gio mount -a "afp://127.0.0.1/share"
 nfs=$(ls -d /run/rt/gvfs/nfs*)
 afp=$(ls -d /run/rt/gvfs/afp-volume*)
 
-mkdir -p /run/xdg/config /run/xdg/cache /run/xdg/data
-XDG_CONFIG_HOME=/run/xdg/config XDG_CACHE_HOME=/run/xdg/cache XDG_DATA_HOME=/run/xdg/data \
-    SKWIR_TEST_GVFS_NFS="$nfs" SKWIR_TEST_GVFS_AFP="$afp" \
+SKWIR_TEST_GVFS_NFS="$nfs" SKWIR_TEST_GVFS_AFP="$afp" \
     "$TEST_BINARY" --exact gvfs_nfs_and_afp_take_by_gio_what_it_does_better --nocapture

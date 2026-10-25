@@ -2370,6 +2370,72 @@ fn gvfs_nfs_and_afp_take_by_gio_what_it_does_better() {
     );
 }
 
+/// An NFS address below its export opens through Skwir's GVfs connector:
+/// GVfs, given the address whole, finds the export that holds its path,
+/// mounts it and says the mount is of that export, the folder asked below
+/// it; Eject lets go of it. Against unfs3 in namespaces of its own, by
+/// `tools/test/gvfs-nfs-afp.sh`, which names the export's folder in
+/// `SKWIR_TEST_NFS_EXPORT` before anything is mounted; its runtime folder
+/// and bus are this process's. Skipped elsewhere.
+#[test]
+fn gvfs_opens_an_nfs_address_below_its_export() {
+    let Some(export) = std::env::var_os("SKWIR_TEST_NFS_EXPORT").map(PathBuf::from) else {
+        eprintln!("skipped: no NFS export served in namespaces by a script");
+        return;
+    };
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").expect("the bridge's runtime folder");
+    let gvfs = skwir_plugin_remote::gvfs::Gvfs {
+        runtime: Some(PathBuf::from(runtime)),
+        ..Default::default()
+    };
+    // The script's server outlives a run, its process numbers do not.
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let below = format!("it's below {run}/é deeper");
+    let folder = export.join(&below);
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("note.txt"), "x").unwrap();
+    let address = Address::parse(&format!("nfs://127.0.0.1{}/{below}/", export.display())).unwrap();
+    let ask: Arc<dyn Ask> = Arc::new(Answers::default());
+    let connected = gvfs
+        .connect(&address, &ask, &CancelToken::new())
+        .unwrap_or_else(|error| panic!("{error:#}"));
+    let left = Unmounted(connected.point.clone());
+    assert_eq!(
+        connected.address.path.strip_suffix(b"/"),
+        Some(export.as_os_str().as_encoded_bytes()),
+        "the export mounted: {}",
+        connected.address
+    );
+    let inside = connected.address.below(&address).expect("the folder in it");
+    assert_eq!(inside, format!("{below}/").as_bytes());
+    let names: Vec<String> = std::fs::read_dir(
+        connected
+            .point
+            .join(skwir_core::os_path::from_bytes(inside.to_vec())),
+    )
+    .unwrap()
+    .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+    .collect();
+    assert_eq!(names, ["note.txt"]);
+
+    let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
+    let recognised = gvfs.recognises(&remote).expect("GVfs's");
+    assert_eq!(recognised.address.as_ref(), Some(&connected.address));
+    gvfs.disconnect(&remote, &recognised, &CancelToken::new())
+        .expect("disconnect");
+    // Gone from GVfs's bridge.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while connected.point.exists() {
+        assert!(Instant::now() < deadline, "never let go of");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    drop(left);
+    std::fs::remove_dir_all(export.join(format!("it's below {run}"))).unwrap();
+}
+
 /// A phone's MTP takes by `gio` every way, a file alone too (2026-10-22,
 /// a phone on USB 2). Only where a script mounted a phone through a GVfs
 /// of its own and named a folder of its on the phone, which it removes
