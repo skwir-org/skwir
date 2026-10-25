@@ -405,6 +405,7 @@ impl Shell {
                     }
                 }
                 ExecEvent::Step(progress) => {
+                    self.made_step(&progress);
                     if let Some(running) = self
                         .toasts
                         .running
@@ -430,6 +431,7 @@ impl Shell {
                     items,
                     ..
                 } => {
+                    self.made(plan, error.is_none() && !cancelled);
                     let Some(index) = self.toasts.running.iter().position(|r| r.plan == plan)
                     else {
                         continue;

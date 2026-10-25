@@ -123,6 +123,21 @@ struct Reveal {
     looked: Option<(u64, u64)>,
 }
 
+/// The latest plan the user asked from a pane that shows a folder: what
+/// it makes there, one entry and nothing more (a new folder, a new file),
+/// is selected once it is made, as other file managers do. Left when the
+/// pane shows another location by then, or its selection changed
+/// meanwhile (`Shell::made`).
+struct Making {
+    plan: skwir_core::op::PlanId,
+    pane: PaneId,
+    shown: Location,
+    /// The pane's selection when it was asked (`Selection::revision`).
+    selection: u64,
+    /// What its step made, as the executor told it (`Shell::made_step`).
+    name: Option<std::ffi::OsString>,
+}
+
 /// The shell's switches read from the settings (`Shell::sync`, when their
 /// revision changes), never per frame.
 /// Where Split and Preview are (`Shell::toggles_at`).
@@ -399,6 +414,8 @@ pub struct Shell {
     /// Advances with each `reveal_path`, so only the latest one's answer
     /// from its worker is acted on.
     reveal_asked: u64,
+    /// What the latest plan the user asked makes, to select once made.
+    making: Option<Making>,
     /// The window's commands asked from elsewhere (an agent, a script)
     /// that the dialog open would take instead (`Shell::takes_now`),
     /// oldest first: they run once it closes.
@@ -690,6 +707,7 @@ impl Shell {
             files_icon: None,
             reveal: None,
             reveal_asked: 0,
+            making: None,
             front_waiting: VecDeque::new(),
             links: crate::links::LinkState::default(),
             stored_session: None,
@@ -1237,6 +1255,79 @@ impl Shell {
         cx.notify();
     }
 
+    /// `plan`, asked by the user with `args`, as the pane it acts on shows
+    /// it: a folder, whatever its one step makes there selected once made.
+    /// Its steps are not read here: what they make is told by the executor,
+    /// on its thread (`made_step`).
+    fn making(&self, plan: skwir_core::op::PlanId, args: &serde_json::Value) -> Option<Making> {
+        let pane = args
+            .get("pane")
+            .and_then(|pane| serde_json::from_value::<PaneId>(pane.clone()).ok());
+        let pane = self.app.pane_or_active(pane);
+        let ws = self.app.workspace.read();
+        let p = ws.pane(pane)?;
+        let shown = p.location().filter(|shown| shown.is_path())?;
+        Some(Making {
+            plan,
+            pane,
+            shown: shown.clone(),
+            selection: p.selection.revision(),
+            name: None,
+        })
+    }
+
+    /// A step of the plan asked last ended (`ExecEvent::Step`): one that
+    /// was all its plan did and made one entry in the folder the pane
+    /// showed, and nothing more (no words of its own: an archive extracted
+    /// or made says what it did), names what to select.
+    pub(crate) fn made_step(&mut self, progress: &skwir_core::op::Progress) {
+        let Some(making) = self.making.as_mut().filter(|m| m.plan == progress.plan) else {
+            return;
+        };
+        if let (
+            1,
+            None,
+            skwir_core::op::Change::Create {
+                path, words: None, ..
+            },
+        ) = (progress.total, &progress.error, &progress.change)
+            && let (Some(folder), Some(name)) = (path.parent(), path.file_name())
+            && Location::from_path(folder) == making.shown
+        {
+            making.name = Some(name.to_owned());
+        }
+    }
+
+    /// The plan `plan` ended, `done` when nothing stopped it: what it made
+    /// is selected once the listing has it (`take_reveal`), if the pane
+    /// still shows where it was made and nothing else was selected since.
+    /// A folder that was there already is selected too: it is the one
+    /// asked for.
+    pub(crate) fn made(&mut self, plan: skwir_core::op::PlanId, done: bool) {
+        let Some(Making {
+            pane,
+            shown,
+            selection,
+            name: Some(name),
+            ..
+        }) = self.making.take_if(|m| m.plan == plan)
+        else {
+            return;
+        };
+        let still =
+            self.app.workspace.read().pane(pane).is_some_and(|p| {
+                p.location() == Some(&shown) && p.selection.revision() == selection
+            });
+        if done && still {
+            self.reveal = Some(Reveal {
+                pane,
+                name,
+                until: Instant::now() + std::time::Duration::from_secs(10),
+                looked: None,
+            });
+        }
+    }
+
     /// Make `id` the active pane (workspace and shell agree).
     pub fn activate_pane(&mut self, id: PaneId, cx: &mut Context<Self>) {
         if self.app.workspace.read().active_id() == id && self.pane == id {
@@ -1770,7 +1861,10 @@ impl Shell {
                 self.set_status(said, false, cx);
             }
             Ok(Outcome::Files { paths, cut }) => self.put_files_on_clipboard(paths, cut, cx),
-            Ok(Outcome::Plan(plan)) => self.apply_user_plan(plan, window, cx),
+            Ok(Outcome::Plan(plan)) => {
+                self.making = self.making(plan.id, &inv.args);
+                self.apply_user_plan(plan, window, cx);
+            }
             Err(e) if skwir_core::command::wants_clipboard(&e) => {
                 self.run_with_clipboard(inv, window, cx);
             }

@@ -52,6 +52,14 @@ around the views is in [shell.md](shell.md).
   leaves out) and lets go of an id it does not show (`Pane::is_shown`):
   Delete must never take what cannot be seen. Showing a hidden entry by
   name turns hidden files on first (`Pane::select_revealed`).
+- **What the user makes is selected.** A new folder or a new file made in
+  the folder a pane shows is selected once it is listed, as Nautilus and
+  Dolphin do, and so is a folder of that name that was there already.
+  Not when the pane shows another location by then, or a selection was
+  made meanwhile: that one wins. What a plan made is told by the
+  executor's events (the step as applied, a plan of one step that makes
+  one entry and says nothing more), never read from the plan on the
+  window's thread (`Shell::made`).
 - Scheme moves say `follow` (`ui.cursor`, `step: follow`): they move a
   following selection and leave a picked one. `pick` is yazi's mark. A
   sweep (`select_sweep`) holds a range while the cursor moves (`sweep` in
