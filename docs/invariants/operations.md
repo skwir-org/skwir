@@ -430,11 +430,12 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   user's alone (`user_only`: an agent never opens a volume with a kept
   passphrase). It tries the keyring first (Skwir's own passphrase where
   `places.remembered` notes one, then GVfs's, read only), then asks the
-  window (`App::ask_passphrase`: masked, Remember offered with what it
-  means), again while refused, three times at most; where the system asks
-  itself (`places::SYSTEM_ASKS`: Windows' BitLocker), it opens the
-  system's own dialog instead and keeps nothing. `places.unlock` takes a
-  passphrase given and keeps none. Opened in a tab
+  window (`App::ask_passphrase`: masked, Remember offered, what it means
+  said under it while it is on), again while refused, three times at
+  most; where the system asks itself (`places::SYSTEM_ASKS`: Windows'
+  BitLocker), it opens the system's own dialog instead and keeps
+  nothing. `places.unlock` takes a passphrase given and keeps none.
+  Opened in a tab
   (`sidebar::open_in_tab`), the command gets `tab`, and the volume opens
   in a background tab.
 - **The passphrase** reaches udisks (`diskutil` on a Mac) on standard

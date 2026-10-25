@@ -1967,7 +1967,7 @@ mod tests {
         assert_eq!(question.title, "Unlock “Backup”");
         assert_eq!(question.placeholder, "Passphrase");
         assert!(
-            question.remember && question.note.is_some(),
+            question.remember && question.keeping.is_some(),
             "offered, with what it means"
         );
         answer(question.id, "example words", true);

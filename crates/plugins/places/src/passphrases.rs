@@ -28,7 +28,7 @@ pub const REMEMBERED: &str = "places.remembered";
 /// volume is left locked.
 const TYPED: usize = 3;
 
-/// Under the question's field: what Remember means.
+/// Under Remember, while it is on: what remembering the passphrase means.
 const KEEPING: &str = "Once remembered, anyone who can open your keyring can unlock this volume.";
 
 /// The keyring as unlocking reads and writes it; a test's stands in.

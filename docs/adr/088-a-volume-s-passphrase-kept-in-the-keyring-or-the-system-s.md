@@ -37,10 +37,11 @@ password") and the operations rule that the passphrase "is never stored".
 
 1. **Asked with Remember.** Opening a locked volume (`places.open_locked`,
    its place's `activate`) asks for its passphrase through the window
-   (`App::ask_passphrase`), offering "Remember in the keyring", off, with
-   what it means under the field ("Once remembered, anyone who can open
-   your keyring can unlock this volume"). Offered only where the volume's
-   UUID is known. A refused passphrase is asked again at once, saying so,
+   (`App::ask_passphrase`), offering "Remember in the keyring", off. What
+   it means is said under the switch once it is turned on ("Once
+   remembered, anyone who can open your keyring can unlock this volume"),
+   and to a screen reader as the switch's description. Offered only where
+   the volume's UUID is known. A refused passphrase is asked again at once, saying so,
    three times at most.
 2. **Kept in the desktop's keyring alone**, once it unlocked the volume:
    never in Skwir's files, logs or command lines. Keyed by the container's

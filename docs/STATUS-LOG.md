@@ -4844,3 +4844,7 @@ build it on macOS and Windows too, with their own mechanisms.
   the menu is unit-tested); `bench-check`, `smoke`, `a11y-check` and the
   readers' checks were not run (nothing they measure changed); macOS and
   Windows never run (ADR-088's consequences say what is not known).
+- **Then, the user's ask:** what remembering means is said under the
+  Remember switch, and only while it is on (it was under the field,
+  always); a screen reader hears it as the switch's description
+  (`SecretQuestion::keeping`, `prompts::Remember`).

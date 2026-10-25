@@ -76,13 +76,18 @@ struct Prompted {
     /// A server's password, a volume's passphrase: offer to keep it in the
     /// keyring (ADR-082, ADR-088).
     remember: bool,
+    /// What keeping it means, said under Remember while it is on.
+    keeping: Option<String>,
 }
 
 /// The prompt's Remember switch (a server's password, ADR-082; a volume's
-/// passphrase, ADR-088): whether it is on, and its focus.
+/// passphrase, ADR-088): whether it is on, its focus, and what keeping
+/// the answer means, said under it while it is on (and to a screen reader
+/// as its description, before it is).
 pub struct Remember {
     pub on: bool,
     focus: FocusHandle,
+    keeping: Option<String>,
 }
 
 pub struct PromptState {
@@ -238,8 +243,9 @@ impl Shell {
             Prompted {
                 ask: None,
                 accept: Some(question.accept),
-                note: question.note,
+                note: None,
                 remember: question.remember,
+                keeping: question.keeping,
             },
             window,
             cx,
@@ -308,6 +314,7 @@ impl Shell {
                 ask: Some(ask),
                 note: text("note").map(str::to_owned),
                 remember: false,
+                keeping: None,
             },
             window,
             cx,
@@ -336,6 +343,7 @@ impl Shell {
             accept,
             note,
             remember,
+            keeping,
         } = prompted;
         let accept = accept.unwrap_or_else(|| kind.accept().to_owned());
         let back = FocusReturn::capture(window, cx);
@@ -378,6 +386,7 @@ impl Shell {
             remember: remember.then(|| Remember {
                 on: false,
                 focus: cx.focus_handle(),
+                keeping,
             }),
             accept,
             accept_focus: cx.focus_handle(),
@@ -551,7 +560,7 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
             let label = "Remember in the keyring";
             // Each its own click, the switch's answering Space and Enter
             // where it has the focus.
-            div()
+            let switch = div()
                 .flex()
                 .items_center()
                 .gap_2()
@@ -563,6 +572,9 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
                         &theme,
                     )
                     .aria_label(label)
+                    .when_some(remember.keeping.clone(), |d, keeping| {
+                        d.aria_description(keeping)
+                    })
                     .on_click(cx.listener(|this, _, _, cx| this.prompt_toggle_remember(cx))),
                 )
                 .child(
@@ -572,7 +584,19 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
                         .text_color(theme.text_muted)
                         .on_click(cx.listener(|this, _, _, cx| this.prompt_toggle_remember(cx)))
                         .child(label),
-                )
+                );
+            // What keeping it means, once the user means to.
+            let keeping = remember
+                .keeping
+                .clone()
+                .filter(|_| remember.on)
+                .map(|keeping| div().text_xs().text_color(theme.text_muted).child(keeping));
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(switch)
+                .children(keeping)
         }))
         .child(modal::footer(
             "Enter to confirm, Escape to cancel",

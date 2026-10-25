@@ -80,9 +80,9 @@ pub struct SecretQuestion {
     pub accept: String,
     /// What the empty field says is asked: "Password", "Passphrase".
     pub placeholder: String,
-    /// A line under the field: what keeping the answer means (a volume's
-    /// passphrase, ADR-088).
-    pub note: Option<String>,
+    /// What keeping the answer means, said under Remember while it is on
+    /// (a volume's passphrase, ADR-088).
+    pub keeping: Option<String>,
     /// Whether the window offers to keep the answer in the desktop's
     /// keyring (a server's password, ADR-082; a volume's passphrase,
     /// ADR-088): the asker keeps it.
@@ -1292,7 +1292,7 @@ impl App {
             title: title.into(),
             accept: accept.into(),
             placeholder: "Password".to_owned(),
-            note: None,
+            keeping: None,
             remember: false,
         })
     }
@@ -1310,16 +1310,16 @@ impl App {
             title: title.into(),
             accept: accept.into(),
             placeholder: "Password".to_owned(),
-            note: None,
+            keeping: None,
             remember: true,
         })
     }
 
     /// [`App::ask_secret`] for an encrypted volume's passphrase, which the
     /// window offers to keep in the desktop's keyring (ADR-088) where
-    /// `keeping` says under the field what keeping it means: the answer
-    /// says whether the user asked for it, and the asker keeps it once it
-    /// unlocked the volume.
+    /// `keeping` says what keeping it means (under Remember, while it is
+    /// on): the answer says whether the user asked for it, and the asker
+    /// keeps it once it unlocked the volume.
     pub fn ask_passphrase(
         &self,
         title: impl Into<String>,
@@ -1332,7 +1332,7 @@ impl App {
             accept: accept.into(),
             placeholder: "Passphrase".to_owned(),
             remember: keeping.is_some(),
-            note: keeping,
+            keeping,
         })
     }
 
