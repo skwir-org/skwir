@@ -829,7 +829,9 @@ impl Default for PreviewState {
         let (count_tx, count_rx) = flume::unbounded();
         let (sources_tx, sources_rx) = flume::unbounded();
         PreviewState {
-            reader: crate::reader::ReaderState::default(),
+            // No file yet: each one shown gets a reader of its own, in the
+            // mode the user chose (`Shell::let_reader_go`).
+            reader: crate::reader::ReaderState::new(false),
             inspection: crate::inspector::State::default(),
             media: crate::media::MediaState::default(),
             menu: None,
@@ -2230,7 +2232,19 @@ impl Shell {
                 Some(Media::Pinned | Media::NoPoster | Media::NoPlayer) | None => {}
             }
             if let Some(session) = result.session {
-                self.reader_opened(session, window, cx);
+                self.reader_opened(session, cx);
+            } else if self.preview.reader.session.is_none()
+                && matches!(
+                    result.content,
+                    PreviewContent::Image {
+                        detail: Some(PreviewInfo::Document { .. }),
+                        ..
+                    }
+                )
+            {
+                // Pages drawn without a reader (`pdftoppm`, where no worker
+                // is installed) are asked for one at a time: no column.
+                self.preview.reader.scroll.continuous = false;
             }
             if matches!(result.content, PreviewContent::Image { .. }) {
                 self.preview
@@ -4914,7 +4928,7 @@ pub(crate) fn content(
                     crate::reader::page_placeholder(
                         Arc::clone(image),
                         (*width as f32, *height as f32),
-                        crate::settings::reader_mode(shell),
+                        p.reader.scroll.continuous,
                     )
                 } else {
                     picture(

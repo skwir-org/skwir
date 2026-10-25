@@ -89,9 +89,15 @@ pub struct DocumentScroll {
 }
 impl Default for DocumentScroll {
     fn default() -> Self {
+        Self::new(false)
+    }
+}
+impl DocumentScroll {
+    /// Pages read continuously or a page at a time, none of them known yet.
+    pub(crate) fn new(continuous: bool) -> Self {
         let (tx, rx) = flume::unbounded();
         Self {
-            continuous: false,
+            continuous,
             list: ListState::new(0, ListAlignment::Top, px(100.)),
             single: ScrollHandle::new(),
             sideways: ScrollHandle::new(),
@@ -357,14 +363,13 @@ impl Shell {
         cx.notify();
     }
 
-    /// A document session arrived. One that just opened reads the way the
-    /// user last chose (`reading.continuous`, or the choice not saved yet);
-    /// one read again after its file changed keeps the mode it had, over its
-    /// new number of pages, at the same place.
+    /// A document session arrived, in a reader that already reads the way
+    /// the user chose (`let_reader_go`): read continuously, its column gets
+    /// an item per page, at the page asked for, or, read again after its
+    /// file changed, at the same place over its new number of pages.
     pub(crate) fn reader_opened(
         &mut self,
         session: Arc<dyn skwir_core::document::DocumentSession>,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let first = self.preview.reader.session.is_none();
@@ -381,25 +386,23 @@ impl Shell {
         // A book laid out again lands where it was read (`reader_land`).
         let relaid = self.preview.reader.relayout.take().filter(|_| reopened);
         let scroll = &mut self.preview.reader.scroll;
-        if reopened && scroll.continuous {
-            let mut top = scroll.list.logical_scroll_top();
+        if scroll.continuous {
+            let mut top = if reopened {
+                scroll.list.logical_scroll_top()
+            } else {
+                ListOffset {
+                    item_ix: (self.preview.page as usize).saturating_sub(1),
+                    offset_in_item: px(0.),
+                }
+            };
             top.item_ix = top.item_ix.min(count.saturating_sub(1));
             scroll.list.reset(count);
             scroll.layout.borrow_mut().take();
             scroll.list.scroll_to(top);
-            if let Some(anchor) = relaid {
-                self.reader_land(anchor, cx);
-            }
-            return;
         }
-        if reopened {
-            if let Some(anchor) = relaid {
-                self.reader_land(anchor, cx);
-            }
-            return;
+        if let Some(anchor) = relaid {
+            self.reader_land(anchor, cx);
         }
-        let continuous = crate::settings::reader_mode(self);
-        self.set_reader_continuous(continuous, window, cx);
     }
 
     /// The document changed on disk (a PDF rebuilt by LaTeX): read it again
@@ -575,10 +578,10 @@ impl Shell {
     }
 
     /// Let the reader go, with its pages and the page the panel shows of
-    /// its document: that page is drawn the way its reader reads, and a
-    /// new reader reads a page at a time until its document opens. Left
-    /// in the panel while the next file loads, it was drawn again a page
-    /// at a time, then the next document in its own mode.
+    /// its document, which the next reader has no column for. The next
+    /// one reads the way the user last chose (`reading.continuous`) from
+    /// the start: what stands for its first page and the page itself are
+    /// drawn that way, never a page at a time first.
     pub(crate) fn let_reader_go(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.clear_document_pages(window, cx);
         if matches!(
@@ -590,7 +593,7 @@ impl Shell {
         ) {
             self.replace_preview_content(None, window, cx);
         }
-        self.preview.reader = crate::reader::ReaderState::default();
+        self.preview.reader = crate::reader::ReaderState::new(crate::settings::reader_mode(self));
     }
 
     /// An explicit visit renders a failed page again.

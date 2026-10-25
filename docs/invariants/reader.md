@@ -81,15 +81,21 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
 
 - Documents open in continuous mode unless the reader's button last said
   otherwise. The choice is `reading.continuous`, written through
-  `settings.apply` (queued behind a running save) and read when a document
-  opens, never when a later page arrives.
+  `settings.apply` (queued behind a running save) and read when the
+  reader for a file is made, never when a later page arrives. Every file
+  shown gets its reader from `Shell::let_reader_go` (another file,
+  another member of an archive, another view of the file), in that mode
+  from the start (`ReaderState::new`): what stands for the first page
+  (its thumbnail) and the page itself are drawn that way, and the session
+  that arrives only sizes the column (`reader_opened`), never switches.
+- A page shown goes with its reader: `let_reader_go` takes it from the
+  panel, since the next reader has no column for it. Left there, it was
+  drawn again a page at a time while the next file loaded.
+- Pages drawn without a reader (`pdftoppm`, where no worker is installed)
+  are turned by asking for each one: their reader reads a page at a time,
+  whatever the choice.
 - A document whose file changes reopens at the same page, zoom and mode
   (`reader_reopen`).
-- A page shown goes with its reader. A new reader reads a page at a time
-  until its document opens, so letting one go (another file, another
-  member of an archive, another view of the file) goes through
-  `Shell::let_reader_go`, which takes the page from the panel: left
-  there, it was drawn again a page at a time while the next file loaded.
 - The column is an item per page, built on the window's thread: every
   count the reader reads of a session is `reader::page_count`, the
   engine's held to `document::MAX_PAGES`, whichever engine or plugin

@@ -63,10 +63,12 @@ pub struct ReaderState {
     pub(crate) search: Latest<Result<Vec<SearchHit>, String>>,
     pub down: Option<(f32, f32)>,
 }
-impl Default for ReaderState {
-    fn default() -> Self {
+impl ReaderState {
+    /// A reader for the next file, reading as `continuous` says before its
+    /// document opens: its first page is drawn that way from the start.
+    pub fn new(continuous: bool) -> Self {
         Self {
-            scroll: crate::reader_scroll::DocumentScroll::default(),
+            scroll: crate::reader_scroll::DocumentScroll::new(continuous),
             selection_page: None,
             session: None,
             lifetime: CancelToken::new(),
