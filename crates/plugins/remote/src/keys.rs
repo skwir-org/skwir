@@ -713,7 +713,7 @@ pub fn logs_in(
         return false;
     };
     let attempt = mounter::attempt(cancel);
-    // Where the window cannot be asked (off Unix), nothing is.
+    // Where the window cannot be asked (no askpass made), nothing is.
     let askpass = ask.and_then(|ask| {
         ssh.askpass()
             .and_then(|program| mounter::Askpass::serve_with(program, ask, &attempt))

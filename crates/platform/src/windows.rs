@@ -356,6 +356,113 @@ pub fn hold(pids: &[u32], held: bool) {
     }
 }
 
+/// Named pipes only the user opens (`crate::askpass`): each instance
+/// made with a DACL naming the user alone, local clients alone.
+pub mod pipe {
+    use std::ffi::OsStr;
+    use std::io;
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+
+    use windows_sys::Win32::Foundation::{
+        ERROR_PIPE_CONNECTED, GetLastError, INVALID_HANDLE_VALUE, LocalFree,
+    };
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::{PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_FIRST_PIPE_INSTANCE, PIPE_ACCESS_DUPLEX,
+    };
+    use windows_sys::Win32::System::Pipes::{
+        ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_REJECT_REMOTE_CLIENTS,
+        PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
+    };
+
+    /// The size of each way's buffer: a frame of a question or an answer.
+    const BUFFER: u32 = 64 * 1024;
+
+    /// A new instance of the pipe `name` (`\\.\pipe\…`), waiting for a
+    /// client: the pipe's first where `first` (it fails where one of that
+    /// name is there, made by anyone).
+    ///
+    /// # Errors
+    /// When Windows will not say who the user is, or makes no pipe.
+    pub fn instance(name: &OsStr, first: bool) -> io::Result<OwnedHandle> {
+        let sid = super::user_sid()
+            .ok_or_else(|| io::Error::other("Windows does not say who the user is"))?;
+        // Protected, its one entry the user's: all access, for them alone.
+        let sddl: Vec<u16> = format!("D:P(A;;GA;;;{sid})")
+            .encode_utf16()
+            .chain([0])
+            .collect();
+        let mut descriptor: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
+        // SAFETY: a NUL-terminated SDDL string, and an out pointer the
+        // system fills with a descriptor it allocated; no size asked.
+        if unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &raw mut descriptor,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: u32::try_from(std::mem::size_of::<SECURITY_ATTRIBUTES>()).unwrap_or(u32::MAX),
+            lpSecurityDescriptor: descriptor,
+            bInheritHandle: 0,
+        };
+        let wide: Vec<u16> = name.encode_wide().chain([0]).collect();
+        let alone = if first {
+            FILE_FLAG_FIRST_PIPE_INSTANCE
+        } else {
+            0
+        };
+        // SAFETY: a NUL-terminated name and the attributes above, alive
+        // for the call; plain values otherwise.
+        let handle = unsafe {
+            CreateNamedPipeW(
+                wide.as_ptr(),
+                PIPE_ACCESS_DUPLEX | alone,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                PIPE_UNLIMITED_INSTANCES,
+                BUFFER,
+                BUFFER,
+                0,
+                &raw const attributes,
+            )
+        };
+        let failed = io::Error::last_os_error();
+        // SAFETY: the descriptor the system allocated, freed once, after
+        // the call that read it.
+        unsafe { LocalFree(descriptor) };
+        if handle == INVALID_HANDLE_VALUE {
+            return Err(failed);
+        }
+        // SAFETY: a handle just made, owned from here on.
+        Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
+    }
+
+    /// Wait for a client of `pipe`, an instance [`instance`] made: the
+    /// connection, read and written as a file, closed when dropped.
+    ///
+    /// # Errors
+    /// When the wait fails.
+    pub fn accept(pipe: OwnedHandle) -> io::Result<std::fs::File> {
+        // SAFETY: a pipe instance's handle, owned by `pipe`; no overlap.
+        let connected = unsafe { ConnectNamedPipe(pipe.as_raw_handle(), std::ptr::null_mut()) };
+        // A client that came before the wait is connected as well.
+        // SAFETY: no arguments.
+        if connected == 0 && unsafe { GetLastError() } != ERROR_PIPE_CONNECTED {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(std::fs::File::from(pipe))
+    }
+}
+
 /// The Credential Manager's generic credentials: skwir's secrets
 /// (`crate::secrets`), each named `target`, its bytes the secret.
 pub mod credentials {

@@ -259,10 +259,11 @@ Left:
   tried under Wine with rclone's own Windows release, pinned
   (`tools/test/rclone-windows.sh`, `just test-windows`): Wine has no Unix
   socket (`WSAEAFNOSUPPORT`). sshfs does not run on Windows. GVfs, KIO's
-  kio-fuse (ADR-081) and fstab are Linux's. The askpass socket is Unix's:
-  on Windows ssh's questions do not reach the window (a named pipe
-  would), so an encrypted rclone configuration opens there with the
-  keyring's password alone.
+  kio-fuse (ADR-081) and fstab are Linux's. The askpass is a named pipe
+  on Windows (`skwir_platform::askpass`): rclone's own Windows release
+  asks an encrypted configuration's password through `skwir.exe` under
+  Wine; Windows' own OpenSSH running it as `SSH_ASKPASS` is not tried
+  (Wine has none), nor the pipe's access entry refusing another user.
   Eject asks what uses a mount of `/proc` on Linux, of `lsof` on a Mac
   (compiled only). A paused plan holds its tool: `SIGSTOP` to its group
   on Unix, each thread of its job's processes suspended on Windows

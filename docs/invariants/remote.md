@@ -550,7 +550,10 @@ ADR-077 (which revises ADR-021).
   (`RCLONE_SMB_PASS`…), after listing the server's top tells whether it
   needs one. ssh asks through `SSH_ASKPASS` = the `skwir` executable, which
   asks the window over the connection's own socket
-  (`skwir_platform::askpass`); `gio mount`'s questions are read from its
+  (`skwir_platform::askpass`): on Windows a named pipe of a name no one
+  guesses, made the pipe's first, its one access entry the user's, local
+  clients alone, opened by the askpass as a client the server can know
+  but never act as; `gio mount`'s questions are read from its
   output (English, `LC_MESSAGES=C`) and answered on its input; a password
   is `App::ask_secret`, a server Skwir cannot vouch for `App::ask_as`
   with `Asker::Connection`. KIO's are KDE's own (its password dialog,

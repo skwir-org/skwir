@@ -171,7 +171,15 @@ impl Connector for Rclone {
             None => None,
         };
         #[cfg(windows)]
-        return self.mount_on_windows(&rclone, &remote, &top, options, password.as_ref(), cancel);
+        return self.mount_on_windows(
+            &rclone,
+            &remote,
+            &top,
+            options,
+            password.as_ref(),
+            ask,
+            cancel,
+        );
         #[cfg(not(windows))]
         self.mount_on_unix(
             &rclone,
@@ -368,7 +376,9 @@ impl Rclone {
 impl Rclone {
     /// Mount `remote` (`top`'s) through `WinFsp` in a folder of Skwir's, in
     /// the foreground with no window, its remote control on the loopback
-    /// (`winfsp`): once its folder is there.
+    /// (`winfsp`): once its folder is there. What its configuration and
+    /// ssh ask reaches the window, as on Unix.
+    #[allow(clippy::too_many_arguments)] // the connector's, then Windows' own
     fn mount_on_windows(
         &self,
         rclone: &Path,
@@ -376,6 +386,7 @@ impl Rclone {
         top: &Address,
         options: &crate::options::MountOptions,
         password: Option<&(&'static str, String)>,
+        ask: &Arc<dyn Ask>,
         cancel: &CancelToken,
     ) -> anyhow::Result<Connected> {
         use std::os::windows::process::CommandExt as _;
@@ -401,7 +412,6 @@ impl Rclone {
             .args(crate::winfsp::mount_arguments(remote, &point, &at, &log))
             .args(crate::options::rclone_arguments(options))
             .envs(at.serving().1)
-            .arg("--ask-password=false")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -414,9 +424,12 @@ impl Rclone {
             top.ssh_user()?;
             command.arg("--sftp-ssh").arg(ssh_command(top));
         }
-        if let Some(kept) = self.keyring().own(crate::rclone_config::KEYRING_KEY) {
-            command.env("RCLONE_CONFIG_PASS", kept);
-        }
+        // A configuration kept encrypted asks its password of the window.
+        let attempt = mounter::attempt(cancel);
+        let program = self.askpass_program()?;
+        let askpass = mounter::Askpass::serve_with(program.clone(), ask, &attempt)?;
+        askpass.give(&mut command);
+        command.arg("--password-command").arg(program);
         let (ended_tx, ended) = crossbeam_channel::bounded(1);
         skwir_platform::process::spawn_watched(&mut command, move |status| {
             let _ = ended_tx.send(status);
@@ -433,9 +446,13 @@ impl Rclone {
             if ended.try_recv().is_ok() {
                 let said = std::fs::read_to_string(&log).unwrap_or_default();
                 crate::winfsp::forget(&point);
-                anyhow::bail!("{}", words(&said));
+                return Err(mounter::ended(
+                    &attempt,
+                    cancel,
+                    anyhow::anyhow!("{}", words(&said)),
+                ));
             }
-            if cancel.is_cancelled() || std::time::Instant::now() > deadline {
+            if attempt.is_cancelled() || std::time::Instant::now() > deadline {
                 let _ = crate::rc::call(
                     &at,
                     "core/quit",
@@ -443,7 +460,11 @@ impl Rclone {
                     &CancelToken::new(),
                 );
                 crate::winfsp::forget(&point);
-                anyhow::bail!("rclone did not mount it in time");
+                return Err(mounter::ended(
+                    &attempt,
+                    cancel,
+                    anyhow::anyhow!("rclone did not mount it in time"),
+                ));
             }
             std::thread::sleep(Duration::from_millis(100));
         }

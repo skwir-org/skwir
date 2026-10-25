@@ -1490,9 +1490,10 @@ protocol is a scheme a connector maps, or a connector.
   - a browser's sign-in (Google Drive's, Dropbox's…) checked up to the
     page rclone serves, never signed in to a real provider; a cloud's
     trash named by what rclone and its options say, never seen filling;
-  - on Windows, ssh's questions and an encrypted rclone configuration's
-    password reach no window (the askpass is a Unix socket): the
-    keyring's password alone opens one there;
+  - on Windows, ssh's questions and rclone's reach the window through a
+    named pipe (2026-10-25): rclone's own Windows release asked through
+    it under Wine; Windows' own OpenSSH running Skwir as its askpass not
+    tried (Wine has none), nor the pipe refusing another user;
   - a remote half made when Skwir ends mid-question is said so where it
     is listed (Finish Setting Up…, Remove…), never removed unasked; one
     half made by another program than Skwir is not known to be;

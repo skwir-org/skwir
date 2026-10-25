@@ -227,7 +227,6 @@ pub struct Session {
     /// What rclone said on its standard error, the last of it.
     said: Arc<Mutex<String>>,
     /// Where the configuration's password is asked, while it runs.
-    #[cfg(unix)]
     _askpass: mounter::Askpass,
 }
 
@@ -321,7 +320,6 @@ impl Session {
             .env_remove("RCLONE_CONFIG_PASS");
         // A configuration kept encrypted asks its password through Skwir,
         // run as rclone's password command.
-        #[cfg(unix)]
         let askpass = {
             let program = with.askpass_program()?;
             // Its own token: dropped with the session, it ends that alone.
@@ -330,17 +328,6 @@ impl Session {
             command.arg("--password-command").arg(program);
             askpass
         };
-        // Where Skwir has no way to ask (Windows, yet): the keyring's
-        // password, in rclone's environment alone, else rclone says it
-        // needs one.
-        #[cfg(not(unix))]
-        {
-            let _ = ask;
-            command.arg("--ask-password=false");
-            if let Some(password) = with.keyring().own(KEYRING_KEY) {
-                command.env("RCLONE_CONFIG_PASS", password);
-            }
-        }
         let mut child = command.spawn()?;
         let said = Arc::new(Mutex::new(String::new()));
         if let Some(mut stderr) = child.stderr.take() {
@@ -370,7 +357,6 @@ impl Session {
             child,
             at,
             said,
-            #[cfg(unix)]
             _askpass: askpass,
         };
         session.wait_serving(cancel)?;
