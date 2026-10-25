@@ -4673,3 +4673,98 @@ overnight: the review's remote items, then what the servers' work left.
   folder or process of the test's was left under `~/.cache/skwir-tests`.
   Connect at Login is now checked under a real systemd user manager on
   Linux; launchd and the Task Scheduler still never ran one.
+
+### The remote arc's small gaps (2026-10-25)
+
+The four the user asked for after the login check passed, and what was
+found on the way. On main, none pushed.
+
+- **What asks reaches the window on Windows.** The askpass
+  (`skwir_platform::askpass`) is a named pipe there: a name no one
+  guesses (the system's randomness), made the pipe's first, its one
+  access entry the user's (`D:P(A;;GA;;;<SID>)`), local clients alone,
+  its next instance made before the one connected is answered (a second
+  question finds it busy a moment, never gone); the `skwir` executable
+  opens it as a client the server may know but never act as. So on
+  Windows too an encrypted rclone configuration's password and ssh's
+  questions (a password, a passphrase, a host) are asked of the window:
+  rclone's mount there and its configuration's session ask through it
+  (they gave the keyring's password alone, or nothing). Encrypting the
+  configuration, which stopped there at once ("not available on Windows
+  yet"), works under Wine; key login and a new key's passphrase no
+  longer stop there at once, but were not tried (no OpenSSH under
+  Wine). A question refused there now stops the mount at once, said as
+  cancelled. Checked under Wine with rclone's own Windows
+  release: a configuration encrypted with its password given through
+  `skwir.exe`, opened with the one the window gives (asked once),
+  refused when cancelled or wrong (`remote_askpass`, also on Linux), and
+  the pipe's own tests (four questions at once each answered). Wine
+  makes a second "first" instance of a pipe, which Windows refuses: that
+  check says so under Wine. Windows' own OpenSSH running `skwir.exe` as
+  `SSH_ASKPASS` and the pipe refusing another user are not tried.
+- **Connect at Login on Windows** (ADR-087 amended): a remote of
+  rclone's configuration gets a logon task, refused where the
+  configuration is encrypted or names no such remote, as on Unix. Its
+  rclone is given nothing in its environment, so its remote control (how
+  Eject lets go of a mount there) serves on a port rclone chooses as it
+  starts, read back from its log, behind a login made with the task and
+  kept beside the mounts while the task is; rclone checks it by its SHA-1
+  in an htpasswd file (`{SHA}`, checked with rclone 1.75.2: a plain line
+  is refused). Its log rotates where the installed rclone has
+  `--log-file-max-size`. Eject asks Skwir's own mount's remote control,
+  then the task's, and forgets the task's login once no task is there;
+  turned on again while its mount runs, the login kept stays. Checked:
+  the task's arguments and kept files, and a real `rclone rcd` started
+  with them (on Linux, and under Wine with rclone's Windows release):
+  found through its log, refusing another login, quitting on its own.
+  Never run by a Task Scheduler (Wine's does not start) nor mounted by
+  WinFsp (a driver Wine lacks); that WinFsp takes its folder away after
+  a crash is its documentation's word.
+- **Found on the way: a mount's features on Windows.** What a storage
+  can do (how full it is, public links, its trash's name;
+  `rclone_features`) was never asked on Windows, though its remote
+  control answers there: now asked of the mount's own or its task's,
+  as on Unix. Under Wine its unit tests pass; no mount was made.
+- **Key login against OpenSSH checking a password**, which rclone's
+  SFTP server stood in for: OpenSSH 10.5 as root of user, mount and pid
+  namespaces of its own (newuidmap for its unprivileged half), its
+  accounts, shadow file and PAM stack laid over the system's (and nscd
+  hidden, which would answer for the system's), checking the password
+  through `pam_unix` (`remote_keys`). Without PAM, Nixpkgs' OpenSSH
+  checks passwords with OpenSSL's `DES_crypt`, which no hash made here
+  matches (libxcrypt has DES turned off): PAM is also what servers do.
+  The password asked once as a server's (`root@127.0.0.1's password:`),
+  the key put up through its shell (`.ssh` 700, the file 600), a login
+  by key after asking nothing; a wrong password (asked as often as ssh
+  asks) and a refused one put up nothing. Skipped, saying why, without
+  subordinate ids, `unshare`, `openssl` or a `pam_unix` beside OpenSSH.
+- **NFS through Skwir's own connector**, until now known from GVfs's
+  source alone: `gvfs_opens_an_nfs_address_below_its_export`, run by
+  `tools/test/gvfs-nfs-afp.sh` before anything is mounted, opens an
+  address below the export through Skwir's GVfs connector (unfs3 in its
+  namespaces): GVfs finds the export holding the path, the mount is said
+  to be of that export, the folder asked is listed below it, and Eject
+  takes it out of GVfs's bridge. Then in a window: the debug build on an
+  Xvfb inside the same namespaces (`/tmp` and the network private, so
+  the session's X was never touched: its socket checked before and
+  after), the address typed in the address bar (a name with an
+  apostrophe, a file with an accent): its folder listed, the trail
+  "export on 127.0.0.1 › it's a folder", the Network section holding
+  the mount; a folder in it opened by keyboard; Eject from the sidebar
+  took it out (the pane went Home; `gio mount -l` and the bridge empty).
+  The window script was a scratch copy of the harness, not kept.
+- **Found by the final checks: a test's race.** The menu test of Connect
+  at Login took its unit's link gone (`disable`) for its file gone, and
+  failed once under the whole suite's load: it waits for Skwir's own
+  notice now, which comes after the file is removed (since `12c0e002`;
+  then passed in the whole suite and five times alone).
+- **Final checks**, on the tree as committed: `lint-all` (both cross
+  lints) passed; `test` (2188 tests, 27 skipped) passed once the race
+  was fixed; `remote-check` passed whole (155 tests, the new NFS test
+  and the NFS and AFP, AFC and Nearby harnesses, keyrings 5, 5, 2);
+  `test-windows` (1673 tests, 22 skipped) passed whole on its second run,
+  the first having `any_file`'s mutated samples' test end with a SIGSEGV
+  after reporting ok (Wine, under load), which then passed three times
+  alone. Under Wine `remote_askpass` is reported leaky (its rclone's and
+  `skwir.exe`'s output held a moment after it ends). Each commit was not
+  built alone: they split one tree that was.
