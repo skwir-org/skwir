@@ -17,7 +17,11 @@
 //! of, as Skwir lets go of it before mounting (`mounter::point_for`): a
 //! mount whose program is gone, its sockets. Turned off, the entry is
 //! removed and its manager forgets it; a mount it carries stays until Eject
-//! or the end of the session, and one that keeps failing is stopped.
+//! or the end of the session, and one that keeps failing is stopped. Its
+//! manager forgets the running entry's own commands with its file (systemd
+//! reloads a unit whose file is gone as not found): such a mount is then
+//! as one Skwir made. Eject lets go of it and its point; let go of
+//! otherwise, what it leaves is let go of by the next mount there.
 
 use std::ffi::OsString;
 use std::fmt::Write as _;
@@ -835,8 +839,10 @@ impl Manager {
     }
 
     /// Stop connecting `id` at login: its entry removed and forgotten. A
-    /// mount it carries at `point` stays until Eject or the session's end;
-    /// where none is, it is stopped too (a run failing again and again).
+    /// mount it carries at `point` stays until Eject or the session's end,
+    /// as a mount Skwir made: its manager forgot the entry's own commands
+    /// (letting go of its point, starting it again) with its file. Where
+    /// none is, it is stopped too (a run failing again and again).
     ///
     /// # Errors
     /// What its manager said.

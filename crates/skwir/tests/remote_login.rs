@@ -982,7 +982,7 @@ fn until_held(seconds: u64, what: &str, mut ready: impl FnMut() -> bool) {
 }
 
 /// What a check of the user's manager took out however it ended: its
-/// unit (disabled, removed, forgotten), its mount.
+/// unit (disabled, removed, forgotten), its mount and its point.
 struct TakenOut<'a> {
     manager: &'a Manager,
     at: &'a AtLogin,
@@ -1000,6 +1000,7 @@ impl Drop for TakenOut<'_> {
         if let Err(error) = self.manager.uninstall(&self.at.id, &self.at.point, &cancel) {
             eprintln!("taking the unit out: {error:#}");
         }
+        let _ = std::fs::remove_dir(&self.at.point);
     }
 }
 
@@ -1012,8 +1013,11 @@ impl Drop for TakenOut<'_> {
 /// rclone of the test's own on this machine; the manager starts it and it
 /// mounts; its program killed, the manager lets go of what it left and
 /// mounts again (`Restart=on-failure`); turned off while mounted, the mount
-/// stays until let go of, then the unit ends; turned on and off again with
-/// nothing mounted, it stops. Nothing is left: no unit, link or mount.
+/// stays until Eject, which lets go of it and its point as of a mount Skwir
+/// made (the manager forgot the unit's own commands with its file), and the
+/// unit ends; turned on again and let go of outside Skwir, the unit's own
+/// commands remove its point and it is not started again; turned off then,
+/// with nothing mounted, it stops. Nothing is left: no unit, link or mount.
 #[test]
 #[ignore = "the user's own systemd: run by tools/test/login-user-systemd.sh"]
 fn connect_at_login_under_the_user_s_own_systemd() {
@@ -1105,26 +1109,24 @@ fn connect_at_login_under_the_user_s_own_systemd() {
     );
 
     // Turned off while mounted: no longer wanted at login, its unit
-    // removed and forgotten; the mount stays until let go of (Eject), then
-    // the unit ends and its point goes.
+    // removed and forgotten; the mount stays until Eject. Its manager forgot
+    // the unit's own commands with its file, so the mount is as one Skwir
+    // made: Eject lets go of it and its point, and the unit ends well.
     manager.uninstall(&at.id, &at.point, &cancel).unwrap();
     assert!(!manager.installed(&at.id));
     assert!(!units.join(&unit).exists());
-    assert!(mounted_at(&at.point).is_some(), "the mount stays");
-    assert!(
-        Command::new("fusermount3")
-            .arg("-u")
-            .arg(&at.point)
-            .status()
-            .unwrap()
-            .success()
-    );
-    until_held(30, "the unit ended once let go of", || !active());
-    until_held(10, "its point removed", || !at.point.exists());
+    let remote = mounted_at(&at.point).expect("the mount stays");
+    let recognised = rclone.recognises(&remote).unwrap();
+    rclone.disconnect(&remote, &recognised, &cancel).unwrap();
+    assert!(!at.point.exists(), "Eject removed its point");
+    until_held(30, "the unit ended well once let go of", || {
+        ask(&["is-active", &unit]).1 == "inactive"
+    });
 
-    // Turned on again, then let go of (Eject): the unit ends, not started
-    // again (its program ended well); turned off then, with nothing
-    // mounted, it is stopped and removed.
+    // Turned on again, then let go of outside Skwir: the unit ends, its own
+    // commands remove its point, and it is not started again (its program
+    // ended well); turned off then, with nothing mounted, it is stopped and
+    // removed.
     manager.install(&at, &cancel).unwrap();
     until_mounted(&at.point, 30);
     assert!(
@@ -1136,6 +1138,7 @@ fn connect_at_login_under_the_user_s_own_systemd() {
             .success()
     );
     until_held(30, "the unit ended once let go of", || !active());
+    until_held(10, "its point removed by its unit", || !at.point.exists());
     std::thread::sleep(Duration::from_secs(12));
     assert!(
         !active() && mounted_at(&at.point).is_none(),

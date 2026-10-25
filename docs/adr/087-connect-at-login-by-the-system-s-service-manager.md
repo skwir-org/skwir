@@ -62,3 +62,17 @@ of their own manager.
   configuration outside Skwir leaves its entry failing until turned off;
   removed from Skwir, it takes its entry along (ADR-086, amended
   2026-10-24).
+
+## Amendments
+
+- 2026-10-25: the user's own systemd, checked by them
+  (`tools/test/login-user-systemd.sh`), started, mounted and restarted
+  the unit as written, and showed what no stand-in did: turned off while
+  it carries a mount, the unit's file removed and its manager reloaded,
+  systemd keeps the unit running as not found and forgets its commands
+  (it no longer heard rclone's notifications; once let go of by hand, its
+  clean-up did not run and its point stayed). Such a mount is then as one
+  Skwir made, with no manager behind it: Eject lets go of it and its
+  point, the next mount there lets go of what it leaves otherwise, and
+  it is not started again. The check ejects as Skwir does, and asks the
+  unit's own clean-up only of a unit still set up.

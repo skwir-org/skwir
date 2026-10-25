@@ -372,7 +372,13 @@ ADR-077 (which revises ADR-021).
   `~/.ssh`, configuration or known hosts.
 - Connect at login (`login`, ADR-087): the service manager's entry runs
   Skwir's own mount command at Skwir's own point; what needs an answer at
-  login is refused. Tests read units with `systemd-analyze verify` in
+  login is refused. Turned off while it carries a mount, its file is gone
+  and its manager forgets the unit's own commands (systemd reloads it as
+  not found: no clean-up once it ends, no restart): the mount is then as
+  one Skwir made, Eject letting go of it and its point, the next mount
+  there of what it leaves otherwise (`mounter::point_for`, rclone's
+  socket). Nothing relies on a unit's commands once it is turned off.
+  Tests read units with `systemd-analyze verify` in
   their own folders, run a unit's command as it would be run, and install
   through a stand-in `systemctl` given a runtime folder of its own: never
   the user's manager, and never a manager of the test's own started from

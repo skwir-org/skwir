@@ -4630,3 +4630,39 @@ overnight: the review's remote items, then what the servers' work left.
   keyrings 5, 5 and 2), no test mount left after; `just test-windows`
   passed whole at `e671d424` on its first run (1664 tests, 22 skipped).
   Not run: `tools/test/login-user-systemd.sh`, the user's to run.
+
+### Connect at Login under the user's own systemd (2026-10-25)
+
+- **The user ran `tools/test/login-user-systemd.sh`**, in their session,
+  against their own user manager (running). Through Skwir's installer,
+  the unit was enabled, started and mounted the test's WebDAV server
+  through rclone; its program killed, the manager mounted it again ten
+  seconds later (`Restart=on-failure`); turned off while mounted, the
+  file was removed and forgotten, and the mount stayed. Let go of by
+  hand (`fusermount3 -u`), the unit ended, but its point stayed: the
+  test failed there ("its point removed", after 21.8 s). The script
+  found nothing left in the unit folder and no mount; the empty point
+  and the test's folder stayed under `~/.cache/skwir-tests`, removed
+  after.
+- **Why, from the manager's journal:** the reload after the file was
+  removed loaded the running unit as not found, and systemd forgot its
+  commands. rclone's notification at its unmount was refused
+  ("reception is disabled": no longer `Type=notify`), and once it ended
+  nothing ran after it (`ExecStopPost`, which removes the point and
+  rclone's socket). No stand-in did this: the stand-in `systemctl` keeps
+  no units, and `systemd-analyze verify` runs none.
+- **What it is now (ADR-087 amended, `docs/invariants/remote.md`):**
+  nothing relies on a unit's commands once it is turned off. Its mount is
+  as one Skwir made: Eject (`Connector::disconnect`) lets go of it and
+  removes its point; let go of otherwise, what it leaves is let go of by
+  the next mount there (`mounter::point_for` takes an empty or dead
+  point, rclone's mount removes a socket left before it listens), and it
+  is not started again (the restart went with its file).
+- **The check now:** turned off while mounted, it ejects as Skwir does
+  and waits for the unit to end well (`inactive`, not failed), its point
+  gone; the unit's own clean-up is checked where the unit is still set
+  up (turned on again, let go of by hand: its point removed by its unit,
+  not started again). What it took out, however it ends, includes the
+  point. Checked: the test builds, lints, and skips at once without the
+  script; the stand-in tests pass. Not run again under the user's
+  manager yet: theirs.

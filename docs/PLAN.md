@@ -1508,8 +1508,11 @@ protocol is a scheme a connector maps, or a connector.
   - Connect at Login never run by a real systemd, launchd or Task
     Scheduler here (systemd-analyze, the unit's command run as it would
     be, a stand-in systemctl; Wine's Task Scheduler does not start): a
-    check under the user's own systemd manager is written for the user to
-    run (`tools/test/login-user-systemd.sh`, 2026-10-25), not run yet; on
+    check under the user's own systemd manager is the user's to run
+    (`tools/test/login-user-systemd.sh`): its first run, 2026-10-25,
+    started, mounted and restarted the unit, and showed systemd forgets a
+    unit turned off while mounted (ADR-087 amended); run again since the
+    check changed: not yet; on
     Windows rclone's remotes do not connect at login yet; key login never
     tried against an OpenSSH server checking a password (rclone's SFTP
     server stood in);
