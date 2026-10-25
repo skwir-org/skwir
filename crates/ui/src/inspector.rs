@@ -3015,6 +3015,12 @@ pub fn content(
         )
     });
     let a11y = shell.a11y;
+    // A table is as wide as its columns, every row's cells counted (a CSV's
+    // rows need not agree with its header): its rows and header stop at the
+    // last column's rule, so no tint past it reads as more data.
+    let grid = shape
+        .as_deref()
+        .map(|shape| shape.widths.iter().sum::<f32>());
     let list = gpui::list(state.list.clone(), move |index, _, _| {
         let theme = &list_theme;
         if index == 0 {
@@ -3132,6 +3138,7 @@ pub fn content(
                         // on the right, every other row tinted.
                         d.p_0()
                             .gap_0()
+                            .when_some(grid, |d, width| d.w(px(width)))
                             .text_size(px(13.))
                             .when(position % 2 == 1, |d| d.bg(theme.zebra))
                             .when(selected != Some(data.blocks.len() + ri), |d| {
@@ -3146,7 +3153,14 @@ pub fn content(
                     "▾"
                 });
             }
-            for (column, cell) in r.cells.iter().enumerate() {
+            // A row short of the table's columns draws the rest empty, so
+            // its rules go on to the last.
+            let count = shape
+                .as_ref()
+                .map_or(0, |shape| shape.widths.len())
+                .max(r.cells.len());
+            for column in 0..count {
+                let cell = r.cells.get(column).map_or("", String::as_str);
                 if data.kind == InspectionKind::Archive {
                     break;
                 }
@@ -3305,11 +3319,20 @@ pub fn content(
             header = header
                 .p_0()
                 .gap_0()
+                .when_some(grid, |d, width| d.w(px(width)))
                 .bg(theme.code_bg)
                 .border_b_1()
                 .border_color(theme.border);
         }
-        for (index, column) in display.data.columns.iter().enumerate() {
+        // A column only some rows reach has a header too, unnamed, so the
+        // rules above and below line up.
+        let count = display
+            .table
+            .as_ref()
+            .map_or(0, |shape| shape.widths.len())
+            .max(display.data.columns.len());
+        for index in 0..count {
+            let column = display.data.columns.get(index).map_or("", String::as_str);
             let arrow = match sort {
                 Some((sorted, ascending)) if sorted == index => {
                     if ascending {
@@ -3459,15 +3482,11 @@ pub fn content(
         decoded = Some(strip);
     }
     if wide {
-        let gap = if display.data.kind == InspectionKind::Table {
-            0.
-        } else {
-            12.
-        };
-        let width = (0..display.data.columns.len())
-            .map(|i| column_width(display.table.as_deref(), display.data.kind, i) + gap)
-            .sum::<f32>()
-            + 16.;
+        let width = grid.unwrap_or_else(|| {
+            (0..display.data.columns.len())
+                .map(|i| column_width(None, display.data.kind, i) + 12.)
+                .sum()
+        }) + 16.;
         // The strip is about the panel, not the table: it stays put while
         // the rows scroll sideways.
         div()

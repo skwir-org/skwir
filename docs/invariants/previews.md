@@ -1117,6 +1117,11 @@ is still to come are in `docs/preview-frame.md`.
   worker that builds the `Display` (a cell wider after all is
   truncated). A column whose filled cells are all numbers is
   right-aligned.
+- A table is as wide as its columns, every row's cells counted (a CSV's
+  rows need not agree: a column only some rows reach has an unnamed
+  header, a row short of the last draws the rest empty). Its rows and
+  header end at the last column's rule, in a panel wider than the table
+  too: a tint past it would read as more data to the right.
 - A click on a header sorts the rows shown by value or by text, blanks
   last; the next sorts descending, the third restores the file's order.
   It reorders the index of visible rows, never the data, so selection,
