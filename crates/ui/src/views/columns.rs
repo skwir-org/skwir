@@ -331,24 +331,26 @@ fn side_column(
                     mark,
                     &theme,
                 );
-                // Where a press goes: into the folder under the cursor, the
-                // row selected there; from a column above, where the row
-                // leads (a folder, or where a place leads).
-                let press = if next {
-                    Some(serde_json::json!({
+                // Where a press goes: from a column above, where a folder
+                // or a place leads. Anything else is selected in its
+                // column's folder, gone to as in Finder: into the folder
+                // under the cursor, or up to a folder above, so a file
+                // pressed there is the pane's and is previewed.
+                let leads = match (&row.place, &target) {
+                    _ if next => None,
+                    (Some((place, _)), _) => Some(serde_json::json!(place.arg())),
+                    (None, Some(target)) if row.is_dir => Some(serde_json::json!(
+                        skwir_core::os_path::PathArg::from(target.as_path())
+                    )),
+                    _ => None,
+                };
+                let press = match leads {
+                    Some(leads) => serde_json::json!({ "location": leads, "pane": pane }),
+                    None => serde_json::json!({
                         "location": at.arg(),
                         "select": skwir_core::os_path::PathArg::from(Path::new(&row.name)),
                         "pane": pane,
-                    }))
-                } else {
-                    match (&row.place, &target) {
-                        (Some((place, _)), _) => Some(serde_json::json!(place.arg())),
-                        (None, Some(target)) if row.is_dir => Some(serde_json::json!(
-                            skwir_core::os_path::PathArg::from(target.as_path())
-                        )),
-                        _ => None,
-                    }
-                    .map(|leads| serde_json::json!({ "location": leads, "pane": pane }))
+                    }),
                 };
                 // The folder the pane went into from here is this column's
                 // selected option.
@@ -387,9 +389,7 @@ fn side_column(
                         MouseButton::Left,
                         cx.listener(move |this, _, window, cx| {
                             this.activate_pane(pane, cx);
-                            if let Some(press) = &press {
-                                this.run("navigate", press.clone(), window, cx);
-                            }
+                            this.run("navigate", press.clone(), window, cx);
                         }),
                     )
                     .child(icon)

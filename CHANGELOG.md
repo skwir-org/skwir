@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Columns view**: a click on a file in a column to the left goes up to
+  that folder with the file selected, as in Finder, so it is previewed;
+  it did nothing.
 - **Properties** show when anything about a file last changed (Changed:
   a new name, permissions or tags move it, Modified only its contents),
   and each time says which it is in a tooltip. A folded group says more

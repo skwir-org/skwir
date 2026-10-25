@@ -131,7 +131,10 @@ around the views is in [shell.md](shell.md).
     `up`, the folder left selected.
   - A click on a folder selects it, and its column follows. A press in
     that column goes into it, the row pressed selected there (`navigate`
-    with `select`); a press in a column above goes where the row leads.
+    with `select`). A press in a column above goes where a folder or a
+    place leads; on a file it goes up to that column's folder, the file
+    selected there, as in Finder: the preview shows only the pane's
+    selection, so a file pressed anywhere becomes the pane's.
 - A hydration is remembered by the listing that holds the entry
   (`Pane::listing_of`), so an entry moved between opened folders is asked
   for again.
