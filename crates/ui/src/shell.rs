@@ -133,6 +133,14 @@ pub enum TogglesAt {
     Pane(PaneId),
 }
 
+/// Where the sidebar's toggle and More are (`Shell::corner_at`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CornerAt {
+    Sidebar,
+    Strip,
+    Pane(PaneId),
+}
+
 // Independent switches, one per setting, each read from its own key: not
 // states of one thing that an enum would name.
 #[allow(clippy::struct_excessive_bools)]
@@ -322,7 +330,7 @@ pub struct Shell {
     pub nav_asked: u64,
     /// How wide the sidebar is drawn this frame, from the window's size
     /// (`sidebar_drawn_width`; 0 when it is not): drawn, its header holds
-    /// the window's toggle and More, else the first pane's row does.
+    /// the window's toggle and More (`corner_at`).
     pub(crate) sidebar_drawn: f32,
     /// Where More hangs from this frame, wherever its button is.
     pub(crate) more_anchor: crate::elements::popover::PopoverAnchor,
@@ -891,17 +899,24 @@ impl Shell {
             .expect("at least one pane")
     }
 
-    /// The pane whose row starts with the sidebar toggle and More: the
-    /// first (left, or top), while the sidebar is not drawn; the sidebar's
-    /// header has them otherwise (`address::corner`).
-    pub fn corner_pane(&self) -> Option<PaneId> {
-        (self.sidebar_drawn <= 0.)
-            .then(|| self.panes.first().map(|p| p.id))
-            .flatten()
+    /// Where the sidebar toggle and More are this frame (`address::corner`),
+    /// Split and Preview in mirror: the sidebar's header while it is
+    /// drawn, else the start of the row beside it, the tab strip while it
+    /// shows, else the first pane's (left, or top).
+    pub fn corner_at(&self) -> CornerAt {
+        if self.sidebar_drawn > 0. {
+            return CornerAt::Sidebar;
+        }
+        if self.strip_shown() {
+            return CornerAt::Strip;
+        }
+        self.panes
+            .first()
+            .map_or(CornerAt::Strip, |p| CornerAt::Pane(p.id))
     }
 
     /// Where Split and Preview are this frame, the sidebar's toggle and
-    /// More in mirror: the preview's own bar while it is open at the
+    /// More in mirror (`corner_at`): the preview's own bar while it is open at the
     /// right, else the right end of the tab strip while it shows, else the
     /// end of the row of the pane at the window's right (the top one when
     /// the split is stacked).
@@ -3000,8 +3015,8 @@ impl Render for Shell {
         // Below it the panes keep the room: places stay reachable through the
         // address bar, the palette and Jump.
         let sidebar_width = self.sidebar_drawn_width(window);
-        // Where the window's own tools go this frame (`address::corner`):
-        // the sidebar's header, or the first pane's row.
+        // Where the window's own tools go this frame (`corner_at`), read by
+        // the sidebar, the strip and the panes' rows built below.
         self.sidebar_drawn = sidebar_width;
         self.more_anchor = crate::elements::popover::PopoverAnchor::default();
         let side = (sidebar_width > 0.).then(|| sidebar::render(self, sidebar_width, window, cx));

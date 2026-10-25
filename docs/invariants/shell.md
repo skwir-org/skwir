@@ -103,8 +103,9 @@ of bars, split or not.
 
 - **Sidebar header** (`address::sidebar_header`): the sidebar toggle and
   More (everything without a button). Without a sidebar they start the
-  first pane's row (`Shell::corner_pane`). More hangs from
-  `Shell::more_anchor`.
+  row its header would share: the tab strip while it shows, else the
+  first pane's row. One rule decides (`Shell::corner_at`). More hangs
+  from `Shell::more_anchor`.
 - **Split and Preview toggles** mirror them on the right: in the preview
   panel's bar when it is open at the right, else at the end of the tab
   strip, else at the end of the rightmost (or top, when stacked) pane's

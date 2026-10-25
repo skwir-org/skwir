@@ -470,8 +470,9 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
     )
 }
 
-/// The tabs and the button that opens another, then Split and Preview
-/// when the strip holds them (`toggles`: whether they have their labels,
+/// The tabs and the button that opens another, after the sidebar toggle
+/// and More when the strip holds them (`Shell::corner_at`), then Split and
+/// Preview when it holds them (`toggles`: whether they have their labels,
 /// its tabs then held at their widest). Alone, the row draws its own border;
 /// under `AdaptiveRow`, its parent's.
 fn row(
@@ -556,7 +557,21 @@ fn row(
             .child(split)
             .child(preview)
     });
-    let line = div().flex().child(strip);
+    // The sidebar's toggle and More start the strip while the sidebar is
+    // not drawn, on the row its header would share; beside the tabs too.
+    let corner = (shell.corner_at() == crate::shell::CornerAt::Strip).then(|| {
+        let [toggle, more] = crate::address::corner(shell, cx);
+        div()
+            .flex_none()
+            .h_full()
+            .flex()
+            .items_center()
+            .gap(px(2.))
+            .px(px(6.))
+            .child(toggle)
+            .child(more)
+    });
+    let line = div().flex().children(corner).child(strip);
     match toggles {
         Some(toggles) => line.size_full().child(toggles),
         None => line

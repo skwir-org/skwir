@@ -494,8 +494,9 @@ fn more_panel(
 
 /// The window's own tools have no row of their own: each area owns its
 /// top. The sidebar's header holds its toggle and More; a sidebar not
-/// drawn leaves them at the start of the first pane's row
-/// (`Shell::corner_pane`). Split and Preview mirror them at the right, in
+/// drawn leaves them at the start of the row beside it: the tab strip
+/// while it shows, else the first pane's row (`Shell::corner_at`). Split
+/// and Preview mirror them at the right, in
 /// the order of what they open (the middle of the window, then its edge):
 /// in the preview's own bar while it is open at the right, else at the end
 /// of the tab strip, else of the row of the pane at the window's right
@@ -503,9 +504,9 @@ fn more_panel(
 /// asked for, `ui.single_tab`), are a strip above the panes (`tabs.rs`).
 /// So a window of one tab has one row above its lists, split or not.
 ///
-/// The sidebar toggle and More, as the sidebar's header or a pane row
-/// starts with them. More hangs from `Shell::more_anchor`.
-fn corner(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
+/// The sidebar toggle and More, as the sidebar's header, the tab strip or
+/// a pane row starts with them. More hangs from `Shell::more_anchor`.
+pub fn corner(shell: &Shell, cx: &mut Context<Shell>) -> [AnyElement; 2] {
     let open = shell.toolbar_menu.as_ref().map(|menu| menu.kind);
     [
         Button::new("sidebar-toggle", "sidebar", "Sidebar", "ui.toggle_sidebar")
@@ -720,7 +721,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 .filter(|menu| menu.pane == shell.pane)
                 .map(|menu| menu.what.clone()),
             ends: Ends {
-                corner: shell.corner_pane() == Some(shell.pane),
+                corner: shell.corner_at() == crate::shell::CornerAt::Pane(shell.pane),
                 toggles: shell.toggles_at() == crate::shell::TogglesAt::Pane(shell.pane),
             },
             tools: {
