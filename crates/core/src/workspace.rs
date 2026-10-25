@@ -1135,24 +1135,27 @@ impl Pane {
             .then(|| self.listing.find_by_name(name).map(|e| e.id))
             .flatten()
         {
-            self.select_revealed(id);
+            self.select_revealed(&[id]);
             self.reveal = None;
         } else if self.listing.is_complete() && !coming {
             self.reveal = None;
         }
     }
 
-    /// Select `id` alone, an entry asked for by its name (a path typed, a
-    /// jump, a link followed): a hidden one turns hidden files on in the
-    /// pane, or it would be selected unseen and let go of at once
-    /// (`retain_shown`). Whether it turned them on.
-    pub fn select_revealed(&mut self, id: EntryId) -> bool {
-        let unhide =
-            !self.sort.show_hidden && self.listing.get(id).is_some_and(crate::Entry::is_hidden);
+    /// Select `ids` alone, entries asked for by their names (a path typed,
+    /// a jump, a link followed) or just put there (a new folder, what was
+    /// pasted): a hidden one turns hidden files on in the pane, or it would
+    /// be selected unseen and let go of at once (`retain_shown`). Whether
+    /// it turned them on.
+    pub fn select_revealed(&mut self, ids: &[EntryId]) -> bool {
+        let unhide = !self.sort.show_hidden
+            && ids
+                .iter()
+                .any(|id| self.listing.get(*id).is_some_and(crate::Entry::is_hidden));
         if unhide {
             self.set_show_hidden(true);
         }
-        self.selection.set([id]);
+        self.selection.set(ids.iter().copied());
         unhide
     }
 

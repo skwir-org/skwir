@@ -112,30 +112,56 @@ impl PaneUi {
     }
 }
 
-/// A pending "show me this file": the pane it belongs to, the file name to
-/// look for, and when to stop waiting for a listing that never brings it.
+/// A pending "show me these": the pane they belong to, the names to look
+/// for (the file a link leads to; what a plan put in the folder shown),
+/// and when to stop waiting for a listing that never brings them.
 struct Reveal {
     pane: PaneId,
-    name: std::ffi::OsString,
+    names: Vec<std::ffi::OsString>,
     until: Instant,
     /// The listing and its names when last looked through: looked through
     /// again only once they change, not at every sync while it waits.
     looked: Option<(u64, u64)>,
+    /// The selection it made of those listed so far, while the others are
+    /// waited for (what a paste put, listed as the watcher tells it): a
+    /// selection made since wins.
+    selected: Option<u64>,
 }
 
-/// The latest plan the user asked from a pane that shows a folder: what
-/// it makes there, one entry and nothing more (a new folder, a new file),
-/// is selected once it is made, as other file managers do. Left when the
-/// pane shows another location by then, or its selection changed
-/// meanwhile (`Shell::made`).
+impl Reveal {
+    fn new(pane: PaneId, names: Vec<std::ffi::OsString>) -> Self {
+        Self {
+            pane,
+            names,
+            until: Instant::now() + std::time::Duration::from_secs(10),
+            looked: None,
+            selected: None,
+        }
+    }
+}
+
+/// The latest plan the user asked, and the folders the panes shown then
+/// showed: what it puts in one of them (a new folder, what was pasted or
+/// dropped, an archive made or extracted) is selected there once it is
+/// done, as other file managers do (`Shell::made`).
 struct Making {
     plan: skwir_core::op::PlanId,
+    /// The pane it was asked from: chosen where several show the folder.
+    asked: PaneId,
+    shown: Vec<Shown>,
+    /// What its steps put in those folders, as the executor told each
+    /// (`Shell::made_step`): what it did where its steps are its items.
+    placed: Vec<std::path::PathBuf>,
+}
+
+/// A pane as a plan found it: the folder it showed, and its selection
+/// (`Selection::revision`). Shown elsewhere by the plan's end, or selected
+/// otherwise meanwhile, it is left as it is.
+struct Shown {
     pane: PaneId,
-    shown: Location,
-    /// The pane's selection when it was asked (`Selection::revision`).
+    folder: std::path::PathBuf,
+    location: Location,
     selection: u64,
-    /// What its step made, as the executor told it (`Shell::made_step`).
-    name: Option<std::ffi::OsString>,
 }
 
 /// The shell's switches read from the settings (`Shell::sync`, when their
@@ -414,7 +440,8 @@ pub struct Shell {
     /// Advances with each `reveal_path`, so only the latest one's answer
     /// from its worker is acted on.
     reveal_asked: u64,
-    /// What the latest plan the user asked makes, to select once made.
+    /// The latest plan the user asked, what it puts in a folder shown to
+    /// select once it is done.
     making: Option<Making>,
     /// The window's commands asked from elsewhere (an agent, a script)
     /// that the dialog open would take instead (`Shell::takes_now`),
@@ -1189,12 +1216,7 @@ impl Shell {
                 if let (Some(mark), true) = (at.mark.clone(), name.is_some()) {
                     this.wait_for_mark(pane, path.clone(), mark, cx);
                 }
-                this.reveal = name.map(|name| Reveal {
-                    pane,
-                    name,
-                    until: Instant::now() + std::time::Duration::from_secs(10),
-                    looked: None,
-                });
+                this.reveal = name.map(|name| Reveal::new(pane, vec![name]));
                 cx.notify();
             },
             window,
@@ -1203,7 +1225,9 @@ impl Shell {
         true
     }
 
-    /// Select what `reveal_path` is waiting for, once the listing has it.
+    /// Select what `reveal_path` or a plan's end is waiting for, as the
+    /// listing has it: those listed so far, then all once all are, unless
+    /// something else was selected in between.
     fn take_reveal(&mut self, cx: &mut Context<Self>) {
         let Some(reveal) = self.reveal.as_ref() else {
             return;
@@ -1213,17 +1237,47 @@ impl Shell {
             let Some(pane) = ws.pane(reveal.pane) else {
                 return;
             };
+            if reveal
+                .selected
+                .is_some_and(|ours| ours != pane.selection.revision())
+            {
+                self.reveal = None;
+                return;
+            }
             let names = (pane.listing.id(), pane.listing.names_version());
-            let found = (reveal.looked != Some(names))
-                .then(|| {
-                    pane.listing
-                        .find_by_name(&reveal.name)
-                        .map(|entry| entry.id)
-                })
-                .flatten();
+            let found = (reveal.looked != Some(names)).then(|| {
+                // The listing walked once, however many are looked for.
+                let wanted: std::collections::HashSet<&std::ffi::OsStr> = reveal
+                    .names
+                    .iter()
+                    .map(std::ffi::OsString::as_os_str)
+                    .collect();
+                let listed: HashMap<&std::ffi::OsStr, (skwir_core::EntryId, bool)> = pane
+                    .listing
+                    .iter()
+                    .filter(|entry| wanted.contains(entry.name.as_os_str()))
+                    .map(|entry| (entry.name.as_os_str(), (entry.id, entry.is_hidden())))
+                    .collect();
+                let hidden = reveal
+                    .names
+                    .iter()
+                    .find(|name| {
+                        listed
+                            .get(name.as_os_str())
+                            .is_some_and(|(_, hidden)| *hidden)
+                    })
+                    .filter(|_| !pane.sort.show_hidden)
+                    .map(|name| name.to_string_lossy().into_owned());
+                let ids: Vec<skwir_core::EntryId> = reveal
+                    .names
+                    .iter()
+                    .filter_map(|name| listed.get(name.as_os_str()).map(|(id, _)| *id))
+                    .collect();
+                (ids, hidden)
+            });
             (found, names)
         };
-        let Some(id) = found else {
+        let Some((ids, hidden)) = found.filter(|(ids, _)| !ids.is_empty()) else {
             if reveal.until < Instant::now() {
                 self.reveal = None;
             } else if let Some(reveal) = self.reveal.as_mut() {
@@ -1232,15 +1286,22 @@ impl Shell {
             return;
         };
         let pane = reveal.pane;
-        let name = reveal.name.to_string_lossy().into_owned();
-        self.reveal = None;
-        let unhidden = self
-            .app
-            .workspace
-            .write()
-            .pane_mut(pane)
-            .is_some_and(|pane| pane.select_revealed(id));
-        if unhidden {
+        let whole = ids.len() >= reveal.names.len();
+        let selected = {
+            let mut ws = self.app.workspace.write();
+            ws.pane_mut(pane).map(|pane| {
+                pane.select_revealed(&ids);
+                pane.selection.revision()
+            })
+        };
+        match self.reveal.as_mut() {
+            Some(reveal) if !whole && reveal.until >= Instant::now() => {
+                reveal.looked = Some(looked);
+                reveal.selected = selected;
+            }
+            _ => self.reveal = None,
+        }
+        if let Some(name) = hidden {
             self.set_status(
                 format!("Hidden files are shown, “{name}” among them"),
                 false,
@@ -1255,77 +1316,105 @@ impl Shell {
         cx.notify();
     }
 
-    /// `plan`, asked by the user with `args`, as the pane it acts on shows
-    /// it: a folder, whatever its one step makes there selected once made.
-    /// Its steps are not read here: what they make is told by the executor,
-    /// on its thread (`made_step`).
+    /// `plan`, asked by the user with `args`, and the folders the panes
+    /// shown show: what it puts in one is selected there once done. Its
+    /// steps are not read here: where they put what they do is told by
+    /// the executor, from its thread (`made_step`, `made`).
     fn making(&self, plan: skwir_core::op::PlanId, args: &serde_json::Value) -> Option<Making> {
-        let pane = args
+        let asked = args
             .get("pane")
             .and_then(|pane| serde_json::from_value::<PaneId>(pane.clone()).ok());
-        let pane = self.app.pane_or_active(pane);
+        let asked = self.app.pane_or_active(asked);
         let ws = self.app.workspace.read();
-        let p = ws.pane(pane)?;
-        let shown = p.location().filter(|shown| shown.is_path())?;
-        Some(Making {
+        let shown: Vec<Shown> = self
+            .panes
+            .iter()
+            .filter_map(|ui| {
+                let pane = ws.pane(ui.id)?;
+                let location = pane.location()?;
+                Some(Shown {
+                    pane: ui.id,
+                    folder: location.path()?,
+                    location: location.clone(),
+                    selection: pane.selection.revision(),
+                })
+            })
+            .collect();
+        (!shown.is_empty()).then_some(Making {
             plan,
-            pane,
-            shown: shown.clone(),
-            selection: p.selection.revision(),
-            name: None,
+            asked,
+            shown,
+            placed: Vec::new(),
         })
     }
 
-    /// A step of the plan asked last ended (`ExecEvent::Step`): one that
-    /// was all its plan did and made one entry in the folder the pane
-    /// showed, and nothing more (no words of its own: an archive extracted
-    /// or made says what it did), names what to select.
+    /// A step of the plan asked last ended (`ExecEvent::Step`), as it was
+    /// applied: where it put something, in a folder shown, is kept for its
+    /// end (`Change::placed`, a name taken settled).
     pub(crate) fn made_step(&mut self, progress: &skwir_core::op::Progress) {
         let Some(making) = self.making.as_mut().filter(|m| m.plan == progress.plan) else {
             return;
         };
-        if let (
-            1,
-            None,
-            skwir_core::op::Change::Create {
-                path, words: None, ..
-            },
-        ) = (progress.total, &progress.error, &progress.change)
-            && let (Some(folder), Some(name)) = (path.parent(), path.file_name())
-            && Location::from_path(folder) == making.shown
+        if progress.error.is_none()
+            && let Some(path) = progress.change.placed()
+            && making
+                .shown
+                .iter()
+                .any(|shown| path.parent() == Some(shown.folder.as_path()))
         {
-            making.name = Some(name.to_owned());
+            making.placed.push(path.to_path_buf());
         }
     }
 
-    /// The plan `plan` ended, `done` when nothing stopped it: what it made
-    /// is selected once the listing has it (`take_reveal`), if the pane
-    /// still shows where it was made and nothing else was selected since.
-    /// A folder that was there already is selected too: it is the one
-    /// asked for.
-    pub(crate) fn made(&mut self, plan: skwir_core::op::PlanId, done: bool) {
-        let Some(Making {
-            pane,
-            shown,
-            selection,
-            name: Some(name),
-            ..
-        }) = self.making.take_if(|m| m.plan == plan)
-        else {
+    /// The plan `plan` ended, `done` when nothing stopped it, `items` what
+    /// it says it did item by item where its steps are not its items (a
+    /// folder merged into, a name taken settled): what it put in a folder
+    /// a pane shows is selected there once the listing has it
+    /// (`take_reveal`), in the pane it was asked from first, if that pane
+    /// still shows the folder and nothing else was selected since. A
+    /// folder of the name asked that was there already is selected too.
+    pub(crate) fn made(
+        &mut self,
+        plan: skwir_core::op::PlanId,
+        done: bool,
+        items: Option<&skwir_core::op::Items>,
+    ) {
+        let Some(making) = self.making.take_if(|m| m.plan == plan) else {
             return;
         };
-        let still =
-            self.app.workspace.read().pane(pane).is_some_and(|p| {
-                p.location() == Some(&shown) && p.selection.revision() == selection
-            });
-        if done && still {
-            self.reveal = Some(Reveal {
-                pane,
-                name,
-                until: Instant::now() + std::time::Duration::from_secs(10),
-                looked: None,
-            });
+        if !done {
+            return;
         }
+        let placed = items.map_or(&making.placed, |items| &items.placed);
+        let pane = {
+            let ws = self.app.workspace.read();
+            let still = |shown: &&Shown| {
+                ws.pane(shown.pane).is_some_and(|p| {
+                    p.location() == Some(&shown.location)
+                        && p.selection.revision() == shown.selection
+                })
+            };
+            let holds = |shown: &&Shown| {
+                placed
+                    .iter()
+                    .any(|path| path.parent() == Some(shown.folder.as_path()))
+            };
+            let candidates: Vec<&Shown> = making.shown.iter().filter(still).filter(holds).collect();
+            candidates
+                .iter()
+                .find(|shown| shown.pane == making.asked)
+                .or(candidates.first())
+                .copied()
+        };
+        let Some(shown) = pane else {
+            return;
+        };
+        let names: Vec<std::ffi::OsString> = placed
+            .iter()
+            .filter(|path| path.parent() == Some(shown.folder.as_path()))
+            .filter_map(|path| path.file_name().map(ToOwned::to_owned))
+            .collect();
+        self.reveal = Some(Reveal::new(shown.pane, names));
     }
 
     /// Make `id` the active pane (workspace and shell agree).

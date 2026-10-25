@@ -1338,9 +1338,56 @@ fn a_plan_settled_says_what_was_asked() {
                 to: root.join("dest/a.txt"),
             },
             count: 2,
+            placed: vec![root.join("dest/a.txt"), root.join("dest/b.txt")],
         })
     );
     assert_eq!(read(&root.join("dest/c.txt")), "kept");
+}
+
+/// Where each item of a plan settled went, what the window selects: a
+/// folder merged into where it is (its steps put files inside it), a file
+/// kept beside the one there under its new name, one that met no name
+/// taken where it was asked to go.
+#[test]
+fn a_plan_settled_says_where_each_item_went() {
+    let tmp = Scratch::new();
+    let root = tmp.path().join("it's here");
+    write(&root.join("src/d/x.txt"), "x, mine");
+    write(&root.join("dest/d/y.txt"), "y, theirs");
+    write(&root.join("src/a.txt"), "mine");
+    write(&root.join("dest/a.txt"), "theirs");
+    write(&root.join("src/new  café.txt"), "new");
+    let app = app(tmp.path());
+    let entries = ["d", "a.txt", "new  café.txt"].map(|n| root.join("src").join(n));
+    let plan = plan(
+        &app,
+        "copy",
+        serde_json::json!({
+            "entries": entries,
+            "dest": root.join("dest"),
+            "on_conflict": { "files": "keep_both", "folders": "merge" },
+        }),
+    );
+    app.apply_whole(plan);
+    let ExecEvent::Finished {
+        error: None,
+        items: Some(items),
+        ..
+    } = finished(&app)
+    else {
+        panic!("settled, it says its items");
+    };
+    let dest = root.join("dest");
+    assert_eq!(
+        items.placed,
+        [
+            dest.join("d"),
+            dest.join("a (copy).txt"),
+            dest.join("new  café.txt")
+        ]
+    );
+    assert_eq!(read(&dest.join("d/x.txt")), "x, mine");
+    assert_eq!(read(&dest.join("a (copy).txt")), "mine");
 }
 
 /// A link onto a name taken is asked about as a copy is, with a file's

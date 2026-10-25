@@ -52,14 +52,20 @@ around the views is in [shell.md](shell.md).
   leaves out) and lets go of an id it does not show (`Pane::is_shown`):
   Delete must never take what cannot be seen. Showing a hidden entry by
   name turns hidden files on first (`Pane::select_revealed`).
-- **What the user makes is selected.** A new folder or a new file made in
-  the folder a pane shows is selected once it is listed, as Nautilus and
-  Dolphin do, and so is a folder of that name that was there already.
-  Not when the pane shows another location by then, or a selection was
-  made meanwhile: that one wins. What a plan made is told by the
-  executor's events (the step as applied, a plan of one step that makes
-  one entry and says nothing more), never read from the plan on the
-  window's thread (`Shell::made`).
+- **What the user puts somewhere is selected there.** What a plan the
+  user asked puts in a folder a pane shows is selected there once it is
+  done and listed, as Nautilus and Dolphin do: a new folder or file (and
+  a folder of that name there already), what was pasted or dropped (the
+  other pane's folder for Shift+F5 and a drop on it), an archive made or
+  extracted, what was restored. Selected as it is listed, all of it once
+  all is; in the pane it was asked from first. Not when the pane shows
+  another location by then, or a selection was made meanwhile, even
+  between two names listed: that one wins. Where it went is told by the
+  executor (`Change::placed`), never read from the plan on the window's
+  thread: a name taken settled (`photos (copy)`), and a folder merged
+  into as itself, though its steps fill it (`Items::placed`). A rename
+  keeps its entry, and its selection, through the listing
+  (`Shell::made`).
 - Scheme moves say `follow` (`ui.cursor`, `step: follow`): they move a
   following selection and leave a picked one. `pick` is yazi's mark. A
   sweep (`select_sweep`) holds a range while the cursor moves (`sweep` in

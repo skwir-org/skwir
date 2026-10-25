@@ -31,9 +31,13 @@
   the next move of the mouse.
 - **About** and `skwir --version` say the commit a build between releases
   was made from (`0.2.0+8ef7a93f6d38`); a release says its version alone.
-- **A new folder or file** you make is selected once it is there, as in
-  other file managers, and scrolled to; so is a folder of that name that
-  was there already.
+- **What you put in a folder is selected**, as in other file managers,
+  and scrolled to: a new folder or file (or the folder of that name that
+  was there already), what you paste or drop, a copy of a file beside
+  itself, an archive you make or extract. Copied to the other side of
+  the split (Shift+F5), it is selected there, as what you restore from
+  the Trash is where the other side shows its folder. A selection you
+  make while it is being done is kept.
 - **Deleting permanently**: a file's sidecars (XMP, a Mac's `._` files,
   TagSpaces' notes) show as a small "+ metadata" mark after its name, and
   where they are when you point at it. A long name keeps the room: a

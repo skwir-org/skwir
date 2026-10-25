@@ -4848,3 +4848,45 @@ build it on macOS and Windows too, with their own mechanisms.
   Remember switch, and only while it is on (it was under the field,
   always); a screen reader hears it as the switch's description
   (`SecretQuestion::keeping`, `prompts::Remember`).
+
+### What the user puts in a folder is selected there (2026-10-25)
+
+As Nautilus and Dolphin do: what a plan the user asked puts in a folder
+a pane shows is selected there once done and listed, scrolled to, in the
+pane it was asked from first (`Shell::making`, `made_step`, `made`). A
+new folder or file first (5d0955fc), then everything that puts
+something somewhere: a paste, a drop, Shift+F5 into the other pane, a
+copy beside itself, an archive made or extracted, a restore where a pane
+shows its folder.
+
+- **Where things went is the executor's to say**, never read from the
+  plan on the window's thread (an extract step reads its archive to name
+  itself): `Change::placed` (a copy's, a move's, a link's destination,
+  what is made, where a restore goes back; not a rename, whose entry the
+  listing follows) from each step event as applied; and, where a plan's
+  steps are not its items, `Items::placed`, worked out by settling for
+  every item (it was the first only): the name a taken one was settled
+  to, and a folder merged into as itself, though its steps put files
+  inside it.
+- **The reveal takes several names**, the listing walked once per look
+  (`find_by_name` is a scan), and selects what is listed as it comes;
+  a selection made in between ends it (`Reveal::selected`), as one made
+  while the plan runs leaves it unselected (each pane's revision kept
+  when it was asked). `Pane::select_revealed` takes several ids.
+- **Checked:** `cargo clippy --all-targets -D warnings`; skwir-core's lib
+  and clash tests (353, the new `a_plan_settled_says_where_each_item_went`
+  among them), skwir-ui's toast, reveal and select tests (20). In a
+  window (debug build, Xvfb :90): three files pasted (quote, two spaces,
+  an accent) all selected; a copy beside itself (`f00 (copy).txt`); 46
+  copies at once; a folder pasted onto its name, merged by the dialog's
+  default, selected as `photos`; Shift+F5 selecting both copies in the
+  other pane, the first keeping its own; Extract Here selecting
+  `project-1.0`, the member's name, not the archive's; Compress selecting
+  `three café.txt.zip`; 20 000 files pasted, all 20 000 selected (8 s);
+  the same paste with Home pressed at 6 719 copied kept that one
+  selected. Idle after it about 1 % on Xvfb, no sync logged after the
+  copy's end.
+- **Not checked:** a restore from the Trash beside a pane showing its
+  folder (a test window's trash on the home volume is the machine's);
+  a drag with the pointer (a drop runs the command Shift+F5 does);
+  `just release-check`.

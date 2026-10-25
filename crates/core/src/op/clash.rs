@@ -256,7 +256,7 @@ pub fn settle(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext) 
         clashes: Vec::new(),
         changed: false,
     };
-    let (mut count, mut first) = (0, None);
+    let (mut count, mut first, mut placed) = (0, None, Vec::new());
     for (i, step) in steps.iter().enumerate() {
         let asked = step.describe();
         let before = walk.out.len();
@@ -270,27 +270,34 @@ pub fn settle(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext) 
             continue;
         }
         count += 1;
-        if first.is_none() {
-            let from = match &asked {
-                Change::Copy { from, .. }
-                | Change::Move { from, .. }
-                | Change::Link { from, .. } => Some(from.clone()),
-                _ => None,
-            };
-            let made = matches!(asked, Change::Create { .. });
-            let own = done.iter().map(|s| s.describe()).find(|c| {
-                matches!(c, Change::Copy { from: f, .. } | Change::Move { from: f, .. }
-                    | Change::Link { from: f, .. } if Some(f) == from.as_ref())
-                    || made && matches!(c, Change::Create { .. })
-            });
-            first = Some(own.unwrap_or(asked));
-        }
+        // The item as done: by its own step where it has one (under its
+        // new name), else as asked (a folder merged into, which its steps
+        // fill).
+        let from = match &asked {
+            Change::Copy { from, .. } | Change::Move { from, .. } | Change::Link { from, .. } => {
+                Some(from.clone())
+            }
+            _ => None,
+        };
+        let made = matches!(asked, Change::Create { .. });
+        let own = done.iter().map(|s| s.describe()).find(|c| {
+            matches!(c, Change::Copy { from: f, .. } | Change::Move { from: f, .. }
+                | Change::Link { from: f, .. } if Some(f) == from.as_ref())
+                || made && matches!(c, Change::Create { .. })
+        });
+        let item = own.unwrap_or(asked);
+        placed.extend(item.placed().map(Path::to_path_buf));
+        first.get_or_insert(item);
     }
     Settled {
         steps: walk.out,
         clashes: walk.clashes,
         changed: walk.changed,
-        items: first.map(|first| super::Items { first, count }),
+        items: first.map(|first| super::Items {
+            first,
+            count,
+            placed,
+        }),
     }
 }
 

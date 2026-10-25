@@ -436,6 +436,19 @@ impl Change {
         }
     }
 
+    /// Where it puts something that was not there: what a copy, a move or
+    /// a link places, what is made, where a restore puts a file back. What
+    /// the window selects once listed (ADR-054's names settled first). A
+    /// rename leaves its entry where it was, under another name: the
+    /// listing follows it (`ListingEvent::Renamed`).
+    pub fn placed(&self) -> Option<&Path> {
+        match self {
+            Change::Copy { to, .. } | Change::Move { to, .. } | Change::Link { to, .. } => Some(to),
+            Change::Create { path, .. } | Change::Restore { path } => Some(path),
+            _ => None,
+        }
+    }
+
     /// Where `path` is once this change holds: what a holder of paths (the
     /// shelf, a clipboard) does with each change a
     /// [`ChangeObserver`](executor::ChangeObserver) hears.
@@ -885,11 +898,18 @@ pub struct Plan {
 }
 
 /// A plan's items as the user asked for them: the first one's change and
-/// how many there are.
+/// how many there are, and where each was put.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Items {
     pub first: Change,
     pub count: usize,
+    /// Where each item that puts something was put, in plan order
+    /// (`Change::placed`): under the name it was settled to (`photos
+    /// (copy)`), a folder merged into where it is, though the steps that
+    /// merged it put files inside it. What the window selects once the
+    /// plan is done; not said with the plan's events (the toast counts).
+    #[serde(skip)]
+    pub placed: Vec<PathBuf>,
 }
 
 /// Serialized plan.
@@ -1014,9 +1034,15 @@ impl Plan {
             return self;
         };
         let items = self.items.or_else(|| {
+            let asked: Vec<Change> = self.steps.iter().map(|step| step.describe()).collect();
+            let placed = asked
+                .iter()
+                .filter_map(Change::placed)
+                .map(Path::to_path_buf);
             Some(Box::new(Items {
-                first: self.steps.first()?.describe(),
-                count: self.steps.len(),
+                placed: placed.collect(),
+                count: asked.len(),
+                first: asked.into_iter().next()?,
             }))
         });
         Plan {

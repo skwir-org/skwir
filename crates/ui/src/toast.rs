@@ -431,7 +431,7 @@ impl Shell {
                     items,
                     ..
                 } => {
-                    self.made(plan, error.is_none() && !cancelled);
+                    self.made(plan, error.is_none() && !cancelled, items.as_ref());
                     let Some(index) = self.toasts.running.iter().position(|r| r.plan == plan)
                     else {
                         continue;
@@ -930,6 +930,7 @@ mod tests {
                 to: PathBuf::from("/example/it's here/a.txt"),
             },
             count: 1,
+            placed: vec![PathBuf::from("/example/it's here/a.txt")],
         };
         assert_eq!(
             ended(running(None), 2, None, false, Some(copied.clone()), None),
