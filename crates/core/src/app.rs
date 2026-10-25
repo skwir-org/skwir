@@ -78,8 +78,14 @@ pub struct SecretQuestion {
     pub title: String,
     /// The verb on its button: "Extract".
     pub accept: String,
+    /// What the empty field says is asked: "Password", "Passphrase".
+    pub placeholder: String,
+    /// A line under the field: what keeping the answer means (a volume's
+    /// passphrase, ADR-088).
+    pub note: Option<String>,
     /// Whether the window offers to keep the answer in the desktop's
-    /// keyring (a server's password, ADR-082): the asker keeps it.
+    /// keyring (a server's password, ADR-082; a volume's passphrase,
+    /// ADR-088): the asker keeps it.
     pub remember: bool,
 }
 
@@ -1281,7 +1287,14 @@ impl App {
         title: impl Into<String>,
         accept: impl Into<String>,
     ) -> (u64, crossbeam_channel::Receiver<Option<SecretAnswer>>) {
-        self.ask_secret_as(title.into(), accept.into(), false)
+        self.ask_secret_as(SecretQuestion {
+            id: 0,
+            title: title.into(),
+            accept: accept.into(),
+            placeholder: "Password".to_owned(),
+            note: None,
+            remember: false,
+        })
     }
 
     /// [`App::ask_secret`] for a server's password, which the window offers
@@ -1292,25 +1305,47 @@ impl App {
         title: impl Into<String>,
         accept: impl Into<String>,
     ) -> (u64, crossbeam_channel::Receiver<Option<SecretAnswer>>) {
-        self.ask_secret_as(title.into(), accept.into(), true)
+        self.ask_secret_as(SecretQuestion {
+            id: 0,
+            title: title.into(),
+            accept: accept.into(),
+            placeholder: "Password".to_owned(),
+            note: None,
+            remember: true,
+        })
     }
 
+    /// [`App::ask_secret`] for an encrypted volume's passphrase, which the
+    /// window offers to keep in the desktop's keyring (ADR-088) where
+    /// `keeping` says under the field what keeping it means: the answer
+    /// says whether the user asked for it, and the asker keeps it once it
+    /// unlocked the volume.
+    pub fn ask_passphrase(
+        &self,
+        title: impl Into<String>,
+        accept: impl Into<String>,
+        keeping: Option<String>,
+    ) -> (u64, crossbeam_channel::Receiver<Option<SecretAnswer>>) {
+        self.ask_secret_as(SecretQuestion {
+            id: 0,
+            title: title.into(),
+            accept: accept.into(),
+            placeholder: "Passphrase".to_owned(),
+            remember: keeping.is_some(),
+            note: keeping,
+        })
+    }
+
+    /// Ask `question`, numbered here.
     fn ask_secret_as(
         &self,
-        title: String,
-        accept: String,
-        remember: bool,
+        question: SecretQuestion,
     ) -> (u64, crossbeam_channel::Receiver<Option<SecretAnswer>>) {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         let id = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let (reply, answer) = crossbeam_channel::bounded(1);
         self.secret_replies.lock().insert(id, reply);
-        self.secrets.lock().push(SecretQuestion {
-            id,
-            title,
-            accept,
-            remember,
-        });
+        self.secrets.lock().push(SecretQuestion { id, ..question });
         self.wake();
         (id, answer)
     }

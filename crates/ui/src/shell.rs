@@ -366,8 +366,6 @@ pub struct Shell {
     pub about: Option<crate::about::About>,
     /// A rubber-band selection in progress.
     pub marquee: Option<crate::elements::marquee::Drag>,
-    /// The encrypted volume the passphrase prompt is for.
-    pub unlock: Option<crate::prompts::Unlock>,
     /// What plans' steps ask that only the user knows (an archive's
     /// password), waiting for the prompt to be free (`ask_secrets`).
     pub secrets: std::collections::VecDeque<skwir_core::app::SecretQuestion>,
@@ -672,7 +670,6 @@ impl Shell {
             shortcuts: None,
             about: None,
             marquee: None,
-            unlock: None,
             secrets: std::collections::VecDeque::new(),
             form: None,
             forms: std::collections::VecDeque::new(),
@@ -1910,21 +1907,6 @@ impl Shell {
             "ask" => self.open_ask(args, window, cx),
             "choose" => self.open_choose(args, window, cx),
             "choose_option" => self.choose_toggle_option(window, cx),
-            "unlock_prompt" => {
-                if let Some(device) = arg("device") {
-                    let title = arg("title").unwrap_or_else(|| "this volume".into());
-                    let tab = args.get("tab").and_then(serde_json::Value::as_bool) == Some(true);
-                    self.unlock = Some(crate::prompts::Unlock { device, tab });
-                    self.open_prompt(
-                        crate::prompts::PromptKind::Passphrase,
-                        &format!("Unlock “{title}”"),
-                        "",
-                        None,
-                        window,
-                        cx,
-                    );
-                }
-            }
             name if name.starts_with("menu_") => self.menu_command(name, window, cx),
             "palette" => self.open_palette(window, cx),
             // Up and Down in whichever list has the keyboard: what a

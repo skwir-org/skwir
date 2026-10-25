@@ -371,18 +371,6 @@ mod args {
     }
 
     #[derive(Deserialize, JsonSchema)]
-    pub(super) struct Unlock {
-        /// The locked container's device.
-        device: String,
-        /// What the question calls it.
-        #[serde(default)]
-        title: Option<String>,
-        /// Open the volume in a tab behind the one shown.
-        #[serde(default)]
-        tab: bool,
-    }
-
-    #[derive(Deserialize, JsonSchema)]
     pub(super) struct Ask {
         #[serde(default)]
         title: Option<String>,
@@ -432,7 +420,7 @@ use args::{
     Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold, Folders,
     History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player,
     Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submit, TagsPrompt, TerminalPaste, Text,
-    Unlock, Url, UsageMode, View,
+    Url, UsageMode, View,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -569,7 +557,6 @@ const SHOWS: &[&str] = &[
 const ACTS: &[&str] = &[
     "ui.ask",
     "ui.choose",
-    "ui.unlock_prompt",
     "ui.open_url",
     "ui.preview_open_external",
     "ui.map_open",
@@ -1305,12 +1292,6 @@ pub fn declare_all(app: &App) {
         "ui.choose_option",
         "Switch the option",
         "Switch the choice's option (Always use for…)",
-    );
-    declare::<Unlock>(
-        app,
-        "ui.unlock_prompt",
-        "Unlock…",
-        "Ask for the passphrase of a locked volume and unlock it",
     );
     none("ui.accept", "Confirm", "Answer yes to the question asked");
     none("ui.dismiss", "Cancel", "Answer no to the question asked");

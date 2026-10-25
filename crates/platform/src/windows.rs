@@ -152,6 +152,122 @@ pub fn space(path: &Path) -> Option<(u64, u64)> {
     (ok != 0 && total > 0).then_some((free, total))
 }
 
+/// What a file call on a drive BitLocker keeps locked fails with:
+/// `FVE_E_LOCKED_VOLUME`, and `FVE_E_VOLUME_NOT_BOUND` (its key not at
+/// hand), as Double Commander reads them.
+const LOCKED: [u32; 2] = [0x8031_0000, 0x8031_0017];
+
+/// Whether `code`, a file call's last error, says BitLocker keeps the
+/// volume locked.
+fn is_locked_error(code: u32) -> bool {
+    LOCKED.contains(&code)
+}
+
+/// Whether BitLocker keeps the drive at `root` (`E:\`) locked: asking it
+/// for its space fails for that. Asks no administrator, as Windows'
+/// own ways of reading it do (WMI's needs one).
+pub fn drive_locked(root: &Path) -> bool {
+    let wide = wide_path(root);
+    let (mut free, mut total) = (0u64, 0u64);
+    // SAFETY: a NUL-terminated root, and out values the call fills.
+    let ok = unsafe {
+        windows_sys::Win32::Storage::FileSystem::GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &raw mut free,
+            &raw mut total,
+            std::ptr::null_mut(),
+        )
+    };
+    // SAFETY: no arguments; this thread's last error, the call's.
+    ok == 0 && is_locked_error(unsafe { windows_sys::Win32::Foundation::GetLastError() })
+}
+
+/// How long a drive is looked at, once Windows' unlock dialog was opened
+/// in a program Skwir cannot wait for, before it is left locked.
+const UNLOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Unlock the drive `device` (`E:`) BitLocker keeps locked through
+/// Windows' own dialog (ADR-088): the drive's Unlock Drive verb
+/// (`unlock-bde`, Explorer's, which runs `bdeunlock.exe` as the user and
+/// offers to unlock it automatically from then on). Waits for the dialog
+/// to close, or `cancel`. Where the drive then is, `None` when it stays
+/// locked.
+pub fn unlock_drive(
+    device: &str,
+    cancel: &skwir_core::CancelToken,
+) -> anyhow::Result<Option<PathBuf>> {
+    let root = PathBuf::from(format!("{}\\", device.trim_end_matches('\\')));
+    if !drive_locked(&root) {
+        return Ok(Some(root));
+    }
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    let asked = root.clone();
+    // A thread of its own: the shell wants its own COM there.
+    std::thread::Builder::new()
+        .name("skwir-unlock".into())
+        .spawn(move || {
+            let _ = tx.send(run_verb(&asked, "unlock-bde"));
+        })?;
+    let cancelled = cancel.subscribe();
+    let waited = crossbeam_channel::select! {
+        recv(rx) -> ran => ran.map_err(|_| anyhow::anyhow!("Windows' unlock dialog did not answer"))??,
+        recv(cancelled.receiver()) -> _ => return Ok(None),
+    };
+    if !waited {
+        let deadline = std::time::Instant::now() + UNLOCK_WAIT;
+        while drive_locked(&root) && std::time::Instant::now() < deadline {
+            if cancel.is_cancelled() {
+                return Ok(None);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    }
+    Ok((!drive_locked(&root)).then_some(root))
+}
+
+/// Run the shell's `verb` on `path` and wait for the program it started
+/// to end: whether it could be waited for (a verb a running program
+/// carries out gives none to wait for).
+fn run_verb(path: &Path, verb: &str) -> anyhow::Result<bool> {
+    use ::windows::Win32::System::Com::{
+        COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, CoInitializeEx,
+    };
+    use windows_sys::Win32::System::Threading::{INFINITE, WaitForSingleObject};
+    use windows_sys::Win32::UI::Shell::{
+        SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW,
+        ShellExecuteExW,
+    };
+    // SAFETY: this thread's own COM, as ShellExecuteEx asks for, on a
+    // thread that does nothing else.
+    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE) };
+    let file = wide_path(path);
+    let verb: Vec<u16> = verb.encode_utf16().chain([0]).collect();
+    // SAFETY: a plain C struct, every field of which may be zero.
+    let mut info: SHELLEXECUTEINFOW = unsafe { std::mem::zeroed() };
+    info.cbSize = u32::try_from(std::mem::size_of::<SHELLEXECUTEINFOW>())?;
+    info.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+    info.lpVerb = verb.as_ptr();
+    info.lpFile = file.as_ptr();
+    info.nShow = ::windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL.0;
+    // SAFETY: `info` filled as the call asks, its strings outliving it.
+    if unsafe { ShellExecuteExW(&raw mut info) } == 0 {
+        anyhow::bail!(
+            "Windows' unlock dialog could not be opened: {}",
+            std::io::Error::last_os_error()
+        );
+    }
+    if info.hProcess.is_null() {
+        return Ok(false);
+    }
+    // SAFETY: the process handle the call opened for this thread, waited
+    // on, then closed once.
+    unsafe {
+        WaitForSingleObject(info.hProcess, INFINITE);
+        CloseHandle(info.hProcess);
+    }
+    Ok(true)
+}
+
 /// Whether the drive at `root` is one the user plugs in and out.
 pub fn is_removable_drive(root: &Path) -> bool {
     let root = wide_path(root);
@@ -749,6 +865,18 @@ mod tests {
         let (free, total) = space(Path::new("C:\\")).expect("C:'s space");
         assert!(free <= total);
         assert_eq!(process_runs(std::process::id()), Some(true));
+        // Read, so not locked (Wine has no BitLocker: it says so of none).
+        assert!(!drive_locked(Path::new("C:\\")));
+    }
+
+    /// BitLocker's two answers for a drive locked; any other failure (an
+    /// empty card reader's `ERROR_NOT_READY`) is not one.
+    #[test]
+    fn a_drive_bitlocker_keeps_locked_is_told_by_its_error() {
+        assert!(is_locked_error(0x8031_0000));
+        assert!(is_locked_error(0x8031_0017));
+        assert!(!is_locked_error(21), "ERROR_NOT_READY");
+        assert!(!is_locked_error(5), "ERROR_ACCESS_DENIED");
     }
 
     /// In the Wine prefix of the tests alone (`just test-windows`), never

@@ -2256,11 +2256,11 @@ mod tests {
         };
         let mut locked = place("device:/dev/sdz");
         locked.activate = Some(skwir_core::command::Invocation::with_args(
-            "ui.unlock_prompt",
+            "places.open_locked",
             &serde_json::json!({ "device": "/dev/sdz", "title": "Backup" }),
         ));
         let run = super::open_in_tab(&locked);
-        assert_eq!(&*run.name, "ui.unlock_prompt");
+        assert_eq!(&*run.name, "places.open_locked");
         assert_eq!(
             run.args,
             serde_json::json!({ "device": "/dev/sdz", "title": "Backup", "tab": true })

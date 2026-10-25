@@ -4779,3 +4779,68 @@ found on the way. On main, none pushed.
   `ci-check`'s steps pass (522 tests, also with the table emptied). The
   same run here found the login menu test's fix unformatted, formatted
   since (`818f7c14`).
+
+### An encrypted volume's passphrase remembered (2026-10-25, ADR-088)
+
+The user asked whether Skwir could offer to remember the passphrase of an
+encrypted volume in the keyring, as it does a server's password; then to
+build it on macOS and Windows too, with their own mechanisms.
+
+- **Linux.** Opening a locked LUKS volume runs `places.open_locked`
+  (user-only), in the places plugin's new `passphrases.rs`: Skwir's own
+  passphrase where `places.remembered` notes the volume's UUID, then
+  GVfs's (`org.gnome.GVfs.Luks.Password`, `gvfs-luks-uuid`, read from
+  GVfs 1.60.3's source), then the window's question
+  (`App::ask_passphrase`: the placeholder "Passphrase", Remember with a
+  note saying what it means, offered only with a UUID), asked again while
+  refused (three times). Kept once udisks accepted it; Skwir's own
+  refused is forgotten once another served; GVfs's never changed. Forget
+  Passphrase on the volume's place, locked or mounted. The shell's own
+  prompt (`ui.unlock_prompt`, `PromptKind::Passphrase`) is gone: a secret
+  question carries its placeholder and note. `secrets::heard` (a keyring
+  call on a thread of its own, until cancelled) moved from the remote
+  plugin to the platform for both. udisks' refusal is a typed error
+  (`places::Refused`).
+- **macOS** (compiled only): `diskutil apfs list -plist`'s locked
+  volumes listed (a role offered hidden), unlocked with the passphrase a
+  line on `diskutil apfs unlockVolume -stdinpassphrase`'s input, mounted
+  where `diskutil info -plist` says; the Keychain remembers. Keys, flags
+  and messages were checked against Apple's man page and captured output
+  by a research pass; the parser is tested on Linux with a synthetic
+  plist.
+- **Windows** (compiled; Wine has no BitLocker): a drive whose volume
+  says nothing of itself and whose `GetDiskFreeSpaceExW` fails with
+  `FVE_E_LOCKED_VOLUME` (or `FVE_E_VOLUME_NOT_BOUND`) is listed as
+  locked; opening it runs Explorer's Unlock Drive verb (`unlock-bde`) on
+  its root through `ShellExecuteEx` on a thread with its own COM, waits
+  for `bdeunlock.exe`, and opens the drive if it is unlocked then.
+  Windows' dialog offers its own automatic unlocking; Skwir keeps
+  nothing. The quick scan and the measured one both listing such a drive,
+  `carry_over` keeps one row.
+- **Checked:** `just lint` and `just test` (2192 tests, 28 skipped);
+  `just check-cross` (Windows and macOS clippy, after fixing what it
+  found: doc names, a match, a test-only struct; `BitLocker` joined
+  `clippy.toml`'s names); `just test-windows -p skwir-platform -p
+  skwir-plugin-places` (191 tests: a readable drive is not taken for a
+  locked one, the error codes told apart); the keyring tests in a private
+  GNOME Keyring (4, the new one reading an item written as GVfs writes
+  it; `remote-check`'s filters now take `test(passphrase)`); `just deny`,
+  `just notices-check`. The plugin test runs the flow against stand-in
+  `udisksctl` and `lsblk` and an in-memory keyring: typed and remembered,
+  opened from the keyring without a question, refused after a change then
+  forgotten, GVfs's used unchanged, Cancel, three refusals.
+- **In a window** (debug build, Xvfb :93, a private GNOME Keyring, the
+  stand-ins first on PATH): the sidebar's "2 TB encrypted" (no UUID
+  known for a stand-in device) asked "Unlock “2 TB encrypted”" with no
+  Remember, the row "Unlocking…"; a wrong passphrase was asked again
+  ("that passphrase was not accepted"); Escape left it locked, unsaid.
+  Through `skwir cmd places.open_locked` with a UUID: the note and the
+  Remember switch; typed with it on, the folder opened ("Mounted “It's a
+  backup”"), the keyring held "Skwir: Backup (encrypted volume)" under
+  `places.passphrases`, and `data.toml` the UUID alone; locked again and
+  opened, no question; `places.forget_passphrase` emptied both.
+- **Not checked:** a real LUKS drive (no root here to make one); Forget
+  Passphrase in a window's menu (a stand-in device has no udev identity:
+  the menu is unit-tested); `bench-check`, `smoke`, `a11y-check` and the
+  readers' checks were not run (nothing they measure changed); macOS and
+  Windows never run (ADR-088's consequences say what is not known).

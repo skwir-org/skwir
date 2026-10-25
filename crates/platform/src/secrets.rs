@@ -11,6 +11,8 @@
 #[cfg(any(target_os = "linux", target_os = "freebsd", test))]
 use std::collections::HashMap;
 
+use skwir_core::CancelToken;
+
 /// Where a secret belongs: a field of a record of a setting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SecretRef<'a> {
@@ -104,7 +106,8 @@ mod backend {
         })
     }
 
-    pub fn lookup_network(named: &[(&str, &str)]) -> anyhow::Result<Option<SecretText>> {
+    /// The least specific secret holding every attribute `named`.
+    pub fn lookup_desktop(named: &[(&str, &str)]) -> anyhow::Result<Option<SecretText>> {
         block_on(async {
             let keyring = keyring().await?;
             let wanted: HashMap<&str, &str> = named.iter().copied().collect();
@@ -291,12 +294,54 @@ pub fn delete_record(setting: &str, record: &str) -> anyhow::Result<()> {
 pub fn lookup_network(named: &[(&str, &str)]) -> anyhow::Result<Option<SecretText>> {
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
-        backend::lookup_network(named)
+        backend::lookup_desktop(named)
     }
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
         let _ = named;
         Ok(None)
+    }
+}
+
+/// The passphrase the desktop keeps for the encrypted volume whose
+/// container's UUID is `uuid`, under GVfs's own schema
+/// (`org.gnome.GVfs.Luks.Password`, by `gvfs-luks-uuid`: what GVfs keeps
+/// when Nautilus is told to remember one, ADR-088). Read only: Skwir never
+/// changes another program's. Linux and FreeBSD's Secret Service;
+/// elsewhere none.
+pub fn lookup_volume(uuid: &str) -> anyhow::Result<Option<SecretText>> {
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    {
+        backend::lookup_desktop(&[("gvfs-luks-uuid", uuid)])
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+    {
+        let _ = uuid;
+        Ok(None)
+    }
+}
+
+/// What `ask` answers of the keyring, asked on a thread of its own,
+/// unless `cancel` comes first: then `None`, and the keyring's prompt (an
+/// unlock it asked for, which the user may leave open) is left to the
+/// user, its answer to no one (ADR-082).
+pub fn heard<T: Send + 'static>(
+    cancel: &CancelToken,
+    ask: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let (tx, rx) = crossbeam_channel::bounded(1);
+    let started = std::thread::Builder::new()
+        .name("skwir-keyring".into())
+        .spawn(move || {
+            let _ = tx.send(ask());
+        });
+    if started.is_err() {
+        return None;
+    }
+    let cancelled = cancel.subscribe();
+    crossbeam_channel::select! {
+        recv(rx) -> answer => answer.ok(),
+        recv(cancelled.receiver()) -> _ => None,
     }
 }
 
@@ -452,6 +497,44 @@ mod tests {
                 .unwrap()
                 .is_none(),
             "another user's is not"
+        );
+    }
+
+    /// A volume's passphrase GVfs kept (its own schema, by the container's
+    /// UUID) is found by that UUID alone; written here as GVfs writes it
+    /// (`monitor/udisks2/gvfsudisks2volume.c`, 1.60).
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[test]
+    #[ignore = "needs a private Secret Service (tools/test/private-keyring.sh)"]
+    fn a_passphrase_gvfs_kept_is_found_by_its_volume() {
+        assert_eq!(
+            std::env::var("SKWIR_PRIVATE_KEYRING").as_deref(),
+            Ok("1"),
+            "refusing to touch a keyring that is not the test's own"
+        );
+        futures_lite::future::block_on(async {
+            let keyring = oo7::Keyring::new().await.unwrap();
+            let all = HashMap::from([
+                ("xdg:schema", "org.gnome.GVfs.Luks.Password"),
+                ("gvfs-luks-uuid", "1111-luks"),
+            ]);
+            keyring
+                .create_item(
+                    "Encryption passphrase for Backup",
+                    &all,
+                    b"example words",
+                    true,
+                )
+                .await
+                .unwrap();
+        });
+        assert_eq!(
+            lookup_volume("1111-luks").unwrap().unwrap().expose(),
+            "example words"
+        );
+        assert!(
+            lookup_volume("2222").unwrap().is_none(),
+            "another volume's is not"
         );
     }
 }

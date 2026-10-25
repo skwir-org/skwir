@@ -42,6 +42,10 @@ pub struct Mount {
     /// What of its filesystem is mounted there: `/` for all of it, a
     /// subvolume or a folder of it otherwise (`/@home`).
     pub root: PathBuf,
+    /// Its volume is locked, though its place is there: a Windows drive
+    /// BitLocker keeps locked (`windows::drive_locked`), its letter given
+    /// and nothing readable. Opening it unlocks it ([`unlock_by_system`]).
+    pub locked: bool,
 }
 
 /// Free and total bytes of the filesystem holding `path`. Asks the
@@ -77,6 +81,9 @@ pub struct Volume {
     /// A small FAT or NTFS partition: a boot or recovery one, by the
     /// judgement desktops make where udisks says nothing (`Identity`).
     pub system: bool,
+    /// What the system's own listing names it by, where udev does not (a
+    /// Mac's APFS volume UUID); on Linux `None`, and [`identity`] says.
+    pub uuid: Option<String>,
 }
 
 /// What udev knows of a block device, read from sysfs and udev's
@@ -250,6 +257,7 @@ pub fn parse_lsblk(json: &str) -> Vec<Volume> {
                 hotplug,
                 container,
                 system,
+                uuid: None,
             })
         })
         .collect()
@@ -300,8 +308,25 @@ pub fn lsblk() -> Option<String> {
         .then(|| String::from_utf8_lossy(&finished.stdout).into_owned())
 }
 
+/// Volumes present but not mounted, to mount or unlock from the sidebar:
+/// `lsblk`'s (Linux); on a Mac the encrypted APFS volumes locked
+/// (`apfs::locked`); on Windows none, a drive BitLocker locked being one of
+/// its drives (`Mount::locked`). Spawns a process: call from a worker.
 pub fn unmounted_volumes() -> Vec<Volume> {
-    lsblk().map(|json| parse_lsblk(&json)).unwrap_or_default()
+    #[cfg(target_os = "macos")]
+    {
+        apfs::list()
+            .map(|plist| apfs::locked(&plist))
+            .unwrap_or_default()
+    }
+    #[cfg(windows)]
+    {
+        Vec::new()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        lsblk().map(|json| parse_lsblk(&json)).unwrap_or_default()
+    }
 }
 
 /// Run `udisksctl <verb> --block-device <device>`, with `input` on its
@@ -348,17 +373,68 @@ pub fn cleartext_of(message: &str) -> Option<String> {
     Some(device.strip_suffix('.').unwrap_or(device).to_owned())
 }
 
-/// Mount through udisks and return the mount point. Blocks: worker only.
+/// Mount through udisks (`diskutil` on a Mac) and return the mount point.
+/// Blocks: worker only.
 pub fn mount(device: &str) -> anyhow::Result<PathBuf> {
-    let message = udisks("mount", device, &[], None)?;
-    mount_point_of(&message)
-        .ok_or_else(|| anyhow::anyhow!("udisksctl did not say where it mounted the volume"))
+    #[cfg(target_os = "macos")]
+    {
+        apfs::mount(device)
+    }
+    #[cfg(windows)]
+    {
+        let _ = device;
+        Err(skwir_core::system::not_yet("Mounting a volume").into())
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        let message = udisks("mount", device, &[], None)?;
+        mount_point_of(&message)
+            .ok_or_else(|| anyhow::anyhow!("udisksctl did not say where it mounted the volume"))
+    }
 }
 
-/// Unlock an encrypted volume and return its cleartext device. The
-/// passphrase travels on the child's standard input, never on a command
-/// line, and is not kept. Blocks: worker only.
+/// The system refused the passphrase given to unlock a volume
+/// ([`is_refused`]): typed wrong, or kept from before it changed.
+#[derive(Debug)]
+pub struct Refused;
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("The passphrase was not accepted")
+    }
+}
+
+impl std::error::Error for Refused {}
+
+/// Whether [`unlock`] failed because the passphrase was refused, which
+/// another may answer, rather than for something it cannot.
+pub fn is_refused(error: &anyhow::Error) -> bool {
+    error.is::<Refused>()
+}
+
+/// Unlock an encrypted volume and return its cleartext device (a Mac's
+/// APFS volume is its own, mounted by then). The passphrase travels on the
+/// child's standard input, never on a command line, and is not kept here.
+/// Windows asks for it itself ([`SYSTEM_ASKS`]). Blocks: worker only.
 pub fn unlock(device: &str, passphrase: &str) -> anyhow::Result<String> {
+    #[cfg(target_os = "macos")]
+    {
+        apfs::unlock(device, passphrase)
+    }
+    #[cfg(windows)]
+    {
+        let _ = (device, passphrase);
+        anyhow::bail!("Windows asks for a BitLocker drive's password itself: open the drive")
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        unlock_luks(device, passphrase)
+    }
+}
+
+/// [`unlock`] through udisks.
+#[cfg(not(any(target_os = "macos", windows)))]
+fn unlock_luks(device: &str, passphrase: &str) -> anyhow::Result<String> {
     // No trailing newline: a key file is taken byte for byte.
     let message = udisks(
         "unlock",
@@ -369,13 +445,34 @@ pub fn unlock(device: &str, passphrase: &str) -> anyhow::Result<String> {
     .map_err(|error| {
         let text = error.to_string();
         if text.contains("Failed to activate") || text.contains("No key available") {
-            anyhow::anyhow!("The passphrase was not accepted")
+            anyhow::Error::new(Refused)
         } else {
             error
         }
     })?;
     cleartext_of(&message)
         .ok_or_else(|| anyhow::anyhow!("udisksctl did not name the unlocked device"))
+}
+
+/// Whether the system asks for a locked volume's passphrase itself, in a
+/// dialog of its own that offers to remember it (Windows' BitLocker): Skwir
+/// then asks nothing and keeps nothing ([`unlock_by_system`], ADR-088).
+pub const SYSTEM_ASKS: bool = cfg!(windows);
+
+/// Unlock `device` through the system's own dialog, where it asks itself
+/// ([`SYSTEM_ASKS`]), and answer where it is then, `None` when the user
+/// left it locked or `cancel` came first. Blocks until the dialog closes:
+/// worker only.
+pub fn unlock_by_system(device: &str, cancel: &CancelToken) -> anyhow::Result<Option<PathBuf>> {
+    #[cfg(windows)]
+    {
+        crate::windows::unlock_drive(device, cancel)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (device, cancel);
+        anyhow::bail!("This system does not ask for a volume's passphrase itself")
+    }
 }
 
 /// Whether udisks refused because something still uses the volume
@@ -1010,6 +1107,7 @@ pub fn parse_mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mount> {
             removable: false,
             source: mounted.source.to_string_lossy().into_owned(),
             root: mounted.root,
+            locked: false,
         });
     }
     out
@@ -1033,7 +1131,9 @@ mod imp {
 }
 
 /// Windows: the local drives, each its label (or what Windows calls an
-/// unnamed one) with its letter, removable when it is plugged in.
+/// unnamed one) with its letter, removable when it is plugged in, locked
+/// when BitLocker keeps it so (asked only of a drive that says nothing of
+/// itself: an empty card reader's says nothing either).
 #[cfg(windows)]
 mod imp {
     use super::Mount;
@@ -1043,7 +1143,9 @@ mod imp {
             .into_iter()
             .map(|root| {
                 let letter = root.to_string_lossy().trim_end_matches('\\').to_owned();
-                let (label, fstype) = crate::windows::volume_information(&root).unwrap_or_default();
+                let information = crate::windows::volume_information(&root);
+                let locked = information.is_none() && crate::windows::drive_locked(&root);
+                let (label, fstype) = information.unwrap_or_default();
                 let label = if label.is_empty() {
                     format!("Local Disk ({letter})")
                 } else {
@@ -1057,6 +1159,7 @@ mod imp {
                     source: letter,
                     root: std::path::PathBuf::from("\\"),
                     path: root,
+                    locked,
                 }
             })
             .collect()
@@ -1116,14 +1219,264 @@ mod imp {
                     source: text(&e.f_mntfromname),
                     root: PathBuf::from("/"),
                     path,
+                    locked: false,
                 })
             })
             .collect()
     }
 }
 
+/// macOS's encrypted APFS volumes through `diskutil` (ADR-088): those
+/// locked listed, unlocked with the passphrase on its standard input
+/// (`-stdinpassphrase`), mounted where macOS mounts them (`/Volumes`).
+/// Compiled, never run; the parser runs in the tests everywhere.
+#[cfg(any(target_os = "macos", test))]
+mod apfs {
+    use super::Volume;
+
+    /// The volumes `diskutil apfs list -plist` says are locked: each by its
+    /// device (`disk4s1`), name and UUID. A volume with a role (the system
+    /// of another macOS, its data, a recovery) is offered hidden.
+    pub fn locked(plist: &[u8]) -> Vec<Volume> {
+        let Ok(listing) = plist::Value::from_reader(std::io::Cursor::new(plist)) else {
+            return Vec::new();
+        };
+        let field = |volume: &plist::Dictionary, key: &str| volume.get(key).cloned();
+        listing
+            .as_dictionary()
+            .and_then(|top| top.get("Containers")?.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|container| container.as_dictionary()?.get("Volumes")?.as_array())
+            .flatten()
+            .filter_map(plist::Value::as_dictionary)
+            .filter(|volume| field(volume, "Locked").and_then(|v| v.as_boolean()) == Some(true))
+            .filter_map(|volume| {
+                let device = field(volume, "DeviceIdentifier")?.into_string()?;
+                let roles = field(volume, "Roles")
+                    .and_then(plist::Value::into_array)
+                    .unwrap_or_default();
+                Some(Volume {
+                    device,
+                    label: field(volume, "Name")
+                        .and_then(plist::Value::into_string)
+                        .unwrap_or_default(),
+                    size: field(volume, "CapacityInUse")
+                        .and_then(|v| v.as_unsigned_integer())
+                        .unwrap_or(0),
+                    locked: true,
+                    hotplug: false,
+                    container: None,
+                    system: !roles.is_empty(),
+                    uuid: field(volume, "APFSVolumeUUID").and_then(plist::Value::into_string),
+                })
+            })
+            .collect()
+    }
+
+    /// Where `diskutil info -plist` says a volume is mounted, `None` when
+    /// it is not (an empty `MountPoint`).
+    pub fn mount_point(plist: &[u8]) -> Option<std::path::PathBuf> {
+        let info = plist::Value::from_reader(std::io::Cursor::new(plist)).ok()?;
+        let at = info.as_dictionary()?.get("MountPoint")?.as_string()?;
+        (!at.is_empty()).then(|| std::path::PathBuf::from(at))
+    }
+
+    /// Whether what `diskutil apfs unlockVolume` said is a passphrase
+    /// refused ("Passphrase incorrect or user does not exist").
+    pub fn refused(said: &str) -> bool {
+        said.contains("Passphrase incorrect")
+    }
+
+    /// What `diskutil` answered `args`, with `input` on its standard input.
+    #[cfg(target_os = "macos")]
+    fn diskutil(args: &[&str], input: Option<&[u8]>) -> anyhow::Result<crate::process::Finished> {
+        crate::process::run_to_exit(
+            std::process::Command::new("diskutil").args(args),
+            input,
+            &skwir_core::CancelToken::new(),
+            super::UDISKS_TIMEOUT,
+        )
+        .map_err(|error| anyhow::anyhow!("diskutil could not be run: {error:#}"))
+    }
+
+    /// `diskutil apfs list -plist`.
+    #[cfg(target_os = "macos")]
+    pub fn list() -> Option<Vec<u8>> {
+        let finished = diskutil(&["apfs", "list", "-plist"], None).ok()?;
+        finished.status.success().then_some(finished.stdout)
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn unlock(device: &str, passphrase: &str) -> anyhow::Result<String> {
+        // A line, as macOS's own scripts give it.
+        let mut input = passphrase.as_bytes().to_vec();
+        input.push(b'\n');
+        let finished = diskutil(
+            &["apfs", "unlockVolume", device, "-stdinpassphrase"],
+            Some(&input),
+        )?;
+        if finished.status.success() {
+            return Ok(device.to_owned());
+        }
+        let said = format!(
+            "{}{}",
+            String::from_utf8_lossy(&finished.stdout),
+            finished.stderr
+        );
+        if refused(&said) {
+            return Err(anyhow::Error::new(super::Refused));
+        }
+        // Unlocked meanwhile (macOS's own dialog, a Keychain): mounted.
+        if said.contains("already unlocked") {
+            return Ok(device.to_owned());
+        }
+        anyhow::bail!("{}", said.trim())
+    }
+
+    /// Mounted where macOS mounts it: as it was unlocked, else now.
+    #[cfg(target_os = "macos")]
+    pub fn mount(device: &str) -> anyhow::Result<std::path::PathBuf> {
+        let at = || -> anyhow::Result<Option<std::path::PathBuf>> {
+            let finished = diskutil(&["info", "-plist", device], None)?;
+            anyhow::ensure!(finished.status.success(), "{}", finished.stderr.trim());
+            Ok(mount_point(&finished.stdout))
+        };
+        if let Some(path) = at()? {
+            return Ok(path);
+        }
+        let finished = diskutil(&["mount", device], None)?;
+        anyhow::ensure!(finished.status.success(), "{}", finished.stderr.trim());
+        at()?.ok_or_else(|| anyhow::anyhow!("diskutil did not say where it mounted the volume"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    /// What `diskutil apfs list -plist` answers, cut to what is read: a
+    /// Mac's own container (its system, its data, unlocked) and a drive's,
+    /// one volume locked, one not encrypted. Synthetic names and UUIDs, in
+    /// the keys captured from real answers.
+    const APFS_LIST: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Containers</key>
+  <array>
+    <dict>
+      <key>APFSContainerUUID</key><string>00000000-0000-4000-8000-000000000001</string>
+      <key>Volumes</key>
+      <array>
+        <dict>
+          <key>APFSVolumeUUID</key><string>00000000-0000-4000-8000-000000000002</string>
+          <key>DeviceIdentifier</key><string>disk3s1</string>
+          <key>Encryption</key><true/>
+          <key>FileVault</key><true/>
+          <key>Locked</key><false/>
+          <key>Name</key><string>Macintosh HD</string>
+          <key>Roles</key><array><string>System</string></array>
+        </dict>
+        <dict>
+          <key>APFSVolumeUUID</key><string>00000000-0000-4000-8000-000000000003</string>
+          <key>DeviceIdentifier</key><string>disk3s7</string>
+          <key>FileVault</key><true/>
+          <key>Locked</key><true/>
+          <key>Name</key><string>Other Data</string>
+          <key>Roles</key><array><string>Data</string></array>
+        </dict>
+      </array>
+    </dict>
+    <dict>
+      <key>APFSContainerUUID</key><string>00000000-0000-4000-8000-000000000004</string>
+      <key>Volumes</key>
+      <array>
+        <dict>
+          <key>APFSVolumeUUID</key><string>00000000-0000-4000-8000-000000000005</string>
+          <key>CapacityInUse</key><integer>1000000000</integer>
+          <key>DeviceIdentifier</key><string>disk5s1</string>
+          <key>Encryption</key><true/>
+          <key>FileVault</key><true/>
+          <key>Locked</key><true/>
+          <key>Name</key><string>It's a backup</string>
+          <key>Roles</key><array/>
+        </dict>
+        <dict>
+          <key>APFSVolumeUUID</key><string>00000000-0000-4000-8000-000000000006</string>
+          <key>DeviceIdentifier</key><string>disk5s2</string>
+          <key>Encryption</key><false/>
+          <key>FileVault</key><false/>
+          <key>Locked</key><false/>
+          <key>Name</key><string>Open</string>
+          <key>Roles</key><array/>
+        </dict>
+      </array>
+    </dict>
+  </array>
+</dict>
+</plist>"#;
+
+    /// A Mac's locked encrypted volumes are listed by their device, name
+    /// and UUID; another macOS's (a role) offered hidden; what is unlocked
+    /// or not encrypted is not one to unlock.
+    #[test]
+    fn a_macs_locked_apfs_volumes_are_listed() {
+        let volumes = super::apfs::locked(APFS_LIST.as_bytes());
+        let listed: Vec<(&str, &str, bool, Option<&str>)> = volumes
+            .iter()
+            .map(|v| {
+                (
+                    v.device.as_str(),
+                    v.label.as_str(),
+                    v.system,
+                    v.uuid.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (
+                    "disk3s7",
+                    "Other Data",
+                    true,
+                    Some("00000000-0000-4000-8000-000000000003")
+                ),
+                (
+                    "disk5s1",
+                    "It's a backup",
+                    false,
+                    Some("00000000-0000-4000-8000-000000000005")
+                ),
+            ]
+        );
+        assert!(volumes.iter().all(|v| v.locked));
+        assert_eq!(volumes[1].size, 1_000_000_000);
+        assert!(super::apfs::locked(b"not a plist").is_empty());
+    }
+
+    /// Where `diskutil info -plist` says a volume is mounted; an empty
+    /// mount point is none. A refusal is told by what diskutil says.
+    #[test]
+    fn diskutil_says_where_a_volume_is_and_when_a_passphrase_is_refused() {
+        let info = |at: &str| {
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>DeviceIdentifier</key><string>disk5s1</string><key>MountPoint</key><string>{at}</string></dict></plist>"#
+            )
+        };
+        assert_eq!(
+            super::apfs::mount_point(info("/Volumes/It's a backup").as_bytes()),
+            Some(std::path::PathBuf::from("/Volumes/It's a backup"))
+        );
+        assert_eq!(super::apfs::mount_point(info("").as_bytes()), None);
+        assert!(super::apfs::refused(
+            "Error unlocking APFS Volume: Passphrase incorrect or user does not exist"
+        ));
+        assert!(!super::apfs::refused(
+            "Error unlocking APFS Volume: This operation is restricted by Sandbox (-69464)"
+        ));
+    }
+
     const LSBLK: &str = r#"{"blockdevices": [
         {"path":"/dev/sda","label":null,"size":500107862016,"fstype":null,"mountpoint":null,"hotplug":true,"pkname":null},
         {"path":"/dev/sda1","label":null,"size":104857600,"fstype":"vfat","mountpoint":null,"hotplug":true,"pkname":"sda"},

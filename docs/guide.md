@@ -189,8 +189,13 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   anywhere to move, copy or trash them together later. `Delete` there
   takes files off the shelf; its buttons move or copy them to the other
   pane.
-- **Drives** are listed mounted or not. Click one to mount it (a locked
-  one asks for its passphrase); middle-click to open it in a new tab. A
+- **Drives** are listed mounted or not. Click one to mount it;
+  middle-click to open it in a new tab. A locked one asks for its
+  passphrase, and Remember in the keyring keeps it there for the next time
+  (anyone who can open your keyring can then unlock the drive); Forget
+  Passphrase in its menu removes it. A passphrase Nautilus remembered is
+  used too. On Windows, a drive BitLocker locked opens Windows' own
+  dialog, whose "Automatically unlock on this PC" is Windows' to keep. A
   drive mounted for you has an eject button, which writes out what is
   pending and unmounts it.
 

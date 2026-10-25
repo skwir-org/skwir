@@ -17,6 +17,10 @@ use skwir_core::scheduler::Priority;
 use skwir_core::workspace::PaneId;
 use skwir_platform::places::{BookmarkEdit, Bookmarked, Marked, address_name};
 
+mod passphrases;
+
+pub use passphrases::Keyring;
+
 const ID: &str = "places";
 /// A disk brings several partitions: events this close together are one change.
 const SETTLE: Duration = Duration::from_millis(400);
@@ -27,12 +31,30 @@ const SETTLE: Duration = Duration::from_millis(400);
 const RELEASE: Duration = Duration::from_secs(3);
 
 /// The places plugin.
-#[derive(Default)]
 pub struct PlacesPlugin {
     places: Places,
     /// Watches for volumes being plugged, unplugged, mounted or unmounted,
     /// and for the bookmarks changing, whoever changes them.
     watcher: Watcher,
+    /// Where the passphrases the user asked to be remembered are (ADR-088).
+    keyring: Arc<dyn Keyring>,
+}
+
+impl Default for PlacesPlugin {
+    fn default() -> Self {
+        Self::with_keyring(Arc::new(passphrases::Desktop))
+    }
+}
+
+impl PlacesPlugin {
+    /// The plugin with `keyring` for volumes' passphrases: a test's.
+    pub fn with_keyring(keyring: Arc<dyn Keyring>) -> Self {
+        PlacesPlugin {
+            places: Places::default(),
+            watcher: Watcher::default(),
+            keyring,
+        }
+    }
 }
 
 /// The plugin's watcher, shared with the bookmark commands: the first
@@ -117,6 +139,32 @@ fn mark_busy(places: &mut [Place], busy: &[Busy], cleartext: &[Cleartext]) {
     }
 }
 
+/// Forget Passphrase on the place of each volume whose passphrase Skwir
+/// keeps (`remembered`, by UUID), locked or mounted, and on no other
+/// (ADR-088).
+fn offer_forget(places: &mut [Place], remembered: &[String]) {
+    const FORGET: &str = "places.forget_passphrase";
+    for place in places {
+        place
+            .menu
+            .retain(|item| item.command.name.as_ref() != FORGET);
+        let Some(uuid) = place.key.as_deref().and_then(|k| k.strip_prefix("volume:")) else {
+            continue;
+        };
+        // `volume:<uuid>/@home`: a subvolume of it.
+        let uuid = uuid.split('/').next().unwrap_or(uuid);
+        if remembered.iter().any(|r| r == uuid) {
+            place.menu.push(MenuItem::new(
+                "place",
+                "Forget Passphrase",
+                "",
+                530,
+                Invocation::new(FORGET).with("volume", uuid),
+            ));
+        }
+    }
+}
+
 /// The place `volume_place` publishes for the volume at `device`.
 fn device_location(device: &str) -> Location {
     Location::parse(&format!("device:{device}"))
@@ -141,7 +189,23 @@ fn carry_over(fresh: &[Place], measured: &[Place]) -> Vec<Place> {
             place
         })
         .collect();
-    out.extend(measured.iter().filter(|m| m.activate.is_some()).cloned());
+    // What only the worker lists (`lsblk`'s), not what both do (a drive
+    // BitLocker locked, from the quick scan, which also activates).
+    let listed: Vec<(String, Location)> = out
+        .iter()
+        .map(|p| (p.group.clone(), p.location.clone()))
+        .collect();
+    out.extend(
+        measured
+            .iter()
+            .filter(|m| {
+                m.activate.is_some()
+                    && !listed
+                        .iter()
+                        .any(|(group, location)| *group == m.group && *location == m.location)
+            })
+            .cloned(),
+    );
     out
 }
 
@@ -172,22 +236,31 @@ fn volume_key(identity: &skwir_platform::places::Identity, root: &Path) -> Optio
 }
 
 /// A present but unmounted volume as a sidebar entry: activating it mounts
-/// it, asking for the passphrase first when it is locked. One udisks says
-/// not to show (an EFI partition) is offered hidden, as is a small FAT or
-/// NTFS partition where udev says nothing.
+/// it, unlocking it first when it is locked (`places.open_locked`). One
+/// udisks says not to show (an EFI partition) is offered hidden, as is a
+/// small FAT or NTFS partition where udev says nothing.
 fn volume_place(volume: &skwir_platform::places::Volume) -> Place {
     use skwir_core::command::Invocation;
-    let identity = skwir_platform::places::identity(&volume.device);
+    let identity = match &volume.uuid {
+        Some(uuid) => skwir_platform::places::Identity {
+            uuid: Some(uuid.clone()),
+            ignored: None,
+        },
+        None => skwir_platform::places::identity(&volume.device),
+    };
     let title = match (volume.label.is_empty(), volume.locked) {
         (false, _) => volume.label.clone(),
         (true, true) => format!("{} encrypted", size_label(volume.size)),
         (true, false) => format!("{} volume", size_label(volume.size)),
     };
     let activate = if volume.locked {
-        // The shell asks for the passphrase and calls `places.unlock`.
         Invocation::with_args(
-            "ui.unlock_prompt",
-            &serde_json::json!({ "device": volume.device, "title": title }),
+            "places.open_locked",
+            &serde_json::json!({
+                "device": volume.device,
+                "title": title,
+                "uuid": identity.uuid,
+            }),
         )
     } else {
         Invocation::with_args(
@@ -196,7 +269,7 @@ fn volume_place(volume: &skwir_platform::places::Volume) -> Place {
         )
     };
     let unavailable = if volume.locked {
-        "Locked. Click to enter its passphrase and open it."
+        "Locked. Click to unlock and open it."
     } else {
         "Not mounted. Click to mount and open it."
     };
@@ -336,6 +409,24 @@ pub fn scan() -> Vec<Place> {
         if skwir_core::fs::reach::network(&m.fstype, std::ffi::OsStr::new(&m.source)) {
             continue;
         }
+        // A drive BitLocker keeps locked (Windows): opening it unlocks it
+        // through Windows' own dialog (ADR-088).
+        if m.locked {
+            out.push(Place {
+                activate: Some(Invocation::with_args(
+                    "places.open_locked",
+                    &serde_json::json!({ "device": m.source, "title": m.label }),
+                )),
+                unavailable: Some("Locked. Click to unlock and open it.".into()),
+                ..Place::new(
+                    "devices",
+                    m.label,
+                    "drive-harddisk-encrypted",
+                    device_location(&m.source),
+                )
+            });
+            continue;
+        }
         let icon = if m.removable {
             "drive-removable-media"
         } else {
@@ -379,6 +470,9 @@ impl Places {
         places: Vec<Place>,
         measured: Option<Vec<Cleartext>>,
     ) {
+        let mut places = places;
+        // Read before the lock: the settings have their own.
+        offer_forget(&mut places, &passphrases::remembered(app));
         let mut guard = self.0.lock();
         let publisher = &mut *guard;
         if publisher.generation != generation
@@ -393,7 +487,6 @@ impl Places {
             publisher.measured.clone_from(&places);
             publisher.cleartext = cleartext;
         }
-        let mut places = places;
         mark_busy(&mut places, &publisher.busy, &publisher.cleartext);
         publisher.shown.clone_from(&places);
         app.registry.places.replace_owner(ID, places);
@@ -559,7 +652,7 @@ struct MountArgs {
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct UnlockArgs {
     device: String,
-    /// Secret. Handed to udisks on standard input; never stored or logged.
+    /// Secret. Handed to the system on standard input; never kept or logged.
     passphrase: String,
     #[serde(default)]
     pane: Option<skwir_core::workspace::PaneId>,
@@ -568,7 +661,80 @@ struct UnlockArgs {
     tab: bool,
 }
 
-/// Unlock if a passphrase is given, mount, republish the places and open the
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct OpenLockedArgs {
+    /// The locked volume's device, as listed in the sidebar (`/dev/sdb2`).
+    device: String,
+    /// What the question for its passphrase calls it.
+    #[serde(default)]
+    title: Option<String>,
+    /// What its passphrase is kept by in the keyring: its container's UUID.
+    #[serde(default)]
+    uuid: Option<String>,
+    #[serde(default)]
+    pane: Option<skwir_core::workspace::PaneId>,
+    /// Open the volume in a tab behind the one shown, not in the pane.
+    #[serde(default)]
+    tab: bool,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct ForgetArgs {
+    /// The volume, by its container's UUID.
+    volume: String,
+}
+
+/// What a volume is unlocked with before it is mounted.
+enum Unlock {
+    /// Nothing: it is not locked.
+    Not,
+    /// The passphrase given (`places.unlock`).
+    With(String),
+    /// The one the keyring keeps, else the user's answer, or the system's
+    /// own dialog where it asks itself (`places.open_locked`, ADR-088).
+    Asking {
+        title: String,
+        uuid: Option<String>,
+        keyring: Arc<dyn Keyring>,
+    },
+}
+
+/// The volume at `device`, unlocked as `unlock` says and mounted: where
+/// it is mounted, `None` when the user cancelled. Blocks: on a worker.
+fn unlocked_and_mounted(
+    app: &App,
+    device: &str,
+    unlock: Unlock,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<PathBuf>> {
+    use skwir_platform::places;
+    let cleartext = match unlock {
+        Unlock::Not => device.to_owned(),
+        Unlock::With(passphrase) => places::unlock(device, &passphrase)?,
+        Unlock::Asking { .. } if places::SYSTEM_ASKS => {
+            return places::unlock_by_system(device, cancel);
+        }
+        Unlock::Asking {
+            title,
+            uuid,
+            keyring,
+        } => {
+            let volume = passphrases::Locked {
+                device,
+                title: &title,
+                uuid: uuid.as_deref(),
+            };
+            match passphrases::unlock_kept_or_asked(app, &keyring, &volume, cancel, places::unlock)?
+            {
+                Some(cleartext) => cleartext,
+                None => return Ok(None),
+            }
+        }
+    };
+    places::mount(&cleartext).map(Some)
+}
+
+/// Unlock as `unlock` says, mount, republish the places and open the
 /// volume in the pane that asked, or with `tab` in a tab behind the one
 /// shown. Everything blocks, so it runs on a worker; the pane is resolved
 /// now, not when the work ends.
@@ -576,7 +742,7 @@ fn attach(
     places: &Places,
     app: &App,
     device: String,
-    passphrase: Option<String>,
+    unlock: Unlock,
     pane: Option<skwir_core::workspace::PaneId>,
     tab: bool,
 ) {
@@ -587,26 +753,25 @@ fn attach(
     places.start_busy(
         app,
         location.clone(),
-        if passphrase.is_some() {
-            "Unlocking…"
-        } else {
+        if matches!(unlock, Unlock::Not) {
             "Mounting…"
+        } else {
+            "Unlocking…"
         },
     );
+    let Some(cancel) = places.lifetime() else {
+        return;
+    };
     places.spawn(app, "places-attach", move |app| {
         use skwir_core::app::NotifyLevel;
-        let mounted = passphrase
-            .map_or_else(
-                || Ok(device.clone()),
-                |passphrase| skwir_platform::places::unlock(&device, &passphrase),
-            )
-            .and_then(|cleartext| skwir_platform::places::mount(&cleartext));
+        let mounted = unlocked_and_mounted(app, &device, unlock, &cancel);
         // Whatever happened, the set of volumes may have changed (a
         // container can unlock and its filesystem still fail to mount).
-        this.end_busy(&location, mounted.is_ok());
+        this.end_busy(&location, matches!(mounted, Ok(Some(_))));
         this.populate(app);
         match mounted {
-            Ok(path) => {
+            Ok(None) => {}
+            Ok(Some(path)) => {
                 let name = path.file_name().map_or_else(
                     || path.display().to_string(),
                     |name| name.to_string_lossy().into_owned(),
@@ -1010,6 +1175,13 @@ impl Plugin for PlacesPlugin {
         )]
     }
 
+    fn on_settings_changed(&self, app: &App, keys: &[String]) {
+        // Another Skwir remembered or forgot a passphrase.
+        if keys.iter().any(|k| k == passphrases::REMEMBERED) {
+            self.places.populate(app);
+        }
+    }
+
     fn on_disable(&self, _app: &App) {
         *self.watcher.0.lock() = None;
         if let Some(lifetime) = self.places.0.lock().lifetime.take() {
@@ -1031,6 +1203,12 @@ impl Plugin for PlacesPlugin {
         {
             previous.cancel();
         }
+        app.settings
+            .declare(skwir_core::settings::SettingSpec::data(
+                passphrases::REMEMBERED,
+                "The encrypted volumes whose passphrase is kept in the keyring, by their UUID",
+                toml::Value::Array(Vec::new()),
+            ));
         self.places.populate(app);
         let places = self.places.clone();
         app.commands
@@ -1243,7 +1421,7 @@ impl Plugin for PlacesPlugin {
             "Mount volume",
             "Mount a present volume through udisks and open it",
             move |args, app| {
-                attach(&places, app, args.device, None, args.pane, args.tab);
+                attach(&places, app, args.device, Unlock::Not, args.pane, args.tab);
                 Ok(Outcome::Done)
             },
         );
@@ -1252,16 +1430,67 @@ impl Plugin for PlacesPlugin {
             ID,
             "places.unlock",
             "Unlock volume",
-            "Unlock an encrypted volume with its passphrase, mount it and open it. The passphrase is a secret: it is handed to udisks on standard input and never stored or logged",
+            "Unlock an encrypted volume with the passphrase given, mount it and open it. The passphrase is a secret: it is handed to the system on standard input, never logged, and never kept",
             move |args, app| {
                 attach(
                     &places,
                     app,
                     args.device,
-                    Some(args.passphrase),
+                    Unlock::With(args.passphrase),
                     args.pane,
                     args.tab,
                 );
+                Ok(Outcome::Done)
+            },
+        );
+        // The user's alone (ADR-088): the passphrase the keyring keeps
+        // opens the volume only when the user opens it.
+        let (places, keyring) = (self.places.clone(), Arc::clone(&self.keyring));
+        app.commands
+            .register::<OpenLockedArgs, _>(
+                ID,
+                "places.open_locked",
+                "Unlock and open volume",
+                "Unlock an encrypted volume with the passphrase the keyring keeps for it, else the one the user types (offering to remember it), or through the system's own dialog where it asks itself; then mount it and open it",
+                move |args, app| {
+                    let title = args.title.unwrap_or_else(|| "this volume".to_owned());
+                    let unlock = Unlock::Asking {
+                        title,
+                        uuid: args.uuid,
+                        keyring: Arc::clone(&keyring),
+                    };
+                    attach(&places, app, args.device, unlock, args.pane, args.tab);
+                    Ok(Outcome::Done)
+                },
+            )
+            .user_only();
+        let (places, keyring) = (self.places.clone(), Arc::clone(&self.keyring));
+        app.commands.register::<ForgetArgs, _>(
+            ID,
+            "places.forget_passphrase",
+            "Forget passphrase",
+            "Remove from the keyring the passphrase Skwir keeps for an encrypted volume (never one another program kept)",
+            move |args, app| {
+                anyhow::ensure!(
+                    passphrases::remembered(app).contains(&args.volume),
+                    "Skwir keeps no passphrase for this volume"
+                );
+                let keyring = Arc::clone(&keyring);
+                let this = places.clone();
+                // The keyring may wait on its own window: on a worker.
+                places.spawn(app, "places-forget", move |app| {
+                    match keyring.forget(&args.volume) {
+                        Ok(()) => {
+                            passphrases::note(app, &args.volume, false);
+                            app.notify(NotifyLevel::Info, "The passphrase is forgotten");
+                        }
+                        Err(error) => app.notify(
+                            NotifyLevel::Error,
+                            format!("The passphrase was not forgotten: {error:#}"),
+                        ),
+                    }
+                    this.populate(app);
+                });
                 Ok(Outcome::Done)
             },
         );
@@ -1321,6 +1550,7 @@ mod tests {
             hotplug: true,
             container: None,
             system: false,
+            uuid: None,
         };
         let mut places = vec![volume_place(&volume)];
         mark_busy(&mut places, &busy, &[]);
@@ -1384,23 +1614,32 @@ mod tests {
         gone.unavailable = Some("Not found.".into());
         let mut unmounted = place("devices", "/dev/sdz1");
         unmounted.activate = Some(Invocation::new("places.mount"));
+        // A drive BitLocker locked: the quick scan lists it too.
+        let mut locked = place("devices", "device:E:");
+        locked.activate = Some(Invocation::new("places.open_locked"));
         let measured = [
             disk,
             gone,
             unmounted,
             place("bookmarks", "/example/renamed"),
+            locked.clone(),
         ];
         let fresh = [
             place("devices", "/run/media/example/disk"),
             place("bookmarks", "/example/gone"),
             place("bookmarks", "/example/new"),
+            locked,
         ];
         let quick = carry_over(&fresh, &measured);
         assert_eq!(quick[0].space, Some((1, 2)));
         assert!(quick[1].unavailable.is_some());
         assert!(quick[2].unavailable.is_none() && quick[2].space.is_none());
-        assert!(quick[3].activate.is_some(), "volumes not mounted stay");
-        assert_eq!(quick.len(), 4, "what the scan no longer finds goes");
+        assert!(quick[4].activate.is_some(), "volumes not mounted stay");
+        assert_eq!(
+            quick.len(),
+            5,
+            "what the scan no longer finds goes, what both list is there once"
+        );
     }
 
     /// The next message the plugin sends, within a deadline.
@@ -1415,7 +1654,7 @@ mod tests {
     /// until the test lets them answer. Asked for a tab (a middle click),
     /// the volume opens in one behind the tab shown, the pane left where
     /// it was.
-    #[cfg(unix)]
+    #[cfg(target_os = "linux")]
     #[test]
     #[allow(unsafe_code)]
     fn a_volume_says_it_is_unlocking_and_is_right_as_soon_as_it_ends() {
@@ -1567,6 +1806,277 @@ mod tests {
         );
         std::thread::sleep(Duration::from_millis(300));
         assert!(volume().is_none() && opened().is_none());
+    }
+
+    /// A keyring in memory: Skwir's own passphrases, and the desktop's
+    /// (GVfs's) the test puts there.
+    #[cfg(target_os = "linux")]
+    #[derive(Default)]
+    struct Memory {
+        own: Mutex<std::collections::HashMap<String, String>>,
+        desktop: Mutex<std::collections::HashMap<String, String>>,
+    }
+
+    #[cfg(target_os = "linux")]
+    impl Keyring for Memory {
+        fn own(&self, uuid: &str) -> Option<String> {
+            self.own.lock().get(uuid).cloned()
+        }
+        fn desktop(&self, uuid: &str) -> Option<String> {
+            self.desktop.lock().get(uuid).cloned()
+        }
+        fn keep(&self, uuid: &str, _label: &str, passphrase: &str) -> anyhow::Result<()> {
+            self.own
+                .lock()
+                .insert(uuid.to_owned(), passphrase.to_owned());
+            Ok(())
+        }
+        fn forget(&self, uuid: &str) -> anyhow::Result<()> {
+            self.own.lock().remove(uuid);
+            Ok(())
+        }
+    }
+
+    /// Opening a locked volume (ADR-088): the passphrase typed and asked
+    /// to be remembered is kept once it unlocked the volume, and opens it
+    /// next time without a question; once refused (changed since) the
+    /// question says so, and the one that served without Remember makes
+    /// Skwir forget its own. GVfs's opens it, read only. Cancel leaves it
+    /// locked, unsaid; three refusals leave it locked, said. udisks and
+    /// lsblk are scripts that take one passphrase, read from their input.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[allow(unsafe_code)]
+    fn a_remembered_passphrase_opens_the_volume_until_it_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        let mnt = tmp.path().join("mnt");
+        std::fs::create_dir(&bin).unwrap();
+        std::fs::create_dir(&mnt).unwrap();
+        let (right, unlocked, mounted) = (
+            tmp.path().join("right"),
+            tmp.path().join("unlocked"),
+            tmp.path().join("mounted"),
+        );
+        std::fs::write(&right, "example words").unwrap();
+        let script = |name: &str, body: String| {
+            let path = bin.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        let container = r#"{"path":"/dev/sdz","label":null,"size":2000000000000,"fstype":"crypto_LUKS","mountpoint":null,"hotplug":true,"pkname":null}"#;
+        let opened = format!(
+            r#"{{"path":"/dev/dm-9","label":"Backup","size":1999000000000,"fstype":"ext4","mountpoint":"{}","hotplug":false,"pkname":"sdz"}}"#,
+            mnt.display()
+        );
+        script(
+            "lsblk",
+            format!(
+                "if [ -e '{mounted}' ]; then echo '{{\"blockdevices\": [{container},{opened}]}}'\n\
+                 else echo '{{\"blockdevices\": [{container}]}}'; fi\n",
+                mounted = mounted.display(),
+            ),
+        );
+        script(
+            "udisksctl",
+            format!(
+                "case \"$1\" in\n\
+                 unlock) given=$(cat)\n\
+                   if [ \"$given\" != \"$(cat '{right}')\" ]; then echo 'No key available with this passphrase' >&2; exit 1; fi\n\
+                   touch '{unlocked}'; echo 'Unlocked /dev/sdz as /dev/dm-9.';;\n\
+                 mount) touch '{mounted}'; echo 'Mounted /dev/dm-9 at {mnt}';;\n\
+                 *) exit 1;;\n\
+                 esac\n",
+                right = right.display(),
+                unlocked = unlocked.display(),
+                mounted = mounted.display(),
+                mnt = mnt.display(),
+            ),
+        );
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin.clone()];
+        paths.extend(std::env::split_paths(&path));
+        // SAFETY: one test per process under nextest, set before the app
+        // starts any thread.
+        unsafe { std::env::set_var("PATH", std::env::join_paths(paths).unwrap()) };
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.set_window_shown();
+        let keyring = Arc::new(Memory::default());
+        app.plugins
+            .add(Arc::new(PlacesPlugin::with_keyring(keyring.clone())), &app);
+        let uuid = "1111-luks";
+        let wait = |done: &dyn Fn() -> bool| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            while !done() {
+                assert!(std::time::Instant::now() < deadline, "timed out");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let volume = || {
+            app.registry
+                .places
+                .all()
+                .into_iter()
+                .find(|p| p.location.to_string() == "device:/dev/sdz")
+        };
+        let open = || {
+            app.dispatch(&Invocation::with_args(
+                "places.open_locked",
+                &serde_json::json!({ "device": "/dev/sdz", "title": "Backup", "uuid": uuid }),
+            ))
+            .unwrap();
+        };
+        let asked = || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                if let Some(question) = app.take_secret_questions().into_iter().next() {
+                    return question;
+                }
+                assert!(std::time::Instant::now() < deadline, "nothing asked");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        let answer = |id: u64, text: &str, remember: bool| {
+            let text = text.to_owned();
+            app.answer_secret(id, Some(skwir_core::app::SecretAnswer { text, remember }));
+        };
+        // Locked again: unmounted, its container closed.
+        let lock = || {
+            for marker in [&unlocked, &mounted] {
+                if marker.exists() {
+                    std::fs::remove_file(marker).unwrap();
+                }
+            }
+            app.dispatch(&Invocation::new("places.refresh")).unwrap();
+            wait(&|| volume().is_some_and(|v| v.busy.is_none()));
+        };
+        let remembered = || passphrases::remembered(&app);
+        assert_eq!(
+            app.commands
+                .get("places.open_locked")
+                .map(|spec| spec.effect),
+            Some(skwir_core::command::Effect::UserOnly),
+            "a kept passphrase opens a volume only for the user, never an agent"
+        );
+        wait(&|| volume().is_some());
+
+        // Typed, Remember on: kept once it served.
+        open();
+        let question = asked();
+        assert_eq!(question.title, "Unlock “Backup”");
+        assert_eq!(question.placeholder, "Passphrase");
+        assert!(
+            question.remember && question.note.is_some(),
+            "offered, with what it means"
+        );
+        answer(question.id, "example words", true);
+        assert!(next_notice(&app).text.starts_with("Mounted"));
+        assert_eq!(keyring.own(uuid).as_deref(), Some("example words"));
+        assert_eq!(remembered(), [uuid], "its UUID noted, never the passphrase");
+
+        // Kept: opened without a question.
+        lock();
+        open();
+        assert!(next_notice(&app).text.starts_with("Mounted"));
+        assert!(app.take_secret_questions().is_empty(), "nothing asked");
+
+        // Changed since: refused, asked saying so; the one typed without
+        // Remember served, so Skwir's own is forgotten.
+        lock();
+        std::fs::write(&right, "other words").unwrap();
+        open();
+        let question = asked();
+        assert!(
+            question.title.contains("not accepted"),
+            "{}",
+            question.title
+        );
+        answer(question.id, "other words", false);
+        assert!(next_notice(&app).text.starts_with("Mounted"));
+        assert_eq!(keyring.own(uuid), None, "the refused one forgotten");
+        assert!(remembered().is_empty());
+
+        // GVfs's: opened without a question, never copied or changed.
+        lock();
+        keyring
+            .desktop
+            .lock()
+            .insert(uuid.into(), "other words".into());
+        open();
+        assert!(next_notice(&app).text.starts_with("Mounted"));
+        assert!(app.take_secret_questions().is_empty(), "nothing asked");
+        assert_eq!(keyring.own(uuid), None);
+        assert_eq!(
+            keyring.desktop.lock().get(uuid).map(String::as_str),
+            Some("other words")
+        );
+
+        // Cancel: left locked, nothing said.
+        lock();
+        keyring.desktop.lock().clear();
+        open();
+        let question = asked();
+        app.answer_secret(question.id, None);
+        wait(&|| volume().is_some_and(|v| v.busy.is_none()));
+        assert!(!unlocked.exists());
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(app.take_notifications().is_empty(), "nothing to say");
+
+        // Refused three times: left locked, said.
+        open();
+        for _ in 0..3 {
+            let question = asked();
+            answer(question.id, "wrong words", true);
+        }
+        let notice = next_notice(&app);
+        assert!(
+            notice.text.contains("passphrase was not accepted"),
+            "{}",
+            notice.text
+        );
+        assert!(
+            app.take_secret_questions().is_empty(),
+            "not asked a fourth time"
+        );
+        assert!(keyring.own(uuid).is_none(), "a refused one never kept");
+    }
+
+    /// Forget Passphrase is on the place of a volume whose passphrase
+    /// Skwir keeps, mounted or locked, a subvolume's included, and on no
+    /// other; it comes off once forgotten.
+    #[test]
+    fn forget_passphrase_is_offered_where_one_is_kept() {
+        let place = |key: &str| Place {
+            key: Some(key.to_owned()),
+            ..Place::new("devices", "Backup", "", Location::parse("device:/dev/sdz"))
+        };
+        let mut places = vec![
+            place("volume:1111-luks"),
+            place("volume:1111-luks/@home"),
+            place("volume:2222"),
+        ];
+        let forgets = |places: &[Place]| {
+            places
+                .iter()
+                .map(|p| {
+                    p.menu
+                        .iter()
+                        .filter(|m| m.command.name.as_ref() == "places.forget_passphrase")
+                        .count()
+                })
+                .collect::<Vec<_>>()
+        };
+        let kept = vec!["1111-luks".to_owned()];
+        offer_forget(&mut places, &kept);
+        offer_forget(&mut places, &kept);
+        assert_eq!(forgets(&places), [1, 1, 0], "once each");
+        assert_eq!(
+            places[1].menu[0].command.args,
+            serde_json::json!({ "volume": "1111-luks" })
+        );
+        offer_forget(&mut places, &[]);
+        assert_eq!(forgets(&places), [0, 0, 0]);
     }
 
     fn next_notice(app: &App) -> skwir_core::app::Notification {

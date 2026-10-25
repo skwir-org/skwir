@@ -85,6 +85,8 @@ objc2-core-foundation = { version = "0.3", default-features = false, features = 
 block2 = "0.6"
 security-framework = "3"
 libc = "0.2"
+# `diskutil`'s answers (ADR-088): the version the tags plugin links.
+plist.workspace = true
 
 # The settings portal's accent, contrast and font (ADR-071): the zbus the
 # media controls' plugin and gpui's portal (through ashpd) already link.
@@ -101,6 +103,7 @@ zbus = { version = "5", features = ["p2p"] }
 
 [dev-dependencies]
 dirs.workspace = true
+plist.workspace = true
 skwir-core = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 tempfile.workspace = true

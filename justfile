@@ -148,12 +148,12 @@ remote-check:
     keyring=$(nix build --no-link --print-out-paths nixpkgs#gnome-keyring)
     PATH="$keyring/bin:$PATH" tools/test/private-keyring.sh cargo nextest run \
         -p skwir-platform -p skwir-plugin-remote --run-ignored only \
-        -E 'test(secret) | test(password)'
+        -E 'test(secret) | test(password) | test(passphrase)'
     # The same against KeePassXC's Secret Service, and a keyring locked
     # whose own prompt asks to unlock it, each on a display of its own.
     tools/test/keepassxc-keyring.sh cargo nextest run \
         -p skwir-platform -p skwir-plugin-remote --run-ignored only \
-        -E 'test(secret) | test(password)'
+        -E 'test(secret) | test(password) | test(passphrase)'
     tools/test/locked-keyring.sh cargo nextest run \
         -p skwir-platform -p skwir-plugin-remote --run-ignored only \
         -E 'test(locked_keyring)' -j 1

@@ -229,20 +229,7 @@ impl Keyed {
     /// prompt (an unlock it asked for) is left to the user, its answer to
     /// no one.
     fn heard<T: Send + 'static>(&self, ask: impl FnOnce() -> T + Send + 'static) -> Option<T> {
-        let (tx, rx) = crossbeam_channel::bounded(1);
-        let started = std::thread::Builder::new()
-            .name("skwir-keyring".into())
-            .spawn(move || {
-                let _ = tx.send(ask());
-            });
-        if started.is_err() {
-            return None;
-        }
-        let cancelled = self.cancel.subscribe();
-        crossbeam_channel::select! {
-            recv(rx) -> answer => answer.ok(),
-            recv(cancelled.receiver()) -> _ => None,
-        }
+        skwir_platform::secrets::heard(&self.cancel, ask)
     }
 
     fn key(&self) -> String {

@@ -426,14 +426,25 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 - An unlocked container is listed as its cleartext volume
   (`Volume::container`).
 - **Mount and unlock.** A place with `activate` runs it instead of
-  navigating: `places.mount`, or `ui.unlock_prompt`, which asks for the
-  passphrase in a masked input and dispatches `places.unlock` directly,
-  never through `Shell::run` (it traces arguments). Opened in a tab
+  navigating: `places.mount`, or `places.open_locked` (ADR-088), the
+  user's alone (`user_only`: an agent never opens a volume with a kept
+  passphrase). It tries the keyring first (Skwir's own passphrase where
+  `places.remembered` notes one, then GVfs's, read only), then asks the
+  window (`App::ask_passphrase`: masked, Remember offered with what it
+  means), again while refused, three times at most; where the system asks
+  itself (`places::SYSTEM_ASKS`: Windows' BitLocker), it opens the
+  system's own dialog instead and keeps nothing. `places.unlock` takes a
+  passphrase given and keeps none. Opened in a tab
   (`sidebar::open_in_tab`), the command gets `tab`, and the volume opens
   in a background tab.
-- **The passphrase** reaches udisks on standard input; it is never
-  stored, logged or put on a command line, and its argument struct has no
-  `Debug`.
+- **The passphrase** reaches udisks (`diskutil` on a Mac) on standard
+  input; it is never logged or put on a command line, and its argument
+  struct has no `Debug`. It is kept only in the desktop's keyring, keyed
+  by the container's UUID, once it unlocked the volume and only when the
+  user turned Remember on; one refused is asked again, and Skwir's own
+  refused is forgotten once another served (`passphrases.rs`). Forget
+  Passphrase is on the volume's place, locked or mounted. The plugin's
+  data notes the UUIDs alone.
 - **Unmount.** First `App::release` lets go of everything under the mount
   point (panes there go home; kept or opened folders close), since the
   kernel refuses to unmount a busy volume. Then `places::flush` (`syncfs`)

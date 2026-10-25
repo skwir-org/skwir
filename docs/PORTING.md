@@ -218,11 +218,23 @@ Done:
   (`getmntinfo`, compiled only).
 - The user's folders are the system's off Linux (`dirs`: Windows' known
   folders, a Mac's), under Wine.
+- Encrypted volumes (ADR-088), compiled only. macOS: the APFS volumes
+  `diskutil apfs list -plist` says are locked are listed, unlocked with
+  the passphrase on `diskutil apfs unlockVolume`'s input, remembered in
+  the Keychain (the parser tested everywhere). Windows: a drive BitLocker
+  keeps locked is told by `FVE_E_LOCKED_VOLUME` and opened through
+  Explorer's Unlock Drive verb (`unlock-bde`), Windows' own dialog, which
+  remembers; Wine has no BitLocker (its drives are never locked, tested).
 
 Left:
 
 - Eject and mount off Linux **(n)**: no command (DiskArbitration,
-  `IOCTL_STORAGE_EJECT_MEDIA`); `Mount::udisks` is false there.
+  `IOCTL_STORAGE_EJECT_MEDIA`); `Mount::udisks` is false there. A Mac's
+  APFS volume unlocked is mounted by `diskutil`; only locked ones are
+  listed unmounted.
+- Whether `diskutil apfs unlockVolume` runs from Skwir's window without
+  Full Disk Access, and whether `bdeunlock.exe` shows on Windows Home
+  **(u)**: untried (ADR-088).
 - Write-through off Linux: `fs::volume::is_removable` is false **(u)**.
   Windows calls a USB hard drive fixed (`GetDriveType`), so ask its bus, as
   on Linux; Windows' default policy for external drives (quick removal)

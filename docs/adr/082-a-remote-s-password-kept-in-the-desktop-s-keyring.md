@@ -5,7 +5,8 @@ related points you recommended, as well as the optional reading the
 passwords GVfs and Nautilus save"), after ADR-081's report named what was
 left: a password-protected SMB, WebDAV or FTP server through rclone, on a
 desktop with neither GVfs nor KIO. Amends ADR-077's seventh decision
-("never stored").
+("never stored"). Its first decision amended by ADR-088 (2026-10-25): an
+encrypted volume's passphrase is kept the same way.
 
 ## Context
 

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Encrypted drives**: the passphrase question offers to remember it in
+  your keyring, as for a server's password; the drive then opens without
+  asking, until its passphrase changes. Forget Passphrase is in its menu.
+  One Nautilus remembered opens it too. A wrong passphrase is asked again
+  at once. On a Mac, an encrypted APFS drive that is plugged in and
+  locked is listed, and unlocks from the sidebar; on Windows, a drive
+  BitLocker locked opens Windows' own unlock dialog (macOS and Windows
+  untried).
 - **Your desktop's colors**: on Plasma, Skwir wears your color scheme;
   elsewhere the colors of the GTK theme your desktop names (adw-gtk3,
   Materia and most others), each with your accent, and follows them as

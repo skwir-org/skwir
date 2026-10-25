@@ -1,7 +1,8 @@
 //! Single-line prompts (`ui.ask`: rename, new folder, a plugin's
-//! question; finding a name; a passphrase; what a plan's step asks that
-//! only the user knows) and the confirmation of what Undo cannot take
-//! back, or of quitting while a plan runs.
+//! question; finding a name; what a plan's step or a plugin asks that
+//! only the user knows, a password or a volume's passphrase) and the
+//! confirmation of what Undo cannot take back, or of quitting while a plan
+//! runs.
 
 use gpui::{AnyElement, Context, Entity, FocusHandle, Subscription, Window, div, prelude::*, px};
 use skwir_core::Plan;
@@ -17,17 +18,8 @@ use crate::modal::{self, FocusReturn};
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-/// The encrypted volume the passphrase prompt is for, and whether it then
-/// opens in a tab behind the one shown (a middle click on its place).
-pub struct Unlock {
-    pub device: String,
-    pub tab: bool,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PromptKind {
-    /// The passphrase of `Shell::unlock`. Masked, never trimmed.
-    Passphrase,
     /// `/`: a name in the pane, found as it is typed from where the cursor
     /// was (`origin`), after it or, `backward`, before it.
     Find {
@@ -40,23 +32,23 @@ pub enum PromptKind {
     },
     /// `ui.ask`: the text completes a command (`PromptState::ask`).
     Ask,
-    /// What a plan's step asks that only the user knows (an archive's
-    /// password, `App::ask_secret`): masked, never trimmed, answered to
-    /// the step waiting for it, `None` however the prompt closes else.
+    /// What a plan's step or a plugin asks that only the user knows (an
+    /// archive's password, a server's, a volume's passphrase:
+    /// `App::ask_secret`): masked, never trimmed, answered to what waits
+    /// for it, `None` however the prompt closes else.
     Secret { id: u64 },
 }
 
 impl PromptKind {
     /// Whether what is typed is hidden and kept as typed, spaces and all.
     fn secret(self) -> bool {
-        matches!(self, PromptKind::Passphrase | PromptKind::Secret { .. })
+        matches!(self, PromptKind::Secret { .. })
     }
 
     /// What its answer does, on the button Enter presses (`ui.ask` names
     /// its own).
     fn accept(self) -> &'static str {
         match self {
-            PromptKind::Passphrase => "Unlock",
             PromptKind::Find { .. } => "Find",
             PromptKind::InspectJump { .. } => "Go",
             PromptKind::Ask | PromptKind::Secret { .. } => "OK",
@@ -81,12 +73,13 @@ struct Prompted {
     ask: Option<Ask>,
     accept: Option<String>,
     note: Option<String>,
-    /// A server's password: offer to keep it in the keyring (ADR-082).
+    /// A server's password, a volume's passphrase: offer to keep it in the
+    /// keyring (ADR-082, ADR-088).
     remember: bool,
 }
 
-/// The prompt's Remember switch (a server's password, ADR-082): whether it
-/// is on, and its focus.
+/// The prompt's Remember switch (a server's password, ADR-082; a volume's
+/// passphrase, ADR-088): whether it is on, and its focus.
 pub struct Remember {
     pub on: bool,
     focus: FocusHandle,
@@ -201,7 +194,6 @@ impl Shell {
     ) {
         let placeholder = match kind {
             PromptKind::InspectJump { .. } => "Offset (decimal or 0x hexadecimal)",
-            PromptKind::Passphrase => "Passphrase",
             PromptKind::Find { .. } => "Part of a name (capitals: exact case)",
             PromptKind::Ask => "",
             PromptKind::Secret { .. } => "Password",
@@ -240,13 +232,13 @@ impl Shell {
         self.open_prompt_with(
             PromptKind::Secret { id: question.id },
             &question.title,
-            "Password",
+            &question.placeholder,
             "",
             None,
             Prompted {
                 ask: None,
                 accept: Some(question.accept),
-                note: None,
+                note: question.note,
                 remember: question.remember,
             },
             window,
@@ -439,7 +431,6 @@ impl Shell {
 
     /// Close the prompt unanswered: Escape, Cancel, or a press outside.
     fn prompt_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.unlock = None;
         self.close_prompt(window, cx);
     }
 
@@ -480,30 +471,6 @@ impl Shell {
                         );
                     }
                 });
-            }
-            PromptKind::Passphrase => {
-                let Some(Unlock { device, tab }) = self.unlock.take() else {
-                    return;
-                };
-                if text.is_empty() {
-                    return;
-                }
-                // Dispatched directly, not through `run`: `run` traces the
-                // arguments of what it runs, and this one is a secret.
-                let pane = self.pane;
-                let unlock = Invocation::with_args(
-                    "places.unlock",
-                    &serde_json::json!({
-                        "device": device,
-                        "passphrase": text,
-                        "pane": pane,
-                        "tab": tab,
-                    }),
-                );
-                match self.app.dispatch(&unlock) {
-                    Ok(_) => self.set_status("Unlocking…", false, cx),
-                    Err(error) => self.set_status(format!("{error:#}"), true, cx),
-                }
             }
             PromptKind::Find { backward, .. } => {
                 self.last_find = (!text.is_empty()).then_some((text, backward));

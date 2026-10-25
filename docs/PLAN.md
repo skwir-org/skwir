@@ -291,6 +291,10 @@ above; each with the design its fixer proposed):
   Baloo's; renaming a tag leaves hidden files alone, as the search does
   (2026-09-30).
 - Companion files (ADR-028): an orphan offered back to its file.
+- Encrypted volumes (ADR-088, 2026-10-25): no real LUKS drive unlocked
+  with a kept passphrase (stand-in `udisksctl` only); KWallet's volume
+  passphrases (KDE's device notifier) and crypttab's key files not read;
+  a Mac's and Windows' unlocking compiled only (`docs/PORTING.md`).
 - Not checked in a window: a tag exported by a real drag, a drag between
   sidebar groups refused, a busy volume on a real drive (fake `lsblk` and
   `udisksctl` only), F5 in Usage, Alt+click on a tag's pill, an office
@@ -595,7 +599,10 @@ it left is in [What is left](#what-is-left).
 - **Tags, places and the trash:** tag-preserving copies (ADR-006); notes
   (ratings, comments) and Finder tags; tags as places (ADR-032); the
   sidebar the user's and the trash a place (ADR-034); busy volumes;
-  bookmarks; Open With.
+  bookmarks; Open With; an encrypted volume's passphrase remembered in
+  the keyring, a Mac's APFS volumes unlocked, Windows' BitLocker drives
+  through its own dialog (ADR-088, 2026-10-25; macOS and Windows compiled
+  only).
 - **Upkeep:** the consistency review (2026-10-05); drops that ask, plans
   that pause, copies at a drive's pace, hard links as entries (ADR-049,
   2026-10-07 to 10); what woke while nothing changed (2026-10-10); the
