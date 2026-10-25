@@ -4664,5 +4664,12 @@ overnight: the review's remote items, then what the servers' work left.
   up (turned on again, let go of by hand: its point removed by its unit,
   not started again). What it took out, however it ends, includes the
   point. Checked: the test builds, lints, and skips at once without the
-  script; the stand-in tests pass. Not run again under the user's
-  manager yet: theirs.
+  script; the stand-in tests pass.
+- **Run again by the user at `f466597d`: passed whole** (24.8 s). Its
+  journal: started, killed, started again ten seconds later; turned off
+  while mounted and ejected (the one refused notification, rclone's at
+  its unmount); turned on again, let go of by hand, taken out. The script
+  found nothing left in the unit folder and no mount; no point, test
+  folder or process of the test's was left under `~/.cache/skwir-tests`.
+  Connect at Login is now checked under a real systemd user manager on
+  Linux; launchd and the Task Scheduler still never ran one.

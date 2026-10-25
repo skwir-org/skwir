@@ -1511,8 +1511,8 @@ protocol is a scheme a connector maps, or a connector.
     check under the user's own systemd manager is the user's to run
     (`tools/test/login-user-systemd.sh`): its first run, 2026-10-25,
     started, mounted and restarted the unit, and showed systemd forgets a
-    unit turned off while mounted (ADR-087 amended); run again since the
-    check changed: not yet; on
+    unit turned off while mounted (ADR-087 amended); run again after the
+    change, it passed whole; launchd and the Task Scheduler still never; on
     Windows rclone's remotes do not connect at login yet; key login never
     tried against an OpenSSH server checking a password (rclone's SFTP
     server stood in);
