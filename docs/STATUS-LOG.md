@@ -4768,3 +4768,14 @@ found on the way. On main, none pushed.
   alone. Under Wine `remote_askpass` is reported leaky (its rclone's and
   `skwir.exe`'s output held a moment after it ends). Each commit was not
   built alone: they split one tree that was.
+- **Found by GitHub's routine CI** ("essentials", on `efe44e82` once
+  pushed): the privacy check's test of a server that does not answer
+  (from `4eccb29a`) failed on the runner, which mounts nothing on the
+  network. A test's pretended remotes answered `reach::of` but not
+  `reach::all`, and the check follows a link into a remote only once
+  some remote is mounted: it passed here thanks to the desktop's GVfs
+  bridge. Both answer for them now (`976d11a8`). Checked with the table
+  emptied as on the runner: failed as on CI before, passes after;
+  `ci-check`'s steps pass (522 tests, also with the table emptied). The
+  same run here found the login menu test's fix unformatted, formatted
+  since (`818f7c14`).
