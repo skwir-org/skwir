@@ -274,6 +274,16 @@ mod args {
     }
 
     #[derive(Deserialize, JsonSchema)]
+    pub(super) struct ViewButton {
+        /// The view's id (`list`, `grid`, `columns`, a plugin's).
+        id: String,
+        /// Give it a button (true) or take it away (false); without, the
+        /// other of what it has.
+        #[serde(default)]
+        on: Option<bool>,
+    }
+
+    #[derive(Deserialize, JsonSchema)]
     pub(super) struct View {
         /// The view's id (`list`, `grid`, `columns`, a plugin's).
         #[serde(default)]
@@ -420,7 +430,7 @@ use args::{
     Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold, Folders,
     History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player,
     Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submit, TagsPrompt, TerminalPaste, Text,
-    Url, UsageMode, View,
+    Url, UsageMode, View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -435,6 +445,8 @@ const SHOWS: &[&str] = &[
     "ui.view",
     "ui.columns",
     "ui.columns_reset",
+    "ui.view_button",
+    "ui.view_buttons_reset",
     "ui.zoom",
     "ui.grid_fill",
     "ui.narrow_folders",
@@ -694,6 +706,11 @@ const KEY_FORMS: &[(&str, &str, &str)] = &[
     ("ui.sidebar_key", r#"{"key":"move_down"}"#, "Move it down"),
     ("ui.sidebar_key", r#"{"key":"rename"}"#, "Rename it"),
     ("ui.sidebar_key", r#"{"key":"remove"}"#, "Remove or hide it"),
+    (
+        "ui.toolbar_menu",
+        r#"{"kind":"view_buttons"}"#,
+        "Choose which views have a button",
+    ),
     // What the preview plays, and the pinned player.
     ("ui.media_control", r#"{"action":"play"}"#, "Play or pause"),
     ("ui.media_control", r#"{"action":"mute"}"#, "Mute or unmute"),
@@ -1191,6 +1208,17 @@ pub fn declare_all(app: &App) {
         "Reset column widths",
         "Give the list's detail columns their default widths",
     );
+    declare::<ViewButton>(
+        app,
+        "ui.view_button",
+        "Show or hide a view's button",
+        "Give a view a button beside the address, or take it away; the view shown keeps its button while shown",
+    );
+    none(
+        "ui.view_buttons_reset",
+        "Default view buttons",
+        "Give a button to the views that show the files as listed (list, grid, columns), and no other",
+    );
     declare::<Dir>(
         app,
         "ui.zoom",
@@ -1456,7 +1484,7 @@ pub fn declare_all(app: &App) {
         app,
         "ui.toolbar_menu",
         "Toolbar menu",
-        "Open or close More, the View menu, the Map view's backgrounds or the pinned player's More (kind: more, view_options, map_backgrounds, player)",
+        "Open or close More, the View menu, the choice of view buttons, the Map view's backgrounds or the pinned player's More (kind: more, view_options, view_buttons, map_backgrounds, player)",
     );
     // Answered by the focused button and the open popup themselves.
     none(

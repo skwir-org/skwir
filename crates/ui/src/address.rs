@@ -30,6 +30,7 @@ impl Shell {
     ) {
         let kind = match args.get("kind").and_then(serde_json::Value::as_str) {
             Some("view_options") => VIEW_OPTIONS,
+            Some("view_buttons") => VIEW_BUTTONS,
             Some(crate::map_view::BACKGROUNDS) => crate::map_view::BACKGROUNDS,
             Some(crate::dock::MENU) => crate::dock::MENU,
             _ => MORE,
@@ -42,7 +43,60 @@ impl Shell {
 }
 
 const VIEW_OPTIONS: &str = "view_options";
+/// Which views have a button: the buttons' right-click, the Menu key on
+/// one, or the View menu's Buttons row.
+const VIEW_BUTTONS: &str = "view_buttons";
 const MORE: &str = "more";
+
+/// The views the user gave a button, or took it from (`ui.view_button`,
+/// `settings::VIEW_BUTTONS_KEY`), by id. A view not named keeps what its
+/// role gives it, so a view added later comes as its plugin meant.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ViewButtons(std::collections::BTreeMap<String, bool>);
+
+impl ViewButtons {
+    pub fn read(app: &skwir_core::App) -> Self {
+        Self(
+            app.settings
+                .get(crate::settings::VIEW_BUTTONS_KEY)
+                .unwrap_or_default(),
+        )
+    }
+
+    /// Whether `spec` has a button while another view is shown: as chosen,
+    /// else if it shows the listing (`ViewRole::Listing`).
+    pub fn pinned(&self, spec: &ViewSpec) -> bool {
+        self.0
+            .get(&*spec.id)
+            .copied()
+            .unwrap_or(spec.role == ViewRole::Listing)
+    }
+
+    /// `spec` with a button (`on`) or without: a choice that is its
+    /// role's is not kept, so Default buttons is nothing chosen.
+    #[must_use]
+    pub fn with(mut self, spec: &ViewSpec, on: bool) -> Self {
+        if on == (spec.role == ViewRole::Listing) {
+            self.0.remove(&*spec.id);
+        } else {
+            self.0.insert(spec.id.to_string(), on);
+        }
+        self
+    }
+
+    pub fn is_default(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn value(&self) -> toml::Value {
+        toml::Value::Table(
+            self.0
+                .iter()
+                .map(|(id, on)| (id.clone(), toml::Value::Boolean(*on)))
+                .collect(),
+        )
+    }
+}
 
 /// A view's bundled icon, or the grid's for a plugin view without one.
 fn view_icon(spec: &ViewSpec) -> gpui::SharedString {
@@ -64,31 +118,35 @@ fn view_button(shell: &Shell, spec: &ViewSpec, prefix: &str) -> Button {
     .active(shell.ui().view_id == &*spec.id)
 }
 
-/// The pane row's view buttons: the views that show the listing, and an
-/// alternate shape or a lens only while it is shown; the View menu offers
-/// them all.
-fn toolbar_views(views: Vec<ViewSpec>, current: &str) -> Vec<ViewSpec> {
+/// The pane row's view buttons: those the user chose, else the views that
+/// show the listing, and any other only while it is shown, so the row
+/// always says which view is shown and is there to be right-clicked; the
+/// View menu offers them all.
+fn toolbar_views(views: Vec<ViewSpec>, current: &str, chosen: &ViewButtons) -> Vec<ViewSpec> {
     views
         .into_iter()
-        .filter(|s| &*s.id == current || s.role == ViewRole::Listing)
+        .filter(|s| &*s.id == current || chosen.pinned(s))
         .collect()
 }
 
 /// How the pane shows its folder: its view buttons and the View menu
 /// beside them (`wide`), or one button, the current view's icon, that
-/// opens the menu, which starts with every view.
+/// opens the menu, which starts with every view. `open` is the popup open
+/// from here: the View menu, or which views have a button, which hangs
+/// from the buttons, or from the one button when there are none.
 fn view_control(
     shell: &Shell,
     wide: bool,
     anchor: &PopoverAnchor,
-    open: bool,
+    open: Option<&'static str>,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
+    let choosing = open == Some(VIEW_BUTTONS);
     let menu = |id: &'static str, icon: gpui::SharedString, title: String| {
         Button::new(id, icon, title, "ui.toolbar_menu")
             .args(serde_json::json!({"kind": VIEW_OPTIONS}))
-            .anchor_if(anchor, true)
-            .active(open)
+            .anchor_if(anchor, !(wide && choosing))
+            .active(open == Some(VIEW_OPTIONS))
             .dropdown()
     };
     let views = shell.available_views();
@@ -107,7 +165,13 @@ fn view_control(
         .into_any_element();
     }
     let theme = cx.global::<Theme>().clone();
+    let pane = shell.pane;
+    // Right-clicked, or the Menu key on one of them, the buttons say which
+    // views have one, as the list's header says which columns it shows.
     let mut group = div()
+        .id(("view-buttons", pane.0 as usize))
+        .key_context(keymap::VIEW_BUTTONS)
+        .relative()
         .flex()
         .flex_none()
         .gap(px(1.))
@@ -115,8 +179,28 @@ fn view_control(
         .rounded_lg()
         .border_1()
         .border_color(theme.border)
-        .bg(theme.bg);
-    for spec in toolbar_views(views, current) {
+        .bg(theme.bg)
+        // Taken on its way in: a button takes the keyboard on any press
+        // before its row hears of it, and the popup must take it from
+        // what had it, not from the button.
+        .capture_any_mouse_down(
+            cx.listener(move |this, ev: &gpui::MouseDownEvent, window, cx| {
+                if ev.button != gpui::MouseButton::Right {
+                    return;
+                }
+                cx.stop_propagation();
+                window.prevent_default();
+                this.activate_pane(pane, cx);
+                this.run(
+                    "ui.toolbar_menu",
+                    serde_json::json!({ "kind": VIEW_BUTTONS }),
+                    window,
+                    cx,
+                );
+            }),
+        )
+        .when(choosing, |d| d.child(anchor.marker()));
+    for spec in toolbar_views(views, current, &shell.view_buttons) {
         group = group.child(
             view_button(shell, &spec, "view")
                 .render(shell, cx)
@@ -151,7 +235,7 @@ fn menu_item(button: Button, label: impl Into<gpui::SharedString>) -> Button {
 /// included: a narrow pane row has only the button that opens it.
 fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     use skwir_core::SortKey;
-    let views = shell
+    let mut views: Vec<Button> = shell
         .available_views()
         .into_iter()
         .map(|spec| {
@@ -160,6 +244,17 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
                 .menu()
         })
         .collect();
+    // Where one looks for them first; the buttons' right-click says the same.
+    views.push(menu_item(
+        Button::new(
+            "menu-view-buttons",
+            "pin",
+            "Choose which views have a button beside the address",
+            "ui.toolbar_menu",
+        )
+        .args(serde_json::json!({ "kind": VIEW_BUTTONS })),
+        "Buttons…",
+    ));
     let spec = shell.sort_spec();
     // By name, then by what each column that sorts shows, in its words.
     let order: Vec<Button> = shell
@@ -329,6 +424,49 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         ("Show", show),
         ("Zoom", size),
     ]
+}
+
+/// Which views have a button beside the address, each checked or not, and
+/// the buttons skwir comes with once others were chosen. The view shown
+/// keeps its button while it is shown, checked or not. A view's row keeps
+/// the menu open, for the next; Default buttons closes it.
+fn view_buttons_menu(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
+    let chosen = &shell.view_buttons;
+    let mut rows: Vec<Button> = shell
+        .available_views()
+        .into_iter()
+        .map(|spec| {
+            let pinned = chosen.pinned(&spec);
+            // The row stays, open, as its check changes: gpui keeps a
+            // tooltip as it was built, so it says what the row is about,
+            // never what pressing it does now.
+            let tip = format!("Whether the {} view has a button", spec.title);
+            menu_item(
+                Button::new(
+                    format!("view-button-{}", spec.id),
+                    if pinned { "check" } else { "" },
+                    tip,
+                    "ui.view_button",
+                )
+                .args(serde_json::json!({ "id": spec.id, "on": !pinned }))
+                .active(pinned)
+                .keeps_open(),
+                spec.title.clone(),
+            )
+        })
+        .collect();
+    if !chosen.is_default() {
+        rows.push(menu_item(
+            Button::new(
+                "view-buttons-reset",
+                "revert",
+                "Back to the buttons skwir comes with",
+                "ui.view_buttons_reset",
+            ),
+            "Default buttons",
+        ));
+    }
+    vec![("View buttons", rows)]
 }
 
 /// More's Layout groups: the panels without a button of their own, then
@@ -623,7 +761,8 @@ struct PaneRow {
     location: Option<skwir_core::Location>,
     /// What the names shown must hold, typed in the field (`omnibox.rs`).
     filter: Option<String>,
-    menu_open: bool,
+    /// The View menu or the view buttons' menu, open from this row.
+    menu_open: Option<&'static str>,
     /// The menu of places open from this row, if one is.
     nav: Option<crate::nav_menu::NavWhat>,
     /// The window's tools this row holds (see `corner`).
@@ -710,11 +849,11 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             location,
             // The View menu hangs from the active pane's button: the pane it
             // acts on.
-            menu_open: active
-                && shell
-                    .toolbar_menu
-                    .as_ref()
-                    .is_some_and(|menu| menu.kind == VIEW_OPTIONS),
+            menu_open: shell
+                .toolbar_menu
+                .as_ref()
+                .map(|menu| menu.kind)
+                .filter(|kind| active && [VIEW_OPTIONS, VIEW_BUTTONS].contains(kind)),
             nav: shell
                 .nav_menu
                 .as_ref()
@@ -772,21 +911,29 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             height: PANE_ROW_HEIGHT - 1.,
             chosen: None,
         });
-    if row.menu_open
+    if let Some(kind) = row.menu_open
         && let Some(popup) = &shell.toolbar_menu
     {
         let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", &theme, cx);
+        let groups = if kind == VIEW_BUTTONS {
+            view_buttons_menu(shell)
+        } else {
+            view_options(shell)
+        };
         // A group with nothing to offer here is left out, title and all.
-        for (title, items) in view_options(shell)
-            .into_iter()
-            .filter(|(_, items)| !items.is_empty())
-        {
+        for (title, items) in groups.into_iter().filter(|(_, items)| !items.is_empty()) {
             panel = panel.child(group_title(title, &theme));
             for item in items {
                 panel = panel.child(item.render(shell, cx));
             }
         }
-        bar = bar.child(anchor.popup(panel));
+        // Which views have a button hangs from the buttons' right edge,
+        // which stays where it is as buttons come and go under it.
+        bar = bar.child(if kind == VIEW_BUTTONS {
+            anchor.popup_right(panel)
+        } else {
+            anchor.popup(panel)
+        });
     }
     // What the text typed will do, under the field typed in.
     if matches!(row.address, Address::Text)
@@ -1504,7 +1651,7 @@ fn breadcrumbs(
 
 #[cfg(test)]
 mod tests {
-    use super::{ViewSpec, crumbs, taking_off, tool_pane, toolbar_views};
+    use super::{ViewButtons, ViewSpec, crumbs, taking_off, tool_pane, toolbar_views};
     use crate::sidebar::Root;
     use skwir_core::location::{Location, ToolPane};
     use skwir_core::workspace::PaneId;
@@ -1561,17 +1708,28 @@ mod tests {
         assert_eq!(tool_pane(ToolPane::Shown, shown, false, None), None);
     }
 
-    fn shown(current: &str) -> Vec<String> {
-        let views = vec![
+    fn views() -> Vec<ViewSpec> {
+        vec![
             ViewSpec::named("list", "List", "list", Arc::default()),
             ViewSpec::named("tree", "Tree", "tree", Arc::default()).alternate(),
             ViewSpec::named("grid", "Grid", "grid", Arc::default()),
             ViewSpec::named("usage", "Usage", "usage", Arc::default()).lens(),
-        ];
-        toolbar_views(views, current)
+        ]
+    }
+
+    fn shown_with(current: &str, chosen: &ViewButtons) -> Vec<String> {
+        toolbar_views(views(), current, chosen)
             .into_iter()
             .map(|spec| spec.id.to_string())
             .collect()
+    }
+
+    fn shown(current: &str) -> Vec<String> {
+        shown_with(current, &ViewButtons::default())
+    }
+
+    fn spec(id: &str) -> ViewSpec {
+        views().into_iter().find(|s| &*s.id == id).expect("a view")
     }
 
     #[test]
@@ -1579,6 +1737,40 @@ mod tests {
         assert_eq!(shown("grid"), ["list", "grid"]);
         assert_eq!(shown("usage"), ["list", "grid", "usage"]);
         assert_eq!(shown("tree"), ["list", "tree", "grid"]);
+    }
+
+    /// Given a button, a lens keeps it; taken away, a listing's button
+    /// stays only while that view is shown, in the views' own order.
+    #[test]
+    fn the_buttons_chosen_replace_what_the_roles_give() {
+        let chosen = ViewButtons::default()
+            .with(&spec("usage"), true)
+            .with(&spec("grid"), false);
+        assert_eq!(shown_with("list", &chosen), ["list", "usage"]);
+        assert_eq!(shown_with("grid", &chosen), ["list", "grid", "usage"]);
+        let none = ViewButtons::default()
+            .with(&spec("list"), false)
+            .with(&spec("grid"), false);
+        assert_eq!(
+            shown_with("tree", &none),
+            ["tree"],
+            "the view shown keeps one"
+        );
+    }
+
+    /// A choice that is the role's is not kept: choosing back what skwir
+    /// gives is Default buttons, and a view added later comes with its own.
+    #[test]
+    fn a_choice_back_to_the_role_is_forgotten() {
+        let grid = spec("grid");
+        let chosen = ViewButtons::default().with(&grid, false);
+        assert!(!chosen.pinned(&grid));
+        assert_eq!(chosen.value().to_string(), "{ grid = false }");
+        let back = chosen.with(&grid, true);
+        assert!(back.is_default() && back.pinned(&grid));
+        let usage = spec("usage");
+        assert!(!ViewButtons::default().with(&usage, false).pinned(&usage));
+        assert!(ViewButtons::default().with(&usage, false).is_default());
     }
 
     fn root(path: &str, name: &str) -> Root {

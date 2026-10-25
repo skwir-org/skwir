@@ -355,6 +355,9 @@ pub struct Shell {
     /// The categories a file has one tag of at a time: fields
     /// (`metadata::TAG_EXCLUSIVE_SETTING`), read when the settings change.
     pub tag_fields: Vec<String>,
+    /// The views given a button beside the address, or taken it from
+    /// (`ui.view_button`), read when the settings change.
+    pub view_buttons: crate::address::ViewButtons,
     pub bulk: Option<BulkState>,
     pub prompt: Option<PromptState>,
     /// The form a plugin asked shown, and those waiting their turn
@@ -691,6 +694,7 @@ impl Shell {
             tag_editor: None,
             tag_colors: crate::tags::TagColors::default(),
             tag_fields: Vec::new(),
+            view_buttons: crate::address::ViewButtons::default(),
             bulk: None,
             prompt: None,
             confirm: None,
@@ -1670,6 +1674,32 @@ impl Shell {
         }
     }
 
+    /// `ui.view_button { id, on }`: give the view a button beside the
+    /// address (`on`), take it away, or, without `on`, the other.
+    fn set_view_button(&mut self, id: &str, on: Option<bool>, cx: &mut Context<Self>) {
+        let Some(spec) = self.available_views().into_iter().find(|s| &*s.id == id) else {
+            self.set_status(format!("unknown view `{id}`"), true, cx);
+            return;
+        };
+        let on = on.unwrap_or(!self.view_buttons.pinned(&spec));
+        let chosen = self.view_buttons.clone().with(&spec, on);
+        self.save_view_buttons(chosen, cx);
+    }
+
+    /// What the user made, kept with their data (ADR-057) as pinned tags
+    /// are, on a worker.
+    fn save_view_buttons(&mut self, chosen: crate::address::ViewButtons, cx: &mut Context<Self>) {
+        if chosen == self.view_buttons {
+            return;
+        }
+        self.app
+            .settings
+            .set(crate::settings::VIEW_BUTTONS_KEY, chosen.value());
+        self.view_buttons = chosen;
+        self.save_settings_later();
+        cx.notify();
+    }
+
     /// `ui.grid_fill`: a preference, saved as the dialog's switch is
     /// (`settings::remember`: one save at a time, the next waiting).
     fn toggle_grid_fill(&mut self, cx: &mut Context<Self>) {
@@ -2369,6 +2399,15 @@ impl Shell {
                 }
             }
             "columns_reset" => self.reset_column_widths(cx),
+            "view_button" => {
+                if let Some(id) = arg("id") {
+                    let on = args.get("on").and_then(serde_json::Value::as_bool);
+                    self.set_view_button(&id, on, cx);
+                }
+            }
+            "view_buttons_reset" => {
+                self.save_view_buttons(crate::address::ViewButtons::default(), cx);
+            }
             "grid_fill" => self.toggle_grid_fill(cx),
             "narrow_folders" => self.toggle_narrow_folders(cx),
             "full_width" => self.toggle_full_width(cx),
@@ -2715,6 +2754,7 @@ impl Shell {
                 .settings
                 .get(skwir_core::metadata::TAG_EXCLUSIVE_SETTING)
                 .unwrap_or_default();
+            self.view_buttons = crate::address::ViewButtons::read(&self.app);
             self.prefs.friendly_dates = self
                 .app
                 .settings

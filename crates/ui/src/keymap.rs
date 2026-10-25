@@ -75,6 +75,9 @@ pub const SLIDESHOW: &str = "Slideshow";
 /// The sidebar while it has the keyboard (F6): the arrows walk its groups
 /// and places (`sidebar.rs`).
 pub const SIDEBAR: &str = "Sidebar";
+/// A pane's view buttons, one of which has the keyboard: the Menu key
+/// says which views have one (`address::view_control`).
+pub const VIEW_BUTTONS: &str = "ViewButtons";
 
 /// A binding as the palette shows it: keys and command name. Only the
 /// bindings that can run are hints: one a later layer hides is not.
@@ -489,6 +492,19 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         "ui.sidebar_key",
         r#"{"key":"remove"}"#,
         Some("sidebar"),
+    ),
+    // What the view buttons' right-click opens: which views have one.
+    (
+        "menu",
+        "ui.toolbar_menu",
+        r#"{"kind":"view_buttons"}"#,
+        Some("view_buttons"),
+    ),
+    (
+        "shift-f10",
+        "ui.toolbar_menu",
+        r#"{"kind":"view_buttons"}"#,
+        Some("view_buttons"),
     ),
     // Shift+F3 splits the other way from F3, for this split only.
     ("shift-f3", "ui.split", r#"{"axis":"other"}"#, None),
@@ -1093,6 +1109,7 @@ pub(crate) const PLACES: &[Place] = &[
     place("pane", PANE, "File list"),
     place("sidebar", SIDEBAR, "Sidebar"),
     place("address", ADDRESS, "Address bar"),
+    place("view_buttons", VIEW_BUTTONS, "View buttons"),
     place("peek", PEEK, "Peek"),
     place("preview", PREVIEW, "Documents and structured previews"),
     place("reader", READER, "Document reader"),

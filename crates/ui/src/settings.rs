@@ -69,6 +69,9 @@ pub const DRAG_IMAGE_KEY: &str = "ui.drag_image";
 /// The dialog's pages unfolded to show all their settings (ADR-072), by
 /// their words: the window's state, kept until folded again.
 pub const UNFOLDED_KEY: &str = "ui.settings_unfolded";
+/// The views given a button beside the address, or whose button was
+/// taken away (`address::ViewButtons`): made from the buttons' own menu.
+pub const VIEW_BUTTONS_KEY: &str = "ui.view_buttons";
 /// Whether a folder has the Narrow by bar above its files (`narrow.rs`).
 pub const NARROW_FOLDERS_KEY: &str = "ui.narrow_folders";
 /// Whether the tab strip shows for a window that has only one tab.
@@ -544,6 +547,11 @@ pub fn declare(app: &App) {
         UNFOLDED_KEY,
         "The settings pages unfolded to show all their settings",
         toml::Value::Array(Vec::new()),
+    ));
+    app.settings.declare(SettingSpec::data(
+        VIEW_BUTTONS_KEY,
+        "The views given a button beside the address (true) or whose button was taken away (false), by id; any other has a button if it shows the files as they are listed (list, grid, columns)",
+        toml::Value::Table(toml::Table::new()),
     ));
     app.settings.declare(SettingSpec::state(
         crate::shortcuts::HINTS_KEY,

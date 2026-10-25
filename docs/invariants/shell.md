@@ -83,7 +83,10 @@ Views are in [views.md](views.md); what locations decide, in
 - **One popup at a time,** all through `Shell::toggle_popup`. A press
   outside closes it and says so (`pointer` in its close command,
   `Shell::note_dismissed`); if that press is on the popup's own button,
-  it stays closed. Any button's click closes the open popup the same way.
+  it stays closed. Any button's click closes the open popup the same way,
+  but a popup's row that switches one of several choices it shows (which
+  views have a button) keeps it open, its row keeping the keyboard
+  (`Button::keeps_open`).
 - Toolbar popup rows are buttons: arrows walk them, Home/End reach the
   ends (`ui.toolbar_first`, `ui.toolbar_last`). The row reached scrolls
   into view in prepaint (`toolbar::RevealRow`, read from the focused
@@ -124,6 +127,14 @@ of bars, split or not.
   - View buttons are the `ViewRole::Listing` views (list, grid,
     columns). `Alternate` (tree, board) and `Lens` (Usage) views get a
     button only while shown. The view states its role, never the shell.
+  - The user may give any view a button or take one away
+    (`ui.view_button`, `address::ViewButtons`): from the buttons'
+    right-click, taken in the capture phase so no button takes the
+    keyboard first, the Menu key on one (`view_buttons`), or View ›
+    Buttons…. Kept with their data (`ui.view_buttons`, ADR-057), only
+    where it differs from the role, so a view added later comes with its
+    role's. The view shown always keeps its button, so the group never
+    goes and always says which view is shown.
   - The View menu (views, sort, hidden files, zoom, Fill thumbnails) hangs
     from the active pane's row.
   - Two `AdaptiveRow` variants: all buttons while the address keeps

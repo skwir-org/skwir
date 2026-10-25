@@ -157,6 +157,8 @@ pub struct Button {
     tint: Option<Tint>,
     /// What a long press runs instead of the click (`HOLD`).
     hold: Option<Box<(SharedString, serde_json::Value)>>,
+    /// A popup's row that leaves the popup open when pressed (`keeps_open`).
+    keeps_open: bool,
 }
 
 /// A tag's colors on a button (a narrowing by that tag), in place of
@@ -210,6 +212,7 @@ impl Button {
             tint: None,
             shape: Shape::Tool,
             hold: None,
+            keeps_open: false,
         }
     }
     pub fn title(&self) -> SharedString {
@@ -258,6 +261,14 @@ impl Button {
         self.enabled = enabled;
         self
     }
+    /// A popup's row that switches one of several choices the popup
+    /// shows (which views have a button): pressed, the popup stays open,
+    /// its row keeping the keyboard, so the next is a press away. Any
+    /// other button closes the popup open.
+    pub fn keeps_open(mut self) -> Self {
+        self.keeps_open = true;
+        self
+    }
     pub fn anchor_if(
         mut self,
         anchor: &crate::elements::popover::PopoverAnchor,
@@ -274,6 +285,7 @@ impl Button {
         let command = self.command.clone();
         let args = self.args.clone();
         let enabled = self.enabled;
+        let keeps_open = self.keeps_open;
         let menu = self.shape == Shape::MenuRow;
         // The shortcut comes from the keymap, never from the title: it
         // follows what is bound, and goes when its plugin does.
@@ -432,7 +444,7 @@ impl Button {
                                 };
                                 press.fired = true;
                                 let (command, args) = *hold;
-                                invoke(this, pane, &command, args, window, cx);
+                                invoke(this, pane, &command, args, true, window, cx);
                             });
                         });
                         this.held = Some(Held {
@@ -463,7 +475,8 @@ impl Button {
                     return;
                 }
                 if enabled {
-                    invoke(this, pane, &command, args.clone(), window, cx);
+                    let close = !keeps_open;
+                    invoke(this, pane, &command, args.clone(), close, window, cx);
                 }
             },
             cx,
@@ -485,11 +498,14 @@ pub(crate) struct Held {
     _timer: gpui::Task<()>,
 }
 
+/// Run a button's command on its pane, closing the popup open unless the
+/// button keeps it open (`close`, `Button::keeps_open`).
 fn invoke(
     shell: &mut Shell,
     pane: PaneId,
     command: &str,
     mut args: serde_json::Value,
+    close: bool,
     window: &mut Window,
     cx: &mut Context<Shell>,
 ) {
@@ -500,7 +516,7 @@ fn invoke(
     // What a button runs closes the popup open, as a press outside it
     // does: a menu's row closes its menu, and the popup's own button,
     // pressed again, leaves it closed (`Shell::toggle_popup`).
-    if let Some(was) = shell.close_popup(window, cx) {
+    if close && let Some(was) = shell.close_popup(window, cx) {
         shell.dismissed = Some((shell.presses, was));
     }
     shell.note_pointer_use(command, &args, cx);

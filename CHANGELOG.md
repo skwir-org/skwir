@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **View buttons**: choose which views have a button beside the
+  address. Right-click the buttons (or press Menu on one, or View ›
+  Buttons…) and check the views you switch to, the tree, the board,
+  Usage or the map among them; uncheck those you never use. The view
+  shown keeps its button. Default buttons brings back list, grid and
+  columns.
 - **Columns view**: a click on a file in a column to the left goes up to
   that folder with the file selected, as in Finder, so it is previewed;
   it did nothing.

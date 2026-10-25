@@ -17,9 +17,10 @@ that work where the keyboard is.
   `Alt+Up`/`Alt+Down` move it, `Delete` removes or hides it, `Escape`
   goes back to the files.
 - **Panes.** Each pane has its own row: Back, Forward, the address, and
-  the view buttons. `F3` (or `Ctrl+Shift+D`) splits the window or joins
-  it, `Shift+F3` splits the other way, `Tab` switches pane. General says
-  which pane closing the split closes.
+  the view buttons. Right-click them (or `Menu` on one, or View ›
+  Buttons…) to choose which views have one. `F3` (or `Ctrl+Shift+D`)
+  splits the window or joins it, `Shift+F3` splits the other way, `Tab`
+  switches pane. General says which pane closing the split closes.
 - **Tabs.** `Ctrl+T` opens one, `Ctrl+W` closes it, `Ctrl+Shift+T`
   reopens the last closed. `Ctrl+Tab` and `Ctrl+Shift+Tab` (or
   `Ctrl+PageDown`, `Ctrl+PageUp`) switch tabs, `Ctrl+Shift+PageDown` and
