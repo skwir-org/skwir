@@ -4617,3 +4617,9 @@ overnight: the review's remote items, then what the servers' work left.
   and the window's remote tests, not its package's). Under the suite's
   load, the frozen-server test caught a read the listing asked still on
   its way before it stopped the server: it waits for that now.
+- **Found by `release-check`, passing:** the servers-by-address test
+  still left a mount behind under the suite's load: the server it opens
+  as it adds it connected after its last steps had let go of its mounts
+  (they take a second; a mount under a load of twelve, more). It waits
+  for that folder to open now, and lets go until none of its server's
+  mounts is left.

@@ -1311,26 +1311,38 @@ fn server_records(app: &App) -> Vec<serde_json::Value> {
 /// one). Only this test's server's: others mount there too.
 fn let_go_of_mounts(app: &App, port: u16) {
     let this = format!("127.0.0.1:{port}");
-    let points: Vec<PathBuf> = skwir_core::fs::reach::all()
-        .into_iter()
-        .map(|r| r.point.clone())
-        .filter(|p| {
-            p.file_name()
-                .is_some_and(|n| n.to_string_lossy().contains(&this))
-        })
-        .collect();
-    for point in points {
-        app.dispatch(&Invocation::with_args(
-            "remote.disconnect",
-            &serde_json::json!({ "path": point }),
-        ))
-        .unwrap();
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point) {
-            app.pump();
-            assert!(Instant::now() < deadline, "{} let go of", point.display());
-            std::thread::sleep(Duration::from_millis(50));
+    let ours = || -> Vec<PathBuf> {
+        skwir_core::fs::reach::changed();
+        skwir_core::fs::reach::all()
+            .into_iter()
+            .map(|r| r.point.clone())
+            .filter(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().contains(&this))
+            })
+            .collect()
+    };
+    // Until none is left: a connection still on its way mounts later.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        app.pump();
+        let points = ours();
+        if points.is_empty() {
+            return;
         }
+        for point in points {
+            app.dispatch(&Invocation::with_args(
+                "remote.disconnect",
+                &serde_json::json!({ "path": point }),
+            ))
+            .unwrap();
+            while skwir_core::fs::reach::of(&point).is_some_and(|r| r.point == point) {
+                app.pump();
+                assert!(Instant::now() < deadline, "{} let go of", point.display());
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+        assert!(Instant::now() < deadline, "its mounts let go of");
     }
 }
 
@@ -1556,6 +1568,19 @@ fn a_server_added_by_its_address_is_kept_and_opened_at_once() {
         ],
     );
     until_said(&app, 30, "“Shared” is added");
+    // Opened as added: mounted before what follows, which takes less time
+    // than a mount under load.
+    let pane = app.workspace.read().active_id();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !app
+        .pane_location(pane)
+        .and_then(|l| l.path())
+        .is_some_and(|p| p.to_string_lossy().contains("sub folder"))
+    {
+        app.pump();
+        assert!(Instant::now() < deadline, "“Shared” opened");
+        std::thread::sleep(Duration::from_millis(50));
+    }
     let entry = base.join("data/remoteview/Shared.desktop");
     let text = std::fs::read_to_string(&entry).unwrap();
     assert!(
