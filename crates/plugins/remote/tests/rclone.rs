@@ -92,7 +92,8 @@ fn an_address_rclone_opens_is_a_folder_and_a_copy_is_on_the_server_once_done() {
     std::fs::create_dir_all(served_root.join("sub folder")).unwrap();
     std::fs::write(served_root.join("hello.txt"), "hello").unwrap();
     let served = Served::start(&served_root);
-    let address = Address::parse(&format!("dav://127.0.0.1:{}/sub folder", served.port)).unwrap();
+    // The server's root: a WebDAV share is mounted where its address says.
+    let address = Address::parse(&format!("dav://127.0.0.1:{}/", served.port)).unwrap();
     let ask: Arc<dyn Ask> = Arc::new(NoOne);
     let cancel = CancelToken::new();
     let connected = Rclone::default()

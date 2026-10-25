@@ -4610,3 +4610,10 @@ overnight: the review's remote items, then what the servers' work left.
   sign-in, whose page listens on one port (127.0.0.1:53682): run at once,
   one could not bind it. They take turns now (a nextest test group,
   `rclone-sign-in`, one at a time).
+- **Found by the whole suite:** the remote plugin's own test of an
+  address rclone opens mounted `dav://…/sub folder` and expected the
+  server's root, as before WebDAV shares; it opens the root's address
+  now (again my slip: after that change I ran the plugin's unit tests
+  and the window's remote tests, not its package's). Under the suite's
+  load, the frozen-server test caught a read the listing asked still on
+  its way before it stopped the server: it waits for that now.
