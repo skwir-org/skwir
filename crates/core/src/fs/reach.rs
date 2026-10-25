@@ -162,17 +162,11 @@ impl Thumbnails {
 /// opened ([`of_device`]).
 pub fn of(path: &Path) -> Option<Arc<Remote>> {
     #[cfg(test)]
-    if let Some((point, fstype)) = PRETENDED_REMOTES
-        .lock()
-        .iter()
-        .find(|(point, _)| path.starts_with(point))
+    if let Some(remote) = pretended()
+        .into_iter()
+        .find(|remote| path.starts_with(&remote.point))
     {
-        return Some(Arc::new(Remote {
-            point: point.clone(),
-            fstype: (*fstype).to_owned(),
-            source: "me@example.com:/".into(),
-            device: None,
-        }));
+        return Some(remote);
     }
     table().of(path)
 }
@@ -181,6 +175,25 @@ pub fn of(path: &Path) -> Option<Arc<Remote>> {
 /// ([`pretend_remote`]).
 #[cfg(test)]
 static PRETENDED_REMOTES: Mutex<Vec<(PathBuf, &str)>> = Mutex::new(Vec::new());
+
+/// The remotes a test says are mounted, as the table would list them:
+/// every question asked of the table answers for them too ([`of`],
+/// [`all`]), whatever this machine has mounted.
+#[cfg(test)]
+fn pretended() -> Vec<Arc<Remote>> {
+    PRETENDED_REMOTES
+        .lock()
+        .iter()
+        .map(|(point, fstype)| {
+            Arc::new(Remote {
+                point: point.clone(),
+                fstype: (*fstype).to_owned(),
+                source: "me@example.com:/".into(),
+                device: None,
+            })
+        })
+        .collect()
+}
 
 /// Say, for this test's process (nextest runs each in one of its own),
 /// that an sshfs remote is mounted at `point`: [`of`] says so of every
@@ -386,7 +399,14 @@ pub fn mounts_in(folder: PathBuf, fstype: &str) {
 /// Every network mount of the table, a bridge as one ([`bridged`] lists
 /// what it holds).
 pub fn all() -> Vec<Arc<Remote>> {
-    table().remotes.clone()
+    #[cfg(test)]
+    let pretended = pretended();
+    #[cfg(not(test))]
+    let pretended = Vec::new();
+    pretended
+        .into_iter()
+        .chain(table().remotes.iter().cloned())
+        .collect()
 }
 
 /// The mount points of type `fstype` (a bridge: GVfs's, `fuse.gvfsd-fuse`;
