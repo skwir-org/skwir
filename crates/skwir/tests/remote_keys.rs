@@ -1,17 +1,20 @@
 //! Key login for SFTP set up from Skwir (`remote::keys`), against servers on
 //! this machine: OpenSSH's own server run as the user, its home and
-//! authorized keys the test's, and rclone's SFTP server, which checks a
-//! password and runs no command. The keys listed from an agent of the
-//! test's, the default ones found in a folder of the test's, a new one made
-//! with its passphrase given through the `skwir` executable as
-//! `SSH_ASKPASS`.
+//! authorized keys the test's; OpenSSH checking a password through PAM, as
+//! root of user and mount namespaces of its own, its accounts the test's;
+//! and rclone's SFTP server, which checks a password and runs no command.
+//! The keys listed from an agent of the test's, the default ones found in
+//! a folder of the test's, a new one made with its passphrase given
+//! through the `skwir` executable as `SSH_ASKPASS`.
 //!
-//! Skipped, saying why, where OpenSSH or rclone is missing. Never the
+//! Skipped, saying why, where OpenSSH or rclone is missing, or the
+//! namespaces cannot be made. Never the
 //! user's `~/.ssh`, agent, known hosts or ssh configuration: ssh is given
 //! `-F /dev/null`, known hosts and keys of the test's, each command its
 //! agent by name.
 #![cfg(target_os = "linux")]
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -245,6 +248,208 @@ impl Sshd {
 
 impl Drop for Sshd {
     fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// This user's first block of subordinate ids in `file` (`/etc/subuid`),
+/// as `unshare` maps them after root: `1:<start>:<count - 1>`.
+fn subordinate(file: &str) -> Option<String> {
+    let user = std::env::var("USER").ok()?;
+    let text = std::fs::read_to_string(file).ok()?;
+    text.lines().find_map(|line| {
+        let mut parts = line.split(':');
+        let (name, start, count) = (parts.next()?, parts.next()?, parts.next()?);
+        let count: u64 = count.trim().parse().ok()?;
+        (name == user && count > 1).then(|| format!("1:{start}:{}", count - 1))
+    })
+}
+
+/// The `pam_unix` module beside the PAM that OpenSSH's `sshd-session` at
+/// `sshd`'s side links, as `ldd` says.
+fn pam_unix_of(sshd: &Path) -> Option<PathBuf> {
+    let bin = std::fs::canonicalize(sshd).ok()?;
+    let session = bin.parent()?.parent()?.join("libexec").join("sshd-session");
+    let linked = Command::new("ldd").arg(&session).output().ok()?;
+    String::from_utf8_lossy(&linked.stdout)
+        .lines()
+        .find_map(|line| {
+            let (_, path) = line.split_once("libpam.so.0 => ")?;
+            let path = Path::new(path.split_whitespace().next()?);
+            Some(path.parent()?.join("security").join("pam_unix.so"))
+        })
+        .filter(|module| module.is_file())
+}
+
+/// OpenSSH's own server checking a password as most do, through PAM: run
+/// as root of a user namespace of its own (this user, mapped), so it reads
+/// a shadow file and switches to its unprivileged half, a subordinate id
+/// (newuidmap). In a mount namespace, the accounts, shadow file and PAM
+/// stack of the test's own are laid over the system's (and nscd, which
+/// would answer for the system's, hidden): its root logs in with
+/// [`PASSWORD`] alone at first, its home the test's. Every process ends
+/// with it (a pid namespace). `None`, saying why, where such namespaces
+/// cannot be made, or OpenSSH's PAM, a password's hash or `unshare` is
+/// missing.
+struct PasswordSshd {
+    child: Child,
+    port: u16,
+    home: PathBuf,
+}
+
+impl PasswordSshd {
+    fn start(base: &Path) -> Option<PasswordSshd> {
+        let found = |program: &str| {
+            let found = skwir_core::os_path::find_program(program);
+            if found.is_none() {
+                eprintln!("skipped: {program} is not installed");
+            }
+            found
+        };
+        let (sshd, unshare, mount) = (found("sshd")?, found("unshare")?, found("mount")?);
+        let (Some(users), Some(groups)) = (subordinate("/etc/subuid"), subordinate("/etc/subgid"))
+        else {
+            eprintln!("skipped: this user has no subordinate ids (/etc/subuid)");
+            return None;
+        };
+        let Some(pam_unix) = pam_unix_of(&sshd) else {
+            eprintln!("skipped: no pam_unix beside OpenSSH's PAM");
+            return None;
+        };
+        // Its hash, the password on no command line.
+        let mut hashing = Command::new(found("openssl")?)
+            .args(["passwd", "-6", "-stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        std::io::Write::write_all(&mut hashing.stdin.take().unwrap(), PASSWORD.as_bytes()).unwrap();
+        let hashed = hashing.wait_with_output().unwrap();
+        let hash = String::from_utf8(hashed.stdout).unwrap().trim().to_owned();
+        assert!(hash.starts_with("$6$"), "{hash}");
+
+        let home = base.join("home");
+        for folder in ["home", "empty", "nscd", "pam.d"] {
+            std::fs::create_dir_all(base.join(folder)).unwrap();
+        }
+        std::fs::write(
+            base.join("passwd"),
+            format!(
+                "root:x:0:0:root:{}:/bin/sh\nsshd:x:1:1:sshd:/var/empty:/bin/false\n",
+                home.display()
+            ),
+        )
+        .unwrap();
+        std::fs::write(base.join("group"), "root:x:0:\nsshd:x:1:\n").unwrap();
+        std::fs::write(
+            base.join("shadow"),
+            format!("root:{hash}:20000:0:99999:7:::\nsshd:!:20000::::::\n"),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(base.join("shadow"), std::fs::Permissions::from_mode(0o600))
+                .unwrap();
+        }
+        let mut stack = String::new();
+        for kind in ["auth", "account", "password", "session"] {
+            let _ = writeln!(stack, "{kind} required {}", pam_unix.display());
+        }
+        std::fs::write(base.join("pam.d/sshd"), stack).unwrap();
+        keygen(&base.join("hostkey"), "ed25519", "host");
+        // What the client asks runs in the test's home with the tests'
+        // programs: sshd's own path has none of them here.
+        let wrapper = base.join("in-home.sh");
+        std::fs::write(
+            &wrapper,
+            format!(
+                "#!/bin/sh\nPATH='{}'; export PATH\ncd \"$HOME\" || exit 1\n\
+                 exec sh -c \"$SSH_ORIGINAL_COMMAND\"\n",
+                std::env::var("PATH").unwrap(),
+            ),
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let port = free_port();
+        let config = base.join("sshd_config");
+        std::fs::write(
+            &config,
+            format!(
+                "Port {port}\nListenAddress 127.0.0.1\nHostKey {}\nPidFile {}\n\
+                 UsePAM yes\nPasswordAuthentication yes\nKbdInteractiveAuthentication no\n\
+                 PermitRootLogin yes\nStrictModes no\nAuthorizedKeysFile .ssh/authorized_keys\n\
+                 ForceCommand {}\nLogLevel VERBOSE\n",
+                base.join("hostkey").display(),
+                base.join("sshd.pid").display(),
+                wrapper.display(),
+            ),
+        )
+        .unwrap();
+        let inside = base.join("inside.sh");
+        let laid = |from: &str, over: &str| {
+            format!(
+                "'{}' --bind '{}' {over}\n",
+                mount.display(),
+                base.join(from).display()
+            )
+        };
+        std::fs::write(
+            &inside,
+            format!(
+                "set -e\n{}{}{}{}{}if [ -d /run/nscd ]; then {}fi\nexec '{}' -D -f '{}' -E '{}'\n",
+                laid("passwd", "/etc/passwd"),
+                laid("group", "/etc/group"),
+                laid("shadow", "/etc/shadow"),
+                laid("pam.d", "/etc/pam.d"),
+                laid("empty", "/var/empty"),
+                laid("nscd", "/run/nscd"),
+                sshd.display(),
+                config.display(),
+                base.join("sshd.log").display(),
+            ),
+        )
+        .unwrap();
+        let mut child = Command::new(unshare)
+            .args(["-U", "--map-user=0", "--map-group=0"])
+            .arg(format!("--map-users={users}"))
+            .arg(format!("--map-groups={groups}"))
+            .args([
+                "-m",
+                "-p",
+                "--fork",
+                "--kill-child",
+                "--propagation",
+                "private",
+                "sh",
+            ])
+            .arg(&inside)
+            .stdout(Stdio::null())
+            .stderr(std::fs::File::create(base.join("unshare.log")).unwrap())
+            .spawn()
+            .expect("start unshare");
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            if child.try_wait().unwrap().is_some() {
+                eprintln!(
+                    "skipped: no user namespace with subordinate ids to run sshd as root in: {}",
+                    std::fs::read_to_string(base.join("unshare.log")).unwrap_or_default()
+                );
+                return None;
+            }
+            assert!(Instant::now() < deadline, "sshd never listened");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        Some(PasswordSshd { child, port, home })
+    }
+}
+
+impl Drop for PasswordSshd {
+    fn drop(&mut self) {
+        // Its namespace's first process killed with it, then all of them.
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -776,6 +981,103 @@ fn key_login_is_set_up_by_the_server_s_password_on_a_server_of_sftp_alone() {
     );
     no_master_left();
     drop(rclone);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// Against OpenSSH checking a password, as a server most often is: the
+/// password asked of the window as a server's (`root@127.0.0.1's
+/// password:`), the key put up through its shell, and a login by key
+/// after. A wrong one and one refused put up nothing.
+#[test]
+fn key_login_is_set_up_by_an_openssh_server_s_password() {
+    if installed(&["ssh", "ssh-keygen"]).is_none() {
+        return;
+    }
+    let base = fixture("password");
+    let cancel = CancelToken::new();
+    keygen(&base.join("b"), "ed25519", "key b");
+    let b = public(&base.join("b"));
+    let Some(sshd) = PasswordSshd::start(&base) else {
+        return;
+    };
+    let address = Address::parse(&format!("sftp://root@127.0.0.1:{}/", sshd.port)).unwrap();
+    let by_b = ssh_with(&base.join("b"), None, &base.join("known_hosts"));
+    let answers = Arc::new(Answers {
+        password: PASSWORD.to_owned(),
+        ..Answers::default()
+    });
+    let ask = ask_of(&answers);
+
+    // Not by key, and no password asked to find out.
+    assert!(!keys::logs_in(&address, &by_b, Some(&ask), &cancel));
+    let asked = answers.asked();
+    assert!(
+        matches!(asked.as_slice(), [one] if one.starts_with("confirm:")),
+        "the host alone: {asked:?}"
+    );
+
+    // Refused by the user, or a wrong one (asked as often as ssh asks):
+    // nothing put up, and said so.
+    let refusing = Arc::new(Answers::default());
+    let error = keys::install(
+        &address,
+        std::slice::from_ref(&b),
+        &by_b,
+        &ask_of(&refusing),
+        &cancel,
+    )
+    .unwrap_err();
+    assert_eq!(error.to_string(), "you cancelled");
+    let wrong = Arc::new(Answers {
+        password: "not the password".to_owned(),
+        ..Answers::default()
+    });
+    let error = keys::install(
+        &address,
+        std::slice::from_ref(&b),
+        &by_b,
+        &ask_of(&wrong),
+        &cancel,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("refused the login"), "{error}");
+    let asked = wrong.asked();
+    assert!(
+        !asked.is_empty() && asked.iter().all(|q| q.starts_with("password:")),
+        "{asked:?}"
+    );
+    let folder = sshd.home.join(".ssh");
+    assert!(!folder.exists());
+
+    // Its password asked once, as a server's; the key put up through its
+    // shell, the folder and the file made with only the user allowed in.
+    answers.forget();
+    assert_eq!(
+        keys::install(&address, std::slice::from_ref(&b), &by_b, &ask, &cancel).unwrap(),
+        1
+    );
+    let asked = answers.asked();
+    assert!(
+        matches!(asked.as_slice(), [one] if one.starts_with("password:") && one.contains("root@127.0.0.1")),
+        "{asked:?}"
+    );
+    let authorized = folder.join("authorized_keys");
+    assert_eq!(
+        std::fs::read_to_string(&authorized).unwrap(),
+        format!("{}\n", b.line)
+    );
+    assert_eq!((mode(&folder), mode(&authorized)), (0o700, 0o600));
+
+    // In by key from now on: nothing asked, nothing added again.
+    assert!(keys::logs_in(&address, &by_b, None, &cancel));
+    answers.forget();
+    assert_eq!(
+        keys::install(&address, std::slice::from_ref(&b), &by_b, &ask, &cancel).unwrap(),
+        0
+    );
+    assert_eq!(answers.asked(), Vec::<String>::new());
+    no_master_left();
+    drop(sshd);
     std::fs::remove_dir_all(&base).unwrap();
 }
 

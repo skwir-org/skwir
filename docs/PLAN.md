@@ -1518,8 +1518,7 @@ protocol is a scheme a connector maps, or a connector.
     2026-10-25 (ADR-087 amended), its file and its remote control tried
     under Wine, never run by the Task Scheduler nor mounted by WinFsp
     (whether WinFsp takes its folder away after a crash is its
-    documentation's word); key login never tried against an OpenSSH
-    server checking a password (rclone's SFTP server stood in);
+    documentation's word);
   - a GVfs mount made by another program is used, but its questions are
     the desktop's (Skwir's own connections offer Remember, ADR-082);
   - ADR-077's point 8, if asked: a helper of Skwir's serving SFTP
