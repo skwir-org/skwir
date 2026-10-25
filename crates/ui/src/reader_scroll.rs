@@ -574,6 +574,25 @@ impl Shell {
         }
     }
 
+    /// Let the reader go, with its pages and the page the panel shows of
+    /// its document: that page is drawn the way its reader reads, and a
+    /// new reader reads a page at a time until its document opens. Left
+    /// in the panel while the next file loads, it was drawn again a page
+    /// at a time, then the next document in its own mode.
+    pub(crate) fn let_reader_go(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.clear_document_pages(window, cx);
+        if matches!(
+            &self.preview.content,
+            Some(PreviewContent::Image {
+                document: Some(_),
+                ..
+            })
+        ) {
+            self.replace_preview_content(None, window, cx);
+        }
+        self.preview.reader = crate::reader::ReaderState::default();
+    }
+
     /// An explicit visit renders a failed page again.
     pub(crate) fn reader_retry_page(&mut self, number: u32) {
         if self.preview.reader.scroll.forget_errors(Some(number)) {

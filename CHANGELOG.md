@@ -29,6 +29,9 @@
 - **Find in a preview** says that nothing matches in its own popup, under
   what you typed, rather than in a message at the bottom of the window;
   so does the hex view's "Match at 0x…".
+- **Going from one PDF to another in an archive** no longer redraws the
+  first a page at a time, a little larger, while the next one opens in
+  continuous scrolling; nor does turning to a PDF's hex view.
 - **Scripts and agents**: a file selected, a folder opened or a sort
   changed by `skwir cmd` or an agent shows in the window at once, not at
   the next move of the mouse.

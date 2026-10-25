@@ -1993,8 +1993,7 @@ impl Shell {
         }
         self.cancel_pending_preview();
         self.preview.media = crate::media::MediaState::default();
-        self.clear_document_pages(window, cx);
-        self.preview.reader = crate::reader::ReaderState::default();
+        self.let_reader_go(window, cx);
         self.preview.phase = PreviewPhase::Queued;
         self.preview.menu = None;
         cx.notify();

@@ -85,6 +85,11 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   opens, never when a later page arrives.
 - A document whose file changes reopens at the same page, zoom and mode
   (`reader_reopen`).
+- A page shown goes with its reader. A new reader reads a page at a time
+  until its document opens, so letting one go (another file, another
+  member of an archive, another view of the file) goes through
+  `Shell::let_reader_go`, which takes the page from the panel: left
+  there, it was drawn again a page at a time while the next file loaded.
 - The column is an item per page, built on the window's thread: every
   count the reader reads of a session is `reader::page_count`, the
   engine's held to `document::MAX_PAGES`, whichever engine or plugin

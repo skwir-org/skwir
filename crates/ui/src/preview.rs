@@ -3508,8 +3508,7 @@ impl Shell {
         while self.preview.rx.try_recv().is_ok() {}
         self.replace_preview_content(None, window, cx);
         self.preview.media = crate::media::MediaState::default();
-        self.clear_document_pages(window, cx);
-        self.preview.reader = crate::reader::ReaderState::default();
+        self.let_reader_go(window, cx);
         self.preview.inspection = crate::inspector::State::default();
         // Pinned, the contents are part of how files are read: the next
         // one's show where it has some (`outline_drawer`).
@@ -3850,8 +3849,7 @@ impl Shell {
     ) {
         self.cancel_pending_preview();
         self.preview.media = crate::media::MediaState::default();
-        self.clear_document_pages(window, cx);
-        self.preview.reader = crate::reader::ReaderState::default();
+        self.let_reader_go(window, cx);
         if let Some(popup) = self.preview.menu.take() {
             popup.restore(window, cx);
         }
