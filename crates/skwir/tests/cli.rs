@@ -103,7 +103,7 @@ fn skwir_says_its_version_and_how_to_use_it_without_opening_a_window() {
     assert!(version.status.success());
     assert_eq!(
         String::from_utf8_lossy(&version.stdout).trim(),
-        format!("skwir {}", env!("CARGO_PKG_VERSION"))
+        format!("skwir {}", env!("SKWIR_BUILD"))
     );
     let help = Command::new(env!("CARGO_BIN_EXE_skwir"))
         .arg("--help")

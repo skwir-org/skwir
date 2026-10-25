@@ -36,10 +36,11 @@ const LICENCE: &str = env!("CARGO_PKG_LICENSE");
 const WEBSITE: &str = env!("CARGO_PKG_HOMEPAGE");
 const SOURCE: &str = concat!(env!("CARGO_PKG_HOMEPAGE"), "/source");
 
-/// The version as `skwir --version` says it, and whether it is a build
-/// for development, slower than a release.
+/// The version as `skwir --version` says it, with the commit a build that
+/// is not a release was made from (`skwir_platform::process::build`), and
+/// whether it is a build for development, slower than a release.
 fn version() -> String {
-    let version = env!("CARGO_PKG_VERSION");
+    let version = skwir_platform::process::build().unwrap_or(env!("CARGO_PKG_VERSION"));
     if cfg!(debug_assertions) {
         format!("{version} (debug build)")
     } else {

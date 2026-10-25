@@ -29,6 +29,8 @@
 - **Scripts and agents**: a file selected, a folder opened or a sort
   changed by `skwir cmd` or an agent shows in the window at once, not at
   the next move of the mouse.
+- **About** and `skwir --version` say the commit a build between releases
+  was made from (`0.2.0+8ef7a93f6d38`); a release says its version alone.
 - **Deleting permanently**: a file's sidecars (XMP, a Mac's `._` files,
   TagSpaces' notes) show as a small "+ metadata" mark after its name, and
   where they are when you point at it. A long name keeps the room: a

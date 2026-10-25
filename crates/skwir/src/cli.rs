@@ -31,7 +31,7 @@ pub fn run(args: &[OsString]) -> Option<i32> {
         "mcp" => Some(mcp()),
         "cmd" => Some(cmd(&args[1..])),
         "--version" | "-V" => {
-            println!("skwir {}", env!("CARGO_PKG_VERSION"));
+            println!("skwir {}", env!("SKWIR_BUILD"));
             Some(0)
         }
         "--help" | "-h" => {

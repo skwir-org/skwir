@@ -222,8 +222,9 @@ The key is the owner's; the page is the subject's (ADR-072).
   is not reported installed where only its program is. A new helper
   answers `--probe` too, with a test.
 - **Helpers answer `--build`** with the build of Skwir they are
-  (`SKWIR_BUILD`: the version, plus the commit in a release build, from
-  `tools/build/identity.rs`, which the helper's build script includes).
+  (`SKWIR_BUILD`: the version, plus the commit in a release build not made
+  from the version's tag, from `tools/build/identity.rs`, which the
+  helper's build script includes; About and `skwir --version` say it too).
   Skwir asks only after a call of the helper failed (`process::explain`)
   and then says, after the failure, that a helper of another build may be
   why. It never refuses one for it, since most calls work all the same. A

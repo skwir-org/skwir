@@ -108,6 +108,12 @@ pub fn set_build(build: &'static str) {
     let _ = BUILD.set(build);
 }
 
+/// Which build of skwir this program is, as it said (`set_build`): its
+/// version, and the commit unless it is a release. `None` untold.
+pub fn build() -> Option<&'static str> {
+    BUILD.get().copied()
+}
+
 /// How long a helper may take to answer `--build`, the first thing it
 /// answers: only one older than the question, taking it for its input,
 /// does anything else.
