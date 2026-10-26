@@ -1117,6 +1117,14 @@ impl Plugin for TagsPlugin {
             |a, app| browse::narrow(app, &a),
         )
         .shows();
+        app.commands.register::<browse::OpenArgs, _>(
+            ID,
+            "tags.open",
+            "Open a tag",
+            "Show the files of the home folder that have a tag (or a tag within it), as its pinned pill does, in the pane given or the active one",
+            |a, app| browse::open(app, &a),
+        )
+        .shows();
         app.commands.register::<browse::PillArgs, _>(
             ID,
             "tags.pill",
@@ -1181,6 +1189,15 @@ impl Plugin for TagsPlugin {
             |a, app| Ok(browse::tag_menu(app, a)),
         )
         .data();
+        app.commands
+            .register::<browse::PaneOnly, _>(
+                ID,
+                "tags.files_menu",
+                "Tags of the selection's menu",
+                "The context menu's submenu of each tag the selected files have: its files in the folder shown, its place, its color, taking it from them",
+                |a, app| Ok(browse::files_menu(app, a)),
+            )
+            .data();
         app.commands.register::<browse::PaneOnly, _>(
             ID,
             "tags.place_menu",
@@ -1337,6 +1354,17 @@ impl Plugin for TagsPlugin {
                 ..menu_item("Comment…", ask_comment(None), 560, "comment")
             },
         );
+        // A submenu for each tag of the selected files: what a right press
+        // on its chip offers, where the keys reach it.
+        app.registry.menu_sources.add(
+            ID,
+            MenuSource {
+                menu: "context".into(),
+                when: Some("selection".into()),
+                command: Invocation::new("tags.files_menu"),
+                replaces: Vec::new(),
+            },
+        );
         // The comment already there, to edit rather than retype.
         app.registry.menu_sources.add(
             ID,
@@ -1448,6 +1476,88 @@ mod tests {
             .into_iter()
             .map(|t| (t.name, t.color))
             .collect()
+    }
+
+    /// The items of `menu` (a source's answer) by submenu, their titles
+    /// in order.
+    fn submenus(answer: &serde_json::Value) -> Vec<(String, Vec<String>)> {
+        let mut items: Vec<MenuItem> = serde_json::from_value(answer["items"].clone()).unwrap();
+        items.sort_by_key(|item| item.order);
+        let mut out: Vec<(String, Vec<String>)> = Vec::new();
+        for item in items {
+            let submenu = item.submenu.unwrap_or_default();
+            match out.iter_mut().find(|(name, _)| *name == submenu) {
+                Some((_, titles)) => titles.push(item.title),
+                None => out.push((submenu, vec![item.title])),
+            }
+        }
+        out
+    }
+
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
+    #[test]
+    fn the_context_menu_gives_each_tag_of_the_selection_a_submenu() {
+        let tmp = home_tempdir();
+        let dir = tmp.path().join("it's tagged");
+        std::fs::create_dir(&dir).unwrap();
+        for (name, tags) in [
+            ("a.txt", &["zeta", "alpha"][..]),
+            ("b.txt", &["Places/Paris", "pinned"][..]),
+            ("c.txt", &["Other/Paris", "beta"][..]),
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+            write_tags(
+                &dir.join(name),
+                &tags.iter().map(|t| (*t).to_owned()).collect::<Vec<_>>(),
+            )
+            .unwrap();
+        }
+        let (app, pane) = app_in(tmp.path(), &dir, &["a.txt", "b.txt"]);
+        app.settings.set(
+            crate::sidebar::PINNED,
+            toml::Value::Array(vec![toml::Value::String("pinned".into())]),
+        );
+        let menu = |pane| {
+            let Outcome::Value(v) = app
+                .dispatch(&Invocation::with_args(
+                    "tags.files_menu",
+                    &serde_json::json!({ "pane": pane }),
+                ))
+                .unwrap()
+            else {
+                panic!("an answer")
+            };
+            submenus(&v)
+        };
+        let names: Vec<String> = menu(pane).into_iter().map(|(name, _)| name).collect();
+        assert_eq!(
+            names,
+            ["Tag “pinned”", "Tag “alpha”", "Tag “Paris”", "Tag “zeta”"],
+            "the pinned first, then by name"
+        );
+        let (_, alpha) = &menu(pane)[1];
+        assert_eq!(
+            alpha[..3],
+            ["Show Its Files Here", "Open Tag", "Color: From Its Name"]
+        );
+        assert_eq!(alpha.last().unwrap(), "Remove From Selected Files");
+        // Two tags of one name in two categories say their categories.
+        app.dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "names": ["b.txt", "c.txt"] }),
+        ))
+        .unwrap();
+        let names: Vec<String> = menu(pane).into_iter().map(|(name, _)| name).collect();
+        assert_eq!(
+            names,
+            [
+                "Tag “pinned”",
+                "Tag “beta”",
+                "Tag “Other/Paris”",
+                "Tag “Places/Paris”"
+            ]
+        );
     }
 
     // Extended attributes: Unix's.

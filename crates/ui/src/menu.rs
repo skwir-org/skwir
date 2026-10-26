@@ -726,17 +726,20 @@ impl Shell {
         cx.notify();
     }
 
-    /// A tag's menu where a file shows it (Properties): the tag's own menu,
-    /// as the sources of tags' menus answer it (the tags plugin's: the same
-    /// as its pill's and its place's in a tag location).
+    /// A tag's menu where a file shows it (an entry's chip, Properties,
+    /// the preview's header): the tag's own menu, as the sources of tags'
+    /// menus answer it (the tags plugin's: the same as its pill's and its
+    /// place's in a tag location). `files`: shown on the selected files,
+    /// which the menu then also acts on.
     pub fn open_tag_menu(
         &mut self,
         tag: &str,
+        files: bool,
         position: Point<Pixels>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut items = self.sourced("tag", serde_json::json!({ "tags": [tag] }));
+        let mut items = self.sourced("tag", serde_json::json!({ "tags": [tag], "files": files }));
         if items.is_empty() {
             return;
         }

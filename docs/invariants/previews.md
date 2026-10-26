@@ -669,6 +669,12 @@ is still to come are in `docs/preview-frame.md`.
   name (a trail inside a container) and one line of type, size and date.
   It names what the panel shows: under a container's view kept above a
   member, the container (the member's bar names the member).
+- Under them, while a store keeps notes, its stars and its tags as every
+  view draws them (`preview::notes_line`, all of them: the file is shown
+  whole): a click on a tag opens its place (`tags.open`), a right press
+  its menu ([shell.md](shell.md), "Context menu"); then "+", the tag
+  editor, when what is shown is selected (the editor edits the
+  selection). With no tag, no rating and nothing to edit, no line.
 - Clicking the card opens Properties. So does the (i) button beside it,
   since what the card does is not seen until tried; the button is lit
   while Properties is open, as Preview's is while its panel is. So do

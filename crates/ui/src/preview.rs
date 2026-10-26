@@ -5254,7 +5254,8 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
                             d.tooltip(move |_, cx| crate::toolbar::tooltip(mime.clone().into(), cx))
                         })
                         .children(facts),
-                ),
+                )
+                .children(notes_line(shell, theme, cx)),
         );
     div()
         .px_1()
@@ -5290,6 +5291,93 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
 
 /// The header's icon: two lines of text tall.
 const ICON: f32 = 36.;
+
+/// The tags and the rating of the file shown, under its facts, while a
+/// store keeps them: its stars, then its tags as every view draws them
+/// (`tags::strip`), a click on one opening the tag and a right press its
+/// menu (`Shell::tag_act`), then "+", the tag editor, when what is shown
+/// is selected (the editor edits the selection). `None` with nothing to
+/// say.
+fn notes_line(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    let preview = &shell.preview;
+    let entry = preview.properties_entry.as_ref()?;
+    let held = shell.app.notes.held();
+    let tags = if held.tags {
+        crate::tags::entry_tags(entry, &shell.tag_colors, &shell.tag_pins, &[])
+    } else {
+        Vec::new()
+    };
+    let rating = entry
+        .metadata
+        .value(skwir_core::entry::keys::RATING)
+        .and_then(skwir_core::Value::as_u64)
+        .filter(|stars| held.rating && *stars > 0);
+    let pane = preview.key.as_ref().map_or(shell.pane, |key| key.pane);
+    let edits = held.tags
+        && preview.key.as_ref().is_some_and(|key| {
+            let ws = shell.app.workspace.read();
+            ws.pane(key.pane)
+                .is_some_and(|p| p.selection.contains(key.id))
+        });
+    if tags.is_empty() && rating.is_none() && !edits {
+        return None;
+    }
+    let add = edits.then(|| {
+        let keys = shell.keys_for("ui.tags_prompt", &serde_json::json!({}));
+        let tip: gpui::SharedString = match keys {
+            Some(keys) => format!("Edit tags ({keys})"),
+            None => "Edit tags".to_owned(),
+        }
+        .into();
+        div()
+            .id("preview-tags-edit")
+            .flex_none()
+            .h(px(crate::tags::CHIP_HEIGHT))
+            .px(px(4.))
+            .flex()
+            .items_center()
+            .gap_1()
+            .rounded_sm()
+            .text_xs()
+            .text_color(theme.text_muted)
+            .cursor_pointer()
+            .hover(|d| d.bg(theme.hover))
+            .child(
+                gpui::svg()
+                    .path("toolbar/plus.svg")
+                    .size(px(10.))
+                    .text_color(theme.text_muted),
+            )
+            .when(tags.is_empty(), |d| d.child("Tag"))
+            .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+            .on_click(cx.listener(|this, _, window, cx| {
+                cx.stop_propagation();
+                this.run("ui.tags_prompt", serde_json::json!({}), window, cx);
+            }))
+    });
+    let act = Shell::tag_act(pane, None, true, cx);
+    Some(
+        div()
+            .id("preview-notes")
+            .mt(px(2.))
+            .h(px(crate::tags::CHIP_HEIGHT))
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap_2()
+            .children(rating.map(|stars| crate::tags::stars(stars, 12., theme)))
+            .when(!tags.is_empty(), |d| {
+                d.child(crate::tags::strip_acting(
+                    &tags,
+                    crate::tags::StripOn::Row { selected: false },
+                    theme,
+                    Some(act),
+                ))
+            })
+            .children(add)
+            .into_any_element(),
+    )
+}
 
 /// "PDF document" rather than `application/pdf`; the raw type is the tooltip.
 /// What is previewed as assistive technology hears it: its name, and the

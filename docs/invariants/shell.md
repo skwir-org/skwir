@@ -280,6 +280,17 @@ of bars, split or not.
   refuses an argument answers nothing, unsaid
   (`crates/skwir/tests/plugins_toggle.rs` gives every source its menu's).
 - Rare items set `submenu` (expanded in place). Give items an `icon`.
+- **A tag's menu, where a file shows it.** A right press on a tag's chip
+  or dot (`Shell::tag_act`: an entry's in a view, the preview's header,
+  Properties) selects the entry as its row's right press does
+  (`Shell::open_chip_menu`) and opens the tag's own menu, asked with
+  `files` (`tags.tag_menu`): its files in the folder shown, its place,
+  taking it from the selected files, then what its pill's menu offers.
+  The keys reach the same: the context menu of selected files gives each
+  of their tags (at most four, pinned first) a submenu, `Tag “draft”`
+  (`tags.files_menu`), with its color too. A chip in a side column or
+  on another place's card is no entry of the pane: a press there opens
+  nothing.
 
 ## Drag and drop
 

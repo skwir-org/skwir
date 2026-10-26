@@ -1429,7 +1429,7 @@ fn tag_chips(
                         let tag = tag.clone();
                         move |this, event: &gpui::MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            this.open_tag_menu(&tag, event.position, window, cx);
+                            this.open_tag_menu(&tag, true, event.position, window, cx);
                         }
                     }),
                 )

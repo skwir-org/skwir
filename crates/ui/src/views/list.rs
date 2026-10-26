@@ -637,6 +637,7 @@ pub fn row(
                     selected: look.selected,
                 },
                 theme,
+                Some(Shell::tag_act(shell.pane, Some(look.id), false, cx)),
             ))
         });
     let mut line = line(name, if compact { 0. } else { NAME_MIN }, height);

@@ -185,9 +185,15 @@ pub fn name(el: Stateful<Div>, look: &Look) -> AnyElement {
 }
 
 /// Its tags as a strip that takes what it is given, giving way in steps
-/// (`tags::strip`): chips, then dots, then "+N". It grows along a row: a
-/// view that puts it under the name gives it a row of its own; one over
-/// a picture gives it the picture's width.
-pub fn tags(look: &Look, on: crate::tags::StripOn, theme: &Theme) -> ChipStrip {
-    crate::tags::strip(&look.tags, on, theme)
+/// (`tags::strip`): chips, then dots, then "+N", each answering as `act`
+/// says (`Shell::tag_act`: a right press, the tag's menu). It grows along
+/// a row: a view that puts it under the name gives it a row of its own;
+/// one over a picture gives it the picture's width.
+pub fn tags(
+    look: &Look,
+    on: crate::tags::StripOn,
+    theme: &Theme,
+    act: Option<crate::tags::TagAct>,
+) -> ChipStrip {
+    crate::tags::strip_acting(&look.tags, on, theme, act)
 }

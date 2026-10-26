@@ -391,6 +391,10 @@ fn card_element(
             .into_any_element(),
         ThumbView::Unavailable => look.picture(PICTURE, theme),
     };
+    // The pane's own cards answer a press on a tag; another's, nothing.
+    let act = card
+        .ix
+        .map(|_| Shell::tag_act(shell.pane, Some(look.id), false, cx));
     let el = div()
         // Two names of one file are two cards (ADR-049).
         .id(crate::elements::known_by("card", look.id))
@@ -437,6 +441,7 @@ fn card_element(
                                 selected: look.selected,
                             },
                             theme,
+                            act,
                         ),
                     ))
                 }),

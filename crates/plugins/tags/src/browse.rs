@@ -89,6 +89,14 @@ pub struct NarrowArgs {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct OpenArgs {
+    /// The tag whose files are shown.
+    pub tag: String,
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PillArgs {
     /// The tag of the sidebar's pill.
     pub tag: String,
@@ -495,6 +503,20 @@ pub fn narrow(app: &App, a: &NarrowArgs) -> anyhow::Result<Outcome> {
     Ok(Outcome::Done)
 }
 
+/// `tags.open`: a tag's place, every file of the home folder that has it
+/// (or a tag within it), as its pinned pill opens it.
+pub fn open(app: &App, a: &OpenArgs) -> anyhow::Result<Outcome> {
+    let pane = app.pane_or_active(a.pane);
+    let tag = clean_tag(&a.tag);
+    anyhow::ensure!(!tag.is_empty(), "which tag?");
+    let address = Address {
+        tag: Some(tag),
+        ..Address::default()
+    };
+    app.navigate(pane, &address.location())?;
+    Ok(Outcome::Done)
+}
+
 /// `tags.pill`: a sidebar's tag clicked with Shift (`also`) or Alt
 /// (`here`).
 pub fn pill(app: &App, a: &PillArgs) -> anyhow::Result<Outcome> {
@@ -614,15 +636,21 @@ pub struct TagMenuArgs {
     pub tags: Vec<String>,
     #[serde(default)]
     pub location: Option<skwir_core::os_path::PathArg>,
-    /// The pane the menu opens in, which a menu gives every source.
-    #[serde(default, rename = "pane")]
-    pub _pane: Option<PaneId>,
+    /// Shown on the selected files (a chip of an entry, of Properties,
+    /// of the preview): the menu also acts on them.
+    #[serde(default)]
+    pub files: bool,
+    /// The pane the menu opens in, which a menu gives every source: the
+    /// one whose selection `files` acts on.
+    #[serde(default)]
+    pub pane: Option<PaneId>,
 }
 
 /// `tags.tag_menu`: a tag's menu where it is shown outside a tag location:
-/// its chip in Properties (`tags`), its pill in the sidebar (`location`,
-/// whose pin the sidebar takes out itself). Nothing for a place that is no
-/// tag's. Answers from memory.
+/// a file's chip (`tags`, `files`: an entry's, in Properties, in the
+/// preview's header), its pill in the sidebar (`location`, whose pin the
+/// sidebar takes out itself). Nothing for a place that is no tag's.
+/// Answers from memory.
 pub fn tag_menu(app: &App, a: TagMenuArgs) -> Outcome {
     let (tags, on_pin) = match a
         .location
@@ -638,7 +666,156 @@ pub fn tag_menu(app: &App, a: TagMenuArgs) -> Outcome {
         },
         None => (a.tags, false),
     };
-    Outcome::Value(serde_json::json!({ "items": tag_items(app, &tags, None, on_pin) }))
+    let mut items = match (a.files, tags.as_slice()) {
+        (true, [tag]) => file_items(app, tag, a.pane),
+        _ => Vec::new(),
+    };
+    items.extend(tag_items(app, &tags, None, on_pin));
+    Outcome::Value(serde_json::json!({ "items": items }))
+}
+
+/// The most tags of the selection the context menu gives a submenu.
+const FILES_MENU_TAGS: usize = 4;
+/// The most selected files whose tags the context menu reads: what their
+/// listing knows, so a menu is no walk of a huge selection.
+const FILES_MENU_READ: usize = 1000;
+
+/// `tags.files_menu`: in the context menu of selected files, a submenu
+/// for each tag they have, as their listing read them, those pinned
+/// first, then by name, at most `FILES_MENU_TAGS`: what a chip's menu does
+/// on them (its files here, its place, taking it from them), and its
+/// color. Where the keys reach what a right press on a chip opens.
+/// Answers from memory.
+pub fn files_menu(app: &App, a: PaneOnly) -> Outcome {
+    let pane = app.pane_or_active(a.pane);
+    let mut tags: Vec<String> = Vec::new();
+    {
+        let ws = app.workspace.read();
+        if let Some(p) = ws.pane(pane) {
+            for e in p
+                .selection
+                .iter()
+                .take(FILES_MENU_READ)
+                .filter_map(|id| p.entry(id))
+            {
+                for tag in crate::tags_of(&e.metadata).unwrap_or_default() {
+                    if !tags.iter().any(|t| same_tag(t, &tag)) {
+                        tags.push(tag);
+                    }
+                }
+            }
+        }
+    }
+    let pins = crate::sidebar::pinned(app);
+    tags.sort_by_cached_key(|t| {
+        (
+            pins.iter()
+                .position(|p| same_tag(p, t))
+                .unwrap_or(usize::MAX),
+            t.to_lowercase(),
+        )
+    });
+    tags.truncate(FILES_MENU_TAGS);
+    let chosen: toml::Table = app
+        .settings
+        .get(skwir_core::metadata::TAG_COLOR_SETTING)
+        .unwrap_or_default();
+    let mut items = Vec::new();
+    for tag in &tags {
+        // Its own name, unless another's is the same in another category.
+        let leaf = tag_leaf(tag);
+        let name = if tags
+            .iter()
+            .any(|t| !same_tag(t, tag) && same_tag(tag_leaf(t), leaf))
+        {
+            tag.as_str()
+        } else {
+            leaf
+        };
+        let submenu = format!("Tag “{name}”");
+        let color = chosen
+            .get(&tag.to_lowercase())
+            .and_then(toml::Value::as_str);
+        let mut add = |mut item: MenuItem, order: i32| {
+            item.submenu = Some(submenu.clone());
+            item.order = order;
+            items.push(item);
+        };
+        for (i, item) in file_items(app, tag, Some(pane)).into_iter().enumerate() {
+            // Its files and its place first, taking it last.
+            let order = if item.order >= 300 {
+                590
+            } else {
+                570 + i32::try_from(i).unwrap_or_default()
+            };
+            add(item, order);
+        }
+        let paint = |title: &str, value: Option<&str>| {
+            let on = color == value;
+            item(
+                title,
+                Invocation::with_args(
+                    "tags.color",
+                    &serde_json::json!({ "tag": tag, "color": value }),
+                ),
+                0,
+                if on { "check" } else { "appearance" },
+            )
+        };
+        add(paint("Color: From Its Name", None), 575);
+        for (i, name) in TAG_COLORS.iter().enumerate() {
+            let mut title = (*name).to_owned();
+            title[..1].make_ascii_uppercase();
+            add(
+                paint(&format!("Color: {title}"), Some(name)),
+                576 + i32::try_from(i).unwrap_or_default(),
+            );
+        }
+    }
+    Outcome::Value(serde_json::json!({ "items": items }))
+}
+
+/// What a tag's menu adds where files show it (their chips, Properties,
+/// the preview's header): its files in the folder shown (`tags.pill`, as
+/// its pill clicked with Alt), its place (`tags.open`), and taking it from
+/// the files selected in `pane`, which the chip pressed was made one of.
+pub fn file_items(app: &App, tag: &str, pane: Option<PaneId>) -> Vec<MenuItem> {
+    let pane = app.pane_or_active(pane);
+    let selected = app
+        .workspace
+        .read()
+        .pane(pane)
+        .map_or(0, |p| p.selection.len());
+    let mut items = vec![
+        item(
+            "Show Its Files Here",
+            Invocation::with_args(
+                "tags.pill",
+                &serde_json::json!({ "tag": tag, "how": "here" }),
+            ),
+            10,
+            "filter",
+        ),
+        item(
+            "Open Tag",
+            Invocation::with_args("tags.open", &serde_json::json!({ "tag": tag })),
+            11,
+            "tag",
+        ),
+    ];
+    if selected > 0 {
+        items.push(item(
+            if selected == 1 {
+                "Remove From This File"
+            } else {
+                "Remove From Selected Files"
+            },
+            Invocation::with_args("tags.remove", &serde_json::json!({ "tags": [tag] })),
+            300,
+            "minus",
+        ));
+    }
+    items
 }
 
 /// The one menu of tags, wherever they are shown (a tag location's

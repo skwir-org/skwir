@@ -322,6 +322,7 @@ fn cell(
 ) -> AnyElement {
     let zoom = shell.zoom;
     let (ix, look, id) = (row.ix, &row.look, row.look.id);
+    let act = Shell::tag_act(shell.pane, Some(id), false, cx);
     let pictures = shell
         .app
         .workspace
@@ -434,6 +435,7 @@ fn cell(
                                         look,
                                         crate::tags::StripOn::Picture { zoom: zoom as f32 },
                                         theme,
+                                        Some(act.clone()),
                                     )),
                             )
                         },
@@ -453,7 +455,7 @@ fn cell(
         look.name.clone(),
     ))
     .when(!captions.is_empty(), |d| {
-        d.child(caption_lines(row, captions, theme))
+        d.child(caption_lines(row, captions, theme, act.clone()))
     });
     let seat = crate::views::entry::Seat {
         index: ix,
@@ -463,7 +465,12 @@ fn cell(
 }
 
 /// A tile's captions under its name, a line each, said or blank.
-fn caption_lines(row: &RowData, captions: &[Caption], theme: &Theme) -> gpui::Div {
+fn caption_lines(
+    row: &RowData,
+    captions: &[Caption],
+    theme: &Theme,
+    act: crate::tags::TagAct,
+) -> gpui::Div {
     let look = &row.look;
     let muted = if look.selected {
         theme.selection_text
@@ -503,6 +510,7 @@ fn caption_lines(row: &RowData, captions: &[Caption], theme: &Theme) -> gpui::Di
                             selected: look.selected,
                         },
                         theme,
+                        Some(act.clone()),
                     )
                     .centered(),
                 ),

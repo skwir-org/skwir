@@ -242,6 +242,11 @@ pub enum StripOn {
 /// The smallest tile whose tags say their names: below it, dots.
 pub const NAMED_FROM: f32 = 128.;
 
+/// What a tag's chip or dot answers where it is drawn, given it and its
+/// tag (`Shell::tag_act`): pressed, its menu; in the preview, a click
+/// opens the tag.
+pub type TagAct = std::rc::Rc<dyn Fn(gpui::Stateful<Div>, &str) -> gpui::Stateful<Div>>;
+
 /// An entry's tags as a strip that gives way in steps
 /// (`elements::chips`): every tag a chip, then the first ones chips and
 /// the rest dots, dots only, then fewer dots and "+N". A tag named after
@@ -249,6 +254,16 @@ pub const NAMED_FROM: f32 = 128.;
 /// categories included, when pointed at: a dot, and a chip whose name is
 /// a category's.
 pub fn strip(tags: &[(String, usize)], on: StripOn, theme: &Theme) -> ChipStrip {
+    strip_acting(tags, on, theme, None)
+}
+
+/// `strip`, each chip and dot answering as `act` says.
+pub fn strip_acting(
+    tags: &[(String, usize)],
+    on: StripOn,
+    theme: &Theme,
+    act: Option<TagAct>,
+) -> ChipStrip {
     let (text, muted) = match on {
         StripOn::Row { selected: true } => (theme.selection_text, theme.selection_text),
         _ => (theme.text, theme.text_muted),
@@ -282,20 +297,24 @@ pub fn strip(tags: &[(String, usize)], on: StripOn, theme: &Theme) -> ChipStrip 
         .iter()
         .enumerate()
         .map(|(i, (tag, color))| {
-            if named_after_its_color(tag, *color) {
-                return strip_dot(i, tag, *color, on, metrics.dot, theme);
-            }
-            let chip = match on {
-                StripOn::Row { .. } => chip(tag, *color, theme).text_color(text),
-                StripOn::Picture { zoom } => picture_chip(tag, *color, zoom, theme),
-            };
-            let el = chip.id(("tag-chip", i));
-            match tag_parent(tag) {
-                Some(_) => {
-                    let tip: gpui::SharedString = tag.clone().into();
-                    el.tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
-                        .into_any_element()
+            let el = if named_after_its_color(tag, *color) {
+                strip_dot(i, tag, *color, on, metrics.dot, theme)
+            } else {
+                let chip = match on {
+                    StripOn::Row { .. } => chip(tag, *color, theme).text_color(text),
+                    StripOn::Picture { zoom } => picture_chip(tag, *color, zoom, theme),
+                };
+                let el = chip.id(("tag-chip", i));
+                match tag_parent(tag) {
+                    Some(_) => {
+                        let tip: gpui::SharedString = tag.clone().into();
+                        el.tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+                    }
+                    None => el,
                 }
+            };
+            match &act {
+                Some(act) => act(el, tag).into_any_element(),
                 None => el.into_any_element(),
             }
         })
@@ -308,7 +327,11 @@ pub fn strip(tags: &[(String, usize)], on: StripOn, theme: &Theme) -> ChipStrip 
         whole,
         dot: Box::new(move |i| {
             let (tag, color) = &dots[i];
-            strip_dot(i, tag, *color, on, metrics.dot, &theme_dots)
+            let el = strip_dot(i, tag, *color, on, metrics.dot, &theme_dots);
+            match &act {
+                Some(act) => act(el, tag).into_any_element(),
+                None => el.into_any_element(),
+            }
         }),
         more: Box::new(move |left: std::ops::Range<usize>| {
             let tip: gpui::SharedString = names[left.clone()].join(", ").into();
@@ -370,7 +393,7 @@ fn strip_dot(
     on: StripOn,
     side: f32,
     theme: &Theme,
-) -> AnyElement {
+) -> gpui::Stateful<Div> {
     let tip: gpui::SharedString = tag.to_owned().into();
     dot(color, theme)
         .id(("tag-dot", i))
@@ -379,7 +402,82 @@ fn strip_dot(
             d.border_2().border_color(theme.bg)
         })
         .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
-        .into_any_element()
+}
+
+impl Shell {
+    /// What a tag's chip or dot answers on an entry of `pane` (`at`, when
+    /// it is one of the pane's: a row, a tile, a card) or on the file the
+    /// preview shows: a right press opens the tag's menu, the entry
+    /// selected first as a row's right press does; with `opens`, a click
+    /// opens the tag (`tags.open`).
+    pub fn tag_act(
+        pane: PaneId,
+        at: Option<skwir_core::EntryId>,
+        opens: bool,
+        cx: &mut Context<Shell>,
+    ) -> TagAct {
+        let shell = cx.weak_entity();
+        std::rc::Rc::new(move |el, tag| {
+            let pressed = (shell.clone(), tag.to_owned());
+            let el = el.on_mouse_down(
+                gpui::MouseButton::Right,
+                move |ev: &gpui::MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    let (shell, tag) = &pressed;
+                    let _ = shell.update(cx, |this, cx| {
+                        this.open_chip_menu(pane, at, tag, ev.position, window, cx);
+                    });
+                },
+            );
+            if !opens {
+                return el;
+            }
+            let (shell, tag) = (shell.clone(), tag.to_owned());
+            el.cursor_pointer().on_click(move |_, window, cx| {
+                cx.stop_propagation();
+                let _ = shell.update(cx, |this, cx| {
+                    this.run(
+                        "tags.open",
+                        serde_json::json!({ "tag": tag, "pane": pane }),
+                        window,
+                        cx,
+                    );
+                });
+            })
+        })
+    }
+
+    /// The menu of `tag`, pressed on an entry of `pane` (`at`) or on the
+    /// file the preview shows: the entry is selected first unless it is
+    /// (its row's right press does the same), and the menu acts on the
+    /// selection.
+    pub fn open_chip_menu(
+        &mut self,
+        pane: PaneId,
+        at: Option<skwir_core::EntryId>,
+        tag: &str,
+        position: gpui::Point<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.activate_pane(pane, cx);
+        if let Some(id) = at {
+            window.focus(&self.ui().focus, cx);
+            // Gone since it was drawn: the press is on nothing.
+            if self.ui().list.index_of(id).is_none() {
+                return;
+            }
+            let selected = {
+                let ws = self.app.workspace.read();
+                ws.pane(pane).is_some_and(|p| p.selection.contains(id))
+            };
+            if !selected {
+                self.select_ids(vec![id], "replace", window, cx);
+            }
+        }
+        self.open_tag_menu(tag, true, position, window, cx);
+        cx.notify();
+    }
 }
 
 /// A tag's dot, in its color.
