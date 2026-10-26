@@ -1514,7 +1514,10 @@ protocol is a scheme a connector maps, or a connector.
 - **G. Left** (each its own step):
   - a device another program holds is named, never taken from it: KDE's
     `kiod6` keeps every phone it sees while it runs, so on a desktop with
-    both, Dolphin and Skwir take turns (ADR-096);
+    both, Dolphin and Skwir take turns (ADR-096). Not built: a Quit
+    kiod6 button beside that message; a connector through `kmtpd`
+    itself (measured 2026-10-26, `docs/STATUS-LOG.md`), which would let
+    both use a phone at once, for Plasma;
   - an iPhone's (AFC) ways chosen by requests counted against a
     stand-in, an iPhone's own pace not timed (no iPhone at hand);
   - on the machines (Phase 5b): Windows' and macOS's own shares (the

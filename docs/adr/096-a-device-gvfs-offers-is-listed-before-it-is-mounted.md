@@ -92,5 +92,13 @@ GVfs reads has an address of its own.
   devices.rs`: listed by name and address, a camera beside, unplugged,
   disabled and enabled again, a volume that does not mount or names no
   device left out, a holder named through `Remotes::reach`); the window
-  on a display of its own against the session's GVfs with the phone that
-  `kiod6` held (listed, said held by `kiod6`).
+  on a display of its own against the session's GVfs, the phone held by
+  `kiod6` (listed, said held by `kiod6`), then free (opened, the same
+  place mounted with Eject, let go of, offered again); `just mtp-check`
+  with the phone (offered, opened, Eject, offered again, said held by
+  `gvfsd-gphoto2` while it held the phone as a camera).
+- A connector through KDE's `kmtpd` instead (its D-Bus interface, served
+  as a folder by a FUSE helper of Skwir's) was measured against GVfs on
+  the same phone and not built: it would let KDE and Skwir use a phone at
+  once, but serves one request at a time, reads whole files only, and
+  listed no faster (`docs/STATUS-LOG.md`, 2026-10-26).

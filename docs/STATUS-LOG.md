@@ -5373,3 +5373,31 @@ Dolphin and nowhere in Skwir. Investigated, then built as proposed
   (following, or not): 281.0 and 282.0 MiB PSS against 282.6 and
   281.4, three threads more. `just lint` and the default tests (2237
   passed, 28 skipped); clippy of the remote plugin for Windows and macOS.
+- **With the phone free** (after the commit, `kiod6` quit by the user):
+  in the window, "Pixel 5" opened in under a second, the trail named it
+  "Pixel 5", its place gained Eject and its space (moving up among the
+  mounted volumes, as a disk does); Eject said "Disconnecting…", sent the
+  pane home, and the phone was offered again. `just mtp-check` passed
+  whole: `gvfs_offers_a_phone_opens_it_and_lets_go_of_it` (7.4 s:
+  offered by name, opened, the same place mounted, Eject, offered again,
+  "gvfsd-gphoto2 has it open…" while GVfs held it as a camera), then the
+  MTP and camera copies (85.4 s, 40.5 s).
+- **KDE's `kiod6`, why and what else:** it has run since Friday, its
+  `kmtpd` loaded once a KDE program asked for a phone; `kmtpd` opens
+  every MTP device present at its start and each one plugged in after
+  (kio-extras 26.08 `kmtpd.cpp`), Dolphin open or not, and runs on
+  `kiod6`'s one thread. kio-fuse 5.1.1 refuses `mtp:` on purpose (a
+  list in `kiofuseservice.cpp`, beside `gdrive`, `http`, `https`,
+  `admin`). `kmtpd`'s D-Bus interface (`org.kde.kmtp.Storage`) has what
+  a folder needs (list, metadata, a whole file into a descriptor, a file
+  from one, rename, folder, delete); measured on the phone against GVfs,
+  the same 40 folders (2575 entries) read alike, counts and times only:
+  the largest folder (2287 entries) listed in 28.7 s by `kmtpd`, 21.5 s
+  through GVfs's bridge (3.7 s again); the top (74) 0.24–0.40 s and
+  0.44 s; a 12 MB file whole in 0.37 s (31 MiB/s) by `kmtpd`, 1.60 s
+  (7.2 MiB/s) through the bridge (`gio copy`, Skwir's copies there, 2.3–
+  2.5 s for 64 MiB, ADR-078); the first 64 KiB of a 159 MiB file 0.49 s
+  through the bridge, where `kmtpd` reads the whole file (~5 s at its
+  pace, not measured); a listing asked during a read waited for it
+  (0.60 s). Locked, the phone kept `kmtpd`'s listing 60 s and gave
+  nothing. Not built (the user's call): a connector through it.
