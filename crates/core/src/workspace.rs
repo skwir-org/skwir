@@ -1644,8 +1644,10 @@ impl Pane {
             .collect()
     }
 
-    /// `ids` by the location that lists them: the shown one, or an opened
-    /// folder's. For hydration, called outside the lock.
+    /// `ids` by the location that lists them: the shown one, an opened
+    /// folder's, or one kept beside it that its view also shows (a column
+    /// of the columns view, `PaneView::kept_locations`). For hydration,
+    /// called outside the lock.
     pub(crate) fn by_location(
         &self,
         ids: &[EntryId],
@@ -1657,6 +1659,12 @@ impl Pane {
             } else {
                 self.opened_of(id)
                     .and_then(|(_, k)| k.open.as_ref())
+                    .or_else(|| {
+                        self.kept
+                            .iter()
+                            .find(|k| k.listing.get(id).is_some())
+                            .and_then(|k| k.open.as_ref())
+                    })
                     .or(self.open.as_ref())
             };
             let Some(open) = open else { continue };

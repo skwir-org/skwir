@@ -435,6 +435,27 @@ impl Shell {
         self.ask_hydrate(ids, false);
     }
 
+    /// Ask for the metadata of entries drawn from a listing the pane keeps
+    /// beside the one it shows (`Pane::kept`: a column of the columns
+    /// view), which its tags need.
+    pub fn request_hydrate_kept(
+        &mut self,
+        location: &skwir_core::Location,
+        ids: impl IntoIterator<Item = EntryId>,
+    ) {
+        let held: Vec<(u64, EntryId)> = {
+            let ws = self.app.workspace.read();
+            let Some(listing) = ws.pane(self.pane).and_then(|p| p.kept(location)) else {
+                return;
+            };
+            ids.into_iter()
+                .filter(|id| listing.get(*id).is_some_and(|e| !e.metadata.is_hydrated()))
+                .map(|id| (listing.id(), id))
+                .collect()
+        };
+        self.ask_hydrate_held(held, true);
+    }
+
     fn ask_hydrate(&mut self, ids: impl IntoIterator<Item = EntryId>, on_screen: bool) {
         let pane = self.pane;
         // Only what lacks its metadata, of whichever listing of the pane
@@ -447,6 +468,14 @@ impl Shell {
                 .filter_map(|id| Some((p.listing_of(id)?, id)))
                 .collect()
         };
+        self.ask_hydrate_held(held, on_screen);
+    }
+
+    /// Ask for `held`, each entry with the listing that holds it, but what
+    /// was asked already: on screen, once; off it, once, or once more
+    /// when it comes on screen.
+    fn ask_hydrate_held(&mut self, held: Vec<(u64, EntryId)>, on_screen: bool) {
+        let pane = self.pane;
         let need: Vec<EntryId> = {
             let pending = &mut self.ui_mut().list.pending_hydrate;
             held.into_iter()

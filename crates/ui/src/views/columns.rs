@@ -237,6 +237,9 @@ struct SideRow {
     link: icons::Link,
     /// Where it leads, for a place (a tag's), and its tag's color.
     place: Option<(Location, Option<usize>)>,
+    /// Its tags, with their colors, as every view draws them
+    /// (`tags::entry_tags`).
+    tags: Vec<(String, usize)>,
 }
 
 /// A column beside the pane's, a list box named `title` for assistive
@@ -283,6 +286,9 @@ fn side_column(
             // Only the rows drawn are read from the kept listing. An entry
             // gone meanwhile is a blank, as `list::row_elements` keeps one:
             // the rows after it keep their places and their numbers.
+            // What its place says of every entry it lists, which they
+            // leave out.
+            let shown = this.app.tags_shown(&at);
             let rows: Vec<Option<SideRow>> = {
                 let ws = this.app.workspace.read();
                 let listing = ws.pane(pane).and_then(|p| p.kept(&at));
@@ -309,10 +315,18 @@ fn side_column(
                                     .and_then(skwir_core::Value::as_str);
                                 (leads, tag.map(|tag| this.tag_colors.of(tag)))
                             }),
+                            tags: crate::tags::entry_tags(
+                                e,
+                                &this.tag_colors,
+                                &this.tag_pins,
+                                &shown,
+                            ),
                         })
                     })
                     .collect()
             };
+            // Their tags come with their metadata, asked for what is drawn.
+            this.request_hydrate_kept(&at, rows.iter().flatten().map(|row| row.id));
             let a11y = this.a11y;
             let mut out = Vec::with_capacity(rows.len());
             for (ix, row) in range.zip(rows) {
@@ -393,16 +407,28 @@ fn side_column(
                         }),
                     )
                     .child(icon)
+                    // The name takes what it needs, its tags what it
+                    // leaves, giving way in steps, as in the pane's column.
                     .child(crate::elements::clip::clipped(
                         div()
                             .id(("name", ix))
-                            .flex_1()
+                            .when(row.tags.is_empty(), gpui::Styled::flex_1)
+                            .when(!row.tags.is_empty(), gpui::Styled::flex_initial)
                             .min_w_0()
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_ellipsis_middle(),
                         row.label.clone(),
                     ))
+                    .when(!row.tags.is_empty(), |d| {
+                        d.child(crate::tags::strip(
+                            &row.tags,
+                            crate::tags::StripOn::Row {
+                                selected: is_on_path,
+                            },
+                            &theme,
+                        ))
+                    })
                     .when(row.is_dir, |d| {
                         d.child(div().text_color(theme.text_muted).child("›"))
                     });

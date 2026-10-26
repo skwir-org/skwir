@@ -15,8 +15,10 @@ around the views is in [shell.md](shell.md).
 - A row, a tile or a card draws its own shape around these, never its
   own copy of them. The columns view's parent folders and the folder
   under its cursor are not the pane's entries: they take only the
-  picture (`icons::entry_picture`), the cut dimming and an option's
-  name and place in its column's list box.
+  picture (`icons::entry_picture`), the cut dimming, the tags' strip
+  (their metadata asked for what is drawn of the kept listing,
+  `Shell::request_hydrate_kept`) and an option's name and place in its
+  column's list box.
 - Every view marks a link, and a tag's place, with `icons::Mark`.
 - **An entry's tags are one strip** (`tags::strip`, fitted in prepaint
   by `elements/chips.rs`), wherever it is drawn: each tag a chip (its
