@@ -669,12 +669,16 @@ is still to come are in `docs/preview-frame.md`.
   name (a trail inside a container) and one line of type, size and date.
   It names what the panel shows: under a container's view kept above a
   member, the container (the member's bar names the member).
-- Under them, while a store keeps notes, its stars and its tags as every
-  view draws them (`preview::notes_line`, all of them: the file is shown
-  whole): a click on a tag opens its place (`tags.open`), a right press
-  its menu ([shell.md](shell.md), "Context menu"); then "+", the tag
-  editor, when what is shown is selected (the editor edits the
-  selection). With no tag, no rating and nothing to edit, no line.
+- While a store keeps notes, its stars and its tags as every view draws
+  them (`preview::notes_items`, all of them: the file is shown whole)
+  follow the facts on their wrapping line, where they fit, else on a line
+  of their own: the strip asks for the width that names every tag
+  (`ChipStrip::natural`), so it steps down only on a line of its own. A
+  click on a tag opens its place (`tags.open`), a right press its menu
+  ([shell.md](shell.md), "Context menu"), which edits the tags too (Edit
+  Tags…). With no tag, "+ Tag", the tag editor, when what is shown is
+  selected (the editor edits the selection). A fact says the type when
+  pointed at; the rating and the tags do not.
 - Clicking the card opens Properties. So does the (i) button beside it,
   since what the card does is not seen until tried; the button is lit
   while Properties is open, as Preview's is while its panel is. So do
@@ -721,10 +725,15 @@ is still to come are in `docs/preview-frame.md`.
     (Device, On disk) has no gist. Where the heading has room for all
     of it, each part first says what it is where its words alone do
     not (`Row::lead`, `Group::gist_led`: "Modified" before the date,
-    "Tagged", "Comment:", a field's name, "Downloaded from", "Deleted
-    from", "Owned by", "On" before the drive, "Lasts"); else the parts
-    alone, cut. The heading draws the first that fits as it is laid
-    out (`adaptive::Fit` with `cuts`), never by counting characters.
+    "Comment:", a field's name, "Downloaded from", "Deleted from",
+    "Owned by", "On" before the drive, "Lasts"); else the parts alone,
+    cut. The heading draws the first that fits as it is laid out
+    (`adaptive::Fit` with `cuts`), never by counting characters.
+  - Folded, Notes draws its tags as chips, in the views' order and
+    colors (`Group::tags`, `tags::ordered`), before the words of
+    the rest (the rating, the comment): the strip asks for the width that
+    names them all, and the words are cut to nothing before it steps
+    down.
   - A row's links (Change…, Edit…, Copy) show while the pointer is on
     it, over the end of its last line: hidden, they take no room, and
     nothing moves when they show. Those that are all a row says (Count,

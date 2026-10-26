@@ -5184,7 +5184,8 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
     // Each fact is one unbreakable segment of a wrapping line: a narrow
     // panel wraps between the facts, never inside the date. One alone on
     // its line and still too wide is cut, and says itself whole, before
-    // the type the line's tooltip names.
+    // the type it names when pointed at. The rating and the tags follow
+    // on the same line (`notes_items`).
     let mime = info.mime.clone().map(gpui::SharedString::from);
     let facts = [
         type_label(shell, info),
@@ -5247,15 +5248,13 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
                         .id("preview-meta")
                         .flex()
                         .flex_wrap()
+                        .items_center()
                         .gap_x_1()
                         .text_xs()
                         .text_color(theme.text_muted)
-                        .when_some(info.mime.clone(), |d, mime| {
-                            d.tooltip(move |_, cx| crate::toolbar::tooltip(mime.clone().into(), cx))
-                        })
-                        .children(facts),
-                )
-                .children(notes_line(shell, theme, cx)),
+                        .children(facts)
+                        .children(notes_items(shell, theme, cx)),
+                ),
         );
     div()
         .px_1()
@@ -5292,15 +5291,19 @@ fn header(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyElement {
 /// The header's icon: two lines of text tall.
 const ICON: f32 = 36.;
 
-/// The tags and the rating of the file shown, under its facts, while a
-/// store keeps them: its stars, then its tags as every view draws them
-/// (`tags::strip`), a click on one opening the tag and a right press its
-/// menu (`Shell::tag_act`), then "+", the tag editor, when what is shown
-/// is selected (the editor edits the selection). `None` with nothing to
-/// say.
-fn notes_line(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+/// The rating and the tags of the file shown, while a store keeps them:
+/// items of the facts' wrapping line, after them where they fit, else on
+/// a line of their own. Its stars, then its tags as every view draws them
+/// (`tags::strip`), asking for the width that names them all
+/// (`ChipStrip::natural`), a click on one opening the tag and a right
+/// press its menu (`Shell::tag_act`), which edits the tags too. With no
+/// tag, "+ Tag", the tag editor, when what is shown is selected (the
+/// editor edits the selection).
+fn notes_items(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyElement> {
     let preview = &shell.preview;
-    let entry = preview.properties_entry.as_ref()?;
+    let Some(entry) = preview.properties_entry.as_ref() else {
+        return Vec::new();
+    };
     let held = shell.app.notes.held();
     let tags = if held.tags {
         crate::tags::entry_tags(entry, &shell.tag_colors, &shell.tag_pins, &[])
@@ -5313,20 +5316,18 @@ fn notes_line(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         .and_then(skwir_core::Value::as_u64)
         .filter(|stars| held.rating && *stars > 0);
     let pane = preview.key.as_ref().map_or(shell.pane, |key| key.pane);
-    let edits = held.tags
+    let adds = held.tags
+        && tags.is_empty()
         && preview.key.as_ref().is_some_and(|key| {
             let ws = shell.app.workspace.read();
             ws.pane(key.pane)
                 .is_some_and(|p| p.selection.contains(key.id))
         });
-    if tags.is_empty() && rating.is_none() && !edits {
-        return None;
-    }
-    let add = edits.then(|| {
+    let add = adds.then(|| {
         let keys = shell.keys_for("ui.tags_prompt", &serde_json::json!({}));
         let tip: gpui::SharedString = match keys {
-            Some(keys) => format!("Edit tags ({keys})"),
-            None => "Edit tags".to_owned(),
+            Some(keys) => format!("Add tags ({keys})"),
+            None => "Add tags".to_owned(),
         }
         .into();
         div()
@@ -5348,35 +5349,38 @@ fn notes_line(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
                     .size(px(10.))
                     .text_color(theme.text_muted),
             )
-            .when(tags.is_empty(), |d| d.child("Tag"))
+            .child("Tag")
             .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
             .on_click(cx.listener(|this, _, window, cx| {
                 cx.stop_propagation();
                 this.run("ui.tags_prompt", serde_json::json!({}), window, cx);
             }))
+            .into_any_element()
     });
     let act = Shell::tag_act(pane, None, true, cx);
-    Some(
-        div()
-            .id("preview-notes")
-            .mt(px(2.))
-            .h(px(crate::tags::CHIP_HEIGHT))
-            .min_w_0()
-            .flex()
-            .items_center()
-            .gap_2()
-            .children(rating.map(|stars| crate::tags::stars(stars, 12., theme)))
-            .when(!tags.is_empty(), |d| {
-                d.child(crate::tags::strip_acting(
-                    &tags,
-                    crate::tags::StripOn::Row { selected: false },
-                    theme,
-                    Some(act),
-                ))
-            })
-            .children(add)
-            .into_any_element(),
-    )
+    let strip = (!tags.is_empty()).then(|| {
+        crate::tags::strip_acting(
+            &tags,
+            crate::tags::StripOn::Row { selected: false },
+            theme,
+            Some(act),
+        )
+        .natural()
+        .into_any_element()
+    });
+    rating
+        .map(|stars| {
+            div()
+                .h(px(crate::tags::CHIP_HEIGHT))
+                .flex()
+                .items_center()
+                .child(crate::tags::stars(stars, 12., theme))
+                .into_any_element()
+        })
+        .into_iter()
+        .chain(strip)
+        .chain(add)
+        .collect()
 }
 
 /// "PDF document" rather than `application/pdf`; the raw type is the tooltip.

@@ -8,6 +8,11 @@
 //! for the rest; at the last, nothing. Which step fits is known only once
 //! the strip has its width, so it is decided here, in prepaint, from each
 //! whole form's natural width and the dots' fixed one: never in `render`.
+//!
+//! A strip that shares a line with something else asks instead for the
+//! width that draws every item whole (`ChipStrip::natural`): a wrapping
+//! row puts it on a line of its own before it steps down, and what gives
+//! way more readily beside it is cut first.
 use std::ops::Range;
 
 use gpui::{
@@ -44,6 +49,9 @@ pub struct ChipStrip {
     /// The items left out, as "+N".
     pub more: Box<dyn Fn(Range<usize>) -> AnyElement>,
     pub metrics: Metrics,
+    /// It asks for the width that draws every item whole, else it takes
+    /// what it is given (`ChipStrip::natural`).
+    pub natural: bool,
 }
 
 impl ChipStrip {
@@ -51,6 +59,17 @@ impl ChipStrip {
     #[must_use]
     pub fn centered(mut self) -> Self {
         self.metrics.center = true;
+        self
+    }
+
+    /// It asks for the width that draws every item whole, measured as it
+    /// is laid out, up to its container's: in a wrapping row it goes to a
+    /// line of its own before it steps down (the preview's header); beside
+    /// what gives way more readily (`flex_shrink`), that is cut first (a
+    /// folded group's words).
+    #[must_use]
+    pub fn natural(mut self) -> Self {
+        self.natural = true;
         self
     }
 }
@@ -163,6 +182,44 @@ impl Element for ChipStrip {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, ()) {
+        let height = px(self.metrics.height);
+        if self.natural {
+            let natural = size(AvailableSpace::MaxContent, AvailableSpace::Definite(height));
+            let widths: Vec<Pixels> = self
+                .whole
+                .iter_mut()
+                .map(|item| item.layout_as_root(natural, window, cx).width)
+                .collect();
+            let n = widths.len();
+            let all = if self.metrics.whole {
+                Fit {
+                    whole: n,
+                    dots: 0,
+                    more: 0,
+                }
+            } else {
+                Fit {
+                    whole: 0,
+                    dots: n.min(self.metrics.max_dots),
+                    more: 0,
+                }
+            };
+            let widest = span(&widths, all, &self.metrics, px(0.));
+            let mut style = Style {
+                flex_grow: 0.,
+                flex_shrink: 1.,
+                ..Style::default()
+            };
+            style.min_size.width = px(0.).into();
+            style.max_size.width = gpui::relative(1.).into();
+            let layout = window.request_measured_layout(style, move |known, _, _, _| {
+                size(
+                    known.width.unwrap_or(widest),
+                    known.height.unwrap_or(height),
+                )
+            });
+            return (layout, ());
+        }
         // What it is given, with no basis of its own.
         let mut style = Style {
             flex_grow: 1.,
@@ -171,7 +228,7 @@ impl Element for ChipStrip {
             ..Style::default()
         };
         style.min_size.width = px(0.).into();
-        style.size.height = px(self.metrics.height).into();
+        style.size.height = height.into();
         (window.request_layout(style, [], cx), ())
     }
     fn prepaint(

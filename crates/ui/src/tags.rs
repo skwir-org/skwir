@@ -152,12 +152,25 @@ pub fn entry_tags(
     pins: &TagPins,
     left_out: &[String],
 ) -> Vec<(String, usize)> {
-    let given = given_colors(e);
-    let mut tags: Vec<(String, usize)> = tags_of(e)
+    let tags = tags_of(e)
         .into_iter()
         .filter(|t| !left_out.iter().any(|out| same_tag(out, t)))
+        .collect();
+    ordered(tags, &given_colors(e), colors, pins)
+}
+
+/// `tags`, each with the color it wears (`given` by its file, else
+/// `colors`), in the order every view draws them (`entry_tags`).
+pub fn ordered(
+    tags: Vec<String>,
+    given: &[(String, usize)],
+    colors: &TagColors,
+    pins: &TagPins,
+) -> Vec<(String, usize)> {
+    let mut tags: Vec<(String, usize)> = tags
+        .into_iter()
         .map(|t| {
-            let color = colors.of_given(&t, &given);
+            let color = colors.of_given(&t, given);
             (t, color)
         })
         .collect();
@@ -354,6 +367,7 @@ pub fn strip_acting(
             .into_any_element()
         }),
         metrics,
+        natural: false,
     }
 }
 

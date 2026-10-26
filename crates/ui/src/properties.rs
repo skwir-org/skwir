@@ -80,7 +80,7 @@ pub struct Row {
     pub gist: Option<Gist>,
     /// What its gist follows where the heading has room for all of it
     /// (`Group::gist_led`): what the gist is, where its words alone do not
-    /// say ("Modified" before a date, "Tagged" before tags).
+    /// say ("Modified" before a date, "Comment:" before a comment).
     pub lead: Option<SharedString>,
     /// What its label means, in a tooltip while the pointer rests on the
     /// row: which of a file's times it is.
@@ -220,6 +220,16 @@ impl Group {
     /// start when a path is part of it.
     pub fn gist(&self) -> Option<Gist> {
         self.said(false)
+    }
+
+    /// Its tags, and the colors their file gives them: a folded heading
+    /// draws them as chips, as every view does, before its gist's words
+    /// (`heading`). `None` without tags.
+    pub fn tags(&self) -> Option<(&[String], &[(String, usize)])> {
+        self.rows.iter().find_map(|row| match &row.show {
+            Show::Tags { tags, given } if !tags.is_empty() => Some((&tags[..], &given[..])),
+            _ => None,
+        })
     }
 
     /// Its gist with each part after its lead (`Row::lead`), said instead
@@ -420,8 +430,7 @@ fn notes_groups(entry: &Entry, path: &std::path::Path, fields: &[String]) -> [Op
         source: meta
             .get(keys::TAGS)
             .and_then(|f| note_source(&f.provenance)),
-        gist: (!tags.is_empty()).then(|| Gist::Said(tags.join(", ").into())),
-        lead: Some("Tagged".into()),
+        // No gist: a folded heading draws them as chips (`Group::tags`).
         ..Row::new("Tags", tags.join(", "))
     };
     tags_row = tags_row.action(
@@ -1669,6 +1678,12 @@ pub fn render(
         .text_xs();
     for (g, group) in groups.into_iter().enumerate() {
         let folded = preview.properties_folds.folded(&group.title, group.folded);
+        let chips = folded.then(|| group.tags()).flatten().map(|(tags, given)| {
+            let tags =
+                crate::tags::ordered(tags.to_vec(), given, &shell.tag_colors, &shell.tag_pins);
+            crate::tags::strip(&tags, crate::tags::StripOn::Row { selected: false }, theme)
+                .natural()
+        });
         let gists = if folded {
             [group.gist_led(), group.gist()]
                 .into_iter()
@@ -1677,7 +1692,7 @@ pub fn render(
         } else {
             Vec::new()
         };
-        list = list.child(heading(g, &group.title, folded, gists, theme, cx));
+        list = list.child(heading(g, &group.title, folded, chips, gists, theme, cx));
         if folded {
             continue;
         }
@@ -1712,11 +1727,14 @@ pub fn render(
 /// heading shows it). While folded, its gist at its right: the first of
 /// `gists` that fits (`Group::gist_led`, then `Group::gist`), measured
 /// as it is laid out (`adaptive::Fit`); where none does, the last, cut at
-/// its end, or at its start when it holds a path.
+/// its end, or at its start when it holds a path. Its tags come first, as
+/// `chips` (`Group::tags`), named as room allows: the words give way
+/// before them.
 fn heading(
     g: usize,
     title: &SharedString,
     folded: bool,
+    chips: Option<crate::elements::chips::ChipStrip>,
     gists: Vec<Gist>,
     theme: &Theme,
     cx: &mut Context<Shell>,
@@ -1783,7 +1801,26 @@ fn heading(
                                 .child(title.clone()),
                         ),
                 )
-                .children(gist),
+                .map(|d| match chips {
+                    // The words are cut to nothing before a chip steps
+                    // down: they give way a hundred times as readily.
+                    Some(chips) => {
+                        d.child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .gap_2()
+                                .child(chips)
+                                .children(gist.map(|gist| {
+                                    div().flex().min_w_0().flex_shrink(100.).child(gist)
+                                })),
+                        )
+                    }
+                    None => d.children(gist),
+                }),
         )
 }
 
@@ -2476,7 +2513,16 @@ mod tests {
             said("1.2 MB"),
             "without the bytes"
         );
-        assert_eq!(gist(&groups, "Notes"), said("work · 3½ stars · First line"));
+        assert_eq!(
+            gist(&groups, "Notes"),
+            said("3½ stars · First line"),
+            "the tags are chips beside it"
+        );
+        let notes = groups.iter().find(|group| group.title == "Notes").unwrap();
+        assert_eq!(
+            notes.tags().map(|(tags, _)| tags),
+            Some(&["work".to_owned()][..])
+        );
         assert_eq!(gist(&groups, "Source"), said("example.org:8080"));
         assert_eq!(
             gist(&groups, "Location"),
@@ -2506,7 +2552,7 @@ mod tests {
         );
         assert_eq!(
             led(&groups, "Notes"),
-            said("Tagged work · 3½ stars · Comment: First line")
+            said("3½ stars · Comment: First line")
         );
         assert_eq!(
             led(&groups, "Source"),
