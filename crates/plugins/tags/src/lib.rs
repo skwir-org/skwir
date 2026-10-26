@@ -1021,6 +1021,15 @@ impl Plugin for TagsPlugin {
             },
         )
         .plans();
+        // Its forms, one per pinned tag (`sidebar::toggle_forms`): set here
+        // as the pins stand, since the sidebar's first publish, on a
+        // worker, may run before the command is registered.
+        {
+            let pinned = sidebar::pinned(app);
+            let pinned: Vec<&str> = pinned.iter().map(String::as_str).collect();
+            app.commands
+                .set_forms(ID, "tags.toggle", sidebar::toggle_forms(&pinned));
+        }
         let v = Arc::clone(&vocabulary);
         app.commands.register::<PaneArgs, _>(
             ID,
@@ -1492,6 +1501,49 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn each_pinned_tag_is_a_command_to_bind_to_a_key() {
+        let tmp = home_tempdir();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(TagsPlugin::default()), &app);
+        let forms = |app: &App| -> Vec<(String, serde_json::Value)> {
+            app.commands
+                .list()
+                .into_iter()
+                .find(|spec| &*spec.name == "tags.toggle")
+                .expect("tags.toggle")
+                .forms
+                .into_iter()
+                .map(|form| (form.title, form.args))
+                .collect()
+        };
+        assert!(forms(&app).is_empty(), "nothing pinned");
+        app.dispatch(&Invocation::with_args(
+            "tags.pins",
+            &serde_json::json!({ "tags": ["print", "Places/Paris"] }),
+        ))
+        .unwrap();
+        assert_eq!(
+            forms(&app),
+            [
+                (
+                    "Toggle tag “print”".to_owned(),
+                    serde_json::json!({ "tag": "print" })
+                ),
+                (
+                    "Toggle tag “Places/Paris”".to_owned(),
+                    serde_json::json!({ "tag": "Places/Paris" })
+                ),
+            ]
+        );
+        app.dispatch(&Invocation::with_args(
+            "tags.unpin",
+            &serde_json::json!({ "tag": "print" }),
+        ))
+        .unwrap();
+        assert_eq!(forms(&app).len(), 1, "an unpinned tag's goes");
     }
 
     // Extended attributes: Unix's.

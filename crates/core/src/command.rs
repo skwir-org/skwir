@@ -883,6 +883,20 @@ impl CommandRegistry {
             .collect()
     }
 
+    /// Replace the forms of `owner`'s command `name` (see [`Form`]) with
+    /// `forms`: those that follow what the user keeps (a pinned tag's),
+    /// which every list of actions reads as they are when it opens.
+    /// Nothing when `owner` registered no such command.
+    pub fn set_forms(&self, owner: &str, name: &str, forms: Vec<Form>) {
+        let mut commands = self.commands.write();
+        if let Some((spec, _, _)) = commands
+            .get_mut(name)
+            .and_then(|stack| stack.iter_mut().find(|(s, _, _)| &*s.owner == owner))
+        {
+            spec.forms = forms;
+        }
+    }
+
     /// Whether `inv` names a command and gives it arguments it takes,
     /// without running it: a binding the user wrote, or a command the
     /// window carries out itself.

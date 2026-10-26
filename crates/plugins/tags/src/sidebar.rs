@@ -240,6 +240,21 @@ pub fn edit(
 
 /// Publish the sidebar's tags if they changed: those pinned, else the
 /// suggestions from `index`. Reads the index: call on a worker.
+/// A command for each pinned tag, toggling it on the selection: what the
+/// palette and the keyboard's lists offer to bind to a key, no key given
+/// (`tags.toggle`'s forms, as the pins stand, set again as they change).
+pub fn toggle_forms(pinned: &[&str]) -> Vec<skwir_core::command::Form> {
+    pinned
+        .iter()
+        .map(|tag| {
+            skwir_core::command::Form::new(
+                serde_json::json!({ "tag": tag }),
+                format!("Toggle tag “{tag}”"),
+            )
+        })
+        .collect()
+}
+
 pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown: &Shown) {
     let Some(home) = std::env::home_dir() else {
         return;
@@ -286,6 +301,13 @@ pub fn publish(app: &App, index: &Arc<TagIndex>, vocabulary: &Vocabulary, shown:
         return;
     }
     *last = Some(rows.clone());
+    let pinned: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.pinned)
+        .map(|r| r.tag.as_str())
+        .collect();
+    app.commands
+        .set_forms(crate::ID, "tags.toggle", toggle_forms(&pinned));
     let places = rows.into_iter().map(|r| {
         let one = serde_json::json!({ "tag": &r.tag });
         // Its menu is the tag's (`tags.tag_menu`, a source of the places'

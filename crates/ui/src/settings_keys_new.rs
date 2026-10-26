@@ -944,7 +944,45 @@ impl SettingsView {
 mod tests {
     use serde_json::json;
 
-    use super::{Kind, kind_of};
+    use super::{Kind, candidates, kind_of};
+
+    #[derive(serde::Deserialize, schemars::JsonSchema)]
+    struct Tag {
+        #[allow(dead_code, reason = "read by the schema alone")]
+        tag: String,
+    }
+
+    /// A form set while the window runs (a pinned tag's toggle) is a
+    /// shortcut's command as soon as the page lists them, and one taken
+    /// back is no longer.
+    #[test]
+    fn forms_set_after_registering_are_offered_as_they_stand() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        app.commands
+            .register::<Tag, _>("plug", "plug.toggle", "Toggle a tag", "", |_, _| {
+                Ok(skwir_core::command::Outcome::Done)
+            });
+        let titles = |app: &skwir_core::App| -> Vec<String> {
+            candidates(app)
+                .into_iter()
+                .filter(|(spec, _, _)| &*spec.name == "plug.toggle")
+                .map(|(_, _, title)| title)
+                .collect()
+        };
+        assert_eq!(titles(&app), ["Toggle a tag…"]);
+        app.commands.set_forms(
+            "plug",
+            "plug.toggle",
+            vec![skwir_core::command::Form::new(
+                json!({ "tag": "print" }),
+                "Toggle tag “print”",
+            )],
+        );
+        assert_eq!(titles(&app), ["Toggle a tag…", "Toggle tag “print”"]);
+        app.commands.set_forms("plug", "plug.toggle", Vec::new());
+        assert_eq!(titles(&app), ["Toggle a tag…"]);
+    }
 
     /// A schema a plugin from outside declares is untrusted: one that
     /// refers to itself, round two definitions or along a long chain, is

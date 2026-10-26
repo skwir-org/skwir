@@ -26,7 +26,11 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   `crates/skwir/tests/keymap_titles.rs` holds it for every built-in key
   and that no place lists two actions under one title. Only a title
   naming what an argument names elsewhere (a folder, a view, a choice's
-  own title) is worked out instead.
+  own title) is worked out instead. Forms that follow what the user
+  keeps are set again as it changes (`CommandRegistry::set_forms`: a
+  toggle of each pinned tag, `tags.toggle {"tag": "draft"}`, Toggle tag
+  “draft”), and every list reads them as they stand when it opens; no
+  key is given them, the user binds one in Settings.
 - **Repeats (ADR-066).** A command runs once for each press of its key
   unless it declares when a key held down runs it again, by its
   arguments (`Declared::repeats`; `command::always` for one that only
