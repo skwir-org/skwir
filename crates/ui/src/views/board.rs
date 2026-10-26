@@ -409,16 +409,18 @@ fn card_element(
                     div().id("card-name").text_sm(),
                     look,
                 ))
-                // A line of chips takes what its row leaves: under the
+                // A strip of tags takes what its row leaves: under the
                 // name, a row of its own.
                 .when(!look.tags.is_empty(), |d| {
-                    d.child(
-                        div()
-                            .flex()
-                            .w_full()
-                            .h(px(crate::tags::CHIP_HEIGHT))
-                            .child(crate::views::entry::tags(look, theme)),
-                    )
+                    d.child(div().flex().w_full().h(px(crate::tags::CHIP_HEIGHT)).child(
+                        crate::views::entry::tags(
+                            look,
+                            crate::tags::StripOn::Row {
+                                selected: look.selected,
+                            },
+                            theme,
+                        ),
+                    ))
                 }),
         );
     let el = if card.ix.is_some() {

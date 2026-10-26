@@ -617,10 +617,16 @@ pub fn row(
         // A name keeps its end: the extension tells files apart.
         .child(crate::views::entry::name(div().id(("name", ix)), look))
         // The tags take only what the name leaves (no basis of their own):
-        // the chips that do not fit drop whole, last first, "+N" saying how
-        // many, and the name never gives way to them.
+        // where chips do not fit they give way to dots, then to "+N", and
+        // the name never gives way to them.
         .when(!look.tags.is_empty(), |d| {
-            d.child(crate::views::entry::tags(look, theme))
+            d.child(crate::views::entry::tags(
+                look,
+                crate::tags::StripOn::Row {
+                    selected: look.selected,
+                },
+                theme,
+            ))
         });
     let mut line = line(name, if compact { 0. } else { NAME_MIN }, height);
     if !compact {

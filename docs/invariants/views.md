@@ -18,6 +18,15 @@ around the views is in [shell.md](shell.md).
   picture (`icons::entry_picture`), the cut dimming and an option's
   name and place in its column's list box.
 - Every view marks a link, and a tag's place, with `icons::Mark`.
+- **An entry's tags are one strip** (`tags::strip`, fitted in prepaint
+  by `elements/chips.rs`), wherever it is drawn: each tag a chip (its
+  dot, then its own name), and as room shrinks the first ones chips and
+  the rest dots, dots only, then fewer dots and "+N". A tag named after
+  the color it wears ("Red") is a dot at every step. They stand in one
+  order, so a tag is in the same place on every row and tile: those
+  pinned to the sidebar first, in its order, then by name
+  (`tags::entry_tags`). A dot, a "+N" and a chip whose tag is in a
+  category say the whole name when pointed at.
 - A thumbnail is drawn by `backdrop::Picture::img`, sized and fitted by
   the view. One that lets its background through, whose ink (its
   luminance, weighted by opacity, read once when converted) would not
@@ -175,8 +184,10 @@ around the views is in [shell.md](shell.md).
   hydration), order or zoom change; never per frame or metadata batch. The
   label is clamped to that count, so a disagreement costs an ellipsis, not
   an overlap.
-- Nothing that would change a tile's height goes on it: tags are dots on
-  the picture's corner (`tags::tile_dots`), named in its tooltip.
+- Nothing that would change a tile's height goes on it: its tags are a
+  strip over the picture's top edge, as wide as the picture
+  (`tags::StripOn::Picture`), its chips opaque so they read on any
+  picture; names from the 128 px step (`tags::NAMED_FROM`), dots below.
 - Fill thumbnails (`ui.grid_fill`) crops pictures to the box.
 
 ## Names and zoom
@@ -205,8 +216,8 @@ around the views is in [shell.md](shell.md).
 - Name and detail columns sit in one wrapping flex line one row tall
   (`views/list.rs::line`, shared by header and rows): columns drop whole,
   last first, and the name, the only child that grows, takes the room.
-- Tag chips take what the name leaves, placed in prepaint
-  (`elements/chips.rs`); those that do not fit drop whole behind "+N".
+- The tags' strip takes what the name leaves; the name never gives way
+  to it.
 - Where files come from many folders (a search, a tag, the shelf,
   Recent), the Folder column comes first among details and goes last, its
   full path in the tooltip. Show in Folder (`show_in_folder`, Ctrl+Alt+O)

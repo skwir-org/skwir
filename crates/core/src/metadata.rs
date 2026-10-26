@@ -181,6 +181,11 @@ pub fn with_exclusive(tags: &[String], added: &str, exclusive: &[String]) -> Vec
     out
 }
 
+/// The setting where the tags plugin keeps the tags pinned to the
+/// sidebar, in its order; the UI reads it to draw an entry's tags in the
+/// same order everywhere, the pinned first.
+pub const TAG_PINNED_SETTING: &str = "tags.pinned";
+
 /// The setting where the tags plugin keeps the colors the user chose,
 /// `{ tag in lowercase = color }`; the UI reads it to draw tags.
 pub const TAG_COLOR_SETTING: &str = "tags.colors";

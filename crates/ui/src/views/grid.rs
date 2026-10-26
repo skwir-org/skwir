@@ -295,12 +295,23 @@ fn cell(
                     .relative()
                     .flex_none()
                     .child(icons::marked(picture, icon_px, look.mark(), theme))
-                    .children(crate::tags::tile_dots(
-                        ("tile-tags", ix),
-                        &look.tags,
-                        zoom as f32,
-                        theme,
-                    )),
+                    // Over the picture's top edge, as wide as the picture:
+                    // the tile keeps the height its name gives it.
+                    .when(!look.tags.is_empty(), |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .top(px(-3.))
+                                .left(px(-3.))
+                                .right(px(-3.))
+                                .flex()
+                                .child(crate::views::entry::tags(
+                                    &look,
+                                    crate::tags::StripOn::Picture { zoom: zoom as f32 },
+                                    theme,
+                                )),
+                        )
+                    }),
             ),
     )
     .child(crate::elements::clip::clipped(

@@ -645,6 +645,12 @@ impl Theme {
         color.opacity(if self.is_dark { 0.3 } else { 0.18 })
     }
 
+    /// The fill of a tag's chip laid over a picture (a tile's): its
+    /// `tag_fill` on `bg`, opaque, so it reads on whatever is under it.
+    pub fn tag_solid(&self, index: usize) -> Hsla {
+        self.bg.blend(self.tag_fill(index))
+    }
+
     /// The fill of the chip of the tag a pane shows: its pill in the
     /// sidebar, the last of the address's trail.
     pub fn tag_shown(&self, index: usize) -> Hsla {

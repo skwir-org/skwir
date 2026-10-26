@@ -27,7 +27,7 @@ pub const GROUP: &str = "tags";
 pub const SETTING: &str = "tags.sidebar";
 pub const DEFAULT: i64 = 12;
 /// The tags pinned to the sidebar, in their order.
-pub const PINNED: &str = "tags.pinned";
+pub const PINNED: &str = skwir_core::metadata::TAG_PINNED_SETTING;
 
 /// A tag as the sidebar shows it.
 #[derive(Clone, Debug, PartialEq, Eq)]

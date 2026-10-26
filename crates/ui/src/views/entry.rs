@@ -17,6 +17,7 @@ use skwir_core::workspace::Pane;
 use skwir_core::{EntryId, Location};
 
 use crate::dnd;
+use crate::elements::chips::ChipStrip;
 use crate::icons;
 use crate::shell::Shell;
 use crate::theme::Theme;
@@ -76,7 +77,7 @@ impl Shell {
             cut: self.pending.cut && self.pending.holds(e.file(), &e.name),
             icon: self.icons.for_entry(e, || pane.path_of(id), icon_px),
             link: icons::Link::of(e),
-            tags: crate::tags::entry_tags(e, &self.tag_colors),
+            tags: crate::tags::entry_tags(e, &self.tag_colors, &self.tag_pins, &[]),
             place,
             path: if e.is_dir() { pane.path_of(id) } else { None },
         })
@@ -178,27 +179,10 @@ pub fn name(el: Stateful<Div>, look: &Look) -> AnyElement {
     .into_any_element()
 }
 
-/// Its tags as chips in a line that takes what it is given: those that do
-/// not fit drop whole, last first, "+N" saying how many. It grows along a
-/// row: a view that puts it under the name gives it a row of its own.
-pub fn tags(look: &Look, theme: &Theme) -> crate::elements::chips::ChipLine {
-    let (text, muted) = if look.selected {
-        (theme.selection_text, theme.selection_text)
-    } else {
-        (theme.text, theme.text_muted)
-    };
-    crate::elements::chips::ChipLine {
-        chips: look
-            .tags
-            .iter()
-            .map(|(tag, color)| {
-                crate::tags::chip(tag, *color, theme)
-                    .text_color(text)
-                    .into_any_element()
-            })
-            .collect(),
-        more: Box::new(move |n| crate::tags::more_chip(n, muted).into_any_element()),
-        height: crate::tags::CHIP_HEIGHT,
-        gap: 4.,
-    }
+/// Its tags as a strip that takes what it is given, giving way in steps
+/// (`tags::strip`): chips, then dots, then "+N". It grows along a row: a
+/// view that puts it under the name gives it a row of its own; one over
+/// a picture gives it the picture's width.
+pub fn tags(look: &Look, on: crate::tags::StripOn, theme: &Theme) -> ChipStrip {
+    crate::tags::strip(&look.tags, on, theme)
 }

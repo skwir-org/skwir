@@ -352,6 +352,8 @@ pub struct Shell {
     pub tag_editor: Option<crate::tags::TagEditor>,
     /// The colors the user chose for tags, read when the settings change.
     pub tag_colors: crate::tags::TagColors,
+    /// The tags pinned to the sidebar, which come first among an entry's.
+    pub tag_pins: crate::tags::TagPins,
     /// The categories a file has one tag of at a time: fields
     /// (`metadata::TAG_EXCLUSIVE_SETTING`), read when the settings change.
     pub tag_fields: Vec<String>,
@@ -693,6 +695,7 @@ impl Shell {
             choose: None,
             tag_editor: None,
             tag_colors: crate::tags::TagColors::default(),
+            tag_pins: crate::tags::TagPins::default(),
             tag_fields: Vec::new(),
             view_buttons: crate::address::ViewButtons::default(),
             bulk: None,
@@ -2788,6 +2791,7 @@ impl Shell {
             self.theme_revision = revision;
             self.resolve_theme(window, cx);
             self.tag_colors = crate::tags::TagColors::read(&self.app);
+            self.tag_pins = crate::tags::TagPins::read(&self.app);
             self.tag_fields = self
                 .app
                 .settings

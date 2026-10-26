@@ -25,12 +25,14 @@ use gpui::{
 };
 use skwir_core::command::Outcome;
 use skwir_core::metadata::{
-    TAG_COLOR_SETTING, TAG_COLORS, same_tag, tag_color, tag_leaf, tag_lineage, tag_parent,
+    TAG_COLOR_SETTING, TAG_COLORS, TAG_PINNED_SETTING, same_tag, tag_color, tag_leaf, tag_lineage,
+    tag_parent,
 };
 use skwir_core::op::EntryRef;
 use skwir_core::workspace::PaneId;
 
 use crate::controls::{self, ButtonStyle};
+use crate::elements::chips::{ChipStrip, Metrics};
 use crate::elements::clip::clipped;
 use crate::input::{InputEvent, TextInput};
 use crate::keymap;
@@ -118,23 +120,65 @@ pub fn tags_of(e: &skwir_core::Entry) -> Vec<String> {
     }
 }
 
-/// An entry's tags, each with the color it wears.
-pub fn entry_tags(e: &skwir_core::Entry, colors: &TagColors) -> Vec<(String, usize)> {
+/// The tags the user pinned to the sidebar (`metadata::TAG_PINNED_SETTING`,
+/// the tags plugin's), in its order, read when the settings change: they
+/// come first wherever an entry's tags are drawn.
+#[derive(Clone, Debug, Default)]
+pub struct TagPins(Vec<String>);
+
+impl TagPins {
+    pub fn read(app: &skwir_core::App) -> Self {
+        TagPins(
+            app.settings
+                .get::<Vec<String>>(TAG_PINNED_SETTING)
+                .unwrap_or_default(),
+        )
+    }
+
+    /// Where `tag` stands among the pins.
+    fn rank(&self, tag: &str) -> Option<usize> {
+        self.0.iter().position(|pin| same_tag(pin, tag))
+    }
+}
+
+/// An entry's tags, each with the color it wears, in the order every view
+/// draws them: those pinned first, as the sidebar has them, then by name,
+/// so a tag stands in the same place on every row and tile. Those the
+/// place shown says of every entry it lists (`left_out`: a tag's own,
+/// `LocationProvider::tags_shown`) are left out: the place says them.
+pub fn entry_tags(
+    e: &skwir_core::Entry,
+    colors: &TagColors,
+    pins: &TagPins,
+    left_out: &[String],
+) -> Vec<(String, usize)> {
     let given = given_colors(e);
-    tags_of(e)
+    let mut tags: Vec<(String, usize)> = tags_of(e)
         .into_iter()
+        .filter(|t| !left_out.iter().any(|out| same_tag(out, t)))
         .map(|t| {
             let color = colors.of_given(&t, &given);
             (t, color)
         })
-        .collect()
+        .collect();
+    tags.sort_by_cached_key(|(t, _)| (pins.rank(t).unwrap_or(usize::MAX), t.to_lowercase()));
+    tags
+}
+
+/// Whether `tag` is named after the color it wears (`Red` in red, as a
+/// Mac's first tags are): its dot says all a chip would, so it is drawn as
+/// a dot, never as a chip saying "Red".
+pub fn named_after_its_color(tag: &str, color: usize) -> bool {
+    TAG_COLORS
+        .get(color)
+        .is_some_and(|name| same_tag(name, tag_leaf(tag)))
 }
 
 /// A chip's height: rows of chips are one chip tall (the list's wrap).
 pub const CHIP_HEIGHT: f32 = 18.;
 
-/// A tag as a chip, in its color: its own name (`Paris` for
-/// `Places/France/Paris`), as a row has room for.
+/// A tag as a chip, in its color: its dot, then its own name (`Paris`
+/// for `Places/France/Paris`), as a row has room for.
 pub fn chip(tag: &str, color: usize, theme: &Theme) -> Div {
     chip_frame(color, theme).child(tag_leaf(tag).to_owned())
 }
@@ -150,6 +194,8 @@ pub fn chip_in_full(tag: &str, color: usize, theme: &Theme) -> Div {
     }
 }
 
+/// A chip's tint and its dot: what it is when there is no room for its
+/// name (`strip`).
 fn chip_frame(color: usize, theme: &Theme) -> Div {
     div()
         .flex_none()
@@ -157,10 +203,12 @@ fn chip_frame(color: usize, theme: &Theme) -> Div {
         .flex()
         .items_center()
         .whitespace_nowrap()
-        .px(px(5.))
+        .pl(px(5.))
+        .pr(px(6.))
         .rounded_sm()
         .text_xs()
         .bg(theme.tag_fill(color))
+        .child(dot(color, theme).size(px(7.)).mr(px(4.)))
 }
 
 /// How many tags a line left out, as a chip without a color.
@@ -177,73 +225,159 @@ pub fn more_chip(n: usize, color: gpui::Hsla) -> Div {
         .child(format!("+{n}"))
 }
 
-/// The most dots a grid tile shows before "+N".
-const TILE_DOTS: usize = 3;
+/// Where a strip of tags is drawn (`strip`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StripOn {
+    /// On a row of text (a list row, a card, a column, a header), in the
+    /// selection's colors when `selected`: chips tinted with their colors
+    /// and plain dots.
+    Row { selected: bool },
+    /// Over the top edge of a picture `zoom` px (a tile's): opaque chips
+    /// and dots ringed with the background, which read on any picture;
+    /// names from `NAMED_FROM` up, which leaves a small tile's picture
+    /// to itself.
+    Picture { zoom: f32 },
+}
 
-/// A tile's tags as dots over the top corner of its picture, as many as
-/// `TILE_DOTS` and then how many more, their names in the tooltip. Over
-/// the picture, not under the name: the tile keeps the height its name
-/// gives it (`GridView::measure`), tagged or not. `None` for no tags.
-pub fn tile_dots(
-    id: impl Into<gpui::ElementId>,
-    tags: &[(String, usize)],
-    zoom: f32,
-    theme: &Theme,
-) -> Option<AnyElement> {
-    if tags.is_empty() {
-        return None;
-    }
-    // Growing slower than the picture, like the link's badge.
-    let side = (zoom * 0.04 + 7.).round().clamp(10., 16.);
-    let ring = theme.bg;
-    let more = tags.len().saturating_sub(TILE_DOTS);
-    let tip: gpui::SharedString = tags
+/// The smallest tile whose tags say their names: below it, dots.
+pub const NAMED_FROM: f32 = 128.;
+
+/// An entry's tags as a strip that gives way in steps
+/// (`elements::chips`): every tag a chip, then the first ones chips and
+/// the rest dots, dots only, then fewer dots and "+N". A tag named after
+/// its color is a dot at every step. Each says its whole name, its
+/// categories included, when pointed at: a dot, and a chip whose name is
+/// a category's.
+pub fn strip(tags: &[(String, usize)], on: StripOn, theme: &Theme) -> ChipStrip {
+    let (text, muted) = match on {
+        StripOn::Row { selected: true } => (theme.selection_text, theme.selection_text),
+        _ => (theme.text, theme.text_muted),
+    };
+    let metrics = match on {
+        StripOn::Row { .. } => Metrics {
+            height: CHIP_HEIGHT,
+            gap: 4.,
+            dot: 8.,
+            dot_step: 11.,
+            max_dots: 5,
+            whole: true,
+        },
+        StripOn::Picture { zoom } => {
+            // Growing slower than the picture, like the link's badge.
+            let side = (zoom * 0.04 + 7.).round().clamp(10., 16.);
+            Metrics {
+                height: picture_chip_height(zoom),
+                gap: 3.,
+                dot: side,
+                // Each overlaps the one before it by a third.
+                dot_step: (side * 2. / 3.).round(),
+                max_dots: 3,
+                whole: zoom >= NAMED_FROM,
+            }
+        }
+    };
+    let whole = tags
         .iter()
-        .map(|(tag, _)| tag.as_str())
-        .collect::<Vec<_>>()
-        .join(", ")
-        .into();
-    Some(
-        div()
-            .id(id)
-            .absolute()
-            .top(px(-3.))
-            .left(px(-3.))
-            .flex()
-            .items_center()
-            .children(
-                tags.iter()
-                    .take(TILE_DOTS)
-                    .enumerate()
-                    .map(|(i, (_, color))| {
-                        // Each overlaps the one before it by a third, ringed so
-                        // they part on any picture.
-                        div()
-                            .flex_none()
-                            .size(px(side))
-                            .when(i > 0, |d| d.ml(px(-side / 3.)))
-                            .rounded_full()
-                            .border_2()
-                            .border_color(ring)
-                            .bg(theme.tag(*color))
-                    }),
-            )
-            .when(more > 0, |d| {
-                d.child(
-                    div()
-                        .ml(px(2.))
-                        .px(px(3.))
-                        .rounded_sm()
-                        .bg(ring)
-                        .text_color(theme.text_muted)
-                        .text_size(px(10.))
-                        .line_height(px(side))
-                        .child(format!("+{more}")),
-                )
-            })
+        .enumerate()
+        .map(|(i, (tag, color))| {
+            if named_after_its_color(tag, *color) {
+                return strip_dot(i, tag, *color, on, metrics.dot, theme);
+            }
+            let chip = match on {
+                StripOn::Row { .. } => chip(tag, *color, theme).text_color(text),
+                StripOn::Picture { zoom } => picture_chip(tag, *color, zoom, theme),
+            };
+            let el = chip.id(("tag-chip", i));
+            match tag_parent(tag) {
+                Some(_) => {
+                    let tip: gpui::SharedString = tag.clone().into();
+                    el.tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+                        .into_any_element()
+                }
+                None => el.into_any_element(),
+            }
+        })
+        .collect();
+    let dots: Vec<(String, usize)> = tags.to_vec();
+    let theme_dots = theme.clone();
+    let names: Vec<String> = tags.iter().map(|(tag, _)| tag.clone()).collect();
+    let theme_more = theme.clone();
+    ChipStrip {
+        whole,
+        dot: Box::new(move |i| {
+            let (tag, color) = &dots[i];
+            strip_dot(i, tag, *color, on, metrics.dot, &theme_dots)
+        }),
+        more: Box::new(move |left: std::ops::Range<usize>| {
+            let tip: gpui::SharedString = names[left.clone()].join(", ").into();
+            let n = left.len();
+            match on {
+                StripOn::Row { .. } => more_chip(n, muted),
+                StripOn::Picture { .. } => div()
+                    .flex_none()
+                    .px(px(3.))
+                    .rounded_sm()
+                    .bg(theme_more.bg)
+                    .text_color(theme_more.text_muted)
+                    .text_size(px(10.))
+                    .line_height(px(metrics.dot))
+                    .whitespace_nowrap()
+                    .child(format!("+{n}")),
+            }
+            .id("tag-more")
             .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
-            .into_any_element(),
-    )
+            .into_any_element()
+        }),
+        metrics,
+    }
+}
+
+/// A chip's height over a picture `zoom` px: smaller than a row's on the
+/// default tile, a row's on the large ones.
+fn picture_chip_height(zoom: f32) -> f32 {
+    if zoom >= 192. { CHIP_HEIGHT } else { 16. }
+}
+
+/// A tag's chip over a picture: opaque (`Theme::tag_solid`), ringed with
+/// the background, so it reads on any picture.
+fn picture_chip(tag: &str, color: usize, zoom: f32, theme: &Theme) -> Div {
+    div()
+        .flex_none()
+        .h(px(picture_chip_height(zoom)))
+        .flex()
+        .items_center()
+        .whitespace_nowrap()
+        .pl(px(4.))
+        .pr(px(5.))
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.bg)
+        .bg(theme.tag_solid(color))
+        .text_color(theme.text)
+        .text_size(px(if zoom >= 192. { 11. } else { 10. }))
+        .child(dot(color, theme).size(px(6.)).mr(px(3.)))
+        .child(tag_leaf(tag).to_owned())
+}
+
+/// Tag `i` of a strip as a dot of `side` px, saying its whole name when
+/// pointed at; over a picture, ringed so dots part on any picture.
+fn strip_dot(
+    i: usize,
+    tag: &str,
+    color: usize,
+    on: StripOn,
+    side: f32,
+    theme: &Theme,
+) -> AnyElement {
+    let tip: gpui::SharedString = tag.to_owned().into();
+    dot(color, theme)
+        .id(("tag-dot", i))
+        .size(px(side))
+        .when(matches!(on, StripOn::Picture { .. }), |d| {
+            d.border_2().border_color(theme.bg)
+        })
+        .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+        .into_any_element()
 }
 
 /// A tag's dot, in its color.
@@ -1210,5 +1344,60 @@ mod tests {
         assert_eq!(colors.of_given("home", &given), 6);
         assert_eq!(colors.of_given("Work", &given), 4);
         assert_eq!(colors.of_given("other", &given), tag_color("other"));
+    }
+
+    fn tagged(tags: &[&str]) -> skwir_core::Entry {
+        let mut entry = skwir_core::Entry::new(
+            skwir_core::EntryId {
+                file: skwir_core::FileId::new(1, 2),
+                at: 0,
+            },
+            "pic.jpg",
+            skwir_core::EntryKind::File,
+        );
+        entry.metadata.set(
+            skwir_core::entry::keys::TAGS,
+            skwir_core::Value::List(
+                tags.iter()
+                    .map(|t| skwir_core::Value::Text((*t).into()))
+                    .collect(),
+            ),
+            skwir_core::Provenance::User,
+        );
+        entry
+    }
+
+    #[test]
+    fn an_entrys_tags_stand_pinned_first_then_by_name() {
+        let entry = tagged(&["zoo", "Print", "apple", "Places/Paris", "favorite"]);
+        let pins = TagPins(vec!["favorite".into(), "print".into()]);
+        let names = |left_out: &[String]| -> Vec<String> {
+            entry_tags(&entry, &TagColors::default(), &pins, left_out)
+                .into_iter()
+                .map(|(tag, _)| tag)
+                .collect()
+        };
+        assert_eq!(
+            names(&[]),
+            ["favorite", "Print", "apple", "Places/Paris", "zoo"],
+            "the pins in their order, whatever the file's, then by name"
+        );
+        // What the place shown says of every entry is left out, its case
+        // aside; a category's tag stays.
+        assert_eq!(
+            names(&["PRINT".into(), "Places".into()]),
+            ["favorite", "apple", "Places/Paris", "zoo"]
+        );
+    }
+
+    #[test]
+    fn a_tag_named_after_the_color_it_wears_is_a_dot() {
+        let red = TAG_COLORS.iter().position(|c| *c == "red").unwrap();
+        let blue = TAG_COLORS.iter().position(|c| *c == "blue").unwrap();
+        assert!(named_after_its_color("Red", red));
+        assert!(named_after_its_color("Colors/red", red));
+        // Worn in another color, its name says something the dot does not.
+        assert!(!named_after_its_color("Red", blue));
+        assert!(!named_after_its_color("Redwood", red));
     }
 }
