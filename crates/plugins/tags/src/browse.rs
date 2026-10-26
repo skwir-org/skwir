@@ -15,7 +15,8 @@ use skwir_core::command::{Invocation, Outcome};
 use skwir_core::entry::keys;
 use skwir_core::location::Location;
 use skwir_core::metadata::{
-    TAG_COLORS, TAG_EXCLUSIVE_SETTING, clean_tag, same_tag, tag_leaf, tag_parent,
+    TAG_COLORS, TAG_EXCLUSIVE_SETTING, clean_tag, same_tag, tag_leaf, tag_lineage, tag_parent,
+    tag_under,
 };
 use skwir_core::op::EntryRef;
 use skwir_core::os_path::PathArg;
@@ -614,8 +615,8 @@ fn item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
 }
 
 /// `tags.place_menu`: the items of the tags selected in a tag location
-/// (`tag_items`).
-pub fn place_menu(app: &App, a: PaneOnly) -> Outcome {
+/// (`tag_items`, `one_at_a_time` of the tag, among those `known`).
+pub fn place_menu(app: &App, known: &[String], a: PaneOnly) -> Outcome {
     let pane = app.pane_or_active(a.pane);
     let tags = selected_places(app, pane);
     let root: Option<PathArg> = app
@@ -624,7 +625,9 @@ pub fn place_menu(app: &App, a: PaneOnly) -> Outcome {
         .and_then(address_of)
         .and_then(|a| a.scope)
         .map(PathArg::from);
-    Outcome::Value(serde_json::json!({ "items": tag_items(app, &tags, root.as_ref(), false) }))
+    let mut items = tag_items(app, &tags, root.as_ref(), false);
+    items.extend(one_at_a_time(app, &tags, false, known));
+    Outcome::Value(serde_json::json!({ "items": items }))
 }
 
 /// `tags.tag_menu`'s arguments: tags by name (a chip in Properties), or a
@@ -650,8 +653,8 @@ pub struct TagMenuArgs {
 /// a file's chip (`tags`, `files`: an entry's, in Properties, in the
 /// preview's header), its pill in the sidebar (`location`, whose pin the
 /// sidebar takes out itself). Nothing for a place that is no tag's.
-/// Answers from memory.
-pub fn tag_menu(app: &App, a: TagMenuArgs) -> Outcome {
+/// Answers from memory, `known` the tags the plugin knows.
+pub fn tag_menu(app: &App, known: &[String], a: TagMenuArgs) -> Outcome {
     let (tags, on_pin) = match a
         .location
         .as_deref()
@@ -667,10 +670,25 @@ pub fn tag_menu(app: &App, a: TagMenuArgs) -> Outcome {
         None => (a.tags, false),
     };
     let mut items = match (a.files, tags.as_slice()) {
-        (true, [tag]) => file_items(app, tag, a.pane),
+        (true, [tag]) => {
+            let mut items = file_items(app, tag, a.pane);
+            // The tag editor of the files the chip pressed was made one
+            // of: where a file shows its tags, the chips are the way to
+            // it. The context menu has its own (Tags…).
+            if selected(app, a.pane) > 0 {
+                items.push(item(
+                    "Edit Tags…",
+                    Invocation::new("ui.tags_prompt"),
+                    12,
+                    "tag",
+                ));
+            }
+            items
+        }
         _ => Vec::new(),
     };
     items.extend(tag_items(app, &tags, None, on_pin));
+    items.extend(one_at_a_time(app, &tags, a.files, known));
     Outcome::Value(serde_json::json!({ "items": items }))
 }
 
@@ -780,12 +798,7 @@ pub fn files_menu(app: &App, a: PaneOnly) -> Outcome {
 /// its pill clicked with Alt), its place (`tags.open`), and taking it from
 /// the files selected in `pane`, which the chip pressed was made one of.
 pub fn file_items(app: &App, tag: &str, pane: Option<PaneId>) -> Vec<MenuItem> {
-    let pane = app.pane_or_active(pane);
-    let selected = app
-        .workspace
-        .read()
-        .pane(pane)
-        .map_or(0, |p| p.selection.len());
+    let selected = selected(app, pane);
     let mut items = vec![
         item(
             "Show Its Files Here",
@@ -818,12 +831,68 @@ pub fn file_items(app: &App, tag: &str, pane: Option<PaneId>) -> Vec<MenuItem> {
     items
 }
 
+/// How many files are selected in `pane`, or the active one.
+fn selected(app: &App, pane: Option<PaneId>) -> usize {
+    let pane = app.pane_or_active(pane);
+    app.workspace
+        .read()
+        .pane(pane)
+        .map_or(0, |p| p.selection.len())
+}
+
+/// "One “Places” Tag at a Time": make a category hold one tag at a time
+/// (`tags.exclusive`), or several again (checked while it holds one).
+/// Offered for a category (a tag that tags are known under: `known`, or
+/// the menu's own `tags`) or one already holding one at a time; on a tag
+/// with nothing under it, it would change nothing. A pill or a tag's
+/// place offers its own tag. A `chip` shows a file's tag, a value: it
+/// offers the categories the tag is in, the outermost first (`Places`,
+/// then `Norway`, for `Places/Norway/Fjords`), and the tag itself only
+/// where tags are under it.
+pub fn one_at_a_time(app: &App, tags: &[String], chip: bool, known: &[String]) -> Vec<MenuItem> {
+    let [tag] = tags else {
+        return Vec::new();
+    };
+    let fields: Vec<String> = app.settings.get(TAG_EXCLUSIVE_SETTING).unwrap_or_default();
+    let mut candidates: Vec<&str> = if chip {
+        tag_lineage(tag).collect()
+    } else {
+        vec![tag.as_str()]
+    };
+    candidates.reverse();
+    let under = |category: &str| {
+        known
+            .iter()
+            .chain(tags)
+            .any(|k| tag_under(k, category).is_some_and(|rest| !rest.is_empty()))
+    };
+    candidates
+        .into_iter()
+        .filter_map(|category| {
+            let on = fields.iter().any(|f| same_tag(f, category));
+            (on || under(category)).then_some((category, on))
+        })
+        .zip(150..)
+        .map(|((category, on), order)| {
+            item(
+                &format!("One “{}” Tag at a Time", tag_leaf(category)),
+                Invocation::with_args(
+                    "tags.exclusive",
+                    &serde_json::json!({ "tag": category, "on": !on }),
+                ),
+                order,
+                if on { "check" } else { "tag" },
+            )
+        })
+        .collect()
+}
+
 /// The one menu of tags, wherever they are shown (a tag location's
 /// entries, a sidebar pill, a chip in Properties), answered from memory (the
 /// pins, the fields, the colors' names): pin or unpin them (not `on_pin`,
 /// a pin of the sidebar, which takes itself out), their color, put them in
-/// a category or out of it, one tag at a time, merge them, take them off
-/// every file (of `root` only, when given).
+/// a category or out of it, merge them, take them off every file (of
+/// `root` only, when given). Its callers add `one_at_a_time`.
 pub fn tag_items(
     app: &App,
     tags: &[String],
@@ -887,17 +956,6 @@ pub fn tag_items(
         ));
     }
     if let [tag] = tags {
-        let fields: Vec<String> = app.settings.get(TAG_EXCLUSIVE_SETTING).unwrap_or_default();
-        let on = fields.iter().any(|f| same_tag(f, tag));
-        items.push(item(
-            "One Tag at a Time",
-            Invocation::with_args(
-                "tags.exclusive",
-                &serde_json::json!({ "tag": tag, "on": !on }),
-            ),
-            150,
-            if on { "check" } else { "tag" },
-        ));
         let mut color = |title: &str, color: Option<&str>, order| {
             items.push(MenuItem {
                 submenu: Some("Color".into()),

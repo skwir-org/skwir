@@ -1190,12 +1190,16 @@ impl Plugin for TagsPlugin {
             )
         .data();
         }
+        let v = Arc::clone(&vocabulary);
         app.commands.register::<browse::TagMenuArgs, _>(
             ID,
             "tags.tag_menu",
             "A tag's menu",
             "The items of a tag's menu where it is shown: its chip in Properties (tags), its pill in the sidebar (location). Answers from memory",
-            |a, app| Ok(browse::tag_menu(app, a)),
+            move |a, app| {
+                let known = known(sidebar::pinned(app), v.known());
+                Ok(browse::tag_menu(app, &known, a))
+            },
         )
         .data();
         app.commands
@@ -1212,7 +1216,13 @@ impl Plugin for TagsPlugin {
             "tags.place_menu",
             "Tags' menu",
             "The context menu's items for the tags selected in a tag location. Answers from memory",
-            |a, app| Ok(browse::place_menu(app, a)),
+            {
+                let v = Arc::clone(&vocabulary);
+                move |a, app| {
+                    let known = known(sidebar::pinned(app), v.known());
+                    Ok(browse::place_menu(app, &known, a))
+                }
+            },
         )
         .data();
         let (colors, color_sidebar) = (lifetime.clone(), sidebar.clone());
@@ -1594,6 +1604,79 @@ mod tests {
             ["Show Its Files Here", "Open Tag", "Color: From Its Name"]
         );
         assert_eq!(alpha.last().unwrap(), "Remove From Selected Files");
+        assert!(
+            !alpha.iter().any(|title| title == "Edit Tags…"),
+            "the context menu has Tags… of its own"
+        );
+        // A chip's menu (its tag, with the files) edits them too.
+        let Outcome::Value(chip) = app
+            .dispatch(&Invocation::with_args(
+                "tags.tag_menu",
+                &serde_json::json!({ "tags": ["alpha"], "files": true, "pane": pane }),
+            ))
+            .unwrap()
+        else {
+            panic!("an answer")
+        };
+        let (_, chip) = &submenus(&chip)[0];
+        assert_eq!(chip[..3], ["Show Its Files Here", "Open Tag", "Edit Tags…"]);
+        // A tag with nothing under it holds no tags: no "One … at a Time".
+        assert!(!chip.iter().any(|title| title.starts_with("One ")));
+        // A chip's tag is a value: its categories may hold one at a time.
+        let one_at_a_time = |tag: &str| -> Vec<String> {
+            let Outcome::Value(menu) = app
+                .dispatch(&Invocation::with_args(
+                    "tags.tag_menu",
+                    &serde_json::json!({ "tags": [tag], "files": true, "pane": pane }),
+                ))
+                .unwrap()
+            else {
+                panic!("an answer")
+            };
+            submenus(&menu)[0]
+                .1
+                .iter()
+                .filter(|title| title.starts_with("One "))
+                .cloned()
+                .collect()
+        };
+        assert_eq!(
+            one_at_a_time("Places/Paris"),
+            ["One “Places” Tag at a Time"]
+        );
+        app.dispatch(&Invocation::with_args(
+            "tags.exclusive",
+            &serde_json::json!({ "tag": "Places", "on": true }),
+        ))
+        .unwrap();
+        let Outcome::Value(held) = app
+            .dispatch(&Invocation::with_args(
+                "tags.tag_menu",
+                &serde_json::json!({ "tags": ["Places/Paris"], "files": true, "pane": pane }),
+            ))
+            .unwrap()
+        else {
+            panic!("an answer")
+        };
+        let items: Vec<MenuItem> = serde_json::from_value(held["items"].clone()).unwrap();
+        let held = items
+            .iter()
+            .find(|item| item.title == "One “Places” Tag at a Time")
+            .unwrap();
+        assert_eq!(
+            held.icon.as_deref(),
+            Some("check"),
+            "checked while it holds one"
+        );
+        assert_eq!(
+            held.command.args["on"], false,
+            "chosen again, it holds several"
+        );
+        app.dispatch(&Invocation::with_args(
+            "tags.exclusive",
+            &serde_json::json!({ "tag": "Places", "on": false }),
+        ))
+        .unwrap();
         // Two tags of one name in two categories say their categories.
         app.dispatch(&Invocation::with_args(
             "select",

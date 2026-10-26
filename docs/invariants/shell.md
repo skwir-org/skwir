@@ -297,10 +297,13 @@ of bars, split or not.
   Properties) selects the entry as its row's right press does
   (`Shell::open_chip_menu`) and opens the tag's own menu, asked with
   `files` (`tags.tag_menu`): its files in the folder shown, its place,
-  taking it from the selected files, then what its pill's menu offers.
+  the tag editor of the selected files (Edit Tags…: where a file shows
+  its tags, its chips are the way to it), taking it from them, then
+  what its pill's menu offers.
   The keys reach the same: the context menu of selected files gives each
   of their tags (at most four, pinned first) a submenu, `Tag “draft”`
-  (`tags.files_menu`), with its color too. A chip in a side column or
+  (`tags.files_menu`), with its color too (the editor is the menu's own
+  Tags…). A chip in a side column or
   on another place's card is no entry of the pane: a press there opens
   nothing.
 

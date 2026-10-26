@@ -84,7 +84,11 @@ registered in `App::notes` by its plugin); all share one model,
   one tag at a time (`tags.exclusive`, `metadata::TAG_EXCLUSIVE_SETTING`)
   replaces its value on every edit (`metadata::with_exclusive`), takes
   one tag in the tag editor, shows as its own Properties row (`Status:
-  Draft`), and keeps the mark when renamed.
+  Draft`), and keeps the mark when renamed. A tag's menu offers it,
+  named ("One “Status” Tag at a Time", checked while on), only for a
+  category: a tag known with tags under it, or one already holding one
+  at a time. A chip shows a value, so its menu offers the categories its
+  tag is in, the outermost first (`browse::one_at_a_time`).
 
 ## The tags index
 
