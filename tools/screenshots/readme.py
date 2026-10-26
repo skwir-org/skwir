@@ -15,8 +15,8 @@ shadow, on transparency) and written to docs/images/screenshot-<theme>.png.
 
 Nothing personal can reach the pictures: HOME, the XDG folders and the
 runtime folder are under ~/.cache/skwir-tests/screenshots-*, and the
-sidebar's drives are hidden, since mountinfo lists the machine's real ones
-whatever HOME says. A file is selected before the capture, so the preview
+sidebar's drives and network mounts are hidden, since mountinfo lists the
+machine's real ones whatever HOME says. A file is selected before the capture, so the preview
 panel shows it rather than Properties (which says where the folder is
 and who owns it). Look at the result before committing it all the same.
 """
@@ -273,9 +273,10 @@ class Window:
         # The window as it was left is state, not a setting (ADR-056).
         (self.root / "state" / "skwir").mkdir(parents=True, exist_ok=True)
         (self.root / "state" / "skwir" / "state.toml").write_text(
-            '[ui.session]\nview = "grid"\nzoom = 96\npreview = true\n'
+            '[ui.session]\nview = "grid"\nzoom = 128\npreview = true\n'
             "preview_width = 480.0\nsidebar_width = 230.0\n\n"
-            '[ui.session.sidebar_sections]\nhidden = ["devices"]\n'
+            # The machine's drives and network mounts are its own.
+            '[ui.session.sidebar_sections]\nhidden = ["devices", "network"]\n'
         )
         dirs = "".join(f"  <dir>{d}</dir>\n" for d in self.tools.fonts)
         (self.root / "fonts.conf").write_text(
