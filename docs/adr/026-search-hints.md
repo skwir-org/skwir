@@ -2,7 +2,8 @@
 
 Status: accepted, 2026-09-30. Built: `tag:` searches hinted by Baloo
 and by the tags plugin's index. Amended by ADR-050 (2026-10-10, not
-built): an index that proves its coverage answers.
+built): an index that proves its coverage answers; and by ADR-094
+(2026-10-26): hints gain a proof and a score for terms that rank.
 
 ## Context
 

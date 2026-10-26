@@ -4929,6 +4929,86 @@ lines it counted, so the label showed one.
 - **Not checked:** `just release-check`, `check-cross` (nothing
   system-specific changed).
 
+### Indexing and AI: the design (2026-10-26, ADR-089 to ADR-095)
+
+The user asked for a review of the project and a brainstorm on an
+indexing layer (names, full-text, metadata; skwird's preliminary work)
+and AI features on top of it (small local models where they serve,
+larger or remote ones when needed), for enriching metadata, organizing
+files and finding them, as light on the machine as possible. Then for
+the ground work before any code: a design note, draft ADRs, the plan's
+steps. Nothing was built and nothing was measured anew.
+
+- **Written:** `docs/indexing-and-ai.md` (the layers, the core
+  contracts `harvest` and `models`, every plugin's keys, commands,
+  settings and cache namespaces, the helper's protocol and sandbox,
+  model packs and candidate models, freshness, pacing, privacy, the
+  user's view, what to measure first, open questions, what skwird's
+  design must take in); ADR-089 to ADR-095 as drafts;
+  `docs/invariants/indexes.md` and `docs/invariants/models.md`; the
+  plan's "Indexing and AI (Phase 7)" section with steps A to H, each
+  with tests and a "done when"; the ADR index and the status lines of
+  ADR-003, 023, 026 and 050; `AGENTS.md`'s area table; `docs/README.md`.
+- **Read for it:** the plan; ADR-000, 003, 023, 026, 027, 043, 044,
+  050, 085; the commands, notes, locations and settings invariants; the
+  query plugin (`lang.rs`, `provider.rs`, `similar.rs`, `narrow.rs`),
+  the tags index, Usage, checksums, `fields.rs`, `hints.rs`,
+  `cache.rs`, `thumbs.rs`, `metadata.rs`, the review, the plan and
+  step types, `line_channel.rs`, `secrets.rs`, the trigram bench;
+  skwird's `README.md`, `docs/DESIGN.md`, `docs/PLAN.md` and
+  `AGENTS.md`. On the reference machine: Ollama (one cloud model
+  pulled), whisper-cli, exiftool, pdftotext, pandoc and ffmpeg
+  installed; no tesseract, no desktop index, no plocate; 20 threads,
+  30 GB.
+- **Measurements reused,** none new: the walk and stat of the reference
+  home (5.6 s), the `content:` scan (34 to 67 s), the trigram index
+  (11 % of the text, 5 to 175× faster, 2026-10-10), skwird's check
+  (52 ms warm, 1.9 s cold for 652,336 folders, 2026-10-11), the tags
+  index's count (0.4 ms), the home's 5.8 M entries.
+- **Decided, as drafts for the user to accept:** content stays out of
+  skwird and derived indexes are harvested in Skwir's own run, never by
+  a daemon or as root, indexing while closed only by the system's
+  service manager (ADR-089); `content:` by a trigram index of what a
+  file reads as text, documents included, Tantivy dropped (ADR-090);
+  derived facts as fields asked ahead, two keys, learned from previews
+  (ADR-091); scope and pace with budgets, off by default (ADR-092);
+  models by task from providers, the system's own first, a sandboxed
+  helper, model packs as the one download, what leaves the machine
+  said and logged (ADR-093); vectors in two tiers with `about:` and
+  `like:` (ADR-094); suggestions as Model provenance until confirmed,
+  steps with reasons that can be left out, organizing by prototypes
+  (ADR-095).
+- **For skwird's own session** (`docs/indexing-and-ai.md`, last
+  section): its open question 4 answered no; the `changes` journal
+  earlier in its plan, with identity and kind; a query by kinds, size
+  and time under a root; the same four proof words.
+- **Provisional until measured:** the candidate models and their sizes,
+  the pacing thresholds (two seconds, the load average, the batch of
+  64 files or 32 MB), the caps (`extract.mb` 512, `fulltext.mb` 256,
+  `semantic.mb` 256), `organize.threshold` 0.6, and whether the dense
+  tier reranks on CPU in time; `skwir-bench embed`, `harvest` and
+  `images` are the steps that decide them.
+- **Consulted on the web,** for the state of things, nothing copied:
+  model2vec's static embeddings and sizes, fastembed-rs's models
+  (EmbeddingGemma quantized among them), ocrs's scope (Latin, early),
+  GNOME's LocalSearch plan to widen its index for GNOME 50, Windows'
+  semantic indexing on Copilot+ PCs, SmolVLM's sizes, the llama.cpp
+  Rust bindings.
+- **Not done:** no commit; no bench run; no model tried on this
+  machine; skwird's documents untouched (its session's work).
+- **Accepted** by the user the same day, all six choices, with one
+  addition: indexing while closed is turned on in Settings, a switch
+  on the Index page that writes and removes the service manager's
+  entry (ADR-089, points 3 and 4: the entry stopped before it is
+  removed, taken back when the manager fails, gone with the plugin; the
+  windowless run paced by the session's idle signal and reading
+  nothing without one; one harvest at a time). The seven records'
+  status is accepted; the trigram choice was explained at the user's
+  asking, and ADR-090 now says what a common word costs; the "zone
+  bitmaps" the format named, which nothing defined and no query needs
+  (a segment's sorted trigram table is searched directly), were taken
+  out.
+
 ### Tags named where there is room, and acted on where they are shown (2026-10-26)
 
 The grid showed a file's tags as three dots on its picture's corner,

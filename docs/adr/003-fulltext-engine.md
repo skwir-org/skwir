@@ -1,7 +1,8 @@
 # ADR-003: Embedded full-text search engine
 
-Status: accepted, 2026-09-19. Amended by ADR-050 (skwird). Not built: the
-`fulltext` plugin is planned for Phase 7.
+Status: accepted, 2026-09-19. Amended by ADR-050 (skwird). Revised by
+ADR-090 (2026-10-26): a trigram index of what a file reads as text
+answers `content:`; Tantivy is dropped. Not built.
 
 ## Context
 

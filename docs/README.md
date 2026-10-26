@@ -28,4 +28,7 @@
   [HELP-WANTED.md](HELP-WANTED.md): helping with macOS and Windows.
 - Design records and measurements: [the preview frame](preview-frame.md),
   [PDF engines compared](pdf-comparison.md),
-  [video playback](video-playback.md).
+  [video playback](video-playback.md),
+  [indexing and AI](indexing-and-ai.md) (a design, not built: the
+  harvest, the extract provider, trigrams, vectors, model providers,
+  suggestions and organizing).

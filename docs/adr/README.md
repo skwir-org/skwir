@@ -15,7 +15,7 @@ them by topic.
 | [000](000-principles-and-budgets.md) | Principles and performance budgets | binding; revised by 002, 033, 049 |
 | [001](001-ui-toolkit.md) | gpui is the UI toolkit | built (vendored, patched); pin revised by 064 |
 | [002](002-ui-budgets-revisited.md) | UI budgets revisited after Phase 2 | in force; amended by 033 |
-| [003](003-fulltext-engine.md) | An embedded full-text search engine | not built (Phase 7); amended by 050 |
+| [003](003-fulltext-engine.md) | An embedded full-text search engine | not built; amended by 050; revised by 090: trigrams, Tantivy dropped |
 | [003](003-preview-providers.md) | Preview providers and external document renderers | built; PDF engine superseded by 004, 005 |
 | [004](004-pdfium-reader.md) | PDFium as the document reader | built; amended by 014, 015, 041 |
 | [005](005-poppler-reader.md) | Poppler behind the same reader protocol | built |
@@ -36,10 +36,10 @@ them by topic.
 | [020](020-maps.md) | Maps, their backgrounds, the first network requests | built |
 | [021](021-remote-file-systems.md) | Remote file systems come from installed tools | direction; revised by 077 |
 | [022](022-maps-later.md) | Search by place, writing locations, offline names and backgrounds | parts 1–3 built; part 4 partly |
-| [023](023-fields-on-demand.md) | Fields read on demand | built |
+| [023](023-fields-on-demand.md) | Fields read on demand | built; extended by 091 |
 | [024](024-key-schemes-and-the-users-keys.md) | Key schemes and the user's keys, in layers | built |
 | [025](025-folders-opened-in-place.md) | Folders opened in place | built; revised by 032 |
-| [026](026-search-hints.md) | Indexes hint, the walk answers | built; amended by 050 |
+| [026](026-search-hints.md) | Indexes hint, the walk answers | built; amended by 050, and by 094: a proof and a score |
 | [027](027-notes-stores.md) | Notes read from every store, written where the user says | built |
 | [028](028-companion-files.md) | Files beside a file go where it goes | built, but for orphan matching |
 | [029](029-links-in-text.md) | Links found in text and in the terminal | built |
@@ -63,7 +63,7 @@ them by topic.
 | [047](047-previews-from-outside-are-files-skwir-shows.md) | A preview from outside is a file Skwir shows | built |
 | [048](048-archives-are-extracted-by-libarchive-in-its-sandbox.md) | Archives extracted by libarchive, sandboxed, as a step | built |
 | [049](049-a-file-and-its-names.md) | A file and its names are two identities | built |
-| [050](050-names-are-indexed-by-skwird.md) | Names are indexed by skwird | plocate's answer dated (2026-10-20); skwird and coverage not built |
+| [050](050-names-are-indexed-by-skwird.md) | Names are indexed by skwird | plocate's answer dated (2026-10-20); skwird and coverage not built; amended by 089 |
 | [051](051-text-is-read-where-it-is-shown.md) | Text is read where it is shown | built |
 | [052](052-portable-appimage.md) | A portable AppImage built in a distribution root, and its tree as a tarball | built and tried on x86-64 Linux |
 | [053](053-local-releases-minimal-ci.md) | Local Linux releases; minimal routine GitHub CI | implemented; upload tested with a fake GitHub CLI |
@@ -102,3 +102,10 @@ them by topic.
 | [086](086-servers-configured-in-the-tools-own-configurations.md) | Servers configured from Skwir in the tools' own configurations: rclone's remotes added, edited, signed in, tested and removed through rclone's remote control on a private socket, in forms the plugin describes and the window draws (`App::fill`); secrets typed by the user alone, never an argument; the configuration's encryption offered, its password in the keyring; amended 2026-10-24: a server added by its address kept in Skwir's list or KDE's network folders, in the Network section, never a bookmark; Settings lists every server | built and checked on Linux against servers, configurations, keyrings and a browser of the tests' own |
 | [087](087-connect-at-login-by-the-system-s-service-manager.md) | A remote connects at login by the system's own service manager, never a daemon of Skwir's: a systemd user unit, a launch agent, a logon task running Skwir's own mount command at Skwir's own mount point; only what asks nothing at login; tests never touch the user's manager | built and checked on Linux (systemd-analyze, the unit's command run, a stand-in systemctl; and under the user's own systemd, which amended it on 2026-10-25); macOS and Windows compiled, their files tested, Windows' rclone task's remote control under Wine (amended 2026-10-25) |
 | [088](088-a-volume-s-passphrase-kept-in-the-keyring-or-the-system-s.md) | An encrypted volume's passphrase kept in the desktop's keyring when the user asks (the question's Remember, with what it means), once it unlocked the volume, keyed by the container's UUID; the keyring answers first (Skwir's own where noted, then GVfs's, read only); asked again while refused; the user's alone (`places.open_locked`, user-only); Forget Passphrase; a Mac's locked APFS volumes unlocked through `diskutil`, the Keychain remembering; Windows' BitLocker drives through Windows' own dialog, which remembers; amends ADR-082's first decision | built and checked on Linux (stand-in udisks, a private GNOME Keyring for GVfs's); macOS and Windows compiled |
+| [089](089-derived-indexes-are-harvested-in-skwir-s-own-run.md) | Derived indexes (content, facts, vectors) are per user, harvested in Skwir's own run by a core lane and helpers that end with it, never by a daemon or as root; content stays out of skwird, whose journal keeps them current; indexing while closed only by the system's service manager, turned on in Settings; freshness without skwird by the check | not built (accepted 2026-10-26; `docs/indexing-and-ai.md`) |
+| [090](090-content-is-answered-by-a-trigram-index.md) | `content:` is answered by a trigram index of what a file reads as text, a document's extracted text included, with a proof of coverage; the scan stays the reference and extracts on the fly where nothing covers; Tantivy dropped (revises 003) | not built; the index measured 2026-10-10 |
+| [091](091-derived-facts-are-fields-asked-ahead.md) | Derived facts (text, hash, perceptual hash, OCR, transcript, facts) are fields of an `extract` provider asked ahead of time by the harvest, read once per version by the previews' readers, keyed by identity and by content hash, taught by previews and thumbnails (`Fields::teach`); failures retryable, never empty | not built |
+| [092](092-the-harvest-is-scoped-and-yields.md) | The harvest is scoped (the XDG folders, exclusions by name and marker, never private, remote or unasked removable) and yields (no input for two seconds, load, battery, memory pressure; idle class; one batch; `fadvise`); off by default; each index capped; budgets including the pause after input and idle PSS with AI on | not built |
+| [093](093-models-from-providers-the-system-s-own-first.md) | Models asked by task through core providers, the system's own first (Apple's and Windows' frameworks), then installed (Ollama, programs), Skwir's sandboxed helper, a remote by opt-in per task with an indicator and a log; model packs in the data folders, the one download the user's act (amends 020); prompts treat files as data | not built |
+| [094](094-vectors-in-two-tiers.md) | Vectors in two tiers (a static model for everything in process, a dense model learned where used), pictures from thumbnails, `about:` and `like:`, Find Similar by meaning and looks, an int8 memory-mapped index per root, brute force until measured past a million; hints gain a proof and a score (amends 026) | not built; models decided by `skwir-bench embed` |
+| [095](095-suggestions-and-organizing-end-in-reviewed-plans.md) | Suggestions are fields with Model provenance shown as dashed pills until confirmed, then written as the user's through the stores; a suggestion for many files is a plan; steps carry a reason and a confidence and can be left out in the review; organizing by prototypes without a model, by groups, or by tags; `query.ask` compiles words to pills; the agent last; cleaners deterministic | not built |

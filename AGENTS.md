@@ -419,6 +419,8 @@ Binding. Read the file for the area before working in it.
 | [media.md](docs/invariants/media.md) | audio and video: GStreamer worker, frame slots, generations, fullscreen controls, the atlas |
 | [accessibility.md](docs/invariants/accessibility.md) | what a screen reader hears: roles and names, built only while one listens, focus and the active descendant, lists, what is exposed, `just a11y-check` |
 | [remote.md](docs/invariants/remote.md) | remote folders: reach and lanes, what differs on a network (thumbnails, refresh, walks, trash, references), addresses and their redirect, connectors, credentials, testing against servers on this machine |
+| [indexes.md](docs/invariants/indexes.md) | derived indexes (designed, not built): every index an accelerator, coverage never overstated, scope, one read per file, pace, freshness, formats |
+| [models.md](docs/invariants/models.md) | models (designed, not built): providers by task, the helper, what leaves the machine, answers are data, suggestions, plans from models |
 
 ## Layout
 

@@ -1,7 +1,8 @@
 # ADR-023: Fields read on demand
 
 Status: accepted, 2026-09-27. Built with the first field, a file's position
-(ADR-022, part 1).
+(ADR-022, part 1). Extended by ADR-091 (2026-10-26): derived facts are
+fields asked ahead of time by a harvest, and `Fields::teach`.
 
 ## Context
 

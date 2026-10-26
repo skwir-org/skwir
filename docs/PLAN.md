@@ -93,7 +93,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; A, B and D wait for skwird (ADR-050) | — |
 | [Remote folders](#remote-folders) | A to F built and checked on Linux 2026-10-21 (ADR-077); G's list for the night of 2026-10-23 built (ADR-080 amended, ADR-084), what is left in G | — |
 | [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E planned (ADR-071, ADR-073) | — |
-| [Phase 7: AI](#phase-7-ai) | planned, after Release 0.1 | ~10 weeks |
+| [Indexing and AI (Phase 7)](#indexing-and-ai-phase-7) | designed and accepted 2026-10-26 (ADR-089 to ADR-095, `docs/indexing-and-ai.md`); nothing built | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
 
 ---
@@ -160,8 +160,8 @@ Gathered on 2026-10-20 from the notes of this plan and of
 may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
-**Planned** (in the sections below): Phase 7 (AI); skwird's steps
-(ADR-050); the desktop's colors on macOS and Windows (step E); Phase 5b
+**Planned** (in the sections below): Indexing and AI (Phase 7, designed
+2026-10-26: ADR-089 to ADR-095); skwird's steps (ADR-050); the desktop's colors on macOS and Windows (step E); Phase 5b
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
@@ -1266,7 +1266,9 @@ after Release 0.1 and after skwird's phase 1.
   footer; a real system database (none on the reference machine).
 - **D. Then, each decided on its own:** the address field searching as
   one types, Usage of a tree from skwird's folder totals, "recently
-  changed", the tags index's checks.
+  changed", the tags index's checks; the harvest's enumeration and its
+  journal (ADR-089, "Indexing and AI" below), which step A's proof
+  words serve too.
 
 ---
 
@@ -1546,58 +1548,117 @@ protocol is a scheme a connector maps, or a connector.
 
 ---
 
-## Phase 7: AI
+## Indexing and AI (Phase 7)
 
-**Goal:** agents that organize, rename, clean, tag and summarize, always
-ending in a plan the user reviews.
+ADR-089 to ADR-095, accepted 2026-10-26 after a review with the user:
+the design is `docs/indexing-and-ai.md` (contracts, names, formats,
+reasons), the binding rules `docs/invariants/indexes.md` and
+`docs/invariants/models.md`. Nothing is built. It waits for Release 0.1
+as before (the user's choice, 2026-10-07); skwird's phase 1 is not a
+prerequisite: without it the harvest reconciles by the check.
 
-**Scope:**
-1. `extract`: a content extraction provider (text from PDFs and
-   documents, OCR, EXIF, audio and video metadata), cached by content
-   hash, using installed tools where present. Helps plain search at
-   once.
-2. `cleaners`: deterministic: exact duplicates (hash), near-duplicate
-   images (perceptual hash), empty folders, stale downloads. No model.
-   Each produces a plan.
-3. `fulltext`: a keyword index on Tantivy (ADR-003), embedded, no
-   service; one index per subtree, built only when asked, refreshed
-   incrementally by mtime and content hash, in the deletable cache,
-   pausable. It answers `content:` when an index covers the query's
-   root; otherwise the scan runs, so the index only accelerates. Text
-   comes from `extract`. System indexes (Tracker, Baloo, Recoll,
-   Spotlight, Windows Search) and a running Meilisearch are optional
-   providers for the same term, never required.
-4. `models`: a `ModelProvider` trait (chat with tool calling,
-   embeddings, image understanding, transcription): a local runtime
-   (lazy-loaded), Ollama when detected, remote APIs only by explicit
-   opt-in with a persistent "leaves your machine" indicator. Zero idle
-   cost when disabled.
-5. `models-small`: embeddings, CLIP-style image tagging and search,
-   OCR, a document classifier, on CPU or iGPU. They do the volume; the
-   LLM orchestrates.
-6. `semantic`: a scoped, on-demand, incremental subtree index in the
-   cache, visible and pausable. Natural language becomes a
-   `LocationProvider` in the same address bar.
-7. `agent`: the LLM plugin. Tools are the command registry; its output
-   is a `Plan`; it never executes. Prompts treat file names and contents
-   as untrusted. Flows: organize this folder, rename these consistently,
-   what is safe to delete here, tag the selection, summarize in the
-   preview.
-8. Metadata from models carries `Model(name, confidence)` provenance and
-   shows as suggestions until confirmed, then becomes User provenance
-   written to xattrs.
-9. An MCP client, so the agent can use external tools the user
-   configures.
+**Goal:** searches that answer from an index where it proves it is
+current and say what they have not read; files enriched, organized and
+found with models that stay local and light by default; every change a
+plan the user reviews; the window as light as before with every AI
+plugin off.
 
-**Done when:** "organize this folder" on a messy Downloads produces a
-correct, undoable plan using only local models, and disabling every AI
-plugin returns idle memory to the Phase 2 baseline.
+**Steps**, each useful alone and each ending with its measurements in
+`docs/STATUS-LOG.md`:
 
-**Status:** planned; waits for Release 0.1 (the user's choice,
-2026-10-07). Measured ahead, nothing built: a trigram index of what
-`content:` reads, timed against the scan (`skwir-bench trigram`,
-2026-10-10; ADR-050's context has the numbers). The permission layer it
-needs exists (Phase 6, ADR-044).
+- **A. The extract provider, and `content:` over documents** (ADR-091;
+  ADR-090's second point). The `extract` plugin as a `FieldProvider` for
+  `extract.text`, `extract.hash`, `extract.phash` and `extract.facts`,
+  read by the previews' readers under their bounds; the scan extracts a
+  document on the fly where nothing covers it; `Fields::teach` from the
+  previews and the thumbnail service; Properties' "In the index" row.
+  No index, no model. Tests: a generated PDF and an ODT found by a word
+  inside them, the scan and the preview reading alike; a special file,
+  a link's own entry, a private file and a file past `extract.max_mb`
+  never read; a failed read retried, never kept as empty; a file copied
+  reuses its facts by hash. *Done when:* the tests pass, `tags_fill_us`
+  and `just idle-pss` hold, and `extract_text_us` is measured and set.
+- **B. The harvest and the trigram index** (ADR-089, ADR-090, ADR-092).
+  Core `harvest` (scope, pace, the check, the proof words, indexers),
+  `App::last_input`, the Index page and its settings,
+  `extract.status`, `extract.build`, `extract.pause`, `extract.resume`,
+  `extract.forget`, `skwir index` and the switch that writes its
+  service manager's entry (`extract.while_closed`, ADR-087's shape); the `fulltext` plugin; hints with a proof (ADR-050's step A,
+  which skwird's provider will use too); the footer's words. Tests:
+  each way coverage is lost (`docs/invariants/indexes.md`, "Tests");
+  the bench's queries through the index and the scan compared; the
+  harvest pausing within one batch of a simulated input; a private
+  folder added mid-harvest not read; an index deleted mid-search
+  answered by the scan; the switch writing the entry with a
+  stand-in manager, stopping it before removing it, and going back off
+  when the manager fails; the entry's command run; a windowless run
+  reading nothing without an idle signal and ending when a window
+  opens. *Done when:* a `content:` search under a checked root answers
+  without scanning and says as of when and how many files are not
+  read; `just idle-pss` with `fulltext` on and idle equals the
+  baseline; `harvest_yield_ms`, `trigram_segment_us` and
+  `trigram_query_us` are set; `skwir-bench harvest` reports.
+- **C. Cleaners, and steps that can be left out** (ADR-095, points 3 and
+  7). `StepMark` in the core, the review's reasons, bars and checkboxes,
+  a plan applied as its kept steps; `cleaners.duplicates`,
+  `cleaners.similar_pictures`, `cleaners.empty_folders`,
+  `cleaners.stale_downloads`. Tests: hard links are not duplicates; a
+  step left out is not applied and not in the undo; undo restores the
+  tree. *Done when:* a synthetic Downloads with duplicates, near-dupes
+  and empties yields a correct, undoable plan whose steps say why.
+- **D. Vectors over names, measured first** (ADR-094). `skwir-bench
+  embed` on a bilingual synthetic set decides the static model; the
+  `semantic` plugin's static tier over names and paths, `about:` and
+  `like:`, Find Similar by meaning, `keys::SCORE`, `hints::scored` and
+  `hints::coverage`; then text chunks of `extract.text`. *Done when:* a
+  name search by meaning across French and English answers from a scope
+  of 100,000 names under its budget and says as of when and what is not
+  read; `static_embed_us` and `vector_search_us` are set.
+- **E. Models and the helper** (ADR-093). Core `models`; the `models`
+  plugin with the `ollama`, `installed`, `helper` and `remote` providers
+  (`system` compiled only); `skwir-infer-worker` with `--probe` and
+  `--build`, packaged as an optional helper; model packs, the catalogue,
+  `models.fetch`; the indicator, `models.log`, the Models page; the
+  dense tier of D through it. Tests: a stand-in provider on a socket of
+  the test's own; an agent's call that would leave asked first; a
+  private path refused; the helper ending after idle; a prompt built
+  from a file named like an instruction changing nothing. *Done when:*
+  the dense rerank improves the bench's recall and stays under a second
+  for a hundred chunks on the reference machine, or is kept for what
+  was embedded, and the record says which; `just idle-pss` with `models`
+  on and idle equals the baseline; `just deny` and the notices are
+  green.
+- **F. Pictures** (ADR-094, point 3; ADR-091, point 6). Thumbnails
+  embedded by the image tower, `about:` finding pictures by words,
+  `like:` by looks, `semantic.labels`, `extract.ocr` through the OCR
+  provider, off by default; `skwir-bench images`. *Done when:* a
+  synthetic set of shapes, colours and rendered words is found by words
+  and labelled at a measured precision, and `idle-pss` holds.
+- **G. Suggestions, organizing, the address** (ADR-095). `suggest`
+  (pills, `suggest.tags`, `suggest.describe`, `suggest.peek`,
+  `suggested:`), `organize` (`organize.into`, `organize.propose` with
+  the Groups facet, `organize.tags`), `query.ask` (rules without a
+  provider, the model with one, always the parser's pills). *Done when:*
+  "organize this folder" on a synthetic messy Downloads produces a
+  correct, undoable plan with no language model, each step saying why;
+  with one, the groups are named; a plan of suggestions undone restores
+  every store's bytes.
+- **H. The agent plugin, and speech** (ADR-095, point 6; ADR-091,
+  point 6): last, once the flows above stand.
+
+**Done when:** A to G built and checked on Linux; "organize this folder"
+on a messy Downloads produces a correct, undoable plan using local
+models only; disabling every AI plugin returns idle memory to the
+baseline; the macOS and Windows providers compiled (`docs/PORTING.md`).
+
+**Status:** designed 2026-10-26; nothing built. Measured ahead: the
+trigram index (`skwir-bench trigram`, 2026-10-10; ADR-050's context has
+the numbers). Deviations from the Phase 7 plan of 2026-09-18, each
+recorded in its ADR: Tantivy dropped for trigrams (ADR-090);
+`models-small` folded into the `semantic` plugin and the helper
+(ADR-093, ADR-094); natural language in the address is `query.ask` over
+the query language, not a `LocationProvider` of its own (ADR-095); the
+permission layer it needs exists (Phase 6, ADR-044).
 
 ---
 

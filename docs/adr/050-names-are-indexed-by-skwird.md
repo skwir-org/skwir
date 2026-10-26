@@ -4,7 +4,8 @@ Status: accepted, 2026-10-10. Built in part: a search that plocate
 answers says as of when (2026-10-20, amendment below); skwird, coverage
 and its provider are not built. Amends ADR-026 (an index that proves its
 coverage answers) and the last point of ADR-003 (Skwir may start skwird
-for the session).
+for the session). Amended by ADR-089 (2026-10-26): content stays out of
+skwird; its journal feeds Skwir's derived indexes.
 
 ## Context
 
