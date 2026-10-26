@@ -263,11 +263,6 @@ above; each with the design its fixer proposed):
   binds again.
 - Menus (2026-10-05): the current item is marked two ways, a check for
   an option, a highlight for where one is.
-- Menus (2026-10-26): the context menu does not scroll, so one taller
-  than the window is cut at its edge and the keyboard's highlight there
-  is not followed (a file of several tags in an 800-point window, its
-  four tag submenus added); the View menu scrolls. A chip's tooltip
-  stays over the menu its right press opened until the pointer moves.
 - Accessibility (ADR-065): never listened to with Orca speaking;
   AccessKit's Linux adapter passes no tree level or expanded state; a
   scanned page's text (`docs/invariants/accessibility.md`).

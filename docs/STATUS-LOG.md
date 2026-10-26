@@ -5021,3 +5021,51 @@ screenshots).
 - **README:** the screenshots made again at the default zoom (128), so
   tags show their names; `tools/screenshots/readme.py` hides the network
   section too, since mountinfo lists the machine's own mounts there.
+
+### The context menu within the window, and no tooltip over it (2026-10-26)
+
+The two things the tag display night left in PLAN.md's "What is left",
+fixed the same day at the user's request.
+
+- **A menu taller than the window** ran past its foot: a picture with
+  seven tags, its four tag submenus added, in an 800-point window, lost
+  its last submenus and Properties, and the keyboard's highlight went on
+  out of sight. The menu now takes at most the window's height less its
+  margins, measured in prepaint (`PopoverAnchor::popup_at` for the
+  pointer's, `popup_first` for the keyboard's: `Room::Window`; a
+  toolbar's popup still shrinks to the room on its button's side,
+  `Room::Side`), and is moved to stay in the window as before. Its rows
+  scroll inside its padding, and the row the keyboard reaches is brought
+  into view in the frame that draws it (`MenuState::reveal`:
+  `ScrollHandle::scroll_to_item`, honoured in the rows' prepaint, the
+  separators counted among their children by `menu::child_of`). The
+  scrolling list has no role, so a screen reader still hears the items
+  as the menu's own.
+- **A chip's tooltip over its menu:** a press cleared a tooltip already
+  shown, but not one still waiting for its half second. A quick right
+  press on a chip opened the menu, and the chip's tooltip then showed
+  over its first item and stayed until the pointer moved: gpui checks a
+  shown tooltip's hover in prepaint by its element's bounds alone, which
+  know nothing of the menu over it (its own TODO). gpui patch 0038 makes
+  the press drop a waiting tooltip too (`cancel_waiting_tooltip`); the
+  next move over the element waits again.
+- **Checked:** a unit test of the separators and the rows' children
+  (`the_keyboards_row_is_found_among_the_separators`), and
+  `tooltip_waiting_to_show_is_cancelled_by_a_press` beside upstream's
+  tooltip tests, which `just gpui-check` now runs. In a window (debug
+  build, Xvfb, the night's synthetic folder), light and dark: the quick
+  right press on a chip showed the tooltip over the menu before the
+  patch and none after; a tooltip still shows on hover, and one already
+  shown still goes at the press; the seven-tag picture's menu from the
+  pointer (it stops at the window's margin, and the wheel reaches
+  Properties) and from the Menu key (End shows Properties, Up keeps the
+  highlight in sight, Home shows the top with its padding as when it
+  opened; a tag's submenu opened with Right and walked down to its last
+  color). The gpui test fails without the patch (the tooltip shows) and
+  passes with it.
+- **Checked, the whole:** `just release-check` passed on the final tree,
+  in a memory-capped scope of its own: fmt, clippy, `check-cross`, deny,
+  notices, every test (2254, 28 skipped), smoke, a11y (the context
+  menu's first item said as focused, within "Context menu"), Poppler,
+  MuPDF, DjVuLibre and djvu-rs, the bench's budgets, the release tools;
+  `just gpui-check` too (gpui 110 tests, gpui_wgpu 49, gpui_linux 5).
