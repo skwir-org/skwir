@@ -613,7 +613,7 @@ pub(crate) fn remote_of(top: &Address) -> anyhow::Result<String> {
             }
             "ftp"
         }
-        Scheme::Nfs | Scheme::Afp => {
+        Scheme::Nfs | Scheme::Afp | Scheme::Mtp | Scheme::Gphoto2 | Scheme::Afc => {
             anyhow::bail!("rclone does not open {} addresses", top.scheme.title())
         }
     };
@@ -649,7 +649,14 @@ fn password_variable(scheme: Scheme) -> Option<&'static str> {
         Scheme::Smb => Some("RCLONE_SMB_PASS"),
         Scheme::Dav | Scheme::Davs => Some("RCLONE_WEBDAV_PASS"),
         Scheme::Ftp | Scheme::Ftps => Some("RCLONE_FTP_PASS"),
-        Scheme::Sftp | Scheme::Nfs | Scheme::Afp | Scheme::Rclone | Scheme::S3 => None,
+        Scheme::Sftp
+        | Scheme::Nfs
+        | Scheme::Afp
+        | Scheme::Rclone
+        | Scheme::S3
+        | Scheme::Mtp
+        | Scheme::Gphoto2
+        | Scheme::Afc => None,
     }
 }
 

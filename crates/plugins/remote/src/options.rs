@@ -51,8 +51,9 @@ const CACHES: [(&str, &str); 4] = [
 ];
 
 /// Whether the tools that mount `scheme` take options: rclone and sshfs.
+/// Never a device's, which GVfs alone mounts.
 pub fn takes_options(scheme: Scheme) -> bool {
-    !matches!(scheme, Scheme::Nfs | Scheme::Afp)
+    !matches!(scheme, Scheme::Nfs | Scheme::Afp) && scheme.device().is_none()
 }
 
 /// The options chosen for `top`'s server.

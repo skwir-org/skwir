@@ -88,6 +88,21 @@ impl Device {
     }
 }
 
+/// A device plugged in that a connector's program offers to mount (a phone,
+/// a camera), mounted or not (ADR-096): listed among the sidebar's devices,
+/// mounted once opened.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Offered {
+    /// Where it opens: the top of its mount, once mounted.
+    pub address: Address,
+    /// What its program calls it ("Example Phone"): mounted or not.
+    pub name: String,
+    pub device: Device,
+    /// Its node on this machine (`/dev/bus/usb/001/004`), which a program
+    /// using the device holds open: who holds it is found there.
+    pub node: Option<PathBuf>,
+}
+
 /// A server the user can connect to, from the tool's configuration (an
 /// rclone remote, a network entry of fstab, one of Dolphin's places) or
 /// one added by its address (`servers`).
@@ -152,6 +167,17 @@ pub trait Connector: Send + Sync {
         recognised: &Recognised,
         cancel: &CancelToken,
     ) -> anyhow::Result<()>;
+    /// Follow the devices plugged in that its program would mount (a phone,
+    /// a camera, ADR-096): `told` what it offers at once, then again each
+    /// time that, or one of its mounts, may have changed, until `cancel`.
+    /// On a thread of its own; `false` where it follows none.
+    fn follow_devices(
+        &self,
+        _told: Arc<dyn Fn(Vec<Offered>) + Send + Sync>,
+        _cancel: &CancelToken,
+    ) -> bool {
+        false
+    }
     /// The servers its configuration names. Reads files and may start the
     /// tool: on a worker.
     fn servers(&self, _cancel: &CancelToken) -> Vec<Server> {

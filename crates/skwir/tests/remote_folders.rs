@@ -2509,6 +2509,119 @@ fn gvfs_gphoto2_takes_by_gio_up_and_within() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A phone GVfs's monitor offers (ADR-096), as the window has it: listed
+/// among the devices by its volume's name before it is mounted, opened at
+/// its address into its mount (the same place, now with Eject), let go of
+/// by Eject (offered again), and said held by GVfs's camera program while
+/// that holds it. Only where a script runs a GVfs of its own with a phone
+/// plugged in and its USB port in `SKWIR_TEST_GVFS_PHONE` (`just
+/// mtp-check`, which offers the phone): writes nothing to it. Skipped
+/// elsewhere.
+#[test]
+fn gvfs_offers_a_phone_opens_it_and_lets_go_of_it() {
+    let Some(port) = std::env::var_os("SKWIR_TEST_GVFS_PHONE") else {
+        eprintln!("skipped: no phone offered by a script's GVfs");
+        return;
+    };
+    let port = port.to_string_lossy().into_owned();
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").expect("the bridge's runtime folder");
+    let gvfs: Arc<dyn Connector> = Arc::new(skwir_plugin_remote::gvfs::Gvfs {
+        runtime: Some(PathBuf::from(runtime)),
+        ..Default::default()
+    });
+    let remotes = Remotes::with(vec![gvfs]);
+    let base = fixture("gvfs-phone");
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    app.plugins
+        .add(Arc::new(RemotePlugin::with(remotes.clone())), &app);
+    let phone = || {
+        app.registry
+            .places
+            .all()
+            .into_iter()
+            .find(|p| p.group == "devices" && p.icon.as_deref() == Some("phone"))
+    };
+
+    // Offered, not mounted: at its address, by its volume's name.
+    until(&app, 20, "the phone offered", || {
+        phone().is_some_and(|p| &*p.location.scheme == "mtp")
+    });
+    let offered = phone().unwrap();
+    let address = Address::of_location(&offered.location).unwrap();
+    assert!(offered.unavailable.is_some() && offered.eject.is_none());
+    assert_ne!(
+        offered.title,
+        address.label(),
+        "named by its volume, not its serial"
+    );
+    assert_eq!(remotes.label_of(&address), offered.title);
+
+    // Opened: its mount, the same place, with Eject.
+    let point = remotes
+        .reach(
+            &app,
+            &address,
+            &(Arc::new(Answers::default()) as Arc<dyn Ask>),
+            &CancelToken::new(),
+        )
+        .expect("the phone opens");
+    until(&app, 20, "the phone shown mounted", || {
+        phone().is_some_and(|p| p.location.path().as_deref() == Some(point.as_path()))
+    });
+    let mounted = phone().unwrap();
+    assert_eq!(
+        (mounted.title.as_str(), mounted.key.as_deref()),
+        (offered.title.as_str(), offered.key.as_deref()),
+        "the same place mounted or not"
+    );
+    assert!(mounted.eject.is_some() && mounted.unavailable.is_none());
+    assert!(std::fs::read_dir(&point).is_ok(), "its storage listed");
+
+    // Eject: let go of, offered again.
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    until(&app, 30, "the phone let go of, offered again", || {
+        phone().is_some_and(|p| &*p.location.scheme == "mtp") && !point.exists()
+    });
+
+    // Held as a camera by GVfs's gPhoto2 program: opening it says so.
+    let camera = format!("gphoto2://[usb:{port}]/");
+    let mounted_camera = (0..3).any(|_| {
+        Command::new("gio")
+            .args(["mount", &camera])
+            .stdin(Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    });
+    assert!(mounted_camera, "the phone mounted as a camera");
+    let held = remotes
+        .reach(
+            &app,
+            &address,
+            &(Arc::new(Answers::default()) as Arc<dyn Ask>),
+            &CancelToken::new(),
+        )
+        .map(|path| path.display().to_string());
+    let _ = Command::new("gio")
+        .args(["mount", "-u", &camera])
+        .stdin(Stdio::null())
+        .status();
+    let error = held
+        .expect_err("a phone held as a camera does not open")
+        .to_string();
+    assert!(
+        error.starts_with(
+            "gvfsd-gphoto2 has it open, and only one program at a time can use a phone"
+        ),
+        "{error}"
+    );
+    drop(app);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// GVfs's AFC mount (an iPhone's) against a stand-in device on this
 /// machine, by `tools/test/gvfs-afc.sh`: `gio` up, within, removed and for
 /// a file alone down; down in batches through the bridge, which asks the

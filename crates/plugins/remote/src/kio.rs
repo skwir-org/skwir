@@ -202,7 +202,14 @@ fn kio_scheme(scheme: Scheme) -> Option<&'static str> {
         Scheme::Ftp => Some("ftp"),
         Scheme::Sftp => Some("sftp"),
         Scheme::Nfs => Some("nfs"),
-        Scheme::Ftps | Scheme::Afp | Scheme::Rclone | Scheme::S3 => None,
+        // kio-fuse mounts no device (it refuses `mtp:`): GVfs does.
+        Scheme::Ftps
+        | Scheme::Afp
+        | Scheme::Rclone
+        | Scheme::S3
+        | Scheme::Mtp
+        | Scheme::Gphoto2
+        | Scheme::Afc => None,
     }
 }
 

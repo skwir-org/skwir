@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# A phone over MTP through GVfs (ADR-078, 16), for `remote_folders`'s
-# gvfs_mtp_takes_by_gio_every_way, then the same phone as a camera
-# through GVfs's gphoto2 backend (PTP), for
-# gvfs_gphoto2_takes_by_gio_up_and_within:
+# A phone offered by GVfs's monitor, opened and let go of (ADR-096), for
+# `remote_folders`'s gvfs_offers_a_phone_opens_it_and_lets_go_of_it; then
+# over MTP through GVfs (ADR-078, 16), for gvfs_mtp_takes_by_gio_every_way,
+# then the same phone as a camera through GVfs's gphoto2 backend (PTP),
+# for gvfs_gphoto2_takes_by_gio_up_and_within:
 #   tools/test/gvfs-mtp.sh <remote_folders test binary>
 # Run on purpose alone (`just mtp-check`): it writes to the phone plugged
 # in, in a folder of its own on its first storage (`skwir-test-…`), which
@@ -74,6 +75,12 @@ exec 3< <(dbus-daemon --config-file="$RUNTIME/bus.conf" --nofork --print-address
     2>"$RUNTIME/bus.log")
 read -r address <&3
 export DBUS_SESSION_BUS_ADDRESS="$address"
+status=0
+# Offered before it is mounted: the plugin finds, opens and lets go of it
+# itself, through the monitor this bus starts.
+XDG_CONFIG_HOME="$RUNTIME/xdg/config" XDG_CACHE_HOME="$RUNTIME/xdg/cache" \
+    XDG_DATA_HOME="$RUNTIME/xdg/data" SKWIR_TEST_GVFS_PHONE="$PORT" \
+    "$TEST_BINARY" --exact gvfs_offers_a_phone_opens_it_and_lets_go_of_it --nocapture || status=$?
 if ! gio mount "mtp://$PHONE/" < /dev/null; then
     echo "the phone could not be mounted: unlocked, in file transfer mode, closed in the file manager?" >&2
     exit 1
@@ -82,7 +89,6 @@ bridge=$(ls -d "$rt"/gvfs/mtp*)
 storage=$(find "$bridge" -mindepth 1 -maxdepth 1 -type d | head -1)
 folder="$storage/skwir-test-$(date +%s%N)"
 mkdir "$folder"
-status=0
 XDG_CONFIG_HOME="$RUNTIME/xdg/config" XDG_CACHE_HOME="$RUNTIME/xdg/cache" \
     XDG_DATA_HOME="$RUNTIME/xdg/data" SKWIR_TEST_GVFS_MTP="$folder" \
     "$TEST_BINARY" --exact gvfs_mtp_takes_by_gio_every_way --nocapture || status=$?

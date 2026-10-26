@@ -101,7 +101,8 @@ fn snapshot(app: &App) -> Snapshot {
         panels: app.registry.panels.all().len(),
         providers: [
             "path", "query", "shelf", "recent", "tags", "trash", "sftp", "ssh", "smb", "cifs",
-            "dav", "davs", "webdav", "webdavs", "ftp", "ftps", "nfs", "afp", "rclone", "nearby",
+            "dav", "davs", "webdav", "webdavs", "ftp", "ftps", "nfs", "afp", "rclone", "s3", "mtp",
+            "gphoto2", "afc", "nearby",
         ]
         .into_iter()
         .filter(|s| app.provider(s).is_some())

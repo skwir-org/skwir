@@ -91,7 +91,7 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 | [Phase 6: The extension boundary](#phase-6-the-extension-boundary) | gate passed 2026-10-07 | ~4 weeks |
 | [Release 0.1: Linux](#release-01-linux) | released 2026-10-13 (0.1.0) | — |
 | [Names indexed by skwird](#names-indexed-by-skwird) | C built 2026-10-20; A, B and D wait for skwird (ADR-050) | — |
-| [Remote folders](#remote-folders) | A to F built and checked on Linux 2026-10-21 (ADR-077); G's list for the night of 2026-10-23 built (ADR-080 amended, ADR-084), what is left in G | — |
+| [Remote folders](#remote-folders) | A to F built and checked on Linux 2026-10-21 (ADR-077); G's list for the night of 2026-10-23 built (ADR-080 amended, ADR-084); devices listed before they are mounted 2026-10-26 (ADR-096); what is left in G | — |
 | [Colors and font from the desktop](#colors-and-font-from-the-desktop) | A to D and the fonts by role built 2026-10-19 and 20; E planned (ADR-071, ADR-073) | — |
 | [Indexing and AI (Phase 7)](#indexing-and-ai-phase-7) | designed and accepted 2026-10-26 (ADR-089 to ADR-095, `docs/indexing-and-ai.md`); nothing built | ~10 weeks |
 | [Phase 8: Polish and release](#phase-8-polish-and-release) | planned, ongoing | — |
@@ -1502,7 +1502,19 @@ protocol is a scheme a connector maps, or a connector.
   what its menu does; the Network section's menu holds Add Server…. How
   each was checked is in `docs/STATUS-LOG.md`, "Servers configured from
   Skwir".
+- **Devices before they are mounted** (2026-10-26, ADR-096, the user's
+  report that a phone plugged in showed only in Dolphin): a phone, a
+  camera or an iPhone GVfs reads has an address of its own (`mtp://`,
+  `gphoto2://`, `afc://`), never a server's; what GVfs's volume monitors
+  offer is listed among the devices by its volume's name, followed over
+  the session bus, mounted once opened, the same place mounted, Eject
+  through its address; one another program holds (KDE's `kiod6`) is said
+  held, by whom. How it was checked is in `docs/STATUS-LOG.md`, "Devices
+  before they are mounted".
 - **G. Left** (each its own step):
+  - a device another program holds is named, never taken from it: KDE's
+    `kiod6` keeps every phone it sees while it runs, so on a desktop with
+    both, Dolphin and Skwir take turns (ADR-096);
   - an iPhone's (AFC) ways chosen by requests counted against a
     stand-in, an iPhone's own pace not timed (no iPhone at hand);
   - on the machines (Phase 5b): Windows' and macOS's own shares (the

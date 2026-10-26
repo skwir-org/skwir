@@ -4,6 +4,9 @@
 //! remote folder is a folder: everything works there. This plugin knows the
 //! tools (connectors), names each mount in the sidebar's Network section,
 //! lets go of them, and says what is shown of each unasked (thumbnails).
+//! A phone or a camera GVfs reads is a device of this machine with an
+//! address of its own (`mtp://`, `gphoto2://`, `afc://`): listed among the
+//! sidebar's devices once plugged in, mounted once opened (ADR-096).
 //!
 //! Settings: `remote.connectors` (the tools, in the order tried),
 //! `remote.thumbnails` (for a remote the user chose nothing for),
@@ -17,7 +20,10 @@ pub mod connector;
 pub mod fstab;
 pub mod gio_copy;
 pub mod gvfs;
+#[cfg(target_os = "linux")]
+pub mod gvfs_devices;
 mod gvfs_spec;
+mod holders;
 pub mod keys;
 mod keys_form;
 pub mod kio;
@@ -65,7 +71,7 @@ use skwir_core::scheduler::Priority;
 use skwir_core::settings::SettingSpec;
 
 use crate::address::{Address, Scheme};
-use crate::connector::{Ask, Connector, Password, Recognised, Server};
+use crate::connector::{Ask, Connector, Offered, Password, Recognised, Server};
 
 pub const ID: &str = "remote";
 
@@ -156,15 +162,20 @@ struct State {
     /// question at a time each, never another queued behind one a server
     /// gone holds for good.
     asking: std::collections::HashSet<PathBuf>,
+    /// The devices plugged in each connector offers, mounted or not
+    /// (ADR-096), as it last told.
+    devices: HashMap<&'static str, Vec<Offered>>,
 }
 
 impl State {
     /// Whether each mount's server is near, where its name says so (an
-    /// address, `nas.local`); a name to resolve is found out after.
+    /// address, `nas.local`); a name to resolve is found out after. A
+    /// device is no server: its name is never looked up.
     fn note_said(&mut self) {
         let mounted = Arc::clone(&self.mounted);
         for m in mounted.iter() {
             if let Some(address) = &m.recognised.address
+                && address.scheme.device().is_none()
                 && !self.local.contains_key(&address.host)
                 && let Some(near) = lan::said(&address.host)
             {
@@ -333,6 +344,40 @@ impl Remotes {
         self.state.lock().lifetime.clone()
     }
 
+    /// The device offered at `address`, where one is (ADR-096).
+    fn offered_at(&self, address: &Address) -> Option<Offered> {
+        address.scheme.device()?;
+        self.state
+            .lock()
+            .devices
+            .values()
+            .flatten()
+            .find(|o| o.address.same_server(address))
+            .cloned()
+    }
+
+    /// What the user calls `address`: a device by the name its program
+    /// gives it ("Example Phone"), not by its serial; a server by its
+    /// address.
+    pub fn label_of(&self, address: &Address) -> String {
+        self.offered_at(address)
+            .map_or_else(|| address.label(), |offered| offered.name)
+    }
+
+    /// What `connector` offers now (ADR-096): the mounts are read again,
+    /// a device gone, mounted or let go of with it.
+    fn offered(&self, app: &App, connector: &'static str, devices: Vec<Offered>) {
+        {
+            let mut state = self.state.lock();
+            if state.lifetime.is_none() {
+                return;
+            }
+            state.devices.insert(connector, devices);
+        }
+        reach::changed();
+        self.refresh(app);
+    }
+
     /// The connectors in the order the setting says, those it leaves out
     /// after, in their own.
     fn ordered(&self, app: &App) -> Vec<Arc<dyn Connector>> {
@@ -357,14 +402,30 @@ impl Remotes {
     /// a bridge's (GVfs's, kio-fuse's) one by one. Lists the bridges, which
     /// answer from memory: on a worker.
     fn mounted(&self) -> Vec<Mounted> {
+        let offered: Vec<Offered> = self
+            .state
+            .lock()
+            .devices
+            .values()
+            .flatten()
+            .cloned()
+            .collect();
         reach::all()
             .iter()
             .flat_map(reach::bridged)
             .filter_map(|remote| {
-                let known = self
-                    .connectors
-                    .iter()
-                    .find_map(|c| Some((Arc::clone(c), c.recognises(&remote)?)));
+                let known = self.connectors.iter().find_map(|c| {
+                    let mut recognised = c.recognises(&remote)?;
+                    // A device by the name its volume has, mounted or not.
+                    if let Some(offered) = recognised.address.as_ref().and_then(|a| {
+                        offered
+                            .iter()
+                            .find(|o| a.scheme.device().is_some() && o.address.same_server(a))
+                    }) {
+                        recognised.label.clone_from(&offered.name);
+                    }
+                    Some((Arc::clone(c), recognised))
+                });
                 Some(match known {
                     Some((connector, recognised)) => Mounted {
                         remote,
@@ -397,8 +458,51 @@ impl Remotes {
     /// user): on a thread of its own.
     ///
     /// # Errors
-    /// Why it could not be reached, in the user's words.
+    /// Why it could not be reached, in the user's words: for a device
+    /// another program holds, which program (ADR-096).
     pub fn reach(
+        &self,
+        app: &App,
+        address: &Address,
+        ask: &Arc<dyn Ask>,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<PathBuf> {
+        self.reach_or_mount(app, address, ask, cancel)
+            .map_err(|error| match self.held_by(address) {
+                Some(held) if !cancel.is_cancelled() => anyhow::anyhow!("{held}"),
+                _ => error,
+            })
+    }
+
+    /// Why the device at `address` opens nowhere, where another program of
+    /// the user's holds it open (KDE's `kiod6`, a camera's program): one
+    /// program at a time uses a device over USB. Reads `/proc`: on a
+    /// worker, once opening it failed.
+    fn held_by(&self, address: &Address) -> Option<String> {
+        let device = address.scheme.device()?;
+        let node = self.offered_at(address)?.node?;
+        // GVfs's own program for it, still letting go of the open that
+        // failed, is not another's (one for a camera holding a phone is).
+        let asked = gvfs::backend_of(address.scheme);
+        let mut programs = holders::of(&node);
+        programs.retain(|program| *program != asked);
+        let (them, have) = match programs.as_slice() {
+            [] => return None,
+            [one] => (one.clone(), "has"),
+            [first @ .., last] => (format!("{} and {last}", first.join(", ")), "have"),
+        };
+        let quit = if programs.len() == 1 { &them } else { "them" };
+        Some(format!(
+            "{them} {have} it open, and only one program at a time can use {}. Quit {quit}, then try again.",
+            match device {
+                connector::Device::Phone => "a phone",
+                connector::Device::Camera => "a camera",
+            }
+        ))
+    }
+
+    /// [`Remotes::reach`], what failed as each tool said it.
+    fn reach_or_mount(
         &self,
         app: &App,
         address: &Address,
@@ -567,10 +671,13 @@ impl Remotes {
                         }
                     }
                 }
-                // Whether each server is near, for its thumbnails.
+                // Whether each server is near, for its thumbnails. A
+                // device is near, its name (a serial) never looked up.
                 let hosts: Vec<String> = mounted
                     .iter()
-                    .filter_map(|m| Some(m.recognised.address.as_ref()?.host.clone()))
+                    .filter_map(|m| m.recognised.address.as_ref())
+                    .filter(|a| a.scheme.device().is_none())
+                    .map(|a| a.host.clone())
                     .collect();
                 let mut local = this.state.lock().local.clone();
                 for host in hosts {
@@ -823,6 +930,28 @@ impl Remotes {
                 // A server kept, mounted: its own Edit and Remove.
                 place.menu.extend(configure::kept_items(&kept.address));
             }
+            places.push(place);
+        }
+        // The devices plugged in and not mounted (ADR-096), as unmounted
+        // disks are: the same place mounted or not, mounted once opened.
+        for offered in state.devices.values().flatten() {
+            let shown = mounted.iter().any(|m| {
+                m.recognised
+                    .address
+                    .as_ref()
+                    .is_some_and(|a| a.same_server(&offered.address))
+            });
+            if shown {
+                continue;
+            }
+            let mut place = Place::new(
+                DEVICES,
+                &offered.name,
+                offered.device.icon(),
+                offered.address.location(),
+            );
+            place.key = Some(format!("remote:{}", offered.address));
+            place.unavailable = Some("Not mounted. Click to mount and open it.".to_owned());
             places.push(place);
         }
         for server in &state.servers {
@@ -1100,7 +1229,7 @@ impl Plugin for RemotePlugin {
     }
 
     fn description(&self) -> &'static str {
-        "Open SFTP, SMB, WebDAV, FTP, NFS and rclone addresses as folders, through sshfs, GVfs, rclone or the system's mounts"
+        "Open SFTP, SMB, WebDAV, FTP, NFS and rclone addresses as folders, through sshfs, GVfs, rclone or the system's mounts; phones and cameras through GVfs"
     }
 
     fn category(&self) -> skwir_core::plugin::Category {
@@ -1125,9 +1254,11 @@ impl Plugin for RemotePlugin {
     }
 
     fn on_disable(&self, _app: &App) {
-        if let Some(lifetime) = self.remotes.state.lock().lifetime.take() {
+        let mut state = self.remotes.state.lock();
+        if let Some(lifetime) = state.lifetime.take() {
             lifetime.cancel();
         }
+        state.devices.clear();
     }
 
     fn register(&self, app: &App) {
@@ -1228,6 +1359,21 @@ impl Plugin for RemotePlugin {
         #[cfg(windows)]
         if let Some(folder) = connector::mounts_folder() {
             reach::mounts_in(folder, rclone::FSTYPE);
+        }
+        // The devices plugged in that a tool would mount, followed while
+        // the plugin is enabled (ADR-096).
+        if let Some(lifetime) = self.remotes.lifetime() {
+            for connector in self.remotes.connectors.iter() {
+                let (remotes, weak, id) = (self.remotes.clone(), app.weak(), connector.id());
+                connector.follow_devices(
+                    Arc::new(move |devices| {
+                        if let Some(app) = weak.upgrade() {
+                            remotes.offered(&app, id, devices);
+                        }
+                    }),
+                    &lifetime,
+                );
+            }
         }
         let remotes = self.remotes.clone();
         app.commands.register::<ConnectArgs, _>(
@@ -1378,7 +1524,11 @@ impl Remotes {
             .into_iter()
             .filter_map(|m| m.recognised.address)
             .collect();
-        known.extend(self.state.lock().servers.iter().map(|s| s.address.clone()));
+        {
+            let state = self.state.lock();
+            known.extend(state.servers.iter().map(|s| s.address.clone()));
+            known.extend(state.devices.values().flatten().map(|o| o.address.clone()));
+        }
         known.extend(
             skwir_platform::places::remote_bookmarks()
                 .into_iter()

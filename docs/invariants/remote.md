@@ -162,6 +162,19 @@ ADR-077 (which revises ADR-021).
   listed among the sidebar's devices; they keep a lane of their own. A
   camera moves nothing between its folders: copies there are written in
   place, never staged (ADR-083, operations.md).
+- **A device has an address** (`mtp://`, `gphoto2://`, `afc://`,
+  `Scheme::device`, ADR-096), GVfs's name for it, which GVfs alone opens
+  and Eject lets go of. It is no server: its name (a serial) is never
+  looked up on a network (`lan`), nothing of it is kept as a server's
+  (passwords, mount options, login), and the user sees its volume's name
+  (`Remotes::label_of`), never the address's.
+- **What GVfs offers is listed before it is mounted** (ADR-096): its
+  volume monitors on the session bus, asked and followed
+  (`Connector::follow_devices`, `gvfs_devices`), each device the same
+  place mounted or not (`remote:<address>`). A device is mounted once
+  opened, never because it was plugged in: mounted, it is held from
+  every other program. When it does not open, the programs holding its
+  node are named (`holders`), GVfs's own for that kind left out.
 - **Staging** on a remote is swept only where this machine noted it
   (operations.md, "Staging"): a folder its copy could not remove as its
   server stopped answering goes once that remote answers again.

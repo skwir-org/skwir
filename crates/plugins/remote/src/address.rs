@@ -1,7 +1,8 @@
 //! A remote's address: `sftp://me@host:2222/home/me`, `smb://nas/photos`,
-//! `rclone://gdrive/Photos` (ADR-077). What the user types, bookmarks and
-//! keeps; what a connector turns into a mount. Never a password: one
-//! written in an address is refused, not kept.
+//! `rclone://gdrive/Photos` (ADR-077), or a device's on this machine that
+//! GVfs reads (`mtp://Example_Phone_0123/`, ADR-096). What the user types,
+//! bookmarks and keeps; what a connector turns into a mount. Never a
+//! password: one written in an address is refused, not kept.
 
 use std::fmt::{self, Write as _};
 
@@ -23,11 +24,20 @@ pub enum Scheme {
     /// An S3 bucket, through the user's own AWS configuration
     /// (`s3://bucket/path`, `s3://profile@bucket/`, ADR-086).
     S3,
+    /// A phone over MTP, by the name GVfs gives it (its USB serial:
+    /// `mtp://Example_Phone_0123/`).
+    Mtp,
+    /// A camera over PTP, through GVfs's gPhoto2, by its USB port
+    /// (`gphoto2://[usb:001,004]/`).
+    Gphoto2,
+    /// An iPhone or an iPad, through GVfs's AFC, by its identifier; a port
+    /// names another of its services (`afc://00008030-0123/`).
+    Afc,
 }
 
 impl Scheme {
     /// Every scheme, each by its own name: what the plugin opens.
-    pub const ALL: [Scheme; 10] = [
+    pub const ALL: [Scheme; 13] = [
         Scheme::Sftp,
         Scheme::Smb,
         Scheme::Dav,
@@ -38,6 +48,9 @@ impl Scheme {
         Scheme::Afp,
         Scheme::Rclone,
         Scheme::S3,
+        Scheme::Mtp,
+        Scheme::Gphoto2,
+        Scheme::Afc,
     ];
 
     /// Names another program gives a scheme here: `ssh://` is SFTP for
@@ -61,6 +74,21 @@ impl Scheme {
             Scheme::Afp => "afp",
             Scheme::Rclone => "rclone",
             Scheme::S3 => "s3",
+            Scheme::Mtp => "mtp",
+            Scheme::Gphoto2 => "gphoto2",
+            Scheme::Afc => "afc",
+        }
+    }
+
+    /// The device on this machine an address of this scheme names, where
+    /// it names one rather than a server: never looked up on a network,
+    /// never logged in to, nothing of its kept as a server's (ADR-096).
+    pub fn device(self) -> Option<crate::connector::Device> {
+        use crate::connector::Device;
+        match self {
+            Scheme::Mtp | Scheme::Afc => Some(Device::Phone),
+            Scheme::Gphoto2 => Some(Device::Camera),
+            _ => None,
         }
     }
 
@@ -88,6 +116,9 @@ impl Scheme {
             Scheme::Afp => "AFP",
             Scheme::Rclone => "rclone",
             Scheme::S3 => "S3",
+            Scheme::Mtp => "MTP",
+            Scheme::Gphoto2 => "PTP",
+            Scheme::Afc => "AFC",
         }
     }
 }
@@ -159,6 +190,9 @@ impl Address {
         if scheme == Scheme::Rclone {
             return Address::rclone(&decoded_text(authority), &decoded(path));
         }
+        if scheme.device().is_some() {
+            return Address::of_device(scheme, &decoded_text(authority), &decoded(path));
+        }
         let (userinfo, hostport) = match authority.rfind('@') {
             Some(at) => (Some(&authority[..at]), &authority[at + 1..]),
             None => (None, authority),
@@ -229,6 +263,36 @@ impl Address {
             domain: None,
             host: name.to_owned(),
             port: None,
+            path,
+        })
+    }
+
+    /// The address of the device `authority` names (`Example_Phone_0123`,
+    /// `[usb:001,004]`, an iPhone's identifier and a service's port), as
+    /// GVfs writes it, at `path`.
+    ///
+    /// # Errors
+    /// When it names a user, or no device GVfs would name so.
+    fn of_device(scheme: Scheme, authority: &str, path: &[u8]) -> Result<Address, NotAnAddress> {
+        if authority.contains('@') {
+            return Err(NotAnAddress(format!(
+                "“{authority}”: a device's address names no user"
+            )));
+        }
+        let (host, port) = split_port(authority)?;
+        if !device_name(host) || (port.is_some() && scheme != Scheme::Afc) {
+            return Err(NotAnAddress(format!("“{authority}” is no device's name")));
+        }
+        let mut path = without_dots(path);
+        if path.is_empty() {
+            path.push(b'/');
+        }
+        Ok(Address {
+            scheme,
+            user: None,
+            domain: None,
+            host: host.to_owned(),
+            port,
             path,
         })
     }
@@ -330,15 +394,20 @@ impl Address {
             Scheme::Ftps => Some(990),
             Scheme::Nfs => Some(2049),
             Scheme::Afp => Some(548),
-            Scheme::Rclone | Scheme::S3 => None,
+            Scheme::Rclone | Scheme::S3 | Scheme::Mtp | Scheme::Gphoto2 | Scheme::Afc => None,
         };
         self.port.filter(|p| Some(*p) != usual)
     }
 
     /// What the user calls it: `me@host`, `photos on nas`, `gdrive`; a
     /// port not its scheme's usual one is said (`nas:8080`), so two
-    /// servers of one host are told apart.
+    /// servers of one host are told apart. A device by GVfs's name for it
+    /// (`Example Phone 0123 (MTP)`), where its volume's is not known
+    /// (`Remotes::label_of`).
     pub fn label(&self) -> String {
+        if let Some(label) = self.device_label() {
+            return label;
+        }
         let share = String::from_utf8_lossy(self.first_part()).into_owned();
         let server = match self.effective_port() {
             Some(port) => format!("{}:{port}", self.host),
@@ -362,6 +431,18 @@ impl Address {
                 None => server,
             },
         }
+    }
+
+    /// What a device's address says of it: its name with spaces, its
+    /// protocol after.
+    fn device_label(&self) -> Option<String> {
+        let words = self.bare_host().replace('_', " ");
+        Some(match self.scheme {
+            Scheme::Mtp => format!("{words} (MTP)"),
+            Scheme::Gphoto2 => format!("{words} (camera)"),
+            Scheme::Afc => format!("{words} (iOS)"),
+            _ => return None,
+        })
     }
 
     /// The address as a URI other programs read (`gio mount`): its path's
@@ -421,6 +502,23 @@ fn server_name(host: &str) -> bool {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '.' | '%'));
     }
     !host.starts_with(['-', '.'])
+        && host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+'))
+}
+
+/// Whether `host` is a device's name as GVfs writes one: a USB serial
+/// (letters, digits, `.`, `-`, `_`, `+`, starting with neither `-` nor
+/// `.`) or a port in brackets (`[usb:001,004]`).
+fn device_name(host: &str) -> bool {
+    if let Some(inner) = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        return !inner.is_empty()
+            && inner
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | ','));
+    }
+    !host.is_empty()
+        && !host.starts_with(['-', '.'])
         && host
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+'))
@@ -711,6 +809,48 @@ mod tests {
             None,
             "a share whose name starts the same"
         );
+    }
+
+    /// A device GVfs reads has an address of its own (ADR-096), as GVfs
+    /// names it: never a user, a port only for an iPhone's services.
+    #[test]
+    fn a_device_s_address_is_read_and_written_back() {
+        use crate::connector::Device;
+        let phone = Address::parse("mtp://Example_Phone_0123/").unwrap();
+        assert_eq!(
+            (phone.scheme, phone.host.as_str(), phone.port),
+            (Scheme::Mtp, "Example_Phone_0123", None)
+        );
+        assert_eq!(phone.to_string(), "mtp://Example_Phone_0123/");
+        assert_eq!(phone.label(), "Example Phone 0123 (MTP)");
+        assert_eq!(phone.scheme.device(), Some(Device::Phone));
+        assert_eq!(Scheme::Sftp.device(), None);
+        let camera = Address::parse("gphoto2://[usb:001,004]/DCIM/It's 100").unwrap();
+        assert_eq!(camera.host, "[usb:001,004]");
+        assert_eq!(camera.scheme.device(), Some(Device::Camera));
+        assert_eq!(camera.top().to_string(), "gphoto2://[usb:001,004]/");
+        assert_eq!(camera.uri(), "gphoto2://[usb:001,004]/DCIM/It's%20100");
+        assert_eq!(camera.label(), "usb:001,004 (camera)");
+        assert_eq!(
+            Address::parse("gphoto2://%5Busb%3A001%2C004%5D/").unwrap(),
+            camera.top(),
+            "escaped, as a URI may write it"
+        );
+        let documents = Address::parse("afc://00008030-0123:3/").unwrap();
+        assert_eq!(documents.port, Some(3));
+        assert!(
+            !documents.same_server(&Address::parse("afc://00008030-0123/").unwrap()),
+            "another of its services"
+        );
+        for text in [
+            "mtp://me@Example_Phone/",
+            "mtp://Example_Phone:3/",
+            "mtp://-oOption/",
+            "mtp:///",
+            "gphoto2://[usb 1]/",
+        ] {
+            assert!(Address::parse(text).is_err(), "{text}");
+        }
     }
 
     #[test]

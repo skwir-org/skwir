@@ -42,7 +42,9 @@ impl Spec {
     }
 
     /// The address this mount is of, at its top; `None` for what has no
-    /// address of Skwir's (a phone over MTP, a Google account).
+    /// address of Skwir's (a Google account). A device's is GVfs's name for
+    /// it (ADR-096): what its volume monitor offers it at, and what lets
+    /// go of it.
     pub fn address(&self) -> Option<Address> {
         let port = self.get("port").and_then(|p| p.parse().ok());
         let user = self.get("user").map(ToOwned::to_owned);
@@ -74,8 +76,22 @@ impl Spec {
                 self.get("host")?,
                 format!("/{}/", self.get("volume")?),
             ),
+            "mtp" => (Scheme::Mtp, self.get("host")?, "/".to_owned()),
+            "gphoto2" => (Scheme::Gphoto2, self.get("host")?, "/".to_owned()),
+            "afc" => (Scheme::Afc, self.get("host")?, "/".to_owned()),
             _ => return None,
         };
+        if scheme.device().is_some() {
+            // Read as its address would be: a name GVfs gave that is no
+            // device's as Skwir reads one (an option, a user) has none.
+            let mut text = format!("{}://{}", scheme.name(), escaped_host(host));
+            if let Some(port) = port {
+                use std::fmt::Write as _;
+                let _ = write!(text, ":{port}");
+            }
+            text.push('/');
+            return Address::parse(&text).ok();
+        }
         Some(Address {
             scheme,
             user,
@@ -87,7 +103,8 @@ impl Spec {
     }
 
     /// The device on this machine it is, if one: a phone (MTP, Apple's
-    /// AFC) or a camera (gPhoto2).
+    /// AFC) or a camera (gPhoto2), whether or not its name reads as an
+    /// address.
     pub fn device(&self) -> Option<crate::connector::Device> {
         use crate::connector::Device;
         match self.kind.as_str() {
@@ -98,7 +115,8 @@ impl Spec {
     }
 
     /// What the user calls this mount: its address's name, else what GVfs
-    /// says it is (`Phone (MTP)`).
+    /// says it is (`Phone (MTP)`). A device's volume says better, where
+    /// its monitor offers it (`Remotes::label_of`).
     pub fn label(&self) -> String {
         if let Some(address) = self.address() {
             return address.label();
@@ -129,6 +147,24 @@ fn slashed(path: &str) -> String {
     out.push_str(path);
     if !out.ends_with('/') {
         out.push('/');
+    }
+    out
+}
+
+/// A host as an address's authority holds it: what would end the
+/// authority `%XX`-escaped, a port's brackets kept.
+fn escaped_host(host: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(host.len());
+    for b in host.bytes() {
+        if b.is_ascii_alphanumeric()
+            || b"-._+[],".contains(&b)
+            || (b == b':' && host.starts_with('['))
+        {
+            out.push(char::from(b));
+        } else {
+            let _ = write!(out, "%{b:02X}");
+        }
     }
     out
 }
@@ -175,17 +211,39 @@ mod tests {
         );
     }
 
+    /// A device GVfs reads is named by its address (ADR-096): what its
+    /// monitor offers it at, and what lets go of it.
     #[test]
-    fn what_has_no_address_keeps_a_name() {
+    fn a_device_s_folder_name_is_its_address() {
         let phone = Spec::parse("mtp:host=Example_Phone_0123").unwrap();
-        assert!(phone.address().is_none());
+        assert_eq!(
+            phone.address().unwrap().to_string(),
+            "mtp://Example_Phone_0123/"
+        );
         assert_eq!(phone.label(), "Example Phone 0123 (MTP)");
         // A phone or a camera is on this machine, never a server.
         assert_eq!(phone.device(), Some(Device::Phone));
         let camera = Spec::parse("gphoto2:host=%5Busb%3A001%2C004%5D").unwrap();
+        assert_eq!(
+            camera.address().unwrap().to_string(),
+            "gphoto2://[usb:001,004]/"
+        );
         assert_eq!(camera.device(), Some(Device::Camera));
+        let documents = Spec::parse("afc:host=00008030-0123,port=3").unwrap();
+        assert_eq!(
+            documents.address().unwrap().to_string(),
+            "afc://00008030-0123:3/"
+        );
+        // A name no device's address reads as keeps GVfs's word for it.
+        let odd = Spec::parse("mtp:host=-Odd%20Phone").unwrap();
+        assert!(odd.address().is_none());
+        assert_eq!(odd.label(), "-Odd Phone (MTP)");
+        assert_eq!(odd.device(), Some(Device::Phone));
         let share = Spec::parse("smb-share:server=nas,share=photos").unwrap();
         assert_eq!(share.device(), None);
+        let drive = Spec::parse("google-drive:host=example.com,user=me").unwrap();
+        assert!(drive.address().is_none());
+        assert_eq!(drive.label(), "me@example.com");
         assert!(Spec::parse("not a spec").is_none());
         assert!(Spec::parse("sftp:host").is_none(), "a key without a value");
     }

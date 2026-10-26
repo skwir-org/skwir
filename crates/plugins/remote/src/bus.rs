@@ -8,7 +8,7 @@ use std::time::Duration;
 
 /// The bus the variables `env` name (a test's), else the session's; a
 /// call on it waits at most `patience` for its answer.
-fn connect(
+pub(crate) fn connect(
     env: &[(OsString, OsString)],
     patience: Duration,
 ) -> anyhow::Result<zbus::blocking::Connection> {

@@ -204,3 +204,10 @@ Revises ADR-021: its direction kept, its steps decided.
   Automatic's Small files where reads proved fast; renaming and moving a
   remote bookmark; servers found on the local network, ADR-084;
   Windows' and macOS's own shares as a connector, compiled only.)
+
+## Amendments
+
+- 2026-10-26 (ADR-096): a device GVfs reads (a phone, a camera, an
+  iPhone) has an address of its own, opened by GVfs alone, and what
+  GVfs's volume monitors offer is listed among the devices before it is
+  mounted, mounted once opened.

@@ -5329,3 +5329,47 @@ does not say what it cancels:
   stages no remote), GVfs and sshfs servers that do not answer.
   `just lint`, the default tests (2233 passed, 28 skipped), `just
   smoke` and `just a11y-check` passed.
+
+### Devices before they are mounted (2026-10-26)
+
+Asked by the user: a Pixel 5 plugged in for file transfer showed in
+Dolphin and nowhere in Skwir. Investigated, then built as proposed
+("Go ahead with 1-5", ADR-096):
+
+- **Why it was missing:** Skwir listed GVfs's mounts only, and nothing
+  mounted the phone on Hyprland (GNOME Shell mounts what GVfs says should
+  be). GVfs's MTP monitor offered it (`gio mount -li`: "Pixel 5",
+  `can_mount`, `should_automount`). And KDE's `kiod6` (its `kmtpd`) held
+  the phone's USB node, left from Dolphin: GVfs could not open it
+  ("Impossible d'ouvrir le périphérique MTP « 009,010 »"); replugged, it
+  was `kiod6`'s again at once. kio-fuse refuses `mtp:`.
+- **Addresses for devices:** `mtp://`, `gphoto2://`, `afc://`
+  (`Scheme::device`), read from GVfs's folder names too, opened by GVfs
+  alone. Eject on a mounted phone could not work before (`Gvfs::disconnect`
+  needed an address and a phone had none); a phone's label held its USB
+  serial. Its serial is never looked up as a host (`lan`), nor kept as a
+  server's (passwords, options, login, rclone, KIO).
+- **What GVfs offers, followed:** `gvfs_devices` asks the MTP, gPhoto2
+  and AFC monitors' `List` on the session bus and reads it again at each
+  of their signals and GVfs's `Mounted`/`Unmounted`; each device is a
+  Devices place by its volume's name, drawn as an unmounted disk, opened
+  at its address, the same place mounted (`remote:<address>`).
+- **Who holds it:** when a device does not open, `holders` reads `/proc`
+  for the user's programs holding its node, by the names they were
+  started as (`kiod6`, not `.kiod6-wrapped`), GVfs's own backend for that
+  kind left out (the first window check named `gvfsd-mtp`, the failed
+  open still letting go).
+- **Checked:** the remote plugin's unit tests (addresses and folder names
+  of devices, holders found through a `sleep` holding a file); a stand-in
+  MTP monitor on a private bus (`remote/tests/devices.rs`: a phone and a
+  camera listed by name and address, unplugged, the plugin disabled and
+  enabled again, a volume that does not mount or names no device left
+  out, "sleep has it open…" through `Remotes::reach`), which fails when
+  the places are not published; a window (debug build, Xvfb, the
+  session's GVfs, XDG folders of its own) listed "Pixel 5" among the
+  devices as not mounted, and opening it said "Could not open Pixel 5:
+  kiod6 has it open…" while `kiod6` held it. Idle memory, debug build on
+  that display, the same binary with and without `gio` on its `PATH`
+  (following, or not): 281.0 and 282.0 MiB PSS against 282.6 and
+  281.4, three threads more. `just lint` and the default tests (2237
+  passed, 28 skipped); clippy of the remote plugin for Windows and macOS.

@@ -271,7 +271,11 @@ Left:
   tried under Wine with rclone's own Windows release, pinned
   (`tools/test/rclone-windows.sh`, `just test-windows`): Wine has no Unix
   socket (`WSAEAFNOSUPPORT`). sshfs does not run on Windows. GVfs, KIO's
-  kio-fuse (ADR-081) and fstab are Linux's. The askpass is a named pipe
+  kio-fuse (ADR-081) and fstab are Linux's, and so are phones and
+  cameras among the devices (ADR-096: GVfs's volume monitors, its MTP,
+  gPhoto2 and AFC): Windows reaches a phone through its Portable Devices,
+  which are no folders, and macOS has no MTP; an iPhone's files there
+  would be a connector of its own. The askpass is a named pipe
   on Windows (`skwir_platform::askpass`): rclone's own Windows release
   asks an encrypted configuration's password through `skwir.exe` under
   Wine; Windows' own OpenSSH running it as `SSH_ASKPASS` is not tried

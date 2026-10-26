@@ -13,7 +13,7 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach::Remote;
 
 use crate::address::{Address, Scheme};
-use crate::connector::{Ask, Connected, Connector, Recognised};
+use crate::connector::{Ask, Connected, Connector, Offered, Recognised};
 use crate::gio_copy::GioCopy;
 use crate::gvfs_spec::Spec;
 
@@ -128,6 +128,9 @@ impl Connector for Gvfs {
             Scheme::Ftps,
             Scheme::Nfs,
             Scheme::Afp,
+            Scheme::Mtp,
+            Scheme::Gphoto2,
+            Scheme::Afc,
         ]
     }
 
@@ -225,6 +228,42 @@ impl Connector for Gvfs {
     fn transfers(&self) -> Vec<Arc<dyn skwir_core::op::transfer::Transfer>> {
         vec![self.gio_copy()]
     }
+
+    /// The phones, cameras and iPhones GVfs's volume monitors offer on the
+    /// session's bus (the test's), mounted or not (ADR-096).
+    fn follow_devices(
+        &self,
+        told: Arc<dyn Fn(Vec<Offered>) + Send + Sync>,
+        cancel: &CancelToken,
+    ) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            let (env, cancel) = (self.env.clone(), cancel.clone());
+            std::thread::Builder::new()
+                .name("skwir-gvfs-devices".into())
+                .spawn(move || {
+                    // Offered only where GVfs would open them.
+                    if skwir_core::os_path::find_program("gio").is_none() {
+                        return;
+                    }
+                    if let Err(error) = crate::gvfs_devices::follow(&env, &told, &cancel) {
+                        tracing::debug!("the devices GVfs offers are not followed: {error:#}");
+                    }
+                })
+                .is_ok()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (told, cancel);
+            false
+        }
+    }
+}
+
+/// The program GVfs runs for a mount of `scheme` (`gvfsd-mtp`): its
+/// backends are named by the type of their mounts.
+pub(crate) fn backend_of(scheme: Scheme) -> String {
+    format!("gvfsd-{}", scheme.name())
 }
 
 /// Whether a GVfs bridge still holds a mount at `point`.
@@ -388,9 +427,14 @@ fn mount(
             break Err(anyhow::anyhow!("cancelled"));
         }
         if since.elapsed() > PATIENCE {
+            // A device's name is its serial: it, as the message's start
+            // names it.
+            let who = match top.scheme.device() {
+                Some(_) => "it",
+                None => top.host.as_str(),
+            };
             break Err(anyhow::anyhow!(
-                "{} did not answer within {} seconds",
-                top.host,
+                "{who} did not answer within {} seconds",
                 PATIENCE.as_secs()
             ));
         }

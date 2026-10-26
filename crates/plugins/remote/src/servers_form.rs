@@ -87,7 +87,9 @@ pub fn choices() -> Vec<Choice> {
                 Scheme::Ftps => ("FTP Server (TLS)", "A server's files over FTP with TLS"),
                 Scheme::Nfs => ("NFS Export", "A Unix server's shared folder"),
                 Scheme::Afp => ("AFP Volume", "An older Mac's or NAS's shared volume"),
-                Scheme::Rclone | Scheme::S3 => ("", ""),
+                Scheme::Rclone | Scheme::S3 | Scheme::Mtp | Scheme::Gphoto2 | Scheme::Afc => {
+                    ("", "")
+                }
             };
             Choice::new(format!("{KIND_PREFIX}{}", scheme.name()), title)
                 .detail(detail)

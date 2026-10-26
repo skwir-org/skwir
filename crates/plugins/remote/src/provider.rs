@@ -20,7 +20,7 @@ use skwir_core::scheduler::Priority;
 
 use crate::Remotes;
 use crate::address::{Address, Scheme};
-use crate::connector::Ask;
+use crate::connector::{Ask, Device};
 use crate::known;
 
 pub struct Provider {
@@ -67,7 +67,9 @@ impl LocationProvider for Provider {
     }
 
     fn title(&self, location: &Location) -> Option<String> {
-        Address::of_location(location).ok().map(|a| a.label())
+        Address::of_location(location)
+            .ok()
+            .map(|a| self.remotes.label_of(&a))
     }
 
     /// The servers known, as the server is typed (`sftp://me@ho`): those
@@ -106,10 +108,21 @@ impl LocationProvider for Provider {
 
     fn empty_state(&self, location: &Location) -> Option<EmptyState> {
         let address = Address::of_location(location).ok()?;
-        Some(EmptyState::new(
-            format!("Connecting to {}…", address.label()),
-            "If the server asks for a password, or to be trusted the first time, the window asks you.",
-        ))
+        let label = self.remotes.label_of(&address);
+        Some(match address.scheme.device() {
+            Some(Device::Phone) => EmptyState::new(
+                format!("Opening {label}…"),
+                "A phone shows its files once it is unlocked.",
+            ),
+            Some(Device::Camera) => EmptyState::new(
+                format!("Opening {label}…"),
+                "A camera shows its files while it is switched on.",
+            ),
+            None => EmptyState::new(
+                format!("Connecting to {label}…"),
+                "If the server asks for a password, or to be trusted the first time, the window asks you.",
+            ),
+        })
     }
 }
 
@@ -154,10 +167,14 @@ impl How {
                     Ok(path) => this
                         .tx
                         .send(ListingEvent::Redirect(Location::from_path(path))),
-                    Err(error) => this.tx.send(ListingEvent::Error(format!(
-                        "Could not connect to {}: {error:#}",
-                        this.address.label()
-                    ))),
+                    Err(error) => {
+                        let label = this.remotes.label_of(&this.address);
+                        this.tx
+                            .send(ListingEvent::Error(match this.address.scheme.device() {
+                                Some(_) => format!("Could not open {label}: {error:#}"),
+                                None => format!("Could not connect to {label}: {error:#}"),
+                            }))
+                    }
                 };
             });
         if let Err(error) = spawned {
@@ -174,16 +191,24 @@ impl How {
         let ask: Arc<dyn Ask> = Arc::new(crate::WindowAsk {
             app: self.app.clone(),
         });
-        if self.agent
-            && !ask.confirm(
-                &format!("An agent asks to connect to {}", self.address.host),
-                &format!(
+        // A device's files are the user's as a server's are: asked too.
+        let (title, detail) = match self.address.scheme.device() {
+            Some(_) => (
+                format!(
+                    "An agent asks to open {}",
+                    self.remotes.label_of(&self.address)
+                ),
+                format!("It asked to open {}.", self.address),
+            ),
+            None => (
+                format!("An agent asks to connect to {}", self.address.host),
+                format!(
                     "It asked to open {}. Connecting tells the server who you are.",
                     self.address
                 ),
-                &self.cancel,
-            )
-        {
+            ),
+        };
+        if self.agent && !ask.confirm(&title, &detail, &self.cancel) {
             anyhow::bail!("you did not allow it");
         }
         self.remotes.reach(&app, &self.address, &ask, &self.cancel)
