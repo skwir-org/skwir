@@ -5296,9 +5296,9 @@ const ICON: f32 = 36.;
 /// a line of their own. Its stars, then its tags as every view draws them
 /// (`tags::strip`), asking for the width that names them all
 /// (`ChipStrip::natural`), a click on one opening the tag and a right
-/// press its menu (`Shell::tag_act`), which edits the tags too. With no
-/// tag, "+ Tag", the tag editor, when what is shown is selected (the
-/// editor edits the selection).
+/// press its menu (`Shell::tag_act`), which edits the tags too. Like the
+/// facts, they say what the file has: no control adds to them (the
+/// context menu's Tags…, Ctrl+Shift+G, Properties' Tags row do).
 fn notes_items(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyElement> {
     let preview = &shell.preview;
     let Some(entry) = preview.properties_entry.as_ref() else {
@@ -5316,47 +5316,6 @@ fn notes_items(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<Any
         .and_then(skwir_core::Value::as_u64)
         .filter(|stars| held.rating && *stars > 0);
     let pane = preview.key.as_ref().map_or(shell.pane, |key| key.pane);
-    let adds = held.tags
-        && tags.is_empty()
-        && preview.key.as_ref().is_some_and(|key| {
-            let ws = shell.app.workspace.read();
-            ws.pane(key.pane)
-                .is_some_and(|p| p.selection.contains(key.id))
-        });
-    let add = adds.then(|| {
-        let keys = shell.keys_for("ui.tags_prompt", &serde_json::json!({}));
-        let tip: gpui::SharedString = match keys {
-            Some(keys) => format!("Add tags ({keys})"),
-            None => "Add tags".to_owned(),
-        }
-        .into();
-        div()
-            .id("preview-tags-edit")
-            .flex_none()
-            .h(px(crate::tags::CHIP_HEIGHT))
-            .px(px(4.))
-            .flex()
-            .items_center()
-            .gap_1()
-            .rounded_sm()
-            .text_xs()
-            .text_color(theme.text_muted)
-            .cursor_pointer()
-            .hover(|d| d.bg(theme.hover))
-            .child(
-                gpui::svg()
-                    .path("toolbar/plus.svg")
-                    .size(px(10.))
-                    .text_color(theme.text_muted),
-            )
-            .child("Tag")
-            .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
-            .on_click(cx.listener(|this, _, window, cx| {
-                cx.stop_propagation();
-                this.run("ui.tags_prompt", serde_json::json!({}), window, cx);
-            }))
-            .into_any_element()
-    });
     let act = Shell::tag_act(pane, None, true, cx);
     let strip = (!tags.is_empty()).then(|| {
         crate::tags::strip_acting(
@@ -5379,7 +5338,6 @@ fn notes_items(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<Any
         })
         .into_iter()
         .chain(strip)
-        .chain(add)
         .collect()
 }
 

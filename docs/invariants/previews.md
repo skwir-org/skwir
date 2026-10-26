@@ -676,9 +676,11 @@ is still to come are in `docs/preview-frame.md`.
   (`ChipStrip::natural`), so it steps down only on a line of its own. A
   click on a tag opens its place (`tags.open`), a right press its menu
   ([shell.md](shell.md), "Context menu"), which edits the tags too (Edit
-  Tags…). With no tag, "+ Tag", the tag editor, when what is shown is
-  selected (the editor edits the selection). A fact says the type when
-  pointed at; the rating and the tags do not.
+  Tags…). Like the facts, they say what the file has: the header holds
+  no control to add one (a "+ Tag" there read as one more fact, and was
+  dropped); the context menu's Tags…, Ctrl+Shift+G and Properties' Tags
+  row add them. A fact says the type when pointed at; the rating and the
+  tags do not.
 - Clicking the card opens Properties. So does the (i) button beside it,
   since what the card does is not seen until tried; the button is lit
   while Properties is open, as Preview's is while its panel is. So do
