@@ -804,7 +804,28 @@ impl PaneView for GridView {
 
 #[cfg(test)]
 mod tests {
-    use super::fitted;
+    use super::{CAPTIONS, COLUMNS, Caption, Detail, fitted};
+
+    /// The captions are the tags, then the list's columns as they stand,
+    /// each called and kept as its column is: a column added to the list
+    /// is a caption the grid offers.
+    #[test]
+    fn the_captions_are_the_tags_then_the_lists_columns() {
+        assert_eq!(CAPTIONS[0].caption, Caption::Tags);
+        let details: Vec<Detail> = CAPTIONS[1..]
+            .iter()
+            .map(|spec| match spec.caption {
+                Caption::Detail(detail) => detail,
+                Caption::Tags => panic!("the tags once, first"),
+            })
+            .collect();
+        let columns: Vec<Detail> = COLUMNS.iter().map(|column| column.detail).collect();
+        assert_eq!(details, columns);
+        for (spec, column) in CAPTIONS[1..].iter().zip(&COLUMNS) {
+            assert_eq!(spec.label, column.label);
+            assert_eq!(spec.setting, format!("ui.grid_caption_{}", column.key));
+        }
+    }
 
     #[test]
     fn a_thumbnail_fits_its_box_whatever_its_shape() {
