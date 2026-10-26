@@ -108,8 +108,11 @@ like `AGENTS.md`.
   whether it is opened (`aria_expanded`), not its position: a reader
   counts siblings by level.
 - **An entry says what `entry::behave` gives it** (`views/entry.rs`): its
-  name, whether it is selected, its `Seat` (index, depth in a tree), and
-  on the cursor the active descendant. A view passes the seat; it never
+  name, its tags and stars as its description (`tags::said`: "Tagged
+  Paris, print; 4 stars", the names its chips show, without those its
+  place says), whether it is selected, its `Seat` (index, depth in a
+  tree), and on the cursor the active descendant. A side column's row
+  and another place's card say their tags the same way. A view passes the seat; it never
   names or states an entry itself. A view's container takes its role
   from `PaneView::role` (a list box, a tree, or a group of list boxes:
   the columns, the board's), named by the location, with the count; a

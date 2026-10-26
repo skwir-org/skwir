@@ -449,9 +449,13 @@ fn card_element(
     let el = if card.ix.is_some() {
         crate::views::entry::behave(el, look, seat, shell, cx)
     } else {
-        // Not one of the pane's entries: said by its name and place alone.
+        // Not one of the pane's entries: said by its name, its tags and
+        // stars, and its place.
         el.role(gpui::Role::ListBoxOption).when(shell.a11y, |d| {
             d.aria_label(look.name.clone())
+                .when_some(crate::tags::said(&look.tags, look.rating), |d, said| {
+                    d.aria_description(said)
+                })
                 .aria_position_in_set(seat.index)
         })
     };

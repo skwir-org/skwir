@@ -91,6 +91,8 @@ class Window:
         (self.files / "notes" / "it's a draft.txt").write_text("draft\n")
         (self.files / "café list.md").write_text("# List\n- bread\n")
         (self.files / "report 2026.txt").write_text("a report\n")
+        # Tags, as Dolphin writes them: what a reader hears beside its name.
+        os.setxattr(self.files / "report 2026.txt", "user.xdg.tags", b"print,Places/Paris")
         self.runtime.mkdir(mode=0o700)
         config = self.root / "config" / "skwir"
         config.mkdir(parents=True)
@@ -440,6 +442,9 @@ def run(w):
     check("a file trashed is announced", announced.hears(f"Moved “{third}” to Trash"))
     check("the cursor goes to the file after it, selected, as in Dolphin and Nautilus",
           hears(w, f"list item {fourth!r} 3 of 3 selected focused"))
+    check("its tags as its description, by the names its chips show",
+          until(lambda: (w.focused().get_description() or "") == "Tagged Paris, print")
+          or print("  description:", w.focused().get_description()))
     w.keys("ctrl+z")
     check("an undoing is announced too", announced.hears("Undid: move to trash")
           and until(lambda: (w.files / third).exists()))
@@ -464,9 +469,12 @@ def run(w):
     w.keys("Escape")
 
     w.cmd("ui.tags_prompt")
-    check("the tag editor's field, in its dialog",
-          until(lambda: w.focused().get_role_name() == "entry"
-                and within(w.focused())[0] == "Tag editor"))
+    # The field keeps the keyboard; the tags known (the fixture's) are a
+    # list box beside it, the first said as focused.
+    check("the tag editor: the tags known, the first said as focused, in its dialog",
+          until(lambda: w.focused().get_role_name() == "list item"
+                and within(w.focused())[:2] == ["Tags", "Tag editor"])
+          or print("  focused:", said(w.focused()), within(w.focused())))
     w.type("draft")
     check("a tag typed is offered to add, said as focused",
           hears(w, "list item 'Add draft' 1 of 1 selected focused")

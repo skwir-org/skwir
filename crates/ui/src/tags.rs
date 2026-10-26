@@ -518,6 +518,21 @@ pub fn stars_words(rating: u64) -> String {
     format!("{whole}{half} star{plural}").replacen("0½", "½", 1)
 }
 
+/// What a screen reader hears of an entry besides its name: its tags, as
+/// their chips name them, and its stars ("Tagged print, Paris; 4
+/// stars"). `None` with neither.
+pub fn said(tags: &[(String, usize)], rating: Option<u64>) -> Option<String> {
+    let mut parts = Vec::new();
+    if !tags.is_empty() {
+        let names: Vec<&str> = tags.iter().map(|(tag, _)| tag_leaf(tag)).collect();
+        parts.push(format!("Tagged {}", names.join(", ")));
+    }
+    if let Some(rating) = rating.filter(|stars| *stars > 0) {
+        parts.push(stars_words(rating));
+    }
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
 /// Where a tag is, or will be, among the entries edited.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mark {
@@ -1488,6 +1503,18 @@ mod tests {
             names(&["PRINT".into(), "Places".into()]),
             ["favorite", "apple", "Places/Paris", "zoo"]
         );
+    }
+
+    #[test]
+    fn a_reader_hears_the_tags_and_the_stars() {
+        let tags = [("Places/Paris".to_owned(), 0), ("print".to_owned(), 1)];
+        assert_eq!(
+            said(&tags, Some(7)).as_deref(),
+            Some("Tagged Paris, print; 3½ stars")
+        );
+        assert_eq!(said(&[], Some(2)).as_deref(), Some("1 star"));
+        assert_eq!(said(&[], Some(0)), None, "unrated");
+        assert_eq!(said(&[], None), None);
     }
 
     #[test]

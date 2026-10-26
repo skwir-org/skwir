@@ -5,10 +5,11 @@
 //! waits to be pasted elsewhere, the menu's marker on the cursor, pressed
 //! and clicked as the pane's entry, dragged as the selection, taking what
 //! a dragged place gives (a tag), and taking files dropped where it leads,
-//! and what assistive technology hears of it: its name, whether it is
-//! selected, where it stands among the entries (`Seat`), and, on the
-//! cursor, that it is where the keys are. A view draws its own shape
-//! around these (a row, a tile, a card), never its own copy of them.
+//! and what assistive technology hears of it: its name, its tags and
+//! stars, whether it is selected, where it stands among the entries
+//! (`Seat`), and, on the cursor, that it is where the keys are. A view
+//! draws its own shape around these (a row, a tile, a card), never its
+//! own copy of them.
 
 use std::path::PathBuf;
 
@@ -37,6 +38,9 @@ pub struct Look {
     pub link: icons::Link,
     /// Each tag with its color (`tags::TagColors`).
     pub tags: Vec<(String, usize)>,
+    /// Its rating in half stars, where its notes keep one: what a screen
+    /// reader hears with its tags (`tags::said`).
+    pub rating: Option<u64>,
     /// A place (a tag's), or a folder that does not open at its path (a
     /// trashed one): where it leads, and a tag's color.
     pub place: Option<(Location, Option<usize>)>,
@@ -83,6 +87,10 @@ impl Shell {
                 &self.tag_pins,
                 &self.ui().place.tags_shown,
             ),
+            rating: e
+                .metadata
+                .value(skwir_core::entry::keys::RATING)
+                .and_then(skwir_core::Value::as_u64),
             place,
             path: if e.is_dir() { pane.path_of(id) } else { None },
         })
@@ -156,6 +164,10 @@ fn expose(el: Stateful<Div>, look: &Look, seat: Seat) -> Stateful<Div> {
             gpui::Role::ListBoxOption
         })
         .aria_label(look.name.clone())
+        // Its tags and stars, as the views draw them.
+        .when_some(crate::tags::said(&look.tags, look.rating), |d, said| {
+            d.aria_description(said)
+        })
         .aria_selected(look.selected)
         .when(
             look.cursor,

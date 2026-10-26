@@ -240,6 +240,8 @@ struct SideRow {
     /// Its tags, with their colors, as every view draws them
     /// (`tags::entry_tags`).
     tags: Vec<(String, usize)>,
+    /// Its rating in half stars: what a screen reader hears with its tags.
+    rating: Option<u64>,
 }
 
 /// A column beside the pane's, a list box named `title` for assistive
@@ -321,6 +323,10 @@ fn side_column(
                                 &this.tag_pins,
                                 &shown,
                             ),
+                            rating: e
+                                .metadata
+                                .value(skwir_core::entry::keys::RATING)
+                                .and_then(skwir_core::Value::as_u64),
                         })
                     })
                     .collect()
@@ -374,6 +380,9 @@ fn side_column(
                     .role(gpui::Role::ListBoxOption)
                     .when(a11y, |d| {
                         d.aria_label(row.label.clone())
+                            .when_some(crate::tags::said(&row.tags, row.rating), |d, said| {
+                                d.aria_description(said)
+                            })
                             .aria_selected(is_on_path)
                             .aria_position_in_set(ix)
                     })
