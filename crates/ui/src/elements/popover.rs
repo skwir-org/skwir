@@ -1,7 +1,10 @@
 //! Same-frame button anchors, shared across responsive toolbar variants.
 use std::{cell::Cell, rc::Rc};
 
-use gpui::{AnyElement, AvailableSpace, Bounds, IntoElement, Pixels, canvas, prelude::*, px, size};
+use gpui::{
+    AnyElement, AvailableSpace, Bounds, IntoElement, Pixels, Point, Window, canvas, prelude::*, px,
+    size,
+};
 
 #[derive(Clone, Default)]
 pub struct PopoverAnchor(Rc<Cell<Option<Bounds<Pixels>>>>);
@@ -33,6 +36,7 @@ impl PopoverAnchor {
             std::slice::from_ref(self),
             3,
             gpui::Anchor::TopRight,
+            Room::Side,
             move || panel.take(),
         )
     }
@@ -66,6 +70,7 @@ impl PopoverAnchor {
             std::slice::from_ref(self),
             3,
             gpui::Anchor::BottomRight,
+            Room::Side,
             move || {
                 let last = panels.len().checked_sub(1)?;
                 Some(panels.swap_remove(chosen.get().unwrap_or(last).min(last)))
@@ -73,16 +78,23 @@ impl PopoverAnchor {
         )
     }
 
-    /// `panel` under the first of `anchors` drawn this frame: a menu opened
+    /// A menu under the first of `anchors` drawn this frame: one opened
     /// from the keyboard hangs from the row it is about, or from the pane
-    /// when no row is. Drawn at `priority` among deferred draws.
+    /// when no row is. Drawn at `priority` among deferred draws. It takes
+    /// the window's height (`Room::Window`).
     pub fn popup_first(
         anchors: &[PopoverAnchor],
         priority: usize,
         panel: AnyElement,
     ) -> AnyElement {
         let mut panel = Some(panel);
-        below(anchors, priority, move || panel.take())
+        hang(
+            anchors,
+            priority,
+            gpui::Anchor::TopLeft,
+            Room::Window,
+            move || panel.take(),
+        )
     }
 
     /// `popup_first`, standing above the anchor: for a menu at the
@@ -93,9 +105,32 @@ impl PopoverAnchor {
         panel: AnyElement,
     ) -> AnyElement {
         let mut panel = Some(panel);
-        hang(anchors, priority, gpui::Anchor::BottomLeft, move || {
-            panel.take()
-        })
+        hang(
+            anchors,
+            priority,
+            gpui::Anchor::BottomLeft,
+            Room::Window,
+            move || panel.take(),
+        )
+    }
+
+    /// A menu whose corner is at `position`, where the pointer pressed,
+    /// taking the window's height (`Room::Window`).
+    pub fn popup_at(position: Point<Pixels>, priority: usize, panel: AnyElement) -> AnyElement {
+        let mut panel = Some(panel);
+        place(
+            priority,
+            move |window| {
+                let room = window.viewport_size().height - MARGIN * 2.;
+                Some((
+                    gpui::anchored()
+                        .position(position)
+                        .snap_to_window_with_margin(MARGIN),
+                    room,
+                ))
+            },
+            move || panel.take(),
+        )
     }
 
     /// Mark where the anchor is, for an element that draws what it is
@@ -104,6 +139,20 @@ impl PopoverAnchor {
         self.0.set(Some(bounds));
     }
 }
+
+/// How tall a popup may be.
+#[derive(Clone, Copy)]
+enum Room {
+    /// What is left on the anchor's side: a toolbar's popup hangs from
+    /// its button and shrinks to that.
+    Side,
+    /// The window's: a menu is moved to stay in the window, and shrinks
+    /// only when taller than it.
+    Window,
+}
+
+/// Room kept between a popup and the window's edge.
+const MARGIN: Pixels = px(8.);
 
 /// Defer until the anchors have prepainted in this same frame, then lay out
 /// what `panel` gives under the first that has bounds. No coordinates
@@ -115,46 +164,73 @@ fn below(
     priority: usize,
     panel: impl FnMut() -> Option<AnyElement> + 'static,
 ) -> AnyElement {
-    hang(anchors, priority, gpui::Anchor::TopLeft, panel)
+    hang(anchors, priority, gpui::Anchor::TopLeft, Room::Side, panel)
 }
 
 /// `below`, the panel's `corner` at the anchor's opposite edge: a top
 /// corner hangs under the anchor, a bottom one stands above it, with the
-/// height left on that side.
+/// height `room` gives.
 fn hang(
     anchors: &[PopoverAnchor],
     priority: usize,
     corner: gpui::Anchor,
-    mut panel: impl FnMut() -> Option<AnyElement> + 'static,
+    room: Room,
+    panel: impl FnMut() -> Option<AnyElement> + 'static,
 ) -> AnyElement {
     let anchors: Vec<_> = anchors.iter().map(|a| a.0.clone()).collect();
-    gpui::deferred(
-        canvas(
-            move |_, window, cx| {
-                let bounds = anchors.iter().find_map(|a| a.get())?;
-                let (gap, margin) = (px(6.), px(8.));
-                let below = window.viewport_size().height - bounds.bottom() - gap - margin;
-                let above = bounds.top() - gap - margin;
-                let center = bounds.center().x;
-                // Popups hang by a corner or a side's middle; one anchored at a
-                // side's middle (never asked here) hangs below it.
-                let (at, room, offset) = match corner {
-                    gpui::Anchor::TopLeft | gpui::Anchor::LeftCenter => {
-                        (bounds.bottom_left(), below, gap)
-                    }
-                    gpui::Anchor::TopRight | gpui::Anchor::RightCenter => {
-                        (bounds.bottom_right(), below, gap)
-                    }
-                    gpui::Anchor::TopCenter => (gpui::point(center, bounds.bottom()), below, gap),
-                    gpui::Anchor::BottomLeft => (bounds.origin, above, -gap),
-                    gpui::Anchor::BottomRight => (bounds.top_right(), above, -gap),
-                    gpui::Anchor::BottomCenter => (gpui::point(center, bounds.top()), above, -gap),
-                };
-                let mut popup = gpui::anchored()
+    place(
+        priority,
+        move |window| {
+            let bounds = anchors.iter().find_map(|a| a.get())?;
+            let gap = px(6.);
+            let height = window.viewport_size().height;
+            let below = height - bounds.bottom() - gap - MARGIN;
+            let above = bounds.top() - gap - MARGIN;
+            let center = bounds.center().x;
+            // Popups hang by a corner or a side's middle; one anchored at a
+            // side's middle (never asked here) hangs below it.
+            let (at, side, offset) = match corner {
+                gpui::Anchor::TopLeft | gpui::Anchor::LeftCenter => {
+                    (bounds.bottom_left(), below, gap)
+                }
+                gpui::Anchor::TopRight | gpui::Anchor::RightCenter => {
+                    (bounds.bottom_right(), below, gap)
+                }
+                gpui::Anchor::TopCenter => (gpui::point(center, bounds.bottom()), below, gap),
+                gpui::Anchor::BottomLeft => (bounds.origin, above, -gap),
+                gpui::Anchor::BottomRight => (bounds.top_right(), above, -gap),
+                gpui::Anchor::BottomCenter => (gpui::point(center, bounds.top()), above, -gap),
+            };
+            let room = match room {
+                Room::Side => side,
+                Room::Window => height - MARGIN * 2.,
+            };
+            Some((
+                gpui::anchored()
                     .anchor(corner)
                     .position(at)
                     .offset(gpui::point(px(0.), offset))
-                    .snap_to_window_with_margin(margin)
+                    .snap_to_window_with_margin(MARGIN),
+                room,
+            ))
+        },
+        panel,
+    )
+}
+
+/// Draw `panel` deferred, at `priority`: in prepaint, where the window
+/// and the anchors are measured, `at` says where it stands and how tall
+/// it may be, and it is laid out there.
+fn place(
+    priority: usize,
+    at: impl Fn(&Window) -> Option<(gpui::Anchored, Pixels)> + 'static,
+    mut panel: impl FnMut() -> Option<AnyElement> + 'static,
+) -> AnyElement {
+    gpui::deferred(
+        canvas(
+            move |_, window, cx| {
+                let (popup, room) = at(window)?;
+                let mut popup = popup
                     .child(
                         gpui::div()
                             .flex()

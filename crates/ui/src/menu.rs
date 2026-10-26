@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::ffi::OsStr;
 
 use gpui::{
-    AnyElement, Context, FocusHandle, MouseButton, Pixels, Point, Window, anchored, deferred, div,
+    AnyElement, Context, FocusHandle, MouseButton, Pixels, Point, ScrollHandle, Window, div,
     prelude::*, px,
 };
 use skwir_core::registry::{MenuItem, MenuSource};
@@ -249,6 +249,10 @@ pub struct MenuState {
     /// index, where it is done another way: the drop menu's keys held
     /// while dropping.
     pub keys: Vec<Option<String>>,
+    /// The rows of a menu taller than the window scroll (it is never
+    /// taller: `PopoverAnchor::popup_at`), and the keyboard's row is
+    /// brought into view (`MenuState::reveal`).
+    scroll: ScrollHandle,
 }
 
 /// Where a menu opened with the Menu key or Shift+F10 is drawn: under the
@@ -313,6 +317,7 @@ impl MenuState {
             back,
             keyboard: None,
             keys: Vec::new(),
+            scroll: ScrollHandle::new(),
         }
     }
 }
@@ -330,6 +335,52 @@ impl MenuState {
     pub fn rows(&self) -> Vec<Row> {
         rows_of(&self.items, self.expanded.as_deref())
     }
+
+    fn drawn(&self) -> Vec<(Row, bool)> {
+        drawn_of(&self.items, self.expanded.as_deref())
+    }
+
+    /// The keyboard reached `row`: the rows scroll the least that shows
+    /// it, in the prepaint of the frame that draws it.
+    fn reveal(&self, row: usize) {
+        self.scroll.scroll_to_item(child_of(&self.drawn(), row));
+    }
+}
+
+/// The rows of `rows_of`, each with whether a separator stands above it:
+/// between order groups (the hundreds digit, per the convention on
+/// `skwir_core::registry::MenuItem`) and above a submenu's parent.
+fn drawn_of(items: &[MenuItem], expanded: Option<&str>) -> Vec<(Row, bool)> {
+    let mut previous: Option<&MenuItem> = None;
+    rows_of(items, expanded)
+        .into_iter()
+        .map(|row| {
+            let separated = match &row {
+                Row::Item { index, nested } => {
+                    let item = &items[*index];
+                    let separated = !nested
+                        && previous.is_some_and(|before| before.order / 100 != item.order / 100);
+                    if !nested {
+                        previous = Some(item);
+                    }
+                    separated
+                }
+                Row::Parent(_) => true,
+            };
+            (row, separated)
+        })
+        .collect()
+}
+
+/// Which child of the menu's rows `row` is drawn as: the separators above
+/// it are children too.
+fn child_of(drawn: &[(Row, bool)], row: usize) -> usize {
+    let separators = drawn
+        .iter()
+        .take(row + 1)
+        .filter(|(_, separated)| *separated)
+        .count();
+    row + separators
 }
 
 /// Top-level items in order, then each submenu's parent row, followed by its
@@ -1020,6 +1071,11 @@ impl Shell {
             }
             _ => {}
         }
+        if let Some(menu) = &self.menu
+            && let Some(row) = menu.highlighted
+        {
+            menu.reveal(row);
+        }
         cx.notify();
     }
 }
@@ -1030,12 +1086,15 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let a11y = shell.a11y;
     // A menu to assistive technology, its highlighted row said as focused
     // while the menu keeps the keyboard.
-    let mut panel = div()
+    let panel = div()
         .id("context-menu")
         .role(gpui::Role::Menu)
         .aria_label("Context menu")
         .min_w(px(220.))
         .py_1()
+        .flex()
+        .flex_col()
+        .min_h_0()
         .rounded_lg()
         .border_1()
         .border_color(theme.border)
@@ -1047,24 +1106,23 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .on_mouse_down_out(cx.listener(|this, _, window, cx| {
             this.close_context_menu(window, cx);
         }));
-    let mut previous: Option<&MenuItem> = None;
-    for (i, row) in menu.rows().into_iter().enumerate() {
+    // The rows scroll inside the panel's padding, so the first and the
+    // last brought into view keep it.
+    let mut rows = div()
+        .id("context-menu-rows")
+        .min_h_0()
+        .overflow_y_scroll()
+        .track_scroll(&menu.scroll);
+    for (i, (row, separated)) in menu.drawn().into_iter().enumerate() {
         let highlighted = menu.highlighted == Some(i);
         let muted = if highlighted {
             theme.selection_text
         } else {
             theme.text_muted
         };
-        let (title, icon, keys, nested, separated) = match &row {
+        let (title, icon, keys, nested) = match &row {
             Row::Item { index, nested } => {
                 let item = &menu.items[*index];
-                // Separator between order groups (hundreds digit), per the
-                // convention on `skwir_core::registry::MenuItem`.
-                let separated = !nested
-                    && previous.is_some_and(|before| before.order / 100 != item.order / 100);
-                if !nested {
-                    previous = Some(item);
-                }
                 let keys = menu
                     .keys
                     .get(*index)
@@ -1076,18 +1134,18 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 } else {
                     item.title.clone()
                 };
-                (title, item.icon.clone(), keys, *nested, separated)
+                (title, item.icon.clone(), keys, *nested)
             }
-            Row::Parent(name) => (name.clone(), None, None, false, true),
+            Row::Parent(name) => (name.clone(), None, None, false),
         };
         if separated {
-            panel = panel.child(div().my_1().h(px(1.)).bg(theme.border));
+            rows = rows.child(div().my_1().h(px(1.)).bg(theme.border));
         }
         let expanded = matches!(&row, Row::Parent(name) if menu.expanded.as_ref() == Some(name));
         let is_parent = matches!(row, Row::Parent(_));
         let icon =
             icon.filter(|name| crate::toolbar::asset(&format!("toolbar/{name}.svg")).is_some());
-        panel = panel.child(
+        rows = rows.child(
             div()
                 .id(("menu", i))
                 .role(gpui::Role::MenuItem)
@@ -1153,25 +1211,16 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                 }),
         );
     }
+    let panel = panel.child(rows).into_any_element();
     if let Some(anchor) = &menu.keyboard {
         let anchors = [anchor.row.clone(), anchor.area.clone()];
-        let panel = panel.into_any_element();
         return Some(if anchor.host.above() {
             PopoverAnchor::popup_first_above(&anchors, 2, panel)
         } else {
             PopoverAnchor::popup_first(&anchors, 2, panel)
         });
     }
-    Some(
-        deferred(
-            anchored()
-                .position(menu.position)
-                .snap_to_window_with_margin(px(8.))
-                .child(panel),
-        )
-        .with_priority(2)
-        .into_any_element(),
-    )
+    Some(PopoverAnchor::popup_at(menu.position, 2, panel))
 }
 
 #[cfg(test)]
@@ -1326,6 +1375,48 @@ mod tests {
                 top(4)
             ]
         );
+    }
+
+    #[test]
+    fn the_keyboards_row_is_found_among_the_separators() {
+        let at = |title: &str, order, submenu| MenuItem {
+            order,
+            ..item(title, submenu)
+        };
+        let items = [
+            at("Open", 0, None),
+            at("Copy", 120, None),
+            at("Paste", 130, None),
+            at("Move to Trash", 300, None),
+            at("Compress…", 400, Some("More")),
+            at("Properties", super::LAST, None),
+        ];
+        let separated = |expanded| -> Vec<bool> {
+            super::drawn_of(&items, expanded)
+                .into_iter()
+                .map(|(_, separated)| separated)
+                .collect()
+        };
+        assert_eq!(
+            separated(None),
+            [false, true, false, true, true, true],
+            "between the hundreds, above a submenu, before the menu's end"
+        );
+        assert_eq!(
+            separated(Some("More")),
+            [false, true, false, true, true, false, true],
+            "a submenu's items follow their parent"
+        );
+        // Open, a line, Copy, Paste, a line, Move to Trash, a line, More,
+        // a line, Properties.
+        let drawn = super::drawn_of(&items, None);
+        let children: Vec<usize> = (0..drawn.len())
+            .map(|row| super::child_of(&drawn, row))
+            .collect();
+        assert_eq!(children, [0, 2, 3, 5, 7, 9]);
+        let drawn = super::drawn_of(&items, Some("More"));
+        assert_eq!(super::child_of(&drawn, 5), 8, "Compress… under More");
+        assert_eq!(super::child_of(&drawn, 6), 10, "Properties after it");
     }
 
     fn ctx(count: usize, all_dirs: bool, all_files: bool) -> SelectionCtx {

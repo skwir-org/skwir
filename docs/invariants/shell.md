@@ -280,6 +280,15 @@ of bars, split or not.
   refuses an argument answers nothing, unsaid
   (`crates/skwir/tests/plugins_toggle.rs` gives every source its menu's).
 - Rare items set `submenu` (expanded in place). Give items an `icon`.
+- **Never taller than the window.** The menu stands where it opened (at
+  the pointer, or under the keyboard's row), moved to stay in the
+  window, and takes at most the window's height less its margins, in
+  prepaint (`PopoverAnchor::popup_at`, `popup_first`: `Room::Window`,
+  where a toolbar's popup shrinks to the room on its button's side
+  instead). Its rows scroll inside its padding; the row the keyboard
+  reaches is brought into view in the frame that draws it
+  (`MenuState::reveal`, the separators counted among the rows'
+  children, `menu::child_of`).
 - **A tag's menu, where a file shows it.** A right press on a tag's chip
   or dot (`Shell::tag_act`: an entry's in a view, the preview's header,
   Properties) selects the entry as its row's right press does
