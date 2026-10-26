@@ -900,7 +900,7 @@ fn connect_at_login_is_turned_on_and_off_from_a_remote_s_menu() {
     std::fs::write(
         &config,
         format!(
-            "[disk]\ntype = alias\nremote = {}\n",
+            "[at-login]\ntype = alias\nremote = {}\n",
             base.join("disk").display()
         ),
     )
@@ -919,7 +919,7 @@ fn connect_at_login_is_turned_on_and_off_from_a_remote_s_menu() {
     let item = |title: &str| {
         app.registry
             .places
-            .find(|p| p.title.starts_with("disk"))
+            .find(|p| p.title.starts_with("at-login"))
             .and_then(|p| p.menu.into_iter().find(|i| i.title == title))
     };
     until(&app, 30, "its menu offers to connect at login", || {
@@ -927,7 +927,7 @@ fn connect_at_login_is_turned_on_and_off_from_a_remote_s_menu() {
     });
     app.dispatch(&item("Connect at Login").unwrap().command)
         .unwrap();
-    let id = login::id_of("rclone", &Address::parse("rclone://disk/").unwrap());
+    let id = login::id_of("rclone", &Address::parse("rclone://at-login/").unwrap());
     // Set up once it says so: enabled before it is started.
     let mut heard = Vec::new();
     until(&app, 60, "its unit was set up", || {

@@ -558,6 +558,10 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
   writes stay isolated. Await listing completion or events with a
   deadline, never fixed sleeps (`crates/core/tests/common/mod.rs` has
   examples).
+- A test that mounts a remote names it apart from every other test's
+  (`rclone://optioned/`, not `rclone://dav/` twice): tests run at once
+  and share the runtime folder, where Skwir names a mount point by its
+  address, so two tests mounting one name take each other's mount.
 - Test the user-facing command path for cross-plugin bugs, not just the
   helper that formats a string. Include synthetic special-character paths
   and assert the returned entries, not merely that parsing succeeds.

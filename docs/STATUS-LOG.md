@@ -5523,3 +5523,11 @@ Asked by the user after the disk fell to 3 GB during a full run:
   info was gone were built again from scratch (their incremental folders
   removed), and every `.dwo` a current artifact names was checked present.
   From 13 GB free to 87 GB, re-recording each build compiling nothing.
+- **Two tests that took each other's mounts:** `remote_configs` mounted
+  `rclone://dav/` in two tests, and `remote_configs` and `remote_login`
+  each `rclone://disk/`; tests run at once share the runtime folder, where
+  a mount point is named by its address, so under load one found the
+  other's mount ("rclone://dav/ never led to its folder", and Connect at
+  Login skipping its start as the point was mounted). Each now names its
+  own (`rclone://optioned/`, `rclone://at-login/`); the rule is in
+  AGENTS.md's tests.

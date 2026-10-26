@@ -1923,7 +1923,7 @@ fn mount_options_chosen_for_a_server_shape_its_next_mount() {
     std::fs::write(
         &config,
         format!(
-            "[dav]\ntype = webdav\nurl = http://127.0.0.1:{}/\n",
+            "[optioned]\ntype = webdav\nurl = http://127.0.0.1:{}/\n",
             served.port
         ),
     )
@@ -1932,7 +1932,7 @@ fn mount_options_chosen_for_a_server_shape_its_next_mount() {
     let window = Window::new(&app);
     app.dispatch(&Invocation::with_args(
         "remote.mount_options",
-        &serde_json::json!({ "address": "rclone://dav/" }),
+        &serde_json::json!({ "address": "rclone://optioned/" }),
     ))
     .unwrap();
     let asked = window.form(30);
@@ -1953,7 +1953,7 @@ fn mount_options_chosen_for_a_server_shape_its_next_mount() {
     );
     until_said(&app, 30, "when it next connects");
 
-    let point = mounted(&app, "rclone://dav/");
+    let point = mounted(&app, "rclone://optioned/");
     let _left = Unmounted(point.clone());
     assert_eq!(
         std::fs::read_to_string(point.join("kept.txt")).unwrap(),
