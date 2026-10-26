@@ -1511,13 +1511,20 @@ protocol is a scheme a connector maps, or a connector.
   through its address; one another program holds (KDE's `kiod6`) is said
   held, by whom. How it was checked is in `docs/STATUS-LOG.md`, "Devices
   before they are mounted".
+- **A phone KDE holds** (2026-10-26, ADR-097, the user's choice for
+  Plasma): the `kmtp` connector, before GVfs, opens a phone KDE's kmtpd
+  holds through Skwir's helper `skwir-kmtp-worker` (FUSE, kmtpd's D-Bus
+  interface), never loading kmtpd off KDE's desktop; the same address and
+  place as GVfs's. How it was checked is in `docs/STATUS-LOG.md`, "A
+  phone KDE holds, through kmtpd".
 - **G. Left** (each its own step):
   - a device another program holds is named, never taken from it: KDE's
     `kiod6` keeps every phone it sees while it runs, so on a desktop with
-    both, Dolphin and Skwir take turns (ADR-096). Not built: a Quit
-    kiod6 button beside that message; a connector through `kmtpd`
-    itself (measured 2026-10-26, `docs/STATUS-LOG.md`), which would let
-    both use a phone at once, for Plasma;
+    both, Dolphin and Skwir take turns (ADR-096), unless Skwir reaches
+    it through `kmtpd` (ADR-097, built 2026-10-26). Not built: a Quit
+    kiod6 button beside that message; one connection to the session bus
+    for GVfs's and kmtpd's followers (each holds its own: 0.5 MiB idle,
+    three threads);
   - an iPhone's (AFC) ways chosen by requests counted against a
     stand-in, an iPhone's own pace not timed (no iPhone at hand);
   - on the machines (Phase 5b): Windows' and macOS's own shares (the

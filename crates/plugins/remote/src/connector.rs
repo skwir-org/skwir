@@ -167,6 +167,13 @@ pub trait Connector: Send + Sync {
         recognised: &Recognised,
         cancel: &CancelToken,
     ) -> anyhow::Result<()>;
+    /// Whether it opens `address` here, where it may answer for some of a
+    /// scheme's addresses alone (KDE's kmtpd, the phones it holds, ADR-097):
+    /// one it does not open goes to the next tool, unsaid. Asked before
+    /// connecting, on its thread: it may ask a program.
+    fn opens(&self, _address: &Address) -> bool {
+        true
+    }
     /// Follow the devices plugged in that its program would mount (a phone,
     /// a camera, ADR-096): `told` what it offers at once, then again each
     /// time that, or one of its mounts, may have changed, until `cancel`.

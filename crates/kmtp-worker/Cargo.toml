@@ -1,0 +1,31 @@
+[package]
+name = "skwir-kmtp-worker"
+description = "skwir helper: a phone KDE's kmtpd holds, served as a folder through FUSE"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+# Linux only, as kmtpd is (ADR-097): elsewhere it answers `--probe` that it
+# cannot work, and nothing else.
+[target.'cfg(target_os = "linux")'.dependencies]
+# FUSE without libfuse: mounted through the system's `fusermount3`.
+fuser = { version = "0.18", default-features = false }
+# KDE's kmtpd on the session bus: the zbus the platform links.
+zbus = "5"
+# What is read or written, kept in an unnamed file of Skwir's cache.
+tempfile.workspace = true
+rustix = { workspace = true, features = ["process", "mount"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# A stand-in kmtpd, and the connector that starts this helper (ADR-097).
+serde.workspace = true
+parking_lot.workspace = true
+dirs.workspace = true
+serde_json.workspace = true
+skwir-core = { workspace = true, features = ["testing"] }
+skwir-plugin-remote.workspace = true
+
+[lints]
+workspace = true

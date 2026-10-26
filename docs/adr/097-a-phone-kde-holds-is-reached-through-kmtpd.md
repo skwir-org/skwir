@@ -2,9 +2,10 @@
 
 Status: accepted, 2026-10-26, the user's choice ("Accept"), after the
 measurements on a Pixel 5 (`docs/STATUS-LOG.md`, "Devices before they
-are mounted") and their agreeing to its four points. Not built yet.
-Amends ADR-077 (a mount of Skwir's own helper) and ADR-096 (a second way
-to a device).
+are mounted") and their agreeing to its four points. Built and checked
+on Linux the same day (`docs/STATUS-LOG.md`, "A phone KDE holds, through
+kmtpd"); macOS and Windows compiled. Amends ADR-077 (a mount of Skwir's
+own helper) and ADR-096 (a second way to a device).
 
 ## Context
 
@@ -117,8 +118,15 @@ to a device).
   a phone `kmtpd` holds either); ending `kiod6` from Skwir (a "Quit
   kiod6" button stays possible, and ends what else `kiod6` serves, KIO's
   passwords for the session among them).
-- To test: a stand-in `kmtpd` on a private bus (listing, reading,
-  writing, refusals, a device gone, a `kiod6` that does not run, one
-  where `kmtpd` is not loaded and must not be); the helper's mount in a
-  test's FUSE; a phone held by a private `kiod6` in `just mtp-check`
-  beside GVfs's part.
+- Tested: a stand-in `kmtpd` on a private bus (`kmtp-worker/tests`:
+  listing, reading, writing, replacing, folders, refusals, space, a
+  device gone; the connector offering, opening, Eject; a `kiod6` whose
+  `kmtpd` is not loaded, never addressed off KDE's desktop, addressed on
+  it), the helper's mount through FUSE, as a user and as root in a user
+  namespace; a phone held by a private `kiod6` in `just mtp-check` beside
+  GVfs's part.
+- As root (a user namespace's), fuser mounts with the type `fuse` alone;
+  the helper mounts there itself, as `fuse.skwir-kmtp`, and serves
+  FUSE's device through fuser (`mount_as_root`).
+- `kmtpd` opens only a phone free as it loads, and never again but for a
+  phone plugged in after: one another program held then stays GVfs's.

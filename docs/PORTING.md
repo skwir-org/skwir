@@ -275,7 +275,9 @@ Left:
   cameras among the devices (ADR-096: GVfs's volume monitors, its MTP,
   gPhoto2 and AFC): Windows reaches a phone through its Portable Devices,
   which are no folders, and macOS has no MTP; an iPhone's files there
-  would be a connector of its own. The askpass is a named pipe
+  would be a connector of its own. A phone KDE's kmtpd holds is reached
+  through Skwir's helper (`skwir-kmtp-worker`, ADR-097), Linux only too:
+  elsewhere it answers `--probe` that it cannot work. The askpass is a named pipe
   on Windows (`skwir_platform::askpass`): rclone's own Windows release
   asks an encrypted configuration's password through `skwir.exe` under
   Wine; Windows' own OpenSSH running it as `SSH_ASKPASS` is not tried

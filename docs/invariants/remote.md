@@ -175,6 +175,18 @@ ADR-077 (which revises ADR-021).
   opened, never because it was plugged in: mounted, it is held from
   every other program. When it does not open, the programs holding its
   node are named (`holders`), GVfs's own for that kind left out.
+- **A phone KDE's kmtpd holds** (ADR-097) opens through it: the `kmtp`
+  connector, tried before GVfs, answers only for a phone kmtpd holds
+  (`Connector::opens`), asked only where `kiod6` owns its name and kmtpd
+  is loaded (what `/modules` lists, which loads nothing), never loading
+  it, except on KDE's desktop. Its helper (`skwir-kmtp-worker`) serves
+  kmtpd's interface as a FUSE folder of Skwir's (`fuse.skwir-kmtp`): one
+  call at a time, a file fetched whole into an unnamed file of the cache
+  and sent whole at its close, a replaced file removed first, a move
+  between folders refused (copies written in place, ADR-083), times and
+  modes refused. Eject lets go of Skwir's mount alone: the phone stays
+  KDE's. The phone keeps GVfs's address and place, its device found by
+  Solid's `udi` in sysfs and udev (`Kmtp::of_udi`).
 - **Staging** on a remote is swept only where this machine noted it
   (operations.md, "Staging"): a folder its copy could not remove as its
   server stopped answering goes once that remote answers again.

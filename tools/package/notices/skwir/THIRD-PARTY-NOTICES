@@ -2,9 +2,9 @@ Third-party software in skwir
 
 The programs of this package (skwir, skwir-pdf-worker,
 skwir-djvu-worker, skwir-archive-worker, skwir-model-worker,
-skwir-module-worker) are built from skwir's own code, under the
-package's licence, and the crates below, each under the licence it is
-listed with, whose text follows.
+skwir-module-worker, skwir-kmtp-worker) are built from skwir's own code,
+under the package's licence, and the crates below, each under the
+licence it is listed with, whose text follows.
 
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
@@ -2426,7 +2426,7 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: adler2 2.0.1, allocator-api2 0.2.21, anyhow 1.0.104, async-channel 2.5.0, async-executor 1.14.0, async-fs 2.2.0, async-io 2.6.0, async-lock 3.4.2, async-net 2.0.0, async-process 2.5.0, async-recursion 1.1.1, async-signal 0.2.14, async-task 4.7.1, async-trait 0.1.92, atomic-waker 1.1.2, blocking 1.7.0, concurrent-queue 2.5.0, displaydoc 0.2.7, dtoa 1.0.11, dyn-clone 1.0.20, endi 1.1.1, enumn 0.1.14, event-listener 5.4.2, event-listener-strategy 0.5.4, fast-float2 0.2.4, fastrand 2.5.0, flume 0.12.0, futures-lite 2.6.1, glow 0.18.0, hashify 0.2.9, home 0.5.12, inventory 0.3.24, itoa 1.0.18, khronos-egl 6.0.0, leb128fmt 0.1.0, linux-raw-sys 0.12.1, mail-parser 0.11.9, minimal-lexical 0.2.1, once_cell 1.21.4, ordered-stream 0.2.0, parking 2.2.1, paste 1.0.15, pastey 0.2.3, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, piper 0.2.5, polling 3.11.0, proc-macro-crate 3.5.0, proc-macro2 1.0.107, quote 1.0.47, ref-cast 1.0.27, ref-cast-impl 1.0.27, rustc-hash 1.1.0, rustc-hash 2.1.3, rustix 1.1.5, rustix-openpty 0.2.0, rustversion 1.0.23, semver 1.0.28, serde 1.0.229, serde_bytes 0.11.19, serde_core 1.0.229, serde_derive 1.0.229, serde_derive_internals 0.30.0, serde_json 1.0.151, serde_repr 0.1.21, servo_arc 0.4.3, smol 2.0.2, smol_str 0.3.6, syn 2.0.119, syn 3.0.6, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, typed-path 0.12.3, unicode-ident 1.0.26, utf-8 0.7.6, waker-fn 1.2.0, wasm-encoder 0.258.3, wasm-metadata 0.258.3, wasmparser 0.258.3, wasmprinter 0.258.3, wit-component 0.258.3, wit-parser 0.258.3, zbus-lockstep 0.5.2, zbus-lockstep-macros 0.5.2, zed-font-kit 0.14.1-zed, zmij 1.0.23, zvariant_utils 4.2.0
+Used by: adler2 2.0.1, allocator-api2 0.2.21, anyhow 1.0.104, async-channel 2.5.0, async-executor 1.14.0, async-fs 2.2.0, async-io 2.6.0, async-lock 3.4.2, async-net 2.0.0, async-process 2.5.0, async-recursion 1.1.1, async-signal 0.2.14, async-task 4.7.1, async-trait 0.1.92, atomic-waker 1.1.2, blocking 1.7.0, concurrent-queue 2.5.0, displaydoc 0.2.7, dtoa 1.0.11, dyn-clone 1.0.20, endi 1.1.1, enumn 0.1.14, event-listener 5.4.2, event-listener-strategy 0.5.4, fast-float2 0.2.4, fastrand 2.5.0, flume 0.12.0, futures-lite 2.6.1, glow 0.18.0, hashify 0.2.9, home 0.5.12, inventory 0.3.24, itoa 1.0.18, khronos-egl 6.0.0, leb128fmt 0.1.0, linux-raw-sys 0.12.1, mail-parser 0.11.9, minimal-lexical 0.2.1, num_enum 0.7.6, num_enum_derive 0.7.6, once_cell 1.21.4, ordered-stream 0.2.0, parking 2.2.1, paste 1.0.15, pastey 0.2.3, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, piper 0.2.5, polling 3.11.0, proc-macro-crate 3.5.0, proc-macro2 1.0.107, quote 1.0.47, ref-cast 1.0.27, ref-cast-impl 1.0.27, rustc-hash 1.1.0, rustc-hash 2.1.3, rustix 1.1.5, rustix-openpty 0.2.0, rustversion 1.0.23, semver 1.0.28, serde 1.0.229, serde_bytes 0.11.19, serde_core 1.0.229, serde_derive 1.0.229, serde_derive_internals 0.30.0, serde_json 1.0.151, serde_repr 0.1.21, servo_arc 0.4.3, smol 2.0.2, smol_str 0.3.6, syn 2.0.119, syn 3.0.6, thiserror 1.0.69, thiserror 2.0.21, thiserror-impl 1.0.69, thiserror-impl 2.0.21, typed-path 0.12.3, unicode-ident 1.0.26, utf-8 0.7.6, waker-fn 1.2.0, wasm-encoder 0.258.3, wasm-metadata 0.258.3, wasmparser 0.258.3, wasmprinter 0.258.3, wit-component 0.258.3, wit-parser 0.258.3, zbus-lockstep 0.5.2, zbus-lockstep-macros 0.5.2, zed-font-kit 0.14.1-zed, zmij 1.0.23, zvariant_utils 4.2.0
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -2977,7 +2977,7 @@ SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: bitflags 1.3.2, bitflags 2.13.2, getopts 0.2.24, glob 0.3.4, log 0.4.34, num 0.4.3, num-bigint 0.4.8, num-bigint-dig 0.9.1, num-complex 0.4.6, num-integer 0.1.47, num-iter 0.1.46, num-rational 0.4.2, num-traits 0.2.19, regex 1.13.1, regex-automata 0.4.18, regex-syntax 0.8.11
+Used by: bitflags 1.3.2, bitflags 2.13.2, getopts 0.2.24, glob 0.3.4, log 0.4.34, num 0.4.3, num-bigint 0.4.8, num-bigint-dig 0.9.1, num-complex 0.4.6, num-integer 0.1.47, num-iter 0.1.46, num-rational 0.4.2, num-traits 0.2.19, page_size 0.6.0, regex 1.13.1, regex-automata 0.4.18, regex-syntax 0.8.11
 
 Copyright (c) 2014 The Rust Project Developers
 
@@ -4036,7 +4036,7 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: either 1.18.0, itertools 0.13.0, itertools 0.14.0, rawpointer 0.2.1
+Used by: either 1.18.0, itertools 0.14.0, rawpointer 0.2.1
 
 Copyright (c) 2015
 
@@ -4680,6 +4680,35 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+------------------------------------------------------------------------
+MIT License (MIT)
+
+Used by: fuser 0.18.0
+
+The MIT License (MIT)
+=====================
+
+Copyright (c) 2020-present Christopher Berner
+
+Copyright © `2013-2019` `Andreas Neuhaus` `https://zargony.com/`
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the “Software”), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------
 MIT License (MIT)
@@ -6056,6 +6085,31 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
+Used by: memoffset 0.9.1
+
+Copyright (c) 2017 Gilad Naaman
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------
+MIT License (MIT)
+
 Used by: mime 0.3.17
 
 Copyright (c) 2014 Sean McArthur
@@ -6204,6 +6258,33 @@ CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------
+MIT License (MIT)
+
+Used by: nix 0.31.3
+
+The MIT License (MIT)
+
+Copyright (c) 2015 Carl Lerche + nix-rust Authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 
 ------------------------------------------------------------------------
 MIT License (MIT)

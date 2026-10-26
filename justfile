@@ -168,7 +168,8 @@ mtp-check:
     cargo nextest list -p skwir -E 'binary(remote_folders)' > /dev/null
     binary=$(cargo nextest list -p skwir -E 'binary(remote_folders)' \
         --message-format json | python3 -c 'import json, sys; print(json.load(sys.stdin)["rust-suites"]["skwir::remote_folders"]["binary-path"])')
-    tools/test/gvfs-mtp.sh "$binary"
+    cargo build -p skwir-kmtp-worker
+    tools/test/gvfs-mtp.sh "$binary" target/debug/skwir-kmtp-worker
 
 # Exercise GStreamer playback using a synthetic two-track video and subtitles.
 media-check:
@@ -339,12 +340,12 @@ spike toolkit gpu="intel" rows="100000":
 
 # Run the app (release) on a directory, default: the current one.
 run dir=".":
-    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvu-worker -p skwir-djvulibre-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-model-worker -p skwir-module-worker
+    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvu-worker -p skwir-djvulibre-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-model-worker -p skwir-module-worker -p skwir-kmtp-worker
     ./target/release/skwir {{dir}}
 
 # Profile the app with samply (opens the Firefox Profiler UI when done).
 flame dir=".":
-    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvu-worker -p skwir-djvulibre-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-model-worker -p skwir-module-worker
+    cargo build --release -p skwir -p skwir-pdf-worker -p skwir-poppler-worker -p skwir-mupdf-worker -p skwir-djvu-worker -p skwir-djvulibre-worker -p skwir-media-worker -p skwir-archive-worker -p skwir-mermaid-worker -p skwir-model-worker -p skwir-module-worker -p skwir-kmtp-worker
     samply record ./target/release/skwir {{dir}}
 
 # Profile a bench profile's listing with a flamegraph SVG.

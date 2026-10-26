@@ -28,6 +28,7 @@ pub mod keys;
 mod keys_form;
 pub mod kio;
 pub mod kio_copy;
+pub mod kmtp;
 mod known;
 pub mod lan;
 pub mod login;
@@ -91,15 +92,17 @@ pub(crate) const REMEMBERED: &str = "remote.remembered";
 
 /// The tools, in the order the user chose by default (2026-10-20: sshfs
 /// first for SFTP, then GVfs, rclone, the system's mounts), KIO after GVfs
-/// (ADR-081)...
-const ORDER: &str = "sshfs gvfs kio rclone fstab";
+/// (ADR-081), KDE's kmtpd before GVfs for a phone it holds, which GVfs
+/// cannot open (ADR-097)...
+const ORDER: &str = "sshfs kmtp gvfs kio rclone fstab";
 
-/// ...but before it on KDE's desktop, whose remotes and passwords are KIO's.
-const ORDER_ON_KDE: &str = "sshfs kio gvfs rclone fstab";
+/// ...but KIO before GVfs on KDE's desktop, whose remotes and passwords
+/// are KIO's.
+const ORDER_ON_KDE: &str = "sshfs kio kmtp gvfs rclone fstab";
 
 /// Off Linux, the system's own shares first, then rclone and sshfs (over
 /// macFUSE).
-const ORDER_OFF_LINUX: &str = "system rclone sshfs fstab gvfs kio";
+const ORDER_OFF_LINUX: &str = "system rclone sshfs fstab gvfs kio kmtp";
 
 /// The tools' order where the user chose none: the desktop's own first.
 fn default_order() -> &'static str {
@@ -227,6 +230,7 @@ impl Default for Remotes {
     fn default() -> Self {
         Remotes::with(vec![
             Arc::new(sshfs::Sshfs::default()),
+            Arc::new(kmtp::Kmtp::default()),
             Arc::new(gvfs::Gvfs::default()),
             Arc::new(kio::Kio::default()),
             Arc::new(rclone::Rclone::default()),
@@ -566,6 +570,9 @@ impl Remotes {
             }
             if let Some(reason) = connector.unavailable() {
                 why_not.push(reason);
+                continue;
+            }
+            if !connector.opens(address) {
                 continue;
             }
             let heard = Arc::new(Heard {
@@ -933,8 +940,14 @@ impl Remotes {
             places.push(place);
         }
         // The devices plugged in and not mounted (ADR-096), as unmounted
-        // disks are: the same place mounted or not, mounted once opened.
+        // disks are: the same place mounted or not, mounted once opened;
+        // one two tools offer (GVfs, KDE's kmtpd: ADR-097) listed once.
+        let mut listed: Vec<&Address> = Vec::new();
         for offered in state.devices.values().flatten() {
+            if listed.iter().any(|a| a.same_server(&offered.address)) {
+                continue;
+            }
+            listed.push(&offered.address);
             let shown = mounted.iter().any(|m| {
                 m.recognised
                     .address
@@ -1250,6 +1263,7 @@ impl Plugin for RemotePlugin {
                 "Opening addresses through GVfs, the desktop's remotes",
             ),
             Requirement::program("rclone", "Opening rclone's remotes and other addresses"),
+            kmtp::WORKER.requirement("Opening a phone KDE's kmtpd holds"),
         ]
     }
 
@@ -1292,7 +1306,7 @@ impl Plugin for RemotePlugin {
             SettingSpec::text(
                 CONNECTORS,
                 "Tools that open addresses",
-                "The tools that mount an sftp://, smb:// or other address, tried in this order among those installed: sshfs, gvfs, kio, rclone, fstab. On KDE's desktop, kio comes before gvfs.",
+                "The tools that mount an sftp://, smb:// or other address, tried in this order among those installed: sshfs, kmtp (a phone KDE holds), gvfs, kio, rclone, fstab. On KDE's desktop, kio comes before gvfs.",
                 default_order(),
             )
             .page(skwir_core::settings::page::NETWORK)
@@ -1788,11 +1802,14 @@ mod tests {
             assert_eq!(on(&["KDE"]), "system rclone sshfs fstab gvfs kio");
             return;
         }
-        assert_eq!(on(&["KDE"]), "sshfs kio gvfs rclone fstab");
-        assert_eq!(on(&["X-Generic", "kde"]), "sshfs kio gvfs rclone fstab");
-        assert_eq!(on(&["GNOME"]), "sshfs gvfs kio rclone fstab");
-        assert_eq!(on(&["Hyprland"]), "sshfs gvfs kio rclone fstab");
-        assert_eq!(on(&[]), "sshfs gvfs kio rclone fstab");
+        assert_eq!(on(&["KDE"]), "sshfs kio kmtp gvfs rclone fstab");
+        assert_eq!(
+            on(&["X-Generic", "kde"]),
+            "sshfs kio kmtp gvfs rclone fstab"
+        );
+        assert_eq!(on(&["GNOME"]), "sshfs kmtp gvfs kio rclone fstab");
+        assert_eq!(on(&["Hyprland"]), "sshfs kmtp gvfs kio rclone fstab");
+        assert_eq!(on(&[]), "sshfs kmtp gvfs kio rclone fstab");
     }
 
     use super::*;

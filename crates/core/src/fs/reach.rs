@@ -68,14 +68,17 @@ impl Remote {
 
     /// Whether its program moves an entry from one of its folders to
     /// another: not GVfs's for a camera (gPhoto2, its bridge's folder
-    /// `gphoto2:…`), which renames within a folder alone. What is made
-    /// there is written in place, never staged and moved (ADR-083).
+    /// `gphoto2:…`), nor Skwir's own for a phone KDE's kmtpd holds
+    /// (`fuse.skwir-kmtp`, ADR-097), which rename within a folder alone.
+    /// What is made there is written in place, never staged and moved
+    /// (ADR-083).
     pub fn moves_between_folders(&self) -> bool {
-        !(self.fstype == "fuse.gvfsd-fuse"
+        let camera = self.fstype == "fuse.gvfsd-fuse"
             && self
                 .point
                 .file_name()
-                .is_some_and(|name| name.as_encoded_bytes().starts_with(b"gphoto2:")))
+                .is_some_and(|name| name.as_encoded_bytes().starts_with(b"gphoto2:"));
+        !(camera || self.fstype == "fuse.skwir-kmtp")
     }
 }
 
@@ -530,6 +533,10 @@ const FUSE_NETWORK: &[&str] = &[
     "rclone",
     "gvfsd-fuse",
     "kio-fuse",
+    // A phone KDE's kmtpd holds, mounted by Skwir's helper (ADR-097): a
+    // device's, near, but waiting on the phone as a remote waits on its
+    // server, so known here as GVfs's phones are.
+    "skwir-kmtp",
     "curlftpfs",
     "s3fs",
     "gcsfuse",
@@ -975,6 +982,12 @@ mod tests {
             !camera.moves_between_folders(),
             "GVfs's gPhoto2 renames within a folder"
         );
+        let held = remote(
+            "/run/user/1000/skwir/remote/kmtp mtp:%2F%2FPhone%2F",
+            "fuse.skwir-kmtp",
+        );
+        assert!(!held.moves_between_folders(), "nor does KDE's kmtpd");
+        assert!(network("fuse.skwir-kmtp", std::ffi::OsStr::new("kmtpd")));
         for (point, fstype) in [
             (format!("{gvfs}/mtp:host=Phone"), "fuse.gvfsd-fuse"),
             (format!("{gvfs}/sftp:host=nas"), "fuse.gvfsd-fuse"),

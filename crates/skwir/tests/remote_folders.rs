@@ -2622,6 +2622,97 @@ fn gvfs_offers_a_phone_opens_it_and_lets_go_of_it() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A phone KDE's kmtpd holds (ADR-097), as the window has it on Plasma:
+/// offered by kmtpd's name for it, opened through Skwir's helper (the same
+/// place mounted, with Eject), a folder and a file of the test's made,
+/// read back and removed through it, let go of by Eject while kmtpd keeps
+/// the phone. Only where a script runs a `kiod6` of its own on a bus of its
+/// own with a phone plugged in and the helper's build in
+/// `SKWIR_KMTP_WORKER` (`just mtp-check`, which offers the phone). Skipped
+/// elsewhere.
+#[test]
+fn kmtpd_opens_a_phone_kde_holds_through_skwir_s_helper() {
+    if std::env::var_os("SKWIR_TEST_KMTP_PHONE").is_none() {
+        eprintln!("skipped: no phone held by a script's kiod6");
+        return;
+    }
+    let kmtp: Arc<dyn Connector> = Arc::new(skwir_plugin_remote::kmtp::Kmtp {
+        // KDE's desktop: kmtpd loaded as Dolphin would load it.
+        on_kde: Some(true),
+        ..Default::default()
+    });
+    let remotes = Remotes::with(vec![kmtp]);
+    let base = fixture("kmtp-phone");
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    app.plugins
+        .add(Arc::new(RemotePlugin::with(remotes.clone())), &app);
+    let phone = || {
+        app.registry
+            .places
+            .all()
+            .into_iter()
+            .find(|p| p.group == "devices" && p.icon.as_deref() == Some("phone"))
+    };
+    until(&app, 60, "the phone offered by kmtpd", || {
+        phone().is_some_and(|p| &*p.location.scheme == "mtp")
+    });
+    let offered = phone().unwrap();
+    let address = Address::of_location(&offered.location).unwrap();
+    assert_ne!(
+        offered.title,
+        address.label(),
+        "named by kmtpd, not its serial"
+    );
+
+    let top = remotes
+        .reach(
+            &app,
+            &address,
+            &(Arc::new(Answers::default()) as Arc<dyn Ask>),
+            &CancelToken::new(),
+        )
+        .expect("the phone opens through kmtpd");
+    until(&app, 20, "the phone shown mounted", || {
+        phone().is_some_and(|p| p.location.path().as_deref() == Some(top.as_path()))
+    });
+    assert_eq!(phone().unwrap().key, offered.key, "the same place");
+    let storage = std::fs::read_dir(&top)
+        .unwrap()
+        .next()
+        .expect("a storage")
+        .unwrap()
+        .path();
+    assert!(
+        std::fs::read_dir(&storage).unwrap().next().is_some(),
+        "listed"
+    );
+    // A folder of the test's, a file in it, read back, removed.
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let folder = storage.join(format!("skwir-test-{run}"));
+    std::fs::create_dir(&folder).unwrap();
+    let file = folder.join("it's written.txt");
+    std::fs::write(&file, b"through kmtpd").unwrap();
+    assert_eq!(std::fs::read(&file).unwrap(), b"through kmtpd");
+    std::fs::remove_file(&file).unwrap();
+    std::fs::remove_dir(&folder).unwrap();
+    assert!(!folder.exists());
+
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": top }),
+    ))
+    .unwrap();
+    until(&app, 30, "let go of, offered again", || {
+        skwir_core::fs::reach::of(&top).is_none_or(|r| r.point != top)
+            && phone().is_some_and(|p| &*p.location.scheme == "mtp")
+    });
+    drop(app);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// GVfs's AFC mount (an iPhone's) against a stand-in device on this
 /// machine, by `tools/test/gvfs-afc.sh`: `gio` up, within, removed and for
 /// a file alone down; down in batches through the bridge, which asks the

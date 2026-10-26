@@ -9,3 +9,4 @@ skwir-archive-worker
 skwir-mermaid-worker
 skwir-model-worker
 skwir-module-worker
+skwir-kmtp-worker

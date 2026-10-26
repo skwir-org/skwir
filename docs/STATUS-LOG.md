@@ -5401,3 +5401,62 @@ Dolphin and nowhere in Skwir. Investigated, then built as proposed
   pace, not measured); a listing asked during a read waited for it
   (0.60 s). Locked, the phone kept `kmtpd`'s listing 60 s and gave
   nothing. Not built (the user's call): a connector through it.
+
+### A phone KDE holds, through kmtpd (2026-10-26)
+
+ADR-097, accepted and built the same day after the GVfs comparison (the
+user: "so that skwir can work nicely on Plasma"):
+
+- **The helper** `skwir-kmtp-worker` (`crates/kmtp-worker`, pure Rust:
+  `fuser` 0.18 without libfuse, `zbus`): `mount <udi> <point> <cache>`
+  starts a copy of itself in a process group of its own, which mounts
+  kmtpd's device through FUSE and says `mounted` (or why not) before
+  serving; it lets go when the phone leaves kmtpd (`devicesChanged`) or
+  `kiod6` the bus. Each storage a folder; a folder listed each time it is
+  read from its start; a file fetched whole into an unnamed file of the
+  cache, sent whole at its close (a refusal told by the close), what was
+  there removed first; `EXDEV` between folders; times and modes
+  `ENOTSUP` (Skwir's copies leave both unsaid already). One call at a
+  time, waiting as long as kmtpd does; its copies' ends told by
+  `copyFinished`, whoever's, so a fetch waits for its whole size and a
+  send for the phone to list it.
+- **Root's mount**: as root (`unshare -r`, the harness), fuser mounts with
+  the type `fuse` alone, its subtype only the source, so Skwir saw no
+  `fuse.skwir-kmtp` and said "it said it mounted, but nothing is mounted
+  there". The helper mounts there itself (`fuse.skwir-kmtp`, the kernel
+  takes the subtype in the type) and gives fuser the device
+  (`Session::from_fd`); a user's mount still goes through `fusermount3`.
+- **The connector** `kmtp` (remote plugin), first for `mtp://` in every
+  order (`sshfs kmtp gvfs kio rclone fstab`; on KDE's desktop `sshfs kio
+  kmtp gvfs rclone fstab`): `Connector::opens` (new) answers only for a
+  phone kmtpd holds, so another goes to GVfs unsaid; kmtpd asked only
+  where `kiod6` owns its name and `/modules` lists kmtpd, except on KDE's
+  desktop; a device's `udi` read as its sysfs folder, its serial from
+  udev's record, so the phone keeps GVfs's address; offered while kmtpd
+  holds it (`devicesChanged`, `kiod6` coming or going); a device two
+  tools offer listed once. Core's reach knows `fuse.skwir-kmtp` as a
+  device's mount that writes in place.
+- **Packaging**: the helper in `tools/package/programs`, the deb's and
+  rpm's file lists, `just run`/`flame`; the notices made again (adding
+  `fuser` let Cargo pick, among versions already locked, `windows-sys`
+  0.61.2 and `getrandom` 0.4.3 for `rustix` and `tempfile`, so older
+  copies left several packages' notices); `just deny` passed.
+- **Checked**: the helper's tests against a stand-in kmtpd on a private
+  bus, through FUSE, as a user and as root in a user namespace (each
+  failing when its rule is undone: the removal before a replace, the root
+  mount's type, never loading kmtpd off KDE's desktop); the connector
+  through the plugin against the stand-in (offered by name, opened, the
+  same place, Small thumbnails, written in place, Eject); `just mtp-check`
+  passed whole with the phone, the new part a private `kiod6` holding it
+  (offered by kmtpd's name, opened through the helper, a folder and a file
+  of the test's made, read back and removed, Eject) after GVfs's parts.
+  The first full run found the Windows build compiling Linux's code
+  (fixed: `cfg`); the first phone run, kmtpd loading while GVfs's camera
+  program still held the phone, which kmtpd then never opens (the harness
+  waits for the phone to be free). Idle, debug build on a display of its
+  own, the helper found or not: 284.4 and 284.5 MiB PSS against 284.0 and
+  283.9, three or four threads more. `just lint`, the default tests (2249
+  passed, 28 skipped), `just check-cross` (and the helper's and the
+  plugin's Windows and macOS lints again after the root mount's fix).
+- Not checked: a real Plasma session (a private `kiod6` stood in for it),
+  Dolphin and Skwir reading the phone at the same moment.
