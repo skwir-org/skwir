@@ -41,6 +41,9 @@ pub struct Look {
     /// Its rating in half stars, where its notes keep one: what a screen
     /// reader hears with its tags (`tags::said`).
     pub rating: Option<u64>,
+    /// The color of its ring while a place of the sidebar is pointed at
+    /// whose tags it has (`Shell::ring_of`).
+    pub ring: Option<usize>,
     /// A place (a tag's), or a folder that does not open at its path (a
     /// trashed one): where it leads, and a tag's color.
     pub place: Option<(Location, Option<usize>)>,
@@ -91,22 +94,28 @@ impl Shell {
                 .metadata
                 .value(skwir_core::entry::keys::RATING)
                 .and_then(skwir_core::Value::as_u64),
+            ring: self.ring_of(e),
             place,
             path: if e.is_dir() { pane.path_of(id) } else { None },
         })
     }
 }
 
-/// A row's or a tile's selection, cursor and hover.
+/// A row's or a tile's selection, cursor and hover, and its ring while a
+/// place of the sidebar whose tags it has is pointed at: the tag's color
+/// around it and its tint under it.
 pub fn highlight(el: Stateful<Div>, look: &Look, theme: &Theme) -> Stateful<Div> {
     el.border_1()
-        .border_color(if look.cursor {
-            theme.accent
-        } else {
-            gpui::transparent_black()
+        .border_color(match (look.cursor, look.ring) {
+            (true, _) => theme.accent,
+            (false, Some(ring)) => theme.tag(ring),
+            (false, None) => gpui::transparent_black(),
         })
         .when(look.selected, |d| {
             d.bg(theme.selection_bg).text_color(theme.selection_text)
+        })
+        .when_some(look.ring.filter(|_| !look.selected), |d, ring| {
+            d.bg(theme.tag_fill(ring))
         })
         .when(!look.selected, |d| d.hover(|s| s.bg(theme.hover)))
 }

@@ -408,15 +408,15 @@ fn card_element(
         .gap_2()
         .rounded_md()
         .border_1()
-        .border_color(if look.cursor {
-            theme.accent
-        } else {
-            theme.border
+        .border_color(match (look.cursor, look.ring) {
+            (true, _) => theme.accent,
+            (false, Some(ring)) => theme.tag(ring),
+            (false, None) => theme.border,
         })
-        .bg(if look.selected {
-            theme.selection_bg
-        } else {
-            theme.surface
+        .bg(match (look.selected, look.ring) {
+            (true, _) => theme.selection_bg,
+            (false, Some(ring)) => theme.tag_fill(ring),
+            (false, None) => theme.surface,
         })
         .when(look.selected, |d| d.text_color(theme.selection_text))
         .when(!look.selected, |d| d.hover(|s| s.bg(theme.hover)))

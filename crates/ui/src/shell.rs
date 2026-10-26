@@ -357,6 +357,10 @@ pub struct Shell {
     pub tag_colors: crate::tags::TagColors,
     /// The tags pinned to the sidebar, which come first among an entry's.
     pub tag_pins: crate::tags::TagPins,
+    /// The place of the sidebar pointed at that says tags of what it
+    /// lists, and those tags: the files that have them are ringed
+    /// (`Shell::ring_of`).
+    pub ringed: Option<(skwir_core::Location, Vec<String>)>,
     /// The categories a file has one tag of at a time: fields
     /// (`metadata::TAG_EXCLUSIVE_SETTING`), read when the settings change.
     pub tag_fields: Vec<String>,
@@ -700,6 +704,7 @@ impl Shell {
             tag_editor: None,
             tag_colors: crate::tags::TagColors::default(),
             tag_pins: crate::tags::TagPins::default(),
+            ringed: None,
             tag_fields: Vec::new(),
             view_buttons: crate::address::ViewButtons::default(),
             bulk: None,

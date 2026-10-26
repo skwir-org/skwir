@@ -406,6 +406,14 @@ of bars, split or not.
   keeps the last measurements (`carry_over`), so nothing blinks.
 - A place with a `color` is a tag-colored pill; pills wrap together
   (`sidebar::wrap_pills`, layout only).
+- **Pointed at, a place rings its files where they are.** A place whose
+  location says tags of what it lists (a tag's pill, a saved search for
+  one: `LocationProvider::tags_shown`) rings the entries the pane shows
+  that have them or a tag within them, in the tag's color around them
+  and its tint under them (`Shell::ring_tags_of`, `Look::ring`, drawn by
+  `entry::highlight` and the board's cards), until it is left. Asked of
+  the location's text, never of a plugin: a new kind of place that says
+  tags rings its files with no branch here.
 - The sidebar repeats nothing its location says.
 - **Keeping.** Ctrl+D and the pane's keep button run the core `keep`
   command, which hands the location to the `Keeper` registered for its

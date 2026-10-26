@@ -776,6 +776,7 @@ pub fn render(
                     StatefulInteractiveElement::aria_active_descendant,
                 )
                 .children(shell.host_marker(MenuHost::Sidebar, menu_here));
+            pill = rings_its_files(pill, &place.location, cx);
             pill = takes_drops(pill, &place.location, gives.is_some(), cx);
             if drag.reorder.is_some() || drag.gives.is_some() {
                 pill = movable_pill(pill, place.title.clone(), drag, order, cx);
@@ -956,6 +957,7 @@ pub fn render(
                 at_cursor,
                 StatefulInteractiveElement::aria_active_descendant,
             );
+        row = rings_its_files(row, &place.location, cx);
         row = row.optional_tooltip(clip.tooltip(tip));
         if let Some(eject) = place.eject.clone().filter(|_| busy.is_none()) {
             let hover = theme.selection_bg;
@@ -1296,6 +1298,21 @@ fn pill(
         )
         .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
         .child(div().truncate().child(title))
+}
+
+/// Pointed at, a place that says tags of what it lists (a tag's pill, a
+/// saved search for one: `LocationProvider::tags_shown`) rings the files
+/// the pane shows that have them (`Shell::ringed`), so its files stand out
+/// where they are.
+fn rings_its_files(
+    place: gpui::Stateful<gpui::Div>,
+    location: &Location,
+    cx: &mut Context<Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    let location = location.clone();
+    place.on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+        this.ring_tags_of(&location, *hovered, cx);
+    }))
 }
 
 /// A place takes what its location takes (ADR-032): a folder's row is a

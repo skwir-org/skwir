@@ -518,6 +518,45 @@ pub fn stars_words(rating: u64) -> String {
     format!("{whole}{half} star{plural}").replacen("0½", "½", 1)
 }
 
+impl Shell {
+    /// The place `location` of the sidebar pointed at (`hovered`) or left:
+    /// the files that have the tags it says of what it lists are ringed
+    /// while it is (`ring_of`). Left, it lets go only of its own ring: the
+    /// next place may be pointed at first.
+    pub fn ring_tags_of(
+        &mut self,
+        location: &skwir_core::Location,
+        hovered: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let ringed = if hovered {
+            let tags = self.app.tags_shown(location);
+            (!tags.is_empty()).then(|| (location.clone(), tags))
+        } else if self.ringed.as_ref().is_some_and(|(at, _)| at == location) {
+            None
+        } else {
+            return;
+        };
+        if self.ringed != ringed {
+            self.ringed = ringed;
+            cx.notify();
+        }
+    }
+
+    /// The color of the ring around entry `e` while a place of the sidebar
+    /// is pointed at whose tags it has, or a tag within them; `None`
+    /// otherwise.
+    pub fn ring_of(&self, e: &skwir_core::Entry) -> Option<usize> {
+        let (_, tags) = self.ringed.as_ref()?;
+        let have = tags_of(e);
+        let ring = tags.iter().find(|tag| {
+            have.iter()
+                .any(|t| skwir_core::metadata::tag_within(t, tag))
+        })?;
+        Some(self.tag_colors.of(ring))
+    }
+}
+
 /// What a screen reader hears of an entry besides its name: its tags, as
 /// their chips name them, and its stars ("Tagged print, Paris; 4
 /// stars"). `None` with neither.
