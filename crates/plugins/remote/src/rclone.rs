@@ -237,6 +237,10 @@ impl Connector for Rclone {
         };
         #[cfg(not(windows))]
         let unmounted = mounter::unmount(&remote.point, recognised.ours, cancel);
+        #[cfg(unix)]
+        if unmounted.is_ok() && recognised.ours {
+            quit(&remote.point, cancel);
+        }
         unmounted
     }
 
@@ -468,6 +472,28 @@ impl Rclone {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+}
+
+/// Have the rclone of the mount Skwir made at `point`, let go of, end now,
+/// as on Windows (`core/quit` through its remote control), and wait a
+/// moment until it has. Let go of whole, it ends of itself; cut while one
+/// of its calls waited for a server that does not answer
+/// (`mounter::force_unmount`), it waits for that call first, minutes on
+/// end, and then, ending, unmounts its point and removes its socket's
+/// path: a mount made there again meanwhile would lose both.
+#[cfg(unix)]
+fn quit(point: &Path, cancel: &CancelToken) {
+    let Some(socket) = crate::rclone_copy::socket_for(point) else {
+        return;
+    };
+    // Ended already: nothing listens there any more.
+    if crate::rclone_copy::call(&socket, "core/quit", &serde_json::json!({}), cancel).is_err() {
+        return;
+    }
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while socket.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
 

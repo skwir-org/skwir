@@ -210,6 +210,18 @@ pub struct Mounted {
     pub id: Option<u64>,
 }
 
+impl Mounted {
+    /// Its device as the kernel numbers it inside (`major << 20 | minor`),
+    /// the name sysfs gives it (a FUSE connection's folder,
+    /// `/sys/fs/fuse/connections/<n>`); `device` is a stat's number.
+    pub fn kernel_device(&self) -> Option<u64> {
+        let device = self.device?;
+        let major = ((device >> 32) & 0xffff_f000) | ((device >> 8) & 0x0000_0fff);
+        let minor = ((device >> 12) & 0xffff_ff00) | (device & 0x0000_00ff);
+        Some((major << 20) | minor)
+    }
+}
+
 /// Every mount `mountinfo` (the bytes of `/proc/self/mountinfo`) lists,
 /// in its order, its paths exact whatever bytes they hold. The one reading
 /// of it: the places plugin's volumes and the write-through's devices.
@@ -690,6 +702,21 @@ mod tests {
             Some(PathBuf::from("/dev/mapper/root")),
             "a name that only begins like the mount's is not in it"
         );
+    }
+
+    #[test]
+    fn a_mount_s_device_reads_back_as_the_kernel_numbers_it() {
+        let table = "\
+41 22 0:75 / /run/user/1000/skwir/remote/a rw - fuse.rclone a: rw
+42 22 0:300 / /run/user/1000/skwir/remote/b rw - fuse.sshfs host:/ rw
+43 22 8:17 / /media/stick rw - fuseblk /dev/sdb1 rw
+";
+        let numbers: Vec<_> = mountinfo(table)
+            .iter()
+            .map(Mounted::kernel_device)
+            .collect();
+        // 8:17, the major above the kernel's 20 bits of minor.
+        assert_eq!(numbers, [Some(75), Some(300), Some(0x0080_0011)]);
     }
 
     #[test]

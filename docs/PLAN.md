@@ -184,6 +184,13 @@ above; each with the design its fixer proposed):
   nixpkgs, not the flake's: pinned, the flake's rclone 1.75.1 failed
   Skwir's rclone mounts ("daemon exited with error code 1"), which the
   registry's 1.75.2 passes. Pin them once the flake's nixpkgs moves.
+- The NFS/AFP harness (`tools/test/gvfs-nfs-afp.sh`) fails (seen
+  2026-10-26, the same at 162dc59d): once
+  `gvfs_opens_an_nfs_address_below_its_export` has mounted the export
+  through Skwir's GVfs connector and let go of it, `gio mount` of it
+  again leaves GVfs's bridge answering an I/O error, so
+  `gvfs_nfs_and_afp_take_by_gio_what_it_does_better` does not run. With
+  Skwir's test left out the harness passes. Not looked into.
 - Types by extension: the documents plugin's engine and Pandoc's
   format, the XMP field provider; JSON Lines and JSON with comments,
   which the database does not name. JSON Lines table cells print

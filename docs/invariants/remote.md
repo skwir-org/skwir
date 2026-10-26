@@ -484,27 +484,49 @@ ADR-077 (which revises ADR-021).
   remote (an archive KIO reads) is not shown. It mounts what it is asked:
   an address on a server it holds is asked for again
   (`Connector::mounts_each_path`). It lets go of no server: no Eject.
-- Letting go of a mount (Eject) first leaves the folders shown there
-  (`App::release`), then waits, ten seconds at most, until their
-  listings let go of them (closed a moment later on a worker,
-  `fs::wait_let_go`) and the remote's lane runs nothing: until then the
-  system refuses the unmount as busy, and Eject said another program
-  used it. GVfs refuses too while its backend is at work (a read through
-  its bridge, a folder just listed through it, closed after the bridge's
-  release returned): `Gvfs::disconnect` asks again while the mount is
-  still there, five seconds at most (`BUSY_PATIENCE`). It refuses only
-  while a read of its runs: between two, it lets go, and what another
-  program was reading there is cut.
+- Letting go of a mount (Eject) is refused while an action of Skwir's
+  is under way there (`Executor::under_way_in`, by its footprint; one
+  cancelled is not), naming it, before anything is left and again just
+  before the unmount; `force` (an agent's, a script's) cuts it too. It
+  first leaves the folders shown there (`App::release`), then waits, ten
+  seconds at most, until their listings let go of them (closed a moment
+  later on a worker, `fs::wait_let_go`) and the remote's lane runs
+  nothing: until then the system refuses the unmount as busy. It stops
+  waiting once that lane has run a job for `reach::NOT_ANSWERING`: a
+  read waiting for a server that does not answer waits for the server,
+  not for time. GVfs refuses too while its backend is at work (a read
+  through its bridge, a folder just listed through it, closed after the
+  bridge's release returned): `Gvfs::disconnect` asks again while the
+  mount is still there, five seconds at most (`BUSY_PATIENCE`). It
+  refuses only while a read of its runs: between two, it lets go, and
+  what another program was reading there is cut.
 - The system refuses to unmount a folder watched as one used (GVfs's
   trash puts a watch on the top of every mount, inotify). Refused as
-  busy, `mounter::unmount` asks what uses the mount
+  busy, `mounter::unmount` asks what other programs use the mount
   (`process::using`: a file open or mapped there, a working folder in
-  it; never a watch, never a look under it): nothing, it is let go of
-  lazily, which ends the watches; something, Eject names it ("“vim” is
-  using it"). Where the system does not say, it says another program
-  uses it: Linux's `/proc` says, macOS's `lsof` (compiled only); Skwir
-  mounts nothing on Windows yet. A mount fstab lets the user mount is let
-  go of so too (`umount -l` where nothing uses it).
+  it; never a watch, never a look under it; never Skwir itself, whose
+  actions were asked and whose reads left there were given up on):
+  none, it is let go of lazily, which ends the watches; some, Eject
+  names them ("“vim” is using it"). Where the system does not say, it
+  says another program uses it: Linux's `/proc` says, macOS's `lsof`
+  (compiled only); Skwir mounts nothing on Windows yet. A mount fstab
+  lets the user mount is let go of so too (`umount -l` where nothing
+  uses it).
+- A FUSE mount let go of whatever holds it (`mounter::force_unmount`)
+  has its connection cut first on Linux (`/sys/fs/fuse/connections/<n>/
+  abort`, the user's own for a mount of theirs; the kernel's number for
+  the device, `Mounted::kernel_device`), while that number still names
+  it, and only a mount at the point itself, never the bridge a folder is
+  in (GVfs's holds every mount of the session): a call waiting for a
+  server that does not answer then fails at once, rather than hold a
+  worker and the lane (keyed by the point, which the next mount there
+  takes again). macOS's `umount -f` cuts it itself. Where
+  fusectl is not mounted, what waits keeps waiting for its server. The
+  rclone of a mount Skwir made is then asked to quit
+  (`rclone::quit`, `core/quit`, as on Windows), and waited for a moment:
+  cut, it would wait for its call to the server first, minutes on end,
+  and, ending, unmount its point and remove its socket's path, a mount
+  made there again meanwhile losing both.
 - Whether each mount's program still answers is asked in its lane, one
   question at a time a mount: none is queued behind one a server gone
   holds for good. A refresh publishes what is mounted at once, read from

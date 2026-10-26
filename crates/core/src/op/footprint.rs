@@ -89,6 +89,12 @@ impl Footprint {
             .map(PathBuf::as_path)
     }
 
+    /// Whether it touches anything at or below `tree`: reads, changes or
+    /// names there; everything, where it cannot say.
+    pub fn touches(&self, tree: &Path) -> bool {
+        self.every || self.paths().any(|path| path.starts_with(tree))
+    }
+
     /// Touching everything: what a step that cannot say touches.
     pub fn every() -> Self {
         Footprint {

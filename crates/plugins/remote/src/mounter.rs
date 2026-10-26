@@ -160,10 +160,13 @@ pub fn unmount(point: &Path, ours: bool, cancel: &CancelToken) -> anyhow::Result
 }
 
 /// The system refused to unmount `point` as busy, which it says for a
-/// watch too (GVfs's trash watches the top of every mount): where nothing
-/// reads, writes or works there (`process::using`), it is let go of at
-/// once by `lazily`, which ends the watches; else Eject names what uses
-/// it.
+/// watch too (GVfs's trash watches the top of every mount): where no other
+/// program reads, writes or works there (`process::using`), it is let go
+/// of at once by `lazily`, which ends the watches; else Eject names what
+/// uses it. Skwir itself is no such program: Eject left the folders it
+/// showed there and refused while an action of its own was under way
+/// there (`Remotes::disconnect`), so what it still holds is a read given
+/// up on, waiting for a server that does not answer.
 ///
 /// # Errors
 /// What uses it, or what `lazily` met.
@@ -189,12 +192,17 @@ fn in_use(users: &[String]) -> String {
 }
 
 /// Let go of the mount at `point` whatever holds it (a lazy unmount: the
-/// kernel detaches it now, and what still uses it sees it gone). For a
-/// mount whose program died, or a server that no longer answers.
+/// kernel detaches it now), and what still uses it sees it gone: on Linux
+/// its FUSE connection is cut first (`abort`), so a call waiting for a
+/// server that does not answer returns at once; macOS's `umount -f` cuts
+/// it itself. For a mount whose program died, or a server that no longer
+/// answers.
 ///
 /// # Errors
 /// When the system refused.
 pub fn force_unmount(point: &Path) -> anyhow::Result<()> {
+    #[cfg(target_os = "linux")]
+    abort(point);
     let mut command = unmount_command(point, true);
     let finished = skwir_platform::process::run_to_exit(
         &mut command,
@@ -205,6 +213,33 @@ pub fn force_unmount(point: &Path) -> anyhow::Result<()> {
     skwir_core::fs::reach::changed();
     anyhow::ensure!(finished.status.success(), "{}", finished.stderr.trim());
     Ok(())
+}
+
+/// Cut the FUSE connection mounted at `point` (the kernel's way for one
+/// whose server does not answer: `/sys/fs/fuse/connections/<n>/abort`,
+/// the user's own for a mount of theirs): every call waiting on it fails
+/// at once (its program may still wait for its own call to the server:
+/// `rclone::quit`). Only a mount at `point` itself, never
+/// the bridge a folder is in (GVfs's holds every mount of the session);
+/// cut before it is let go of, while the number still names it. Where
+/// fusectl is not mounted, what waits keeps waiting for its server.
+#[cfg(target_os = "linux")]
+fn abort(point: &Path) {
+    let Ok(table) = std::fs::read("/proc/self/mountinfo") else {
+        return;
+    };
+    let Some(number) = skwir_core::fs::volume::mountinfo(&table)
+        .iter()
+        .rev()
+        .find(|m| m.point == point && m.fstype.starts_with("fuse"))
+        .and_then(skwir_core::fs::volume::Mounted::kernel_device)
+    else {
+        return;
+    };
+    let at = format!("/sys/fs/fuse/connections/{number}/abort");
+    if let Err(error) = std::fs::write(&at, "1") {
+        tracing::debug!("{at}: {error}");
+    }
 }
 
 fn unmount_command(point: &Path, lazy: bool) -> Command {

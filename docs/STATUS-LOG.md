@@ -5222,3 +5222,69 @@ fourth they chose once they asked what "One Tag at a Time" meant.
   load near 20 then. Alone, the test passed in 0.9 s, and the whole
   check passed again with the load near 3; the test's minute is
   short under such a load.
+
+### Eject lets go of a server that does not answer (2026-10-26)
+
+Reported by the user: an S3 remote (a local RustFS, stopped) connected,
+its folder said "… is not answering…", and Eject failed with "“…” was
+not disconnected: “skwir” is using it", so it could neither be waited
+out nor let go of.
+
+- **Why:** rclone mounts S3 without asking the server, and the folder's
+  listing then waits inside rclone, which retries the server for
+  minutes. Eject left the folder and waited its ten seconds for the
+  listing to let go, which it never did; the unmount was refused as
+  busy, and `process::using` named the one process holding the mount:
+  Skwir, by the listing it had already given up on.
+- **Skwir is not another program:** `process::using` leaves out the
+  process asking. What Skwir itself still does there is asked of the
+  executor instead (`Executor::under_way_in`, the actions started whose
+  footprint touches the mount, `Footprint::touches`; one cancelled is
+  not): Eject is refused while one is under way, naming it ("“copy to
+  …” is under way there"), before the folders are left and again just
+  before the unmount; `force` cuts it too. What else Skwir holds there
+  is a read given up on, and the mount is let go of lazily.
+- **No waiting on a server that does not answer:** Eject stops waiting
+  for its folders to be let go of once the remote's lane has run a job
+  for `reach::NOT_ANSWERING`, as the banner says it; it went on through
+  its ten seconds before.
+- **The read that waited is cut:** a lazy unmount detaches the mount,
+  but the connection stays while anything holds it, and the worker
+  waiting in it stayed in the kernel's `request_wait_answer` until
+  rclone gave up, its lane (keyed by the point, which the next mount
+  there takes) one job short. `mounter::force_unmount` now cuts the
+  FUSE connection first on Linux (fusectl's `abort`, named by the
+  kernel's number for the device, `Mounted::kernel_device`; only a mount
+  at the point itself, never GVfs's bridge), so what waits fails at
+  once. rclone itself then still waited for its call to the server (48 s
+  and counting with the server stopped, ended by hand) and would, on
+  ending, unmount its point and remove its socket's path under a mount
+  made there again meanwhile: the rclone of a mount Skwir made is asked
+  to quit (`core/quit`, as on Windows) and waited for, five seconds at
+  most. Answered by hand, it ended at once and removed its socket.
+- **Checked:** a test against an S3 server of its own, stopped
+  (SIGSTOP) before its folder is listed
+  (`a_server_that_does_not_answer_is_disconnected_all_the_same`): before
+  the change it failed as the user saw it ("“bucket-…” was not
+  disconnected: “remote_configs-” is using it"), and its process stayed a
+  zombie, a worker in `request_wait_answer`, until its connection was
+  aborted by hand; now it says "Disconnected from …" about a second
+  after the folder is said not to answer (4.3 s in all), the read that
+  waited ends and rclone's socket is gone. Unit tests: this process left
+  out of
+  `process::using` while a `sleep` working in a folder is named, the
+  kernel's numbers read back (`0:75`, `0:300`, `8:17`), the actions under
+  way in a tree named, one cancelled not. `just lint`; the default tests
+  (2232 passed, 28 skipped); `just remote-check`: its 156 tests passed
+  (a first run under a load near 12 failed two, GVfs's SMB disconnect
+  patience and a half-made remote's listing, both passing alone), and
+  AFC, Nearby and the three keyrings passed. Its NFS/AFP harness fails
+  at the `ls` after `gio mount` of the export
+  `gvfs_opens_an_nfs_address_below_its_export` mounted and let go of
+  (an I/O error from GVfs's bridge), so
+  `gvfs_nfs_and_afp_take_by_gio_what_it_does_better` did not run: the
+  same with a test binary built from the commit before (a worktree), and
+  the harness passes with Skwir's test left out. Not from this change;
+  not looked into further. Not checked: Eject from the sidebar in a
+  window (the test runs the command its button runs), sshfs and GVfs
+  servers that do not answer, macOS.

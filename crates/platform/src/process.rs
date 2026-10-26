@@ -860,21 +860,25 @@ pub fn run_watching(
 /// schedule a job, wake the app), never the work itself.
 pub type OnExit = Box<dyn FnOnce(io::Result<ExitStatus>) + Send>;
 
-/// The programs that use something under `folder`, by name, each once:
-/// a file open there, a file of it mapped, their working folder or root
-/// in it. A watch (inotify, fanotify) is no use: the system refuses to
-/// unmount a folder watched as one read, but what watches it lets go when
-/// it goes. A process of another user is not seen. `None` where the
-/// system does not say: on Linux, `/proc` says; on macOS, `lsof` (a part
-/// of the system there; compiled only); Windows has no mount of Skwir's
-/// to let go of yet.
+/// The other programs that use something under `folder`, by name, each
+/// once: a file open there, a file of it mapped, their working folder or
+/// root in it. A watch (inotify, fanotify) is no use: the system refuses
+/// to unmount a folder watched as one read, but what watches it lets go
+/// when it goes. This process is left out: what it holds there, its
+/// caller knows (Eject asks the actions under way there; a read given up
+/// on, waiting for a server, is no use). A process of another user is not
+/// seen. `None` where the system does not say: on Linux, `/proc` says; on
+/// macOS, `lsof` (a part of the system there; compiled only); Windows has
+/// no mount of Skwir's to let go of yet.
 pub fn using(folder: &Path) -> Option<Vec<String>> {
     #[cfg(target_os = "linux")]
     {
+        let me = std::process::id().to_string();
         let mut names = std::collections::BTreeSet::new();
         for process in std::fs::read_dir("/proc").ok()?.flatten() {
             let pid = process.file_name();
             if pid.as_encoded_bytes().iter().all(u8::is_ascii_digit)
+                && pid != me.as_str()
                 && uses(&process.path(), folder)
             {
                 let name = std::fs::read_to_string(process.path().join("comm")).unwrap_or_default();
@@ -889,7 +893,7 @@ pub fn using(folder: &Path) -> Option<Vec<String>> {
         // stats the mount point: one whose server is gone holds it, so it
         // is given a time, then nothing is said.
         let mut command = Command::new("/usr/sbin/lsof");
-        command.args(["-w", "-F", "c", "+f", "--"]).arg(folder);
+        command.args(["-w", "-F", "pc", "+f", "--"]).arg(folder);
         let finished = run_to_exit(
             &mut command,
             None,
@@ -901,11 +905,19 @@ pub fn using(folder: &Path) -> Option<Vec<String>> {
         if !finished.status.success() && !finished.stderr.is_empty() {
             return None;
         }
-        let names: std::collections::BTreeSet<String> = String::from_utf8_lossy(&finished.stdout)
-            .lines()
-            .filter_map(|line| line.strip_prefix('c'))
-            .map(ToOwned::to_owned)
-            .collect();
+        // A process's `p<pid>` line, then its `c<name>`.
+        let me = std::process::id().to_string();
+        let mut names = std::collections::BTreeSet::new();
+        let mut mine = false;
+        for line in String::from_utf8_lossy(&finished.stdout).lines() {
+            if let Some(pid) = line.strip_prefix('p') {
+                mine = pid == me;
+            } else if let Some(name) = line.strip_prefix('c')
+                && !mine
+            {
+                names.insert(name.to_owned());
+            }
+        }
         Some(names.into_iter().collect())
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -1235,18 +1247,32 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 
-    /// A file held open under a folder makes this process one of the
-    /// programs using it; a folder nothing holds is used by none.
+    /// A program working in a folder is one of those using it; this
+    /// process, a file held open there, is not; a folder nothing holds is
+    /// used by none.
     #[cfg(target_os = "linux")]
     #[test]
     fn the_programs_using_a_folder_are_named() {
         let tmp = tempfile::tempdir().unwrap();
-        let (held, free) = (tmp.path().join("held"), tmp.path().join("free"));
-        std::fs::create_dir(&held).unwrap();
-        std::fs::create_dir(&free).unwrap();
-        let open = std::fs::File::create(held.join("it's open")).unwrap();
-        let me = std::fs::read_to_string("/proc/self/comm").unwrap();
-        assert!(using(&held).unwrap().contains(&me.trim().to_owned()));
+        let (held, free, mine) = (
+            tmp.path().join("held"),
+            tmp.path().join("free"),
+            tmp.path().join("mine"),
+        );
+        for folder in [&held, &free, &mine] {
+            std::fs::create_dir(folder).unwrap();
+        }
+        let mut other = Command::new("sleep")
+            .arg("30")
+            .current_dir(&held)
+            .spawn()
+            .unwrap();
+        let open = std::fs::File::create(mine.join("it's open")).unwrap();
+        let named = using(&held).unwrap();
+        let _ = other.kill();
+        let _ = other.wait();
+        assert_eq!(named, ["sleep"]);
+        assert_eq!(using(&mine), Some(Vec::new()), "this process is left out");
         assert_eq!(using(&free), Some(Vec::new()));
         drop(open);
     }

@@ -1213,30 +1213,7 @@ fn an_s3_address_opens_through_the_aws_configuration_keeping_nothing() {
     std::fs::create_dir_all(data.join("bucket-one/sub")).unwrap();
     std::fs::write(data.join("bucket-one/sub/it's here.txt"), "hello").unwrap();
     let served = Served::start("s3", &data, &["--auth-key", "AKIDTEST,secret-of-the-test"]);
-    let aws = base.join("aws");
-    std::fs::create_dir_all(&aws).unwrap();
-    let endpoint = format!("http://127.0.0.1:{}", served.port);
-    std::fs::write(
-        aws.join("config"),
-        format!(
-            "[default]\nregion = us-east-1\nendpoint_url = {endpoint}\n\n[profile work]\nregion = eu-west-3\nendpoint_url = {endpoint}\n"
-        ),
-    )
-    .unwrap();
-    std::fs::write(
-        aws.join("credentials"),
-        "[default]\naws_access_key_id = AKIDTEST\naws_secret_access_key = secret-of-the-test\n\n[work]\naws_access_key_id = AKIDTEST\naws_secret_access_key = secret-of-the-test\n",
-    )
-    .unwrap();
-    // SAFETY: nextest runs each test in a process of its own, and this
-    // runs before the test starts an app or a program, so no other thread
-    // reads the environment meanwhile.
-    #[allow(unsafe_code)]
-    unsafe {
-        std::env::set_var("AWS_CONFIG_FILE", aws.join("config"));
-        std::env::set_var("AWS_SHARED_CREDENTIALS_FILE", aws.join("credentials"));
-        std::env::remove_var("AWS_PROFILE");
-    }
+    use_aws_files(&base, served.port);
     let config = base.join("rclone.conf");
     std::fs::write(&config, "").unwrap();
     let app = app_with_rclone(&base, &config, Arc::default());
@@ -1289,6 +1266,103 @@ fn an_s3_address_opens_through_the_aws_configuration_keeping_nothing() {
         app.pump();
         assert!(Instant::now() < deadline, "never let go of");
         std::thread::sleep(Duration::from_millis(100));
+    }
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// AWS's files of the test's own in `base`, its default profile and
+/// `work` both reaching the S3 server on `port`, given to what the test
+/// starts in its environment.
+fn use_aws_files(base: &Path, port: u16) {
+    let aws = base.join("aws");
+    std::fs::create_dir_all(&aws).unwrap();
+    let endpoint = format!("http://127.0.0.1:{port}");
+    std::fs::write(
+        aws.join("config"),
+        format!(
+            "[default]\nregion = us-east-1\nendpoint_url = {endpoint}\n\n[profile work]\nregion = eu-west-3\nendpoint_url = {endpoint}\n"
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        aws.join("credentials"),
+        "[default]\naws_access_key_id = AKIDTEST\naws_secret_access_key = secret-of-the-test\n\n[work]\naws_access_key_id = AKIDTEST\naws_secret_access_key = secret-of-the-test\n",
+    )
+    .unwrap();
+    // SAFETY: nextest runs each test in a process of its own, and this
+    // runs before the test starts an app or a program, so no other thread
+    // reads the environment meanwhile.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("AWS_CONFIG_FILE", aws.join("config"));
+        std::env::set_var("AWS_SHARED_CREDENTIALS_FILE", aws.join("credentials"));
+        std::env::remove_var("AWS_PROFILE");
+    }
+}
+
+/// A server that does not answer is let go of all the same: Eject leaves
+/// its folder, and what Skwir was still reading there, given up on, is no
+/// program using it; that read ends at once, its connection cut. Against
+/// an S3 server of the test's own, stopped before its folder is listed:
+/// rclone's mount waits for it for good.
+#[test]
+fn a_server_that_does_not_answer_is_disconnected_all_the_same() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("s3-stopped");
+    let data = base.join("served");
+    // A bucket of its own: the S3 test's mount is at the same point.
+    std::fs::create_dir_all(data.join("bucket-stopped")).unwrap();
+    let served = Served::start("s3", &data, &["--auth-key", "AKIDTEST,secret-of-the-test"]);
+    use_aws_files(&base, served.port);
+    let config = base.join("rclone.conf");
+    std::fs::write(&config, "").unwrap();
+    let app = app_with_rclone(&base, &config, Arc::default());
+    // It listens, and answers nothing.
+    let stopped = Command::new("kill")
+        .arg("-STOP")
+        .arg(served.child.id().to_string())
+        .status()
+        .unwrap();
+    assert!(stopped.success());
+    let point = mounted(&app, "s3://bucket-stopped/");
+    let _left = Unmounted(point.clone());
+    let lane = skwir_core::fs::reach::of(&point).unwrap().lane();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while app
+        .scheduler
+        .stalled(lane)
+        .is_none_or(|ran| ran < skwir_core::fs::reach::NOT_ANSWERING)
+    {
+        app.pump();
+        assert!(Instant::now() < deadline, "its folder never waited");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    said(&app);
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    let words = until_said(&app, 30, "isconnected");
+    assert!(words.starts_with("Disconnected from"), "{words}");
+    assert!(
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point),
+        "still mounted"
+    );
+    // Its rclone has ended, rather than wait for the server: a mount made
+    // there again keeps its point and its socket.
+    let socket = skwir_plugin_remote::rclone_copy::socket_for(&point).unwrap();
+    assert!(!socket.exists(), "its rclone still runs");
+    // The read that waited on the server has ended.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.scheduler.stalled(lane).is_some() {
+        app.pump();
+        assert!(Instant::now() < deadline, "what read there still waits");
+        std::thread::sleep(Duration::from_millis(50));
     }
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();

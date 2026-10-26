@@ -1428,6 +1428,20 @@ impl Executor {
         entry.map_or_else(|| verb.to_owned(), |title| format!("{verb} {title}"))
     }
 
+    /// The actions under way that touch something at or below `tree`, by
+    /// what they are called: what letting go of a mount there would cut
+    /// (Eject). One cancelled is not: what it still waits for there, it
+    /// gave up on.
+    pub fn under_way_in(&self, tree: &Path) -> Vec<String> {
+        self.lane
+            .lock()
+            .started
+            .iter()
+            .filter(|begun| !begun.cancel.is_cancelled() && begun.footprint.touches(tree))
+            .map(|begun| begun.named.clone())
+            .collect()
+    }
+
     /// Whether a plan, an undo or a redo runs or waits its turn.
     pub fn is_busy(&self) -> bool {
         let lane = self.lane.lock();
@@ -2883,6 +2897,33 @@ mod tests {
         );
         up.opened();
         assert!(logged(&log, "ended /servers/one/b/videos"));
+    }
+
+    /// What a mount's Eject would cut: the actions under way there, by
+    /// what they are called; not one elsewhere, nor one cancelled that
+    /// still waits there.
+    #[test]
+    fn the_actions_under_way_in_a_tree_are_named() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let up = Gate::new("/servers/one/photos", false, false, &log);
+        let cancel = CancelToken::new();
+        executor.execute(up.plan(), cancel.clone());
+        assert!(logged(&log, "began /servers/one/photos"));
+        let one = Path::new("/servers/one");
+        assert_eq!(executor.under_way_in(one), ["/servers/one/photos"]);
+        assert_eq!(
+            executor
+                .under_way_in(Path::new("/servers/one/photos"))
+                .len(),
+            1
+        );
+        assert!(executor.under_way_in(Path::new("/servers/two")).is_empty());
+        assert!(executor.under_way_in(Path::new("/servers/on")).is_empty());
+        cancel.cancel();
+        assert!(executor.under_way_in(one).is_empty(), "given up on");
+        up.opened();
+        assert!(logged(&log, "ended /servers/one/photos"));
     }
 
     /// Undo takes the last plan asked: one ended, beside a heavy plan it

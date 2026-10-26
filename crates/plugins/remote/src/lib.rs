@@ -1388,7 +1388,9 @@ impl Remotes {
     }
 
     /// Let go of the mount at `point`: what shows it goes home, then its
-    /// tool lets go of it, on a worker.
+    /// tool lets go of it, on a worker. Refused while an action of Skwir's
+    /// is under way there, unless `force`d; what else Skwir still reads
+    /// there it gave up on, and is cut (`mounter::when_busy`).
     fn disconnect(&self, app: &App, point: PathBuf, force: bool) -> anyhow::Result<()> {
         let mounted = self
             .mounted()
@@ -1399,6 +1401,11 @@ impl Remotes {
             .connector
             .clone()
             .ok_or_else(|| anyhow::anyhow!("Skwir does not know the tool that mounted it"))?;
+        let label = mounted.recognised.label.clone();
+        if !force {
+            under_way(app, &point)
+                .map_err(|e| anyhow::anyhow!("“{label}” was not disconnected: {e:#}"))?;
+        }
         let home = skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/"));
         app.release(&point, &Location::from_path(home))?;
         let key = point.display().to_string();
@@ -1407,28 +1414,37 @@ impl Remotes {
         let this = self.clone();
         let lifetime = self.lifetime().unwrap_or_default();
         let weak = app.weak();
-        let label = mounted.recognised.label.clone();
         std::thread::Builder::new()
             .name("skwir-disconnect".into())
             .spawn(move || {
                 // What showed it lets go first: the folders left close on a
                 // worker a moment later, and what reads it in its lane ends;
-                // until then the system refuses the unmount as busy.
+                // until then the system refuses the unmount as busy. Not a
+                // read waiting for a server that does not answer: that one
+                // waits for the server, not for time, and is cut.
+                let mut result = Ok(());
                 if let Some(app) = weak.upgrade() {
                     let (lane, until) = (mounted.remote.lane(), Instant::now() + LET_GO);
-                    while Instant::now() < until {
+                    loop {
                         let left = skwir_core::fs::wait_let_go(
                             &mounted.remote.point,
-                            until.saturating_duration_since(Instant::now()),
+                            LOOK.min(until.saturating_duration_since(Instant::now())),
                         );
-                        if left && app.scheduler.stalled(lane).is_none() {
-                            break;
+                        match app.scheduler.stalled(lane) {
+                            None if left => break,
+                            Some(ran) if ran >= skwir_core::fs::reach::NOT_ANSWERING => break,
+                            _ if Instant::now() >= until => break,
+                            _ => std::thread::sleep(Duration::from_millis(20)),
                         }
-                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    // An action asked meanwhile.
+                    if !force {
+                        result = under_way(&app, &mounted.remote.point);
                     }
                 }
-                let mut result =
-                    connector.disconnect(&mounted.remote, &mounted.recognised, &lifetime);
+                let mut result = result.and_then(|()| {
+                    connector.disconnect(&mounted.remote, &mounted.recognised, &lifetime)
+                });
                 if result.is_err() && force && !mounted.remote.by_kernel() {
                     result = mounter::force_unmount(&point);
                 }
@@ -1447,8 +1463,25 @@ impl Remotes {
     }
 }
 
+/// Refused while actions of Skwir's are under way at or below `point`
+/// (`Executor::under_way_in`), named: letting go of the mount would cut
+/// them.
+fn under_way(app: &App, point: &Path) -> anyhow::Result<()> {
+    let named: Vec<String> = app
+        .executor
+        .under_way_in(point)
+        .into_iter()
+        .map(|n| format!("“{n}”"))
+        .collect();
+    match named.as_slice() {
+        [] => Ok(()),
+        [one] => anyhow::bail!("{one} is under way there"),
+        [rest @ .., last] => anyhow::bail!("{} and {last} are under way there", rest.join(", ")),
+    }
+}
+
 /// How long a question waits between looks at whether its connection was
-/// cancelled.
+/// cancelled, and letting go of a mount between looks at what holds it.
 const LOOK: Duration = Duration::from_millis(100);
 
 /// How long letting go of a mount waits for what showed it and what read
