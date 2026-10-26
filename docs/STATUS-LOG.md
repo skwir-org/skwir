@@ -5499,3 +5499,27 @@ if it makes sense":
   97 to 91 or 92, zbus's own 6 to 3; PSS 283 452, 283 611 and 283 170
   KiB against 283 199, 283 208 and 284 214, within what a reading
   varies.
+
+### Pruning target/, and what the full checks found after (2026-10-26)
+
+Asked by the user after the disk fell to 3 GB during a full run:
+
+- **`just prune`** (`tools/build/prune.py`) removes from `target/debug`
+  what no build uses, as Cargo lists it: `just build`, `test` and `lint`
+  record their units (`--message-format=json` once up to date); prune
+  keeps those and the crates only the native workers use, removes the
+  other units by hash (`deps`, `build`, `.fingerprint`), the `.dwo` no
+  kept artifact names, older incremental sessions and units untouched
+  three days. `test` and `lint` prune by themselves under 40 GB free (not
+  on CI). `cargo-sweep` was weighed and set aside: it ages files by access
+  time (`accessed()`), and the root is mounted `noatime`; it skips
+  incremental folders and keeps the dead `.dwo` of a current hash.
+- **Found while building it:** Cargo reports a program by the copy it
+  places (`target/debug/skwir`), its unit being the hard-linked
+  `deps/skwir-<hash>`; prune's first version, and the cleanup by hand
+  before it, took those units for stale and removed their `.dwo`, which an
+  incremental rebuild never writes again (it reuses the compiled parts).
+  Programs are now found by their link; the eleven programs whose debug
+  info was gone were built again from scratch (their incremental folders
+  removed), and every `.dwo` a current artifact names was checked present.
+  From 13 GB free to 87 GB, re-recording each build compiling nothing.

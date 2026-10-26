@@ -495,6 +495,7 @@ just test-all / lint-all   every crate, workers included; lint-all adds check-cr
 just check-cross           clippy for Windows and macOS from Linux (ADR-035)
 just macos-sdk             Apple's macOS SDK, by xmac, for building for macOS (you accept Apple's licence)
 just test-windows          the Windows build's tests under Wine (args go to nextest)
+just prune                 what no build uses any more, out of target/debug (--dry-run)
 just bench-check           generate bench-data/ on demand and enforce budgets
 just idle-pss              idle memory and first frame on this display (ADR-033)
 just smoke                 the release window on an X display of its own (CI)
@@ -609,10 +610,16 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
 - Chain verification with `&&` before a commit, so a failing lint or test
   cannot be committed.
 - `target/` grows without bound (cargo never collects stale dependency
-  artifacts; one day of parallel agents left 141 GB on a root filesystem
-  that also hosts `/tmp`). When builds fail with ENOSPC, check
-  `du -sh target` and remove `target/debug`. Real-window checks delete
-  their fixture trees under `/tmp`.
+  artifacts, nor the split debug info an incremental rebuild leaves; one
+  day of parallel agents left 141 GB on a root filesystem that also hosts
+  `/tmp`). `just prune` removes what no build uses, as Cargo lists it
+  (`just build`, `test` and `lint` record theirs; `test` and `lint` prune
+  by themselves under 40 GB free). Never by time: the root is mounted
+  `noatime`. Never a `.dwo` an artifact still names: an incremental
+  rebuild reuses its compiled parts without writing their `.dwo` again,
+  so debug info taken from a kept unit stays lost until that crate is
+  built from scratch. Real-window checks delete their fixture trees
+  under `/tmp`.
 
 ## Working as several agents
 

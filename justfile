@@ -16,6 +16,7 @@ release-check:
 # Exercise release validation, isolated staging and draft uploads with fake tools.
 release-tools-check:
     python3 -B -m unittest discover -s tools/release -p 'test_*.py'
+    python3 -B -m unittest discover -s tools/build -p 'test_*.py'
 
 # Check that tag, crates, package metadata and dated release notes agree.
 release-metadata tag:
@@ -36,6 +37,7 @@ release-upload tag:
 # Build the default members (no native workers; see the root Cargo.toml).
 build:
     cargo build
+    tools/build/prune.py record build --quiet
 
 # Build the optional native workers (Poppler, MuPDF, DjVuLibre, GStreamer, libarchive).
 workers:
@@ -58,6 +60,8 @@ plugins:
 # Run the tests of the default members.
 test:
     cargo nextest run --no-tests=pass
+    tools/build/prune.py record test --quiet
+    tools/build/prune.py --if-below 40G --quiet
 
 # Run every test, native workers included (full release gate and manual CI).
 test-all:
@@ -196,6 +200,16 @@ gpui-check-windows *args:
 lint:
     cargo fmt --all -- --check
     cargo clippy --all-targets -- -D warnings
+    tools/build/prune.py record clippy --quiet
+    tools/build/prune.py --if-below 40G --quiet
+
+# What no build of the workspace uses any more, out of target/debug: units
+# of other dependencies or features, split debug info no artifact names,
+# old incremental sessions (`--dry-run` says what would go). `just build`,
+# `test` and `lint` note what they use; `test` and `lint` prune by
+# themselves under 40 GB free.
+prune *args:
+    tools/build/prune.py {{args}}
 
 # The dependencies against deny.toml: their licences, known advisories
 # (read from RustSec's database, fetched), and where they come from (CI).
