@@ -248,8 +248,9 @@ mod imp {
     /// is read again: choosing a scheme writes it more than once.
     const SETTLE: Duration = Duration::from_millis(200);
 
+    /// The session bus, the program's own connection (`bus::session`).
     pub(super) fn read() -> DesktopStyle {
-        let bus = Connection::session().ok();
+        let bus = crate::bus::session().ok();
         read_from(bus.as_ref(), &TheDesktop)
     }
 
@@ -257,7 +258,7 @@ mod imp {
         let thread = std::thread::Builder::new()
             .name("skwir-desktop-style".into())
             .spawn(move || {
-                let bus = Connection::session();
+                let bus = crate::bus::session();
                 if let Err(error) = &bus {
                     tracing::debug!("the desktop's style is not followed: {error}");
                 }

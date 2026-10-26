@@ -14,5 +14,8 @@ parking_lot.workspace = true
 tracing.workspace = true
 zbus = "5"
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

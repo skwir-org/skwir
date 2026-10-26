@@ -247,6 +247,10 @@ impl Connector for Kmtp {
         None
     }
 
+    fn reaches_through(&self) -> Option<&'static str> {
+        Some("kiod6")
+    }
+
     /// Only a phone kmtpd holds: any other goes to the next tool unsaid.
     fn opens(&self, address: &Address) -> bool {
         #[cfg(target_os = "linux")]
@@ -304,99 +308,36 @@ impl Connector for Kmtp {
         true
     }
 
-    /// The phones kmtpd holds, while `kiod6` runs and kmtpd is loaded (on
-    /// KDE's desktop, loading it): asked again when kmtpd says its devices
+    /// The phones kmtpd holds, asked again when kmtpd says its devices
     /// changed, or `kiod6` came or went.
-    fn follow_devices(
-        &self,
-        told: Arc<dyn Fn(Vec<Offered>) + Send + Sync>,
-        cancel: &CancelToken,
-    ) -> bool {
+    fn device_signals(&self) -> Vec<String> {
+        if !cfg!(target_os = "linux") || self.unavailable().is_some() {
+            return Vec::new();
+        }
+        vec![
+            "type='signal',sender='org.freedesktop.DBus',member='NameOwnerChanged',arg0='org.kde.kiod6'"
+                .to_owned(),
+            "type='signal',interface='org.kde.kmtp.Daemon',member='devicesChanged'".to_owned(),
+        ]
+    }
+
+    /// The phones kmtpd holds now, while `kiod6` runs and kmtpd is loaded
+    /// (on KDE's desktop, loading it).
+    fn devices(&self) -> Vec<Offered> {
         #[cfg(target_os = "linux")]
         {
-            if self.unavailable().is_some() {
-                return false;
-            }
-            let this = Kmtp {
-                env: self.env.clone(),
-                helper: self.helper.clone(),
-                on_kde: Some(self.on_kde()),
-                system: self.system.clone(),
-            };
-            let cancel = cancel.clone();
-            std::thread::Builder::new()
-                .name("skwir-kmtpd-devices".into())
-                .spawn(move || {
-                    if let Err(error) = this.follow(&told, &cancel) {
-                        tracing::debug!("the phones KDE holds are not followed: {error:#}");
-                    }
-                })
-                .is_ok()
+            self.held(self.on_kde())
+                .map(|held| held.into_iter().map(|h| h.offered).collect())
+                .unwrap_or_default()
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (told, cancel);
-            false
+            Vec::new()
         }
     }
-}
 
-impl Kmtp {
-    /// [`Connector::follow_devices`] on this thread, until `cancel`.
-    #[cfg(target_os = "linux")]
-    fn follow(
-        &self,
-        told: &Arc<dyn Fn(Vec<Offered>) + Send + Sync>,
-        cancel: &CancelToken,
-    ) -> anyhow::Result<()> {
-        let bus = crate::bus::connect(&self.env, ASKED)?;
-        let dbus = zbus::blocking::fdo::DBusProxy::new(&bus)?;
-        for rule in [
-            zbus::MatchRule::builder()
-                .msg_type(zbus::message::Type::Signal)
-                .sender("org.freedesktop.DBus")?
-                .member("NameOwnerChanged")?
-                .arg(0, SERVICE)?
-                .build(),
-            zbus::MatchRule::builder()
-                .msg_type(zbus::message::Type::Signal)
-                .interface(DAEMON)?
-                .member("devicesChanged")?
-                .build(),
-        ] {
-            dbus.add_match_rule(rule)?;
-        }
-        let told_of = zbus::blocking::MessageIterator::from(&bus);
-        let (closing, signal) = (bus.clone(), cancel.subscribe());
-        std::thread::Builder::new()
-            .name("skwir-kmtpd-end".into())
-            .spawn(move || {
-                let _ = signal.receiver().recv();
-                let _ = closing.close();
-            })?;
-        let offered = |this: &Kmtp| {
-            this.held(this.on_kde())
-                .map(|held| held.into_iter().map(|h| h.offered).collect())
-                .unwrap_or_default()
-        };
-        told(offered(self));
-        for message in told_of {
-            let Ok(message) = message else { break };
-            if cancel.is_cancelled() {
-                break;
-            }
-            let header = message.header();
-            if header.message_type() != zbus::message::Type::Signal {
-                continue;
-            }
-            if header
-                .member()
-                .is_some_and(|m| m == "NameOwnerChanged" || m == "devicesChanged")
-            {
-                told(offered(self));
-            }
-        }
-        Ok(())
+    fn bus_env(&self) -> Vec<(OsString, OsString)> {
+        self.env.clone()
     }
 }
 

@@ -231,32 +231,34 @@ impl Connector for Gvfs {
 
     /// The phones, cameras and iPhones GVfs's volume monitors offer on the
     /// session's bus (the test's), mounted or not (ADR-096).
-    fn follow_devices(
-        &self,
-        told: Arc<dyn Fn(Vec<Offered>) + Send + Sync>,
-        cancel: &CancelToken,
-    ) -> bool {
+    fn device_signals(&self) -> Vec<String> {
         #[cfg(target_os = "linux")]
         {
-            let (env, cancel) = (self.env.clone(), cancel.clone());
-            std::thread::Builder::new()
-                .name("skwir-gvfs-devices".into())
-                .spawn(move || {
-                    // Offered only where GVfs would open them.
-                    if skwir_core::os_path::find_program("gio").is_none() {
-                        return;
-                    }
-                    if let Err(error) = crate::gvfs_devices::follow(&env, &told, &cancel) {
-                        tracing::debug!("the devices GVfs offers are not followed: {error:#}");
-                    }
-                })
-                .is_ok()
+            crate::gvfs_devices::signals()
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (told, cancel);
-            false
+            Vec::new()
         }
+    }
+
+    fn devices(&self) -> Vec<Offered> {
+        #[cfg(target_os = "linux")]
+        {
+            // Offered only where GVfs would open them.
+            if skwir_core::os_path::find_program("gio").is_none() {
+                return Vec::new();
+            }
+            crate::gvfs_devices::offered(&self.env)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Vec::new()
+        }
+    }
+
+    fn bus_env(&self) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+        self.env.clone()
     }
 }
 

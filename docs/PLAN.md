@@ -1521,10 +1521,13 @@ protocol is a scheme a connector maps, or a connector.
   - a device another program holds is named, never taken from it: KDE's
     `kiod6` keeps every phone it sees while it runs, so on a desktop with
     both, Dolphin and Skwir take turns (ADR-096), unless Skwir reaches
-    it through `kmtpd` (ADR-097, built 2026-10-26). Not built: a Quit
-    kiod6 button beside that message; one connection to the session bus
-    for GVfs's and kmtpd's followers (each holds its own: 0.5 MiB idle,
-    three threads);
+    it through `kmtpd` (ADR-097, built 2026-10-26); where its helper
+    cannot work, the message says why before saying to quit `kiod6`. A
+    Quit kiod6 button is not to be built (the user, 2026-10-26: Skwir
+    reaches such a phone through kmtpd, and ending another desktop's
+    daemon is no way to choose GVfs). The session bus is one connection
+    for the program since (`skwir_platform::bus`: the desktop's style,
+    the media controls, every tool's devices);
   - an iPhone's (AFC) ways chosen by requests counted against a
     stand-in, an iPhone's own pace not timed (no iPhone at hand);
   - on the machines (Phase 5b): Windows' and macOS's own shares (the

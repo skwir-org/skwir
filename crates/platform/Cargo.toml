@@ -92,6 +92,10 @@ plist.workspace = true
 # media controls' plugin and gpui's portal (through ashpd) already link.
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus = "5"
+# One session connection shared, its listeners' streams merged and woken
+# when stopped (`bus`): the versions zbus itself links.
+futures-lite = { version = "2", default-features = false, features = ["std"] }
+event-listener = "5"
 
 # The user's folders as the system names them, off Linux (ADR-035).
 [target.'cfg(not(target_os = "linux"))'.dependencies]

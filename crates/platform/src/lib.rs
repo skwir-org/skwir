@@ -28,6 +28,8 @@ pub mod access;
 mod any_input;
 pub mod askpass;
 pub mod bat;
+#[cfg(target_os = "linux")]
+pub mod bus;
 pub mod calendar;
 #[cfg(target_os = "linux")]
 mod desktop_settings;

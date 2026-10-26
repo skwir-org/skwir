@@ -8,8 +8,10 @@
 //!
 //! A file manager is not always a music player: the bus name is held only
 //! while something plays, so the desktop shows no idle "skwir" player.
-//! Everything runs on the plugin's own thread; without a session bus (a
-//! headless run) it logs once and ends.
+//! Everything runs on the plugin's own thread, on the program's one
+//! session connection (`skwir_platform::bus`), what it serves there taken
+//! back when it ends; without a session bus (a headless run) it logs once
+//! and ends.
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
@@ -282,37 +284,66 @@ impl Player {
     }
 }
 
+/// What is served on the session's connection, which the program shares
+/// (`bus::session`): taken back when the plugin ends, the name too.
+struct Served {
+    connection: zbus::blocking::Connection,
+    name: String,
+    named: bool,
+}
+
+impl Drop for Served {
+    fn drop(&mut self) {
+        let server = self.connection.object_server();
+        let _ = server.remove::<Player, _>(PATH);
+        let _ = server.remove::<Root, _>(PATH);
+        if self.named {
+            let _ = self.connection.release_name(self.name.as_str());
+        }
+    }
+}
+
 /// Hold the bus name while something plays, and tell the bus what changed.
 fn serve(
     app: &Weak<App>,
     changes: &std::sync::mpsc::Receiver<()>,
     stop: &CancelToken,
 ) -> anyhow::Result<()> {
-    let connection = zbus::blocking::connection::Builder::session()?
-        .serve_at(PATH, Root(app.clone()))?
-        .serve_at(PATH, Player(app.clone()))?
-        .build()?;
+    #[cfg(target_os = "linux")]
+    let connection = skwir_platform::bus::session()?;
+    #[cfg(not(target_os = "linux"))]
+    let connection = zbus::blocking::Connection::session()?;
     // One name per process: two windows of two instances are two players.
-    let name = format!(
-        "org.mpris.MediaPlayer2.skwir.instance{}",
-        std::process::id()
-    );
-    let player = connection.object_server().interface::<_, Player>(PATH)?;
-    let mut named = false;
+    let mut served = Served {
+        connection,
+        name: format!(
+            "org.mpris.MediaPlayer2.skwir.instance{}",
+            std::process::id()
+        ),
+        named: false,
+    };
+    let objects = served.connection.object_server();
+    objects.at(PATH, Root(app.clone()))?;
+    objects.at(PATH, Player(app.clone()))?;
+    let player = objects.interface::<_, Player>(PATH)?;
     let mut last: Option<Arc<NowPlaying>> = None;
-    // Asleep until something changes: the channel ends when the plugin is
+    // What plays as it starts (turned on again while a song plays), then
+    // asleep until something changes: the channel ends when the plugin is
     // turned off (its listener is dropped before `on_disable` waits for
     // this thread) or the app goes. A timer woke it four times a second,
     // forever.
-    while changes.recv().is_ok() && !stop.is_cancelled() {
+    let mut starting = true;
+    while std::mem::take(&mut starting) || (changes.recv().is_ok() && !stop.is_cancelled()) {
         let Some(app) = app.upgrade() else { break };
         let current = app.player.get();
         drop(app);
-        match (current.is_some(), named) {
-            (true, false) => named = connection.request_name(name.as_str()).is_ok(),
+        match (current.is_some(), served.named) {
+            (true, false) => {
+                served.named = served.connection.request_name(served.name.as_str()).is_ok();
+            }
             (false, true) => {
-                let _ = connection.release_name(name.as_str());
-                named = false;
+                let _ = served.connection.release_name(served.name.as_str());
+                served.named = false;
             }
             _ => {}
         }
@@ -340,9 +371,6 @@ fn serve(
             }
         });
         last = current;
-    }
-    if named {
-        let _ = connection.release_name(name.as_str());
     }
     Ok(())
 }

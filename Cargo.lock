@@ -7812,6 +7812,7 @@ dependencies = [
  "dirs 7.0.0",
  "ego-tree",
  "encoding_rs",
+ "event-listener",
  "flate2",
  "futures-lite",
  "image",
@@ -8148,6 +8149,7 @@ dependencies = [
  "parking_lot",
  "skwir-core",
  "skwir-platform",
+ "tempfile",
  "tracing",
  "zbus",
 ]

@@ -27,6 +27,51 @@ const MONITOR: &str = "org.gtk.vfs.MTPVolumeMonitor";
 const PATH: &str = "/org/gtk/Private/RemoteVolumeMonitor";
 const INTERFACE: &str = "org.gtk.Private.RemoteVolumeMonitor";
 
+/// A tool that would open a phone through the program holding it (as
+/// KDE's kmtpd through `kiod6`), and cannot here: which program, from when
+/// the test says so.
+struct Through(Mutex<Option<&'static str>>);
+
+impl Connector for Through {
+    fn id(&self) -> &'static str {
+        "through"
+    }
+    fn title(&self) -> &'static str {
+        "a tool through another program"
+    }
+    fn schemes(&self) -> &'static [skwir_plugin_remote::address::Scheme] {
+        &[skwir_plugin_remote::address::Scheme::Mtp]
+    }
+    fn unavailable(&self) -> Option<String> {
+        Some("its helper is not installed".to_owned())
+    }
+    fn reaches_through(&self) -> Option<&'static str> {
+        *self.0.lock()
+    }
+    fn connect(
+        &self,
+        _: &Address,
+        _: &Arc<dyn Ask>,
+        _: &CancelToken,
+    ) -> anyhow::Result<skwir_plugin_remote::connector::Connected> {
+        anyhow::bail!("never asked")
+    }
+    fn recognises(
+        &self,
+        _: &skwir_core::fs::reach::Remote,
+    ) -> Option<skwir_plugin_remote::connector::Recognised> {
+        None
+    }
+    fn disconnect(
+        &self,
+        _: &skwir_core::fs::reach::Remote,
+        _: &skwir_plugin_remote::connector::Recognised,
+        _: &CancelToken,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
 /// Answers nothing: what is tested asks nothing.
 struct NoOne;
 
@@ -290,7 +335,8 @@ fn a_device_gvfs_offers_is_listed_until_unplugged_and_said_held() {
         runtime: Some(runtime.path().to_path_buf()),
         ..Gvfs::default()
     });
-    let remotes = Remotes::with(vec![gvfs]);
+    let through = Arc::new(Through(Mutex::new(None)));
+    let remotes = Remotes::with(vec![gvfs, Arc::clone(&through) as Arc<dyn Connector>]);
     let app = App::new(AppConfig::ephemeral(base.path().join("app"))).unwrap();
     app.plugins
         .add(Arc::new(RemotePlugin::with(remotes.clone())), &app);
@@ -335,20 +381,31 @@ fn a_device_gvfs_offers_is_listed_until_unplugged_and_said_held() {
         .stdin(std::fs::File::open(&node).unwrap())
         .spawn()
         .unwrap();
-    let error = remotes
-        .reach(
-            &app,
-            &Address::parse(phone.uri).unwrap(),
-            &(Arc::new(NoOne) as Arc<dyn Ask>),
-            &CancelToken::new(),
-        )
-        .unwrap_err()
-        .to_string();
+    let open = || {
+        remotes
+            .reach(
+                &app,
+                &Address::parse(phone.uri).unwrap(),
+                &(Arc::new(NoOne) as Arc<dyn Ask>),
+                &CancelToken::new(),
+            )
+            .unwrap_err()
+            .to_string()
+    };
+    let error = open();
+    // A tool that would open it through the program holding it says why
+    // it cannot, before saying to quit that program.
+    *through.0.lock() = Some("sleep");
+    let through_it = open();
     let _ = holder.kill();
     let _ = holder.wait();
     assert_eq!(
         error,
         "sleep has it open, and only one program at a time can use a phone. Quit sleep, then try again."
+    );
+    assert_eq!(
+        through_it,
+        "sleep has it open, and only one program at a time can use a phone. Skwir would open it through sleep, but its helper is not installed; else quit sleep, then try again."
     );
 
     // Unplugged, told: gone.

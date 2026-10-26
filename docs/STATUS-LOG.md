@@ -5460,3 +5460,42 @@ user: "so that skwir can work nicely on Plasma"):
   plugin's Windows and macOS lints again after the root mount's fix).
 - Not checked: a real Plasma session (a private `kiod6` stood in for it),
   Dolphin and Skwir reading the phone at the same moment.
+
+### One session connection, and the phone KDE holds named (2026-10-26)
+
+Asked by the user after ADR-097: take the Quit kiod6 button out of the
+plan, make one session connection, "and include the optional wider part
+if it makes sense":
+
+- **The message** for a phone another program holds says, where a tool
+  would open it through that program and cannot here, why before saying
+  to quit it (`Connector::reaches_through`: kmtp through `kiod6`): "kiod6
+  has it open, … Skwir would open it through kiod6, but
+  skwir-kmtp-worker is not installed; else quit kiod6, then try again."
+  The Quit kiod6 button is out of the plan.
+- **One connection** (`skwir_platform::bus::session`) for the desktop's
+  style, the media controls and the remote plugin's devices, which held
+  four. `bus::listen` follows rules on it until a token ends (woken by
+  a thread waiting for the token, never by closing the connection),
+  saying when it listens before anything is told; `bus::follow` does so
+  on a thread of its own. zbus queues and drops nothing, so a listener
+  that stops reading would hold every user: the remote plugin's one
+  listener (every tool's rules, `Connector::device_signals`) routes each
+  message to the tools whose rules match and lists each again on a
+  thread of its own (`Connector::devices`, on a connection of its own
+  with a time limit), a burst asked once more after. The media controls
+  serve their objects on it and take them back, and their name, when
+  turned off. Found on the way: turned on again while something played,
+  they waited for the next change to take the name; they now act on
+  what plays as they start.
+- **Checked**: the platform's test (two listeners on one connection, each
+  told its own, one stopped alone, the connection still answering); the
+  media controls on a bus of their own (named while playing, turned off:
+  the name and objects gone, the connection answering; turned on again
+  while playing, named at once); the remote plugin's and the helper's
+  tests (the stand-in monitor and the stand-in kmtpd through the one
+  listener, kmtpd still never addressed off KDE's desktop). Idle, debug
+  build on a display of its own, three runs each, alternating: threads
+  97 to 91 or 92, zbus's own 6 to 3; PSS 283 452, 283 611 and 283 170
+  KiB against 283 199, 283 208 and 284 214, within what a reading
+  varies.

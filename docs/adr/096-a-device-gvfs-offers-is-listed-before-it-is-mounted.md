@@ -45,8 +45,9 @@ GVfs reads has an address of its own.
    as GIO's programs ask them (`org.gtk.Private.RemoteVolumeMonitor`,
    `List`; the bus starts one that does not run), and followed: each of
    their signals, and GVfs's daemon's `Mounted` and `Unmounted`, reads
-   the lists again (`Connector::follow_devices`, `gvfs_devices`), on a
-   thread of the plugin's while it is enabled. Each mountable volume whose
+   the lists again (`Connector::device_signals`, `devices`,
+   `gvfs_devices`), followed by the plugin on the program's one session
+   connection (`skwir_platform::bus`) while it is enabled. Each mountable volume whose
    address names a device is a place among the devices, by its volume's
    name, at its address, drawn as an unmounted disk is ("Not mounted.
    Click to mount and open it."). Mounted, it is the same place (its key

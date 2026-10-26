@@ -170,7 +170,9 @@ ADR-077 (which revises ADR-021).
   (`Remotes::label_of`), never the address's.
 - **What GVfs offers is listed before it is mounted** (ADR-096): its
   volume monitors on the session bus, asked and followed
-  (`Connector::follow_devices`, `gvfs_devices`), each device the same
+  (`Connector::device_signals`, `devices`: one listener for every tool,
+  on the program's one session connection, each tool listed again on a
+  thread of its own, a burst asked once more after), each device the same
   place mounted or not (`remote:<address>`). A device is mounted once
   opened, never because it was plugged in: mounted, it is held from
   every other program. When it does not open, the programs holding its

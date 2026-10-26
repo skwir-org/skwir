@@ -167,6 +167,12 @@ pub trait Connector: Send + Sync {
         recognised: &Recognised,
         cancel: &CancelToken,
     ) -> anyhow::Result<()>;
+    /// The program holding a device it opens through (`kiod6`, which holds
+    /// the phones KDE's kmtpd keeps, ADR-097), as that program was started:
+    /// a device that program holds is said to be openable by this tool.
+    fn reaches_through(&self) -> Option<&'static str> {
+        None
+    }
     /// Whether it opens `address` here, where it may answer for some of a
     /// scheme's addresses alone (KDE's kmtpd, the phones it holds, ADR-097):
     /// one it does not open goes to the next tool, unsaid. Asked before
@@ -174,16 +180,26 @@ pub trait Connector: Send + Sync {
     fn opens(&self, _address: &Address) -> bool {
         true
     }
-    /// Follow the devices plugged in that its program would mount (a phone,
-    /// a camera, ADR-096): `told` what it offers at once, then again each
-    /// time that, or one of its mounts, may have changed, until `cancel`.
-    /// On a thread of its own; `false` where it follows none.
-    fn follow_devices(
-        &self,
-        _told: Arc<dyn Fn(Vec<Offered>) + Send + Sync>,
-        _cancel: &CancelToken,
-    ) -> bool {
-        false
+    /// What on the session bus says the devices plugged in that its
+    /// program would mount (a phone, a camera: ADR-096, ADR-097) may have
+    /// changed, as match rules (`type='signal',interface='…'`): the plugin
+    /// follows them all on one connection, the program's (`bus_env`), and
+    /// asks `devices` again when one of a tool's is said. None where it
+    /// offers none.
+    fn device_signals(&self) -> Vec<String> {
+        Vec::new()
+    }
+    /// The devices plugged in that its program would mount, now. Blocks,
+    /// asking programs (on connections of its own, each question given up
+    /// on after a while): on a thread of its own.
+    fn devices(&self) -> Vec<Offered> {
+        Vec::new()
+    }
+    /// The variables naming the bus its devices are followed on: a test's
+    /// own; none for the session's, which the program shares
+    /// (`skwir_platform::bus`).
+    fn bus_env(&self) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+        Vec::new()
     }
     /// The servers its configuration names. Reads files and may start the
     /// tool: on a worker.

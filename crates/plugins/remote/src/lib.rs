@@ -202,6 +202,9 @@ pub struct Remotes {
     /// One publish at a time, each of the state as it then is: the last
     /// to run shows the newest mounts.
     publishing: Arc<Mutex<()>>,
+    /// The tools whose devices are being listed again, by id: whether a
+    /// change came meanwhile, which lists them once more after.
+    relisting: Arc<Mutex<HashMap<&'static str, bool>>>,
     /// rclone's remotes as Settings lists them (ADR-086), told when they
     /// change.
     records: skwir_core::settings::RecordSource,
@@ -249,6 +252,7 @@ impl Remotes {
             connecting: Arc::default(),
             keyring: Arc::new(passwords::Desktop),
             publishing: Arc::default(),
+            relisting: Arc::default(),
             records: skwir_core::settings::RecordSource::new(
                 "remote.server_records",
                 "remote.add_server",
@@ -366,6 +370,136 @@ impl Remotes {
     pub fn label_of(&self, address: &Address) -> String {
         self.offered_at(address)
             .map_or_else(|| address.label(), |offered| offered.name)
+    }
+
+    /// Follow the devices the tools offer (ADR-096, ADR-097): each tool's
+    /// listed at once, then again when one of its signals is said. One
+    /// listener per bus, on a thread of its own: the session's on the
+    /// program's one connection (`skwir_platform::bus`), a test's on its
+    /// own; until `lifetime` ends.
+    fn follow_devices(&self, app: &App, lifetime: &CancelToken) {
+        let tools: Vec<Arc<dyn Connector>> = self
+            .connectors
+            .iter()
+            .filter(|c| !c.device_signals().is_empty())
+            .cloned()
+            .collect();
+        #[cfg(target_os = "linux")]
+        {
+            let mut buses: Vec<(Vec<(std::ffi::OsString, std::ffi::OsString)>, Vec<_>)> =
+                Vec::new();
+            for tool in tools {
+                let env = tool.bus_env();
+                match buses.iter_mut().find(|(on, _)| *on == env) {
+                    Some((_, on_it)) => on_it.push(tool),
+                    None => buses.push((env, vec![tool])),
+                }
+            }
+            for (env, tools) in buses {
+                let (this, weak, lifetime) = (self.clone(), app.weak(), lifetime.clone());
+                let started = std::thread::Builder::new()
+                    .name("skwir-devices".into())
+                    .spawn(move || this.listen_for_devices(&weak, &env, &tools, &lifetime));
+                if let Err(error) = started {
+                    tracing::debug!("the devices the tools offer are not followed: {error}");
+                }
+            }
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            let _ = (tools, app, lifetime);
+        }
+    }
+
+    /// [`Remotes::follow_devices`] for the tools on the bus `env` names,
+    /// on this thread: their signals listened to, then each tool listed,
+    /// then each listed again when one of its own is said.
+    #[cfg(target_os = "linux")]
+    fn listen_for_devices(
+        &self,
+        app: &std::sync::Weak<App>,
+        env: &[(std::ffi::OsString, std::ffi::OsString)],
+        tools: &[Arc<dyn Connector>],
+        lifetime: &CancelToken,
+    ) {
+        let bus = if env.is_empty() {
+            skwir_platform::bus::session().map_err(anyhow::Error::from)
+        } else {
+            bus::connect(env, Duration::from_secs(10))
+        };
+        let bus = match bus {
+            Ok(bus) => bus,
+            Err(error) => {
+                tracing::debug!("the devices the tools offer are not followed: {error:#}");
+                return;
+            }
+        };
+        let mut routes: Vec<(zbus::MatchRule<'static>, usize)> = Vec::new();
+        for (at, tool) in tools.iter().enumerate() {
+            for rule in tool.device_signals() {
+                match zbus::MatchRule::try_from(rule.as_str()) {
+                    Ok(rule) => routes.push((rule.into_owned(), at)),
+                    Err(error) => tracing::debug!("{} says no rule: {error}", tool.id()),
+                }
+            }
+        }
+        let rules = routes.iter().map(|(rule, _)| rule.clone()).collect();
+        let list = |at: usize| {
+            if let Some(app) = app.upgrade() {
+                self.relist(&app, &tools[at]);
+            }
+        };
+        skwir_platform::bus::listen(
+            &bus,
+            rules,
+            lifetime,
+            || (0..tools.len()).for_each(list),
+            |message| {
+                let mut said: Vec<usize> = routes
+                    .iter()
+                    .filter(|(rule, _)| rule.matches(message).unwrap_or(false))
+                    .map(|(_, at)| *at)
+                    .collect();
+                said.dedup();
+                said.into_iter().for_each(list);
+            },
+        );
+    }
+
+    /// Ask `tool` again what devices it offers, on a thread of its own (it
+    /// may wait on a program): one asking at a time per tool, a change said
+    /// meanwhile asked once more after.
+    fn relist(&self, app: &App, tool: &Arc<dyn Connector>) {
+        {
+            let mut relisting = self.relisting.lock();
+            if let Some(again) = relisting.get_mut(tool.id()) {
+                *again = true;
+                return;
+            }
+            relisting.insert(tool.id(), false);
+        }
+        let id = tool.id();
+        let (this, weak, tool) = (self.clone(), app.weak(), Arc::clone(tool));
+        let started = std::thread::Builder::new()
+            .name("skwir-devices-list".into())
+            .spawn(move || {
+                loop {
+                    let devices = tool.devices();
+                    if let Some(app) = weak.upgrade() {
+                        this.offered(&app, tool.id(), devices);
+                    }
+                    let mut relisting = this.relisting.lock();
+                    if relisting.get(tool.id()).copied().unwrap_or(false) {
+                        relisting.insert(tool.id(), false);
+                        continue;
+                    }
+                    relisting.remove(tool.id());
+                    break;
+                }
+            });
+        if started.is_err() {
+            self.relisting.lock().remove(id);
+        }
     }
 
     /// What `connector` offers now (ADR-096): the mounts are read again,
@@ -496,13 +630,28 @@ impl Remotes {
             [first @ .., last] => (format!("{} and {last}", first.join(", ")), "have"),
         };
         let quit = if programs.len() == 1 { &them } else { "them" };
-        Some(format!(
-            "{them} {have} it open, and only one program at a time can use {}. Quit {quit}, then try again.",
-            match device {
-                connector::Device::Phone => "a phone",
-                connector::Device::Camera => "a camera",
-            }
-        ))
+        let kind = match device {
+            connector::Device::Phone => "a phone",
+            connector::Device::Camera => "a camera",
+        };
+        // A tool that would open it through the program holding it (KDE's
+        // kmtpd, through `kiod6`), and cannot here: why, before quitting.
+        let through = self.connectors.iter().find_map(|c| {
+            let holder = c.reaches_through()?;
+            programs
+                .iter()
+                .any(|p| p == holder)
+                .then(|| c.unavailable().map(|why| (holder, why)))
+                .flatten()
+        });
+        Some(match through {
+            Some((holder, why)) => format!(
+                "{them} {have} it open, and only one program at a time can use {kind}. Skwir would open it through {holder}, but {why}; else quit {quit}, then try again."
+            ),
+            None => format!(
+                "{them} {have} it open, and only one program at a time can use {kind}. Quit {quit}, then try again."
+            ),
+        })
     }
 
     /// [`Remotes::reach`], what failed as each tool said it.
@@ -1375,19 +1524,9 @@ impl Plugin for RemotePlugin {
             reach::mounts_in(folder, rclone::FSTYPE);
         }
         // The devices plugged in that a tool would mount, followed while
-        // the plugin is enabled (ADR-096).
+        // the plugin is enabled (ADR-096, ADR-097).
         if let Some(lifetime) = self.remotes.lifetime() {
-            for connector in self.remotes.connectors.iter() {
-                let (remotes, weak, id) = (self.remotes.clone(), app.weak(), connector.id());
-                connector.follow_devices(
-                    Arc::new(move |devices| {
-                        if let Some(app) = weak.upgrade() {
-                            remotes.offered(&app, id, devices);
-                        }
-                    }),
-                    &lifetime,
-                );
-            }
+            self.remotes.follow_devices(app, &lifetime);
         }
         let remotes = self.remotes.clone();
         app.commands.register::<ConnectArgs, _>(

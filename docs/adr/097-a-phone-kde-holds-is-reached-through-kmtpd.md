@@ -58,10 +58,10 @@ own helper) and ADR-096 (a second way to a device).
    GVfs gives it (`mtp://<ID_SERIAL>/`, ADR-096), its `udi` read as the
    device's folder of sysfs and its serial from udev, so it is the same
    place whichever holds it. `kmtp` offers the devices `kmtpd` holds
-   (`Connector::follow_devices`: `listDevices` again at
-   `devicesChanged`, and whenever GVfs's monitors say a device came or
-   went), named by `friendlyName`; a device two connectors offer is one
-   place.
+   (`Connector::devices`: `listDevices` again at `devicesChanged`, or
+   as `kiod6` comes or goes, followed with GVfs's on the program's one
+   session connection), named by `friendlyName`; a device two connectors
+   offer is one place.
 3. **A helper of Skwir's mounts it** (`skwir-kmtp-worker`, FUSE through
    `fusermount3`), started by the connector, in Skwir's mounts folder
    (`connector::mounts_folder`) as its sshfs and rclone mounts are, its

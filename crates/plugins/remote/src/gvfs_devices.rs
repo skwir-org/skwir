@@ -3,16 +3,15 @@
 //! monitor of GVfs's on the session bus, which GIO's programs ask what is
 //! there (`org.gtk.Private.RemoteVolumeMonitor`): asked here the same, its
 //! list read again each time one says something changed, or GVfs's daemon
-//! that a mount was made or let go of. Nothing is mounted by being
+//! that a mount was made or let go of (`signals`, which the plugin follows
+//! on the program's one session connection). Nothing is mounted by being
 //! plugged in: a device is mounted once opened. Linux only.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
-use skwir_core::cancel::CancelToken;
-use zbus::blocking::{Connection, MessageIterator};
+use zbus::blocking::Connection;
 use zbus::zvariant::{Structure, Value};
 
 use crate::address::Address;
@@ -36,76 +35,29 @@ const TRACKER: &str = "org.gtk.vfs.MountTracker";
 /// lists what is plugged in first).
 const PATIENCE: Duration = Duration::from_secs(10);
 
-/// Tell `told` what GVfs's monitors on the bus `env` names (the session's
-/// where it names none) offer, then again at each change, until `cancel`
-/// or the bus goes. Blocks: on a thread of its own.
-///
-/// # Errors
-/// When the bus cannot be reached or listened to.
-pub fn follow(
-    env: &[(OsString, OsString)],
-    told: &Arc<dyn Fn(Vec<Offered>) + Send + Sync>,
-    cancel: &CancelToken,
-) -> anyhow::Result<()> {
-    let bus = crate::bus::connect(env, PATIENCE)?;
-    // Listened to before the first list: nothing said in between is missed.
-    let dbus = zbus::blocking::fdo::DBusProxy::new(&bus)?;
-    for rule in [
-        zbus::MatchRule::builder()
-            .msg_type(zbus::message::Type::Signal)
-            .interface(INTERFACE)?
-            .build(),
-        zbus::MatchRule::builder()
-            .msg_type(zbus::message::Type::Signal)
-            .interface(TRACKER)?
-            .build(),
-        // A monitor started again (by another program) lists anew.
-        zbus::MatchRule::builder()
-            .msg_type(zbus::message::Type::Signal)
-            .sender("org.freedesktop.DBus")?
-            .member("NameOwnerChanged")?
-            .arg0ns("org.gtk.vfs")?
-            .build(),
-    ] {
-        dbus.add_match_rule(rule)?;
-    }
-    let told_of = MessageIterator::from(&bus);
-    let (closing, signal) = (bus.clone(), cancel.subscribe());
-    std::thread::Builder::new()
-        .name("skwir-gvfs-devices-end".into())
-        .spawn(move || {
-            let _ = signal.receiver().recv();
-            // What waits on it ends.
-            let _ = closing.close();
-        })?;
-    told(list(&bus));
-    for message in told_of {
-        let Ok(message) = message else { break };
-        if cancel.is_cancelled() {
-            break;
-        }
-        let header = message.header();
-        if header.message_type() != zbus::message::Type::Signal {
-            continue;
-        }
-        let said = header.interface().map(|i| i.as_str().to_owned());
-        let monitors = said.as_deref() == Some(INTERFACE);
-        let tracker = said.as_deref() == Some(TRACKER);
-        let restarted = header.member().is_some_and(|m| m == "NameOwnerChanged")
-            && message
-                .body()
-                .deserialize::<(String, String, String)>()
-                .is_ok_and(|(name, _, _)| MONITORS.contains(&name.as_str()));
-        // A question a monitor asks while mounting (`MountOpAskPassword`)
-        // changes nothing listed.
-        let asking = header
-            .member()
-            .is_some_and(|m| m.as_str().starts_with("MountOp"));
-        if (monitors && !asking) || tracker || restarted {
-            told(list(&bus));
+/// What on the session bus says what GVfs offers may have changed, as
+/// match rules: its monitors' signals, its daemon's mounts made and let go
+/// of, a monitor started again by another program.
+pub fn signals() -> Vec<String> {
+    vec![
+        format!("type='signal',interface='{INTERFACE}'"),
+        format!("type='signal',interface='{TRACKER}'"),
+        "type='signal',sender='org.freedesktop.DBus',member='NameOwnerChanged',arg0namespace='org.gtk.vfs'"
+            .to_owned(),
+    ]
+}
+
+/// What GVfs's monitors on the bus `env` names (the session's where it
+/// names none) offer now, asked on a connection of its own, each question
+/// given up on after a while. Blocks: on a thread of its own.
+pub fn offered(env: &[(OsString, OsString)]) -> Vec<Offered> {
+    match crate::bus::connect(env, PATIENCE) {
+        Ok(bus) => list(&bus),
+        Err(error) => {
+            tracing::debug!("the devices GVfs offers are not read: {error:#}");
+            Vec::new()
         }
     }
-    Ok(())
 }
 
 /// What the monitors offer now: each one GVfs installs, asked in turn
