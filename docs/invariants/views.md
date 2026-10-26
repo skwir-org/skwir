@@ -25,8 +25,12 @@ around the views is in [shell.md](shell.md).
   the color it wears ("Red") is a dot at every step. They stand in one
   order, so a tag is in the same place on every row and tile: those
   pinned to the sidebar first, in its order, then by name
-  (`tags::entry_tags`). A dot, a "+N" and a chip whose tag is in a
-  category say the whole name when pointed at.
+  (`tags::entry_tags`). A tag the place shown says of every entry it
+  lists is left out (`LocationProvider::tags_shown`: a tag's own, the
+  tags it is narrowed to, a search's `tag:` terms; on the board, a
+  column's tag on its cards): only that tag exactly, never one within
+  it. A dot, a "+N" and a chip whose tag is in a category say the whole
+  name when pointed at.
 - A thumbnail is drawn by `backdrop::Picture::img`, sized and fitted by
   the view. One that lets its background through, whose ink (its
   luminance, weighted by opacity, read once when converted) would not

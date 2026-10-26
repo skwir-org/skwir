@@ -108,6 +108,14 @@ impl Address {
         address
     }
 
+    /// The tags it says of every file it lists
+    /// (`LocationProvider::tags_shown`): its own, and those it is
+    /// narrowed to (files that also have one). A file has each, or a tag
+    /// within it.
+    pub fn tags_shown(&self) -> Vec<String> {
+        self.tag.iter().chain(&self.with).cloned().collect()
+    }
+
     /// What follows `tags:`.
     pub fn text(&self) -> String {
         let mut out = String::from("/");
@@ -1236,6 +1244,10 @@ impl LocationProvider for Provider {
         Address::parse(&location.rest).verbs()
     }
 
+    fn tags_shown(&self, location: &Location) -> Vec<String> {
+        Address::parse(&location.rest).tags_shown()
+    }
+
     /// A folder's tags, first in its menu of what it holds, as its trail
     /// goes on into them (`Photos › Tags`): narrowed as the trail shown
     /// has them, when it goes on into them.
@@ -1297,6 +1309,13 @@ mod tests {
             tag: tag.map(str::to_owned),
             ..Address::default()
         }
+    }
+
+    #[test]
+    fn a_tag_location_says_its_tag_and_what_narrows_it_of_every_file() {
+        let address = Address::parse("/Places/France?with=family&without=old&deep");
+        assert_eq!(address.tags_shown(), ["Places/France", "family"]);
+        assert!(Address::parse("/").tags_shown().is_empty(), "every tag");
     }
 
     // Unix's paths.

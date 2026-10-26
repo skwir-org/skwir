@@ -739,6 +739,14 @@ impl App {
         self.provider(&location.scheme)?.empty_state(location)
     }
 
+    /// The tags every entry `location` lists has because it lists them
+    /// (`LocationProvider::tags_shown`).
+    pub fn tags_shown(&self, location: &Location) -> Vec<String> {
+        self.provider(&location.scheme)
+            .map(|provider| provider.tags_shown(location))
+            .unwrap_or_default()
+    }
+
     /// Where Up goes from `location`: a folder's parent, else the place
     /// before it in its trail. `None` at the top.
     pub fn parent(&self, location: &Location) -> Option<Location> {

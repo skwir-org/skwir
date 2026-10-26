@@ -1470,6 +1470,23 @@ impl Query {
         }
     }
 
+    /// Every tag each match has: the query's `tag:` terms when it is one,
+    /// or an AND of terms. A tag within one of them matches too, so a
+    /// match has these, or a tag within them.
+    pub fn required_tags(&self) -> Vec<&str> {
+        fn tag(e: &Expr) -> Option<&str> {
+            match e {
+                Expr::Term(Term::Tag(t)) => Some(t.as_str()),
+                _ => None,
+            }
+        }
+        match self.expr.as_ref() {
+            Some(Expr::And(items)) => items.iter().filter_map(tag).collect(),
+            Some(e) => tag(e).into_iter().collect(),
+            None => Vec::new(),
+        }
+    }
+
     /// The names the query asks for, every one of them as a substring: what
     /// a locate database answers (`plocate`). One holding what plocate
     /// reads as a glob (`*`, `?`, `[`, `\`) is not one, even where it does
@@ -2384,6 +2401,11 @@ mod tests {
         assert_eq!(q("tag:x OR tag:y").required_tag(), None);
         assert_eq!(q("-tag:x").required_tag(), None);
         assert_eq!(q("ext:pdf").required_tag(), None);
+        // Every tag each match has, as a place shown says them.
+        assert_eq!(q("tag:x ext:pdf tag:y").required_tags(), ["x", "y"]);
+        assert_eq!(q("tag:x").required_tags(), ["x"]);
+        assert!(q("tag:x OR tag:y").required_tags().is_empty());
+        assert!(q("-tag:x tag:*").required_tags().is_empty());
         assert!(q("content:x").needs_content());
         assert_eq!(q("foo").name_substrings().unwrap(), ["foo"]);
         assert_eq!(q("foo bar").name_substrings().unwrap(), ["foo", "bar"]);

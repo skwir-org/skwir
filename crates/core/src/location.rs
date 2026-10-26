@@ -392,6 +392,16 @@ pub trait LocationProvider: Send + Sync {
         false
     }
 
+    /// The tags `location` says of every entry it lists, each of which has
+    /// them or a tag within them: a tag's place, its tag (and those it is
+    /// narrowed to: files that also have one); a search, the `tag:` terms
+    /// every match meets. The views leave them out of each entry's tags,
+    /// that tag exactly, never one within it: the place already says it.
+    /// Answered from the text alone, like `title`.
+    fn tags_shown(&self, _location: &Location) -> Vec<String> {
+        Vec::new()
+    }
+
     /// What a pane showing `location` says when it lists nothing, in the
     /// user's words: what the place holds and how it fills ("The shelf is
     /// empty"). Answered from the text alone, like `title`.

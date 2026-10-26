@@ -118,6 +118,19 @@ impl LocationProvider for QueryProvider {
     fn searches(&self, _location: &Location) -> bool {
         true
     }
+
+    /// The tags its `tag:` terms ask of every match.
+    fn tags_shown(&self, location: &Location) -> Vec<String> {
+        lang::parse(&location.rest)
+            .map(|query| {
+                query
+                    .required_tags()
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
     fn icon(&self, _location: &Location) -> Option<&'static str> {
         Some("search")
     }

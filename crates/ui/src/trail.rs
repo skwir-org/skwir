@@ -4,11 +4,13 @@
 //! drawn with the location's glyph on Tags and each tag as its chip;
 //! the trash, one place), what gestures mean there
 //! (`LocationProvider::verbs`: Delete takes a file out of a tag or the
-//! shelf, a drop gives files the tag, New Folder makes a tag), and what
-//! it says when it lists nothing (`LocationProvider::empty_state`, with
-//! its `icon`). Read once per location a pane shows, outside the
-//! workspace lock, never per frame. The shell never asks a location's
-//! scheme how to show it: a new kind of location needs no branch here.
+//! shelf, a drop gives files the tag, New Folder makes a tag), what it
+//! says when it lists nothing (`LocationProvider::empty_state`, with
+//! its `icon`), and the tags it says of every entry it lists
+//! (`LocationProvider::tags_shown`), which the entries leave out. Read
+//! once per location a pane shows, outside the workspace lock, never per
+//! frame. The shell never asks a location's scheme how to show it: a new
+//! kind of location needs no branch here.
 
 use skwir_core::location::{Crumb, EmptyState, Location, Trail, Verbs};
 
@@ -33,6 +35,9 @@ pub struct Shown {
     pub folder: bool,
     /// It is a search (`LocationProvider::searches`): results, pills.
     pub search: bool,
+    /// The tags every entry it lists has because it lists them
+    /// (`LocationProvider::tags_shown`): left out of each entry's.
+    pub tags_shown: Vec<String>,
     /// The trail's places that take files dropped on them (`Verbs::drop`).
     takes_drops: Vec<Location>,
     /// The sidebar's arrangement they were named under (`Roots::generation`).
@@ -100,6 +105,11 @@ pub fn sync(shell: &mut Shell) {
     let search = location
         .as_ref()
         .is_some_and(|location| shell.app.is_search(location));
+    let tags_shown = location
+        .as_ref()
+        .filter(|location| !location.is_path())
+        .map(|location| shell.app.tags_shown(location))
+        .unwrap_or_default();
     let title = location
         .as_ref()
         .map(|location| shell.app.location_title(location))
@@ -108,6 +118,7 @@ pub fn sync(shell: &mut Shell) {
     shell.ui_mut().place = Shown {
         folder: location.as_ref().is_none_or(Location::is_path),
         search,
+        tags_shown,
         location: text,
         title,
         trail,

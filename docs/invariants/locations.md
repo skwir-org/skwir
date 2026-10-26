@@ -17,6 +17,7 @@ the others with no UI branch.
 | its name, glyph, empty text | `title`, `icon`, `empty_state` |
 | its trail | `LocationProvider::trail` |
 | what gestures mean there | `LocationProvider::verbs` |
+| the tags it says of every entry, which they leave out | `LocationProvider::tags_shown` |
 | whether notes keep a rating | `NoteStores::held` |
 | a modified click on a place | `Place::clicks` |
 | what a command put on the clipboard | `Outcome::Clipboard`, `Outcome::Files` |

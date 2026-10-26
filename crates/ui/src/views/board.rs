@@ -49,6 +49,9 @@ struct Column {
     path: Option<PathBuf>,
     /// Its tag's color, for a tag's.
     color: Option<usize>,
+    /// The tags its place says of every card it holds (a tag's own,
+    /// `LocationProvider::tags_shown`), which its cards leave out.
+    shown: Arc<[String]>,
     ids: Arc<[EntryId]>,
 }
 
@@ -151,12 +154,18 @@ impl BoardView {
             let ids = opened
                 .and_then(|o| pane.kept(&o.location))
                 .map_or_else(|| Arc::from([]), |listing| listing.sorted(spec));
+            let shown = if path.is_none() {
+                shell.app.tags_shown(&location).into()
+            } else {
+                Arc::from([])
+            };
             columns.push(Column {
                 at: Some(id),
                 title: e.name_str().into_owned(),
                 location,
                 path,
                 color,
+                shown,
                 ids,
             });
         }
@@ -178,6 +187,7 @@ impl BoardView {
                         location: location.clone(),
                         path: path.clone(),
                         color: *color,
+                        shown: Arc::from([]),
                         ids: Arc::from([]),
                     },
                 );
@@ -192,6 +202,7 @@ impl BoardView {
                     path: shown.path(),
                     location: shown,
                     color: None,
+                    shown: Arc::from([]),
                     ids: loose.into(),
                 },
             );
@@ -221,13 +232,20 @@ fn column(
     let pane = shell.pane;
     let scroll = view.scrolls.get(&c.location).cloned().unwrap_or_default();
     let ids = Arc::clone(&c.ids);
+    let shown = Arc::clone(&c.shown);
     let list = uniform_list(
         crate::elements::known_by("board-column", &c.location),
         ids.len(),
         cx.processor(move |this: &mut Shell, range: Range<usize>, _, cx| {
             this.with_pane(pane, |this| {
                 let theme = cx.global::<Theme>().clone();
-                let cards = cards(this, &ids[range.clone()]);
+                let mut cards = cards(this, &ids[range.clone()]);
+                // The column says its tag: its cards leave it out.
+                for card in &mut cards {
+                    card.look.tags.retain(|(tag, _)| {
+                        !shown.iter().any(|s| skwir_core::metadata::same_tag(s, tag))
+                    });
+                }
                 cards
                     .into_iter()
                     .map(|card| {

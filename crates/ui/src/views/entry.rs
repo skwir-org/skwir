@@ -77,7 +77,12 @@ impl Shell {
             cut: self.pending.cut && self.pending.holds(e.file(), &e.name),
             icon: self.icons.for_entry(e, || pane.path_of(id), icon_px),
             link: icons::Link::of(e),
-            tags: crate::tags::entry_tags(e, &self.tag_colors, &self.tag_pins, &[]),
+            tags: crate::tags::entry_tags(
+                e,
+                &self.tag_colors,
+                &self.tag_pins,
+                &self.ui().place.tags_shown,
+            ),
             place,
             path: if e.is_dir() { pane.path_of(id) } else { None },
         })
