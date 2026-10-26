@@ -5069,3 +5069,65 @@ fixed the same day at the user's request.
   menu's first item said as focused, within "Context menu"), Poppler,
   MuPDF, DjVuLibre and djvu-rs, the bench's budgets, the release tools;
   `just gpui-check` too (gpui 110 tests, gpui_wgpu 49, gpui_linux 5).
+
+### Tags as chips in Properties' headings, beside the facts in the preview's (2026-10-26)
+
+Three changes the user asked for after the tag display night, and a
+fourth they chose once they asked what "One Tag at a Time" meant.
+
+- **The folded Notes heading** said "Tagged favorite, print, …" in
+  words; it now draws the tags as chips, in the views' order and colors
+  (`Group::tags`, `tags::ordered`, which `tags::entry_tags` now uses
+  too), before the words of the rest (the rating, the comment, a
+  category's field). The Tags row gives no gist any more, and "Tagged"
+  is gone with it. The strip asks for the width that names every tag
+  (`ChipStrip::natural`, new: measured in `request_layout`, as
+  `adaptive::Fit` measures, up to its container's width), and the
+  words beside it give way a hundred times as readily (`flex_shrink`),
+  so they are cut to nothing before a chip steps down to a dot.
+- **The preview's header** drew the stars and the tags on a third line
+  of their own. They are now items of the facts' wrapping line
+  (`preview::notes_items`): after the date where they fit, else on a
+  line of their own, where the strip steps down only if it must. The
+  line's tooltip (the type) moved to the facts, which already said it,
+  so the stars and the gaps between the chips say nothing.
+- **"+" left the header's tags:** a right press on a chip opens the
+  tag's menu, which now gives the tag editor of the selected files
+  (Edit Tags…, Ctrl+Shift+G, third in its first group; `tags.tag_menu`,
+  not the context menu's submenus, whose menu has Tags…). With no tag,
+  the header still says "+ Tag" ("Add tags" when pointed at).
+- **One tag at a time, where it means something:** a tag's menu offered
+  "One Tag at a Time" for every tag, acting on the tag pressed: on a
+  chip, the value (`Places/Norway/Fjords`), not its category, and on a
+  tag with nothing under it, a change nothing would show. It is now
+  offered only for a category (a tag the plugin knows tags under: its
+  vocabulary, the pins, the menu's own tag; or one already holding one
+  at a time), named ("One “Places” Tag at a Time", checked while on),
+  and a chip's menu offers the categories its tag is in, the outermost
+  first (`browse::one_at_a_time`, which `tags.tag_menu` and
+  `tags.place_menu` add, given the vocabulary).
+- **Checked:** unit tests for the Notes gist without the tags and the
+  tags the group gives (`a_folded_group_says_its_gist`), and for Edit
+  Tags… in a chip's menu and not in the context menu's submenus
+  (`the_context_menu_gives_each_tag_of_the_selection_a_submenu`). In a
+  window (debug build, Xvfb, the night's synthetic folder), light and
+  dark, the panel 600 points wide: one tag after the date on line 2
+  (blue-hour.jpg), seven tags all named on a line of their own
+  (harvest.jpg), stars after the date with the tags under them, "+ Tag"
+  after the date of a file without tags (dunes.jpg); the folded heading's
+  chips with "4 stars" after them. At 320 points: the facts wrap, the
+  strip steps to three names and four dots on its own line, and the
+  heading's chips do the same while "4 stars" gives way. A first try
+  let the chips run over "Notes" at 320 points (the gap before the
+  words still taken); the words' shrink fixed it. A chip's right press
+  in the header offered Edit Tags… with its key, which opened "Tags of
+  “harvest.jpg”". One at a time: a unit test (a leaf's chip offers none,
+  `Places/Paris`'s offers "One “Places” Tag at a Time", checked once
+  `Places` holds one, choosing it again turning it off); in the window,
+  the "Fjords" chip offered "One “Places” …" then "One “Norway” …", the
+  "print" chip none, and under All Tags, "Places" offered its own and
+  "print" none.
+- **Checked, the whole:** `just release-check` passed on the final tree,
+  in a memory-capped scope of its own: fmt, clippy, `check-cross`, deny,
+  notices, every test (2254, 28 skipped), smoke, a11y, Poppler, MuPDF,
+  DjVuLibre and djvu-rs, the bench's budgets, the release tools.
