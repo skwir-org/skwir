@@ -1618,6 +1618,19 @@ mod tests {
         else {
             panic!("an answer")
         };
+        let order = |title: &str| {
+            let items: Vec<MenuItem> = serde_json::from_value(chip["items"].clone()).unwrap();
+            items.iter().find(|item| item.title == title).unwrap().order
+        };
+        assert_eq!(
+            order("Edit Tags…") / 100,
+            order("Move to Category…") / 100,
+            "with the other edits"
+        );
+        assert!(
+            order("Edit Tags…") < order("Move to Category…"),
+            "first of them"
+        );
         let (_, chip) = &submenus(&chip)[0];
         assert_eq!(chip[..3], ["Show Its Files Here", "Open Tag", "Edit Tags…"]);
         // A tag with nothing under it holds no tags: no "One … at a Time".

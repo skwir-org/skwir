@@ -673,13 +673,14 @@ pub fn tag_menu(app: &App, known: &[String], a: TagMenuArgs) -> Outcome {
         (true, [tag]) => {
             let mut items = file_items(app, tag, a.pane);
             // The tag editor of the files the chip pressed was made one
-            // of: where a file shows its tags, the chips are the way to
-            // it. The context menu has its own (Tags…).
+            // of, first of the edits (1xx): where a file shows its tags,
+            // the chips are the way to it. The context menu has its own
+            // (Tags…).
             if selected(app, a.pane) > 0 {
                 items.push(item(
                     "Edit Tags…",
                     Invocation::new("ui.tags_prompt"),
-                    12,
+                    110,
                     "tag",
                 ));
             }
