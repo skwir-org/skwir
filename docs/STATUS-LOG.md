@@ -4928,3 +4928,96 @@ lines it counted, so the label showed one.
   as its longest name, at 64, 128 and 256 px.
 - **Not checked:** `just release-check`, `check-cross` (nothing
   system-specific changed).
+
+### Tags named where there is room, and acted on where they are shown (2026-10-26)
+
+The grid showed a file's tags as three dots on its picture's corner,
+their names only in a tooltip; the list dropped chips whole behind "+N";
+nothing said them to a screen reader or let a chip be acted on. The user
+agreed to five points and asked for them overnight: one strip for every
+view, names on the grid's tiles where they fit and captions under the
+names when chosen, less noise (order, the place's own tag, color-named
+tags), tags in the columns view, the preview and to readers, and a tag's
+menu, a sidebar tag pointed at and a key per pinned tag. Committed on
+main, not pushed (818c48f3…b734fc55, then this entry and the README's
+screenshots).
+
+- **One strip** (`tags::strip`, fitted in prepaint by
+  `elements/chips.rs::ChipStrip`, which replaced `ChipLine` and
+  `tags::tile_dots`): each tag a chip, its dot then its own name; as room
+  shrinks, the first ones chips and the rest dots, dots only, then fewer
+  dots and "+N". Over a tile's picture the chips are opaque
+  (`Theme::tag_solid`) and the dots ringed, names from the 128 px step
+  (`tags::NAMED_FROM`).
+- **Order and noise:** pinned tags first, in the sidebar's order
+  (`metadata::TAG_PINNED_SETTING`, read with the colors), then by name; a
+  tag named after the color it wears is a dot at every step; a dot, a
+  "+N" and a category's chip say the whole name when pointed at. A place
+  says which tags it says of every entry it lists
+  (`LocationProvider::tags_shown`: a tag's place its tag and those it is
+  narrowed to, a search its `tag:` terms, `Query::required_tags`), and
+  the entries leave that tag out, exactly; on the board a column's tag is
+  left off its cards.
+- **Captions** (`grid::CAPTIONS`, `ui.grid_caption_*`, off until chosen
+  in Settings or the View menu's Under names…, `ui.grid_caption`): a line
+  under every name for each, the tags or one of the list's details, the
+  same lines on every tile, so `GridView::measure` still counts only
+  names. A detail is read as the list reads its rows
+  (`Shell::rows_showing`).
+- **Columns, preview, readers:** the columns view's side columns draw the
+  strip, their drawn rows hydrated (`Pane::by_location` finds the kept
+  listings, `Shell::request_hydrate_kept`); the preview's header says the
+  stars and the tags of the file shown, a click opening the tag
+  (`tags.open`, new), "+" the tag editor (`preview::notes_line`); an
+  entry is described to a reader by its tags and stars (`tags::said`).
+- **Menus and keys:** a right press on a chip or a dot opens the tag's
+  menu, the entry selected first (`Shell::tag_act`, `open_chip_menu`;
+  `tags.tag_menu` with `files`: Show Its Files Here, Open Tag, Remove From
+  This File); the context menu gives each tag of the selection a submenu
+  (`tags.files_menu`, at most four, with its colors), so the keys reach
+  them. A place of the sidebar that says tags (a tag's pill) rings the
+  files that have them while pointed at (`Shell::ring_tags_of`,
+  `Look::ring`). Each pinned tag is a form of `tags.toggle`, "Toggle tag
+  “draft”", offered by the palette and the keyboard page with no key
+  (the user's choice: Alt+digits are tabs, Ctrl+Alt is AltGr on
+  Windows), kept as the pins change (`CommandRegistry::set_forms`, new).
+- **Checked:** unit tests for the strip's steps, the order, the place's
+  tags, the captions held to the list's columns, the context menu's
+  submenus, the forms set at runtime and the keyboard page's
+  candidates; `just a11y-check` with a tagged fixture file and a check
+  of what is heard (the tag editor's check now expects
+  the tags known beside its field). In a window (debug build, Xvfb, a
+  synthetic folder of tagged pictures and documents; captures in light
+  and dark): the grid at 96, 128 and 256 px, the list narrowed until the
+  strip steps to dots and "+N", a tag's place and its narrowing, a
+  `tag:print` search, the board of a category, the columns view's side
+  columns, captions of tags and sizes, the View menu's Under names…, a
+  chip's menu (Remove From This File, then Undo, on the file's
+  attribute), the context menu's tag submenus (Show Its Files Here), the
+  preview's header (a click opened the tag, "+" the editor), a pinned
+  tag's ring in the grid, the list and on the board, a saved
+  `tag:favorite` search's ring in the list (its four files, gone when
+  the pointer left; the search itself without its "favorite" chips),
+  Toggle tag “print”
+  from the palette (then Undo), and a key bound to it in the settings
+  (Ctrl+Alt+P, which the Keyboard page names Toggle tag “print”)
+  pressed twice: the tag given, then taken. By the keys alone, two
+  files selected: the Menu key, End, then up to Tag “print”, its
+  Color: Green (every chip green, stored) in the light look and Color:
+  From Its Name in the dark (checked on Green until then), and Remove
+  From Selected Files (both files' attribute, then Undo). A Return
+  given before a capture showed the highlight ran the menu's first
+  item, Open With, which started the system's browser on the test
+  display (stopped): capture before Return in a menu.
+- **Checked, the whole:** `just release-check` passed at b734fc55 and
+  again on the night's final tree, in a memory-capped scope of its own:
+  fmt, clippy, `check-cross` (Windows, macOS), deny, notices, every test
+  (2252 at b734fc55, 28 skipped), smoke, a11y, Poppler, MuPDF,
+  DjVuLibre and djvu-rs, the bench's budgets, the release tools.
+- **Found, not fixed** (PLAN.md, "What is left"): the context menu does
+  not scroll, so one taller than the window is cut at its edge; a chip's
+  tooltip stays over the menu its right press opened until the pointer
+  moves.
+- **README:** the screenshots made again at the default zoom (128), so
+  tags show their names; `tools/screenshots/readme.py` hides the network
+  section too, since mountinfo lists the machine's own mounts there.
