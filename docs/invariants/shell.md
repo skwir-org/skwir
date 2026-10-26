@@ -75,6 +75,9 @@ Views are in [views.md](views.md); what locations decide, in
   child.
 - **Popups own the keyboard:** a menu or popover takes focus on open,
   returns it on close, and has its own key context (`menu.rs`).
+- **A press cancels a tooltip waiting to show** (gpui patch 0038): what
+  the press opens is never covered by the tooltip of what was pressed.
+  A tooltip already shown goes at the press, as upstream has it.
 - **Focus never dangles:** when the focused element leaves the window,
   the shell's focus-lost listener gives the keyboard to the pane drawn as
   active (`Shell::drawn_focus`), or to the Settings dialog while it is

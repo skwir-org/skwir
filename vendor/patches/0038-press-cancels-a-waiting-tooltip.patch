@@ -1,0 +1,75 @@
+0038 press-cancels-a-waiting-tooltip: a press cancels a tooltip still waiting to show, which would stand over what the press opened
+
+diff --git a/crates/gpui/src/elements/div.rs b/crates/gpui/src/elements/div.rs
+index 002bf46..448e955 100644
+--- a/crates/gpui/src/elements/div.rs
++++ b/crates/gpui/src/elements/div.rs
+@@ -3813,6 +3813,19 @@ pub(crate) fn clear_active_tooltip_if_not_hoverable(
+     }
+ }
+ 
++/// A press cancels a tooltip still waiting to show: what the press opens (a
++/// menu, a dialog) is drawn by the time the delay ends, and the tooltip would
++/// stand over it until the pointer moves, its hover checked by bounds alone.
++fn cancel_waiting_tooltip(active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>) {
++    let waiting = matches!(
++        active_tooltip.borrow().as_ref(),
++        Some(ActiveTooltip::WaitingForShow { .. })
++    );
++    if waiting {
++        active_tooltip.borrow_mut().take();
++    }
++}
++
+ pub(crate) fn set_tooltip_on_window(
+     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
+     window: &mut Window,
+@@ -3866,6 +3879,7 @@ pub(crate) fn register_tooltip_mouse_handlers(
+             if !tooltip_id.is_some_and(|tooltip_id| tooltip_id.is_hovered(window)) {
+                 clear_active_tooltip_if_not_hoverable(&active_tooltip, window);
+             }
++            cancel_waiting_tooltip(&active_tooltip);
+         }
+     });
+ 
+@@ -5228,6 +5242,40 @@ mod tests {
+         ));
+     }
+ 
++    #[test]
++    fn tooltip_waiting_to_show_is_cancelled_by_a_press() {
++        let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);
++
++        let weak_active_tooltip = captured_active_tooltip.borrow().clone().unwrap();
++        let active_tooltip = weak_active_tooltip.upgrade().unwrap();
++        assert!(matches!(
++            active_tooltip.borrow().as_ref(),
++            Some(ActiveTooltip::WaitingForShow { .. })
++        ));
++
++        test_app
++            .update_window(any_window, |_, window, cx| {
++                window.dispatch_event(
++                    MouseDownEvent {
++                        button: MouseButton::Right,
++                        position: point(px(10.), px(10.)),
++                        modifiers: Default::default(),
++                        click_count: 1,
++                        first_mouse: false,
++                    }
++                    .to_platform_input(),
++                    cx,
++                );
++            })
++            .unwrap();
++        test_app
++            .dispatcher
++            .advance_clock(DEFAULT_TOOLTIP_SHOW_DELAY);
++        test_app.run_until_parked();
++
++        assert!(active_tooltip.borrow().is_none());
++    }
++
+     #[test]
+     fn tooltip_is_released_when_its_owner_disappears() {
+         let (mut test_app, any_window, captured_active_tooltip) = setup_tooltip_owner_test(None);

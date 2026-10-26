@@ -39,6 +39,8 @@ RUNS = [
         "window::a11y", "elements::div::tests::test_write_a11y_info",
         # A mesh and its normals (0033).
         "mesh::",
+        # Upstream's tooltips, and a press before one shows (0038).
+        "elements::div::tests::tooltip",
     ]),
     # All of them: the atlas (an upload to a removed texture), the context
     # and the renderer.

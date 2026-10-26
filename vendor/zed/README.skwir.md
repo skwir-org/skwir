@@ -67,6 +67,7 @@ at the vendored commit.
 | `0035-apple-shaders-at-start` | Built for macOS on another system, the shader bindings are made and the shaders compiled as the renderer starts | — |
 | `0036-no-icu` | A jump list's removed entries are read without ICU's `u_strlen`, so gpui needs no icuuc.dll | — |
 | `0037-middle-ellipsis-over-clamped-lines` | A clamped text cut in the middle keeps its first lines, and its last ends as the text does | — |
+| `0038-press-cancels-a-waiting-tooltip` | A press cancels a tooltip still waiting to show | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -563,6 +564,20 @@ and none is ever added (unlike 0005, which trimmed it; chosen 2026-10-25). One
 line, and truncation from the start or the end, are upstream's.
 `test_multiline_truncation_middle` covers one word, two and three lines, runs
 and newlines.
+
+### 0038: A press cancels a waiting tooltip
+
+A press cleared a tooltip already shown, but not one still waiting for its
+delay (`ActiveTooltip::WaitingForShow`). A right press on a tag's chip
+opens a menu at once; half a second later the chip's tooltip showed over
+the menu, and stayed until the pointer moved: after it is shown, the
+tooltip's hover is checked in prepaint by the element's bounds alone, which
+know nothing of the menu drawn over it (upstream's own TODO in
+`handle_tooltip_mouse_move`). The mouse-down handler that clears a shown
+tooltip now also drops a waiting one (`cancel_waiting_tooltip`), as other
+toolkits do; the next move over the element waits again.
+`tooltip_waiting_to_show_is_cancelled_by_a_press` covers it, and
+`just gpui-check` runs upstream's tooltip tests beside it.
 
 ## Adding or changing a patch
 
