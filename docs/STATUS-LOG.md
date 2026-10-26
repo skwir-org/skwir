@@ -5173,9 +5173,14 @@ fourth they chose once they asked what "One Tag at a Time" meant.
   so the stars and the gaps between the chips say nothing.
 - **"+" left the header's tags:** a right press on a chip opens the
   tag's menu, which now gives the tag editor of the selected files
-  (Edit Tags…, Ctrl+Shift+G, third in its first group; `tags.tag_menu`,
-  not the context menu's submenus, whose menu has Tags…). With no tag,
-  the header still says "+ Tag" ("Add tags" when pointed at).
+  (Edit Tags…, Ctrl+Shift+G; `tags.tag_menu`, not the context menu's
+  submenus, whose menu has Tags…). It first stood third in the menu's
+  first group, to be found; the user asked for it among the edits, and
+  it is now the first of them (order 110, before Move to Category…,
+  the menu's 1xx). A file without tags said "+ Tag" in the header at
+  first; the user dropped it the same day: among read-only facts it
+  read as one more, and the context menu's Tags…, Ctrl+Shift+G and
+  Properties' Tags row add tags already.
 - **One tag at a time, where it means something:** a tag's menu offered
   "One Tag at a Time" for every tag, acting on the tag pressed: on a
   chip, the value (`Places/Norway/Fjords`), not its category, and on a
@@ -5210,4 +5215,10 @@ fourth they chose once they asked what "One Tag at a Time" meant.
 - **Checked, the whole:** `just release-check` passed on the final tree,
   in a memory-capped scope of its own: fmt, clippy, `check-cross`, deny,
   notices, every test (2254, 28 skipped), smoke, a11y, Poppler, MuPDF,
-  DjVuLibre and djvu-rs, the bench's budgets, the release tools.
+  DjVuLibre and djvu-rs, the bench's budgets, the release tools. A run
+  before it, after "+ Tag" was dropped, stopped at
+  `remote_folders::rclone_copies_within_its_mount_on_the_server`: the
+  address did not lead to its folder within a minute, the machine's
+  load near 20 then. Alone, the test passed in 0.9 s, and the whole
+  check passed again with the load near 3; the test's minute is
+  short under such a load.
