@@ -3112,7 +3112,9 @@ impl Shell {
                     .into_any_element(),
             }
         };
-        let message = crate::loading::message(self, id);
+        // Its buttons act on this pane: drawn while it is the one drawn.
+        let banner = crate::loading::message(self, id)
+            .map(|banner| crate::loading::render(banner, self, cx));
         self.sync_sort_hydration();
         self.sync_selection_hydration();
         self.sync_narrow(cx);
@@ -3164,18 +3166,7 @@ impl Shell {
             })
             .child(address_bar)
             .children(narrow)
-            .when_some(message, |d, message| {
-                d.child(
-                    div()
-                        .flex_none()
-                        .px_3()
-                        .py_2()
-                        .text_sm()
-                        .text_color(theme.text_muted)
-                        .bg(theme.surface)
-                        .child(message),
-                )
-            })
+            .children(banner)
             .child(file_area)
             .children(strip)
             .child(footer)

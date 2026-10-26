@@ -54,7 +54,9 @@ ADR-077 (which revises ADR-021).
 - A remote whose lane has run a job for `reach::NOT_ANSWERING` (three seconds)
   while its folder is listed is said not to answer in the pane's banner
   (`Scheduler::stalled`, `ui/loading.rs`), looked at again each second
-  while it is listed, never once it is.
+  while it is listed, never once it is. The banner offers to leave it (Go
+  Back, else Go Home) and to let go of the server (Disconnect, its place's
+  Eject); an address still connecting, to cancel.
 - No lock shared beyond one remote is held across a call that reaches a
   path (`inotify_add_watch`, `statvfs`, `open`): take what is needed,
   let go, call, then take the lock again. What such a call may race with

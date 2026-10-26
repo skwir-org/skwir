@@ -18,7 +18,10 @@ Views are in [views.md](views.md); what locations decide, in
   before its container's tooltip (`clipped_with`). Whether it was cut is
   read from layout when the tooltip is asked for, never in `render`.
 - Pane actions capture their target pane while rendering and use
-  pane-specific element IDs.
+  pane-specific element IDs. A button names its pane in its command's
+  arguments only where they accept one (`CommandSpec::accepts`, as the
+  registry checks them): a place's Eject takes none, and an argument a
+  command does not take is refused.
 - An element is known by what it shows, never by where it stands
   (`elements::known_by`): gpui keeps an element's tooltip as it was
   built, its press and its screen reader's node by its id. A row known by
@@ -377,8 +380,15 @@ of bars, split or not.
 - **Empty is a state.** `placeholder.rs` says why a pane is empty
   (`LocationProvider::empty_state` for non-folders) or failed (the
   system's message as detail) and offers a way out, inside the pane so
-  drops and the menu still work. The banner above the view is only for an
-  error beside existing entries.
+  drops and the menu still work. The banner above the view says an error
+  beside existing entries, or what the pane still waits for
+  (`loading::message`), with the ways out of a wait, as the toolbar's
+  buttons (`loading::Way`): Cancel for a location still opening (an
+  address connecting), Go Back for one on a server that does not answer
+  (Go Home where the pane has no Back), and Disconnect where the place
+  holding that server offers Eject (its invocation, asked of the place:
+  the banner names no plugin). Leaving a location stops what opens or
+  lists it; the server stays connected.
 
 ## Properties and links
 

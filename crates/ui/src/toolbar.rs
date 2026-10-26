@@ -93,6 +93,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "shelf",
         "recent",
         "eject",
+        "home",
         "info",
         "crop",
         "code",
@@ -521,8 +522,17 @@ fn invoke(
     }
     shell.note_pointer_use(command, &args, cx);
     // A command acts on the button's pane, unless the button names the
-    // pane it acts on (a location's tool for the other pane's folder).
-    if !command.starts_with("ui.") && args.get("pane").is_none() {
+    // pane it acts on (a location's tool for the other pane's folder), or
+    // the command takes none (a place's Eject): its arguments refuse what
+    // they do not declare.
+    if !command.starts_with("ui.")
+        && args.get("pane").is_none()
+        && shell
+            .app
+            .commands
+            .get(command)
+            .is_some_and(|spec| spec.accepts("pane"))
+    {
         args["pane"] = serde_json::json!(pane);
     }
     shell.run(command, args, window, cx);

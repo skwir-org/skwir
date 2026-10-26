@@ -217,6 +217,13 @@ fn an_argument_a_command_does_not_take_is_refused_never_dropped() {
         })
         .is_ok()
     );
+    // What a caller may add on its own (a button's pane) is asked first,
+    // as the check reads the schema.
+    let accepts = |name: &str, arg: &str| app.commands.get(name).unwrap().accepts(arg);
+    assert!(accepts("back", "pane") && accepts("trash", "entries"));
+    assert!(accepts("set_access", "entries"), "flattened");
+    assert!(accepts("probe.any", "pane"), "any JSON");
+    assert!(!accepts("probe.none", "pane") && !accepts("set_access", "entrie"));
     // Enum arguments: the names of every variant are taken.
     app.commands
         .register_raw::<Step, _>("probe", "probe.step", "Step", "", |_, _| Ok(Outcome::Done));

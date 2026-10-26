@@ -477,6 +477,14 @@ impl CommandSpec {
             .is_some_and(|p| p.contains_key(name))
     }
 
+    /// Whether its arguments may name `name`, as the registry checks them
+    /// (`Takes`): its schema declares it, in a flattened or referred part
+    /// too, or takes any (a `serde_json::Value`). What a caller adds on its
+    /// own (the pane a button stands in) goes only where it is accepted.
+    pub fn accepts(&self, name: &str) -> bool {
+        property_names(self.args_schema.get().as_value()).is_none_or(|names| names.contains(name))
+    }
+
     /// The form of these arguments: `None` for none declared.
     pub fn form(&self, args: &serde_json::Value) -> Option<&Form> {
         let none = serde_json::Value::Object(serde_json::Map::new());

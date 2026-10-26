@@ -5288,3 +5288,44 @@ out nor let go of.
   not looked into further. Not checked: Eject from the sidebar in a
   window (the test runs the command its button runs), sshfs and GVfs
   servers that do not answer, macOS.
+
+### Ways out of a wait in the pane's banner (2026-10-26)
+
+Asked by the user after Eject was fixed: a Cancel in the bar saying a
+server is not answering. Built as recommended, since "Cancel" alone
+does not say what it cancels:
+
+- **The banner's ways out** (`loading::Banner`, `loading::Way`), drawn
+  as the toolbar's buttons (their keys in their tooltips, Tab reaching
+  them, named by their words): "… is not answering…" offers Go Back
+  (Go Home where the pane has no Back: a tab restored there, the address
+  given at start) and Disconnect, the Eject of the place holding the
+  server, asked of the place (the shell names no plugin; none for
+  kio-fuse, nor while the place is busy disconnecting). "Opening …" (an
+  address connecting) offers Cancel, which goes back, else home: the
+  location's own close cancels its connection. A local folder's
+  "Loading location…" offers nothing.
+- **A button's pane only where accepted:** the toolbar's buttons added
+  `pane` to every command not the shell's; a place's Eject
+  (`remote.disconnect`) takes none and refused it ("unknown field
+  `pane`"), found by the window check. They now add it only where the
+  command's arguments accept it (`CommandSpec::accepts`, read as the
+  registry checks them: a flattened or referred part, or any JSON),
+  as prompts already did for what a question is about.
+- A home icon (`toolbar/home.svg`), drawn for Skwir in the set's style.
+- **Checked** in a window (debug build, Xvfb, a session bus, HOME and
+  XDG folders of its own; servers on the loopback: a socket that
+  accepts and never answers behind an rclone SFTP remote, and an rclone
+  S3 server stopped): "Opening slow (sftp)…" showed Cancel, which went
+  back home and ended rclone's mount attempt; "photos is not
+  answering…" showed Go Back and Disconnect: Disconnect sent the pane
+  home and said "Disconnected from “photos”", the mount and its rclone
+  gone; Go Back went back with the server still mounted, which the
+  sidebar's Eject then let go of the same way; opened at start, Go Home
+  and Disconnect, Tab reaching Go Home (eleventh press) and Disconnect,
+  Return on Go Home going home; Go Back's tooltip "Back · Alt+←". Unit
+  tests: which way leaves (back, else home), what a command accepts.
+  Not checked: a screen reader on these buttons (`just a11y-check`
+  stages no remote), GVfs and sshfs servers that do not answer.
+  `just lint`, the default tests (2233 passed, 28 skipped), `just
+  smoke` and `just a11y-check` passed.
