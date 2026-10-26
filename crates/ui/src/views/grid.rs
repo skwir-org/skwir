@@ -19,6 +19,11 @@
 //! name drawn over the next row. A name cut keeps its first lines whole and
 //! its end on the last (vendored patch 0037: Zed's gpui cuts a clamped text
 //! in the middle to a single line).
+//!
+//! Under the name, a line for each caption the user chose (`CAPTIONS`, off
+//! until chosen): its tags, or one of the list's details. Every tile has
+//! the same lines, said or blank, so its height is still its name's and
+//! the captions', never what its metadata holds.
 
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -36,11 +41,121 @@ use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::thumbs::ThumbView;
 use crate::view::{Nav, PaneView};
+use crate::views::list::{COLUMNS, Detail, PerColumn, RowData};
 
 /// Zoom steps for `ui.zoom`: the side of a tile's box.
 pub const ZOOMS: [u32; 5] = [64, 96, 128, 192, 256];
 /// The step a new window opens at, and Ctrl+0 returns to.
 pub const DEFAULT_ZOOM: u32 = 128;
+
+/// What a tile can say under its name, a line each: its tags, or one of
+/// the list's details (`views::list::COLUMNS`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Caption {
+    Tags,
+    Detail(Detail),
+}
+
+/// A caption: everything about it, once. Settings, the View menu and the
+/// tiles read `CAPTIONS`.
+pub struct CaptionSpec {
+    pub caption: Caption,
+    /// Whether tiles say it (`ui.grid_caption_*`), off until chosen.
+    pub setting: &'static str,
+    /// What the View menu calls it.
+    pub label: &'static str,
+    /// What Settings calls it.
+    pub title: &'static str,
+    pub description: &'static str,
+}
+
+/// The captions in the order they stand under a name: the tags, then the
+/// details as the list's columns stand.
+pub const CAPTIONS: [CaptionSpec; 7] = [
+    CaptionSpec {
+        caption: Caption::Tags,
+        setting: "ui.grid_caption_tags",
+        label: "Tags",
+        title: "Tags under names",
+        description: "Under each name in the grid, a line of its tags, as many as fit, then dots. The picture is then left to itself.",
+    },
+    CaptionSpec {
+        caption: Caption::Detail(Detail::Folder),
+        setting: "ui.grid_caption_folder",
+        label: "Folder",
+        title: "Folder under names",
+        description: "Under each name in the grid, the folder it is in, where files from many folders are listed: a search, a tag, the shelf, Recent.",
+    },
+    CaptionSpec {
+        caption: Caption::Detail(Detail::Deleted),
+        setting: "ui.grid_caption_deleted",
+        label: "Deleted",
+        title: "Deletion under names",
+        description: "Under each name in the grid, when it was put in the trash, where the trash's files are listed.",
+    },
+    CaptionSpec {
+        caption: Caption::Detail(Detail::Size),
+        setting: "ui.grid_caption_size",
+        label: "Size",
+        title: "Size under names",
+        description: "Under each name in the grid, the size of the file, or how many files a place holds.",
+    },
+    CaptionSpec {
+        caption: Caption::Detail(Detail::Modified),
+        setting: "ui.grid_caption_modified",
+        label: "Modified",
+        title: "Modification under names",
+        description: "Under each name in the grid, when it last changed.",
+    },
+    CaptionSpec {
+        caption: Caption::Detail(Detail::Type),
+        setting: "ui.grid_caption_type",
+        label: "Type",
+        title: "Type under names",
+        description: "Under each name in the grid, the kind of file, such as PDF document.",
+    },
+    CaptionSpec {
+        caption: Caption::Detail(Detail::Rating),
+        setting: "ui.grid_caption_rating",
+        label: "Rating",
+        title: "Rating under names",
+        description: "Under each name in the grid, the stars it was given, where its notes are kept.",
+    },
+];
+
+impl Shell {
+    /// Whether `caption` can be said here: the tags while a store keeps
+    /// them, a detail where its column can be shown
+    /// (`Shell::column_applies`).
+    pub fn caption_applies(&self, caption: Caption) -> bool {
+        match caption {
+            Caption::Tags => self.app.notes.held().tags,
+            Caption::Detail(detail) => self.column_applies(detail),
+        }
+    }
+
+    /// The captions the grid's tiles say here: those chosen that apply.
+    pub fn grid_captions(&self) -> Vec<Caption> {
+        CAPTIONS
+            .iter()
+            .zip(&self.captions)
+            .filter(|(spec, chosen)| **chosen && self.caption_applies(spec.caption))
+            .map(|(spec, _)| spec.caption)
+            .collect()
+    }
+
+    /// `ui.grid_caption`: say one caption under the names or no longer,
+    /// a preference saved as the dialog's switch is.
+    pub fn toggle_grid_caption(&mut self, key: &str, cx: &mut Context<Self>) {
+        let Some(at) = CAPTIONS.iter().position(|spec| spec.setting == key) else {
+            return;
+        };
+        let shown = !self.captions[at];
+        self.captions[at] = shown;
+        cx.notify();
+        crate::settings::remember(self, CAPTIONS[at].setting, shown.to_string(), cx);
+    }
+}
 
 #[derive(Default)]
 pub struct GridView {
@@ -55,8 +170,11 @@ pub struct GridView {
     /// What `lines` was counted for: the names, their order and the zoom.
     /// Not the listing's version, which hydration advances with every batch.
     lines_for: Option<(u64, std::sync::Arc<[EntryId]>, u32)>,
-    /// Advances with `lines`, so the grid sums its rows again.
+    /// Advances with `lines` and `captions`, so the grid sums its rows
+    /// again.
     revision: u64,
+    /// How many captions the tiles were counted with.
+    captions: usize,
 }
 
 /// Border and padding around a tile's content, on each side.
@@ -67,6 +185,8 @@ const LABEL_GAP: f32 = 2.;
 const LABEL_LINE: f32 = 15.;
 /// A name takes what it needs up to this, then ends with an ellipsis.
 const MAX_LINES: u8 = 3;
+/// A caption's line, as tall as a tag's chip.
+const CAPTION_LINE: f32 = crate::tags::CHIP_HEIGHT;
 /// The least space between tiles. Spare width widens the gutters between
 /// columns up to `MAX_GUTTER`; the rest becomes the margins.
 const GUTTER: (f32, f32) = (12., 8.);
@@ -85,8 +205,13 @@ impl GridView {
         Self::label_width(zoom) + 2. * FRAME
     }
 
-    fn tile_height(zoom: u32, lines: u8) -> f32 {
-        zoom as f32 + 2. * FRAME + LABEL_GAP + f32::from(lines) * LABEL_LINE
+    fn tile_height(zoom: u32, lines: u8, captions: usize) -> f32 {
+        let captions = if captions == 0 {
+            0.
+        } else {
+            LABEL_GAP + captions as f32 * CAPTION_LINE
+        };
+        zoom as f32 + 2. * FRAME + LABEL_GAP + f32::from(lines) * LABEL_LINE + captions
     }
 
     /// Count the lines every name wraps to, when what they depend on changed.
@@ -190,24 +315,21 @@ impl GridView {
 fn cell(
     shell: &mut Shell,
     theme: &Theme,
-    ix: usize,
-    id: EntryId,
+    row: &RowData,
     lines: u8,
+    captions: &[Caption],
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let zoom = shell.zoom;
-    let (look, pictures) = {
-        let app = std::sync::Arc::clone(&shell.app);
-        let ws = app.workspace.read();
-        let Some(pane) = ws.pane(shell.pane) else {
-            return div().into_any_element();
-        };
-        let (Some(e), Some(look)) = (pane.entry(id), shell.look(pane, id, GridView::icon(zoom).1))
-        else {
-            return div().into_any_element();
-        };
-        (look, mosaic_of(e))
-    };
+    let (ix, look, id) = (row.ix, &row.look, row.look.id);
+    let pictures = shell
+        .app
+        .workspace
+        .read()
+        .pane(shell.pane)
+        .and_then(|pane| pane.entry(id))
+        .map(mosaic_of)
+        .unwrap_or_default();
     // A filled box shows the short side of the thumbnail at full size.
     let fill = shell.prefs.grid_fill;
     let size = if zoom > 128 || (fill && zoom > 96) {
@@ -280,7 +402,7 @@ fn cell(
             .p(px(FRAME - 1.))
             .gap(px(LABEL_GAP))
             .rounded_md(),
-        &look,
+        look,
         theme,
     )
     .child(
@@ -296,22 +418,26 @@ fn cell(
                     .flex_none()
                     .child(icons::marked(picture, icon_px, look.mark(), theme))
                     // Over the picture's top edge, as wide as the picture:
-                    // the tile keeps the height its name gives it.
-                    .when(!look.tags.is_empty(), |d| {
-                        d.child(
-                            div()
-                                .absolute()
-                                .top(px(-3.))
-                                .left(px(-3.))
-                                .right(px(-3.))
-                                .flex()
-                                .child(crate::views::entry::tags(
-                                    &look,
-                                    crate::tags::StripOn::Picture { zoom: zoom as f32 },
-                                    theme,
-                                )),
-                        )
-                    }),
+                    // the tile keeps the height its name gives it. Said
+                    // under the name instead when that is chosen.
+                    .when(
+                        !look.tags.is_empty() && !captions.contains(&Caption::Tags),
+                        |d| {
+                            d.child(
+                                div()
+                                    .absolute()
+                                    .top(px(-3.))
+                                    .left(px(-3.))
+                                    .right(px(-3.))
+                                    .flex()
+                                    .child(crate::views::entry::tags(
+                                        look,
+                                        crate::tags::StripOn::Picture { zoom: zoom as f32 },
+                                        theme,
+                                    )),
+                            )
+                        },
+                    ),
             ),
     )
     .child(crate::elements::clip::clipped(
@@ -325,12 +451,90 @@ fn cell(
             .text_ellipsis_middle()
             .line_clamp(usize::from(lines)),
         look.name.clone(),
-    ));
+    ))
+    .when(!captions.is_empty(), |d| {
+        d.child(caption_lines(row, captions, theme))
+    });
     let seat = crate::views::entry::Seat {
         index: ix,
         tree: None,
     };
-    crate::views::entry::behave(el, &look, seat, shell, cx).into_any_element()
+    crate::views::entry::behave(el, look, seat, shell, cx).into_any_element()
+}
+
+/// A tile's captions under its name, a line each, said or blank.
+fn caption_lines(row: &RowData, captions: &[Caption], theme: &Theme) -> gpui::Div {
+    let look = &row.look;
+    let muted = if look.selected {
+        theme.selection_text
+    } else {
+        theme.text_muted
+    };
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .children(captions.iter().enumerate().map(|(k, caption)| {
+            let line = div()
+                .h(px(CAPTION_LINE))
+                .w_full()
+                .min_w_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .overflow_hidden();
+            let text = |text: &str, whole: &str| {
+                crate::elements::clip::clipped_with(
+                    div()
+                        .id(("caption", row.ix * CAPTIONS.len() + k))
+                        .min_w_0()
+                        .truncate()
+                        .text_xs()
+                        .text_color(muted),
+                    text.to_owned(),
+                    (!whole.is_empty()).then(|| whole.to_owned().into()),
+                )
+            };
+            match caption {
+                Caption::Tags => line.child(
+                    crate::views::entry::tags(
+                        look,
+                        crate::tags::StripOn::Row {
+                            selected: look.selected,
+                        },
+                        theme,
+                    )
+                    .centered(),
+                ),
+                Caption::Detail(Detail::Rating) => line.children(
+                    row.rating
+                        .map(|stars| crate::tags::stars(stars, 12., theme)),
+                ),
+                Caption::Detail(Detail::Folder) => {
+                    let (name, whole) = row.folder.clone().unwrap_or_default();
+                    line.child(text(&name, &whole))
+                }
+                Caption::Detail(Detail::Size) => line.child(text(&row.size, "")),
+                Caption::Detail(Detail::Modified) => {
+                    line.child(text(&row.modified, &row.modified_exact))
+                }
+                Caption::Detail(Detail::Deleted) => {
+                    line.child(text(&row.deleted, &row.deleted_exact))
+                }
+                Caption::Detail(Detail::Type) => line.child(text(&row.kind, "")),
+            }
+        }))
+}
+
+/// The details `captions` say, as the list's columns would.
+fn caption_columns(captions: &[Caption]) -> PerColumn<bool> {
+    let mut columns = PerColumn([false; COLUMNS.len()]);
+    for caption in captions {
+        if let Caption::Detail(detail) = caption {
+            columns[*detail] = true;
+        }
+    }
+    columns
 }
 
 /// A thumbnail's size on its tile: its own, shrunk until its longer side
@@ -459,10 +663,16 @@ impl PaneView for GridView {
         cx: &mut Context<Shell>,
     ) -> AnyElement {
         self.measure(shell, window, cx);
+        let captions: Rc<[Caption]> = shell.grid_captions().into();
+        if captions.len() != self.captions {
+            self.captions = captions.len();
+            self.revision += 1;
+        }
         let lines = self.lines.clone();
         let count = shell.ui().list.sorted.len();
         let zoom = shell.zoom;
         let pane = shell.pane;
+        let said = Rc::clone(&captions);
         let render = cx.processor(
             move |this: &mut Shell, (range, cols): (Range<usize>, usize), _, cx| {
                 this.with_pane(pane, |this| {
@@ -470,16 +680,29 @@ impl PaneView for GridView {
                     let list = &mut this.ui_mut().list;
                     list.visible_rows = range.len().div_ceil(cols.max(1)).max(1);
                     list.visible_items = range.len();
-                    let ids: Vec<(usize, EntryId)> = range
-                        .filter_map(|ix| this.ui().list.sorted.get(ix).map(|id| (ix, *id)))
+                    let ids: Vec<EntryId> = range
+                        .clone()
+                        .filter_map(|ix| this.ui().list.sorted.get(ix).copied())
                         .collect();
                     // Metadata for the whole visible range in one request.
-                    this.request_hydrate(ids.iter().map(|(_, id)| *id).collect::<Vec<_>>());
-                    let cells = ids
-                        .into_iter()
-                        .map(|(ix, id)| {
-                            let lines = lines.get(ix).copied().unwrap_or(1);
-                            cell(this, &theme, ix, id, lines, cx)
+                    this.request_hydrate(ids);
+                    // What every tile shows, and the details its captions
+                    // say, read as the list reads its rows.
+                    let rows = this.rows_showing(
+                        range.clone(),
+                        GridView::icon(zoom).1,
+                        caption_columns(&said),
+                    );
+                    // An entry gone between the order's reading and its
+                    // own is a blank: the tiles after it keep their places.
+                    let mut rows = rows.iter().peekable();
+                    let cells = range
+                        .map(|ix| match rows.next_if(|row| row.ix == ix) {
+                            Some(row) => {
+                                let lines = lines.get(ix).copied().unwrap_or(1);
+                                cell(this, &theme, row, lines, &said, cx)
+                            }
+                            None => div().into_any_element(),
                         })
                         .collect::<Vec<_>>();
                     let app = std::sync::Arc::clone(&this.app);
@@ -496,8 +719,9 @@ impl PaneView for GridView {
                 revision: self.revision,
                 of: {
                     let lines = self.lines.clone();
+                    let captions = captions.len();
                     Rc::new(move |ix| {
-                        GridView::tile_height(zoom, lines.get(ix).copied().unwrap_or(1))
+                        GridView::tile_height(zoom, lines.get(ix).copied().unwrap_or(1), captions)
                     })
                 },
             },

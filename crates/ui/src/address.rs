@@ -31,6 +31,7 @@ impl Shell {
         let kind = match args.get("kind").and_then(serde_json::Value::as_str) {
             Some("view_options") => VIEW_OPTIONS,
             Some("view_buttons") => VIEW_BUTTONS,
+            Some("grid_captions") => GRID_CAPTIONS,
             Some(crate::map_view::BACKGROUNDS) => crate::map_view::BACKGROUNDS,
             Some(crate::dock::MENU) => crate::dock::MENU,
             Some(crate::timeline::DATES_MENU) => crate::timeline::DATES_MENU,
@@ -47,6 +48,9 @@ const VIEW_OPTIONS: &str = "view_options";
 /// Which views have a button: the buttons' right-click, the Menu key on
 /// one, or the View menu's Buttons row.
 const VIEW_BUTTONS: &str = "view_buttons";
+/// What the grid's tiles say under their names: the View menu's Under
+/// names row, in the grid.
+const GRID_CAPTIONS: &str = "grid_captions";
 const MORE: &str = "more";
 
 /// The views the user gave a button, or took it from (`ui.view_button`,
@@ -147,7 +151,7 @@ fn view_control(
         Button::new(id, icon, title, "ui.toolbar_menu")
             .args(serde_json::json!({"kind": VIEW_OPTIONS}))
             .anchor_if(anchor, !(wide && choosing))
-            .active(open == Some(VIEW_OPTIONS))
+            .active(matches!(open, Some(VIEW_OPTIONS | GRID_CAPTIONS)))
             .dropdown()
     };
     let views = shell.available_views();
@@ -380,6 +384,16 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
             .active(shell.prefs.grid_fill),
             "Fill thumbnails",
         ));
+        show.push(menu_item(
+            Button::new(
+                "menu-grid-captions",
+                "contents",
+                "Choose what each tile says under its name: its tags, its size, when it changed…",
+                "ui.toolbar_menu",
+            )
+            .args(serde_json::json!({ "kind": GRID_CAPTIONS })),
+            "Under names…",
+        ));
     }
     // The tree closes what it opened in one go.
     if shell.ui().view_id == crate::view::TREE {
@@ -425,6 +439,39 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         ("Show", show),
         ("Zoom", size),
     ]
+}
+
+/// What the grid's tiles say under their names: each caption that applies
+/// here (`views::grid::CAPTIONS`), checked when chosen. A row keeps the
+/// menu open, for the next.
+fn grid_captions_menu(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
+    let said = shell.grid_captions();
+    let rows = crate::views::grid::CAPTIONS
+        .iter()
+        .enumerate()
+        .filter(|(_, spec)| shell.caption_applies(spec.caption))
+        .map(|(i, spec)| {
+            let on = said.contains(&spec.caption);
+            // A tooltip is kept as built: it says what the row is about.
+            let tip = format!(
+                "Whether each tile says its {} under its name",
+                spec.label.to_lowercase()
+            );
+            menu_item(
+                Button::new(
+                    format!("menu-caption-{i}"),
+                    if on { "check" } else { "" },
+                    tip,
+                    "ui.grid_caption",
+                )
+                .args(serde_json::json!({ "key": spec.setting }))
+                .active(on)
+                .keeps_open(),
+                spec.label,
+            )
+        })
+        .collect();
+    vec![("Under names", rows)]
 }
 
 /// Which views have a button beside the address, each checked or not, and
@@ -854,7 +901,9 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 .toolbar_menu
                 .as_ref()
                 .map(|menu| menu.kind)
-                .filter(|kind| active && [VIEW_OPTIONS, VIEW_BUTTONS].contains(kind)),
+                .filter(|kind| {
+                    active && [VIEW_OPTIONS, VIEW_BUTTONS, GRID_CAPTIONS].contains(kind)
+                }),
             nav: shell
                 .nav_menu
                 .as_ref()
@@ -916,10 +965,10 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         && let Some(popup) = &shell.toolbar_menu
     {
         let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", &theme, cx);
-        let groups = if kind == VIEW_BUTTONS {
-            view_buttons_menu(shell)
-        } else {
-            view_options(shell)
+        let groups = match kind {
+            VIEW_BUTTONS => view_buttons_menu(shell),
+            GRID_CAPTIONS => grid_captions_menu(shell),
+            _ => view_options(shell),
         };
         // A group with nothing to offer here is left out, title and all.
         for (title, items) in groups.into_iter().filter(|(_, items)| !items.is_empty()) {

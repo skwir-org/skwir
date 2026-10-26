@@ -188,10 +188,19 @@ around the views is in [shell.md](shell.md).
   hydration), order or zoom change; never per frame or metadata batch. The
   label is clamped to that count, so a disagreement costs an ellipsis, not
   an overlap.
-- Nothing that would change a tile's height goes on it: its tags are a
-  strip over the picture's top edge, as wide as the picture
-  (`tags::StripOn::Picture`), its chips opaque so they read on any
-  picture; names from the 128 px step (`tags::NAMED_FROM`), dots below.
+- A tile's height is its name's and the captions chosen, never what its
+  metadata holds: an entry's tags or details arriving never move a row.
+  Its tags are a strip over the picture's top edge, as wide as the
+  picture (`tags::StripOn::Picture`), its chips opaque so they read on
+  any picture; names from the 128 px step (`tags::NAMED_FROM`), dots
+  below.
+- **Captions** (`grid::CAPTIONS`, `ui.grid_caption_*`, off until chosen
+  in Settings or the View menu's Under names): a line under every name
+  for each one chosen that applies here (`Shell::caption_applies`, as
+  the list's columns apply), said or blank, the same lines on every
+  tile; `GridView::tile_height` counts them, `measure` still counts only
+  names. The tags as a caption leave the picture to itself. A detail is
+  read as the list reads its rows (`Shell::rows_showing`).
 - Fill thumbnails (`ui.grid_fill`) crops pictures to the box.
 
 ## Names and zoom

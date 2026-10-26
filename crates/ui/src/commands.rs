@@ -477,6 +477,7 @@ const SHOWS: &[&str] = &[
     "ui.view",
     "ui.columns",
     "ui.columns_reset",
+    "ui.grid_caption",
     "ui.view_button",
     "ui.view_buttons_reset",
     "ui.zoom",
@@ -1273,6 +1274,12 @@ pub fn declare_all(app: &App) {
         "ui.columns_reset",
         "Reset column widths",
         "Give the list's detail columns their default widths",
+    );
+    declare::<Key>(
+        app,
+        "ui.grid_caption",
+        "Show or hide a grid caption",
+        "Say one caption under every name in the grid, or no longer: its tags or one of the list's details, by its setting (ui.grid_caption_tags, ui.grid_caption_size…)",
     );
     declare::<ViewButton>(
         app,

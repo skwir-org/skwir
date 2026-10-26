@@ -420,6 +420,15 @@ pub fn declare(app: &App) {
         .section("Grid")
         .essential(),
     );
+    // What the grid's tiles say under their names (`CAPTIONS`), in the
+    // order they stand there.
+    for caption in &crate::views::grid::CAPTIONS {
+        app.settings.declare(
+            SettingSpec::toggle(caption.setting, caption.title, caption.description, false)
+                .page(page::VIEWS)
+                .section("Grid"),
+        );
+    }
     app.settings.declare(
         SettingSpec::toggle(
             READER_CONTINUOUS_KEY,

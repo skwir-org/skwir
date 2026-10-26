@@ -261,6 +261,7 @@ pub fn strip(tags: &[(String, usize)], on: StripOn, theme: &Theme) -> ChipStrip 
             dot_step: 11.,
             max_dots: 5,
             whole: true,
+            center: false,
         },
         StripOn::Picture { zoom } => {
             // Growing slower than the picture, like the link's badge.
@@ -273,6 +274,7 @@ pub fn strip(tags: &[(String, usize)], on: StripOn, theme: &Theme) -> ChipStrip 
                 dot_step: (side * 2. / 3.).round(),
                 max_dots: 3,
                 whole: zoom >= NAMED_FROM,
+                center: false,
             }
         }
     };

@@ -31,6 +31,9 @@ pub struct Metrics {
     /// Whether any item may be whole: a strip too small for names (a tile
     /// at the small zooms) draws dots alone, whatever its width.
     pub whole: bool,
+    /// Whether what it draws stands in the middle of its width (under a
+    /// name centered on a tile), else at its start.
+    pub center: bool,
 }
 
 pub struct ChipStrip {
@@ -41,6 +44,15 @@ pub struct ChipStrip {
     /// The items left out, as "+N".
     pub more: Box<dyn Fn(Range<usize>) -> AnyElement>,
     pub metrics: Metrics,
+}
+
+impl ChipStrip {
+    /// What it draws in the middle of its width.
+    #[must_use]
+    pub fn centered(mut self) -> Self {
+        self.metrics.center = true;
+        self
+    }
 }
 
 impl IntoElement for ChipStrip {
@@ -67,6 +79,26 @@ impl Fit {
     };
 }
 
+/// How wide `fit` of `widths` is, its "+N" `more` wide.
+fn span(widths: &[Pixels], fit: Fit, metrics: &Metrics, more: Pixels) -> Pixels {
+    let gap = px(metrics.gap);
+    let mut used = widths[..fit.whole]
+        .iter()
+        .copied()
+        .fold(px(0.), |a, w| a + w)
+        + gap * fit.whole.saturating_sub(1) as f32;
+    let mut parts = usize::from(fit.whole > 0);
+    if fit.dots > 0 {
+        used += px(metrics.dot + metrics.dot_step * (fit.dots - 1) as f32);
+        parts += 1;
+    }
+    if fit.more > 0 {
+        used += more;
+        parts += 1;
+    }
+    used + gap * parts.saturating_sub(1) as f32
+}
+
 /// The step of `widths` (each item whole) that fits `room`, as the module
 /// says: the most items whole, then the most dots. `more(n)` measures the
 /// "+N" for `n` left out.
@@ -77,23 +109,9 @@ fn fit(
     mut more: impl FnMut(usize) -> Pixels,
 ) -> Fit {
     let n = widths.len();
-    let gap = px(metrics.gap);
     let mut span = |fit: Fit| -> Pixels {
-        let mut used = widths[..fit.whole]
-            .iter()
-            .copied()
-            .fold(px(0.), |a, w| a + w)
-            + gap * fit.whole.saturating_sub(1) as f32;
-        let mut parts = usize::from(fit.whole > 0);
-        if fit.dots > 0 {
-            used += px(metrics.dot + metrics.dot_step * (fit.dots - 1) as f32);
-            parts += 1;
-        }
-        if fit.more > 0 {
-            used += more(fit.more);
-            parts += 1;
-        }
-        used + gap * parts.saturating_sub(1) as f32
+        let more = if fit.more > 0 { more(fit.more) } else { px(0.) };
+        span(widths, fit, metrics, more)
     };
     let first = if metrics.whole { n } else { 0 };
     // The first `whole` items whole and the rest as dots, as many as
@@ -189,6 +207,13 @@ impl Element for ChipStrip {
         let gap = px(metrics.gap);
         let centered = |h: Pixels| bounds.origin.y + (height - h) / 2.;
         let mut x = bounds.origin.x;
+        if metrics.center {
+            let more = counts
+                .iter()
+                .find(|(left, _, _)| *left == fit.more)
+                .map_or(px(0.), |(_, _, measured)| measured.width);
+            x += ((bounds.size.width - span(&widths, fit, &metrics, more)) / 2.).max(px(0.));
+        }
         for (item, measured) in self.whole.iter_mut().zip(&sizes).take(fit.whole) {
             item.prepaint_at(point(x, centered(measured.height)), window, cx);
             x += measured.width + gap;
@@ -253,6 +278,7 @@ mod tests {
         dot_step: 10.,
         max_dots: 3,
         whole: true,
+        center: false,
     };
 
     fn of(whole: usize, dots: usize, more: usize) -> Fit {

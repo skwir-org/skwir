@@ -373,10 +373,25 @@ impl Shell {
     /// Collect row data for `range` of the sorted order. `compact` rows
     /// (the Columns view) show a name only: their details are not computed.
     pub fn rows(&mut self, range: Range<usize>, icon_px: u16, compact: bool) -> Vec<RowData> {
+        let columns = if compact {
+            PerColumn([false; COLUMNS.len()])
+        } else {
+            self.shown_columns()
+        };
+        self.rows_showing(range, icon_px, columns)
+    }
+
+    /// `rows`, with the details of `columns` computed, whatever the list
+    /// shows: what the grid's captions say (`views::grid::CAPTIONS`).
+    pub fn rows_showing(
+        &mut self,
+        range: Range<usize>,
+        icon_px: u16,
+        columns: PerColumn<bool>,
+    ) -> Vec<RowData> {
         let mut out = Vec::with_capacity(range.len());
         let friendly = self.prefs.friendly_dates;
-        let columns = self.shown_columns();
-        let now = (!compact && friendly && (columns[Detail::Modified] || columns[Detail::Deleted]))
+        let now = (friendly && (columns[Detail::Modified] || columns[Detail::Deleted]))
             .then(jiff::Zoned::now);
         // A date as the column says it, and exactly for its tooltip.
         let date = |time: Option<std::time::SystemTime>| -> (String, String) {
@@ -415,84 +430,80 @@ impl Shell {
                 rating: None,
                 folder: None,
             };
-            if !compact {
-                if columns[Detail::Folder] && !e.is_place() {
-                    // A file of the trash is from the folder it was put
-                    // there from, which restoring it puts it back in.
-                    let from = e
+            if columns[Detail::Folder] && !e.is_place() {
+                // A file of the trash is from the folder it was put
+                // there from, which restoring it puts it back in.
+                let from = e
+                    .metadata
+                    .value(keys::TRASHED_FROM)
+                    .and_then(skwir_core::Value::as_str)
+                    .map(std::path::PathBuf::from);
+                row.folder = from
+                    .or_else(|| pane.path_of(id)?.parent().map(ToOwned::to_owned))
+                    .map(|dir| {
+                        let name = dir.file_name().map_or_else(
+                            || dir.display().to_string(),
+                            |n| n.to_string_lossy().into_owned(),
+                        );
+                        (name, dir.display().to_string())
+                    });
+            }
+            if columns[Detail::Rating] {
+                row.rating = e
+                    .metadata
+                    .value(keys::RATING)
+                    .and_then(skwir_core::Value::as_u64);
+            }
+            if columns[Detail::Size] {
+                row.size = match e
+                    .metadata
+                    .value(keys::SIZE)
+                    .and_then(skwir_core::Value::as_u64)
+                {
+                    Some(s) if !e.is_dir() => format::size(s),
+                    // A place says how many files it holds.
+                    _ => match e
                         .metadata
-                        .value(keys::TRASHED_FROM)
-                        .and_then(skwir_core::Value::as_str)
-                        .map(std::path::PathBuf::from);
-                    row.folder = from
-                        .or_else(|| pane.path_of(id)?.parent().map(ToOwned::to_owned))
-                        .map(|dir| {
-                            let name = dir.file_name().map_or_else(
-                                || dir.display().to_string(),
-                                |n| n.to_string_lossy().into_owned(),
-                            );
-                            (name, dir.display().to_string())
-                        });
-                }
-                if columns[Detail::Rating] {
-                    row.rating = e
-                        .metadata
-                        .value(keys::RATING)
-                        .and_then(skwir_core::Value::as_u64);
-                }
-                if columns[Detail::Size] {
-                    row.size = match e
-                        .metadata
-                        .value(keys::SIZE)
+                        .value(keys::FILES)
                         .and_then(skwir_core::Value::as_u64)
                     {
-                        Some(s) if !e.is_dir() => format::size(s),
-                        // A place says how many files it holds.
-                        _ => match e
-                            .metadata
-                            .value(keys::FILES)
-                            .and_then(skwir_core::Value::as_u64)
-                        {
-                            Some(n) => {
-                                format::count(usize::try_from(n).unwrap_or(usize::MAX), "file")
-                            }
-                            None => "—".to_owned(),
-                        },
-                    };
-                }
-                if columns[Detail::Modified] {
-                    (row.modified, row.modified_exact) = date(
-                        e.metadata
-                            .value(keys::MODIFIED)
-                            .and_then(skwir_core::Value::as_time),
-                    );
-                }
-                if columns[Detail::Deleted] {
-                    (row.deleted, row.deleted_exact) = date(
-                        e.metadata
-                            .value(keys::TRASHED)
-                            .and_then(skwir_core::Value::as_time),
-                    );
-                }
-                if columns[Detail::Type] {
-                    row.kind = if e.is_place() {
-                        e.metadata
-                            .value(keys::PLACE_KIND)
-                            .and_then(skwir_core::Value::as_str)
-                            .unwrap_or("Place")
-                            .into()
-                    } else if e.is_dir() {
-                        "Folder".into()
-                    } else if e.is_broken_link() {
-                        crate::typenames::BROKEN_LINK.into()
-                    } else {
-                        // Typed only where the column shows it.
-                        skwir_platform::mime::of_entry(e)
-                            .as_ref()
-                            .and_then(|mime| self.type_names.get(mime))
-                            .unwrap_or_else(|| crate::typenames::fallback_of(e).into())
-                    };
-                }
+                        Some(n) => format::count(usize::try_from(n).unwrap_or(usize::MAX), "file"),
+                        None => "—".to_owned(),
+                    },
+                };
+            }
+            if columns[Detail::Modified] {
+                (row.modified, row.modified_exact) = date(
+                    e.metadata
+                        .value(keys::MODIFIED)
+                        .and_then(skwir_core::Value::as_time),
+                );
+            }
+            if columns[Detail::Deleted] {
+                (row.deleted, row.deleted_exact) = date(
+                    e.metadata
+                        .value(keys::TRASHED)
+                        .and_then(skwir_core::Value::as_time),
+                );
+            }
+            if columns[Detail::Type] {
+                row.kind = if e.is_place() {
+                    e.metadata
+                        .value(keys::PLACE_KIND)
+                        .and_then(skwir_core::Value::as_str)
+                        .unwrap_or("Place")
+                        .into()
+                } else if e.is_dir() {
+                    "Folder".into()
+                } else if e.is_broken_link() {
+                    crate::typenames::BROKEN_LINK.into()
+                } else {
+                    // Typed only where the column shows it.
+                    skwir_platform::mime::of_entry(e)
+                        .as_ref()
+                        .and_then(|mime| self.type_names.get(mime))
+                        .unwrap_or_else(|| crate::typenames::fallback_of(e).into())
+                };
             }
             out.push(row);
         }

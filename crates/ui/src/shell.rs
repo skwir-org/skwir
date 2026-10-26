@@ -326,6 +326,9 @@ pub struct Shell {
     /// Which detail columns the list shows (`views::list::COLUMNS`), as
     /// chosen. Read through `shown_columns`.
     pub columns: crate::views::list::PerColumn<bool>,
+    /// Which captions the grid's tiles say under their names
+    /// (`views::grid::CAPTIONS`), as chosen. Read through `grid_captions`.
+    pub captions: [bool; crate::views::grid::CAPTIONS.len()],
     /// `reading.width`: the reading column's widest, in ems, or `None`
     /// for the whole panel (`markdown::measure`).
     pub reading_measure: Option<f32>,
@@ -682,6 +685,7 @@ impl Shell {
                     .each_ref()
                     .map(|column| column.shown),
             ),
+            captions: [false; crate::views::grid::CAPTIONS.len()],
             reading_measure: crate::markdown::measure("comfortable"),
             reading_width_before: None,
             zoom_wheel: crate::reader_scroll::WheelTurn::default(),
@@ -2441,6 +2445,11 @@ impl Shell {
                 }
             }
             "columns_reset" => self.reset_column_widths(cx),
+            "grid_caption" => {
+                if let Some(key) = arg("key") {
+                    self.toggle_grid_caption(&key, cx);
+                }
+            }
             "view_button" => {
                 if let Some(id) = arg("id") {
                     let on = args.get("on").and_then(serde_json::Value::as_bool);
@@ -2857,6 +2866,9 @@ impl Shell {
                     .each_ref()
                     .map(|column| self.switch(column.setting, column.shown)),
             );
+            self.captions = crate::views::grid::CAPTIONS
+                .each_ref()
+                .map(|caption| self.switch(caption.setting, false));
         }
         if self.type_names.absorb() | self.icons.absorb() {
             cx.notify();
