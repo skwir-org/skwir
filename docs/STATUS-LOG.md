@@ -5531,3 +5531,19 @@ Asked by the user after the disk fell to 3 GB during a full run:
   Login skipping its start as the point was mounted). Each now names its
   own (`rclone://optioned/`, `rclone://at-login/`); the rule is in
   AGENTS.md's tests.
+- **Eject refused on a mount already gone:**
+  `a_webdav_share_below_its_server_s_root_opens_where_it_is` failed once
+  in seven full runs: `fusermount3 -u` refused as busy (something in the
+  mount for a moment, not known what, gone by the time
+  `process::using` read `/proc`), so the mount was let
+  go of by force, its FUSE connection cut first; rclone, cut, ended and
+  unmounted its point itself, and the lazy unmount after found nothing
+  ("not found in /etc/mtab"), which Eject reported as its failure. Checked
+  on a probe mount: rclone is gone within 50 ms of the abort. Now a
+  refusal is an error only while the mount table still lists the mount
+  (`mounter::mounted`, docs/invariants/remote.md).
+  `a_mount_let_go_of_elsewhere_is_disconnected_all_the_same` lets go of
+  an rclone mount outside Skwir before Eject, and fails without the
+  check; the race itself depends on load and was not reproduced on
+  purpose. A watch on an rclone mount, checked the same way, does not
+  make `fusermount3 -u` refuse.

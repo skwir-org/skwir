@@ -556,6 +556,12 @@ ADR-077 (which revises ADR-021).
   cut, it would wait for its call to the server first, minutes on end,
   and, ending, unmount its point and remove its socket's path, a mount
   made there again meanwhile losing both.
+- A mount gone by the time the system is asked to let go of it was let
+  go of, as asked: its program let go of it (rclone does within
+  milliseconds once its connection is cut, often before Skwir's lazy
+  unmount runs), or the user did. The system's refusal then ("not found
+  in /etc/mtab") is no error: `mounter::unmount` and `force_unmount`
+  read the mount table again before saying one (`mounter::mounted`).
 - Whether each mount's program still answers is asked in its lane, one
   question at a time a mount: none is queued behind one a server gone
   holds for good. A refresh publishes what is mounted at once, read from

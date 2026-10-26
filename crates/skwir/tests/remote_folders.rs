@@ -323,6 +323,45 @@ fn a_folder_mounted_again_holds_other_files_by_number_and_the_same_by_path() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A mount let go of elsewhere while Skwir still knew it (by the user, or
+/// by its program: rclone does once Eject cut its connection, maybe before
+/// Skwir lets go of it) is let go of all the same, its folder removed.
+#[test]
+fn a_mount_let_go_of_elsewhere_is_disconnected_all_the_same() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("let-go-elsewhere");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    let served = Served::start("webdav", &served_root, &[]);
+    let address = Address::parse(&format!("dav://127.0.0.1:{}/", served.port)).unwrap();
+    let rclone = Rclone::default();
+    let ask: Arc<dyn Ask> = Arc::new(Answers::default());
+    let connected = rclone
+        .connect(&address, &ask, &CancelToken::new())
+        .expect("connect");
+    let left = Unmounted(connected.point.clone());
+    let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
+    let recognised = rclone.recognises(&remote).expect("rclone's");
+    assert!(
+        Command::new("fusermount3")
+            .arg("-u")
+            .arg(&connected.point)
+            .status()
+            .unwrap()
+            .success()
+    );
+    rclone
+        .disconnect(&remote, &recognised, &CancelToken::new())
+        .expect("disconnect");
+    assert!(!connected.point.exists(), "its folder removed");
+    drop(left);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// Answers as the window would, and says what it was asked.
 #[derive(Default)]
 struct Answers {

@@ -146,7 +146,7 @@ pub fn unmount(point: &Path, ours: bool, cancel: &CancelToken) -> anyhow::Result
     let finished =
         skwir_platform::process::run_to_exit(&mut command, None, cancel, Duration::from_secs(30))?;
     skwir_core::fs::reach::changed();
-    if !finished.status.success() {
+    if !finished.status.success() && mounted(point) {
         let said = finished.stderr.trim();
         if !said.contains("busy") {
             anyhow::bail!("{said}");
@@ -196,7 +196,8 @@ fn in_use(users: &[String]) -> String {
 /// its FUSE connection is cut first (`abort`), so a call waiting for a
 /// server that does not answer returns at once; macOS's `umount -f` cuts
 /// it itself. For a mount whose program died, or a server that no longer
-/// answers.
+/// answers. Its connection cut, rclone lets go of its mount itself, maybe
+/// before Skwir does ([`mounted`]).
 ///
 /// # Errors
 /// When the system refused.
@@ -211,8 +212,20 @@ pub fn force_unmount(point: &Path) -> anyhow::Result<()> {
         Duration::from_secs(30),
     )?;
     skwir_core::fs::reach::changed();
-    anyhow::ensure!(finished.status.success(), "{}", finished.stderr.trim());
+    anyhow::ensure!(
+        finished.status.success() || !mounted(point),
+        "{}",
+        finished.stderr.trim()
+    );
     Ok(())
+}
+
+/// Whether a mount is still at `point`, asked of the table just said to
+/// have changed. Asked when the system refused to let go of it: a mount
+/// let go of meanwhile (by its program, which ended or was told to, or by
+/// the user) is let go of, as asked, not an error.
+fn mounted(point: &Path) -> bool {
+    skwir_core::fs::reach::of(point).is_some_and(|remote| remote.point == point)
 }
 
 /// Cut the FUSE connection mounted at `point` (the kernel's way for one
