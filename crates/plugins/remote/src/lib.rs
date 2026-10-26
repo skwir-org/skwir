@@ -203,7 +203,9 @@ pub struct Remotes {
     /// to run shows the newest mounts.
     publishing: Arc<Mutex<()>>,
     /// The tools whose devices are being listed again, by id: whether a
-    /// change came meanwhile, which lists them once more after.
+    /// change came meanwhile, which lists them once more after. Devices
+    /// are followed on Linux alone, over the session bus.
+    #[cfg(target_os = "linux")]
     relisting: Arc<Mutex<HashMap<&'static str, bool>>>,
     /// rclone's remotes as Settings lists them (ADR-086), told when they
     /// change.
@@ -252,6 +254,7 @@ impl Remotes {
             connecting: Arc::default(),
             keyring: Arc::new(passwords::Desktop),
             publishing: Arc::default(),
+            #[cfg(target_os = "linux")]
             relisting: Arc::default(),
             records: skwir_core::settings::RecordSource::new(
                 "remote.server_records",
@@ -469,6 +472,7 @@ impl Remotes {
     /// Ask `tool` again what devices it offers, on a thread of its own (it
     /// may wait on a program): one asking at a time per tool, a change said
     /// meanwhile asked once more after.
+    #[cfg(target_os = "linux")]
     fn relist(&self, app: &App, tool: &Arc<dyn Connector>) {
         {
             let mut relisting = self.relisting.lock();
@@ -504,6 +508,7 @@ impl Remotes {
 
     /// What `connector` offers now (ADR-096): the mounts are read again,
     /// a device gone, mounted or let go of with it.
+    #[cfg(target_os = "linux")]
     fn offered(&self, app: &App, connector: &'static str, devices: Vec<Offered>) {
         {
             let mut state = self.state.lock();

@@ -5547,3 +5547,9 @@ Asked by the user after the disk fell to 3 GB during a full run:
   check; the race itself depends on load and was not reproduced on
   purpose. A watch on an rclone mount, checked the same way, does not
   make `fusermount3 -u` refuse.
+- **Windows' check, after the shared connection (3f3667cc):** listing
+  the devices again (`Remotes::relist`, `offered`, `relisting`) is
+  Linux's alone, over the session bus, and clippy for Windows called it
+  dead code: it is behind `cfg(target_os = "linux")` now, as its caller
+  was. Then `just lint`, `just test` (2252 passed) and `just check-cross`
+  passed.
