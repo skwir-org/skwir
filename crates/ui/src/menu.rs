@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, Context, FocusHandle, MouseButton, Pixels, Point, ScrollHandle, Window, div,
     prelude::*, px,
 };
-use skwir_core::registry::{MenuItem, MenuSource};
+use skwir_core::registry::{ChoiceLook, MenuItem, MenuSource};
 use skwir_platform::mime::{self, Kind, Mime};
 
 use crate::elements::popover::PopoverAnchor;
@@ -251,6 +251,13 @@ pub struct MenuState {
     /// The pointer resting on a row: the submenu it opens, or the one it
     /// closes, once it has rested `REST` (`MenuState::rest_on`).
     rest: Option<gpui::Task<()>>,
+    /// The star the pointer is on, in a choice drawn as stars: they light
+    /// up to it.
+    lit: Option<usize>,
+    /// The value the keys are on in the choice's row they are on, moved
+    /// by Left and Right and chosen by Enter or Space; none: the value
+    /// chosen (`said_value`).
+    cursor: Option<usize>,
     /// What had the keyboard before: a preview's menu gives it back to the
     /// preview, not to the pane.
     back: FocusReturn,
@@ -331,6 +338,8 @@ impl MenuState {
             sub_area: PopoverAnchor::default(),
             sub_scroll: ScrollHandle::new(),
             rest: None,
+            lit: None,
+            cursor: None,
             back,
             keyboard: None,
             keys: Vec::new(),
@@ -346,6 +355,9 @@ pub enum Row {
     Item(usize),
     /// The row of a submenu, which opens beside it.
     Parent(String),
+    /// A choice drawn as one row (`as_row`), by the index of its first
+    /// value.
+    Choice(usize),
 }
 
 /// How long the pointer rests on a row before the submenu it opens opens,
@@ -362,8 +374,8 @@ impl MenuState {
         drawn_of(&self.items, &self.rows())
     }
 
-    /// The open submenu's items, by index into `items`.
-    fn sub_rows(&self) -> Vec<usize> {
+    /// The open submenu's rows.
+    fn sub_rows(&self) -> Vec<Row> {
         self.open
             .as_deref()
             .map(|name| sub_rows_of(&self.items, name))
@@ -371,8 +383,7 @@ impl MenuState {
     }
 
     fn sub_drawn(&self) -> Vec<(Row, bool)> {
-        let rows: Vec<Row> = self.sub_rows().into_iter().map(Row::Item).collect();
-        drawn_of(&self.items, &rows)
+        drawn_of(&self.items, &self.sub_rows())
     }
 
     /// The keyboard reached `row`: the rows scroll the least that shows
@@ -422,7 +433,7 @@ fn rest_on(shell: &mut Shell, row: &Row, window: &mut Window, cx: &mut Context<S
     };
     let opens = match row {
         Row::Parent(name) => Some(name.clone()),
-        Row::Item(_) => None,
+        Row::Item(_) | Row::Choice(_) => None,
     };
     if menu.open == opens {
         menu.rest = None;
@@ -453,7 +464,7 @@ fn drawn_of(items: &[MenuItem], rows: &[Row]) -> Vec<(Row, bool)> {
     rows.iter()
         .map(|row| {
             let separated = match row {
-                Row::Item(index) => {
+                Row::Item(index) | Row::Choice(index) => {
                     let item = &items[*index];
                     let separated = after_parent
                         || previous.is_some_and(|before| before.order / 100 != item.order / 100);
@@ -488,13 +499,16 @@ fn child_of(drawn: &[(Row, bool)], row: usize) -> usize {
 /// (order 9xx: Properties). A submenu holds no submenu.
 pub fn rows_of(items: &[MenuItem]) -> Vec<Row> {
     let top = |last: bool| {
-        items
-            .iter()
-            .enumerate()
-            .filter(move |(_, item)| item.submenu.is_none() && (item.order >= LAST) == last)
-            .map(|(index, _)| Row::Item(index))
+        level_rows(
+            items,
+            items
+                .iter()
+                .enumerate()
+                .filter(move |(_, item)| item.submenu.is_none() && (item.order >= LAST) == last)
+                .map(|(index, _)| index),
+        )
     };
-    let mut rows: Vec<Row> = top(false).collect();
+    let mut rows: Vec<Row> = top(false);
     let mut parents: Vec<&str> = Vec::new();
     for name in items.iter().filter_map(|item| item.submenu.as_deref()) {
         if !parents.contains(&name) {
@@ -506,14 +520,122 @@ pub fn rows_of(items: &[MenuItem]) -> Vec<Row> {
     rows
 }
 
-/// The items of the submenu `name`, in order.
-fn sub_rows_of(items: &[MenuItem], name: &str) -> Vec<usize> {
+/// The rows of the submenu `name`, in order.
+fn sub_rows_of(items: &[MenuItem], name: &str) -> Vec<Row> {
+    level_rows(
+        items,
+        items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| item.submenu.as_deref() == Some(name))
+            .map(|(index, _)| index),
+    )
+}
+
+/// The rows of `indices`, items of one menu or one submenu: each an item,
+/// but a choice drawn as one row (`as_row`) where its first value is.
+fn level_rows(items: &[MenuItem], indices: impl Iterator<Item = usize>) -> Vec<Row> {
+    let mut rows = Vec::new();
+    let mut seen: Vec<usize> = Vec::new();
+    for index in indices {
+        if !as_row(items, index) {
+            rows.push(Row::Item(index));
+            continue;
+        }
+        let first = values_of(items, index)[0];
+        if !seen.contains(&first) {
+            seen.push(first);
+            rows.push(Row::Choice(first));
+        }
+    }
+    rows
+}
+
+/// The values of the choice `items[value]` is one of, in order: the items
+/// beside it, in its menu or submenu, of the same choice. Itself alone for
+/// an item of none.
+fn values_of(items: &[MenuItem], value: usize) -> Vec<usize> {
+    let item = &items[value];
+    let Some(choice) = &item.choice else {
+        return vec![value];
+    };
     items
         .iter()
         .enumerate()
-        .filter(|(_, item)| item.submenu.as_deref() == Some(name))
+        .filter(|(_, other)| {
+            other.submenu == item.submenu
+                && other.choice.as_ref().is_some_and(|c| c.name == choice.name)
+        })
         .map(|(index, _)| index)
         .collect()
+}
+
+/// Whether the choice `items[value]` is one of is drawn as one row
+/// (`ChoiceLook`): colors and stars always; icons when every value has
+/// one, five at most. Otherwise its values are rows, each checked or not.
+fn as_row(items: &[MenuItem], value: usize) -> bool {
+    let Some(choice) = &items[value].choice else {
+        return false;
+    };
+    match choice.look {
+        ChoiceLook::Colors | ChoiceLook::Stars => true,
+        ChoiceLook::Icons => {
+            let values = values_of(items, value);
+            values.len() <= 5
+                && values
+                    .iter()
+                    .all(|&v| items[v].icon.as_deref().is_some_and(bundled))
+        }
+    }
+}
+
+/// A choice's values in the order its row shows them: of stars, from one
+/// star to the most, none (the last value) drawn as no star.
+fn shown_values(items: &[MenuItem], first: usize) -> Vec<usize> {
+    let values = values_of(items, first);
+    match items[first].choice.as_ref().map(|choice| choice.look) {
+        Some(ChoiceLook::Stars) => values.iter().rev().skip(1).copied().collect(),
+        _ => values,
+    }
+}
+
+/// The value a choice's row says while the keys are on it: the one
+/// chosen, else the first shown (of stars, the first star, unchecked: none
+/// is drawn as no star).
+fn said_value(items: &[MenuItem], first: usize) -> usize {
+    let shown = shown_values(items, first);
+    shown
+        .iter()
+        .copied()
+        .find(|&v| items[v].checked == Some(true))
+        .or_else(|| shown.first().copied())
+        .unwrap_or(first)
+}
+
+/// Whether `icon` names a bundled icon.
+fn bundled(icon: &str) -> bool {
+    crate::toolbar::asset(&format!("toolbar/{icon}.svg")).is_some()
+}
+
+/// What a submenu's row says after its name: the value chosen, when the
+/// submenu holds nothing but the values of one choice drawn as rows (a
+/// server's Thumbnails: Automatic).
+fn chosen_in(items: &[MenuItem], submenu: &str) -> Option<String> {
+    let mut values = items
+        .iter()
+        .filter(|item| item.submenu.as_deref() == Some(submenu));
+    let first = values.next()?;
+    let name = &first.choice.as_ref()?.name;
+    let mut chosen = (first.checked == Some(true)).then_some(first);
+    for item in values {
+        if item.choice.as_ref().map(|c| &c.name) != Some(name) {
+            return None;
+        }
+        if item.checked == Some(true) {
+            chosen = Some(item);
+        }
+    }
+    chosen.map(|item| item.title.clone())
 }
 
 /// The order from which an item ends the menu, after the submenus
@@ -934,6 +1056,8 @@ impl Shell {
                 order: i as i32,
                 icon: self.columns[column.detail].then(|| "check".to_owned()),
                 submenu: None,
+                checked: None,
+                choice: None,
             })
             .collect();
         items.push(MenuItem::new(
@@ -1122,6 +1246,70 @@ impl Shell {
                 self.close_context_menu(window, cx);
                 self.run(&command.name, command.args, window, cx);
             }
+            // Enter or Space: the value the keys are on.
+            Row::Choice(first) => {
+                let shown = shown_values(&menu.items, *first);
+                let v = menu
+                    .cursor
+                    .filter(|v| shown.contains(v))
+                    .unwrap_or_else(|| said_value(&menu.items, *first));
+                self.choose(v, window, cx);
+            }
+        }
+    }
+
+    /// Choose `value` of the choice it is one of: its command runs, and
+    /// the menu stays open, saying the value now chosen, for another
+    /// choice. Of stars, pressing the value chosen chooses none.
+    fn choose(&mut self, value: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(menu) = self.menu.as_mut() else {
+            return;
+        };
+        let values = values_of(&menu.items, value);
+        let stars = menu.items[value]
+            .choice
+            .as_ref()
+            .is_some_and(|choice| choice.look == ChoiceLook::Stars);
+        let pick = match values.last() {
+            Some(&none) if stars && menu.items[value].checked == Some(true) => none,
+            _ => value,
+        };
+        for &v in &values {
+            menu.items[v].checked = Some(v == pick);
+        }
+        menu.cursor = None;
+        let command = menu.items[pick].command.clone();
+        cx.notify();
+        self.run(&command.name, command.args, window, cx);
+    }
+
+    /// Left or Right on a choice's row: the keys move to the value before
+    /// or after, in the order the row shows them (stars count up to the
+    /// right), choosing nothing yet: Enter or Space chooses. Whether there
+    /// was one there.
+    fn move_cursor(&mut self, first: usize, right: bool) -> bool {
+        let Some(menu) = self.menu.as_mut() else {
+            return false;
+        };
+        let shown = shown_values(&menu.items, first);
+        let at = menu
+            .cursor
+            .filter(|v| shown.contains(v))
+            .unwrap_or_else(|| said_value(&menu.items, first));
+        let Some(pos) = shown.iter().position(|&v| v == at) else {
+            return false;
+        };
+        let next = if right {
+            shown.get(pos + 1)
+        } else {
+            pos.checked_sub(1).and_then(|p| shown.get(p))
+        };
+        match next {
+            Some(&v) => {
+                menu.cursor = Some(v);
+                true
+            }
+            None => false,
         }
     }
 
@@ -1137,15 +1325,40 @@ impl Shell {
         if let Some(at) = menu.sub_highlighted {
             let rows = menu.sub_rows();
             let last = rows.len().saturating_sub(1);
+            let current = rows.get(at).cloned();
             match name {
+                // On a choice's row, Left and Right move along its values;
+                // Left from the first goes back, as from any other row.
+                "menu_collapse" | "menu_expand" if matches!(current, Some(Row::Choice(_))) => {
+                    let right = name == "menu_expand";
+                    if let Some(Row::Choice(first)) = current
+                        && !self.move_cursor(first, right)
+                        && !right
+                        && let Some(menu) = self.menu.as_mut()
+                    {
+                        menu.close_sub();
+                    }
+                }
                 "menu_close" | "menu_collapse" => menu.close_sub(),
-                "menu_down" => menu.sub_highlighted = Some((at + 1).min(last)),
-                "menu_up" => menu.sub_highlighted = Some(at.saturating_sub(1)),
-                "menu_first" => menu.sub_highlighted = Some(0),
-                "menu_last" => menu.sub_highlighted = Some(last),
+                "menu_down" => {
+                    menu.cursor = None;
+                    menu.sub_highlighted = Some((at + 1).min(last));
+                }
+                "menu_up" => {
+                    menu.cursor = None;
+                    menu.sub_highlighted = Some(at.saturating_sub(1));
+                }
+                "menu_first" => {
+                    menu.cursor = None;
+                    menu.sub_highlighted = Some(0);
+                }
+                "menu_last" => {
+                    menu.cursor = None;
+                    menu.sub_highlighted = Some(last);
+                }
                 "menu_activate" => {
-                    if let Some(&index) = rows.get(at) {
-                        self.menu_activate(&Row::Item(index), window, cx);
+                    if let Some(row) = current {
+                        self.menu_activate(&row, window, cx);
                     }
                 }
                 _ => {}
@@ -1167,19 +1380,28 @@ impl Shell {
             "menu_close" => self.close_context_menu(window, cx),
             "menu_down" => {
                 menu.close_sub();
+                menu.cursor = None;
                 menu.highlighted = Some(menu.highlighted.map_or(0, |i| (i + 1).min(last)));
             }
             "menu_up" => {
                 menu.close_sub();
+                menu.cursor = None;
                 menu.highlighted = Some(menu.highlighted.map_or(last, |i| i.saturating_sub(1)));
             }
             "menu_first" => {
                 menu.close_sub();
+                menu.cursor = None;
                 menu.highlighted = Some(0);
             }
             "menu_last" => {
                 menu.close_sub();
+                menu.cursor = None;
                 menu.highlighted = Some(last);
+            }
+            "menu_collapse" | "menu_expand" if matches!(current, Some(Row::Choice(_))) => {
+                if let Some(Row::Choice(first)) = current {
+                    self.move_cursor(first, name == "menu_expand");
+                }
             }
             "menu_expand" | "menu_activate" if matches!(current, Some(Row::Parent(_))) => {
                 if let Some(Row::Parent(name)) = current {
@@ -1387,23 +1609,45 @@ fn row_element(
             } else {
                 item.title.clone()
             };
-            (title, item.icon.clone(), keys)
+            // A check or a value: its state in the icon's place.
+            let icon = match item.checked {
+                Some(true) => Some("check".to_owned()),
+                Some(false) => None,
+                None => item.icon.clone(),
+            };
+            (title, icon, keys)
         }
         Row::Parent(name) => (name.clone(), None, None),
+        Row::Choice(first) => return choice_element(shell, menu, *first, at, theme, cx),
     };
     let open = matches!(&row, Row::Parent(name) if menu.open.as_ref() == Some(name));
     let is_parent = matches!(row, Row::Parent(_));
-    let icon = icon.filter(|name| crate::toolbar::asset(&format!("toolbar/{name}.svg")).is_some());
+    let chosen = match &row {
+        Row::Parent(name) => chosen_in(&menu.items, name),
+        _ => None,
+    };
+    let state = match &row {
+        Row::Item(index) => menu.items[*index]
+            .checked
+            .map(|on| (on, menu.items[*index].choice.is_some())),
+        _ => None,
+    };
+    let icon = icon.filter(|name| bundled(name));
     // The row the submenu opens from stays highlighted while it is open.
     let lit = at.highlighted || open;
     let Spot { row: i, sub, .. } = at;
     div()
         .id((if sub { "submenu" } else { "menu" }, i))
-        .role(gpui::Role::MenuItem)
+        .role(match state {
+            Some((_, true)) => gpui::Role::MenuItemRadio,
+            Some((_, false)) => gpui::Role::MenuItemCheckBox,
+            None => gpui::Role::MenuItem,
+        })
         .when(shell.a11y, |d| {
             d.aria_label(title.clone())
                 .when_some(keys.clone(), StatefulInteractiveElement::aria_keyshortcuts)
                 .when(is_parent, |d| d.aria_expanded(open))
+                .when_some(state, |d, (on, _)| d.aria_toggled(on.into()))
         })
         // Said as focused while the menu keeps the keyboard: a row of the
         // menu while the keyboard is in its rows; one of the submenu,
@@ -1474,6 +1718,7 @@ fn row_element(
                 .text_color(muted)
                 .child(keys)
         }))
+        .children(chosen.map(|value| div().flex_none().pl_6().text_color(muted).child(value)))
         .when(is_parent, |d| {
             d.child(
                 gpui::svg()
@@ -1482,6 +1727,253 @@ fn row_element(
                     .text_color(muted),
             )
         })
+        .into_any_element()
+}
+
+/// One value of a choice drawn as a row, pressed to choose it. `said`:
+/// the keyboard is on its row and it is the value chosen, said as focused
+/// (beside the menu when the row is in its submenu: `Some(true)`).
+fn choice_value(
+    shell: &Shell,
+    menu: &MenuState,
+    v: usize,
+    id: &'static str,
+    said: Option<bool>,
+    cx: &mut Context<Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    let item = &menu.items[v];
+    let title: gpui::SharedString = item.title.clone().into();
+    let tip = title.clone();
+    div()
+        .id((id, v))
+        .role(gpui::Role::MenuItemRadio)
+        .when(shell.a11y, |d| {
+            d.aria_label(title.clone())
+                .aria_toggled((item.checked == Some(true)).into())
+        })
+        .when(
+            said == Some(false),
+            StatefulInteractiveElement::aria_active_descendant,
+        )
+        .when(said == Some(true), |d| {
+            d.aria_active_descendant_for(&menu.focus)
+        })
+        .flex_none()
+        .cursor_pointer()
+        .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |this, _, window, cx| {
+            if let Some(command) = this
+                .menu
+                .as_ref()
+                .and_then(|menu| menu.items.get(v))
+                .map(|item| item.command.clone())
+            {
+                this.note_pointer_use(&command.name, &command.args, cx);
+            }
+            this.choose(v, window, cx);
+        }))
+}
+
+/// A choice drawn as one row (`as_row`): its name, then its values, each
+/// pressed to choose it (`Shell::choose`). To assistive technology a
+/// group of radio items, the one chosen said as focused while the
+/// keyboard is on the row.
+fn choice_element(
+    shell: &Shell,
+    menu: &MenuState,
+    first: usize,
+    at: Spot,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let values = values_of(&menu.items, first);
+    let Some(choice) = menu.items[first].choice.clone() else {
+        return div().into_any_element();
+    };
+    let Spot { row: i, sub, .. } = at;
+    let said = said_value(&menu.items, first);
+    // Where the keys are on the row: a ring, said as focused.
+    let keys_on = menu.cursor.filter(|v| values.contains(v)).unwrap_or(said);
+    let claims = at.highlighted && (sub || menu.sub_highlighted.is_none());
+    let said_here = |v: usize| claims && v == keys_on;
+    let ring = |v: usize| at.highlighted && v == keys_on;
+    let value = |v: usize, id: &'static str, cx: &mut Context<Shell>| {
+        choice_value(shell, menu, v, id, said_here(v).then_some(sub), cx)
+    };
+    let shown = match choice.look {
+        ChoiceLook::Icons => div()
+            .flex()
+            .gap(px(2.))
+            .p(px(2.))
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.bg)
+            .children(values.iter().map(|&v| {
+                let on = menu.items[v].checked == Some(true);
+                let icon = menu.items[v].icon.clone().unwrap_or_default();
+                value(v, "choice", cx)
+                    .h(px(20.))
+                    .min_w(px(26.))
+                    .px(px(5.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(if ring(v) {
+                        theme.accent
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .when(on, |d| d.bg(theme.term))
+                    .when(!on, |d| d.hover(|s| s.bg(theme.hover)))
+                    .child(
+                        gpui::svg()
+                            .path(format!("toolbar/{icon}.svg"))
+                            .size(px(15.))
+                            .text_color(if on {
+                                theme.accent_text
+                            } else {
+                                theme.text_muted
+                            }),
+                    )
+            }))
+            .into_any_element(),
+        ChoiceLook::Colors => div()
+            .flex()
+            .items_center()
+            .gap(px(5.))
+            .children(values.iter().map(|&v| {
+                let item = &menu.items[v];
+                let on = item.checked == Some(true);
+                let color = item.icon.as_deref().and_then(|name| {
+                    skwir_core::metadata::TAG_COLORS
+                        .iter()
+                        .position(|c| *c == name)
+                });
+                // A color found otherwise (from a tag's name) is a dashed
+                // ring. The one chosen holds a check; the keys' ring is in
+                // the text's color, which every swatch shows.
+                value(v, "swatch", cx)
+                    .size(px(18.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .map(|d| match color {
+                        Some(index) => d.bg(theme.tag(index)),
+                        None => d.border_1().border_dashed().border_color(theme.text_muted),
+                    })
+                    .when(ring(v), |d| d.border_2().border_color(theme.text))
+                    .when(!ring(v), |d| {
+                        d.hover(|s| s.border_2().border_color(theme.text_muted))
+                    })
+                    .when(on, |d| {
+                        d.child(
+                            gpui::svg()
+                                .path("toolbar/check.svg")
+                                .size(px(11.))
+                                .text_color(if color.is_some() {
+                                    gpui::white()
+                                } else {
+                                    theme.text
+                                }),
+                        )
+                    })
+            }))
+            .into_any_element(),
+        ChoiceLook::Stars => {
+            // Drawn from one star to the most: the values from the first
+            // but none (the last), backwards.
+            let stars: Vec<usize> = values.iter().rev().skip(1).copied().collect();
+            let lit_to = menu
+                .lit
+                .filter(|v| values.contains(v))
+                .or(Some(said).filter(|&v| menu.items[v].checked == Some(true)))
+                .and_then(|v| stars.iter().position(|&s| s == v));
+            div()
+                .id(("stars", first))
+                .flex()
+                .items_center()
+                .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                    if !*hovered && let Some(menu) = this.menu.as_mut() {
+                        menu.lit = None;
+                        cx.notify();
+                    }
+                }))
+                .children(stars.iter().enumerate().map(|(rank, &v)| {
+                    let full = lit_to.is_some_and(|to| rank <= to);
+                    value(v, "star", cx)
+                        .p(px(1.))
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(if ring(v) {
+                            theme.accent
+                        } else {
+                            gpui::transparent_black()
+                        })
+                        .on_mouse_move(cx.listener(move |this, _, _, cx| {
+                            if let Some(menu) = this.menu.as_mut()
+                                && menu.lit != Some(v)
+                            {
+                                menu.lit = Some(v);
+                                cx.notify();
+                            }
+                        }))
+                        .child(
+                            gpui::svg()
+                                .path(if full {
+                                    "toolbar/star-filled.svg"
+                                } else {
+                                    "toolbar/star.svg"
+                                })
+                                .size(px(15.))
+                                .text_color(if full { theme.rating } else { theme.text_muted }),
+                        )
+                }))
+                .into_any_element()
+        }
+    };
+    div()
+        .id((if sub { "subchoice" } else { "choice-row" }, i))
+        .role(gpui::Role::RadioGroup)
+        .when(shell.a11y, |d| d.aria_label(choice.name.clone()))
+        .relative()
+        .h(px(crate::toolbar::MENU_ROW + 4.))
+        .flex_none()
+        .px_2()
+        .flex()
+        .items_center()
+        .gap_2()
+        .rounded_md()
+        .when(at.highlighted, |d| d.bg(theme.hover))
+        .on_mouse_move(cx.listener({
+            let row = Row::Choice(first);
+            move |this, _, window, cx| {
+                let Some(menu) = this.menu.as_mut() else {
+                    return;
+                };
+                if sub {
+                    if menu.sub_highlighted != Some(i) {
+                        menu.sub_highlighted = Some(i);
+                        cx.notify();
+                    }
+                    return;
+                }
+                if menu.highlighted != Some(i) || menu.sub_highlighted.is_some() {
+                    menu.highlighted = Some(i);
+                    menu.sub_highlighted = None;
+                    rest_on(this, &row, window, cx);
+                    cx.notify();
+                }
+            }
+        }))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(div().size(px(16.)).flex_none())
+        .child(div().flex_1().pr_4().child(choice.name))
+        .child(shown)
         .into_any_element()
 }
 
@@ -1598,6 +2090,8 @@ mod tests {
             order: 0,
             icon: None,
             submenu: submenu.map(str::to_owned),
+            checked: None,
+            choice: None,
         }
     }
 
@@ -1623,8 +2117,55 @@ mod tests {
             ],
             "the menu's end comes after the submenus' rows"
         );
-        assert_eq!(super::sub_rows_of(&items, "More"), [1, 3]);
+        assert_eq!(
+            super::sub_rows_of(&items, "More"),
+            [Row::Item(1), Row::Item(3)]
+        );
         assert!(super::sub_rows_of(&items, "Notes").is_empty());
+    }
+
+    #[test]
+    fn a_choice_is_one_row_where_its_values_allow_it() {
+        use skwir_core::registry::ChoiceLook::{Icons, Stars};
+        let value = |title: &str, icon: Option<&str>, look, chosen, submenu| {
+            MenuItem {
+                icon: icon.map(str::to_owned),
+                ..item(title, submenu)
+            }
+            .value_of("Setting", look, chosen)
+        };
+        let items = [
+            item("Open", None),
+            value("5 stars", Some("star"), Stars, false, None),
+            value("No rating", Some("minus"), Stars, true, None),
+            item("Copy", None),
+        ];
+        assert_eq!(
+            rows_of(&items),
+            [Row::Item(0), Row::Choice(1), Row::Item(3)],
+            "stars: one row, where its first value is"
+        );
+        let items = [
+            value("Right", Some("check"), Icons, true, None),
+            value("Bottom", Some("minus"), Icons, false, None),
+        ];
+        assert_eq!(rows_of(&items), [Row::Choice(0)], "icons, all bundled");
+        let items = [
+            value("Automatic", None, Icons, true, Some("Thumbnails")),
+            value("Never", None, Icons, false, Some("Thumbnails")),
+        ];
+        assert_eq!(
+            super::sub_rows_of(&items, "Thumbnails"),
+            [Row::Item(0), Row::Item(1)],
+            "values in words are rows"
+        );
+        assert_eq!(
+            super::chosen_in(&items, "Thumbnails").as_deref(),
+            Some("Automatic"),
+            "a submenu of them says the one chosen on its row"
+        );
+        let mixed = [items[0].clone(), item("Forget", Some("Thumbnails"))];
+        assert_eq!(super::chosen_in(&mixed, "Thumbnails"), None);
     }
 
     #[test]
@@ -1657,10 +2198,7 @@ mod tests {
             .collect();
         assert_eq!(children, [0, 2, 3, 5, 7, 8, 10]);
         // A submenu's own rows: lines between its hundreds only.
-        let rows: Vec<Row> = super::sub_rows_of(&items, "More")
-            .into_iter()
-            .map(Row::Item)
-            .collect();
+        let rows = super::sub_rows_of(&items, "More");
         assert_eq!(super::drawn_of(&items, &rows), [(Row::Item(4), false)]);
     }
 

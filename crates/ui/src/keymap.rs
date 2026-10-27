@@ -2187,13 +2187,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         crate::commands::declare_all(&app);
-        // Moving keys that act once a press: a menu's group opened or
-        // closed, a settings page entered, another track, the address
-        // field's scopes listed or closed.
+        // Moving keys that act once a press: a settings page entered,
+        // another track, the address field's scopes listed or closed.
         let acts = |name: &str, args: &serde_json::Value| match name {
-            "ui.menu_expand" | "ui.menu_collapse" | "ui.settings_enter" | "ui.omnibox_scopes" => {
-                true
-            }
+            "ui.settings_enter" | "ui.omnibox_scopes" => true,
             "ui.player" => matches!(args["request"].as_str(), Some("previous" | "next")),
             _ => false,
         };

@@ -41,7 +41,7 @@ use skwir_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag};
 use skwir_core::op::{EntryRef, Plan};
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
-use skwir_core::registry::{KeyBinding, MenuItem, MenuSource};
+use skwir_core::registry::{ChoiceLook, KeyBinding, MenuItem, MenuSource};
 use skwir_core::scheduler::Priority;
 use skwir_core::settings::SettingSpec;
 use skwir_core::workspace::PaneId;
@@ -469,6 +469,53 @@ fn remembered_comment(app: &App, pane: PaneId) -> Option<String> {
     }
     let comment = p.entry(id)?.metadata.value(keys::COMMENT)?;
     comment.as_str().map(str::to_owned)
+}
+
+/// The rating every selected entry has (none counted as 0), from what the
+/// pane holds; `None` when they differ or nothing is selected.
+fn remembered_rating(app: &App, pane: PaneId) -> Option<u8> {
+    let ws = app.workspace.read();
+    let p = ws.pane(pane)?;
+    let mut shared = None;
+    for id in p.selection.iter() {
+        let stars = p
+            .entry(id)?
+            .metadata
+            .value(keys::RATING)
+            .and_then(skwir_core::Value::as_u64)
+            .unwrap_or(0);
+        let stars = u8::try_from(stars).ok().filter(|s| *s <= 5)?;
+        if shared.is_some_and(|s| s != stars) {
+            return None;
+        }
+        shared = Some(stars);
+    }
+    shared
+}
+
+/// The rating's values, from five stars to none: one choice, drawn as
+/// stars, `chosen` the one set.
+fn rating_items(chosen: Option<u8>) -> Vec<MenuItem> {
+    (0..=5u8)
+        .rev()
+        .map(|stars| {
+            let title = match stars {
+                0 => "No rating".to_owned(),
+                1 => "1 star".to_owned(),
+                n => format!("{n} stars"),
+            };
+            MenuItem {
+                submenu: Some("Notes".into()),
+                ..menu_item(
+                    &title,
+                    Invocation::with_args("notes.rate", &serde_json::json!({ "stars": stars })),
+                    551 + i32::from(5 - stars),
+                    if stars == 0 { "minus" } else { "star" },
+                )
+            }
+            .value_of("Rating", ChoiceLook::Stars, chosen == Some(stars))
+        })
+        .collect()
 }
 
 fn ask_comment(text: Option<&str>) -> Invocation {
@@ -1333,13 +1380,13 @@ impl Plugin for TagsPlugin {
                 "The context menu's Comment…, holding the selected entry's comment",
                 |a, app| {
                     let pane = app.pane_or_active(a.pane);
-                    let items = remembered_comment(app, pane).map(|comment| MenuItem {
+                    let comment = remembered_comment(app, pane);
+                    let mut items = rating_items(remembered_rating(app, pane));
+                    items.push(MenuItem {
                         submenu: Some("Notes".into()),
-                        ..menu_item("Comment…", ask_comment(Some(&comment)), 560, "comment")
+                        ..menu_item("Comment…", ask_comment(comment.as_deref()), 560, "comment")
                     });
-                    Ok(Outcome::Value(
-                        serde_json::json!({ "items": items.into_iter().collect::<Vec<_>>() }),
-                    ))
+                    Ok(Outcome::Value(serde_json::json!({ "items": items })))
                 },
             )
             .data();
@@ -1425,25 +1472,9 @@ impl Plugin for TagsPlugin {
             )
             .when("empty folder"),
         );
-        // Rarely set from a menu: grouped, the menu expands them in place.
-        for stars in (0..=5u8).rev() {
-            let title = match stars {
-                0 => "No rating".to_owned(),
-                1 => "1 star".to_owned(),
-                n => format!("{n} stars"),
-            };
-            app.registry.menus.add(
-                ID,
-                MenuItem {
-                    submenu: Some("Notes".into()),
-                    ..menu_item(
-                        &title,
-                        Invocation::with_args("notes.rate", &serde_json::json!({ "stars": stars })),
-                        551 + i32::from(5 - stars),
-                        if stars == 0 { "minus" } else { "star" },
-                    )
-                },
-            );
+        // One choice, drawn as stars; `tags.menu` answers the one set.
+        for item in rating_items(None) {
+            app.registry.menus.add(ID, item);
         }
         app.registry.menus.add(
             ID,
@@ -1468,9 +1499,13 @@ impl Plugin for TagsPlugin {
             ID,
             MenuSource {
                 menu: "context".into(),
-                when: Some("selection single".into()),
+                when: Some("selection !place".into()),
                 command: Invocation::new("tags.menu"),
-                replaces: vec![ask_comment(None)],
+                replaces: rating_items(None)
+                    .into_iter()
+                    .map(|item| item.command)
+                    .chain([ask_comment(None)])
+                    .collect(),
             },
         );
     }
@@ -1680,7 +1715,8 @@ mod tests {
         let (_, alpha) = &menu(pane)[1];
         assert_eq!(
             alpha[..3],
-            ["Show Its Files Here", "Open Tag", "Color: From Its Name"]
+            ["Show Its Files Here", "Open Tag", "From Its Name"],
+            "its colors, one choice drawn as swatches"
         );
         assert_eq!(alpha.last().unwrap(), "Remove From Selected Files");
         assert!(
@@ -1755,11 +1791,7 @@ mod tests {
             .iter()
             .find(|item| item.title == "One “Places” Tag at a Time")
             .unwrap();
-        assert_eq!(
-            held.icon.as_deref(),
-            Some("check"),
-            "checked while it holds one"
-        );
+        assert_eq!(held.checked, Some(true), "checked while it holds one");
         assert_eq!(
             held.command.args["on"], false,
             "chosen again, it holds several"
@@ -2674,13 +2706,19 @@ mod tests {
             );
             break;
         }
-        // The menu offers the comment there to edit.
+        // The menu offers the comment there to edit, beside the rating's
+        // values (8 is no number of stars: none of them checked).
         let Outcome::Value(menu) = app.dispatch(&Invocation::new("tags.menu")).unwrap() else {
             panic!()
         };
-        assert_eq!(
-            menu["items"][0]["command"]["args"]["text"],
-            "from the “trip”, day 2"
+        let items: Vec<MenuItem> = serde_json::from_value(menu["items"].clone()).unwrap();
+        let comment = items.iter().find(|item| item.title == "Comment…").unwrap();
+        assert_eq!(comment.command.args["text"], "from the “trip”, day 2");
+        assert!(
+            items
+                .iter()
+                .filter(|item| item.choice.is_some())
+                .all(|item| item.checked == Some(false))
         );
 
         app.executor.undo_blocking(app.lifetime()).unwrap();

@@ -288,6 +288,8 @@ impl Plugin for ShellPlugin {
                 order: 410,
                 icon: Some("command".into()),
                 submenu: Some("More".into()),
+                checked: None,
+                choice: None,
             },
         );
     }

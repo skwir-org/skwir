@@ -1199,6 +1199,8 @@ impl Plugin for TimelinePlugin {
                 order: 440,
                 icon: Some("calendar".into()),
                 submenu: None,
+                checked: None,
+                choice: None,
             },
         );
     }

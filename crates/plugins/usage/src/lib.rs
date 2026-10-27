@@ -448,6 +448,8 @@ impl Plugin for UsagePlugin {
                 order: 430,
                 icon: Some("usage".into()),
                 submenu: None,
+                checked: None,
+                choice: None,
             },
         );
     }

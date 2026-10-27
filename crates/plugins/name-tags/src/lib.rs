@@ -451,6 +451,8 @@ fn menu_item(title: &str, command: &str, order: i32, icon: &str) -> MenuItem {
         order,
         icon: Some(icon.into()),
         submenu: Some("Notes".into()),
+        checked: None,
+        choice: None,
     }
 }
 

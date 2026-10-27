@@ -20,7 +20,7 @@ use skwir_core::metadata::{
 };
 use skwir_core::op::EntryRef;
 use skwir_core::os_path::PathArg;
-use skwir_core::registry::MenuItem;
+use skwir_core::registry::{ChoiceLook, MenuItem};
 use skwir_core::workspace::PaneId;
 use skwir_platform::mime::Kind;
 
@@ -614,6 +614,30 @@ fn item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
     MenuItem::new("context", title, icon, order, command).when("place")
 }
 
+/// A tag's colors: one choice, drawn as swatches (each value's icon names
+/// its color), from its name first, `color` the one it was given.
+fn color_items(tag: &str, color: Option<&str>) -> Vec<MenuItem> {
+    std::iter::once(("From Its Name".to_owned(), None))
+        .chain(TAG_COLORS.iter().map(|name| {
+            let mut title = (*name).to_owned();
+            title[..1].make_ascii_uppercase();
+            (title, Some(*name))
+        }))
+        .map(|(title, value)| {
+            item(
+                &title,
+                Invocation::with_args(
+                    "tags.color",
+                    &serde_json::json!({ "tag": tag, "color": value }),
+                ),
+                0,
+                value.unwrap_or_default(),
+            )
+            .value_of("Color", ChoiceLook::Colors, color == value)
+        })
+        .collect()
+}
+
 /// `tags.place_menu`: the items of the tags selected in a tag location
 /// (`tag_items`, `one_at_a_time` of the tag, among those `known`).
 pub fn place_menu(app: &App, known: &[String], a: PaneOnly) -> Outcome {
@@ -769,26 +793,8 @@ pub fn files_menu(app: &App, a: PaneOnly) -> Outcome {
             };
             add(item, order);
         }
-        let paint = |title: &str, value: Option<&str>| {
-            let on = color == value;
-            item(
-                title,
-                Invocation::with_args(
-                    "tags.color",
-                    &serde_json::json!({ "tag": tag, "color": value }),
-                ),
-                0,
-                if on { "check" } else { "appearance" },
-            )
-        };
-        add(paint("Color: From Its Name", None), 575);
-        for (i, name) in TAG_COLORS.iter().enumerate() {
-            let mut title = (*name).to_owned();
-            title[..1].make_ascii_uppercase();
-            add(
-                paint(&format!("Color: {title}"), Some(name)),
-                576 + i32::try_from(i).unwrap_or_default(),
-            );
+        for (i, value) in color_items(tag, color).into_iter().enumerate() {
+            add(value, 575 + i32::try_from(i).unwrap_or_default());
         }
     }
     Outcome::Value(serde_json::json!({ "items": items }))
@@ -882,8 +888,9 @@ pub fn one_at_a_time(app: &App, tags: &[String], chip: bool, known: &[String]) -
                     &serde_json::json!({ "tag": category, "on": !on }),
                 ),
                 order,
-                if on { "check" } else { "tag" },
+                "tag",
             )
+            .checked(on)
         })
         .collect()
 }
@@ -957,29 +964,16 @@ pub fn tag_items(
         ));
     }
     if let [tag] = tags {
-        let mut color = |title: &str, color: Option<&str>, order| {
-            items.push(MenuItem {
-                submenu: Some("Color".into()),
-                ..item(
-                    title,
-                    Invocation::with_args(
-                        "tags.color",
-                        &serde_json::json!({ "tag": tag, "color": color }),
-                    ),
-                    order,
-                    "appearance",
-                )
-            });
-        };
-        color("From Its Name", None, 140);
-        for (i, name) in TAG_COLORS.iter().enumerate() {
-            let mut title = (*name).to_owned();
-            title[..1].make_ascii_uppercase();
-            color(
-                &title,
-                Some(name),
-                141 + i32::try_from(i).unwrap_or_default(),
-            );
+        let chosen: toml::Table = app
+            .settings
+            .get(skwir_core::metadata::TAG_COLOR_SETTING)
+            .unwrap_or_default();
+        let color = chosen
+            .get(&tag.to_lowercase())
+            .and_then(toml::Value::as_str);
+        for (i, mut value) in color_items(tag, color).into_iter().enumerate() {
+            value.order = 140 + i32::try_from(i).unwrap_or_default();
+            items.push(value);
         }
     }
     if tags.len() > 1 {

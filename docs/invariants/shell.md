@@ -416,6 +416,18 @@ of bars, split or not.
   refuses an argument answers nothing, unsaid
   (`crates/skwir/tests/plugins_toggle.rs` gives every source its menu's).
 - Rare items set `submenu`. Give items an `icon`.
+- **State is said, never written into a title.** An item that is on or
+  off sets `MenuItem::checked`; the values of one setting set `choice`
+  (`registry::Choice`). A choice is one row where its values allow it
+  (`ChoiceLook`): its name, then buttons (an icon each, five at most),
+  swatches (colors) or stars. A press chooses a value and the menu stays
+  open with its checks updated (`Shell::choose`). From the keys, Left and
+  Right move a ring along the values, choosing nothing, and Enter or Space
+  chooses the one ringed; Left from the first value of a submenu's
+  choice goes back to its row, as from any other row. Values that need their words are rows, each checked
+  or not, and a submenu they fill says the one chosen on its row (a
+  server's Thumbnails). To a screen reader a choice's row is a radio
+  group, its values radio items.
 - **A submenu opens beside its row** (`PopoverAnchor::popup_beside`):
   its first row level with its row, on the right or, without room, on
   the left, moved up to stay in the window. The submenus' rows stand

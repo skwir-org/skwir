@@ -2044,6 +2044,8 @@ impl Shell {
                 order,
                 icon: icon.map(str::to_owned),
                 submenu: None,
+                checked: None,
+                choice: None,
             }
         };
         let sections = &self.sidebar_sections;

@@ -282,20 +282,19 @@ pub(crate) fn server_items(
     let mut items = Vec::new();
     if let Some(id) = login_id(address) {
         let on = at_login.contains(&id);
-        items.push(MenuItem::new(
-            "place",
-            if on {
-                "Connect at Login ✓"
-            } else {
-                "Connect at Login"
-            },
-            "",
-            430,
-            Invocation::with_args(
-                "remote.connect_at_login",
-                &serde_json::json!({ "address": address.top().to_string(), "on": !on }),
-            ),
-        ));
+        items.push(
+            MenuItem::new(
+                "place",
+                "Connect at Login",
+                "",
+                430,
+                Invocation::with_args(
+                    "remote.connect_at_login",
+                    &serde_json::json!({ "address": address.top().to_string(), "on": !on }),
+                ),
+            )
+            .checked(on),
+        );
     }
     if address.scheme == Scheme::Sftp {
         items.push(MenuItem::new(

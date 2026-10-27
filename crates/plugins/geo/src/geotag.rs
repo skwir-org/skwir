@@ -98,6 +98,8 @@ pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
                 order,
                 icon: Some(icon.into()),
                 submenu: None,
+                checked: None,
+                choice: None,
             },
         );
     }

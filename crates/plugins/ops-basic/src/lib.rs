@@ -645,6 +645,8 @@ impl Plugin for OpsBasicPlugin {
                     order: *order,
                     icon: Some((*icon).into()),
                     submenu: None,
+                    checked: None,
+                    choice: None,
                 },
             );
         }

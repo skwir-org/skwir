@@ -520,9 +520,10 @@ def run(w):
     w.keys("End", "Up")
     row = w.focused().get_name()
     w.keys("Right")
+    # Its first row may be a choice: a radio item in a group named by it.
     check("Right on a submenu's row: its first item said as focused, in a menu named by that row",
-          until(lambda: w.focused().get_role_name() == "menu item"
-                and within(w.focused())[0] == row)
+          until(lambda: w.focused().get_role_name().endswith("menu item")
+                and row in within(w.focused())[:2])
           or print("  row:", row, "focused:", said(w.focused()), within(w.focused())))
     w.keys("Left")
     check("Left: back to the submenu's row, in the context menu",

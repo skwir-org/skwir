@@ -449,6 +449,46 @@ pub struct MenuItem {
     pub order: i32,
     pub icon: Option<String>,
     pub submenu: Option<String>,
+    /// Whether it is on: a check, or the value chosen among its
+    /// `choice`'s. `None` for an item that is no state. Said by the menu,
+    /// never written into the title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checked: Option<bool>,
+    /// The choice it is one value of: the items of one menu, or of one
+    /// submenu, with the same choice are drawn together, as one row where
+    /// their looks allow it (`Choice`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub choice: Option<Choice>,
+}
+
+/// A setting among values, each one a [`MenuItem`] that sets it
+/// (`MenuItem::choice`), the value set `checked`.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Choice {
+    /// What it sets: the name its row says ("Color", "Rating").
+    pub name: String,
+    #[serde(default)]
+    pub look: ChoiceLook,
+}
+
+/// How a choice's values are told apart, which decides how it is drawn.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChoiceLook {
+    /// By their icons, their titles said by tooltips: a row of buttons
+    /// after the choice's name, up to five. Values that need their words
+    /// (one without an icon, or more of them) are rows, each checked or
+    /// not; a submenu they fill says the one chosen on its own row.
+    #[default]
+    Icons,
+    /// By their colors: each value's `icon` names one of
+    /// [`crate::metadata::TAG_COLORS`], or none for a color found
+    /// otherwise (from a tag's name). A row of swatches.
+    Colors,
+    /// By stars: the values from the most to none, a row of stars filled
+    /// up to the value chosen. The last value is none: pressing the star
+    /// chosen chooses it.
+    Stars,
 }
 
 impl MenuItem {
@@ -469,6 +509,8 @@ impl MenuItem {
             order,
             icon: (!icon.is_empty()).then(|| icon.to_owned()),
             submenu: None,
+            checked: None,
+            choice: None,
         }
     }
 
@@ -483,6 +525,25 @@ impl MenuItem {
     #[must_use]
     pub fn submenu(mut self, submenu: &str) -> Self {
         self.submenu = Some(submenu.to_owned());
+        self
+    }
+
+    /// On or off: a check (`MenuItem::checked`).
+    #[must_use]
+    pub fn checked(mut self, on: bool) -> Self {
+        self.checked = Some(on);
+        self
+    }
+
+    /// One value of the choice `name`, drawn as `look` says, `chosen` or
+    /// not.
+    #[must_use]
+    pub fn value_of(mut self, name: &str, look: ChoiceLook, chosen: bool) -> Self {
+        self.choice = Some(Choice {
+            name: name.to_owned(),
+            look,
+        });
+        self.checked = Some(chosen);
         self
     }
 }

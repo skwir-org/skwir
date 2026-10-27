@@ -943,9 +943,9 @@ fn connect_at_login_is_turned_on_and_off_from_a_remote_s_menu() {
     );
     assert!(said.contains(&format!("--user start {name}")), "{said:?}");
     until(&app, 30, "its menu says it connects at login", || {
-        item("Connect at Login ✓").is_some()
+        item("Connect at Login").is_some_and(|i| i.checked == Some(true))
     });
-    app.dispatch(&item("Connect at Login ✓").unwrap().command)
+    app.dispatch(&item("Connect at Login").unwrap().command)
         .unwrap();
     // Taken out once it says so: disabled first, its file removed after.
     let mut heard = Vec::new();

@@ -733,6 +733,8 @@ impl Plugin for ShelfPlugin {
                     order: *order,
                     icon: Some((*icon).into()),
                     submenu: None,
+                    checked: None,
+                    choice: None,
                 },
             );
         }

@@ -1063,6 +1063,10 @@ fn repeats_of(name: &str) -> Option<Repeats> {
         | "ui.menu_down"
         | "ui.menu_first"
         | "ui.menu_last"
+        // A submenu opened or left, which holding the key does once; a
+        // choice's ring moved along its values.
+        | "ui.menu_expand"
+        | "ui.menu_collapse"
         | "ui.settings_next"
         | "ui.settings_prev"
         | "ui.settings_page"
@@ -1793,8 +1797,11 @@ pub fn declare_all(app: &App) {
         ("ui.menu_down", "Next item"),
         ("ui.menu_first", "First item"),
         ("ui.menu_last", "Last item"),
-        ("ui.menu_expand", "Open the group"),
-        ("ui.menu_collapse", "Close the group"),
+        ("ui.menu_expand", "Open the submenu, or the next value"),
+        (
+            "ui.menu_collapse",
+            "Leave the submenu, or the previous value",
+        ),
         ("ui.menu_activate", "Run the item"),
         ("ui.menu_close", "Close the menu"),
     ] {

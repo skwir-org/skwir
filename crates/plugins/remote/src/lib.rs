@@ -1223,16 +1223,18 @@ fn thumbnail_items(key: &str, rule: &str) -> Vec<skwir_core::registry::MenuItem>
     .map(|((value, title), order)| {
         let mut item = skwir_core::registry::MenuItem::new(
             "place",
-            if value == rule {
-                format!("{title} ✓")
-            } else {
-                title.to_owned()
-            },
+            title,
             "",
             order,
             Invocation::new("remote.thumbnails")
                 .with("remote", key)
                 .with("rule", value),
+        )
+        // In words: rows, the submenu's own row saying the rule set.
+        .value_of(
+            "Thumbnails",
+            skwir_core::registry::ChoiceLook::Icons,
+            value == rule,
         );
         item.submenu = Some("Thumbnails".to_owned());
         item
