@@ -129,9 +129,11 @@ and `notes.agree` are core `notes.*` commands.
   of it (ADR-098: `field.rs`, `assist.rs`), as a source like any other.
 - **Scopes (ADR-098).** Words search where the address field's scope
   says: a folder is the search's root; a tag is searched as the tag every
-  match has, from the home folder; another place (Recent) is shown, what
-  it lists filtered by the words (`navigate` with `filter`). The whole
-  disk is `/`, which plocate may answer (below).
+  match has, from the home folder; another place (Recent) is searched as
+  what it lists (`in:recent:`, `within.rs`): opened through its provider,
+  each entry tested as the walk tests a file, what it contains read in
+  its lane, nothing below an entry reached; a search within a search is
+  refused. The whole disk is `/`, which plocate may answer (below).
 - **Recent searches** are the query plugin's, kept in the cache (never in
   the settings or the logs): only what the address field ran
   (`remember`), never an agent's call.

@@ -5618,3 +5618,51 @@ night (ADR-098):
 - **Not checked:** Windows and macOS (compiled by `check-cross`), the
   dark look, Recent as a scope in a window, `ui.suggest` from an agent's
   connection, a screen reader beyond `just a11y-check`.
+
+### The address field's follow-ups (2026-10-27)
+
+Asked by the user the morning after ("Any follow up you can do?"), all of
+those offered:
+
+- **Plain words in the filter:** found byte by byte as `NamePat` finds
+  them, without making a candidate of each entry: about 5 ms a key over
+  100 000 names in release, where the night's reading took 8 to 25 (2 to
+  4 before it). Narrow by's test asks a type once per suffix too: 20 ms
+  over 100 000 names at each redraw of the order, where asking each name
+  took about 400 (both measured under load, `narrow::tests::
+  a_key_over_a_hundred_thousand_names`, ignored, run with
+  `--release`).
+- **The settings test seen failing under load** fails its save by a
+  read-only folder where modes hold, the file staying, so the watcher
+  never reads it gone as the defaults: 20 runs out of 20 passed.
+- **A search of what a place lists:** `in:` takes a place
+  (`in:recent:`, `Query::within`); `within.rs` opens it through its
+  provider, tests each entry as the walk tests a file, contents read in
+  the file's lane, never below, and follows the place's changes; a search
+  within a search is refused. Recent as a scope is that search, no longer
+  a filtered listing (`navigate`'s `filter`, gone). Its pill reads "In
+  Recent", the field edits it with Recent as the scope, and a recent
+  search remembered with it says so.
+- **`?` alone** lists what the field takes: the shell's grammar (a path,
+  places by address, the sidebar's schemes first, `@`, words, `>`) and the
+  query plugin's terms with examples (`assist::terms`); Enter or Tab writes
+  the example. **`ui.suggest`** answers a path's names too
+  (`omnibox::path_suggestions`).
+- **`Theme::term`** (the accent at 18%, a mark of it as the band is) is
+  drawn behind a term's value and the scope's token: the code background
+  was nearly the page's own in the light look.
+- **Checked:** the query and UI crates' tests, `just lint`; a within
+  search of a provider listing files from anywhere (contents, names,
+  extensions, nothing unlisted reached, a search within a search refused);
+  `in:` read as a place or a folder (a drive letter is a folder). A real
+  window on Xvfb in the dark look: `dunes kind:im` with its tint and
+  rest, `?`'s rows, `@rec` offering Recent, `content:water` searched
+  within Recent (two of its four files, "In Recent" and "Contains: water"
+  pills), Ctrl+F editing it with Recent as the scope. `ui.suggest` called
+  as an agent over `skwir mcp` (`ui__suggest`): the search, the reading,
+  completions, a path's names, the terms of `?`. `just a11y-check` on the
+  debug build with two new checks: the scope's token heard as "Searching
+  in files", `?`'s options holding the terms.
+- **Seen, left as it was:** Jump ranks a multi-word text against whole
+  paths, so `pdf last week` offers `packing-list.txt` (from `Drafts` and
+  `Field`); the field asked it the same way before.

@@ -61,7 +61,8 @@ that work where the keyboard is.
 - **Typing in the address.** The first row says what `Enter` does; the
   others offer the rest: a path's names (`Tab` completes), places you go
   to, tags, other tabs, where the pane was, saved and recent searches,
-  commands with their keys. `>` hands the rest to the palette.
+  commands with their keys. `>` hands the rest to the palette; `?` alone
+  lists what the address takes.
 - **Where words search.** `Ctrl+F` puts the folder shown before the text,
   as a token: words search there. Click the token, press `Alt+Down`, or
   type `@` first to search somewhere else (the folder above, home, the

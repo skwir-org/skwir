@@ -87,10 +87,10 @@ ADR-070 (the field's rows) and retires the Jump overlay.
    type) and Enter waits; one that only writes text (a term button)
    writes it.
 4. **The text stays the one truth.** The query plugin's spans draw it
-   (`TextInput::set_styles`): keys in the accent, values on the code
-   background, operators muted, what cannot be read underlined in the
-   error color. Only the scope is a token; a search's pills come back
-   when the field lets go. The UI knows no query syntax.
+   (`TextInput::set_styles`): keys in the accent, values on `term`,
+   operators muted, what cannot be read underlined in the error color.
+   Only the scope is a token; a search's pills come back when the field
+   lets go. The UI knows no query syntax.
 5. **Words typed over a folder filter it by what the listing knows.** The
    core's `filter` asks the filter's reader (`Registry::filter_readers`,
    the query plugin's `narrow::read_filter`): the longest start of the
@@ -112,15 +112,22 @@ ADR-070 (the field's rows) and retires the Jump overlay.
    them all.
 7. **For agents and scripts**, `ui.suggest {text, scope?, pane?}` answers
    every source's rows and the spans, changing nothing (`.data()`: it
-   answers whoever asks); a path's names are the field's own and not in
-   it.
+   answers whoever asks), a path's names read there and then
+   (`omnibox::path_suggestions`, amended 2026-10-27).
 8. **Jump is the field.** The overlay is gone; `ui.jump` keeps its id and
    keys (Ctrl+J, the vim scheme's `z`).
 9. **The field names no plugin.** It runs the rows' invocations and the
    core's commands (`filter`, `navigate`, `open`); it no longer names
    `jump.candidates`, `query.search` or `query.refine`. A scope of a tag
    is searched by the query plugin as the tag every match has, from the
-   home folder.
+   home folder; any other place (Recent) as what it lists, `in:recent:`
+   (`within.rs`): the place opened through its provider, each entry it
+   lists tested as the walk tests a file, contents included, read in its
+   lane, never below (amended 2026-10-27, from a filtered listing).
+10. **`?` alone lists what the field takes** (amended 2026-10-27): the
+    shell's own grammar (a path, a place's address from the schemes
+    providers open, `@`, words, `>`) and the query plugin's terms with
+    examples (`Section::Syntax`); Enter or Tab writes the example.
 
 ## Consequences
 
@@ -136,8 +143,11 @@ ADR-070 (the field's rows) and retires the Jump overlay.
   (`scope_token`), `TextInput::set_styles`, `send_start` and `AtStart`;
   `jump.rs` removed; `ui.omnibox_scopes`, `ui.omnibox_forget`,
   `ui.suggest`.
-- Not built, recorded in PLAN.md: Recent as a scope (the query plugin
-  searches folders; a search of what a location lists is still to make),
-  search as you type (an open decision), the model half of `query.ask`
-  (Phase G), the path rows in `ui.suggest`, a plugin from outside
-  offering rows (sources are Rust).
+- Not built, recorded in PLAN.md: search as you type (an open
+  decision), the model half of `query.ask` (Phase G), a plugin from
+  outside offering rows (sources are Rust).
+- Amended 2026-10-27: `in:` takes a place (`Query::within`), searched by
+  `within.rs`; `?` lists what the field takes; `ui.suggest` answers a
+  path's names; what the query understood is drawn on a token of its own,
+  `Theme::term` (the accent at 18%, as the band is a mark of it), which
+  the code background, nearly the page's own in the light look, was not.

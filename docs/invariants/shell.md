@@ -226,6 +226,10 @@ of bars, split or not.
     keys) answer the rest.
   - The field's own source stays the paths and places it completes
     (below), read in their lane.
+- **`?` alone** lists what the field takes: the shell's grammar (a path,
+  a place's address from the schemes providers open, `@`, words, `>`)
+  and the query plugin's terms with examples; Enter or Tab writes the
+  example.
 - **Before anything is typed**, the dropdown shows what the sources offer
   then, nothing highlighted: Enter does what the text says (the location
   shown again, a search's words again).
@@ -236,7 +240,7 @@ of bars, split or not.
   Shift+Delete (`ui.omnibox_forget`) forgets a recent search highlighted.
 - **The text is drawn with the spans** the query plugin reads
   (`TextInput::set_styles`, cleared when the text changes): keys in the
-  accent, values on `code_bg`, operators muted, what cannot be read with
+  accent, values on `term`, operators muted, what cannot be read with
   a wavy line in `error`. The UI knows no query syntax.
 - **Completion (ADR-070, `complete.rs`).** A path lists the names of the
   folder typed that go on with the name typed: folders, then files, at
