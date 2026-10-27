@@ -401,7 +401,11 @@ of bars, split or not.
   each facet `query.describe` says is set, then "+ Filter". Each choice
   runs the invocation the plugin
   gave (`query.refine`, or `ui.ask` for a typed value), and navigates, so
-  Back undoes it.
+  Back undoes it. A change that takes the last term away shows the place
+  searched (the trail's: the folder, or what it lists), as Escape does
+  and as a folder's last pill gone shows it whole: an empty search is
+  asked for, never left over. One asked with nothing (`in:/x`) stays a
+  search while its depth or hidden files change.
 - The query plugin owns the meaning (`facets.rs`). Pills are read once
   per location, and again when the sidebar's names change; never per
   frame.

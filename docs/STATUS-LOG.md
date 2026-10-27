@@ -6262,3 +6262,20 @@ those offered:
   field with the search's words; in Recent, "Search Recent"; none in the
   trash. Not run: `just a11y-check` (it walks no button of the pane row
   by order), `just check-cross`, `just release-check`.
+
+### A search's last pill gone shows its place (2026-10-28)
+
+- **Built:** a change that takes a search's last term away (a pill's ×,
+  its last kind or tag toggled out, the sidebar's Shift+click on its last
+  tag) shows the place it searched, the folder or what it lists
+  (`in:recent:`), as Escape does, instead of an empty search listing
+  every entry below the folder (`query::refined_location`, in
+  `query.refine`). Back brings the search back. A search asked with
+  nothing (`in:/x`) stays one while its depth or hidden files change.
+- **Checked:** rustfmt; clippy (`-D warnings`) on `skwir-plugin-query`;
+  its tests (95 passed, among them the rule's cases and the chips' path
+  taken to its last term, then Back); the tags and timeline integration
+  tests (24 passed). On Xvfb at 1280 × 860: a search for `pdf` in a
+  folder, its pill removed, shows the folder, Back the search; one in
+  Recent, its pill removed, shows Recent. Not run: `just check-cross`,
+  `just release-check`.

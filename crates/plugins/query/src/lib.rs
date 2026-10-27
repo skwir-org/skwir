@@ -236,6 +236,21 @@ pub fn location_for(expr: &str, root: Option<&std::path::Path>) -> Location {
     Location::new(SCHEME, rest)
 }
 
+/// Where a search refined from `before` to `after` is shown: the search,
+/// unless the change took its last term away, which leaves the place it
+/// looked in (its trail's: the folder, or what it lists), as Escape goes
+/// there. A search asked with nothing to look for (`in:/x`) stays one
+/// while it is refined (how deep, hidden files).
+fn refined_location(before: &str, after: &str) -> Location {
+    let looks_for = |expr: &str| lang::parse(expr).is_ok_and(|q| q.expr.is_some());
+    match lang::parse(after) {
+        Ok(q) if q.expr.is_none() && looks_for(before) => {
+            q.within.unwrap_or_else(|| Location::from_path(&q.root))
+        }
+        _ => Location::new(SCHEME, after),
+    }
+}
+
 /// A name for a search saved without one: what it looks for and where
 /// (`*.pdf modified<7d in Documents`), the place named as `place_name`
 /// says.
@@ -864,13 +879,13 @@ impl Plugin for QueryPlugin {
             ID, Topic::Find,
             "query.refine",
             "Refine search",
-            "Change one facet of the pane's search (or start one in its folder) and show the result",
+            "Change one facet of the pane's search (or start one in its folder) and show the result; its last term taken away, the pane shows the place it searched",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let expr = pane_search(app, pane)?;
                 let refined = facets::refine(&expr, &a.facet, a.value.as_deref())
                     .map_err(|e| anyhow::anyhow!("query: {e}"))?;
-                app.navigate(pane, &Location::new(SCHEME, refined))?;
+                app.navigate(pane, &refined_location(&expr, &refined))?;
                 Ok(Outcome::Done)
             },
         )
@@ -1936,6 +1951,14 @@ mod tests {
         app.dispatch(&clear).unwrap();
         assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
         assert_eq!(names(), set(&["cat.png", "dog.JPG"]));
+        // The last term taken away, the folder is shown, as Escape shows
+        // it; Back brings the search back.
+        let clear: Invocation = serde_json::from_value(chip("kind")["clear"].clone()).unwrap();
+        app.dispatch(&clear).unwrap();
+        assert_eq!(app.pane_location(pane), Some(Location::from_path(&root)));
+        app.dispatch(&Invocation::new("back")).unwrap();
+        let search = lang::parse(&app.pane_location(pane).unwrap().rest).unwrap();
+        assert_eq!(search.expr.unwrap().to_string(), "kind:image");
     }
 
     /// Answers `taken` from a text file holding the clock's digits.
@@ -2303,6 +2326,24 @@ mod tests {
             ListingEvent::Error(e) => assert!(e.contains("not a folder"), "{e}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// A search left with nothing to look for is the place it looked in;
+    /// one asked with nothing stays a search while it is refined.
+    #[test]
+    fn a_search_without_terms_left_is_its_place() {
+        let shown = |before: &str, after: &str| refined_location(before, after);
+        assert_eq!(
+            shown("cat in:/r", "in:/r"),
+            Location::from_path(Path::new("/r"))
+        );
+        let recent = shown("cat in:recent:", "in:recent:");
+        assert_eq!(&*recent.scheme, "recent");
+        assert_eq!(&*shown("in:/r", "in:/r depth:1").scheme, SCHEME);
+        assert_eq!(
+            shown("cat kind:image in:/r", "kind:image in:/r"),
+            Location::new(SCHEME, "kind:image in:/r")
+        );
     }
 
     #[test]

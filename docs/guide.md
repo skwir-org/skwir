@@ -87,8 +87,8 @@ that work where the keyboard is.
   part ("Kind: Images"), as a Narrow by choice does: pressed, it offers
   its other values, and `+ Filter` adds another. A folder's pills wear a
   funnel, a search's their facet's icon. `Escape` with nothing selected
-  shows the folder whole, from a search too. `Alt+Enter` searches the
-  home folder.
+  shows the folder whole, from a search too, and so does removing the
+  last pill. `Alt+Enter` searches the home folder.
 - **Type the first letters of a name** in the file list to go to it.
 - **Jump** (`Ctrl+J`) is the address with nothing typed: the folders you
   go to most, from zoxide's list and the desktop's recent files, then
