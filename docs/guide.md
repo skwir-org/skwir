@@ -248,11 +248,11 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
 
 ## Searching
 
-`Ctrl+F` searches the folder shown and its subfolders as you type. A
-search is a place, with Back, tabs and the sidebar like any folder. Its
-address keeps the folder's trail and shows what it looks for as pills
-after it: click one to change it, **+ Filter** adds one, and the text
-can be typed as is:
+`Ctrl+F`, or the magnifier at the end of the address, searches the folder
+shown and its subfolders as you type. A search is a place, with Back,
+tabs and the sidebar like any folder. Its address keeps the folder's
+trail and shows what it looks for as pills after it: click one to change
+it, **+ Filter** adds one, and the text can be typed as is:
 
 | Text | Finds |
 | --- | --- |

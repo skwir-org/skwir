@@ -6243,3 +6243,22 @@ those offered:
   every crate with its tests; macOS's but for the crates built on gpui),
   once two Windows-only tests of the control plugin had their topic. Not
   run: `just a11y-check` (it walks no F1), `just release-check`.
+
+### A Search button in the address (2026-10-28)
+
+- **Built:** the address field ends with Search (`ui.search`, as
+  Ctrl+F) before the keep-in-sidebar and Tags buttons: nothing else in
+  sight said the field searches. "Search this folder and its subfolders"
+  on a folder, "Search Recent" or a tag's name where those are searched,
+  "Edit this search" over one; none where words cannot look (the trash),
+  while nothing searches (`query.search` not registered), or while the
+  field is typed in, its token wearing the same magnifier
+  (`address::search_title`). The tooltip says Ctrl+F; the card's switch,
+  shown on the click, says Ctrl+Shift+F.
+- **Checked:** rustfmt; clippy (`-D warnings`) and the tests of
+  `skwir-ui` (392 passed). On Xvfb at 1280 × 860: the button on a folder,
+  its tooltip, its click opening the field on the folder and its
+  subfolders; over a search, "Edit this search", its click opening the
+  field with the search's words; in Recent, "Search Recent"; none in the
+  trash. Not run: `just a11y-check` (it walks no button of the pane row
+  by order), `just check-cross`, `just release-check`.

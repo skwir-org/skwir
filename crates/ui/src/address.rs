@@ -1166,6 +1166,21 @@ fn pane_row(
         .child(address)
         // The field's card stands around all of it (`popup_around`).
         .child(omni_anchor.marker());
+    // Search, as Ctrl+F: the field is where words search (ADR-098), and
+    // nothing else in sight says so. Offered where Ctrl+F has a folder, a
+    // tag or Recent to look in, or a search to edit, while something
+    // searches; gone while the field is typed in, its token wearing the
+    // same magnifier.
+    if let Some(title) = search_title(shell, row) {
+        field = field.child(
+            Button::new(format!("search-{}", pane.0), "search", title, "ui.search")
+                .render(shell, cx)
+                .h(px(24.))
+                .min_w(px(24.))
+                .px(px(4.))
+                .mr(px(2.)),
+        );
+    }
     // Keep what the pane shows in the sidebar, a folder as a bookmark or a
     // search as a saved search, while a plugin keeps such locations:
     // filled when it is kept, and pressing it then takes it back with the
@@ -1271,6 +1286,27 @@ fn pane_row(
             .child(preview);
     }
     line.into_any_element()
+}
+
+/// What the field's Search button says, as Ctrl+F does it: a search shown
+/// edited, a folder searched with its subfolders, a tag or Recent
+/// searched. `None` while the field is typed in, where words cannot look
+/// (the trash), or while nothing searches.
+fn search_title(shell: &Shell, row: &PaneRow) -> Option<String> {
+    if !matches!(row.address, Address::Trail { .. })
+        || shell.app.commands.get("query.search").is_none()
+    {
+        return None;
+    }
+    if !shell.ui().chips.chips.is_empty() {
+        return Some("Edit this search".to_owned());
+    }
+    let location = row.location.as_ref()?;
+    if location.is_path() {
+        return Some("Search this folder and its subfolders".to_owned());
+    }
+    crate::suggestions::scope_of(location)
+        .map(|scope| format!("Search {}", shell.app.location_title(&scope)))
 }
 
 /// The pane a location's tool is run with (`ToolPane`), or `None` while

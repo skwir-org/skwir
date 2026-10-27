@@ -142,12 +142,18 @@ of bars, split or not.
   top; a sidebar put away or a window too narrow for it gives the strip
   back, so the tabs are always in sight.
 - **Pane row** (`render_address`): Back, Forward; the address (trail or
-  edited text), ending with the keep-in-sidebar button and then one button
-  per other way to see the folder (`registry::Aspect`, e.g. Tags, Alt+G),
-  last so it stays under the pointer; then the view buttons and the View
-  menu.
+  edited text), ending with Search, the keep-in-sidebar button and then one
+  button per other way to see the folder (`registry::Aspect`, e.g. Tags,
+  Alt+G), last so it stays under the pointer; then the view buttons and
+  the View menu.
+  - Search is Ctrl+F (`ui.search`), the one sign in sight that the field
+    searches: there while the trail is, where Ctrl+F has a folder, a tag
+    or Recent to look in or a search to edit, and something searches
+    (`address::search_title`). Typed in, the field's token wears its
+    magnifier, and the card's switch says Ctrl+Shift+F. Never a second
+    field: the address is where words look (ADR-098).
   - No Up button (the trail's parent segment, Alt+Up) and no New Folder
-    button (the folder's menu, Ctrl+Shift+N).
+    button (the folder's menu, Ctrl+Shift+N): each has a way in sight.
   - View buttons are the `ViewRole::Listing` views (list, grid,
     columns). `Alternate` (tree, board) and `Lens` (Usage) views get a
     button only while shown. The view states its role, never the shell.
