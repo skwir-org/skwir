@@ -25,7 +25,10 @@ that work where the keyboard is.
   reopens the last closed. `Ctrl+Tab` and `Ctrl+Shift+Tab` (or
   `Ctrl+PageDown`, `Ctrl+PageUp`) switch tabs, `Ctrl+Shift+PageDown` and
   `Ctrl+Shift+PageUp` move one, `Alt+1`…`Alt+8` go to a tab and `Alt+9`
-  to the last.
+  to the last. A split tab is named by both its panes, the one without
+  the keys dimmer. General › Tabs lists them in the sidebar instead,
+  above the places; they come back above the files while the sidebar is
+  hidden.
 - **More** (the sidebar's button, or the pane's row when the sidebar is
   hidden) holds what has no button, and Layout: where the split and the
   preview go, or Automatic, which follows the window's shape. About

@@ -74,8 +74,13 @@ pub const UNFOLDED_KEY: &str = "ui.settings_unfolded";
 pub const VIEW_BUTTONS_KEY: &str = "ui.view_buttons";
 /// Whether a folder has the Narrow by bar above its files (`narrow.rs`).
 pub const NARROW_FOLDERS_KEY: &str = "ui.narrow_folders";
-/// Whether the tab strip shows for a window that has only one tab.
+/// Whether the tabs are listed for a window that has only one tab.
 pub const SINGLE_TAB_KEY: &str = "ui.single_tab";
+/// Where the tabs are listed: the strip above the files, or the sidebar
+/// (`Shell::strip_shown`).
+pub const TABS_AT_KEY: &str = "ui.tabs_at";
+/// `ui.tabs_at`'s value for the sidebar.
+pub const TABS_IN_SIDEBAR: &str = "sidebar";
 /// Whether a folder's trail starts at the root rather than at the
 /// sidebar's folder that holds it (`Shell::sync_roots`).
 pub const FULL_PATH_KEY: &str = "ui.full_path";
@@ -382,8 +387,19 @@ pub fn declare(app: &App) {
         SettingSpec::toggle(
             SINGLE_TAB_KEY,
             "Show a lone tab",
-            "Show the tab strip even when the window has one tab, named like the place it shows. Off gives the lists that row; New tab stays in the More menu and on Ctrl+T.",
+            "Show the tabs even when the window has one, named like the place it shows. Off gives the lists the strip's row; New tab stays in the More menu and on Ctrl+T.",
             false,
+        )
+        .page(page::GENERAL)
+        .section("Tabs"),
+    );
+    app.settings.declare(
+        SettingSpec::choice(
+            TABS_AT_KEY,
+            "Show tabs",
+            "Where the tabs are listed. Above the files, a strip over the panes holds them, side by side. In the sidebar, they are its first group, a row each, and the panes start at the top of the window; while the sidebar is hidden, or the window too narrow for it, they go back above the files.",
+            "strip",
+            &[("strip", "Above the files"), (TABS_IN_SIDEBAR, "In the sidebar")],
         )
         .page(page::GENERAL)
         .section("Tabs"),
@@ -2279,8 +2295,8 @@ impl crate::shell::Shell {
 mod tests {
     use super::{
         App, BUILTIN, CODE_APPEARANCE_KEY, CODE_DARK_KEY, CODE_FONT_KEY, CODE_LIGHT_KEY, FONT_KEY,
-        ICON_THEME_AUTO, Page, READING_FONT_KEY, SINGLE_TAB_KEY, SettingSpec, THEME_KEY,
-        code_theme_spec, declare, font_spec, icon_theme_spec, page_order,
+        ICON_THEME_AUTO, Page, READING_FONT_KEY, SINGLE_TAB_KEY, SettingSpec, TABS_AT_KEY,
+        THEME_KEY, code_theme_spec, declare, font_spec, icon_theme_spec, page_order,
     };
     use skwir_platform::icons::Theme;
 
@@ -2427,6 +2443,11 @@ mod tests {
             page(&specs, &Page::General)
                 .iter()
                 .any(|(section, key)| section == "Tabs" && key == SINGLE_TAB_KEY)
+        );
+        assert!(
+            page(&specs, &Page::General)
+                .iter()
+                .any(|(section, key)| section == "Tabs" && key == TABS_AT_KEY)
         );
         assert_eq!(
             sections(&specs, &Page::Views),

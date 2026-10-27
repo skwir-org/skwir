@@ -644,6 +644,25 @@ def run(w):
     check("and what it holds as its description",
           "files" in (w.focused().get_description() or ""))
 
+    # A second tab brings the tabs; split, a tab is said by both its panes.
+    w.cmd("tab.new")
+    w.cmd("ui.split")
+    check("a split tab, in the strip, is named by both its panes",
+          until(lambda: "files and files" in names_of(w))
+          or print("  tabs:", children_of(w, "page tab list", "Tabs")))
+    w.cmd("settings.apply", {"changes": {"ui.tabs_at": "sidebar"}})
+    w.cmd("ui.focus_sidebar")
+    check("listed in the sidebar, the tabs are its first group",
+          hears(w, "tree item 'Tabs' focused"))
+    w.keys("Down")
+    check("Down: the first tab", hears(w, "tree item 'files' focused"))
+    w.keys("Down")
+    check("Down again: the split one, the tab shown, as selected",
+          hears(w, "tree item 'files and files' selected focused"))
+    w.keys("Down")
+    check("Down again: the row that opens another",
+          hears(w, "tree item 'New tab' focused"))
+
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])

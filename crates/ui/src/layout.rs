@@ -191,7 +191,13 @@ impl Layout {
 
     /// Whether split panes are one above the other.
     pub fn stacked(&self) -> bool {
-        match self.split {
+        self.stacked_as(self.split)
+    }
+
+    /// Whether a split made `split` (a tab's own arrangement, or none) has
+    /// its panes one above the other in this window.
+    pub fn stacked_as(&self, split: Option<Panes>) -> bool {
+        match split {
             Some(Panes::Row) => false,
             Some(Panes::Column) => true,
             _ => self.preferred_stacked(),

@@ -26,6 +26,7 @@ use skwir_core::Location;
 use skwir_core::command::Invocation;
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::{Place, Reorder};
+use skwir_core::workspace::TabId;
 
 use crate::controls;
 use crate::dnd::DragPayload;
@@ -144,12 +145,20 @@ impl Role {
 /// The command that arranges a place the user does not keep.
 const PLACE_COMMAND: &str = "ui.sidebar_place";
 
-/// What the sidebar's keyboard cursor is on: a group's header, or a place
-/// (by its group and `Place::key`).
+/// The group the sidebar lists the tabs in, first, while `ui.tabs_at` asks
+/// (`Shell::sidebar_lists_tabs`): folded as the others, not moved or put
+/// away (the setting takes it away).
+pub const TABS: &str = "tabs";
+
+/// What the sidebar's keyboard cursor is on: a group's header, a place
+/// (by its group and `Place::key`), or, in `TABS`, a tab or the row that
+/// opens another.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Item {
     Group(String),
     Place { group: String, key: String },
+    Tab(TabId),
+    NewTab,
 }
 
 impl Item {
@@ -163,6 +172,7 @@ impl Item {
     fn group(&self) -> &str {
         match self {
             Item::Group(group) | Item::Place { group, .. } => group,
+            Item::Tab(_) | Item::NewTab => TABS,
         }
     }
 }
@@ -198,10 +208,18 @@ impl Keys {
     }
 }
 
-/// What is drawn, in order: each group's header, then its shown places
-/// unless it is folded.
-fn drawn_items(places: &[&Arranged], sections: &Sections) -> Vec<Item> {
+/// What is drawn, in order: the tabs' header, its tabs and New tab, while
+/// it lists `tabs`; then each group's header, then its shown places;
+/// nothing under a group folded.
+fn drawn_items(places: &[&Arranged], sections: &Sections, tabs: &[TabId]) -> Vec<Item> {
     let mut items = Vec::new();
+    if !tabs.is_empty() {
+        items.push(Item::Group(TABS.to_owned()));
+        if !sections.folded.contains(TABS) {
+            items.extend(tabs.iter().copied().map(Item::Tab));
+            items.push(Item::NewTab);
+        }
+    }
     for arranged in places {
         let group = &arranged.place.group;
         if items
@@ -594,10 +612,17 @@ pub fn render(
             .map(|a| a.place.group.clone())
             .collect::<Vec<_>>(),
     );
+    // The tabs, first, while the sidebar lists them (`ui.tabs_at`).
+    let tabs: Vec<TabId> = if shell.sidebar_lists_tabs() {
+        shell.sync_tab_labels();
+        shell.tab_labels.labels.iter().map(|l| l.tab).collect()
+    } else {
+        Vec::new()
+    };
     // With the keyboard, the cursor is on something drawn: where it was,
     // else the place shown, else the first.
     let focused = shell.sidebar_keys.focus.is_focused(window);
-    let items = drawn_items(&places, &sections);
+    let items = drawn_items(&places, &sections, &tabs);
     if focused
         && shell
             .sidebar_keys
@@ -691,12 +716,47 @@ pub fn render(
             }),
         );
 
+    // How many children the column has: what the cursor scrolls to.
+    let mut children = 0;
+    if !tabs.is_empty() {
+        let item = Item::Group(TABS.to_owned());
+        let folded = sections.folded.contains(TABS);
+        let at_cursor = cursor.as_ref() == Some(&item);
+        column = column.child(
+            group_header(TABS, folded, None, at_cursor, cx)
+                .role(gpui::Role::TreeItem)
+                .when(a11y, |d| {
+                    d.aria_label(group_title(TABS))
+                        .aria_level(1)
+                        .aria_expanded(!folded)
+                })
+                .when(
+                    at_cursor,
+                    StatefulInteractiveElement::aria_active_descendant,
+                ),
+        );
+        drawn.push((item, children));
+        children += 1;
+        if !folded {
+            let tab = |item: &Option<Item>| match item {
+                Some(Item::Tab(tab)) => Some(*tab),
+                _ => None,
+            };
+            for (id, row) in crate::tabs::sidebar_rows(shell, tab(&cursor), tab(&marked), cx) {
+                column = column.child(row);
+                drawn.push((Item::Tab(id), children));
+                children += 1;
+            }
+            let at_cursor = cursor == Some(Item::NewTab);
+            column = column.child(crate::tabs::sidebar_new_tab(shell, at_cursor, cx));
+            drawn.push((Item::NewTab, children));
+            children += 1;
+        }
+    }
     let mut last_group: Option<String> = None;
     let mut indices: HashMap<(String, String), usize> = HashMap::new();
     // A group's tags, drawn as pills that wrap together.
     let mut pills: Vec<AnyElement> = Vec::new();
-    // How many children the column has: what the cursor scrolls to.
-    let mut children = 0;
     for arranged in places {
         let Arranged {
             place,
@@ -712,7 +772,7 @@ pub fn render(
             let at_cursor = cursor.as_ref() == Some(&item);
             let menu_here = marked.as_ref() == Some(&item);
             column = column.child(
-                group_header(&place.group, folded, &groups, at_cursor, cx)
+                group_header(&place.group, folded, Some(&groups), at_cursor, cx)
                     .role(gpui::Role::TreeItem)
                     .when(a11y, |d| {
                         d.aria_label(group_title(&place.group))
@@ -1075,22 +1135,64 @@ fn move_group(group: &str, before: Option<&str>) -> Invocation {
     )
 }
 
-/// A group's header: a click folds the group, a drag moves it among the
-/// others (`shown`, in their order), a right click opens its menu. While
-/// another group is dragged over it, a line marks where that one lands,
-/// above its upper half and below its lower half, as with places.
+/// A group's header: a click folds the group. A group the user arranges
+/// among the others (`shown`, in their order; not the tabs) is moved by
+/// dragging its header and has a menu on a right click; while another
+/// group is dragged over it, a line marks where that one lands, above its
+/// upper half and below its lower half, as with places.
 fn group_header(
     group: &str,
     folded: bool,
-    shown: &[String],
+    shown: Option<&[String]>,
     at_cursor: bool,
     cx: &mut Context<Shell>,
 ) -> gpui::Stateful<gpui::Div> {
     let theme = cx.global::<Theme>().clone();
     let hover = theme.hover;
-    let at = shown.iter().position(|g| g == group).unwrap_or(0);
     let title = group_title(group);
-    let (fold, menu) = (group.to_owned(), group.to_owned());
+    let fold = group.to_owned();
+    let header = div()
+        .id(SharedString::from(format!("sidebar-group-{group}")))
+        .relative()
+        .flex_none()
+        .mx_1()
+        .mt_2()
+        .px_2()
+        .h(px(22.))
+        .flex()
+        .items_center()
+        .justify_between()
+        .rounded_md()
+        .border_1()
+        .border_color(if at_cursor {
+            theme.accent
+        } else {
+            gpui::transparent_black()
+        })
+        .text_xs()
+        .text_color(theme.text_muted)
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.sidebar_keys.cursor = Some(Item::Group(fold.clone()));
+            this.run(
+                "ui.sidebar_section",
+                serde_json::json!({ "group": fold }),
+                window,
+                cx,
+            );
+        }))
+        .child(title.clone())
+        .child(controls::glyph(
+            if folded { "chevron-right" } else { "chevron" },
+            theme.text_muted,
+            12.,
+        ));
+    let Some(shown) = shown else {
+        return header;
+    };
+    let at = shown.iter().position(|g| g == group).unwrap_or(0);
+    let menu = group.to_owned();
     let drag = GroupDrag {
         group: group.to_owned(),
     };
@@ -1127,37 +1229,7 @@ fn group_header(
         }))
     };
     let (upper, lower) = (zone(true), zone(false));
-    div()
-        .id(SharedString::from(format!("sidebar-group-{group}")))
-        .relative()
-        .flex_none()
-        .mx_1()
-        .mt_2()
-        .px_2()
-        .h(px(22.))
-        .flex()
-        .items_center()
-        .justify_between()
-        .rounded_md()
-        .border_1()
-        .border_color(if at_cursor {
-            theme.accent
-        } else {
-            gpui::transparent_black()
-        })
-        .text_xs()
-        .text_color(theme.text_muted)
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover))
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.sidebar_keys.cursor = Some(Item::Group(fold.clone()));
-            this.run(
-                "ui.sidebar_section",
-                serde_json::json!({ "group": fold }),
-                window,
-                cx,
-            );
-        }))
+    header
         .on_mouse_down(
             MouseButton::Right,
             cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
@@ -1165,18 +1237,9 @@ fn group_header(
                 this.open_sections_menu(Some(&menu), event.position, window, cx);
             }),
         )
-        .on_drag(drag, {
-            let title = title.clone();
-            move |_, position, _, cx| {
-                cx.new(|_| crate::dnd::DragPreview::named(title.clone(), position))
-            }
+        .on_drag(drag, move |_, position, _, cx| {
+            cx.new(|_| crate::dnd::DragPreview::named(title.clone(), position))
         })
-        .child(title)
-        .child(controls::glyph(
-            if folded { "chevron-right" } else { "chevron" },
-            theme.text_muted,
-            12.,
-        ))
         .child(upper)
         .child(lower)
 }
@@ -1719,7 +1782,7 @@ impl Shell {
     fn sidebar_cursor_place(&self) -> Option<Arranged> {
         match self.sidebar_keys.cursor.as_ref()? {
             Item::Place { group, key } => self.sidebar_place_of(group, key),
-            Item::Group(_) => None,
+            Item::Group(_) | Item::Tab(_) | Item::NewTab => None,
         }
     }
 
@@ -1744,11 +1807,12 @@ impl Shell {
     /// The sidebar's keys (`Sidebar` context), `key` naming what to do:
     /// `up`, `down`, `first`, `last` move the cursor; `left` goes to the
     /// group's header and folds it, `right` unfolds it and goes in;
-    /// `open` runs the place (and gives the keyboard back to the files)
-    /// or folds the group, `tab` opens the place in a tab behind; `menu`
-    /// opens its menu; `move_up` and `move_down` move it or its group;
-    /// `rename` renames it; `remove` takes out a place the user keeps and
-    /// hides another.
+    /// `open` runs the place, shows the tab or opens one (and gives the
+    /// keyboard back to the files) or folds the group, `tab` opens the
+    /// place in a tab behind; `menu` opens its menu; `move_up` and
+    /// `move_down` move it, the tab or its group; `rename` renames it;
+    /// `remove` takes out a place the user keeps, hides another, and
+    /// closes a tab.
     pub fn sidebar_key(&mut self, key: &str, window: &mut gpui::Window, cx: &mut Context<Self>) {
         let at = self.sidebar_cursor_at();
         let last = self.sidebar_keys.drawn.len().saturating_sub(1);
@@ -1758,8 +1822,8 @@ impl Shell {
             ("down", _) => self.sidebar_cursor_to(at.map_or(0, |at| (at + 1).min(last)), cx),
             ("first", _) => self.sidebar_cursor_to(0, cx),
             ("last", _) => self.sidebar_cursor_to(last, cx),
-            ("left", Some(Item::Place { group, .. })) => {
-                self.sidebar_keys.cursor = Some(Item::Group(group));
+            ("left", Some(item @ (Item::Place { .. } | Item::Tab(_) | Item::NewTab))) => {
+                self.sidebar_keys.cursor = Some(Item::Group(item.group().to_owned()));
                 self.sidebar_keys.reveal = true;
                 cx.notify();
             }
@@ -1770,15 +1834,23 @@ impl Shell {
                 if self.sidebar_sections.folded.contains(&group) {
                     self.sidebar_section(&serde_json::json!({ "group": group, "fold": false }), cx);
                 } else if let Some(at) = at
-                    && let Some((Item::Place { group: next, .. }, _)) =
-                        self.sidebar_keys.drawn.get(at + 1)
-                    && *next == group
+                    && let Some((next, _)) = self.sidebar_keys.drawn.get(at + 1)
+                    && !matches!(next, Item::Group(_))
+                    && next.group() == group
                 {
                     self.sidebar_cursor_to(at + 1, cx);
                 }
             }
             ("open", Some(Item::Group(group))) => {
                 self.sidebar_section(&serde_json::json!({ "group": group }), cx);
+            }
+            ("open", Some(Item::Tab(tab))) => {
+                window.focus(&self.ui().focus, cx);
+                self.run("tab.select", serde_json::json!({ "tab": tab }), window, cx);
+            }
+            ("open", Some(Item::NewTab)) => {
+                window.focus(&self.ui().focus, cx);
+                self.run("tab.new", serde_json::json!({}), window, cx);
             }
             ("open" | "tab", Some(Item::Place { .. })) => {
                 let Some(arranged) = self.sidebar_cursor_place() else {
@@ -1799,12 +1871,17 @@ impl Shell {
             }
             ("menu", Some(item)) => {
                 match &item {
+                    Item::Group(group) if group == TABS => return,
                     Item::Group(group) => {
                         self.open_sections_menu(Some(group), gpui::Point::default(), window, cx);
                     }
                     Item::Place { group, key } => {
                         self.open_place_menu(group, key, gpui::Point::default(), window, cx);
                     }
+                    Item::Tab(tab) => {
+                        self.open_tab_menu(*tab, gpui::Point::default(), window, cx);
+                    }
+                    Item::NewTab => return,
                 }
                 if let Some(menu) = &mut self.menu {
                     menu.highlighted = Some(0);
@@ -1814,10 +1891,13 @@ impl Shell {
             ("move_up" | "move_down", Some(item)) => {
                 let delta = if key == "move_up" { -1 } else { 1 };
                 let run = match &item {
+                    Item::Group(group) if group == TABS => None,
                     Item::Group(group) => self.group_move(group, delta),
                     Item::Place { .. } => self
                         .sidebar_cursor_place()
                         .and_then(|a| self.sidebar_move(&a, delta)),
+                    Item::Tab(tab) => self.tab_move(*tab, delta),
+                    Item::NewTab => None,
                 };
                 if let Some(run) = run {
                     self.sidebar_keys.reveal = true;
@@ -1831,6 +1911,19 @@ impl Shell {
                 {
                     self.run(&run.name, run.args, window, cx);
                 }
+            }
+            ("remove", Some(Item::Tab(tab))) => {
+                // The cursor stays where the tab was: on the next one, or
+                // the one before the last.
+                let labels = &self.tab_labels.labels;
+                let next = labels.iter().position(|l| l.tab == tab).and_then(|at| {
+                    labels
+                        .get(at + 1)
+                        .or_else(|| at.checked_sub(1).and_then(|before| labels.get(before)))
+                });
+                self.sidebar_keys.cursor = next.map(|l| Item::Tab(l.tab));
+                self.sidebar_keys.reveal = true;
+                self.run("tab.close", serde_json::json!({ "tab": tab }), window, cx);
             }
             ("remove", Some(Item::Place { group, key })) => {
                 let Some(arranged) = self.sidebar_cursor_place() else {
@@ -1859,6 +1952,19 @@ impl Shell {
             }
             _ => {}
         }
+    }
+
+    /// What moves tab `tab` `delta` places along the tabs; `None` at an end.
+    fn tab_move(&self, tab: TabId, delta: isize) -> Option<Invocation> {
+        let labels = &self.tab_labels.labels;
+        let at = labels.iter().position(|l| l.tab == tab)?;
+        let to = at
+            .checked_add_signed(delta)
+            .filter(|to| *to < labels.len())?;
+        Some(Invocation::with_args(
+            "tab.move",
+            &serde_json::json!({ "tab": tab, "to": to }),
+        ))
     }
 
     /// What moves `group` `delta` places among the groups shown.
@@ -2296,6 +2402,59 @@ mod tests {
         let run = super::open_in_tab(&place("/run/media/example/Backup"));
         assert_eq!(&*run.name, "tab.new");
         assert_eq!(run.args["show"], serde_json::json!(false));
+    }
+
+    /// Listed in the sidebar, the tabs come first: their header, each tab
+    /// and New tab, then the groups of places; folded, the header alone,
+    /// and what the keys walk follows.
+    #[test]
+    fn the_tabs_come_before_the_places_and_fold_as_a_group() {
+        use super::{Item, TABS, drawn_items};
+        use skwir_core::workspace::TabId;
+        let arranged = arrange(
+            vec![place("places", "/home"), place("devices", "/dev/sda1")],
+            &Sections::default(),
+        );
+        let places: Vec<&super::Arranged> = arranged.iter().collect();
+        let tabs = [TabId(1), TabId(2)];
+        let group = |g: &str| Item::Group(g.to_owned());
+        let at = |g: &str, key: &str| Item::Place {
+            group: g.to_owned(),
+            key: key.to_owned(),
+        };
+        let home = at("places", &arranged[0].place.key());
+        let disk = at("devices", &arranged[1].place.key());
+        assert_eq!(
+            drawn_items(&places, &Sections::default(), &tabs),
+            [
+                group(TABS),
+                Item::Tab(TabId(1)),
+                Item::Tab(TabId(2)),
+                Item::NewTab,
+                group("places"),
+                home.clone(),
+                group("devices"),
+                disk.clone(),
+            ]
+        );
+        let mut folded = Sections::default();
+        folded.folded.insert(TABS.to_owned());
+        assert_eq!(
+            drawn_items(&places, &folded, &tabs),
+            [
+                group(TABS),
+                group("places"),
+                home.clone(),
+                group("devices"),
+                disk.clone(),
+            ]
+        );
+        // Not listed there: the places alone.
+        assert_eq!(
+            drawn_items(&places, &Sections::default(), &[]),
+            [group("places"), home, group("devices"), disk]
+        );
+        assert_eq!(group_title(TABS), "Tabs");
     }
 
     #[test]

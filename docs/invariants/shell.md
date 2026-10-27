@@ -121,8 +121,12 @@ of bars, split or not.
   row. One rule decides (`Shell::toggles_at`). Their labels show where
   there is room (`address::panel_toggles`). A preview at the bottom has no
   bar.
-- **Tab strip** (`tabs.rs`): shown with two or more tabs, or one with
-  `ui.single_tab`.
+- **Tab strip** (`tabs.rs`): shown while the tabs are listed (two or
+  more, or one with `ui.single_tab`) and not by the sidebar drawn this
+  frame (`Shell::strip_shown`). With `ui.tabs_at` = sidebar, the tabs
+  are the sidebar's first group and the panes' rows are the window's
+  top; a sidebar put away or a window too narrow for it gives the strip
+  back, so the tabs are always in sight.
 - **Pane row** (`render_address`): Back, Forward; the address (trail or
   edited text), ending with the keep-in-sidebar button and then one button
   per other way to see the folder (`registry::Aspect`, e.g. Tags, Alt+G),
@@ -614,6 +618,14 @@ of bars, split or not.
   Enter opens and returns the keyboard, Menu, Alt+arrows move, F2,
   Delete, Escape goes back to the files. A click never takes the
   keyboard (`prevent_default`).
+- **Tabs in the sidebar** (`ui.tabs_at`, `sidebar::TABS`): the first
+  group, drawn while the tabs are listed: a row per tab
+  (`tabs::sidebar_rows`), then New tab. It folds as any group but is not
+  moved or put away; the setting takes it away. Its rows take the
+  sidebar's keys (`Item::Tab`: Enter shows the tab, Delete closes it,
+  Menu opens its menu, Alt+arrows move it; `Item::NewTab`), drops into
+  the folder shown, a drag along them (a line above or below the row),
+  the middle button and the right button, as in the strip.
 - Volumes: [operations.md](operations.md).
 
 ## Asking the user
@@ -747,6 +759,23 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 ## Tabs (ADR-018)
 
 - Tabs are core data (`tab.*` commands); a tab holds one pane or two.
+- **How a tab is drawn** (`tabs.rs`, one `Label` for the strip and the
+  sidebar). In the strip, a pill floating in the row: the tab shown a
+  card in the panes' ground (`bg`, a `border` line, no shadow), the
+  others their names alone until pointed at (`hover`). In the sidebar, a
+  row like a place's, the tab shown the same card, never the selection's
+  color: that says which place the pane shows.
+- A tab's × is on the tab shown and the one under the pointer
+  (`Shell::tab_hovered`, `tabs::closes`), never on a lone tab.
+- A tab is named like the place it shows (`App::location_title`). Split,
+  it is named by both panes, in the order they are laid out, a line
+  between them; the pane with the keys in the text's color, the other
+  `text_muted`, so the names stay put when the keys move. Its icon is
+  the split's, as the Split button draws it for that tab's arrangement
+  (`Shell::tab_stacked`). Short of room, the name with more letters
+  gives way and the other keeps up to half (`tabs::gives_way`). Said
+  aloud and dragged, the names are joined ("Field Guide and Maps"); the
+  tooltip has each pane's location.
 - A hidden tab is dormant: its panes keep history, sort and selection,
   and release listing, watchers and kept columns (`Pane::suspend`).
   Showing it reopens them through `App::show`. `core.sleep_hidden_tabs`

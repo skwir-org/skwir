@@ -5845,3 +5845,63 @@ those offered:
 - **Not checked:** a folder on a server waiting for Enter (no way to
   mark one remote in a test; the branch is `fs::reach::of`); Wayland and
   the user's session.
+
+### Tabs as pills, split tabs named by both panes, tabs in the sidebar (2026-10-27)
+
+- **Asked:** a tab style like today's applications'. Mocked up first on a
+  canvas, five ways in Skwir's colors (today's folder tabs; floating
+  pills, Firefox's and GNOME's; cards joined to the row, Chrome's and
+  Brave's; flat with an accent line, Dolphin's; a list in the sidebar),
+  each clickable, light or dark, three tabs or eight. The user chose the
+  pills by default and the sidebar's list as a setting, the × on the tab
+  shown and the one under the pointer only, and a split tab named by
+  both panes, the one without the keys subdued.
+- **Built** (ADR-018, fourth amendment):
+  - The strip: a tab is a pill centred in the row, the tab shown a card
+    in `bg` with a `border` line (no shadow, the theme's elevation rule),
+    the others their names alone, `hover` under the pointer. The ×
+    (`tabs::closes`) on the tab shown and the one under the pointer
+    (`Shell::tab_hovered`, from `on_hover`).
+  - One `Label` for both lists: `names` (each pane's place, in the
+    order laid out) and `active`; read again when a pane shows another
+    place or the keys move. `tabs::title` draws the names with a line
+    between, the pane with the keys in the text's color; the split's
+    icon as the Split button draws that tab's arrangement
+    (`Layout::stacked_as`, `Shell::tab_stacked`). Short of room the name
+    with more letters gives way, the other keeping up to half
+    (`tabs::gives_way`); shrunk together, "Maps" became "M…" first.
+    Said and dragged as "Field Guide and Maps"; the tooltip has a line
+    per pane.
+  - `ui.tabs_at` (General › Tabs: Above the files, In the sidebar). The
+    sidebar's first group (`sidebar::TABS`): a row per tab
+    (`tabs::sidebar_rows`), the tab shown the strip's card rather than
+    the selection (the place shown keeps that), then New tab. It folds,
+    is not moved or put away; its rows take drops, drags along them (a
+    line above or below), the middle and right buttons, and the
+    sidebar's keys (`Item::Tab`, `Item::NewTab`: Enter, Delete, Menu,
+    Alt+arrows). `Shell::strip_shown` gives the strip back while the
+    sidebar is not drawn (put away, or the window too narrow).
+- **Checked:**
+  - `just release-check` passed (2306 tests, smoke, a11y, the readers,
+    bench, release tools); new tests: a split tab's spoken name, which
+    name gives way, the sidebar's items with the tabs first and folded,
+    the setting on General › Tabs.
+  - A real window on Xvfb, the debug build: three tabs as pills, the
+    × only on the tab shown; pointed at, a tab's fill and ×; F3 and a
+    pane sent to Maps, the tab "Maps | Field Guide", Maps bright; Tab to
+    the other pane, Field Guide bright and the names in place. With
+    `ui.tabs_at = "sidebar"`: the Tabs group above Places, the split tab
+    "Maps | Field …de" in the 200 px sidebar (after the give-way rule),
+    a row pointed at showing its ×; F9, the strip back with the
+    sidebar's corner on it; F9, F6, the keys on the Tabs header; Down,
+    Down, Enter, the Maps tab shown, the keys in the files; F6, Delete on
+    Downloads, closed, the cursor on the tab before; Maps dragged into
+    the split row's upper half, a line above it, then first (into the
+    lower half: where it was, nothing moved); Ctrl+W to one tab, the
+    group gone and the panes at the top.
+  - `just a11y-check` on the debug build, five new checks: a split tab
+    in the strip named "files and files"; with `ui.tabs_at` the sidebar,
+    the focus on "Tabs", Down the first tab, Down the split one,
+    selected, Down "New tab".
+- **Not checked:** Wayland and the user's session; the dark look (drawn
+  from the same tokens).

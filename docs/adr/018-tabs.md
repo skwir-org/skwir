@@ -172,3 +172,29 @@ the row would mirror every dragged edge).
 
 Unchanged: tabs take drops, drag to reorder, close on middle click, and the
 wheel over the strip cycles them.
+
+### 2026-10-27: pills, both panes' names, tabs in the sidebar
+
+Asked to look like today's applications, the strip was mocked up five
+ways (today's, floating pills as Firefox's and GNOME's, cards joined to
+the row as Chrome's, flat with an accent line as Dolphin's, a list in the
+sidebar); the user chose the pills, and the list as a setting.
+
+- A tab in the strip is a pill floating in it: the tab shown a card in
+  the panes' ground with a line round it, the others their names alone.
+  No shadow: only menus, popovers, toasts and dialogs cast one (the
+  theme's elevation rule), and the card reads without it. Joined cards
+  were rejected: on Skwir's two grounds the tab shown needs a darker
+  band to show, a new color across the window's top.
+- A tab's × is on the tab shown and the one under the pointer, so a
+  crowded strip keeps its names.
+- A split tab is named by both panes, in the order they are laid out,
+  the one without the keys subdued: the names stay where their panes are
+  and the brightness follows the keys. Its icon is the split's.
+- `ui.tabs_at` (General › Tabs, Above the files by default) lists the
+  tabs as the sidebar's first group instead, the panes' rows then the
+  window's top. While the sidebar is put away or the window is too narrow
+  for it, the strip comes back: the tabs are never out of sight. The
+  tab shown is the strip's card there too, not the selection, which says
+  which place the pane shows.
+

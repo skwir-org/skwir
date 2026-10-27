@@ -196,6 +196,8 @@ pub struct Preferences {
     pub narrow_folders: bool,
     /// `ui.single_tab`: the tab of a window that has only one is drawn.
     pub single_tab: bool,
+    /// `ui.tabs_at`: the tabs are listed in the sidebar, not the strip.
+    pub tabs_in_sidebar: bool,
     /// `ui.full_path`: a folder's trail starts at the root.
     pub full_path: bool,
     /// `ui.printed_pages`: a book's position counts its printed pages.
@@ -227,6 +229,7 @@ impl Default for Preferences {
             grid_fill: false,
             narrow_folders: false,
             single_tab: false,
+            tabs_in_sidebar: false,
             full_path: false,
             printed_pages: false,
             wrap_lines: true,
@@ -280,6 +283,8 @@ pub struct Shell {
     /// The splits of tabs not shown: their own arrangement and share.
     pub(crate) tab_splits: HashMap<skwir_core::workspace::TabId, crate::layout::TabSplit>,
     pub(crate) tab_labels: crate::tabs::Labels,
+    /// The tab under the pointer, which shows its × (`tabs::closes`).
+    pub(crate) tab_hovered: Option<skwir_core::workspace::TabId>,
     /// The panes of the tab left, still drawn while the tab shown gets
     /// ready (`Shell::present`), and which tab they are.
     pub(crate) presented: Option<Vec<PaneUi>>,
@@ -657,6 +662,7 @@ impl Shell {
             tab_count: 1,
             tab_splits: HashMap::new(),
             tab_labels: crate::tabs::Labels::default(),
+            tab_hovered: None,
             presented: None,
             presented_tab: None,
             held_since: None,
@@ -1012,13 +1018,26 @@ impl Shell {
         pane.map_or(TogglesAt::Strip, |p| TogglesAt::Pane(p.id))
     }
 
-    /// Whether the tab strip shows: two tabs or more, or one asked for
+    /// Whether the tabs are listed: two tabs or more, or one asked for
     /// (`ui.single_tab`). Read from what `sync_tabs` followed, never the
     /// workspace: a row asks this under the workspace's read guard, and a
     /// second read behind a waiting writer would never be granted
     /// (`parking_lot` locks are fair).
-    pub fn strip_shown(&self) -> bool {
+    pub fn tabs_listed(&self) -> bool {
         self.prefs.single_tab || self.tab_count > 1
+    }
+
+    /// Whether the sidebar lists the tabs, as its first group, when it is
+    /// drawn (`ui.tabs_at`).
+    pub fn sidebar_lists_tabs(&self) -> bool {
+        self.prefs.tabs_in_sidebar && self.tabs_listed()
+    }
+
+    /// Whether the tab strip shows: the tabs are listed, and not by the
+    /// sidebar drawn this frame. A sidebar put away, or a window too narrow
+    /// for it, gives them the strip back, so the tabs are always in sight.
+    pub fn strip_shown(&self) -> bool {
+        self.tabs_listed() && !(self.sidebar_lists_tabs() && self.sidebar_drawn > 0.)
     }
 
     /// The UI of pane `id`, wherever it is: drawn, held, or dormant.
@@ -2846,6 +2865,11 @@ impl Shell {
                 .settings
                 .get::<bool>(crate::settings::SINGLE_TAB_KEY)
                 .unwrap_or(false);
+            self.prefs.tabs_in_sidebar = self
+                .app
+                .settings
+                .get::<String>(crate::settings::TABS_AT_KEY)
+                .is_some_and(|at| at == crate::settings::TABS_IN_SIDEBAR);
             self.prefs.full_path = self
                 .app
                 .settings
