@@ -612,6 +612,14 @@ fn said_value(items: &[MenuItem], first: usize) -> usize {
         .unwrap_or(first)
 }
 
+/// The index in the tags' palette of the color `name`
+/// (`skwir_core::metadata::TAG_COLORS`).
+fn palette_index(name: &str) -> Option<usize> {
+    skwir_core::metadata::TAG_COLORS
+        .iter()
+        .position(|c| *c == name)
+}
+
 /// Whether `icon` names a bundled icon.
 fn bundled(icon: &str) -> bool {
     crate::toolbar::asset(&format!("toolbar/{icon}.svg")).is_some()
@@ -1058,6 +1066,7 @@ impl Shell {
                 submenu: None,
                 checked: None,
                 choice: None,
+                color: None,
             })
             .collect();
         items.push(MenuItem::new(
@@ -1653,6 +1662,17 @@ fn row_element(
         }
         Row::Choice(first) => return choice_element(shell, menu, *first, at, theme, cx),
     };
+    // A tag's item: its title drawn as the tag's chip, as views draw it.
+    let chip = match &row {
+        Row::Item(index) => {
+            let item = &menu.items[*index];
+            item.color
+                .as_deref()
+                .filter(|_| item.choice.is_none())
+                .and_then(palette_index)
+        }
+        _ => None,
+    };
     let open = matches!(&row, Row::Parent(name) if menu.open.as_ref() == Some(name));
     let is_parent = matches!(row, Row::Parent(_));
     let chosen = match &row {
@@ -1748,7 +1768,13 @@ fn row_element(
                 .size(px(16.))
                 .text_color(muted)
         })))
-        .child(div().flex_1().child(title))
+        .child(match chip {
+            Some(color) => div()
+                .flex_1()
+                .flex()
+                .child(crate::tags::chip_in_full(&title, color, theme)),
+            None => div().flex_1().child(title),
+        })
         .children(keys.map(|keys| {
             div()
                 .flex_none()
@@ -1887,11 +1913,7 @@ fn choice_element(
             .children(values.iter().map(|&v| {
                 let item = &menu.items[v];
                 let on = item.is_on();
-                let color = item.icon.as_deref().and_then(|name| {
-                    skwir_core::metadata::TAG_COLORS
-                        .iter()
-                        .position(|c| *c == name)
-                });
+                let color = item.color.as_deref().and_then(palette_index);
                 // A color found otherwise (from a tag's name) is a dashed
                 // ring. The one chosen holds a check; the keys' ring is in
                 // the text's color, which every swatch shows.
@@ -2131,6 +2153,7 @@ mod tests {
             submenu: submenu.map(str::to_owned),
             checked: None,
             choice: None,
+            color: None,
         }
     }
 

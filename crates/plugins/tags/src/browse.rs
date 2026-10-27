@@ -25,6 +25,7 @@ use skwir_core::workspace::PaneId;
 use skwir_platform::mime::Kind;
 
 use crate::location::{Address, SCHEME};
+use crate::vocabulary::Vocabulary;
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct DropArgs {
@@ -614,8 +615,8 @@ fn item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
     MenuItem::new("context", title, icon, order, command).when("place")
 }
 
-/// A tag's colors: one choice, drawn as swatches (each value's icon names
-/// its color), from its name first, `color` the one it was given.
+/// A tag's colors: one choice, drawn as swatches (each value's
+/// `MenuItem::color`), from its name first, `color` the one it was given.
 fn color_items(tag: &str, color: Option<&str>) -> Vec<MenuItem> {
     std::iter::once(("From Its Name".to_owned(), None))
         .chain(TAG_COLORS.iter().map(|name| {
@@ -624,16 +625,20 @@ fn color_items(tag: &str, color: Option<&str>) -> Vec<MenuItem> {
             (title, Some(*name))
         }))
         .map(|(title, value)| {
-            item(
+            let item = item(
                 &title,
                 Invocation::with_args(
                     "tags.color",
                     &serde_json::json!({ "tag": tag, "color": value }),
                 ),
                 0,
-                value.unwrap_or_default(),
+                "",
             )
-            .value_of("Color", ChoiceLook::Colors, color == value)
+            .value_of("Color", ChoiceLook::Colors, color == value);
+            match value {
+                Some(value) => item.colored(value),
+                None => item,
+            }
         })
         .collect()
 }
@@ -732,7 +737,7 @@ const FILES_MENU_READ: usize = 1000;
 /// left open for the next. What a tag itself offers (its files here, its
 /// place, its color) is its chip's menu and the sidebar's. Answers from
 /// memory.
-pub fn files_menu(app: &App, a: PaneOnly) -> Outcome {
+pub fn files_menu(app: &App, vocabulary: &Vocabulary, a: PaneOnly) -> Outcome {
     let pane = app.pane_or_active(a.pane);
     // Each tag, with how many of the files read have it.
     let mut tags: Vec<(String, usize)> = Vec::new();
@@ -775,6 +780,8 @@ pub fn files_menu(app: &App, a: PaneOnly) -> Outcome {
         )
     });
     tags.truncate(FILES_MENU_TAGS);
+    // Each drawn as its chip, in the color it wears everywhere.
+    let colors = crate::sidebar::Colors::of(app);
     let items: Vec<MenuItem> = tags
         .iter()
         .zip(510..)
@@ -800,7 +807,8 @@ pub fn files_menu(app: &App, a: PaneOnly) -> Outcome {
                     &serde_json::json!({ "tag": tag, "pane": pane }),
                 ),
             )
-            .submenu(crate::TAGS_SUBMENU);
+            .submenu(crate::TAGS_SUBMENU)
+            .colored(&colors.of_tag(vocabulary, tag));
             match *count {
                 0 => item.checked(false),
                 all if all == read => item.checked(true),

@@ -224,6 +224,29 @@ fn chip_frame(color: usize, theme: &Theme) -> Div {
         .child(dot(color, theme).size(px(7.)).mr(px(4.)))
 }
 
+/// A tag's place in the sidebar: the views' chip (its dot, its tint, its
+/// corners) at the sidebar's text size, a target for the pointer. One its
+/// owner suggests rather than one kept (`Place::suggested`) has its dot
+/// without the tint: an outline is a narrowing to the files without a
+/// tag (`toolbar::Tint`), never a fainter tag.
+pub fn place_chip(color: usize, kept: bool, theme: &Theme) -> Div {
+    div()
+        .flex_none()
+        .h(px(PLACE_CHIP_HEIGHT))
+        .flex()
+        .items_center()
+        .whitespace_nowrap()
+        .pl(px(7.))
+        .pr(px(8.))
+        .rounded_sm()
+        .text_sm()
+        .when(kept, |d| d.bg(theme.tag_fill(color)))
+        .child(dot(color, theme).size(px(8.)).mr(px(6.)))
+}
+
+/// A tag's place's height in the sidebar.
+pub const PLACE_CHIP_HEIGHT: f32 = 22.;
+
 /// How many tags a line left out, as a chip without a color.
 pub fn more_chip(n: usize, color: gpui::Hsla) -> Div {
     div()

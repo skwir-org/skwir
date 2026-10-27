@@ -266,8 +266,8 @@ pub struct Place {
     /// How the place is put in order among its group by dragging.
     pub reorder: Option<Reorder>,
     /// A color of the tags' palette ([`crate::metadata::TAG_COLORS`], by
-    /// name): the place is a tag's, drawn as a pill of that color, the
-    /// pills of a group wrapping together.
+    /// name): the place is a tag's, drawn as the tag's chip in that color,
+    /// as the views draw tags, the chips of a group wrapping together.
     pub color: Option<String>,
     /// Offered by its owner rather than kept by the user (a tag used
     /// often, while none is pinned): drawn fainter than the places kept.
@@ -465,6 +465,12 @@ pub struct MenuItem {
     /// their looks allow it (`Choice`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub choice: Option<Choice>,
+    /// A color of the tags' palette ([`crate::metadata::TAG_COLORS`], by
+    /// name), as [`Place::color`]: the item is a tag's, its title drawn as
+    /// the tag's chip, as every view draws tags; a value of a choice drawn
+    /// as colors (`ChoiceLook::Colors`) is a swatch of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
 }
 
 /// Whether a [`MenuItem`] is on.
@@ -498,9 +504,8 @@ pub enum ChoiceLook {
     /// not; a submenu they fill says the one chosen on its own row.
     #[default]
     Icons,
-    /// By their colors: each value's `icon` names one of
-    /// [`crate::metadata::TAG_COLORS`], or none for a color found
-    /// otherwise (from a tag's name). A row of swatches.
+    /// By their colors (`MenuItem::color`), none for a color found
+    /// otherwise (from a tag's name): a row of swatches.
     Colors,
     /// By stars: the values from the most to none, a row of stars filled
     /// up to the value chosen. The last value is none: pressing the star
@@ -528,6 +533,7 @@ impl MenuItem {
             submenu: None,
             checked: None,
             choice: None,
+            color: None,
         }
     }
 
@@ -549,6 +555,13 @@ impl MenuItem {
     #[must_use]
     pub fn checked(mut self, on: bool) -> Self {
         self.checked = Some(if on { Check::On } else { Check::Off });
+        self
+    }
+
+    /// A tag's, of the palette's `color` (`MenuItem::color`).
+    #[must_use]
+    pub fn colored(mut self, color: &str) -> Self {
+        self.color = Some(color.to_owned());
         self
     }
 

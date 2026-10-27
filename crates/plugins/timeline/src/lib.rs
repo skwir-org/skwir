@@ -1201,6 +1201,7 @@ impl Plugin for TimelinePlugin {
                 submenu: None,
                 checked: None,
                 choice: None,
+                color: None,
             },
         );
     }

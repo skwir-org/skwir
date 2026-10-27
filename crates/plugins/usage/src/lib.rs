@@ -450,6 +450,7 @@ impl Plugin for UsagePlugin {
                 submenu: None,
                 checked: None,
                 choice: None,
+                color: None,
             },
         );
     }

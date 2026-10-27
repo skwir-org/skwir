@@ -604,8 +604,16 @@ of bars, split or not.
   tooltip), `busy` ("Unlocking…": a still hourglass, nothing to click
   until done), `menu` (its own items). A rescan publishes at once and
   keeps the last measurements (`carry_over`), so nothing blinks.
-- A place with a `color` is a tag-colored pill; pills wrap together
-  (`sidebar::wrap_pills`, layout only).
+- **A tag looks the same wherever it is shown:** its chip, a dot and a
+  tint of its color (`tags::chip`): on files' rows and tiles, in
+  Properties and the preview's header, in the sidebar
+  (`tags::place_chip`, a place with a `color`; chips wrap together,
+  `sidebar::wrap_pills`), in the address's trail, and in menus (an item
+  with a `MenuItem::color`: the Tags submenu, the Tags section's menu).
+  The one shown is filled deeper (`Theme::tag_shown`). A tag the sidebar
+  only suggests keeps its dot without the tint: an outline in a tag's
+  color means the files without it (a narrowing's pill, `toolbar::Tint`),
+  never a fainter tag.
 - **Pointed at, a place rings its files where they are.** A place whose
   location says tags of what it lists (a tag's pill, a saved search for
   one: `LocationProvider::tags_shown`) rings the entries the pane shows
@@ -629,9 +637,10 @@ of bars, split or not.
 - Files the desktop shares (bookmarks, `mimeapps.list`) are rewritten
   only through `skwir_platform::file::rewrite`, by an edit returning its
   inverse.
-- **Tag pills:** pinned tags (`tags.pin`, ordered by dragging, unpinned
-  by the keep button), else suggestions from the index
-  (`Place::suggested`, outlined), then All Tags (`tags:/`). A home tag
+- **Tags in the sidebar:** pinned tags (`tags.pin`, ordered by dragging,
+  unpinned by the keep button), else suggestions from the index
+  (`Place::suggested`, their dots without the tint), then All Tags
+  (`tags:/`). A home tag
   folder, not narrowed, is kept as its pin (`Keeper::keeps`).
   Shift+click narrows to files that also have the tag; Alt+click shows its
   files in the folder shown (`tags.pill`). The tag editor offers pinned

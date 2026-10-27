@@ -6,8 +6,9 @@
 //! opens the place's own menu (`Place::menu`: rename or remove a bookmark
 //! or a saved search), and a place its owner lets move (`Place::reorder`:
 //! bookmarks, saved searches) is put in order by dragging it among the
-//! others of its group. A place with a color (a tag's) is a pill of it,
-//! the pills of a group wrapping together, and a place with a `drop`
+//! others of its group. A place with a color (a tag's) is the tag's chip,
+//! as the views draw it, the chips of a group wrapping together, and a
+//! place with a `drop`
 //! command takes files dropped on it (a tag gives them itself).
 //!
 //! The groups are the user's to arrange (`Sections`, remembered with the
@@ -755,7 +756,7 @@ pub fn render(
     }
     let mut last_group: Option<String> = None;
     let mut indices: HashMap<(String, String), usize> = HashMap::new();
-    // A group's tags, drawn as pills that wrap together.
+    // A group's tags, drawn as their chips, wrapping together.
     let mut pills: Vec<AnyElement> = Vec::new();
     for arranged in places {
         let Arranged {
@@ -1276,10 +1277,12 @@ fn row_key(place: &Place) -> u64 {
     crate::elements::key_of((&place.group, &place.location, &place.key, &place.title))
 }
 
-/// A tag's place as a pill of its color: it opens as a row does (a click,
-/// a middle click for a tab behind, a right click for its menu), and files
-/// dropped on it get what its `drop` gives them (the tag). One its owner
-/// suggests is an outline of its color, the pills kept filled.
+/// A tag's place as its chip (`tags::place_chip`), as the views draw tags:
+/// it opens as a row does (a click, a middle click for a tab behind, a
+/// right click for its menu), and files dropped on it get what its `drop`
+/// gives them (the tag). One its owner suggests has its dot without the
+/// tint; the one shown is filled deeper and edged with the accent, as the
+/// keyboard's is edged.
 fn pill(
     i: u64,
     place: &Place,
@@ -1301,31 +1304,16 @@ fn pill(
         place.title
     )
     .into();
-    div()
+    crate::tags::place_chip(color, !place.suggested, &theme)
         .id(crate::elements::known_by("place", i))
-        .flex_none()
         .max_w_full()
-        .h(px(22.))
-        .px(px(9.))
-        .flex()
-        .items_center()
-        .rounded(px(11.))
         .border_1()
         .border_color(if is_current || at_cursor {
             theme.accent
-        } else if place.suggested {
-            tone.opacity(0.6)
         } else {
             gpui::transparent_black()
         })
-        .bg(if is_current {
-            theme.tag_shown(color)
-        } else if place.suggested {
-            gpui::transparent_black()
-        } else {
-            theme.tag_fill(color)
-        })
-        .text_sm()
+        .when(is_current, |d| d.bg(theme.tag_shown(color)))
         .text_color(if place.suggested && !is_current {
             theme.text_muted
         } else {
@@ -2046,6 +2034,7 @@ impl Shell {
                 submenu: None,
                 checked: None,
                 choice: None,
+                color: None,
             }
         };
         let sections = &self.sidebar_sections;
@@ -2116,6 +2105,10 @@ impl Shell {
                     )
                     .checked(arranged.shown),
                 );
+                // A tag's place is said as its chip, as the sidebar draws it.
+                if let (Some(item), Some(color)) = (items.last_mut(), &arranged.place.color) {
+                    item.color = Some(color.clone());
+                }
             }
             if sections.places.get(group).is_some_and(|a| !a.is_empty()) {
                 items.push(place_item(

@@ -1334,7 +1334,10 @@ impl Plugin for TagsPlugin {
                 "tags.files_menu",
                 "Tags of the selection's menu",
                 "The context menu's Tags submenu: the tags the selected files have, then the pinned ones, each checked when they all have it, partly when some do, pressing it toggling it on them all",
-                |a, app| Ok(browse::files_menu(app, a)),
+                {
+                    let vocabulary = Arc::clone(&vocabulary);
+                    move |a, app| Ok(browse::files_menu(app, &vocabulary, a))
+                },
             )
             .data();
         app.commands.register::<browse::PaneOnly, _>(

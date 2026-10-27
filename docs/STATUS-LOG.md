@@ -6078,3 +6078,32 @@ those offered:
     it opened the browser on the test display, under the test's home;
     stopped by its pids, its profile removed with the fixture.
   - Not run: `just release-check`, `just check-cross`.
+
+### A tag looks the same everywhere (2026-10-27)
+
+- **Asked:** "style the tags in contextual menus and the places sidebar
+  the same way they are styled elsewhere, for consistency? Or is there a
+  good reason not to?"
+- **Found:** files' rows and tiles, Properties and the preview's header
+  draw a tag as its chip (`tags::chip`: a dot and a tint of its color).
+  The sidebar drew a rounder, larger pill without a dot, a suggested tag
+  as an outline of its color, which the address's search pills already
+  use for the files without a tag (`toolbar::Tint`, hollow). The context
+  menu's Tags submenu wrote names alone. The trail's tag crumb, said to
+  be "its chip", had no dot. No reason found to keep them apart.
+- **Built:**
+  - `tags::place_chip`: the views' chip at the sidebar's size; a pinned
+    tag tinted, a suggested one its dot without the tint, the one shown
+    filled deeper and edged with the accent as before.
+  - `MenuItem::color` (a palette color by name, as `Place::color`): an
+    item that is a tag's has its title drawn as the tag's chip
+    (`tags::chip_in_full`); the Tags submenu's checks carry their tags'
+    colors (`sidebar::Colors::of_tag`), the Tags section's menu its tag
+    places'. A Colors choice's swatches read it too, instead of `icon`.
+  - The trail's tag crumb has its dot.
+- **Checked:** rustfmt; clippy (`-D warnings`) on skwir-core, skwir-ui,
+  the tags plugin and the crates whose items gained the field; their
+  tests (973), `plugins_toggle`, `keymap_titles`; `just a11y-check`. On
+  Xvfb: the Tags submenu's chips, the sidebar's suggested tags, a pinned
+  one, the one shown, the Tags section's menu, the trail. Not run:
+  `just release-check`, `just check-cross`.

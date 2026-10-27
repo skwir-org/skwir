@@ -297,6 +297,7 @@ impl Plugin for ShellPlugin {
                     submenu: Some(submenu.into()),
                     checked: None,
                     choice: None,
+                    color: None,
                 },
             );
         }

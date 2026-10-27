@@ -100,6 +100,7 @@ pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
                 submenu: None,
                 checked: None,
                 choice: None,
+                color: None,
             },
         );
     }

@@ -735,6 +735,7 @@ impl Plugin for ShelfPlugin {
                     submenu: None,
                     checked: None,
                     choice: None,
+                    color: None,
                 },
             );
         }

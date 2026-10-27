@@ -1533,13 +1533,15 @@ fn breadcrumbs(
             .cursor_pointer()
             .text_color(ink)
             .map(|d| match crumb.tag.as_ref().map(|tag| tag.name.as_str()) {
-                // A tag is its chip, as on a file's row, the one shown
-                // filled as its pill in the sidebar: never a folder's name,
-                // even when the folders before it are out of sight.
+                // A tag is its chip, as on a file's row (its dot, its
+                // tint), the one shown filled deeper as in the sidebar:
+                // never a folder's name, even when the folders before it
+                // are out of sight.
                 Some(tag) => {
                     let color = shell.tag_colors.of(tag);
                     let tone = theme.tag(color);
-                    d.h(px(20.))
+                    d.child(crate::tags::dot(color, theme).size(px(7.)))
+                        .h(px(20.))
                         .line_height(px(20.))
                         .border_1()
                         .border_color(gpui::transparent_black())

@@ -455,6 +455,7 @@ fn menu_item(title: &str, command: &str, order: i32, icon: &str) -> MenuItem {
         submenu: Some("Tags".into()),
         checked: None,
         choice: None,
+        color: None,
     }
 }
 

@@ -650,6 +650,7 @@ impl Plugin for OpsBasicPlugin {
                     submenu: None,
                     checked: None,
                     choice: None,
+                    color: None,
                 },
             );
         }
