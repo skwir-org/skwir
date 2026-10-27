@@ -263,7 +263,7 @@ it, **+ Filter** adds one, and the text can be typed as is:
 | `size>10M`, `size<1.5G` | by size |
 | `modified>=2026-01-01`, `modified<7d`, `modified:this-week` | by date (`created:`, `accessed:` too) |
 | `taken:2023-04`, `taken:2023-04-15..2023-04-17`, `taken>=last-year` | pictures and videos by when they were taken, as the camera's clock says |
-| `tag:Places/France`, `-tag:draft` | with a tag, or without |
+| `#print`, `tag:Places/France`, `-#draft` | with a tag, or without (`"#3"` is a name) |
 | `rating>=3`, `comment:holiday` | by rating or comment |
 | `content:"it's here"`, `content:/re+gex/i` | files containing text or a regex |
 | `near:45.0,6.0~5km` | files made near a point (a picture's position) |
@@ -271,7 +271,7 @@ it, **+ Filter** adds one, and the text can be typed as is:
 | `a OR b`, `NOT a`, `(a b)` | either, not, together |
 
 - While you type, the address colors the terms it understands, completes
-  their values (`kind:` lists the kinds, `tag:` your tags, `modified:` the
+  their values (`kind:` lists the kinds, `#` your tags, `modified:` the
   periods) and says what it cannot read before you press `Enter`. Plain
   words that read as terms (`pdf last week`) are offered as such under
   the search of the words themselves.

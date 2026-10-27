@@ -197,3 +197,15 @@ ADR-070 (the field's rows) and retires the Jump overlay.
   search of depth 1 would lose what a folder is. Ctrl+I, proposed first
   and Dolphin's filter key, stays Properties, as in GNOME's Files and a
   Mac's Get Info. The user chose it from mock-ups.
+- Amended 2026-10-28: `#print` is `tag:print`, as tags are written in
+  notes, chats and posts; nobody types `tag:` before learning it. A word
+  starting with `#` is the tag key, in the parser's tokenizer and the
+  field's lexer alike, so its value is completed, coloured, negated
+  (`-#draft`), quoted (`#"road trip"`) and nested (`#Places/France`) as
+  `tag:`'s is; `#` alone is the key with no tag yet, and the field offers
+  the tags (the tags source answers `#` and what follows it). A name that
+  starts with `#` is written quoted (`"#3"`, `name:#3`), and `quote`
+  writes it so; "C#" stays a name. The field offers the words again with
+  each `#` word as a name (Search in › Names), for a name that has one.
+  Searches are still written with `tag:` (saved searches, agents, the
+  pills' rewriting, `?`): a shell reads `#` as a comment.

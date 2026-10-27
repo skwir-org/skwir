@@ -389,8 +389,12 @@ impl skwir_core::suggest::SuggestSource for TagSuggestions {
         ID
     }
 
+    /// Two letters of a tag's name, or `#` and what follows (`#` alone:
+    /// the tags pinned first).
     fn answers(&self, ask: &skwir_core::suggest::Ask) -> bool {
-        ask.typed == skwir_core::suggest::Typed::Words && ask.words().chars().count() >= 2
+        let words = ask.words();
+        ask.typed == skwir_core::suggest::Typed::Words
+            && (words.starts_with('#') || words.chars().count() >= 2)
     }
 
     fn suggest(
@@ -400,7 +404,8 @@ impl skwir_core::suggest::SuggestSource for TagSuggestions {
         _: &CancelToken,
     ) -> skwir_core::suggest::Answer {
         use skwir_core::suggest::{Answer, Section, Suggestion};
-        let words = ask.words().to_lowercase();
+        // `#print` is how a tag is written in a search.
+        let words = ask.words().trim_start_matches('#').to_lowercase();
         let mut found: Vec<(i32, String)> = known(sidebar::pinned(app), self.vocabulary.known())
             .into_iter()
             .filter_map(|tag| {
@@ -1540,6 +1545,36 @@ mod tests {
     use skwir_core::registry::Check;
     use std::path::Path;
     use std::time::Duration;
+
+    /// The address field's tags: `#` and what follows is a tag's name, as
+    /// a search writes it; `#` alone offers the tags.
+    #[test]
+    fn a_hash_typed_offers_the_tags() {
+        use skwir_core::suggest::{Ask, SuggestSource, Typed};
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let vocabulary = Vocabulary::new(None, &app, app.lifetime().child());
+        vocabulary.saw(&["print".to_owned(), "Places/France".to_owned()]);
+        let source = TagSuggestions { vocabulary };
+        let ask = |text: &str| Ask {
+            text: text.to_owned(),
+            caret: text.len(),
+            typed: Typed::Words,
+            scope: None,
+            shown: None,
+            dir: None,
+            pane: None,
+        };
+        let titles = |text: &str| {
+            let ask = ask(text);
+            assert!(source.answers(&ask), "{text}");
+            let rows = source.suggest(&app, &ask, &CancelToken::new()).rows;
+            rows.into_iter().map(|r| r.title).collect::<Vec<_>>()
+        };
+        assert_eq!(titles("#pr"), ["print"]);
+        assert_eq!(titles("#").len(), 2);
+        assert!(!source.answers(&ask("p")));
+    }
 
     fn home_tempdir() -> tempfile::TempDir {
         let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");

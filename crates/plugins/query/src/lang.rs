@@ -427,6 +427,10 @@ fn tokenize(s: &str) -> Result<Vec<Tok>, ParseError> {
         }) {
             word.key = Some(key);
             i += key.len() + 1;
+        } else if c == '#' {
+            // `#print` is `tag:print`, as tags are written elsewhere.
+            word.key = Some("tag");
+            i += 1;
         }
         let first = cs.get(i).copied();
         if word.key == Some("content")
@@ -1291,7 +1295,7 @@ fn is_plain(s: &str) -> bool {
             .is_some_and(|rest| rest.starts_with(['<', '>', '=']))
     };
     !s.contains(is_break)
-        && !matches!(first, '"' | '\'' | '-' | '~')
+        && !matches!(first, '"' | '\'' | '-' | '~' | '#')
         && s != "OR"
         && s != "NOT"
         && !KEYS
@@ -2326,6 +2330,9 @@ mod tests {
             ("\"size>1\"", "size>1"),
             ("name:\"a b\"", "a b"),
             ("a[b", "a[b"),
+            ("C#", "C#"),
+            ("\"#3\"", "#3"),
+            ("name:#3", "#3"),
         ] {
             let Some(Expr::Term(Term::Name(p))) = q(s).expr else {
                 panic!("`{s}` is not a name");
@@ -2339,6 +2346,26 @@ mod tests {
         assert_eq!(items.len(), 2);
         assert!(matches!(&items[0], Expr::Term(Term::Name(p)) if p.text == "it's"));
         assert!(matches!(&items[1], Expr::Term(Term::Name(p)) if p.text == "bob's"));
+    }
+
+    /// `#` starting a word is `tag:`, as tags are written elsewhere: one
+    /// meaning, written back with its key.
+    #[test]
+    fn a_hash_is_a_tag() {
+        for (s, written) in [
+            ("#print", "tag:print"),
+            ("#Places/France", "tag:Places/France"),
+            ("#\"road trip\"", "tag:\"road trip\""),
+            ("-#draft", "NOT tag:draft"),
+            ("(#a OR #b) dunes", "(tag:a OR tag:b) name:dunes"),
+            ("#*", "tag:*"),
+        ] {
+            assert_eq!(q(s).to_string(), q(written).to_string(), "{s}");
+        }
+        assert!(matches!(q("#*").expr, Some(Expr::Term(Term::AnyTag))));
+        // Alone, it is a key waiting for its tag.
+        assert!(parse_at("#", now()).is_err());
+        assert!(parse_at("dunes #", now()).is_err());
     }
 
     #[test]
@@ -2891,7 +2918,7 @@ mod tests {
         /// the same name: keywords, dashes, keys, quotes, backslashes.
         #[test]
         fn quote_round_trips(
-            s in "(OR|NOT|-|in:|name:|content:/|size>|modified<|taken>|~|\"|'|\\\\|\\\\x41|\\\\xff|\\(|\\)| |\t|\n|a|é|\\*|/){1,8}"
+            s in "(OR|NOT|-|#|in:|name:|content:/|size>|modified<|taken>|~|\"|'|\\\\|\\\\x41|\\\\xff|\\(|\\)| |\t|\n|a|é|\\*|/){1,8}"
         ) {
             let parsed = parse_at(&quote(&s), now()).unwrap();
             let Some(Expr::Term(Term::Name(p))) = parsed.expr else {

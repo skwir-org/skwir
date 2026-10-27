@@ -266,7 +266,7 @@ fn typed(app: &App, ask: &Ask) -> Answer {
                     .runs(search(&expr, &other, ask)),
             );
         }
-        if lang::parse(words).is_ok_and(|q| !q.reads_files()) && !words.contains(':') {
+        if lang::parse(words).is_ok_and(|q| !q.reads_files()) && assist::only_words(words) {
             rows.push(
                 Suggestion::new(Section::SearchIn, "Contents")
                     .icon("contents")
@@ -276,6 +276,17 @@ fn typed(app: &App, ask: &Ask) -> Answer {
                         &scope,
                         ask,
                     )),
+            );
+        }
+        // A word written `#tag` is a tag; the same words in names, for a
+        // name that has one (`#3`, an editor's `#notes#`).
+        if let Some(names) = assist::hashes_as_names(words) {
+            rows.push(
+                Suggestion::new(Section::SearchIn, "Names")
+                    .detail(names.clone())
+                    .icon("search")
+                    .rank(4)
+                    .runs(search(&names, &scope, ask)),
             );
         }
     }
@@ -534,6 +545,23 @@ mod tests {
         assert_eq!(r[0].completion.as_deref(), Some("dunes kind:image"));
         assert_eq!(r[0].rest.as_deref(), Some("age"));
         assert!(r.iter().any(|s| s.section == Section::Complete));
+    }
+
+    /// `#print` searches the tag; the same word in names is a row below,
+    /// and no contents search is offered for a term.
+    #[test]
+    fn a_hash_searches_a_tag_and_names_are_a_row_below() {
+        let r = rows("#print dunes");
+        assert_eq!(r[0].title, "Search “#print dunes”");
+        let names = r.iter().find(|s| s.title == "Names").expect("names");
+        assert_eq!(
+            names.run.as_ref().unwrap().args["expr"],
+            r##""#print" dunes"##
+        );
+        assert!(r.iter().all(|s| s.title != "Contents"));
+        let r = rows("dunes");
+        assert!(r.iter().any(|s| s.title == "Contents"));
+        assert!(r.iter().all(|s| s.title != "Names"));
     }
 
     #[test]

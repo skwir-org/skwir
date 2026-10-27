@@ -127,6 +127,9 @@ and `notes.agree` are core `notes.*` commands.
 - Pills and the address field: [shell.md](shell.md). The query language
   belongs to the query plugin, and so does what the address field offers
   of it (ADR-098: `field.rs`, `assist.rs`), as a source like any other.
+  The parser's tokenizer and the field's lexer split text alike: a change
+  to what a word is (`#print` is `tag:print`) is made in both, and
+  `quote` writes a name that would read otherwise (`"#3"`).
 - **Scopes (ADR-098).** Words search where the address field's scope
   says: a folder is the search's root; a tag is searched as the tag every
   match has, from the home folder; another place (Recent) is searched as

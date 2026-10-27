@@ -6279,3 +6279,26 @@ those offered:
   folder, its pill removed, shows the folder, Back the search; one in
   Recent, its pill removed, shows Recent. Not run: `just check-cross`,
   `just release-check`.
+
+### `#tag` in a search (2026-10-28, ADR-098 amended)
+
+- **Built:** a word starting with `#` is `tag:` (`lang::tokenize` and
+  `assist::lex` alike): `#print`, `-#draft`, `#"road trip"`,
+  `#Places/France`, `#*`; `#` alone waits for its tag. `quote` writes a
+  name starting with `#` quoted (`"#3"`); "C#" stays a name. Searches are
+  still written with `tag:`. In the address field `#` alone offers the
+  tags (the query plugin's completion of the pane's tags, the tags
+  source's rows, which now read `#` and what follows); a tag value that
+  only starts the names offered (`#pr`, `tag:pr` too) is still being
+  typed, so Enter takes the first and no live search runs for a tag
+  nobody has. Search in › Names searches the same words with each `#`
+  word as a name; Contents is offered for plain words only
+  (`assist::only_words`, which `size>1M` is not either).
+- **Checked:** rustfmt; clippy (`-D warnings`) on `skwir-plugin-query` and
+  `skwir-plugin-tags`; their tests (query 98, tags 66 passed; the
+  quoting property test with `#` in its alphabet); the search, tags, CLI,
+  timeline and toggle integration tests (35 passed). On Xvfb at 1280 ×
+  860: `#` alone listing the tags to complete and to go to; `#pr` offering
+  "Search “#print”", Enter showing the four files tagged print under a
+  print pill; `#3` showing nothing found and Names. Not run:
+  `just check-cross`, `just a11y-check`, `just release-check`.

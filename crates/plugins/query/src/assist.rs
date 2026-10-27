@@ -15,7 +15,7 @@ use std::ops::Range;
 use serde::Serialize;
 use skwir_core::app::App;
 use skwir_core::command::{Invocation, Outcome};
-use skwir_core::metadata::tag_leaf;
+use skwir_core::metadata::{same_tag, tag_leaf};
 use skwir_core::workspace::PaneId;
 use skwir_platform::mime::Kind;
 
@@ -43,7 +43,7 @@ static KEYS: [KeyInfo; 20] = [
         false,
     ),
     key("size", "sliders", ">100M, <1M, 1M..100M", false),
-    key("tag", "tag", "a tag, or * for any", false),
+    key("tag", "tag", "a tag, or * for any; #tag too", false),
     key("content", "contents", "\"words\" or /regex/", false),
     key(
         "taken",
@@ -189,6 +189,9 @@ fn lex(text: &str) -> Vec<Lexeme> {
         }) {
             i += k.name.len() + 1;
             key = Some((k.name, off(i)));
+        } else if c == '#' {
+            i += 1;
+            key = Some(("tag", off(i)));
         }
         let mut quoted = false;
         let mut unterminated = false;
@@ -404,6 +407,32 @@ pub fn check(text: &str) -> Option<String> {
     lang::parse(text).err().map(|e| e.to_string())
 }
 
+/// Whether `text` is words alone: no key, comparison or operator.
+pub fn only_words(text: &str) -> bool {
+    lex(text)
+        .iter()
+        .all(|l| matches!(l, Lexeme::Word(w) if w.key.is_none()))
+}
+
+/// `text` with each tag written `#tag` searched as a name instead
+/// (`"#3"`), for a name that has one; `None` when it has none.
+pub fn hashes_as_names(text: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len() + 2);
+    let mut at = 0;
+    for lexeme in lex(text) {
+        if let Lexeme::Word(w) = lexeme
+            && !w.quoted
+            && w.range.len() > 1
+            && text[w.range.clone()].starts_with('#')
+        {
+            out.push_str(&text[at..w.range.start]);
+            out.push_str(&lang::quote(&text[w.range.clone()]));
+            at = w.range.end;
+        }
+    }
+    (at > 0).then(|| out + &text[at..])
+}
+
 /// Why `text` cannot be searched yet, as the field shows it with the
 /// caret at `caret`: the first term that does not parse, else what the
 /// parser says of the whole. A term still being typed at the caret, an
@@ -466,13 +495,18 @@ pub fn complete(text: &str, caret: usize, tags: &[String]) -> Completed {
         };
     };
     let range = w.range.clone();
-    let typing = verdict(text, w).is_err() && typing(text, w, caret);
     let items = match w.key {
         _ if w.unterminated => Vec::new(),
         None if w.quoted => Vec::new(),
         None => keys(&text[range.clone()]),
         Some((key, _)) => values(text, w, key, tags),
     };
+    // Any tag parses, so a tag is still being typed while it only starts
+    // the names of the tags offered (`#pr`): Enter takes the first.
+    let unnamed = w.key.is_some_and(|(k, _)| k == "tag")
+        && !items.is_empty()
+        && !tags.iter().any(|t| same_tag(t, w.value(text)));
+    let typing = (verdict(text, w).is_err() && typing(text, w, caret)) || unnamed;
     Completed {
         range,
         items,
@@ -505,8 +539,6 @@ fn values(text: &str, w: &WordLex, key: &'static str, tags: &[String]) -> Vec<It
     }
     let icon = key_info(key).map_or("search", |k| k.icon);
     let whole = &text[w.range.clone()];
-    // What follows the key's name: the colon or comparison, then the value.
-    let after = &whole[key.len()..];
     let value = w.value(text);
     let presets: &[(&str, &str)] = match key {
         "size" => &SIZE,
@@ -515,6 +547,9 @@ fn values(text: &str, w: &WordLex, key: &'static str, tags: &[String]) -> Vec<It
         _ => &[],
     };
     if !presets.is_empty() {
+        // What follows the key's name, written whole for these (never
+        // `#`): the colon or comparison, then the value.
+        let after = &whole[key.len()..];
         return presets
             .iter()
             .filter_map(|(label, preset)| {
@@ -902,6 +937,38 @@ mod tests {
 
     fn kinds(spans: &[Span]) -> Vec<(Range<usize>, SpanKind)> {
         spans.iter().map(|s| (s.range.clone(), s.kind)).collect()
+    }
+
+    /// `#` is the tag key: drawn as one, offering the tags, which it
+    /// writes after itself; the same words as names for the field's row.
+    #[test]
+    fn a_hash_is_the_tag_key() {
+        assert_eq!(
+            kinds(&tokens("#print dunes")),
+            vec![
+                (0..1, SpanKind::Key),
+                (1..6, SpanKind::Value),
+                (7..12, SpanKind::Word)
+            ]
+        );
+        let tags = vec!["print".to_owned(), "Places/France".to_owned()];
+        let texts = |c: Completed| c.items.into_iter().map(|i| i.text).collect::<Vec<_>>();
+        assert_eq!(texts(complete("#pr", 3, &tags)), ["#print"]);
+        // Still typed while it only starts a tag's name: Enter takes it.
+        assert!(complete("#pr", 3, &tags).typing);
+        assert!(!complete("#print", 6, &tags).typing);
+        assert!(!complete("#elsewhere", 10, &tags).typing);
+        // Alone, every tag, and no error while it is typed.
+        assert_eq!(complete("#", 1, &tags).items.len(), 2);
+        assert!(problem("#", 1).is_none());
+        assert!(problem("# dunes", 7).is_some());
+        assert_eq!(
+            hashes_as_names("#3 dunes -#x").as_deref(),
+            Some(r##""#3" dunes -"#x""##)
+        );
+        assert_eq!(hashes_as_names("C# tag:x"), None);
+        assert!(!only_words("#print") && !only_words("size>1M"));
+        assert!(only_words("water filter"));
     }
 
     #[test]
