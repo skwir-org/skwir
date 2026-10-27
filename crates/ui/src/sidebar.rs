@@ -2074,7 +2074,7 @@ impl Shell {
                     items.push(item(
                         "Move Up".into(),
                         serde_json::json!({ "group": group, "before": shown[at - 1] }),
-                        100,
+                        240,
                         Some("up"),
                     ));
                 }
@@ -2082,7 +2082,7 @@ impl Shell {
                     items.push(item(
                         "Move Down".into(),
                         serde_json::json!({ "group": group, "before": shown.get(at + 2) }),
-                        101,
+                        241,
                         Some("down"),
                     ));
                 }
@@ -2101,23 +2101,27 @@ impl Shell {
                 .filter(|a| a.place.group == group && a.role.hides())
                 .enumerate()
             {
-                items.push(place_item(
-                    arranged.place.title.clone(),
-                    serde_json::json!({
-                        "group": group,
-                        "key": arranged.place.key(),
-                        "hidden": arranged.shown,
-                    }),
-                    // In one group of the menu, however many there are.
-                    200 + i32::try_from(i.min(99)).unwrap_or_default(),
-                    arranged.shown.then_some("check"),
-                ));
+                items.push(
+                    place_item(
+                        arranged.place.title.clone(),
+                        serde_json::json!({
+                            "group": group,
+                            "key": arranged.place.key(),
+                            "hidden": arranged.shown,
+                        }),
+                        // What the group shows (4xx, ADR-099), in one group
+                        // of the menu however many there are.
+                        400 + i32::try_from(i.min(99)).unwrap_or_default(),
+                        None,
+                    )
+                    .checked(arranged.shown),
+                );
             }
             if sections.places.get(group).is_some_and(|a| !a.is_empty()) {
                 items.push(place_item(
                     format!("Reset {}", group_title(group)),
                     serde_json::json!({ "group": group, "reset": true }),
-                    300,
+                    290,
                     Some("revert"),
                 ));
             }
@@ -2141,18 +2145,23 @@ impl Shell {
         // Every group, checked while shown.
         for (i, g) in all.iter().enumerate() {
             let hidden = sections.hidden.contains(g);
-            items.push(item(
-                group_title(g),
-                serde_json::json!({ "group": g, "hidden": !hidden }),
-                400 + i32::try_from(i).unwrap_or_default(),
-                (!hidden).then_some("check"),
-            ));
+            // The sidebar's sections, after what the group shows: a group
+            // of the menu's own (6xx).
+            items.push(
+                item(
+                    group_title(g),
+                    serde_json::json!({ "group": g, "hidden": !hidden }),
+                    600 + i32::try_from(i).unwrap_or_default(),
+                    None,
+                )
+                .checked(!hidden),
+            );
         }
         if sections.arranged_by_user() {
             items.push(item(
                 "Reset Sections".into(),
                 serde_json::json!({ "reset": true }),
-                500,
+                690,
                 Some("revert"),
             ));
         }

@@ -316,7 +316,7 @@ fn folder_menu(path: &Path) -> Vec<MenuItem> {
             "places.bookmark",
             &serde_json::json!({ "path": PathArg::from(path) }),
         ),
-        200,
+        160,
         "bookmark",
     )]
 }
@@ -1509,7 +1509,8 @@ impl Plugin for PlacesPlugin {
         ] {
             app.registry.menus.add(
                 ID,
-                MenuItem::new("context", title, "bookmark", 250, command).when(when),
+                // Kept, beside the shelf (ADR-099).
+                MenuItem::new("context", title, "bookmark", 160, command).when(when),
             );
         }
         // Ctrl+D and the pane's button (the core `keep` command) bookmark

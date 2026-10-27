@@ -780,13 +780,13 @@ fn compress_is_offered_for_files_and_folders_in_their_menu() {
         .filter(|item| item.command.name.starts_with("archive.compress"))
         .collect();
     let titles: Vec<&str> = items.iter().map(|item| item.title.as_str()).collect();
-    assert_eq!(
-        titles,
-        ["Compress to ZIP", "Compress…", "Compress with a Password…"]
-    );
+    assert_eq!(titles, ["To ZIP", "Choose Format…", "With a Password…"]);
     for item in &items {
         assert_eq!(item.menu, "context");
         assert_eq!(item.when.as_deref(), Some("selection !place !restores"));
+        // One submenu, among what is made from the files (ADR-099).
+        assert_eq!(item.submenu.as_deref(), Some("Compress"));
+        assert_eq!(item.order / 100, 3);
     }
     // Withdrawn with its plugin.
     app.unregister_owner("archives");

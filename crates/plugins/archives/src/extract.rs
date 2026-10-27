@@ -662,7 +662,7 @@ pub fn register(app: &App, owner: &str) {
             "context",
             "Extract Here",
             "folder",
-            210,
+            310,
             Invocation::new("archive.extract"),
         )
         .when(&format!("selection {ARCHIVES} !place")),

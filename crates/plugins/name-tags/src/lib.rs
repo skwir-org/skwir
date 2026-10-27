@@ -450,7 +450,9 @@ fn menu_item(title: &str, command: &str, order: i32, icon: &str) -> MenuItem {
         when: Some("selection !place".into()),
         order,
         icon: Some(icon.into()),
-        submenu: Some("Notes".into()),
+        // With the tags they write, in the context menu's Tags submenu
+        // (ADR-099).
+        submenu: Some("Tags".into()),
         checked: None,
         choice: None,
     }
@@ -496,12 +498,13 @@ impl Plugin for NameTagsPlugin {
             |a, app| planned(app, a, untag_names),
         )
         .plans();
-        app.registry
-            .menus
-            .add(ID, menu_item("Tags into Name", "names.tag", 570, "tag"));
         app.registry.menus.add(
             ID,
-            menu_item("Tags out of Name", "names.untag", 571, "rename"),
+            menu_item("Write Tags into Name", "names.tag", 570, "tag"),
+        );
+        app.registry.menus.add(
+            ID,
+            menu_item("Take Tags out of Name", "names.untag", 571, "rename"),
         );
     }
 }

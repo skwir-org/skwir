@@ -561,11 +561,12 @@ impl Plugin for RenameBulkPlugin {
                 "context",
                 "Rename Several…",
                 "rename",
-                105,
+                201,
                 Invocation::new("ui.rename_bulk_prompt"),
             )
-            .when("selection !place")
-            .submenu("More"),
+            // Rename's place when several are selected (Rename is for
+            // one); Ctrl+F2 opens it for one too.
+            .when("selection !single !place"),
         );
     }
 }

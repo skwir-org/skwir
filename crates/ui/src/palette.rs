@@ -418,8 +418,9 @@ pub fn offered(
         offers.push(Offer::of(name, args.clone(), *title));
     }
     // A plugin's context-menu item that runs a shell command with its
-    // own arguments (Open With… is `ui.choose` over the plugin's list)
-    // has no command of its own to be listed by: list the item.
+    // own arguments (Other Application… is `ui.choose` over the plugin's
+    // list) has no command of its own to be listed by: list the item, by
+    // its submenu's name and its own where it is in one.
     for item in app.registry.menus.all() {
         let command = &item.command;
         if item.menu != "context"
@@ -430,7 +431,11 @@ pub fn offered(
         {
             continue;
         }
-        offers.push(Offer::of(&command.name, command.args.clone(), item.title));
+        let title = match &item.submenu {
+            Some(submenu) => format!("{submenu} › {}", item.title),
+            None => item.title,
+        };
+        offers.push(Offer::of(&command.name, command.args.clone(), title));
     }
     offers
 }

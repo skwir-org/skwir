@@ -698,7 +698,7 @@ impl Plugin for EditAsBufferPlugin {
                 "context",
                 "Edit as Text…",
                 "rename",
-                108,
+                205,
                 Invocation::new("edit_as_buffer"),
             )
             .when("empty folder"),

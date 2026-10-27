@@ -441,13 +441,26 @@ of bars, split or not.
   group, its values radio items.
 - **A submenu opens beside its row** (`PopoverAnchor::popup_beside`):
   its first row level with its row, on the right or, without room, on
-  the left, moved up to stay in the window. The submenus' rows stand
-  together before the menu's end under one line. The pointer opens one
+  the left, moved up to stay in the window. A submenu's row stands where
+  its first item's order puts it, in that item's group, with the first
+  icon among its items. The pointer opens one
   after resting `menu::REST` on its row, or at once with a click; resting
   on another row closes it, reaching it in time keeps it. Right, Enter or
   Space open it and move into it; Left or Escape go back to its row. A
   press on it is no press outside the menu (`MenuState::in_sub`). A
   submenu holds no submenu.
+- **A check in a submenu keeps the menu open** (the tags in Tags):
+  pressed, it turns over and the menu stays for the next, so its command
+  toggles (`tags.toggle`), a second press undoing the first. A check at
+  the menu's own level closes it, as any item does. A check on for some of
+  what it is about is `Check::Partly`, a dash.
+- **The file menu** (ADR-099): Open, Open With › (the type's other
+  applications, Other Application…, Run Command…), Open Terminal Here;
+  Cut, Copy, Copy Path, Add to Shelf, Add to Bookmarks; Rename (Rename
+  Several… with several), Move to Trash, Delete Permanently; Extract Here,
+  Compress ›, Find Similar ›; Tags › (Edit Tags…, a check per tag, the
+  name tools), Rating, Comment…, the GPS items; Properties. Paste is the
+  folder's own menu's, on its background.
 - **Never taller than the window.** The menu stands where it opened (at
   the pointer, or under the keyboard's row), moved to stay in the
   window, and takes at most the window's height less its margins, in

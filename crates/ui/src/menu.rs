@@ -8,7 +8,7 @@ use gpui::{
     AnyElement, Context, FocusHandle, MouseButton, Pixels, Point, ScrollHandle, Window, div,
     prelude::*, px,
 };
-use skwir_core::registry::{ChoiceLook, MenuItem, MenuSource};
+use skwir_core::registry::{Check, ChoiceLook, MenuItem, MenuSource};
 use skwir_platform::mime::{self, Kind, Mime};
 
 use crate::elements::popover::PopoverAnchor;
@@ -456,31 +456,33 @@ fn rest_on(shell: &mut Shell, row: &Row, window: &mut Window, cx: &mut Context<S
 
 /// `rows` drawn, each with whether a separator stands above it: between
 /// order groups (the hundreds digit, per the convention on
-/// `skwir_core::registry::MenuItem`), above the first submenu's row, and
-/// after the last.
+/// `skwir_core::registry::MenuItem`), a submenu's row in the group of its
+/// first item.
 fn drawn_of(items: &[MenuItem], rows: &[Row]) -> Vec<(Row, bool)> {
-    let mut previous: Option<&MenuItem> = None;
-    let mut after_parent = false;
+    let mut previous: Option<i32> = None;
     rows.iter()
         .map(|row| {
-            let separated = match row {
-                Row::Item(index) | Row::Choice(index) => {
-                    let item = &items[*index];
-                    let separated = after_parent
-                        || previous.is_some_and(|before| before.order / 100 != item.order / 100);
-                    previous = Some(item);
-                    after_parent = false;
-                    separated
-                }
-                Row::Parent(_) => {
-                    let first = !after_parent && previous.is_some();
-                    after_parent = true;
-                    first
-                }
+            let order = match row {
+                Row::Item(index) | Row::Choice(index) => Some(items[*index].order),
+                Row::Parent(name) => first_of(items, name).map(|first| items[first].order),
             };
+            let separated = previous
+                .zip(order)
+                .is_some_and(|(before, order)| before / 100 != order / 100);
+            previous = order.or(previous);
             (row.clone(), separated)
         })
         .collect()
+}
+
+/// The first item of the submenu `name`, by order.
+fn first_of(items: &[MenuItem], name: &str) -> Option<usize> {
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.submenu.as_deref() == Some(name))
+        .min_by_key(|(_, item)| item.order)
+        .map(|(index, _)| index)
 }
 
 /// Which child of the menu's rows `row` is drawn as: the separators above
@@ -494,29 +496,27 @@ fn child_of(drawn: &[(Row, bool)], row: usize) -> usize {
     row + separators
 }
 
-/// The menu's own rows: its items in order, then a row for each submenu,
-/// which opens beside it (`render`'s `popup_beside`), then the menu's end
-/// (order 9xx: Properties). A submenu holds no submenu.
+/// The menu's own rows, by order: its items, and a row for each submenu,
+/// which opens beside it (`render`'s `popup_beside`), where its first item
+/// stands. A submenu holds no submenu.
 pub fn rows_of(items: &[MenuItem]) -> Vec<Row> {
-    let top = |last: bool| {
-        level_rows(
-            items,
-            items
-                .iter()
-                .enumerate()
-                .filter(move |(_, item)| item.submenu.is_none() && (item.order >= LAST) == last)
-                .map(|(index, _)| index),
-        )
-    };
-    let mut rows: Vec<Row> = top(false);
+    let mut by_order: Vec<usize> = (0..items.len()).collect();
+    by_order.sort_by_key(|&index| items[index].order);
+    let mut rows = Vec::new();
+    let mut run: Vec<usize> = Vec::new();
     let mut parents: Vec<&str> = Vec::new();
-    for name in items.iter().filter_map(|item| item.submenu.as_deref()) {
-        if !parents.contains(&name) {
-            parents.push(name);
+    for index in by_order {
+        match items[index].submenu.as_deref() {
+            None => run.push(index),
+            Some(name) if !parents.contains(&name) => {
+                rows.extend(level_rows(items, run.drain(..)));
+                parents.push(name);
+                rows.push(Row::Parent(name.to_owned()));
+            }
+            Some(_) => {}
         }
     }
-    rows.extend(parents.into_iter().map(|name| Row::Parent(name.to_owned())));
-    rows.extend(top(true));
+    rows.extend(level_rows(items, run.drain(..)));
     rows
 }
 
@@ -607,7 +607,7 @@ fn said_value(items: &[MenuItem], first: usize) -> usize {
     shown
         .iter()
         .copied()
-        .find(|&v| items[v].checked == Some(true))
+        .find(|&v| items[v].is_on())
         .or_else(|| shown.first().copied())
         .unwrap_or(first)
 }
@@ -626,12 +626,12 @@ fn chosen_in(items: &[MenuItem], submenu: &str) -> Option<String> {
         .filter(|item| item.submenu.as_deref() == Some(submenu));
     let first = values.next()?;
     let name = &first.choice.as_ref()?.name;
-    let mut chosen = (first.checked == Some(true)).then_some(first);
+    let mut chosen = first.is_on().then_some(first);
     for item in values {
         if item.choice.as_ref().map(|c| &c.name) != Some(name) {
             return None;
         }
-        if item.checked == Some(true) {
+        if item.is_on() {
             chosen = Some(item);
         }
     }
@@ -803,10 +803,10 @@ impl Shell {
             .as_ref()
             .filter(|_| ctx.count > 0 && !ctx.all_places)
         {
-            items.push(item(&remove.title, "take_out", 295, "minus"));
+            items.push(item(&remove.title, "take_out", 280, "minus"));
         }
         if let Some(create) = verbs.create.as_ref().filter(|_| ctx.count == 0) {
-            items.push(item(&create.title, "ui.create_here", 200, "folder-plus"));
+            items.push(item(&create.title, "ui.create_here", 300, "folder-plus"));
         }
         // The trash's files go back where they came from.
         if let Some(restore) = verbs.restore.as_ref().filter(|_| ctx.count > 0) {
@@ -881,22 +881,22 @@ impl Shell {
         let tab_args = serde_json::json!({ "tab": tab });
         let items = vec![
             item(
+                "Close Tab",
+                skwir_core::command::Invocation::with_args("tab.close", &tab_args),
+                290,
+                "close",
+            ),
+            item(
                 "New Tab",
                 skwir_core::command::Invocation::new("tab.new"),
-                200,
+                300,
                 "tab-new",
             ),
             item(
                 "Reopen Closed Tab",
                 skwir_core::command::Invocation::new("tab.reopen"),
-                210,
+                310,
                 "revert",
-            ),
-            item(
-                "Close Tab",
-                skwir_core::command::Invocation::with_args("tab.close", &tab_args),
-                300,
-                "close",
             ),
         ];
         self.menu = Some(MenuState::open(position, items, window, cx));
@@ -954,19 +954,19 @@ impl Shell {
         // Renamed by its owner (a bookmark, a saved search, a tag on every
         // file) or here, for one offered: F2 does the same.
         if let Some(rename) = self.sidebar_rename(&arranged) {
-            items.push(item("Rename…", rename, 100, "rename"));
+            items.push(item("Rename…", rename, 200, "rename"));
         }
         // A place the user kept is taken out by its owner (the bookmark
         // removed, the search forgotten, the tag unpinned), as the pane's
         // keep button does; one offered or suggested is hidden here.
         if let Some(forget) = place.forget.clone() {
-            items.push(item("Remove From Sidebar", forget, 320, "minus"));
+            items.push(item("Remove From Sidebar", forget, 285, "minus"));
         }
         if let Some(up) = self.sidebar_move(&arranged, -1) {
-            items.push(item("Move Up", up, 140, "up"));
+            items.push(item("Move Up", up, 240, "up"));
         }
         if let Some(down) = self.sidebar_move(&arranged, 1) {
-            items.push(item("Move Down", down, 141, "down"));
+            items.push(item("Move Down", down, 241, "down"));
         }
         if arranged.role.hides() {
             items.push(item(
@@ -975,12 +975,12 @@ impl Shell {
                     "ui.sidebar_place",
                     &serde_json::json!({ "group": group, "key": key, "hidden": true }),
                 ),
-                320,
+                285,
                 "eye-off",
             ));
         }
         if let Some(eject) = place.eject.as_ref().filter(|_| !busy) {
-            items.push(item("Eject", eject.clone(), 350, "eject"));
+            items.push(item("Eject", eject.clone(), 299, "eject"));
         }
         if items.is_empty() {
             return;
@@ -1064,7 +1064,7 @@ impl Shell {
             "columns",
             "Reset widths",
             "revert",
-            100,
+            200,
             skwir_core::command::Invocation::new("ui.columns_reset"),
         ));
         self.menu = Some(MenuState::open(position, items, window, cx));
@@ -1240,11 +1240,31 @@ impl Shell {
                 cx.notify();
             }
             Row::Item(index) => {
-                let Some(command) = menu.items.get(*index).map(|item| item.command.clone()) else {
+                let Some(item) = menu.items.get_mut(*index) else {
                     return;
                 };
-                self.close_context_menu(window, cx);
-                self.run(&command.name, command.args, window, cx);
+                let command = item.command.clone();
+                match (item.checked, item.choice.is_some()) {
+                    // A value in words: chosen, the menu kept open.
+                    (Some(_), true) => self.choose(*index, window, cx),
+                    // A check among a submenu's, a set ticked through (the
+                    // tags in Tags): ticked or unticked, the menu kept open
+                    // for the next. Its command toggles, so a second press
+                    // undoes the first.
+                    (Some(check), false) if item.submenu.is_some() => {
+                        item.checked = Some(if check == Check::On {
+                            Check::Off
+                        } else {
+                            Check::On
+                        });
+                        cx.notify();
+                        self.run(&command.name, command.args, window, cx);
+                    }
+                    _ => {
+                        self.close_context_menu(window, cx);
+                        self.run(&command.name, command.args, window, cx);
+                    }
+                }
             }
             // Enter or Space: the value the keys are on.
             Row::Choice(first) => {
@@ -1271,11 +1291,11 @@ impl Shell {
             .as_ref()
             .is_some_and(|choice| choice.look == ChoiceLook::Stars);
         let pick = match values.last() {
-            Some(&none) if stars && menu.items[value].checked == Some(true) => none,
+            Some(&none) if stars && menu.items[value].is_on() => none,
             _ => value,
         };
         for &v in &values {
-            menu.items[v].checked = Some(v == pick);
+            menu.items[v].checked = Some(if v == pick { Check::On } else { Check::Off });
         }
         menu.cursor = None;
         let command = menu.items[pick].command.clone();
@@ -1611,13 +1631,26 @@ fn row_element(
             };
             // A check or a value: its state in the icon's place.
             let icon = match item.checked {
-                Some(true) => Some("check".to_owned()),
-                Some(false) => None,
+                Some(Check::On) => Some("check".to_owned()),
+                Some(Check::Partly) => Some("minus".to_owned()),
+                Some(Check::Off) => None,
                 None => item.icon.clone(),
             };
             (title, icon, keys)
         }
-        Row::Parent(name) => (name.clone(), None, None),
+        // A submenu's row: the icon of its first item that has one.
+        Row::Parent(name) => {
+            let mut own: Vec<&MenuItem> = menu
+                .items
+                .iter()
+                .filter(|item| item.submenu.as_deref() == Some(name))
+                .collect();
+            own.sort_by_key(|item| item.order);
+            let icon = own
+                .iter()
+                .find_map(|item| item.icon.clone().filter(|icon| bundled(icon)));
+            (name.clone(), icon, None)
+        }
         Row::Choice(first) => return choice_element(shell, menu, *first, at, theme, cx),
     };
     let open = matches!(&row, Row::Parent(name) if menu.open.as_ref() == Some(name));
@@ -1629,7 +1662,7 @@ fn row_element(
     let state = match &row {
         Row::Item(index) => menu.items[*index]
             .checked
-            .map(|on| (on, menu.items[*index].choice.is_some())),
+            .map(|check| (check, menu.items[*index].choice.is_some())),
         _ => None,
     };
     let icon = icon.filter(|name| bundled(name));
@@ -1647,7 +1680,13 @@ fn row_element(
             d.aria_label(title.clone())
                 .when_some(keys.clone(), StatefulInteractiveElement::aria_keyshortcuts)
                 .when(is_parent, |d| d.aria_expanded(open))
-                .when_some(state, |d, (on, _)| d.aria_toggled(on.into()))
+                .when_some(state, |d, (check, _)| {
+                    d.aria_toggled(match check {
+                        Check::On => gpui::Toggled::True,
+                        Check::Off => gpui::Toggled::False,
+                        Check::Partly => gpui::Toggled::Mixed,
+                    })
+                })
         })
         // Said as focused while the menu keeps the keyboard: a row of the
         // menu while the keyboard is in its rows; one of the submenu,
@@ -1749,7 +1788,7 @@ fn choice_value(
         .role(gpui::Role::MenuItemRadio)
         .when(shell.a11y, |d| {
             d.aria_label(title.clone())
-                .aria_toggled((item.checked == Some(true)).into())
+                .aria_toggled(item.is_on().into())
         })
         .when(
             said == Some(false),
@@ -1811,7 +1850,7 @@ fn choice_element(
             .border_color(theme.border)
             .bg(theme.bg)
             .children(values.iter().map(|&v| {
-                let on = menu.items[v].checked == Some(true);
+                let on = menu.items[v].is_on();
                 let icon = menu.items[v].icon.clone().unwrap_or_default();
                 value(v, "choice", cx)
                     .h(px(20.))
@@ -1847,7 +1886,7 @@ fn choice_element(
             .gap(px(5.))
             .children(values.iter().map(|&v| {
                 let item = &menu.items[v];
-                let on = item.checked == Some(true);
+                let on = item.is_on();
                 let color = item.icon.as_deref().and_then(|name| {
                     skwir_core::metadata::TAG_COLORS
                         .iter()
@@ -1891,7 +1930,7 @@ fn choice_element(
             let lit_to = menu
                 .lit
                 .filter(|v| values.contains(v))
-                .or(Some(said).filter(|&v| menu.items[v].checked == Some(true)))
+                .or(Some(said).filter(|&v| menu.items[v].is_on()))
                 .and_then(|v| stars.iter().position(|&s| s == v));
             div()
                 .id(("stars", first))
@@ -2111,11 +2150,11 @@ mod tests {
             rows_of(&items),
             [
                 Row::Item(0),
-                Row::Item(2),
                 Row::Parent("More".into()),
+                Row::Item(2),
                 Row::Item(4)
             ],
-            "the menu's end comes after the submenus' rows"
+            "a submenu's row stands where its first item is"
         );
         assert_eq!(
             super::sub_rows_of(&items, "More"),

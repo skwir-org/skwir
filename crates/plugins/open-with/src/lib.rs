@@ -430,27 +430,59 @@ fn menu(pane: Option<PaneId>, cache: &Cached, app: &App) -> anyhow::Result<Outco
             types.push(m);
         }
     }
-    let mut defaults = types
-        .iter()
-        .map(|m| catalog.default_for_lineage(&mime::lineage(m)));
-    let Some(Some(default)) = defaults.next() else {
-        return nothing();
-    };
-    if !defaults.all(|d| d.is_some_and(|d| d.id == default.id)) {
-        return nothing();
-    }
-    let item = MenuItem::new(
-        "context",
-        format!("Open With {}", default.name),
-        "open",
-        0,
+    let open_with = |application: &Application| {
         Invocation::with_args(
             "open_with",
-            &serde_json::json!({ "app": default.id, "pane": pane }),
+            &serde_json::json!({ "app": application.id, "pane": pane }),
+        )
+    };
+    // The default the files share opens them first; without one, Open
+    // stays, said again since this answer takes its place.
+    let ranked = rank(&catalog, &types);
+    let default = ranked
+        .iter()
+        .find(|(_, _, is_default)| *is_default)
+        .map(|(application, _, _)| *application);
+    let mut items = vec![match default {
+        Some(default) => MenuItem::new(
+            "context",
+            format!("Open With {}", default.name),
+            "open",
+            0,
+            open_with(default),
         ),
+        None => MenuItem::new("context", "Open", "open", 0, Invocation::new("open")),
+    }];
+    // The other applications for their types, best fit first, in the
+    // Open With submenu before the chooser.
+    items.extend(
+        ranked
+            .iter()
+            .filter(|(_, fit, is_default)| fit.is_some() && !is_default)
+            .take(OPEN_WITH_APPS)
+            .map(|(application, _, _)| {
+                MenuItem::new(
+                    "context",
+                    application.name.clone(),
+                    "",
+                    5,
+                    open_with(application),
+                )
+                .submenu(OPEN_WITH)
+            }),
     );
-    Ok(Outcome::Value(serde_json::json!({ "items": [item] })))
+    Ok(Outcome::Value(serde_json::json!({ "items": items })))
 }
+
+/// The context menu's submenu of what opens the selection (ADR-099).
+const OPEN_WITH: &str = "Open With";
+
+/// The same, on the folder's background, for the folder.
+const OPEN_FOLDER_WITH: &str = "Open Folder With";
+
+/// The most applications the Open With submenu names; the chooser has
+/// them all.
+const OPEN_WITH_APPS: usize = 8;
 
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 struct TargetArgs {
@@ -1285,34 +1317,39 @@ impl Plugin for OpenWithPlugin {
                 Ok(Outcome::Done)
             },
         );
+        // The chooser, last of the Open With submenu, after the
+        // applications `open_with.menu` names (ADR-099); on the folder's
+        // background, for the folder.
         app.registry.menus.add(
             ID,
             MenuItem::new(
                 "context",
-                "Open With…",
+                "Other Application…",
                 "open",
-                1,
+                8,
                 choose(&serde_json::json!({})),
             )
-            .when("selection !place"),
+            .when("selection !place")
+            .submenu(OPEN_WITH),
         );
         app.registry.menus.add(
             ID,
             MenuItem::new(
                 "context",
-                "Open Folder With…",
+                "Other Application…",
                 "open",
-                11,
+                8,
                 choose(&serde_json::json!({ "here": true })),
             )
-            .when("empty folder"),
+            .when("empty folder")
+            .submenu(OPEN_FOLDER_WITH),
         );
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<PaneArg, _>(
             ID,
             "open_with.menu",
             "Name the default application in the context menu",
-            "The context menu's Open for the selection, naming the default application its files share; no items when the selection's types or the applications are not known yet. Answers from memory",
+            "The context menu's Open for the selection, naming the default application its files share, and the other applications for their types in its Open With submenu; no items when the selection's types or the applications are not known yet. Answers from memory",
             move |a, app| menu(a.pane, &cache, app),
         )
         .data();
@@ -1870,7 +1907,15 @@ mod tests {
             .iter()
             .map(|item| item["title"].as_str().unwrap())
             .collect();
-        assert_eq!(titles, ["Open With Viewer"], "the default alone");
+        assert_eq!(
+            titles,
+            ["Open With Viewer", "Editor", "Hex"],
+            "the default first, the others in Open With"
+        );
+        for other in &photos[1..] {
+            assert_eq!(other["submenu"], OPEN_WITH);
+            assert_eq!(other["command"]["name"], "open_with");
+        }
         let args = &photos[0]["command"]["args"];
         assert_eq!(photos[0]["command"]["name"], "open_with");
         assert_eq!(args["app"], "viewer.desktop");
@@ -1880,7 +1925,15 @@ mod tests {
             text[0]["title"], "Open With Editor",
             "no default named: the first application that declares the type"
         );
-        assert!(items(&[photo, "notes.txt"]).is_empty(), "no default shared");
+        let mixed = items(&[photo, "notes.txt"]);
+        assert_eq!(
+            mixed[0]["title"], "Open",
+            "no default shared: Open stays, said again"
+        );
+        assert!(
+            mixed[1..].iter().all(|item| item["submenu"] == OPEN_WITH),
+            "what opens both, in Open With"
+        );
         assert!(items(&[photo, "no-type-9q"]).is_empty(), "a type not known");
         assert!(items(&["sub"]).is_empty(), "a folder opens here");
     }

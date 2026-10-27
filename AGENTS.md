@@ -396,11 +396,15 @@ working in an area, also read that area's rules (see
   and a place by its token (`pane`, `address`, `palette`, `sidebar`,
   `preview`, `menu`…, each listed once in `keymap::PLACES` with its key
   context and what F1 calls it). `a|b` holds when either does, `!a` when it does not.
-- Menu `order` groups by its hundreds: 0xx open, 1xx edit (the file
-  itself: its name, the clipboard), 2xx create, 3xx destructive, 4xx
-  misc, 5xx metadata (tags, ratings, a picture's position), 9xx the end,
-  after the submenus (Properties). The UI draws separators between
-  groups.
+- Menu `order` groups by its hundreds, by what is done to what the menu
+  is about (ADR-099): 0xx open it, 1xx copy and keep it (the clipboard,
+  the shelf, bookmarks), 2xx change it (rename, move; the destructive
+  last, 280 to 299), 3xx make or find from it (new, extract, compress,
+  find similar), 4xx the views and tools it opens, 5xx describe it (tags,
+  ratings, a picture's position), 9xx the end (Properties). The UI draws
+  separators between groups; a submenu's row stands at its first item's
+  order. Related actions share a submenu named by what they do
+  (Compress, Open With), never a "More".
 - `ui.*` commands are carried out by the shell; a plugin may bind to
   them.
 - Zoom keys come from one table (`keymap::ZOOM_KEYS`). F5 refreshes in

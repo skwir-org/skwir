@@ -467,7 +467,7 @@ fn place(full: bool) -> Place {
             "place",
             EMPTY_TRASH,
             "trash",
-            300,
+            290,
             Invocation::new("trash.empty"),
         )]
     } else {

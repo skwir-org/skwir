@@ -268,30 +268,38 @@ impl Plugin for ShellPlugin {
         // No key and no menu item: copying for a shell is rare, and the
         // menu's Copy Path, Ctrl+Shift+C and Ctrl+Alt+C copy the paths as
         // text (`copy_paths`). The palette has it, and a key can be given.
-        app.registry.menus.add(
-            ID,
-            MenuItem {
-                menu: "context".into(),
-                title: "Run Command…".into(),
-                // The command is asked for: `shell.run` cannot run without one.
-                command: Invocation::with_args(
-                    "ui.ask",
-                    &serde_json::json!({
-                        "title": "Run command on selection",
-                        "accept": "Run",
-                        "placeholder": "Command; the selected paths are its arguments",
-                        "command": "shell.run",
-                        "field": "command",
-                    }),
-                ),
-                when: Some("selection|folder !place".into()),
-                order: 410,
-                icon: Some("command".into()),
-                submenu: Some("More".into()),
-                checked: None,
-                choice: None,
-            },
-        );
+        // Beside the applications that open the selection, or the folder
+        // on its background: both hand it to a program (ADR-099).
+        for (when, submenu) in [
+            ("selection !place", "Open With"),
+            ("empty folder", "Open Folder With"),
+        ] {
+            app.registry.menus.add(
+                ID,
+                MenuItem {
+                    menu: "context".into(),
+                    title: "Run Command…".into(),
+                    // The command is asked for: `shell.run` cannot run
+                    // without one.
+                    command: Invocation::with_args(
+                        "ui.ask",
+                        &serde_json::json!({
+                            "title": "Run command on selection",
+                            "accept": "Run",
+                            "placeholder": "Command; the selected paths are its arguments",
+                            "command": "shell.run",
+                            "field": "command",
+                        }),
+                    ),
+                    when: Some(when.into()),
+                    order: 9,
+                    icon: Some("command".into()),
+                    submenu: Some(submenu.into()),
+                    checked: None,
+                    choice: None,
+                },
+            );
+        }
     }
 }
 

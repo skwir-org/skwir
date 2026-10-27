@@ -454,7 +454,8 @@ fn place(search: SavedQuery) -> Place {
                 "field": "to",
             }),
         ),
-        110,
+        // Beside Rename…, among what changes it (ADR-099).
+        210,
         "search",
     )];
     Place {
@@ -833,10 +834,11 @@ impl Plugin for QueryPlugin {
         .shows();
         for (title, by, when, order) in [
             // A file's likes: a place (a tag's) has none.
-            ("Same Kind", similar::By::Kind, "single !place", 470),
-            ("Same Day", similar::By::Day, "single !place", 471),
-            ("Similar Size", similar::By::Size, "single file", 472),
-            ("Same Tags", similar::By::Tags, "single !place", 473),
+            // Found from the file, among what is made from it (ADR-099).
+            ("Same Kind", similar::By::Kind, "single !place", 330),
+            ("Same Day", similar::By::Day, "single !place", 331),
+            ("Similar Size", similar::By::Size, "single file", 332),
+            ("Same Tags", similar::By::Tags, "single !place", 333),
         ] {
             app.registry.menus.add(
                 ID,

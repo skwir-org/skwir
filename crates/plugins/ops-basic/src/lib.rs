@@ -422,8 +422,9 @@ const BINDINGS_ARGS: &[(&str, &str, &str)] = &[
 
 // Context menu items: (title, command, when, order). Order follows the
 // convention documented on `skwir_core::registry::MenuItem`: hundreds are
-// groups (0 open, 100 edit, 200 create, 300 destructive, 400 misc, 500
-// metadata), the UI draws a separator between groups. "Open" and "Open
+// groups (0 open it, 100 copy and keep it, 200 change it, 300 make or find
+// from it, 400 views and tools, 500 describe it: ADR-099), the UI draws a
+// separator between groups. "Open" and "Open
 // Terminal Here" are contributed by the open-with plugin, which owns those
 // commands.
 const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
@@ -440,7 +441,7 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
         "Rename",
         "ui.rename_prompt",
         Some("single !restores"),
-        100,
+        200,
         "rename",
     ),
     // A place too: a tag copied into a folder is a folder of its files,
@@ -465,10 +466,12 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
         "link",
     ),
     ("Copy Path", "copy_paths", Some("empty folder"), 125, "link"),
+    // The folder's own menu, on its background: Paste puts what was cut or
+    // copied in the folder shown, never in a file right-clicked.
     (
         "Paste",
         "clipboard_paste",
-        Some("folder|drops"),
+        Some("empty folder|drops"),
         130,
         "paste",
     ),
@@ -477,33 +480,33 @@ const MENU: &[(&str, &str, Option<&str>, i32, &str)] = &[
         "New Folder",
         "ui.mkdir_prompt",
         Some("empty folder"),
-        200,
+        300,
         "folder-plus",
     ),
     (
         "New File",
         "ui.new_file_prompt",
         Some("empty folder"),
-        201,
+        301,
         "file-plus",
     ),
     // Files, never places (a tag's has no file to trash), nor what is in
-    // the trash already.
+    // the trash already: the end of what changes them, beside Rename.
     (
         "Move to Trash",
         "trash",
         Some("selection !place !restores"),
-        300,
+        290,
         "trash",
     ),
     (
         "Delete Permanently",
         "delete",
         Some("selection !place"),
-        310,
+        295,
         "close",
     ),
-    ("Refresh", "refresh", Some("empty"), 400, "refresh"),
+    ("Refresh", "refresh", Some("empty"), 490, "refresh"),
 ];
 
 impl Plugin for OpsBasicPlugin {

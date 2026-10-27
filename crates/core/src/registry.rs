@@ -423,12 +423,18 @@ pub struct Aspect {
 /// symbolic icon.
 ///
 /// `order` sorts items and groups them: the hundreds digit is the group and
-/// the UI draws a separator between groups. Convention for `context`:
-/// 0xx open/navigate, 1xx edit (rename, cut, copy, paste), 2xx create,
-/// 3xx destructive (trash, delete), 4xx misc (refresh), 5xx metadata
-/// (tags, ratings, comments, a picture's position: what is said of a
-/// file, kept apart from what is done to it), 9xx the menu's end, after
-/// the submenus (the shell's Properties).
+/// the UI draws a separator between groups. Every menu follows one
+/// convention (ADR-099), by what is done to what the menu is about:
+/// 0xx open it (open, open with, a new tab, a terminal there), 1xx copy
+/// and keep it (cut, copy, its path, paste, the shelf, bookmarks), 2xx
+/// change it (rename, move, the destructive at the group's end, 280 to
+/// 299: remove, trash, delete, eject), 3xx make or find from it (a new
+/// folder, file or tab, extract, compress, find similar), 4xx the views
+/// and tools it opens (search here, usage, refresh, a server's settings),
+/// 5xx describe it (tags, ratings, comments, a picture's position: what
+/// is said of a file, kept apart from what is done to it), 9xx the menu's
+/// end (the shell's Properties). A submenu's row stands where its first
+/// item's order puts it.
 ///
 /// `drop` is the menu a drop in a folder asks with (`core.drop_asks`):
 /// after Move, Copy and Link Here (0xx) and before Cancel (9xx), so its
@@ -453,12 +459,23 @@ pub struct MenuItem {
     /// `choice`'s. `None` for an item that is no state. Said by the menu,
     /// never written into the title.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checked: Option<bool>,
+    pub checked: Option<Check>,
     /// The choice it is one value of: the items of one menu, or of one
     /// submenu, with the same choice are drawn together, as one row where
     /// their looks allow it (`Choice`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub choice: Option<Choice>,
+}
+
+/// Whether a [`MenuItem`] is on.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Check {
+    Off,
+    On,
+    /// On for some of what it is about and not the rest: a tag some of
+    /// the selected files have. Drawn as a dash; pressing it turns it on.
+    Partly,
 }
 
 /// A setting among values, each one a [`MenuItem`] that sets it
@@ -531,8 +548,20 @@ impl MenuItem {
     /// On or off: a check (`MenuItem::checked`).
     #[must_use]
     pub fn checked(mut self, on: bool) -> Self {
-        self.checked = Some(on);
+        self.checked = Some(if on { Check::On } else { Check::Off });
         self
+    }
+
+    /// On for some of what it is about, not the rest (`Check::Partly`).
+    #[must_use]
+    pub fn partly(mut self) -> Self {
+        self.checked = Some(Check::Partly);
+        self
+    }
+
+    /// Whether it is on: checked, or the value chosen.
+    pub fn is_on(&self) -> bool {
+        self.checked == Some(Check::On)
     }
 
     /// One value of the choice `name`, drawn as `look` says, `chosen` or
@@ -543,8 +572,7 @@ impl MenuItem {
             name: name.to_owned(),
             look,
         });
-        self.checked = Some(chosen);
-        self
+        self.checked(chosen)
     }
 }
 

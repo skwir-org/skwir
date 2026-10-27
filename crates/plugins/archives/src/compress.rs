@@ -30,6 +30,9 @@ const KIND: &str = "compress";
 /// is in the trash.
 const COMPRESSES: &str = "selection !place !restores";
 
+/// The context menu's submenu of the ways to compress.
+const COMPRESS: &str = "Compress";
+
 /// Make an archive named `name` in `dest_dir` of `entries`, each at its
 /// top under its own name, with what is beside it (its companions,
 /// ADR-028); its format is what the name ends with ([`Format::of_name`]).
@@ -785,16 +788,16 @@ pub fn register(app: &App, owner: &str) {
     // A prompt for the user, which runs what they answer as their own:
     // never an agent's, whose `dest` the prompt would not show.
     .user_only();
-    // Beside Extract Here: the one that asks nothing first, a name kept
-    // beside one taken; then the one that asks the name, and the format
-    // with it.
+    // Beside Extract Here, one submenu: the way that asks nothing first, a
+    // name kept beside one taken; then the one that asks the name and the
+    // format; then with a password.
     app.registry.menus.add(
         owner,
         MenuItem::new(
             "context",
-            "Compress to ZIP",
+            "To ZIP",
             "archive",
-            220,
+            320,
             Invocation::new("archive.compress").with(
                 "on_conflict",
                 clash::Policy {
@@ -803,30 +806,32 @@ pub fn register(app: &App, owner: &str) {
                 },
             ),
         )
-        .when(COMPRESSES),
+        .when(COMPRESSES)
+        .submenu(COMPRESS),
     );
     app.registry.menus.add(
         owner,
         MenuItem::new(
             "context",
-            "Compress…",
+            "Choose Format…",
             "archive",
-            221,
+            321,
             Invocation::new("archive.compress_ask"),
         )
-        .when(COMPRESSES),
+        .when(COMPRESSES)
+        .submenu(COMPRESS),
     );
     app.registry.menus.add(
         owner,
         MenuItem::new(
             "context",
-            "Compress with a Password…",
+            "With a Password…",
             "lock",
-            222,
+            322,
             Invocation::new("archive.compress_ask").with("password", true),
         )
         .when(COMPRESSES)
-        .submenu("More"),
+        .submenu(COMPRESS),
     );
 }
 

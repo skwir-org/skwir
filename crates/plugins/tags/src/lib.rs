@@ -504,15 +504,12 @@ fn rating_items(chosen: Option<u8>) -> Vec<MenuItem> {
                 1 => "1 star".to_owned(),
                 n => format!("{n} stars"),
             };
-            MenuItem {
-                submenu: Some("Notes".into()),
-                ..menu_item(
-                    &title,
-                    Invocation::with_args("notes.rate", &serde_json::json!({ "stars": stars })),
-                    551 + i32::from(5 - stars),
-                    if stars == 0 { "minus" } else { "star" },
-                )
-            }
+            menu_item(
+                &title,
+                Invocation::with_args("notes.rate", &serde_json::json!({ "stars": stars })),
+                520 + i32::from(5 - stars),
+                if stars == 0 { "minus" } else { "star" },
+            )
             .value_of("Rating", ChoiceLook::Stars, chosen == Some(stars))
         })
         .collect()
@@ -534,6 +531,9 @@ fn ask_comment(text: Option<&str>) -> Invocation {
 
 /// An item of the files' menu: a file's notes; a place (a tag's) has its
 /// own menu.
+/// The context menu's submenu of a selection's tags (ADR-099).
+pub(crate) const TAGS_SUBMENU: &str = "Tags";
+
 fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuItem {
     MenuItem::new("context", title, icon, order, command).when("selection !place")
 }
@@ -1333,7 +1333,7 @@ impl Plugin for TagsPlugin {
                 ID,
                 "tags.files_menu",
                 "Tags of the selection's menu",
-                "The context menu's submenu of each tag the selected files have: its files in the folder shown, its place, its color, taking it from them",
+                "The context menu's Tags submenu: the tags the selected files have, then the pinned ones, each checked when they all have it, partly when some do, pressing it toggling it on them all",
                 |a, app| Ok(browse::files_menu(app, a)),
             )
             .data();
@@ -1382,10 +1382,12 @@ impl Plugin for TagsPlugin {
                     let pane = app.pane_or_active(a.pane);
                     let comment = remembered_comment(app, pane);
                     let mut items = rating_items(remembered_rating(app, pane));
-                    items.push(MenuItem {
-                        submenu: Some("Notes".into()),
-                        ..menu_item("Comment…", ask_comment(comment.as_deref()), 560, "comment")
-                    });
+                    items.push(menu_item(
+                        "Comment…",
+                        ask_comment(comment.as_deref()),
+                        530,
+                        "comment",
+                    ));
                     Ok(Outcome::Value(serde_json::json!({ "items": items })))
                 },
             )
@@ -1456,9 +1458,14 @@ impl Plugin for TagsPlugin {
                 when: Some("pane".into()),
             },
         );
+        // The editor first in the context menu's Tags submenu, the tags of
+        // the selection as checks after it (`tags.files_menu`).
         app.registry.menus.add(
             ID,
-            menu_item("Tags…", Invocation::new("ui.tags_prompt"), 550, "tag"),
+            MenuItem {
+                submenu: Some(TAGS_SUBMENU.into()),
+                ..menu_item("Edit Tags…", Invocation::new("ui.tags_prompt"), 500, "tag")
+            },
         );
         // The folder's own menu, beside Search here and the Usage view.
         app.registry.menus.add(
@@ -1476,15 +1483,11 @@ impl Plugin for TagsPlugin {
         for item in rating_items(None) {
             app.registry.menus.add(ID, item);
         }
-        app.registry.menus.add(
-            ID,
-            MenuItem {
-                submenu: Some("Notes".into()),
-                ..menu_item("Comment…", ask_comment(None), 560, "comment")
-            },
-        );
-        // A submenu for each tag of the selected files: what a right press
-        // on its chip offers, where the keys reach it.
+        app.registry
+            .menus
+            .add(ID, menu_item("Comment…", ask_comment(None), 530, "comment"));
+        // The selected files' tags, and the pinned ones, checked in the
+        // Tags submenu.
         app.registry.menu_sources.add(
             ID,
             MenuSource {
@@ -1519,6 +1522,7 @@ mod tests {
     use skwir_core::Value;
     use skwir_core::app::AppConfig;
     use skwir_core::location::Location;
+    use skwir_core::registry::Check;
     use std::path::Path;
     use std::time::Duration;
 
@@ -1673,7 +1677,7 @@ mod tests {
     // Extended attributes: Unix's.
     #[cfg(unix)]
     #[test]
-    fn the_context_menu_gives_each_tag_of_the_selection_a_submenu() {
+    fn the_context_menu_checks_the_tags_of_the_selection() {
         let tmp = home_tempdir();
         let dir = tmp.path().join("it's tagged");
         std::fs::create_dir(&dir).unwrap();
@@ -1692,9 +1696,12 @@ mod tests {
         let (app, pane) = app_in(tmp.path(), &dir, &["a.txt", "b.txt"]);
         app.settings.set(
             crate::sidebar::PINNED,
-            toml::Value::Array(vec![toml::Value::String("pinned".into())]),
+            toml::Value::Array(vec![
+                toml::Value::String("pinned".into()),
+                toml::Value::String("beta".into()),
+            ]),
         );
-        let menu = |pane| {
+        let files_menu = || -> Vec<MenuItem> {
             let Outcome::Value(v) = app
                 .dispatch(&Invocation::with_args(
                     "tags.files_menu",
@@ -1704,25 +1711,40 @@ mod tests {
             else {
                 panic!("an answer")
             };
-            submenus(&v)
+            serde_json::from_value(v["items"].clone()).unwrap()
         };
-        let names: Vec<String> = menu(pane).into_iter().map(|(name, _)| name).collect();
+        let items = files_menu();
+        let said: Vec<(&str, Option<Check>)> = items
+            .iter()
+            .map(|item| (item.title.as_str(), item.checked))
+            .collect();
         assert_eq!(
-            names,
-            ["Tag “pinned”", "Tag “alpha”", "Tag “Paris”", "Tag “zeta”"],
-            "the pinned first, then by name"
+            said,
+            [
+                ("pinned", Some(Check::Partly)),
+                ("alpha", Some(Check::Partly)),
+                ("Paris", Some(Check::Partly)),
+                ("zeta", Some(Check::Partly)),
+                ("beta", Some(Check::Off)),
+            ],
+            "the selection's (each on one of the two: partly), pinned first, \
+             then by name; then a pinned one none has"
         );
-        let (_, alpha) = &menu(pane)[1];
-        assert_eq!(
-            alpha[..3],
-            ["Show Its Files Here", "Open Tag", "From Its Name"],
-            "its colors, one choice drawn as swatches"
-        );
-        assert_eq!(alpha.last().unwrap(), "Remove From Selected Files");
-        assert!(
-            !alpha.iter().any(|title| title == "Edit Tags…"),
-            "the context menu has Tags… of its own"
-        );
+        assert!(items.iter().all(|item| {
+            item.submenu.as_deref() == Some(TAGS_SUBMENU)
+                && &*item.command.name == "tags.toggle"
+                && item.order / 100 == 5
+        }));
+        // The editor is the submenu's first, the context menu's own.
+        let editor = app
+            .registry
+            .menus
+            .all()
+            .into_iter()
+            .find(|item| item.title == "Edit Tags…")
+            .unwrap();
+        assert_eq!(editor.submenu.as_deref(), Some(TAGS_SUBMENU));
+        assert!(items.iter().all(|item| editor.order < item.order));
         // A chip's menu (its tag, with the files) edits them too.
         let Outcome::Value(chip) = app
             .dispatch(&Invocation::with_args(
@@ -1791,7 +1813,7 @@ mod tests {
             .iter()
             .find(|item| item.title == "One “Places” Tag at a Time")
             .unwrap();
-        assert_eq!(held.checked, Some(true), "checked while it holds one");
+        assert!(held.is_on(), "checked while it holds one");
         assert_eq!(
             held.command.args["on"], false,
             "chosen again, it holds several"
@@ -1807,14 +1829,25 @@ mod tests {
             &serde_json::json!({ "names": ["b.txt", "c.txt"] }),
         ))
         .unwrap();
-        let names: Vec<String> = menu(pane).into_iter().map(|(name, _)| name).collect();
+        let titles: Vec<String> = files_menu().into_iter().map(|item| item.title).collect();
+        assert_eq!(titles, ["pinned", "beta", "Other/Paris", "Places/Paris"]);
+        // One file: its tags checked, the pinned ones it lacks not.
+        app.dispatch(&Invocation::with_args(
+            "select",
+            &serde_json::json!({ "names": ["a.txt"] }),
+        ))
+        .unwrap();
+        let said: Vec<(String, Option<Check>)> = files_menu()
+            .into_iter()
+            .map(|item| (item.title, item.checked))
+            .collect();
         assert_eq!(
-            names,
+            said,
             [
-                "Tag “pinned”",
-                "Tag “beta”",
-                "Tag “Other/Paris”",
-                "Tag “Places/Paris”"
+                ("alpha".to_owned(), Some(Check::On)),
+                ("zeta".to_owned(), Some(Check::On)),
+                ("pinned".to_owned(), Some(Check::Off)),
+                ("beta".to_owned(), Some(Check::Off)),
             ]
         );
     }
@@ -2718,7 +2751,7 @@ mod tests {
             items
                 .iter()
                 .filter(|item| item.choice.is_some())
-                .all(|item| item.checked == Some(false))
+                .all(|item| item.checked == Some(Check::Off))
         );
 
         app.executor.undo_blocking(app.lifetime()).unwrap();

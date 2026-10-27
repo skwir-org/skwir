@@ -697,14 +697,14 @@ pub fn tag_menu(app: &App, known: &[String], a: TagMenuArgs) -> Outcome {
         (true, [tag]) => {
             let mut items = file_items(app, tag, a.pane);
             // The tag editor of the files the chip pressed was made one
-            // of, first of the edits (1xx): where a file shows its tags,
+            // of, first of what changes them (2xx): where a file shows its tags,
             // the chips are the way to it. The context menu has its own
             // (Tags…).
             if selected(app, a.pane) > 0 {
                 items.push(item(
                     "Edit Tags…",
                     Invocation::new("ui.tags_prompt"),
-                    110,
+                    210,
                     "tag",
                 ));
             }
@@ -717,21 +717,26 @@ pub fn tag_menu(app: &App, known: &[String], a: TagMenuArgs) -> Outcome {
     Outcome::Value(serde_json::json!({ "items": items }))
 }
 
-/// The most tags of the selection the context menu gives a submenu.
-const FILES_MENU_TAGS: usize = 4;
+/// The most tags the context menu's Tags submenu checks.
+const FILES_MENU_TAGS: usize = 8;
 /// The most selected files whose tags the context menu reads: what their
 /// listing knows, so a menu is no walk of a huge selection.
 const FILES_MENU_READ: usize = 1000;
 
-/// `tags.files_menu`: in the context menu of selected files, a submenu
-/// for each tag they have, as their listing read them, those pinned
-/// first, then by name, at most `FILES_MENU_TAGS`: what a chip's menu does
-/// on them (its files here, its place, taking it from them), and its
-/// color. Where the keys reach what a right press on a chip opens.
-/// Answers from memory.
+/// `tags.files_menu`: in the context menu of selected files, the checks
+/// of its Tags submenu (ADR-099): the tags they have, as their listing
+/// read them, then the pinned ones; among them those pinned first, then by
+/// name, at most `FILES_MENU_TAGS`. A tag every file read has is checked,
+/// one some have partly (a dash). Pressing one gives it to them all, or
+/// takes it from them all when they all have it (`tags.toggle`), the menu
+/// left open for the next. What a tag itself offers (its files here, its
+/// place, its color) is its chip's menu and the sidebar's. Answers from
+/// memory.
 pub fn files_menu(app: &App, a: PaneOnly) -> Outcome {
     let pane = app.pane_or_active(a.pane);
-    let mut tags: Vec<String> = Vec::new();
+    // Each tag, with how many of the files read have it.
+    let mut tags: Vec<(String, usize)> = Vec::new();
+    let mut read = 0;
     {
         let ws = app.workspace.read();
         if let Some(p) = ws.pane(pane) {
@@ -741,17 +746,28 @@ pub fn files_menu(app: &App, a: PaneOnly) -> Outcome {
                 .take(FILES_MENU_READ)
                 .filter_map(|id| p.entry(id))
             {
+                read += 1;
                 for tag in crate::tags_of(&e.metadata).unwrap_or_default() {
-                    if !tags.iter().any(|t| same_tag(t, &tag)) {
-                        tags.push(tag);
+                    match tags.iter_mut().find(|(t, _)| same_tag(t, &tag)) {
+                        Some((_, count)) => *count += 1,
+                        None => tags.push((tag, 1)),
                     }
                 }
             }
         }
     }
+    if read == 0 {
+        return Outcome::Value(serde_json::json!({ "items": [] }));
+    }
     let pins = crate::sidebar::pinned(app);
-    tags.sort_by_cached_key(|t| {
+    for pin in &pins {
+        if !tags.iter().any(|(t, _)| same_tag(t, pin)) {
+            tags.push((pin.clone(), 0));
+        }
+    }
+    tags.sort_by_cached_key(|(t, count)| {
         (
+            *count == 0,
             pins.iter()
                 .position(|p| same_tag(p, t))
                 .unwrap_or(usize::MAX),
@@ -759,44 +775,39 @@ pub fn files_menu(app: &App, a: PaneOnly) -> Outcome {
         )
     });
     tags.truncate(FILES_MENU_TAGS);
-    let chosen: toml::Table = app
-        .settings
-        .get(skwir_core::metadata::TAG_COLOR_SETTING)
-        .unwrap_or_default();
-    let mut items = Vec::new();
-    for tag in &tags {
-        // Its own name, unless another's is the same in another category.
-        let leaf = tag_leaf(tag);
-        let name = if tags
-            .iter()
-            .any(|t| !same_tag(t, tag) && same_tag(tag_leaf(t), leaf))
-        {
-            tag.as_str()
-        } else {
-            leaf
-        };
-        let submenu = format!("Tag “{name}”");
-        let color = chosen
-            .get(&tag.to_lowercase())
-            .and_then(toml::Value::as_str);
-        let mut add = |mut item: MenuItem, order: i32| {
-            item.submenu = Some(submenu.clone());
-            item.order = order;
-            items.push(item);
-        };
-        for (i, item) in file_items(app, tag, Some(pane)).into_iter().enumerate() {
-            // Its files and its place first, taking it last.
-            let order = if item.order >= 300 {
-                590
+    let items: Vec<MenuItem> = tags
+        .iter()
+        .zip(510..)
+        .map(|((tag, count), order)| {
+            // Its own name, unless another's is the same in another
+            // category.
+            let leaf = tag_leaf(tag);
+            let name = if tags
+                .iter()
+                .any(|(t, _)| !same_tag(t, tag) && same_tag(tag_leaf(t), leaf))
+            {
+                tag.as_str()
             } else {
-                570 + i32::try_from(i).unwrap_or_default()
+                leaf
             };
-            add(item, order);
-        }
-        for (i, value) in color_items(tag, color).into_iter().enumerate() {
-            add(value, 575 + i32::try_from(i).unwrap_or_default());
-        }
-    }
+            let item = MenuItem::new(
+                "context",
+                name,
+                "",
+                order,
+                Invocation::with_args(
+                    "tags.toggle",
+                    &serde_json::json!({ "tag": tag, "pane": pane }),
+                ),
+            )
+            .submenu(crate::TAGS_SUBMENU);
+            match *count {
+                0 => item.checked(false),
+                all if all == read => item.checked(true),
+                _ => item.partly(),
+            }
+        })
+        .collect();
     Outcome::Value(serde_json::json!({ "items": items }))
 }
 
@@ -831,7 +842,7 @@ pub fn file_items(app: &App, tag: &str, pane: Option<PaneId>) -> Vec<MenuItem> {
                 "Remove From Selected Files"
             },
             Invocation::with_args("tags.remove", &serde_json::json!({ "tags": [tag] })),
-            300,
+            290,
             "minus",
         ));
     }
@@ -879,7 +890,7 @@ pub fn one_at_a_time(app: &App, tags: &[String], chip: bool, known: &[String]) -
             let on = fields.iter().any(|f| same_tag(f, category));
             (on || under(category)).then_some((category, on))
         })
-        .zip(150..)
+        .zip(260..)
         .map(|((category, on), order)| {
             item(
                 &format!("One “{}” Tag at a Time", tag_leaf(category)),
@@ -942,7 +953,7 @@ pub fn tag_items(
                 "field": "into",
             }),
         ),
-        120,
+        220,
         "move",
     ));
     if tags.iter().all(|t| tag_parent(t).is_some()) {
@@ -959,7 +970,7 @@ pub fn tag_items(
                 "tags.move",
                 &serde_json::json!({ "tags": tags, "root": root }),
             ),
-            121,
+            221,
             "move",
         ));
     }
@@ -972,7 +983,7 @@ pub fn tag_items(
             .get(&tag.to_lowercase())
             .and_then(toml::Value::as_str);
         for (i, mut value) in color_items(tag, color).into_iter().enumerate() {
-            value.order = 140 + i32::try_from(i).unwrap_or_default();
+            value.order = 250 + i32::try_from(i).unwrap_or_default();
             items.push(value);
         }
     }
@@ -990,7 +1001,7 @@ pub fn tag_items(
                     "field": "to",
                 }),
             ),
-            122,
+            222,
             "rename",
         ));
     }
@@ -1000,7 +1011,7 @@ pub fn tag_items(
             "tags.delete",
             &serde_json::json!({ "tags": tags, "root": root }),
         ),
-        300,
+        290,
         "trash",
     ));
     items

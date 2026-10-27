@@ -516,8 +516,14 @@ def run(w):
     check("Shift+F10: the context menu, its first item said as focused",
           until(lambda: w.focused().get_role_name() == "menu item"
                 and within(w.focused())[0] == "Context menu"))
-    # The last submenu's row stands just before Properties, the menu's end.
-    w.keys("End", "Up")
+    # Open With, near the top, opens a submenu. AccessKit's AT-SPI adapter
+    # (0.19) says no element expandable: the row is found by its name.
+    for _ in range(30):
+        if w.focused().get_name() == "Open With":
+            break
+        w.keys("Down")
+    check("Down reaches Open With, a submenu's row",
+          w.focused().get_name() == "Open With" or print("  focused:", said(w.focused())))
     row = w.focused().get_name()
     w.keys("Right")
     # Its first row may be a choice: a radio item in a group named by it.

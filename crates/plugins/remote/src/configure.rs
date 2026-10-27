@@ -130,7 +130,7 @@ pub(crate) fn kept_items(address: &Address) -> Vec<MenuItem> {
             "place",
             "Remove Server…",
             "trash",
-            310,
+            290,
             Invocation::with_args("remote.remove_server", &id),
         ),
     ]
@@ -228,7 +228,7 @@ pub(crate) fn menu_items(name: &str, signs_in: bool, unfinished: bool) -> Vec<Me
             "place",
             "Remove Server…",
             "trash",
-            310,
+            290,
             named("remote.remove_server"),
         ),
     ];
