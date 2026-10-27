@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use skwir_core::app::{App, NotifyLevel};
 use skwir_core::command::Outcome;
+use skwir_core::command::Topic;
 use skwir_core::metadata::{Listed, same_tag};
 use skwir_core::notes::raw::RawKey;
 use skwir_core::notes::{Holds, Kept, Notes, NotesStore, Probe, Tag, Write, Wrote};
@@ -484,7 +485,7 @@ impl Plugin for NameTagsPlugin {
         app.register_notes_store(ID, Arc::new(NameStore::new(Convention::Tagspaces)));
         app.register_notes_store(ID, Arc::new(NameStore::new(Convention::Filetags)));
         app.commands.register::<NameArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "names.tag",
             "Tags into name",
             "Rename the entries given, or the selection, to hold their tags in their names (`convention`: `tagspaces`, name[a b].ext, or `filetags`, name -- a b.ext) (plan)",
@@ -492,7 +493,7 @@ impl Plugin for NameTagsPlugin {
         )
         .plans();
         app.commands.register::<NameArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "names.untag",
             "Tags out of name",
             "Rename the entries given, or the selection, without the tags in their names, the other stores keeping them first (plan)",

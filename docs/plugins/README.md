@@ -121,6 +121,9 @@ name = "word-count.count"    # under the id
 title = "Count words"
 description = "How many words the files hold"
 effect = "reads"             # reads, shows, plans or acts (default): what an agent may run
+topic = "files"              # where F1 lists its keys: go, select, files, find, notes, tabs, view,
+                             # preview, player, terminal, places, window or skwir; the category's
+                             # (browsing: go, previews: preview, else files) when left out
 arguments = { type = "object", properties = { minimum = { type = "integer" } } }
 ```
 

@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use skwir_core::app::{App, NotifyLevel};
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::registry::MenuItem;
 use skwir_core::settings::{RecordField, SettingSpec};
 
@@ -372,7 +372,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     let remotes_ = remotes.clone();
     app.commands
         .register::<skwir_core::command::NoArgs, _>(
-            ID,
+            ID, Topic::Places,
             "remote.server_records",
             "Servers",
             "Every server as Settings lists it: each one's name, kind and where it is kept, what its line does, and whether Skwir changes it (`fixed`: another program does)",
@@ -423,7 +423,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     let remotes_ = remotes.clone();
     app.commands
         .register::<AddArgs, _>(
-            ID,
+            ID, Topic::Places,
             "remote.add_server",
             "Add server…",
             "Add a server: a remote of rclone's (cloud storage, S3, WebDAV, SFTP and seventy more), in a form the user fills; what it starts from may be given, never a secret",
@@ -476,6 +476,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     app.commands
         .register::<ServerArgs, _>(
             ID,
+            Topic::Places,
             "remote.edit_server",
             "Edit server…",
             "Change a server in its form: a remote of rclone's, or one added by its address",
@@ -500,7 +501,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     let remotes_ = remotes.clone();
     app.commands
         .register::<NamedArgs, _>(
-            ID,
+            ID, Topic::Places,
             "remote.reconnect",
             "Sign in again…",
             "Sign a remote of rclone's in again through the browser, its access having expired or been revoked",
@@ -520,7 +521,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     let remotes_ = remotes.clone();
     app.commands
         .register::<ServerArgs, _>(
-            ID,
+            ID, Topic::Places,
             "remote.remove_server",
             "Remove server…",
             "Remove a server once the user confirms, where it is kept (rclone's configuration, Skwir's list, KDE's network folders), with its mount options and its entry connecting it at login: what it holds stays where it is",
@@ -561,7 +562,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     let remotes_ = remotes.clone();
     app.commands
         .register::<skwir_core::command::NoArgs, _>(
-            ID,
+            ID, Topic::Places,
             "remote.encrypt_rclone_config",
             "Encrypt rclone's configuration…",
             "Encrypt rclone's configuration file, which keeps its remotes' secrets only obscured, with a password the user types and may keep in the keyring",
@@ -598,7 +599,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     let remotes_ = remotes.clone();
     app.commands
         .register::<PaneArg, _>(
-            ID,
+            ID, Topic::Places,
             "remote.public_link_menu",
             "Offer a public link in the context menu",
             "The context menu's Copy Public Link, for a file of a remote whose storage makes one. Answers from memory",
@@ -645,7 +646,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         },
     );
     app.commands.register::<EntriesArgs, _>(
-        ID,
+        ID, Topic::Places,
         "remote.public_link",
         "Copy public link",
         "Make a public link to a file of a remote whose storage makes one (a cloud's share link), and put it on the clipboard",
@@ -686,7 +687,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     let remotes_ = remotes.clone();
     app.commands
         .register::<AddressArgs, _>(
-            ID,
+            ID, Topic::Places,
             "remote.mount_options",
             "Mount options…",
             "Choose how a server is mounted when it next connects: read only, rclone's file cache and bandwidth, sshfs's compression",
@@ -744,7 +745,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
         .shows();
     let remotes_ = remotes.clone();
     app.commands.register::<AtLoginArgs, _>(
-        ID,
+        ID, Topic::Places,
         "remote.connect_at_login",
         "Connect at login",
         "Have the system's service manager connect a server when the user logs in (a systemd user unit, a launch agent, a logon task), or no longer; connects it now too. Only what asks nothing at login: a remote of rclone's configuration not encrypted, an SFTP server logged in to by key",
@@ -788,7 +789,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     let remotes_ = remotes.clone();
     app.commands
         .register::<AddressArgs, _>(
-            ID,
+            ID, Topic::Places,
             "remote.setup_key_login",
             "Set up key login…",
             "Let ssh log in to an SFTP server by key, no password: a key the ssh agent holds, the user's default one, or a new one, its public half added to the server's authorized keys once the user chose it",
@@ -821,6 +822,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     let remotes_ = remotes.clone();
     app.commands.register::<NamedArgs, _>(
         ID,
+        Topic::Places,
         "remote.test_server",
         "Test server",
         "List the top of a remote of rclone's, as connecting would, and say whether it answers",
@@ -843,7 +845,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     let remotes_ = remotes.clone();
     app.commands
         .register::<LocationArgs, _>(
-            ID,
+            ID, Topic::Places,
             "remote.keep_as_server_menu",
             "Offer Keep as Server in a place's menu",
             "A sidebar place's Keep as Server, for a remote folder's address that is no server yet (a bookmark's). Answers from memory",
@@ -889,7 +891,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     let remotes_ = remotes.clone();
     app.commands
         .register::<PaneArg, _>(
-            ID,
+            ID, Topic::Places,
             "remote.nearby_menu",
             "Nearby server's menu",
             "The context menu's items for the one server selected in the Nearby place: Add as Server…, its form filled in with the name and address it announced, where no server holds that address. Answers from memory",
@@ -931,7 +933,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
     let remotes_ = remotes.clone();
     app.commands
         .register::<KeepArgs, _>(
-            ID,
+            ID, Topic::Places,
             "remote.keep_as_server",
             "Keep as server",
             "Make a remote folder's address a server of the Network section, kept in Skwir's list or KDE's network folders, under its bookmark's name; its bookmark, if it has one, is taken out",

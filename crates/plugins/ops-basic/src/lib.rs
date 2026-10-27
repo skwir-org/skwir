@@ -35,7 +35,7 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 use skwir_core::app::{App, PaneArg, TargetsArgs};
-use skwir_core::command::{ClipboardArg, Invocation, Outcome, WantsClipboard};
+use skwir_core::command::{ClipboardArg, Invocation, Outcome, Topic, WantsClipboard};
 use skwir_core::op::{Change, Copy, EntryRef, Move, Operation, Plan};
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{KeyBinding, MenuItem};
@@ -534,6 +534,7 @@ impl Plugin for OpsBasicPlugin {
         let cb = Arc::clone(&self.clipboard);
         app.commands.register::<TargetsArgs, _>(
             ID,
+            Topic::Files,
             "clipboard_copy",
             "Copy",
             "Remember the selection, or the entries given, for a later paste (copy)",
@@ -555,6 +556,7 @@ impl Plugin for OpsBasicPlugin {
         let cb = Arc::clone(&self.clipboard);
         app.commands.register::<TargetsArgs, _>(
             ID,
+            Topic::Files,
             "clipboard_cut",
             "Cut",
             "Remember the selection, or the entries given, for a later paste (move)",
@@ -575,7 +577,7 @@ impl Plugin for OpsBasicPlugin {
         );
         app.commands
             .register::<TargetsArgs, _>(
-                ID,
+                ID, Topic::Files,
                 "copy_paths",
                 "Copy paths",
                 "The selected paths, or the entries', or with nothing selected the folder shown, as text for the clipboard, one per line",
@@ -585,6 +587,7 @@ impl Plugin for OpsBasicPlugin {
         let cb = Arc::clone(&self.clipboard);
         app.commands.register::<PaneArg, _>(
             ID,
+            Topic::Files,
             "clipboard_clear",
             "Forget cut or copied files",
             "Empty the clipboard; files that were cut stay where they are",
@@ -598,7 +601,7 @@ impl Plugin for OpsBasicPlugin {
         let cb = Arc::clone(&self.clipboard);
         app.commands
             .register::<PasteArgs, _>(
-                ID,
+                ID, Topic::Files,
                 "clipboard_paste",
                 "Paste",
                 "Copy or move the clipboard into the current directory (plan): Skwir's, or the files given as `clipboard`",

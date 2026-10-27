@@ -25,14 +25,20 @@ fn clients_one_after_another_reach_the_window_through_its_pipe() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("app"))).unwrap();
     app.commands
-        .register::<NoArgs, _>("test", "test.answer", "Answer", "Answers 42", |_, _| {
-            Ok(Outcome::Value(json!(42)))
-        })
+        .register::<NoArgs, _>(
+            "test",
+            skwir_core::command::Topic::Files,
+            "test.answer",
+            "Answer",
+            "Answers 42",
+            |_, _| Ok(Outcome::Value(json!(42))),
+        )
         .reads();
     let folders = tmp.path().to_owned();
     app.commands
         .register::<Make, _>(
             "test",
+            skwir_core::command::Topic::Files,
             "test.make",
             "Make a folder",
             "Makes a folder of this name",

@@ -1414,6 +1414,37 @@ pub fn when_of(context: &str) -> Option<String> {
     (!tokens.is_empty()).then(|| tokens.join(" "))
 }
 
+/// What a binding's action is about (`CommandSpec::topic`), the family it
+/// shares a row of keys with (`Form::family`), and where it stands in it:
+/// its form's place among its command's. The views, which no form names
+/// (`named_title`), are one, in the view selector's order.
+pub fn topic_and_family(
+    app: &App,
+    command: &str,
+    args: &serde_json::Value,
+) -> (skwir_core::command::Topic, Option<(String, usize)>) {
+    let Some(spec) = app.commands.get(command) else {
+        return (skwir_core::command::Topic::Skwir, None);
+    };
+    let family = match args.get("id").and_then(serde_json::Value::as_str) {
+        Some(id) if command == "ui.view" => {
+            let order = app
+                .registry
+                .views
+                .all()
+                .into_iter()
+                .find(|view| &*view.id == id)
+                .map_or(i32::MAX, |view| view.order);
+            Some(("Views".to_owned(), usize::try_from(order).unwrap_or(0)))
+        }
+        _ => {
+            let at = spec.forms.iter().position(|form| form.args == *args);
+            at.and_then(|at| Some((spec.forms[at].family.clone()?, at)))
+        }
+    };
+    (spec.topic, family)
+}
+
 /// What a binding does, in words (see `title`).
 pub fn title_of(app: &App, hint: &KeyHint) -> String {
     title(app, &hint.command, &hint.args)
@@ -2645,6 +2676,7 @@ mod tests {
         assert_eq!(on_ctrl_m(&app), ["plugin.default"]);
         app.commands.register::<skwir_core::command::NoArgs, _>(
             "later",
+            skwir_core::command::Topic::Files,
             "later.open",
             "Open",
             "",

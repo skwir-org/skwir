@@ -7,6 +7,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use crate::app::App;
+use crate::command::Topic;
 
 /// A plugin. `register` contributes commands, operations, providers, views,
 /// places, settings, and so on, all tagged with `id()` so they can be
@@ -154,7 +155,7 @@ struct SetEnabledArgs {
 /// and answers once saved: the process may end as soon as it answers.
 pub(crate) fn register(app: &App) {
     app.commands.register::<SetEnabledArgs, _>(
-        "core",
+        "core", Topic::Skwir,
         "plugins.set_enabled",
         "Enable or disable a plugin",
         "Toggle a plugin at runtime and remember the choice; with the window open, completion is signalled by a wake and `plugins.list`",
@@ -194,6 +195,7 @@ pub(crate) fn register(app: &App) {
     app.commands
         .register::<crate::command::NoArgs, _>(
             "core",
+            Topic::Skwir,
             "plugins.list",
             "List plugins",
             "Every plugin with its title, description and enabled state",

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use skwir_core::App;
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::entry::{EntryKind, FileId};
 use skwir_core::fs::{Dir, stat, xattr};
 use skwir_core::op::{
@@ -726,7 +726,7 @@ pub fn register(app: &App, owner: &str) {
     app.ops.register::<Compress>(owner);
     app.commands
         .register::<CompressArgs, _>(
-            owner,
+            owner, Topic::Files,
             "archive.compress",
             "Compress",
             "Make an archive of the selection, or the entries given, beside them or in `dest`: its format is what `name` ends with (.zip, .7z, .tar.gz, .tar.xz, .tar.zst, .tar.bz2, .tar), else `format`, else ZIP (plan)",
@@ -734,7 +734,7 @@ pub fn register(app: &App, owner: &str) {
         )
         .plans();
     app.commands.register::<AskArgs, _>(
-        owner,
+        owner, Topic::Files,
         "archive.compress_ask",
         "Compress…",
         "Ask the name of an archive of the selection, its ending saying its format, and make it",

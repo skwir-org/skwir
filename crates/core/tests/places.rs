@@ -12,7 +12,7 @@ use std::time::Duration;
 use common::*;
 use crossbeam_channel::Receiver;
 use parking_lot::Mutex;
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
 use skwir_core::location::{
     Crumb, EmptyState, EventSink, Listing, ListingEvent, Location, LocationProvider, OpenContext,
@@ -287,6 +287,7 @@ fn delete_takes_out_what_the_location_says_and_nothing_where_it_says_nothing() {
         let asked = Arc::clone(&asked);
         app.commands.register::<serde_json::Value, _>(
             "test",
+            Topic::Files,
             "fake.out",
             "Out",
             "",

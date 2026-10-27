@@ -435,8 +435,8 @@ a plugin you turn off waits for it. Settings › Plugins › **Vim keys** (off b
 file list yazi's keys: `hjkl` to move, `Space` to pick, `v` for a range,
 `y`, `x`, `p` to copy, cut and paste, `/` to find, and `g` and `,`
 sequences. While it is on, typed letters no longer jump to names. `F1`
-lists what applies where you are; type to narrow it, and to find what
-the other places' keys do too. **All shortcuts…** opens Settings ›
+lists what applies where you are, by topic, an action's keys on one
+row; type to narrow it, and to find what the other places' keys do too. **All shortcuts…** opens Settings ›
 Keyboard with what you typed. After the first key of a sequence a hint
 shows what can follow.
 

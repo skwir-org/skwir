@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cache::Cache;
 use crate::cancel::CancelToken;
-use crate::command::{CommandRegistry, Form, Invocation, NoArgs, Outcome};
+use crate::command::{CommandRegistry, Form, Invocation, NoArgs, Outcome, Topic};
 use crate::entry::{Entry, EntryId};
 use crate::fs::PathProvider;
 use crate::location::{Location, LocationProvider, OpenContext, OpenLocation, Waker};
@@ -2219,7 +2219,7 @@ mod builtin {
         let c = &app.commands;
 
         c.register::<NavigateArgs, _>(
-            "core",
+            "core", Topic::Go,
             "navigate",
             "Go to location",
             "Open a path or location in a pane, an entry of it selected once listed when `select` names one; `in_place` puts it in place of the step the pane shows, with no step of its own",
@@ -2240,7 +2240,7 @@ mod builtin {
         .shows();
 
         c.register::<PaneArg, _>(
-            "core",
+            "core", Topic::Places,
             "keep",
             "Add to sidebar",
             "Keep what the pane shows in the sidebar: a folder as a bookmark, a search as a saved search",
@@ -2265,6 +2265,7 @@ mod builtin {
 
         c.register::<PaneArg, _>(
             "core",
+            Topic::Go,
             "refresh",
             "Refresh",
             "Re-list the pane's location",
@@ -2293,8 +2294,13 @@ mod builtin {
                 true,
             ),
         ] {
-            let step =
-                c.register::<HistoryArgs, _>("core", name, title, description, move |a, app| {
+            let step = c.register::<HistoryArgs, _>(
+                "core",
+                Topic::Go,
+                name,
+                title,
+                description,
+                move |a, app| {
                     let pane = app.pane_or_active(a.pane);
                     let steps = a.steps.unwrap_or(1).max(1);
                     let target = {
@@ -2315,14 +2321,15 @@ mod builtin {
                         app.show(pane, &loc, |p| p.go_to(pos, &loc, left))?;
                     }
                     Ok(Outcome::Done)
-                });
+                },
+            );
             // Steps through the history: a key held down goes on.
             step.repeats(crate::command::always);
             step.shows();
         }
 
         let up = c.register::<PaneArg, _>(
-            "core",
+            "core", Topic::Go,
             "up",
             "Parent directory",
             "Go to the parent of the current directory, or to the place before the one shown in its trail (a tag's category, the folder a search looks in), the one left selected there",
@@ -2347,7 +2354,7 @@ mod builtin {
         up.shows();
 
         c.register::<TargetsArgs, _>(
-            "core",
+            "core", Topic::Go,
             "show_in_folder",
             "Show in folder",
             "Open the folder the selected file is in, the file selected: from a search, a tag, the shelf, where files from many folders are listed",
@@ -2368,7 +2375,7 @@ mod builtin {
         .shows();
 
         c.register::<PaneArg, _>(
-            "core",
+            "core", Topic::Files,
             "take_out",
             "Take out of here",
             "Take the selection out of a location that lists files kept elsewhere, as it says (a tag's takes its tag off them, the shelf's unshelves them): the files stay where they are. What the Delete key does there",
@@ -2391,6 +2398,7 @@ mod builtin {
 
         c.register::<SelectArgs, _>(
             "core",
+            Topic::Select,
             "select",
             "Select",
             "Select entries by id or name",
@@ -2476,6 +2484,7 @@ mod builtin {
 
         let sort = c.register::<SortArgs, _>(
             "core",
+            Topic::View,
             "sort",
             "Sort",
             "Set the sort key, direction, and hidden-file visibility of a pane",
@@ -2511,7 +2520,7 @@ mod builtin {
         sort.shows();
 
         c.register::<FilterArgs, _>(
-            "core",
+            "core", Topic::Find,
             "filter",
             "Filter",
             "Show only the entries `text` keeps, until the pane shows another location: as the filter's reader reads it (the query plugin: words find names, terms the listing can decide such as kind:image or size>1M hold for files, every folder staying), else those whose name holds it (case ignored unless it has a capital); without `text`, all of them",
@@ -2532,6 +2541,7 @@ mod builtin {
 
         c.register::<PaneArg, _>(
             "core",
+            Topic::View,
             "toggle_hidden",
             "Toggle hidden files",
             "Show or hide dot-prefixed entries",
@@ -2547,6 +2557,7 @@ mod builtin {
 
         c.register::<PaneArg, _>(
             "core",
+            Topic::Select,
             "select_all",
             "Select all",
             "Select every entry",
@@ -2569,6 +2580,7 @@ mod builtin {
 
         c.register::<PaneArg, _>(
             "core",
+            Topic::Select,
             "select_invert",
             "Invert selection",
             "Select what is shown and not selected, and deselect the rest",
@@ -2594,6 +2606,7 @@ mod builtin {
 
         c.register::<PaneArg, _>(
             "core",
+            Topic::Select,
             "select_none",
             "Clear selection",
             "Deselect everything",
@@ -2608,7 +2621,7 @@ mod builtin {
         .shows();
 
         let sweep = c.register::<SweepArgs, _>(
-            "core",
+            "core", Topic::Select,
             "select_sweep",
             "Select as the cursor moves",
             "Hold a range from the cursor: moving selects, or with `unset` deselects, what lies between",
@@ -2631,6 +2644,7 @@ mod builtin {
 
         c.register::<PaneArg, _>(
             "core",
+            Topic::Select,
             "select_sweep_end",
             "Stop selecting as the cursor moves",
             "End the range held from the cursor, keeping what it covers",
@@ -2646,6 +2660,7 @@ mod builtin {
 
         c.register::<ExpandArgs, _>(
             "core",
+            Topic::View,
             "expand",
             "Expand folder",
             "Open folders in place under the one shown, as the tree view draws them, or close them",
@@ -2701,6 +2716,7 @@ mod builtin {
 
         c.register::<HydrateArgs, _>(
             "core",
+            Topic::Files,
             "hydrate",
             "Load metadata",
             "Request metadata for entries (views call this for visible rows)",
@@ -2726,7 +2742,7 @@ mod builtin {
         .shows();
 
         c.register::<EntriesArgs, _>(
-            "core",
+            "core", Topic::Files,
             "entries",
             "List entries",
             "What a pane shows, in its order (sorted, filtered, with the folders opened in place), or with `location` what a folder holds, listed without showing it: each entry's id, name, path, kind, size and modification time (seconds since 1970), and whether it is selected; from `offset`, at most `limit`. `complete: false`: the listing was still arriving, ask again. `as_of`, when present: the answer is an index's as of its last update (`by` says which, `updated` when, in seconds since 1970), so a file made, renamed or removed since is not in it",
@@ -2789,6 +2805,7 @@ mod builtin {
 
         c.register::<RenameArgs, _>(
             "core",
+            Topic::Files,
             "rename",
             "Rename",
             "Rename the selected entry, or the one given (plan)",
@@ -2811,7 +2828,7 @@ mod builtin {
         .plans();
 
         c.register::<TransferArgs, _>(
-            "core",
+            "core", Topic::Files,
             "move",
             "Move to…",
             "Move the selection, or the entries given, to a directory (plan); on_conflict says what becomes of a name taken there",
@@ -2832,7 +2849,7 @@ mod builtin {
         .plans();
 
         c.register::<TransferArgs, _>(
-            "core",
+            "core", Topic::Files,
             "copy",
             "Copy to…",
             "Copy the selection, or the entries given, to a directory (plan); on_conflict says what becomes of a name taken there",
@@ -2853,7 +2870,7 @@ mod builtin {
         .plans();
 
         c.register::<TransferArgs, _>(
-            "core",
+            "core", Topic::Files,
             "link",
             "Link to…",
             "Make a link in a directory to each of the selection, or the entries given, under its name (plan); on_conflict says what becomes of a name taken there",
@@ -2874,7 +2891,7 @@ mod builtin {
         .plans();
 
         c.register::<AccessArgs, _>(
-            "core",
+            "core", Topic::Files,
             "set_access",
             "Change access",
             "Change who may read, write and run the selection, or the entries given: `mode` as chmod takes it, `group` by number, `inside` for what folders hold (plan). What a link leads to changes; the owner never does",
@@ -2905,6 +2922,7 @@ mod builtin {
 
         c.register::<TargetsArgs, _>(
             "core",
+            Topic::Files,
             "trash",
             "Move to trash",
             "Trash the selection, or the entries given (plan)",
@@ -2974,6 +2992,7 @@ mod builtin {
 
         c.register::<TargetsArgs, _>(
             "core",
+            Topic::Files,
             "delete",
             "Delete permanently",
             "Delete the selection, or the entries given, without trash (plan, irreversible)",
@@ -2998,6 +3017,7 @@ mod builtin {
 
         c.register::<MkdirArgs, _>(
             "core",
+            Topic::Files,
             "mkdir",
             "New folder",
             "Create a folder in the folder given in `in`, or the one the pane shows (plan)",
@@ -3016,7 +3036,7 @@ mod builtin {
         .plans();
 
         c.register::<MkdirArgs, _>(
-            "core",
+            "core", Topic::Files,
             "new_file",
             "New file",
             "Create an empty file in the folder given in `in`, or the one the pane shows (plan); a name ending in / makes a folder",
@@ -3046,6 +3066,7 @@ mod builtin {
 
         c.register::<PlanDiffArgs, _>(
             "core",
+            Topic::Files,
             "plan_diff",
             "Preview plan",
             "Dry-run a plan and return what each step would do",
@@ -3059,7 +3080,7 @@ mod builtin {
         .data();
 
         c.register::<ApplyPlanArgs, _>(
-            "core",
+            "core", Topic::Files,
             "apply_plan",
             "Apply plan",
             "Apply a plan given as data (plan): as any command's, the caller applies it, at once for the user's own gesture, after review for an agent",
@@ -3068,7 +3089,7 @@ mod builtin {
         .plans();
 
         c.register::<UndoArgs, _>(
-            "core",
+            "core", Topic::Files,
             "undo",
             "Undo",
             "Undo the most recent plan, or the plan named when nothing asked after it touched what it did; asked from outside the window, says what it took back",
@@ -3100,7 +3121,7 @@ mod builtin {
         );
 
         c.register::<NoArgs, _>(
-            "core",
+            "core", Topic::Files,
             "redo",
             "Redo",
             "Redo the most recently undone plan; asked from outside the window, says what it applied again",
@@ -3118,7 +3139,7 @@ mod builtin {
         );
 
         c.register::<RetryArgs, _>(
-            "core",
+            "core", Topic::Files,
             "retry",
             "Retry",
             "Run again what a plan stopped by an error had left, the last one stopped unless told which; what it applies is undone with that plan; asked from outside the window, says what it applied",
@@ -3145,6 +3166,7 @@ mod builtin {
 
         c.register::<NoArgs, _>(
             "core",
+            Topic::Skwir,
             "commands",
             "List commands",
             "Return every registered command with its argument schema",

@@ -10,7 +10,7 @@ use std::sync::{Arc, Weak};
 use crossbeam_channel::Receiver;
 use parking_lot::Mutex;
 use skwir_core::app::{App, PaneArg};
-use skwir_core::command::{Invocation, NoArgs, Outcome};
+use skwir_core::command::{Invocation, NoArgs, Outcome, Topic};
 use skwir_core::entry::{Entry, EntryId, EntryKind};
 use skwir_core::fs::hydrate_paths;
 use skwir_core::fs::stat::stat_path;
@@ -577,6 +577,7 @@ impl Plugin for ShelfPlugin {
         let st = Arc::clone(&self.state);
         app.commands.register::<AddArgs, _>(
             ID,
+            Topic::Files,
             "shelf.add",
             "Add to shelf",
             "Put the selection (or the given entries) on the shelf",
@@ -596,6 +597,7 @@ impl Plugin for ShelfPlugin {
         let st = Arc::clone(&self.state);
         app.commands.register::<RemoveArgs, _>(
             ID,
+            Topic::Files,
             "shelf.remove",
             "Remove from shelf",
             "Take entries off the shelf",
@@ -616,6 +618,7 @@ impl Plugin for ShelfPlugin {
         let st = Arc::clone(&self.state);
         app.commands.register::<NoArgs, _>(
             ID,
+            Topic::Files,
             "shelf.clear",
             "Clear shelf",
             "Empty the shelf",
@@ -627,6 +630,7 @@ impl Plugin for ShelfPlugin {
         app.commands
             .register::<PaneArg, _>(
                 ID,
+                Topic::Files,
                 "shelf.open",
                 "Open shelf",
                 "Show the shelf in the pane",
@@ -640,6 +644,7 @@ impl Plugin for ShelfPlugin {
         app.commands
             .register::<NoArgs, _>(
                 ID,
+                Topic::Files,
                 "shelf.list",
                 "List shelf",
                 "Return the shelved entries",
@@ -653,6 +658,7 @@ impl Plugin for ShelfPlugin {
         app.commands
             .register::<PaneArg, _>(
                 ID,
+                Topic::Files,
                 "shelf.move_here",
                 "Move shelf here",
                 "Move every shelved entry into the current directory (plan)",
@@ -666,6 +672,7 @@ impl Plugin for ShelfPlugin {
         app.commands
             .register::<PaneArg, _>(
                 ID,
+                Topic::Files,
                 "shelf.copy_here",
                 "Copy shelf here",
                 "Copy every shelved entry into the current directory (plan)",
@@ -679,6 +686,7 @@ impl Plugin for ShelfPlugin {
         app.commands
             .register::<NoArgs, _>(
                 ID,
+                Topic::Files,
                 "shelf.trash",
                 "Trash shelf",
                 "Move every shelved entry to the trash (plan)",

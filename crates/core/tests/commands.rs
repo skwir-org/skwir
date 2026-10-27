@@ -3,14 +3,14 @@
 mod common;
 
 use common::*;
-use skwir_core::command::{Invocation, NoArgs, Outcome};
+use skwir_core::command::{Invocation, NoArgs, Outcome, Topic};
 
 #[test]
 fn a_command_that_panics_fails_without_taking_its_caller() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
     app.commands
-        .register::<NoArgs, _>("faulty", "faulty.run", "Run", "", |_, _| {
+        .register::<NoArgs, _>("faulty", Topic::Files, "faulty.run", "Run", "", |_, _| {
             panic!("a fault of its own")
         });
     let error = app
@@ -20,10 +20,14 @@ fn a_command_that_panics_fails_without_taking_its_caller() {
         error.to_string(),
         "“faulty.run” stopped on a fault of its own (the log says where)"
     );
-    app.commands
-        .register::<NoArgs, _>("faulty", "faulty.fine", "Fine", "", |_, _| {
-            Ok(Outcome::Value(1.into()))
-        });
+    app.commands.register::<NoArgs, _>(
+        "faulty",
+        Topic::Files,
+        "faulty.fine",
+        "Fine",
+        "",
+        |_, _| Ok(Outcome::Value(1.into())),
+    );
     assert!(
         app.dispatch(&Invocation::new("faulty.fine")).is_ok(),
         "the registry still answers"
@@ -39,11 +43,11 @@ fn a_shadowed_command_returns_when_its_shadow_is_withdrawn() {
         other => panic!("{other:?}"),
     };
     app.commands
-        .register::<NoArgs, _>("first", "probe", "Probe", "", |_, _| {
+        .register::<NoArgs, _>("first", Topic::Files, "probe", "Probe", "", |_, _| {
             Ok(Outcome::Value(1.into()))
         });
     app.commands
-        .register::<NoArgs, _>("second", "probe", "Probe", "", |_, _| {
+        .register::<NoArgs, _>("second", Topic::Files, "probe", "Probe", "", |_, _| {
             Ok(Outcome::Value(2.into()))
         });
     assert_eq!(value(&app), 2);
@@ -102,6 +106,7 @@ fn a_command_is_called_by_the_form_of_its_arguments() {
     let app = app(tmp.path());
     let declared = app.commands.register::<serde_json::Value, _>(
         "sorter",
+        Topic::Files,
         "sorter.sort",
         "Sort",
         "",
@@ -135,16 +140,29 @@ fn a_held_key_repeats_only_what_its_command_declares() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
     for name in ["player.volume", "player.play"] {
-        app.commands
-            .register::<serde_json::Value, _>("player", name, "", "", |_, _| Ok(Outcome::Done));
+        app.commands.register::<serde_json::Value, _>(
+            "player",
+            Topic::Files,
+            name,
+            "",
+            "",
+            |_, _| Ok(Outcome::Done),
+        );
     }
     app.commands
-        .register::<serde_json::Value, _>("player", "player.step", "", "", |_, _| Ok(Outcome::Done))
-        .repeats(skwir_core::command::always);
-    app.commands
-        .register::<serde_json::Value, _>("player", "player.volume_by", "", "", |_, _| {
+        .register::<serde_json::Value, _>("player", Topic::Files, "player.step", "", "", |_, _| {
             Ok(Outcome::Done)
         })
+        .repeats(skwir_core::command::always);
+    app.commands
+        .register::<serde_json::Value, _>(
+            "player",
+            Topic::Files,
+            "player.volume_by",
+            "",
+            "",
+            |_, _| Ok(Outcome::Done),
+        )
         .repeats(|args| args.get("by").is_some());
     let none = serde_json::json!({});
     assert!(app.commands.repeats("player.step", &none));
@@ -204,11 +222,17 @@ fn an_argument_a_command_does_not_take_is_refused_never_dropped() {
     refused("set_access", json!({ "mode": "644", "entrie": [] }));
     // A command that takes none refuses any; one taking any JSON takes all.
     app.commands
-        .register::<NoArgs, _>("probe", "probe.none", "None", "", |_, _| Ok(Outcome::Done));
-    app.commands
-        .register::<serde_json::Value, _>("probe", "probe.any", "Any", "", |_, _| {
+        .register::<NoArgs, _>("probe", Topic::Files, "probe.none", "None", "", |_, _| {
             Ok(Outcome::Done)
         });
+    app.commands.register::<serde_json::Value, _>(
+        "probe",
+        Topic::Files,
+        "probe.any",
+        "Any",
+        "",
+        |_, _| Ok(Outcome::Done),
+    );
     refused("probe.none", json!({ "pane": 1 }));
     assert!(
         app.dispatch(&Invocation {
@@ -225,8 +249,14 @@ fn an_argument_a_command_does_not_take_is_refused_never_dropped() {
     assert!(accepts("probe.any", "pane"), "any JSON");
     assert!(!accepts("probe.none", "pane") && !accepts("set_access", "entrie"));
     // Enum arguments: the names of every variant are taken.
-    app.commands
-        .register_raw::<Step, _>("probe", "probe.step", "Step", "", |_, _| Ok(Outcome::Done));
+    app.commands.register_raw::<Step, _>(
+        "probe",
+        Topic::Files,
+        "probe.step",
+        "Step",
+        "",
+        |_, _| Ok(Outcome::Done),
+    );
     assert!(
         app.dispatch(&Invocation {
             name: "probe.step".into(),
@@ -242,11 +272,12 @@ fn a_plugin_from_outside_takes_no_other_owners_command() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
     app.commands
-        .register::<NoArgs, _>("core", "probe.kept", "Kept", "", |_, _| {
+        .register::<NoArgs, _>("core", Topic::Files, "probe.kept", "Kept", "", |_, _| {
             Ok(Outcome::Value("core's".into()))
         });
     app.commands.register_dynamic(
         "outsider",
+        Topic::Files,
         "probe.kept",
         "Taken",
         "",

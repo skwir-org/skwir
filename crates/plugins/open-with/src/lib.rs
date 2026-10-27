@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 use skwir_core::app::{App, NotifyLevel, PaneArg};
 use skwir_core::cancel::CancelToken;
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::entry::{EntryId, EntryKind};
 use skwir_core::fs::reach;
 use skwir_core::location::Location;
@@ -1215,14 +1215,14 @@ impl Plugin for OpenWithPlugin {
     fn register(&self, app: &App) {
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<OpenArgs, _>(
-            ID,
+            ID, Topic::Go,
             "open",
             "Open",
             "Enter the selected directory, or open the selected files with the default application of their type, as the desktop's lists choose it (the one the context menu names)",
             move |a, app| open(a, &cache, app),
         );
         app.commands.register::<PaneArg, _>(
-            ID,
+            ID, Topic::Terminal,
             "open_terminal",
             "Open terminal here",
             "Open a terminal in the selected folder, else the folder shown, else (in a search) the folder holding the selection",
@@ -1245,7 +1245,7 @@ impl Plugin for OpenWithPlugin {
         );
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<ChoicesArgs, _>(
-            ID,
+            ID, Topic::Files,
             "open_with.choices",
             "List applications for the selection",
             "List the applications that open the selected entries (or the pane's folder with `here`), recommended first, each with the `open_with` invocation that opens them; with `defaults`, each with the `open_with.set_default` that makes it the default for their type",
@@ -1254,7 +1254,7 @@ impl Plugin for OpenWithPlugin {
         .data();
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<TargetArgs, _>(
-            ID,
+            ID, Topic::Files,
             "open_with.properties",
             "Name the default application in Properties",
             "Properties' Opens with row for one file: the application its type opens with, and the way to change it",
@@ -1270,7 +1270,7 @@ impl Plugin for OpenWithPlugin {
         );
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<OpenWithArgs, _>(
-            ID,
+            ID, Topic::Files,
             "open_with",
             "Open with an application by desktop ID",
             "Open the selected entries (or the pane's folder with `here`) with the application whose desktop file ID is `app`",
@@ -1278,7 +1278,7 @@ impl Plugin for OpenWithPlugin {
         );
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<SetDefaultArgs, _>(
-            ID,
+            ID, Topic::Files,
             "open_with.set_default",
             "Set the default application for a type",
             "Make the application whose desktop file ID is `app` the default for the MIME type `mime`, in the user's mimeapps.list; the notification offers Undo",
@@ -1292,7 +1292,7 @@ impl Plugin for OpenWithPlugin {
         );
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<EditArgs, _>(
-            ID,
+            ID, Topic::Files,
             "open_with.edit_associations",
             "Rewrite a type's default application lines",
             "Set the lines a MIME type has in one mimeapps.list (default, added and removed associations); what Undo and Redo of a default run",
@@ -1346,7 +1346,7 @@ impl Plugin for OpenWithPlugin {
         );
         let cache = Arc::clone(&self.catalog);
         app.commands.register::<PaneArg, _>(
-            ID,
+            ID, Topic::Files,
             "open_with.menu",
             "Name the default application in the context menu",
             "The context menu's Open for the selection, naming the default application its files share, and the other applications for their types in its Open With submenu; no items when the selection's types or the applications are not known yet. Answers from memory",

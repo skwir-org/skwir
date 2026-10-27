@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use rmcp::ServiceExt as _;
 use serde_json::{Value, json};
 use skwir_core::app::AppConfig;
-use skwir_core::command::{NoArgs, Outcome};
+use skwir_core::command::{NoArgs, Outcome, Topic};
 use skwir_core::op::Mkdir;
 use skwir_core::{App, Plan};
 use skwir_plugin_control::channel::Address;
@@ -28,14 +28,20 @@ struct Make {
 fn app(root: &Path) -> Arc<App> {
     let app = App::new(AppConfig::ephemeral(root.join("app"))).unwrap();
     app.commands
-        .register::<NoArgs, _>("test", "test.answer", "Answer", "Answers 42", |_, _| {
-            Ok(Outcome::Value(json!(42)))
-        })
+        .register::<NoArgs, _>(
+            "test",
+            Topic::Files,
+            "test.answer",
+            "Answer",
+            "Answers 42",
+            |_, _| Ok(Outcome::Value(json!(42))),
+        )
         .reads();
     let folders = root.to_owned();
     app.commands
         .register::<Make, _>(
             "test",
+            Topic::Files,
             "test.make",
             "Make a folder",
             "Makes a folder of this name",
@@ -49,14 +55,19 @@ fn app(root: &Path) -> Arc<App> {
         )
         .plans();
     // Acts without a plan: an agent asks first.
-    app.commands
-        .register::<NoArgs, _>("test", "test.act", "Act", "Acts at once", |_, _| {
-            Ok(Outcome::Value(json!("acted")))
-        });
+    app.commands.register::<NoArgs, _>(
+        "test",
+        Topic::Files,
+        "test.act",
+        "Act",
+        "Acts at once",
+        |_, _| Ok(Outcome::Value(json!("acted"))),
+    );
     // Answers the window's own question: never an agent's.
     app.commands
         .register::<NoArgs, _>(
             "test",
+            Topic::Files,
             "test.answer_dialog",
             "Answer the dialog",
             "Presses for the user",
@@ -68,6 +79,7 @@ fn app(root: &Path) -> Arc<App> {
     app.commands
         .register::<NoArgs, _>(
             "test",
+            Topic::Files,
             "test.paths",
             "Paths",
             "Answers paths",
@@ -538,6 +550,7 @@ fn what_an_agent_counts_leaves_private_files_out() {
     app.commands
         .register::<NoArgs, _>(
             "test",
+            Topic::Files,
             "test.targets",
             "Targets",
             "The names of what a command is handed",

@@ -116,7 +116,8 @@ working in an area, also read that area's rules (see
   undoable; batch results and anything from a background task or an agent
   go through `App::propose` for review (`docs/invariants/commands.md`). A
   stopped action going on by itself once its server answers again is the
-  user's action continuing (ADR-080, 9), not a new one.
+  user's action continuing (ADR-080, 9), not a new one. Every command
+  names its topic where it is registered (`command::Topic`, ADR-100).
 - **Operations have inverses**, a dry-run `check`, and idempotent
   semantics (`docs/invariants/operations.md`).
 - **Provenance.** Metadata fields record where they came from

@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use parking_lot::Mutex;
 use skwir_core::CancelToken;
 use skwir_core::app::{App, NotifyLevel, PaneArg};
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::entry::FileId;
 use skwir_core::op::{
     EntryRef, Mkdir, Move, Operation, Plan, Rename, RenameOrderError, RenameRequest, Trash,
@@ -679,6 +679,7 @@ impl Plugin for EditAsBufferPlugin {
         *self.lifetime.lock() = lifetime.clone();
         app.commands.register::<PaneArg, _>(
             ID,
+            Topic::Files,
             "edit_as_buffer",
             "Edit as text…",
             "Open the listing in $EDITOR; saving proposes a plan for review",

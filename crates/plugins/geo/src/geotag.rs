@@ -27,7 +27,7 @@ use jiff::civil::DateTime;
 use jiff::tz::{Offset, TimeZone};
 use parking_lot::Mutex;
 use skwir_core::app::{App, NotifyLevel};
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::entry::keys;
 use skwir_core::geo::{Datum, GeoDoc, LatLon, LineKind};
 use skwir_core::lru::ByteLru;
@@ -51,7 +51,7 @@ const MISSING: &str = "Install ExifTool to write pictures' locations";
 pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
     app.ops.register::<SetPosition>(ID);
     app.commands.register::<GeotagArgs, _>(
-        ID,
+        ID, Topic::Notes,
         "geo.geotag",
         "Geotag pictures from a track",
         "Place the selected pictures along the one selected track (GPX, FIT, any track read): each picture taken while it was recorded gets its position at that moment; proposed for review. Works on a worker: the result arrives as a proposal or a notification",
@@ -59,7 +59,7 @@ pub(crate) fn register(app: &App, lifetime: skwir_core::CancelToken) {
     )
         .plans();
     app.commands.register::<RemoveArgs, _>(
-        ID,
+        ID, Topic::Notes,
         "geo.remove_location",
         "Remove pictures' GPS locations",
         "Take the location out of the selected pictures (plan); those without one are left as they are",

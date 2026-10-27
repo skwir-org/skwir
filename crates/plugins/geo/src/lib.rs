@@ -44,6 +44,7 @@ use std::time::{Duration, SystemTime};
 
 use collect::{Collector, Plan, PlanKind, Totals};
 use skwir_core::command::Outcome;
+use skwir_core::command::Topic;
 use skwir_core::geo::{Datum, LineKind};
 use skwir_core::registry::{KeyBinding, ViewSpec};
 use skwir_core::workspace::PaneId;
@@ -166,7 +167,7 @@ impl Plugin for GeoPlugin {
         }
         let scan = Arc::clone(&scanner);
         app.commands.register::<PaneArgs, _>(
-            ID,
+            ID, Topic::View,
             "geo.scan",
             "Find where the files are",
             "Find the pictures and tracks of what a pane lists that say where they are, for the Map view",
@@ -184,7 +185,7 @@ impl Plugin for GeoPlugin {
         );
         let points = Arc::clone(&scanner);
         app.commands.register::<PointsArgs, _>(
-            ID,
+            ID, Topic::View,
             "geo.points",
             "Where the files are",
             "The pictures and tracks of what a pane lists that were placed on the map, after the first `since`",
@@ -199,6 +200,7 @@ impl Plugin for GeoPlugin {
         app.commands
             .register::<PaneArgs, _>(
                 ID,
+                Topic::View,
                 "geo.release",
                 "Forget where the files are",
                 "Stop finding where a pane's files are: its Map view closed",
@@ -209,7 +211,7 @@ impl Plugin for GeoPlugin {
             )
             .shows();
         app.commands.register::<LocateArgs, _>(
-            ID,
+            ID, Topic::View,
             "geo.locate",
             "Where is a place",
             "The places of that name skwir knows offline, biggest first, with their positions: for scripts and agents",
@@ -234,7 +236,7 @@ impl Plugin for GeoPlugin {
         )
         .data();
         app.commands.register::<AreaArgs, _>(
-            ID,
+            ID, Topic::Find,
             "geo.search_area",
             "Search this area",
             "Show the pictures and videos of the folder and its subfolders that were made inside an area",
@@ -262,6 +264,7 @@ impl Plugin for GeoPlugin {
         app.commands
             .register::<PaneArgs, _>(
                 ID,
+                Topic::Find,
                 "geo.search_subfolders",
                 "Search subfolders for places",
                 "Show the pictures and tracks of the folder and all its subfolders",

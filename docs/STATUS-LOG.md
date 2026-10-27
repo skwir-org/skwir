@@ -6186,3 +6186,60 @@ those offered:
   and Enter to its row, Escape twice closing; the dialog's search finding
   `ctrl shift t`. Not run: `just a11y-check` (it walks neither F1 nor the
   Keyboard page), `just release-check`, `just check-cross`.
+
+### F1 by topic, in columns (2026-10-27)
+
+- **Asked:** the F1 overview "has no scrollbar, so a user can't guess
+  that some more shortcuts are present while scrolling down, and very
+  often, the layout end up with a very long list of shortcuts in a
+  column, and just a handful (1, 2...) shortcuts in the other column,
+  with a third empty column". A proposal page (before and after at 1:1)
+  was accepted with its two choices: a topic declared for every command
+  now, and scrolling kept over pages (ADR-100).
+- **Found:** with nothing selected in a file list, 104 bindings apply
+  (counted from the keymap with every plugin of the binary); the panel's
+  300 px columns and 32 px gaps fitted two to a line in its 950 px, so
+  one place filled a column (the file list's 35 rows), a binding of the
+  file list or the terminal took the next, and Anywhere's 68 wrapped
+  below, unseen: 22 rows showed in an 860 px window. Twenty of the file
+  list's rows were the cursor's moves; an action with two keys was two
+  rows.
+- **Built:**
+  - `command::Topic`, thirteen, and an argument of `register`,
+    `register_raw` and `register_dynamic`: the 363 commands of the
+    binary's plugins and the shell were given theirs (tests' commands
+    too); a plugin from outside says `topic` in its manifest, else its
+    category's (`skwir_plugin_api::manifest::Topic`, the template's
+    `topic = "files"`). Agents read it in a command's declaration.
+  - `Form::family` (`Form::in_family`): the cursor's per step, a page at
+    a time apart; Go to a tab (1 to 9, then the last); Move the tab;
+    `ui.zoom`, `ui.preview_zoom`, `ui.preview_page` (`commands::FAMILIES`);
+    the views as one, in the view selector's order
+    (`keymap::topic_and_family`).
+  - F1: one row per action, its keys whichever place each works in; a
+    family on one row, the modifiers its keys all hold said once; rows
+    under their topics, those of the place nearest the focus first.
+    Elsewhere (a filter's) keeps places and conditions as headings.
+  - `elements::columns`: blocks flow down as many columns as fit (290 px
+    at least), as short as whole blocks allow; a block taller than a
+    column carries on under its heading again, each part four rows at
+    least. Each row is measured once on one line when the layout asks;
+    where it does not fit its column, its keys go under its title. The
+    panel is 1320 px at most (94 % of the window), its top 5 % down, 90 %
+    tall at most; the list scrolls under the overlay scrollbar.
+- **Checked:** rustfmt; clippy (`-D warnings`) on the default members;
+  every default test (2292: 2291 passed; `remote_folders`
+  `a_mount_let_go_of_elsewhere_is_disconnected_all_the_same` failed at a
+  load average of 29 and passed alone three times and with its file's 35),
+  among them the columns' split (balanced, a tall block carried on, a
+  short list never cut up), the rows (merged keys, a family, a family of
+  one, keys holding different modifiers said whole, topics nearest first,
+  filtering by topic, words and keys) and the manifest's topic. On Xvfb:
+  F1 in a file list at 1280 × 860 (three columns, 55 rows under 12
+  topics, nothing cut, no scrollbar), 1600 × 1000 (four columns), 760 ×
+  760 (two, the scrollbar shown); filtered by `tab` (Tabs and panes
+  carried on, Elsewhere by place) and `rename` (Elsewhere only). F1 from
+  the terminal is the terminal's key. `just check-cross` passed (Windows'
+  every crate with its tests; macOS's but for the crates built on gpui),
+  once two Windows-only tests of the control plugin had their topic. Not
+  run: `just a11y-check` (it walks no F1), `just release-check`.

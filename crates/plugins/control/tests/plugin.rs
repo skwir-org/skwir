@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::json;
 use skwir_core::app::{App, AppConfig};
-use skwir_core::command::{NoArgs, Outcome};
+use skwir_core::command::{NoArgs, Outcome, Topic};
 use skwir_plugin_control::{Control, ID, PlanMode, channel, client};
 
 #[test]
@@ -26,10 +26,14 @@ fn turned_on_the_window_listens_and_turned_off_it_leaves_nothing() {
 
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
-    app.commands
-        .register::<NoArgs, _>("test", "test.answer", "Answer", "Answers 42", |_, _| {
-            Ok(Outcome::Value(json!(42)))
-        });
+    app.commands.register::<NoArgs, _>(
+        "test",
+        Topic::Files,
+        "test.answer",
+        "Answer",
+        "Answers 42",
+        |_, _| Ok(Outcome::Value(json!(42))),
+    );
     app.plugins.add(Arc::new(Control::default()), &app);
     assert!(!address.0.exists(), "off until the user turns it on");
 
@@ -139,14 +143,24 @@ fn a_command_that_changes_the_window_wakes_it() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
     app.commands
-        .register::<NoArgs, _>("test", "test.show", "Show", "Shows", |_, _| {
-            Ok(Outcome::Done)
-        })
+        .register::<NoArgs, _>(
+            "test",
+            Topic::Files,
+            "test.show",
+            "Show",
+            "Shows",
+            |_, _| Ok(Outcome::Done),
+        )
         .shows();
     app.commands
-        .register::<NoArgs, _>("test", "test.read", "Read", "Reads", |_, _| {
-            Ok(Outcome::Value(json!(42)))
-        })
+        .register::<NoArgs, _>(
+            "test",
+            Topic::Files,
+            "test.read",
+            "Read",
+            "Reads",
+            |_, _| Ok(Outcome::Value(json!(42))),
+        )
         .reads();
     let woken = Arc::new(AtomicUsize::new(0));
     let counted = Arc::clone(&woken);

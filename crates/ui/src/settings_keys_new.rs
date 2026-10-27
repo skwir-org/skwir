@@ -959,10 +959,14 @@ mod tests {
     fn forms_set_after_registering_are_offered_as_they_stand() {
         let tmp = tempfile::tempdir().unwrap();
         let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
-        app.commands
-            .register::<Tag, _>("plug", "plug.toggle", "Toggle a tag", "", |_, _| {
-                Ok(skwir_core::command::Outcome::Done)
-            });
+        app.commands.register::<Tag, _>(
+            "plug",
+            skwir_core::command::Topic::Files,
+            "plug.toggle",
+            "Toggle a tag",
+            "",
+            |_, _| Ok(skwir_core::command::Outcome::Done),
+        );
         let titles = |app: &skwir_core::App| -> Vec<String> {
             candidates(app)
                 .into_iter()

@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use skwir_core::FileId;
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::op::EntryArg;
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
@@ -669,7 +669,7 @@ impl Plugin for ChecksumsPlugin {
         let t = Arc::clone(&this);
         app.commands
             .register::<EntryArgs, _>(
-                ID,
+                ID, Topic::Files,
                 "checksums.properties",
                 "Checksums in Properties",
                 "Properties' rows for one file: each checksum computed, being computed, or the way to compute it",
@@ -679,7 +679,7 @@ impl Plugin for ChecksumsPlugin {
         let t = Arc::clone(&this);
         app.commands
             .register::<ComputeArgs, _>(
-                ID,
+                ID, Topic::Files,
                 "checksums.compute",
                 "Compute a checksum",
                 "The `sha256`, `md5` or `blake3` checksum of a file, read whole: answered where it is called, or from the window shown in Properties when done",
@@ -690,6 +690,7 @@ impl Plugin for ChecksumsPlugin {
         app.commands
             .register::<ComputeArgs, _>(
                 ID,
+                Topic::Files,
                 "checksums.stop",
                 "Stop computing a checksum",
                 "Stop computing a file's checksum",

@@ -19,7 +19,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use skwir_core::app::{App, PaneArg};
 use skwir_core::cancel::CancelToken;
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::location::Location;
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
@@ -340,7 +340,7 @@ impl Plugin for UsagePlugin {
         });
         let t = Arc::clone(&this);
         app.commands.register::<ScanArgs, _>(
-            ID,
+            ID, Topic::View,
             "usage.scan",
             "Scan disk usage",
             "Show cached directory sizes, computing missing or changed branches in the background",
@@ -360,6 +360,7 @@ impl Plugin for UsagePlugin {
         app.commands
             .register::<PaneArg, _>(
                 ID,
+                Topic::View,
                 "usage.status",
                 "Disk usage status",
                 "The selected pane's latest size breakdown",
@@ -382,7 +383,7 @@ impl Plugin for UsagePlugin {
         ] {
             let t = Arc::clone(&this);
             app.commands
-                .register::<PaneArg, _>(ID, name, title, title, move |a, app| {
+                .register::<PaneArg, _>(ID, Topic::View, name, title, title, move |a, app| {
                     let pane = app.pane_or_active(a.pane);
                     let shared = {
                         let mut runtime = t.runtime.lock();

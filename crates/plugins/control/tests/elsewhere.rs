@@ -17,14 +17,24 @@ fn an_agent_naming_a_server_s_share_is_refused_unread() {
     let tmp = tempfile::tempdir().unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
     app.commands
-        .register::<serde_json::Value, _>("test", "test.root", "Root", "Takes a root", |_, _| {
-            Ok(Outcome::Value(json!("ran")))
-        })
+        .register::<serde_json::Value, _>(
+            "test",
+            skwir_core::command::Topic::Files,
+            "test.root",
+            "Root",
+            "Takes a root",
+            |_, _| Ok(Outcome::Value(json!("ran"))),
+        )
         .reads();
     app.commands
-        .register::<NoArgs, _>("test", "test.answer", "Answer", "Answers 42", |_, _| {
-            Ok(Outcome::Value(json!(42)))
-        })
+        .register::<NoArgs, _>(
+            "test",
+            skwir_core::command::Topic::Files,
+            "test.answer",
+            "Answer",
+            "Answers 42",
+            |_, _| Ok(Outcome::Value(json!(42))),
+        )
         .reads();
     let asked = Instant::now();
     let error = skwir_plugin_control::run(

@@ -993,10 +993,14 @@ mod tests {
                 when: Some("pane".into()),
             },
         );
-        app.commands
-            .register::<NoArgs, _>("plugin", "plugin.run", "Run it", "", |_, _| {
-                Ok(Outcome::Done)
-            });
+        app.commands.register::<NoArgs, _>(
+            "plugin",
+            skwir_core::command::Topic::Files,
+            "plugin.run",
+            "Run it",
+            "",
+            |_, _| Ok(Outcome::Done),
+        );
         let waiting = [record(&[
             ("id", "w"),
             ("keys", "ctrl-alt-w"),
@@ -1237,10 +1241,14 @@ mod tests {
                 },
             );
             if !app.commands.contains(command) {
-                app.commands
-                    .register::<NoArgs, _>("plugin", command, command, "", |_, _| {
-                        Ok(Outcome::Done)
-                    });
+                app.commands.register::<NoArgs, _>(
+                    "plugin",
+                    skwir_core::command::Topic::Files,
+                    command,
+                    command,
+                    "",
+                    |_, _| Ok(Outcome::Done),
+                );
             }
         }
         let (keyboard, _) = read(&app, &[]);

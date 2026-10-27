@@ -12,6 +12,7 @@ use serde::Deserialize;
 use crate::app::App;
 use crate::app::TargetsArgs as Targets;
 use crate::command::Outcome;
+use crate::command::Topic;
 use crate::op::{EntryRef, Plan};
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -50,7 +51,7 @@ fn per_entry(
 pub(crate) fn register(app: &App) {
     let c = &app.commands;
     c.register::<RateArgs, _>(
-        "core",
+        "core", Topic::Notes,
         "notes.rate",
         "Rate",
         "Rate the entries given, or the selection, from 1 to 5 stars, or remove their rating with 0 (plan)",
@@ -66,7 +67,7 @@ pub(crate) fn register(app: &App) {
     )
     .plans();
     c.register::<CommentArgs, _>(
-        "core",
+        "core", Topic::Notes,
         "notes.comment",
         "Comment",
         "Set the comment of the entries given, or the selection's, or remove it with an empty text (plan)",
@@ -85,7 +86,7 @@ pub(crate) fn register(app: &App) {
     )
     .plans();
     c.register::<Targets, _>(
-        "core",
+        "core", Topic::Notes,
         "notes.agree",
         "Make notes agree",
         "Write the notes of the entries given, or the selection's, as read from every store, to each store that keeps them, so the stores that differ agree again (plan)",

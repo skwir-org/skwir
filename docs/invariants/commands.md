@@ -31,6 +31,15 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   toggle of each pinned tag, `tags.toggle {"tag": "draft"}`, Toggle tag
   “draft”), and every list reads them as they stand when it opens; no
   key is given them, the user binds one in Settings.
+- **Topics (ADR-100).** Every command names what it is about where it
+  is registered (`command::Topic`, an argument of `register`): F1 lists
+  keys under it, agents read it. A plugin from outside says it in its
+  manifest (`topic`), else its category's. A new topic takes a place in
+  `Topic::ALL`, F1's order.
+- **Families (ADR-100).** Forms of one command that only go elsewhere
+  share a family (`Form::in_family`: Extend the selection up, down, to
+  the first item): F1 lists its keys on one row, in the forms' order.
+  The shell's are in `commands::FAMILIES` and `cursor_forms`.
 - **Repeats (ADR-066).** A command runs once for each press of its key
   unless it declares when a key held down runs it again, by its
   arguments (`Declared::repeats`; `command::always` for one that only

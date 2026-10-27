@@ -36,7 +36,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::entry::{Value, keys};
 use skwir_core::fs::reach;
 use skwir_core::os_path::PathArg;
@@ -1081,7 +1081,7 @@ impl Plugin for TimelinePlugin {
         let t = Arc::clone(&this);
         app.commands
             .register::<HistogramArgs, _>(
-                ID,
+                ID, Topic::View,
                 "timeline.histogram",
                 "Timeline",
                 "Histogram of the listing's modification times (or creation, access, or pictures' clocks), or of the subtree's in the background",
@@ -1104,6 +1104,7 @@ impl Plugin for TimelinePlugin {
         app.commands
             .register::<StatusArgs, _>(
                 ID,
+                Topic::View,
                 "timeline.status",
                 "Timeline status",
                 "The pane's subtree histogram, once the walk is done",
@@ -1123,7 +1124,7 @@ impl Plugin for TimelinePlugin {
         let t = Arc::clone(&this);
         app.commands
             .register::<SelectArgs, _>(
-                ID,
+                ID, Topic::Find,
                 "timeline.select",
                 "Show files from a period",
                 "Navigate to a query for files modified (or created, accessed, taken) in [start, end), or narrow the pane's search to them",

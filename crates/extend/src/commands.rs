@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use skwir_core::app::NotifyLevel;
-use skwir_core::command::{Effect, Invocation, Outcome, is_nothing_selected};
+use skwir_core::command::{Effect, Invocation, Outcome, Topic, is_nothing_selected};
 use skwir_core::op::{self, EntryArg, EntryRef, Operation, Plan};
 use skwir_core::permissions::Capability;
 use skwir_core::scheduler::Priority;
@@ -46,6 +46,7 @@ pub(crate) fn register(app: &App, plugin: &External) {
         app.commands
             .register_dynamic(
                 runner.id,
+                topic_of(plugin, declared.topic),
                 &declared.name,
                 &declared.title,
                 &declared.description,
@@ -58,6 +59,32 @@ pub(crate) fn register(app: &App, plugin: &External) {
                 Declared::Plans => Effect::Plans,
                 Declared::Acts => Effect::Acts,
             });
+    }
+}
+
+/// What a command is about: what its manifest says, else what its
+/// plugin's category is about.
+fn topic_of(plugin: &External, said: Option<skwir_plugin_api::manifest::Topic>) -> Topic {
+    use skwir_plugin_api::manifest::{Category, Topic as Said};
+    match said {
+        Some(Said::Go) => Topic::Go,
+        Some(Said::Select) => Topic::Select,
+        Some(Said::Files) => Topic::Files,
+        Some(Said::Find) => Topic::Find,
+        Some(Said::Notes) => Topic::Notes,
+        Some(Said::Tabs) => Topic::Tabs,
+        Some(Said::View) => Topic::View,
+        Some(Said::Preview) => Topic::Preview,
+        Some(Said::Player) => Topic::Player,
+        Some(Said::Terminal) => Topic::Terminal,
+        Some(Said::Places) => Topic::Places,
+        Some(Said::Window) => Topic::Window,
+        Some(Said::Skwir) => Topic::Skwir,
+        None => match plugin.manifest().category {
+            Category::Browsing => Topic::Go,
+            Category::Files | Category::Desktop => Topic::Files,
+            Category::Previews => Topic::Preview,
+        },
     }
 }
 

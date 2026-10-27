@@ -8,7 +8,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use skwir_core::app::{App, NotifyLevel};
 use skwir_core::cancel::CancelToken;
-use skwir_core::command::{Invocation, NoArgs, Outcome};
+use skwir_core::command::{Invocation, NoArgs, Outcome, Topic};
 use skwir_core::location::Location;
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
@@ -1214,6 +1214,7 @@ impl Plugin for PlacesPlugin {
         app.commands
             .register::<NoArgs, _>(
                 ID,
+                Topic::Places,
                 "places.refresh",
                 "Refresh places",
                 "Re-scan user folders, bookmarks, and mounts",
@@ -1226,6 +1227,7 @@ impl Plugin for PlacesPlugin {
         let (places, watcher) = (self.places.clone(), self.watcher.clone());
         app.commands.register::<BookmarkArgs, _>(
             ID,
+            Topic::Places,
             "places.bookmark",
             "Add to bookmarks",
             "Add a folder to the desktop's shared bookmarks (the GTK bookmarks file)",
@@ -1263,6 +1265,7 @@ impl Plugin for PlacesPlugin {
         let (places, watcher) = (self.places.clone(), self.watcher.clone());
         app.commands.register::<TargetArgs, _>(
             ID,
+            Topic::Places,
             "places.unbookmark",
             "Remove from bookmarks",
             "Remove a folder from the desktop's shared bookmarks; the folder stays where it is",
@@ -1276,6 +1279,7 @@ impl Plugin for PlacesPlugin {
         let (places, watcher) = (self.places.clone(), self.watcher.clone());
         app.commands.register::<AddressArgs, _>(
             ID,
+            Topic::Places,
             "places.bookmark_address",
             "Bookmark an address",
             "Add a remote folder's address (sftp://, smb://…) to the desktop's shared bookmarks",
@@ -1292,6 +1296,7 @@ impl Plugin for PlacesPlugin {
         let (places, watcher) = (self.places.clone(), self.watcher.clone());
         app.commands.register::<AddressArgs, _>(
             ID,
+            Topic::Places,
             "places.unbookmark_address",
             "Remove an address from bookmarks",
             "Remove a remote folder's address from the desktop's shared bookmarks",
@@ -1305,7 +1310,7 @@ impl Plugin for PlacesPlugin {
         );
         let (places, watcher) = (self.places.clone(), self.watcher.clone());
         app.commands.register::<RenameArgs, _>(
-            ID,
+            ID, Topic::Places,
             "places.rename_bookmark",
             "Rename bookmark",
             "Change the name a bookmark shows in the sidebar (a folder's, or a remote folder's by its address); the folder keeps its own",
@@ -1320,7 +1325,7 @@ impl Plugin for PlacesPlugin {
         );
         let (places, watcher) = (self.places.clone(), self.watcher.clone());
         app.commands.register::<MoveArgs, _>(
-            ID,
+            ID, Topic::Places,
             "places.move_bookmark",
             "Move bookmark",
             "Put a bookmark (a folder's, or a remote folder's by its address) before another in the sidebar, or last",
@@ -1335,7 +1340,7 @@ impl Plugin for PlacesPlugin {
         );
         let places = self.places.clone();
         app.commands.register::<PathArgs, _>(
-            ID,
+            ID, Topic::Places,
             "places.unmount",
             "Unmount volume",
             "Detach a removable volume through udisks so it can be unplugged",
@@ -1417,6 +1422,7 @@ impl Plugin for PlacesPlugin {
         let places = self.places.clone();
         app.commands.register::<MountArgs, _>(
             ID,
+            Topic::Places,
             "places.mount",
             "Mount volume",
             "Mount a present volume through udisks and open it",
@@ -1427,7 +1433,7 @@ impl Plugin for PlacesPlugin {
         );
         let places = self.places.clone();
         app.commands.register::<UnlockArgs, _>(
-            ID,
+            ID, Topic::Places,
             "places.unlock",
             "Unlock volume",
             "Unlock an encrypted volume with the passphrase given, mount it and open it. The passphrase is a secret: it is handed to the system on standard input, never logged, and never kept",
@@ -1448,7 +1454,7 @@ impl Plugin for PlacesPlugin {
         let (places, keyring) = (self.places.clone(), Arc::clone(&self.keyring));
         app.commands
             .register::<OpenLockedArgs, _>(
-                ID,
+                ID, Topic::Places,
                 "places.open_locked",
                 "Unlock and open volume",
                 "Unlock an encrypted volume with the passphrase the keyring keeps for it, else the one the user types (offering to remember it), or through the system's own dialog where it asks itself; then mount it and open it",
@@ -1466,7 +1472,7 @@ impl Plugin for PlacesPlugin {
             .user_only();
         let (places, keyring) = (self.places.clone(), Arc::clone(&self.keyring));
         app.commands.register::<ForgetArgs, _>(
-            ID,
+            ID, Topic::Places,
             "places.forget_passphrase",
             "Forget passphrase",
             "Remove from the keyring the passphrase Skwir keeps for an encrypted volume (never one another program kept)",

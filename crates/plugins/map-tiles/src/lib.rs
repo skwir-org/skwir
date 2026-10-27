@@ -22,6 +22,7 @@ use server::Server;
 use skwir_core::CancelToken;
 use skwir_core::app::{App, NotifyLevel};
 use skwir_core::command::Outcome;
+use skwir_core::command::Topic;
 use skwir_core::plugin::Plugin;
 use skwir_core::scheduler::Priority;
 use skwir_core::settings::{RecordField, SettingSpec};
@@ -175,6 +176,7 @@ impl Plugin for MapTilesPlugin {
         let tester = Arc::clone(&source);
         app.commands.register::<TestArgs, _>(
             ID,
+            Topic::Skwir,
             "map-tiles.test_server",
             "Test a tile server",
             "Ask a tile server for one tile, now, and say what it answered",

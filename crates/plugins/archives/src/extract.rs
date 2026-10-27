@@ -12,7 +12,7 @@ use std::path::{Component, Path, PathBuf};
 
 use anyhow::Context;
 use skwir_core::App;
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::op::{
     self, Cancelled, Change, EntryRef, Made, Operation, Plan, StepContext, StepStatus, Unanswered,
     Words,
@@ -610,7 +610,7 @@ pub fn register(app: &App, owner: &str) {
     app.ops.register::<Extract>(owner);
     app.commands
         .register::<ExtractArgs, _>(
-            owner,
+            owner, Topic::Files,
             "archive.extract",
             "Extract here",
             "Extract each archive of the selection, or the entries given, beside it or in `dest`: an archive of one folder or file gives that folder or file, one of several a folder named after it (plan)",

@@ -9,6 +9,7 @@ pub mod adaptive;
 pub mod bars;
 pub mod chips;
 pub mod clip;
+pub mod columns;
 pub mod edge;
 pub mod halo;
 pub mod map;

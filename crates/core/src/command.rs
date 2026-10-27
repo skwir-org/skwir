@@ -195,6 +195,82 @@ pub enum Effect {
     UserOnly,
 }
 
+/// What a command is about, as a person looks for it: F1 lists the keys
+/// that work here under these, in this order (`Topic::ALL`). Every command
+/// names one where it is registered (`CommandRegistry::register`), the
+/// plugins' too; a plugin from outside that names none takes its
+/// category's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Topic {
+    /// Locations, history, the address, places to jump to, opening.
+    Go,
+    /// The cursor and the selection.
+    Select,
+    /// Doing something to files: the clipboard, renaming, copying,
+    /// trashing, making, compressing, the applications that open them.
+    Files,
+    /// Searching, filtering, narrowing, finding a name.
+    Find,
+    /// Tags, ratings, comments, a picture's position.
+    Notes,
+    /// Tabs and the split.
+    Tabs,
+    /// How the files are shown and which panels are: views, columns,
+    /// zoom, sort, the sidebar, the preview panel, the timeline.
+    View,
+    /// Inside a preview: pages, reading, finding text, a model, a map.
+    Preview,
+    /// The player.
+    Player,
+    /// The terminal and commands run in a shell.
+    Terminal,
+    /// The sidebar's places, volumes, bookmarks and servers.
+    Places,
+    /// Moving about the window: focus, buttons, menus, dialogs.
+    Window,
+    /// Skwir itself: the palette, settings, plugins, help, quitting.
+    Skwir,
+}
+
+impl Topic {
+    /// In the order F1 lists them.
+    pub const ALL: [Topic; 13] = [
+        Topic::Go,
+        Topic::Select,
+        Topic::Files,
+        Topic::Find,
+        Topic::Notes,
+        Topic::Tabs,
+        Topic::View,
+        Topic::Preview,
+        Topic::Player,
+        Topic::Terminal,
+        Topic::Places,
+        Topic::Window,
+        Topic::Skwir,
+    ];
+
+    /// Its heading.
+    pub fn title(self) -> &'static str {
+        match self {
+            Topic::Go => "Going places",
+            Topic::Select => "Selecting",
+            Topic::Files => "Files",
+            Topic::Find => "Finding",
+            Topic::Notes => "Tags and notes",
+            Topic::Tabs => "Tabs and panes",
+            Topic::View => "Views and panels",
+            Topic::Preview => "Previews",
+            Topic::Player => "Playing",
+            Topic::Terminal => "Terminal",
+            Topic::Places => "Places and servers",
+            Topic::Window => "The window",
+            Topic::Skwir => "Skwir",
+        }
+    }
+}
+
 /// The JSON schema of a command's arguments, made the first time it is
 /// asked for (an agent's list of tools, the palette's required
 /// arguments): made for every command as it was declared, it held up the
@@ -386,6 +462,11 @@ impl Serialize for ArgsSchema {
 pub struct Form {
     pub args: serde_json::Value,
     pub title: String,
+    /// What it shares with the forms of its command that only go
+    /// elsewhere: Extend the selection up, down, to the first item are
+    /// "Extend the selection". F1 lists a family's keys on one row.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
 }
 
 impl Form {
@@ -393,7 +474,15 @@ impl Form {
         Form {
             args,
             title: title.into(),
+            family: None,
         }
+    }
+
+    /// One of `family` (see [`Form::family`]).
+    #[must_use]
+    pub fn in_family(mut self, family: impl Into<String>) -> Self {
+        self.family = Some(family.into());
+        self
     }
 }
 
@@ -434,6 +523,8 @@ pub struct CommandSpec {
     pub args_schema: ArgsSchema,
     /// Plugin id, or `core`.
     pub owner: Arc<str>,
+    /// What it is about (see [`Topic`]).
+    pub topic: Topic,
     /// What it does: what an agent may run without asking.
     pub effect: Effect,
     /// The arguments that make it one thing to do, each with its title:
@@ -632,10 +723,12 @@ pub struct CommandRegistry {
 
 impl CommandRegistry {
     /// Register a typed handler. `A` must be deserializable from the JSON
-    /// arguments and describable by a schema.
+    /// arguments and describable by a schema. `topic` is what it is about
+    /// (see [`Topic`]).
     pub fn register<A, F>(
         &self,
         owner: &str,
+        topic: Topic,
         name: &str,
         title: &str,
         description: &str,
@@ -657,7 +750,7 @@ impl CommandRegistry {
             let typed: A = serde_json::from_value(args).map_err(invalid)?;
             handler(typed, app)
         });
-        self.insert::<A>(owner, name, title, description, takes, h)
+        self.insert::<A>(owner, topic, name, title, description, takes, h)
     }
 
     /// Register a command whose handler takes its arguments as they came,
@@ -666,6 +759,7 @@ impl CommandRegistry {
     pub fn register_raw<A, F>(
         &self,
         owner: &str,
+        topic: Topic,
         name: &str,
         title: &str,
         description: &str,
@@ -687,7 +781,7 @@ impl CommandRegistry {
             serde_json::from_value::<A>(args.clone()).map_err(invalid)?;
             handler(args, app)
         });
-        self.insert::<A>(owner, name, title, description, takes, h)
+        self.insert::<A>(owner, topic, name, title, description, takes, h)
     }
 
     /// Register a command whose arguments `schema` describes, handled as
@@ -695,9 +789,11 @@ impl CommandRegistry {
     /// data, not a Rust type. They are an object; a name the schema's
     /// `properties` do not hold is refused, as is one its `required` lists
     /// missing.
+    #[allow(clippy::too_many_arguments)] // A command's declaration, whole.
     pub fn register_dynamic<F>(
         &self,
         owner: &str,
+        topic: Topic,
         name: &str,
         title: &str,
         description: &str,
@@ -769,6 +865,7 @@ impl CommandRegistry {
         }
         self.insert_spec(
             owner,
+            topic,
             name,
             title,
             description,
@@ -778,9 +875,11 @@ impl CommandRegistry {
         )
     }
 
+    #[allow(clippy::too_many_arguments)] // A command's declaration, whole.
     fn insert<A>(
         &self,
         owner: &str,
+        topic: Topic,
         name: &str,
         title: &str,
         description: &str,
@@ -795,13 +894,14 @@ impl CommandRegistry {
             takes.check(args)?;
             serde_json::from_value::<A>(args.clone()).map(|_| ())
         });
-        self.insert_spec(owner, name, title, description, schema, v, h)
+        self.insert_spec(owner, topic, name, title, description, schema, v, h)
     }
 
     #[allow(clippy::too_many_arguments)] // A command's declaration, whole.
     fn insert_spec(
         &self,
         owner: &str,
+        topic: Topic,
         name: &str,
         title: &str,
         description: &str,
@@ -816,6 +916,7 @@ impl CommandRegistry {
             description: description.into(),
             args_schema,
             owner: owner.into(),
+            topic,
             effect: Effect::default(),
             forms: Vec::new(),
             keeps_a_key: false,

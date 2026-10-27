@@ -23,7 +23,7 @@ use rmcp::service::RequestContext;
 use rmcp::{ErrorData as McpError, RoleServer, ServerHandler, ServiceExt as _};
 use serde_json::{Value, json};
 use skwir_core::app::NotifyLevel;
-use skwir_core::command::{Effect, Invocation, NoArgs, Outcome};
+use skwir_core::command::{Effect, Invocation, NoArgs, Outcome, Topic};
 use skwir_core::op::Verdict;
 use skwir_core::permissions::{self, AgentGate};
 use skwir_core::plugin::{Category, Plugin};
@@ -122,7 +122,7 @@ impl Plugin for Control {
         let shared = Shared::default();
         let status = (address.clone(), Arc::clone(&shared));
         app.commands.register::<NoArgs, _>(
-            ID,
+            ID, Topic::Skwir,
             "control.status",
             "Agents and scripts",
             "Whether this window listens for agents and scripts, where, and how an agent reaches it",

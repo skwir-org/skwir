@@ -47,6 +47,28 @@ pub enum Category {
     Desktop,
 }
 
+/// What a command is about (skwir's `command::Topic`): where F1 lists
+/// its keys. A command that names none is its plugin's category's: going
+/// places for browsing, files for files and desktop, previews for
+/// previews.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Topic {
+    Go,
+    Select,
+    Files,
+    Find,
+    Notes,
+    Tabs,
+    View,
+    Preview,
+    Player,
+    Terminal,
+    Places,
+    Window,
+    Skwir,
+}
+
 /// What a command does (skwir's `command::Effect`), which decides what
 /// an agent may run without asking.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,6 +188,10 @@ pub struct CommandDecl {
     pub description: String,
     #[serde(default)]
     pub effect: Effect,
+    /// What it is about; its plugin's category's when it names none (see
+    /// [`Topic`]).
+    #[serde(default)]
+    pub topic: Option<Topic>,
     /// The JSON schema of its arguments, an object; none for none. The
     /// files it acts on come as `entries`, a pane's selection when the
     /// caller names none.
@@ -328,6 +354,7 @@ mod tests {
             title: "Count".into(),
             description: String::new(),
             effect: Effect::Reads,
+            topic: None,
             arguments: None,
         });
         assert!(outside.check().is_err());
@@ -337,6 +364,7 @@ mod tests {
             title: "Rename".into(),
             description: String::new(),
             effect: Effect::Plans,
+            topic: Some(Topic::Files),
             arguments: None,
         });
         assert!(plans.check().unwrap_err().contains("write"));
@@ -377,5 +405,25 @@ mod tests {
         .unwrap();
         assert!(said.previews[0].converts);
         assert_eq!(said.check(), Ok(()));
+    }
+
+    /// A command says what it is about, or leaves it to its category.
+    #[test]
+    fn a_command_names_its_topic_or_none() {
+        let said: Manifest = toml::from_str(
+            "id = \"said\"\ntitle = \"Said\"\n[run]\nmodule = \"s.wasm\"\n\
+             [[commands]]\nname = \"said.find\"\ntitle = \"Find\"\ntopic = \"find\"\n\
+             [[commands]]\nname = \"said.other\"\ntitle = \"Other\"\n",
+        )
+        .unwrap();
+        assert_eq!(said.commands[0].topic, Some(Topic::Find));
+        assert_eq!(said.commands[1].topic, None);
+        assert!(
+            toml::from_str::<Manifest>(
+                "id = \"said\"\ntitle = \"Said\"\n[run]\nmodule = \"s.wasm\"\n\
+             [[commands]]\nname = \"said.x\"\ntitle = \"X\"\ntopic = \"misc\"\n",
+            )
+            .is_err()
+        );
     }
 }

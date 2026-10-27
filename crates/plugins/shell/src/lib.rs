@@ -6,7 +6,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use skwir_core::app::{App, TargetsArgs};
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::MenuItem;
 use skwir_core::settings::SettingSpec;
@@ -234,6 +234,7 @@ impl Plugin for ShellPlugin {
         app.commands
             .register::<TargetsArgs, _>(
                 ID,
+                Topic::Files,
                 "shell.copy_paths",
                 "Copy paths for a shell",
                 "The selected paths, or the entries', shell-quoted, for the clipboard",
@@ -252,7 +253,7 @@ impl Plugin for ShellPlugin {
             )
             .reads();
         app.commands.register::<RunArgs, _>(
-            ID,
+            ID, Topic::Terminal,
             "shell.run",
             "Run command on selection…",
             "Run a shell command in a terminal with the selected paths, or the entries', as its arguments",
@@ -260,6 +261,7 @@ impl Plugin for ShellPlugin {
         );
         app.commands.register::<HereArgs, _>(
             ID,
+            Topic::Terminal,
             "shell.run_here",
             "Run command here…",
             "Run a shell command in a terminal in the current directory",

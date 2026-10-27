@@ -747,9 +747,17 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 
 ## Keys
 
-- **F1** (`shortcuts.rs`) lists the bindings of the focused element's
-  key contexts; a new context needs only a name in
-  `keymap::context_label`. Its field has the keyboard when it opens:
+- **F1** (`shortcuts.rs`, ADR-100) lists the bindings of the focused
+  element's key contexts; a new context needs only a name in
+  `keymap::context_label`. One row per action, its keys side by side
+  whichever place each works in; a family's actions (`Form::family`) on
+  one row, the modifiers they all hold said once. Rows stand under their
+  command's topic (`CommandSpec::topic`), the topics of the place nearest
+  the focus first, and flow down as many columns as fit
+  (`elements::columns`: whole topics, a row stacked only where it does
+  not fit its column, all counted from one measure of each row, never
+  from a size read in `render`); what does not fit scrolls under the
+  overlay scrollbar. Its field has the keyboard when it opens:
   what is typed narrows the list and finds the bindings that do not run
   here too ("Elsewhere", each under its place and condition). Escape
   empties the field, then closes. **All shortcuts…** opens the Keyboard

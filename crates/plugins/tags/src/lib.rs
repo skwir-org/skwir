@@ -34,7 +34,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
-use skwir_core::command::{Form, Invocation, Outcome};
+use skwir_core::command::{Form, Invocation, Outcome, Topic};
 use skwir_core::entry::keys;
 use skwir_core::fs::reach;
 use skwir_core::metadata::{TAG_COLOR_SETTING, TAG_COLORS, same_tag};
@@ -943,7 +943,7 @@ impl Plugin for TagsPlugin {
         {
             let fields = sidebar.clone();
             app.commands.register::<ExclusiveArgs, _>(
-                ID,
+                ID, Topic::Notes,
                 "tags.exclusive",
                 "One tag of a category at a time",
                 "Make a category (`tag`) hold one tag per file at a time, a field whose values are its tags (`on`), or several again",
@@ -973,8 +973,13 @@ impl Plugin for TagsPlugin {
             ),
         ] {
             let (pins, lifetime) = (sidebar.clone(), lifetime.clone());
-            app.commands
-                .register::<PinArgs, _>(ID, name, title, description, move |a, app| {
+            app.commands.register::<PinArgs, _>(
+                ID,
+                Topic::Notes,
+                name,
+                title,
+                description,
+                move |a, app| {
                     let tags = everywhere::named(a.tag, a.tags);
                     let edit = match name {
                         "tags.pins" => sidebar::Pin::Set(tags),
@@ -990,7 +995,8 @@ impl Plugin for TagsPlugin {
                         publish.publish(app);
                     });
                     Ok(Outcome::Done)
-                });
+                },
+            );
         }
         // What a `tag:` search asks first (ADR-026).
         app.hints.register(ID, Arc::new(hints::Baloo::default()));
@@ -1007,6 +1013,7 @@ impl Plugin for TagsPlugin {
         app.commands
             .register::<TagsArgs, _>(
                 ID,
+                Topic::Notes,
                 "tags.set",
                 "Set tags",
                 "Replace the tags of the entries given, or the selection's (plan)",
@@ -1029,6 +1036,7 @@ impl Plugin for TagsPlugin {
         app.commands
             .register::<TagsArgs, _>(
                 ID,
+                Topic::Notes,
                 "tags.add",
                 "Add tags",
                 "Add tags to the entries given, or the selection (plan)",
@@ -1050,6 +1058,7 @@ impl Plugin for TagsPlugin {
         app.commands
             .register::<TagsArgs, _>(
                 ID,
+                Topic::Notes,
                 "tags.remove",
                 "Remove tags",
                 "Remove tags from the entries given, or the selection (plan)",
@@ -1069,7 +1078,7 @@ impl Plugin for TagsPlugin {
             .plans();
         let v = Arc::clone(&vocabulary);
         app.commands.register::<EditArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.edit",
             "Edit tags",
             "Add some tags to the entries given, or the selection, and remove others, as one plan: each entry keeps its other tags",
@@ -1078,7 +1087,7 @@ impl Plugin for TagsPlugin {
         .plans();
         let v = Arc::clone(&vocabulary);
         app.commands.register::<ToggleArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.toggle",
             "Toggle a tag",
             "Give the entries given, or the selection, a tag, or take it from every entry when all of them have it: a command to bind to a key (plan)",
@@ -1158,7 +1167,7 @@ impl Plugin for TagsPlugin {
         }
         let v = Arc::clone(&vocabulary);
         app.commands.register::<PaneArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.selected",
             "Tags of the selection",
             "`{ items, tags: [{ name, count, color? }], known }`: the selection's tags, read from its files, with how many carry each and the color a file gives one (a Finder tag's), and the tags known, those pinned first, then the most recently used",
@@ -1170,7 +1179,7 @@ impl Plugin for TagsPlugin {
         follow::register(app, &follows);
         let (v, everywhere, f) = (Arc::clone(&vocabulary), lifetime.clone(), follows.clone());
         app.commands.register::<RenameArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.rename",
             "Rename tag everywhere",
             "Rename a tag (or merge `tags`) on every file under the home folder (or `root`) that has it, merging it with a tag of the new name where a file has both: the files are searched on a worker and the plan proposed for review",
@@ -1184,7 +1193,7 @@ impl Plugin for TagsPlugin {
         .plans();
         let (everywhere, f) = (lifetime.clone(), follows.clone());
         app.commands.register::<MoveArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.move",
             "Move tag into category",
             "Put a tag (or `tags`) into the category `into`, keeping its own name (`Paris` into `Places/France` is `Places/France/Paris`), or out of its category without `into`, on every file under the home folder (or `root`): the files are searched on a worker and the plan proposed for review",
@@ -1204,7 +1213,7 @@ impl Plugin for TagsPlugin {
         .plans();
         let (everywhere, f) = (lifetime.clone(), follows.clone());
         app.commands.register::<DeleteArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.delete",
             "Remove tag everywhere",
             "Take a tag (or `tags`) from every file under the home folder (or `root`) that has it: the files are searched on a worker and the plan proposed for review",
@@ -1218,7 +1227,7 @@ impl Plugin for TagsPlugin {
         // What gestures do in a tag location (`browse.rs`).
         let (everywhere, f) = (lifetime.clone(), follows.clone());
         app.commands.register::<browse::DropArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.drop",
             "Drop on a tag",
             "Give files dropped or pasted on a tag location (`location`) its tag: a pane's selection (`pane`) or `entries`; with `move`, out of the tag location they come from (the pane's, or `from`). Tags dropped go into it, a plan to review",
@@ -1227,7 +1236,7 @@ impl Plugin for TagsPlugin {
         .plans();
         let (everywhere, f) = (lifetime.clone(), follows);
         app.commands.register::<browse::UntagArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.untag",
             "Remove from tag",
             "Take the tag a tag location shows (the pane's, or `location`) off the selected files; tags selected there are taken off every file, a plan to review. What Delete does in a tag location",
@@ -1237,7 +1246,7 @@ impl Plugin for TagsPlugin {
         {
             let places = Arc::clone(&places);
             app.commands.register::<browse::NewArgs, _>(
-                ID,
+                ID, Topic::Notes,
                 "tags.new",
                 "New tag",
                 "Make a tag `name` in the tag a tag location shows (`location`): shown there until a file is given it",
@@ -1245,7 +1254,7 @@ impl Plugin for TagsPlugin {
             );
         }
         app.commands.register::<browse::NarrowArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.narrow",
             "Narrow a tag location",
             "Show, in the tag location the pane shows, only the files that also have a tag (`facet` `also_tag`), none that have one (`not_tag`), of a `kind`, `modified` a year, or every file within the tag (`deep`); `on` false takes it back, omitted it switches",
@@ -1253,7 +1262,7 @@ impl Plugin for TagsPlugin {
         )
         .shows();
         app.commands.register::<browse::OpenArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.open",
             "Open a tag",
             "Show the files of the home folder that have a tag (or a tag within it), as its pinned pill does, in the pane given or the active one",
@@ -1261,7 +1270,7 @@ impl Plugin for TagsPlugin {
         )
         .shows();
         app.commands.register::<browse::PillArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.pill",
             "A tag, here",
             "A tag of the sidebar clicked with Shift (`how` `also`: the files shown that have it too) or Alt (`here`: its files in the folder shown)",
@@ -1269,7 +1278,7 @@ impl Plugin for TagsPlugin {
         )
         .shows();
         let browsing = app.commands.register::<browse::BrowseArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.browse",
             "Tags of a folder",
             "Show every tag of the files under a folder (`in`, an absolute path) as places to browse, each a folder of its files: the folder the pane shows when omitted, or the one a tag location or a search there is of; with `toggle` and no folder, a tag location goes back to its folder instead",
@@ -1282,6 +1291,7 @@ impl Plugin for TagsPlugin {
         browsing.shows();
         app.commands.register::<browse::PaneOnly, _>(
             ID,
+            Topic::Notes,
             "tags.keep",
             "Pin the tag shown",
             "Pin the tag a pane's tag location shows: one tag of the home folder, not narrowed",
@@ -1290,7 +1300,7 @@ impl Plugin for TagsPlugin {
         {
             let places = Arc::clone(&places);
             app.commands.register::<browse::ExportArgs, _>(
-                ID,
+                ID, Topic::Notes,
                 "tags.export",
                 "Copy a tag into a folder",
                 "Make in `dest` a folder of the files a tag location (`location`) lists, named as its tag, with a folder inside for each tag within it: a plan proposed for review. What a tag dropped or pasted in a folder does",
@@ -1301,7 +1311,7 @@ impl Plugin for TagsPlugin {
         {
             let places = Arc::clone(&places);
             app.commands.register::<browse::CountedArgs, _>(
-                ID,
+                ID, Topic::Notes,
                 "tags.counted",
                 "Tags counted",
                 "`{ root, counting, counted, partial }`: whether the tags of the files under `root` (the home folder when omitted) are being counted for its tag locations, as of when a count covers them (`counted`, in seconds since the epoch), and whether some are left out for want of room (`partial`). Answers from memory",
@@ -1318,7 +1328,7 @@ impl Plugin for TagsPlugin {
         }
         let v = Arc::clone(&vocabulary);
         app.commands.register::<browse::TagMenuArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.tag_menu",
             "A tag's menu",
             "The items of a tag's menu where it is shown: its chip in Properties (tags), its pill in the sidebar (location). Answers from memory",
@@ -1330,7 +1340,7 @@ impl Plugin for TagsPlugin {
         .data();
         app.commands
             .register::<browse::PaneOnly, _>(
-                ID,
+                ID, Topic::Notes,
                 "tags.files_menu",
                 "Tags of the selection's menu",
                 "The context menu's Tags submenu: the tags the selected files have, then the pinned ones, each checked when they all have it, partly when some do, pressing it toggling it on them all",
@@ -1341,7 +1351,7 @@ impl Plugin for TagsPlugin {
             )
             .data();
         app.commands.register::<browse::PaneOnly, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.place_menu",
             "Tags' menu",
             "The context menu's items for the tags selected in a tag location. Answers from memory",
@@ -1357,6 +1367,7 @@ impl Plugin for TagsPlugin {
         let (colors, color_sidebar) = (lifetime.clone(), sidebar.clone());
         app.commands.register::<ColorArgs, _>(
             ID,
+            Topic::Notes,
             "tags.color",
             "Tag color",
             "Choose the color a tag wears everywhere, or give it back the one its name gives it",
@@ -1378,6 +1389,7 @@ impl Plugin for TagsPlugin {
         app.commands
             .register::<PaneArgs, _>(
                 ID,
+                Topic::Notes,
                 "tags.menu",
                 "Comment menu",
                 "The context menu's Comment…, holding the selected entry's comment",
@@ -1396,7 +1408,7 @@ impl Plugin for TagsPlugin {
             )
             .data();
         app.commands.register::<ListArgs, _>(
-            ID,
+            ID, Topic::Notes,
             "tags.list",
             "List tags",
             "Tags used in the pane's listing, with counts (tags that differ only in case count as one); with `read`, read from the files whose tags the listing has not read yet too",

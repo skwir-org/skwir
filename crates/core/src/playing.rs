@@ -15,6 +15,7 @@ use std::time::Instant;
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 
+use crate::command::Topic;
 use crate::media::{Control, PlaybackStatus};
 
 // Each is a separate fact about what the player can do right now.
@@ -145,7 +146,7 @@ struct RequestArgs {
 /// the way the desktop's media keys do.
 pub(crate) fn register(app: &crate::App) {
     app.commands.register::<RequestArgs, _>(
-        "core",
+        "core", Topic::Player,
         "player.request",
         "Steer the player",
         "Ask whatever is playing to play, pause, stop, step to the next or previous track, seek, change its volume or its speed, choose a film's audio or subtitles or show it on the whole screen; it is carried out when the player next wakes",
@@ -161,6 +162,7 @@ pub(crate) fn register(app: &crate::App) {
     app.commands
         .register::<crate::command::NoArgs, _>(
             "core",
+            Topic::Player,
             "player.now",
             "What is playing",
             "The track that plays, its state and where it stands, or null",

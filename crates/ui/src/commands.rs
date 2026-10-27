@@ -10,7 +10,7 @@
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use skwir_core::app::App;
-use skwir_core::command::{Effect, Form, Invocation, NoArgs, Outcome, Repeats, always};
+use skwir_core::command::{Effect, Form, Invocation, NoArgs, Outcome, Repeats, Topic, always};
 
 /// Who declares them.
 pub const OWNER: &str = "ui";
@@ -1177,7 +1177,14 @@ fn cursor_forms() -> impl Iterator<Item = Form> {
             } else {
                 format!("{verb} {words}")
             };
-            Form::new(args, title)
+            // A page at a time is a row of its own: with the arrows and
+            // the ends, one row would be too long to read.
+            let family = if to.contains("page") {
+                format!("{verb} a page up or down")
+            } else {
+                verb.to_owned()
+            };
+            Form::new(args, title).in_family(family)
         })
     })
 }
@@ -1199,38 +1206,59 @@ fn forms_of(name: &str) -> Vec<Form> {
         .then(cursor_forms)
         .into_iter()
         .flatten();
+    let family = FAMILIES
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, family)| *family);
     let mut forms: Vec<Form> = Vec::new();
     for form in offered.chain(keys).chain(moves) {
         if !forms.iter().any(|known| known.args == form.args) {
-            forms.push(form);
+            forms.push(match family {
+                Some(family) => form.in_family(family),
+                None => form,
+            });
         }
     }
     forms
 }
 
+/// The shell's commands whose forms are one family (`Form::family`), by
+/// its name: what differs is only which way they go.
+const FAMILIES: &[(&str, &str)] = &[
+    ("ui.zoom", "Zoom"),
+    ("ui.preview_zoom", "Preview: zoom"),
+    ("ui.preview_page", "Preview: turn the page"),
+];
+
 /// Declare `name`, carried out by the window.
 fn declare<A: DeserializeOwned + JsonSchema + 'static>(
     app: &App,
+    topic: Topic,
     name: &'static str,
     title: &str,
     description: &str,
 ) {
-    let declared =
-        app.commands
-            .register_raw::<A, _>(OWNER, name, title, description, move |args, app| {
-                // An agent's call runs here (`permissions::as_agent`), before
-                // the window, which runs what it is handed as the user's.
-                if skwir_core::permissions::agent_call().is_some()
-                    && let Some(instead) = reaches_out(name, &args)
-                {
-                    anyhow::bail!("for an agent, {name} {instead}");
-                }
-                app.request_front(Invocation {
-                    name: name.into(),
-                    args,
-                });
-                Ok(Outcome::Done)
+    let declared = app.commands.register_raw::<A, _>(
+        OWNER,
+        topic,
+        name,
+        title,
+        description,
+        move |args, app| {
+            // An agent's call runs here (`permissions::as_agent`), before
+            // the window, which runs what it is handed as the user's.
+            if skwir_core::permissions::agent_call().is_some()
+                && let Some(instead) = reaches_out(name, &args)
+            {
+                anyhow::bail!("for an agent, {name} {instead}");
+            }
+            app.request_front(Invocation {
+                name: name.into(),
+                args,
             });
+            Ok(Outcome::Done)
+        },
+    );
     declared.forms(forms_of(name));
     if KEEP_A_KEY.contains(&name) {
         declared.keeps_a_key();
@@ -1247,7 +1275,7 @@ fn declare<A: DeserializeOwned + JsonSchema + 'static>(
 fn declare_suggest(app: &App) {
     app.commands
         .register_raw::<args::Suggest, _>(
-            OWNER,
+            OWNER, Topic::Go,
             "ui.suggest",
             "Address suggestions",
             "What the address field offers for `text`: its rows, each with its section, title, detail and the invocation Enter runs, and the spans the text is drawn with",
@@ -1292,506 +1320,628 @@ fn declare_suggest(app: &App) {
 /// Declare every `ui.*` command in the core's registry.
 #[allow(clippy::too_many_lines)] // One line of the table per command.
 pub fn declare_all(app: &App) {
-    let none = |name, title, description| declare::<NoArgs>(app, name, title, description);
+    let none =
+        |topic, name, title, description| declare::<NoArgs>(app, topic, name, title, description);
     // The file list.
     declare::<Cursor>(
         app,
+        Topic::Select,
         "ui.cursor",
         "Move the cursor",
         "Move the file list's cursor (`to`), and with it the selection as `step` says",
     );
     declare::<Pick>(
         app,
+        Topic::Select,
         "ui.cursor_pick",
         "Pick or unpick",
         "Pick or unpick the item under the cursor, as yazi's mark, then go to the next",
     );
     none(
+        Topic::Select,
         "ui.cursor_toggle",
         "Select or deselect",
         "Select or deselect the item under the cursor",
     );
     none(
+        Topic::Window,
         "ui.context_menu",
         "Open the menu",
         "Open the menu of the selection, or of the folder shown",
     );
     declare::<Find>(
         app,
+        Topic::Find,
         "ui.find",
         "Find a name…",
         "Find a name in the pane as it is typed, after the cursor or before it",
     );
     declare::<Delta>(
         app,
+        Topic::Find,
         "ui.find_next",
         "Find the next name",
         "Find the name last looked for again, after the cursor (or before it)",
     );
     declare::<View>(
         app,
+        Topic::View,
         "ui.view",
         "Show a view",
         "Show the pane's files in a view",
     );
     declare::<Key>(
         app,
+        Topic::View,
         "ui.columns",
         "Show or hide a column",
         "Show or hide one of the list's detail columns",
     );
     none(
+        Topic::View,
         "ui.columns_reset",
         "Reset column widths",
         "Give the list's detail columns their default widths",
     );
     declare::<Key>(
         app,
+        Topic::View,
         "ui.grid_caption",
         "Show or hide a grid caption",
         "Say one caption under every name in the grid, or no longer: its tags or one of the list's details, by its setting (ui.grid_caption_tags, ui.grid_caption_size…)",
     );
     declare::<ViewButton>(
         app,
+        Topic::View,
         "ui.view_button",
         "Show or hide a view's button",
         "Give a view a button beside the address, or take it away; the view shown keeps its button while shown",
     );
     none(
+        Topic::View,
         "ui.view_buttons_reset",
         "Default view buttons",
         "Give a button to the views that show the files as listed (list, grid, columns), and no other",
     );
     declare::<Dir>(
         app,
+        Topic::View,
         "ui.zoom",
         "Zoom",
         "Size what the view sizes (tiles, rows, a map's scale): in, out or back",
     );
     none(
+        Topic::View,
         "ui.grid_fill",
         "Toggle filled thumbnails",
         "Crop thumbnails in the grid to fill their box",
     );
     none(
+        Topic::Find,
         "ui.narrow_folders",
         "Toggle the Narrow by bar over folders",
         "Offer the Narrow by bar over folders too",
     );
     none(
+        Topic::Preview,
         "ui.peek",
         "Peek",
         "Look at the file under the cursor in a large preview; run again, or its key held and let go, it closes",
     );
-    none("ui.peek_close", "Close peek", "Close the large preview");
     none(
+        Topic::Preview,
+        "ui.peek_close",
+        "Close peek",
+        "Close the large preview",
+    );
+    none(
+        Topic::View,
         "ui.usage_refresh",
         "Measure again",
         "Measure what the Usage view shows again",
     );
     declare::<UsageMode>(
         app,
+        Topic::View,
         "ui.usage_mode",
         "Usage map shows",
         "Size the Usage map's blocks by the room or the files they hold, or color them by when they changed or the kinds of their files",
     );
     // Asking and naming.
     none(
+        Topic::Files,
         "ui.rename_prompt",
         "Rename…",
         "Rename the selected item, or a place as its location says",
     );
     none(
+        Topic::Files,
         "ui.mkdir_prompt",
         "New folder…",
         "Ask for a name and make a folder in the folder shown",
     );
     none(
+        Topic::Files,
         "ui.new_file_prompt",
         "New file…",
         "Ask for a name and make an empty file (a folder for a name ending in /)",
     );
     none(
+        Topic::Files,
         "ui.create_here",
         "New here…",
         "Make what the location makes (a tag in a tag's folder)",
     );
     none(
+        Topic::Files,
         "ui.rename_bulk_prompt",
         "Rename several…",
         "Rename the selected items together",
     );
     none(
+        Topic::Window,
         "ui.rename_bulk_next",
         "Next field",
         "Go to the next field of Rename several",
     );
     none(
+        Topic::Window,
         "ui.rename_bulk_prev",
         "Previous field",
         "Go to the previous field of Rename several",
     );
     none(
+        Topic::Files,
         "ui.rename_bulk_case",
         "Change case",
         "Cycle the case Rename several gives names",
     );
     declare::<TagsPrompt>(
         app,
+        Topic::Notes,
         "ui.tags_prompt",
         "Tags…",
         "Edit the tags of the selection, or of the files named",
     );
     none(
+        Topic::Notes,
         "ui.tag_editor_apply",
         "Apply tags",
         "Apply what the tag editor changed",
     );
     declare::<Ask>(
         app,
+        Topic::Window,
         "ui.ask",
         "Ask for a line of text",
         "Ask the user for a line of text and run a command with it",
     );
     declare::<Object>(
         app,
+        Topic::Window,
         "ui.choose",
         "Ask for a choice",
         "Ask the user to choose among choices, given or listed by a command, and run the one chosen",
     );
     none(
+        Topic::Window,
         "ui.choose_option",
         "Switch the option",
         "Switch the choice's option (Always use for…)",
     );
-    none("ui.accept", "Confirm", "Answer yes to the question asked");
-    none("ui.dismiss", "Cancel", "Answer no to the question asked");
     none(
+        Topic::Window,
+        "ui.accept",
+        "Confirm",
+        "Answer yes to the question asked",
+    );
+    none(
+        Topic::Window,
+        "ui.dismiss",
+        "Cancel",
+        "Answer no to the question asked",
+    );
+    none(
+        Topic::Files,
         "ui.review_apply",
         "Apply the plan",
         "Apply the plan being reviewed",
     );
     none(
+        Topic::Files,
         "ui.review_cancel",
         "Discard the plan",
         "Discard the plan being reviewed",
     );
     declare::<Delta>(
         app,
+        Topic::Window,
         "ui.review_choose",
         "Next choice",
         "In the names a copy, a move or a link found taken: the next choice of the row the keyboard is on, or the previous with a negative delta",
     );
     // The address and searching.
     none(
+        Topic::Go,
         "ui.focus_address",
         "Focus address bar",
         "Edit the active pane's path",
     );
     declare::<Text>(
         app,
+        Topic::Find,
         "ui.search",
         "Search…",
         "Search the folder shown and its subfolders from the address field, from a text; typed in, look below the folder",
     );
     declare::<Text>(
         app,
+        Topic::Find,
         "ui.filter",
         "Filter…",
         "Filter the folder shown from the address field as you type, its subfolders left out, from a text; typed in, look in the folder alone",
     );
     declare::<Submit>(
         app,
+        Topic::Go,
         "ui.omnibox_submit",
         "Go",
         "Run the address's suggestion, search the home folder, or open the file it names",
     );
     none(
+        Topic::Find,
         "ui.omnibox_scopes",
         "Where to search",
         "List the scopes the address field's words could search in, or close the list",
     );
     none(
+        Topic::Go,
         "ui.omnibox_forget",
         "Forget the suggestion",
         "Forget the recent search highlighted in the address field's suggestions",
     );
     declare_suggest(app);
     none(
+        Topic::Go,
         "ui.omnibox_complete",
         "Complete",
         "Complete what the address is typed: the part the names typed share, else the suggestion highlighted, a folder then listed",
     );
     declare::<Object>(
         app,
+        Topic::Find,
         "ui.search_chip",
         "Search pill's menu",
         "Open or close a search pill's menu",
     );
     declare::<History>(
         app,
+        Topic::Go,
         "ui.history_menu",
         "Back: history…",
         "List the history behind Back, or ahead of Forward",
     );
     declare::<Folders>(
         app,
+        Topic::Go,
         "ui.subfolder_menu",
         "Folders inside…",
         "List the folders or places inside one of the trail's",
     );
     declare::<Folders>(
         app,
+        Topic::Go,
         "ui.parents_menu",
         "Folders above…",
         "List the folders above the trail's first, from the root down",
     );
     declare::<Url>(
         app,
+        Topic::Go,
         "ui.open_url",
         "Open an address",
         "Open an address (http, https, mailto) with the desktop's application",
     );
     declare::<crate::links::RevealArgs>(
         app,
+        Topic::Go,
         "ui.reveal",
         "Show in folder",
         "Show a file in its folder, at a line of its preview",
     );
-    declare::<CopyText>(app, "ui.copy_text", "Copy", "Put a text on the clipboard");
     declare::<CopyText>(
         app,
+        Topic::Files,
+        "ui.copy_text",
+        "Copy",
+        "Put a text on the clipboard",
+    );
+    declare::<CopyText>(
+        app,
+        Topic::Files,
         "ui.compare_copied",
         "Compare with copied",
         "Say whether the clipboard holds a text (a checksum a download page gives, one word of it or all), ignoring case",
     );
     none(
+        Topic::Go,
         "ui.jump",
         "Jump…",
         "Type in the address field, the places one goes to offered first",
     );
     // The window.
-    none("ui.palette", "Command palette", "Find a command and run it");
+    none(
+        Topic::Skwir,
+        "ui.palette",
+        "Command palette",
+        "Find a command and run it",
+    );
     declare::<ListMoveArgs>(
         app,
+        Topic::Window,
         "ui.list_move",
         "Next in the list",
         "Move in the list being typed into (the palette, a choice, Jump, the tag editor, the address's suggestions) or answered (the names a copy found taken): rows round its ends, or a page, or to an end",
     );
     none(
+        Topic::Skwir,
         "ui.shortcuts",
         "Shortcuts",
         "List the keys of where the keyboard is",
     );
     declare::<Close>(
         app,
+        Topic::Skwir,
         "ui.about",
         "About skwir",
         "Show skwir's version and licence, and what it runs on",
     );
     declare::<Settings>(
         app,
+        Topic::Skwir,
         "ui.settings",
         "Settings…",
         "Open the settings, at a setting or a page",
     );
     none(
+        Topic::Window,
         "ui.focus_pane",
         "Focus file list",
         "Give the keyboard to the active pane",
     );
     none(
+        Topic::Tabs,
         "ui.focus_other_pane",
         "Focus other pane",
         "Give the keyboard to the split's other pane",
     );
     none(
+        Topic::Window,
         "ui.focus_sidebar",
         "Focus sidebar",
         "Give the keyboard to the sidebar",
     );
     none(
+        Topic::Window,
         "ui.focus_next_part",
         "Focus next part of the window",
         "Give the keyboard to the next part of the window shown: the sidebar, the files, the preview",
     );
     none(
+        Topic::View,
         "ui.toggle_sidebar",
         "Toggle sidebar",
         "Show or hide the sidebar",
     );
     declare::<Key>(
         app,
+        Topic::Window,
         "ui.sidebar_key",
         "Sidebar key",
         "A key in the sidebar: walk, open, move, rename or remove its places",
     );
     declare::<Key>(
         app,
+        Topic::Window,
         "ui.settings_key",
         "Keyboard page key",
         "A key in the Keyboard page's list of actions: walk the actions and their keys, change, add or remove one",
     );
     declare::<Object>(
         app,
+        Topic::Places,
         "ui.sidebar_section",
         "Arrange a sidebar group",
         "Move, show, hide or reset the sidebar's groups",
     );
     declare::<Object>(
         app,
+        Topic::Places,
         "ui.sidebar_place",
         "Arrange a sidebar place",
         "Move, rename, show or hide a place the sidebar offers",
     );
     declare::<Popup>(
         app,
+        Topic::Window,
         "ui.toolbar_menu",
         "Toolbar menu",
         "Open or close More, the View menu, the choice of view buttons, the Map view's backgrounds or the pinned player's More (kind: more, view_options, view_buttons, map_backgrounds, player)",
     );
     // Answered by the focused button and the open popup themselves.
     none(
+        Topic::Window,
         "ui.toolbar_activate",
         "Press the button",
         "Press the button that has the keyboard",
     );
     none(
+        Topic::Window,
         "ui.toolbar_close",
         "Close the menu",
         "Close the toolbar's open menu",
     );
     none(
+        Topic::Window,
         "ui.toolbar_next",
         "Next button",
         "Give the keyboard to the next button",
     );
     none(
+        Topic::Window,
         "ui.toolbar_prev",
         "Previous button",
         "Give the keyboard to the previous button",
     );
     none(
+        Topic::Window,
         "ui.toolbar_first",
         "First row",
         "Give the keyboard to the first row of the open menu",
     );
     none(
+        Topic::Window,
         "ui.toolbar_last",
         "Last row",
         "Give the keyboard to the last row of the open menu",
     );
     declare::<Split>(
         app,
+        Topic::Tabs,
         "ui.split",
         "Split pane",
         "Split the window in two panes, or join them",
     );
     declare::<Layout>(
         app,
+        Topic::View,
         "ui.layout",
         "Arrange the window",
         "Where split panes, the preview and a file of an archive go",
     );
     none(
+        Topic::Files,
         "ui.copy_other",
         "Copy to the other pane",
         "Copy the selection to what the other pane shows",
     );
     none(
+        Topic::Files,
         "ui.move_other",
         "Move to the other pane",
         "Move the selection to what the other pane shows",
     );
     none(
+        Topic::Files,
         "ui.give_other",
         "Send to the other pane…",
         "Ask what the selection does in what the other pane shows, as a drop asks: move, copy or link it there, or what a plugin offers (extract an archive)",
     );
-    none("ui.timeline", "Timeline", "Show or hide the timeline");
+    none(
+        Topic::View,
+        "ui.timeline",
+        "Timeline",
+        "Show or hide the timeline",
+    );
     declare::<Bucket>(
         app,
+        Topic::View,
         "ui.timeline_bucket",
         "Timeline bars",
         "What each bar of the timeline counts, a day, a week, a month or a year, while the pane shows what it shows: by default the finest that shows every date",
     );
     declare::<Toward>(
         app,
+        Topic::View,
         "ui.timeline_pan",
         "Timeline: move along",
         "Show the timeline's earlier or later bars, when there are too many of them to show at once",
     );
     declare::<args::Measure>(
         app,
+        Topic::View,
         "ui.timeline_measure",
         "Timeline: files or size",
         "Make the timeline's bars as tall as their number of files, or as their size",
     );
     declare::<TimelineDate>(
         app,
+        Topic::View,
         "ui.timeline_date",
         "Timeline: which time",
         "Count files on the timeline by when they were modified, created, last opened, or taken (a picture's or a video's clock)",
     );
     declare::<TimelineCursor>(
         app,
+        Topic::View,
         "ui.timeline_cursor",
         "Timeline: go to a bar",
         "Move the timeline's keyboard bar, or extend the bars chosen",
     );
     none(
+        Topic::View,
         "ui.timeline_list",
         "Timeline: list the bars chosen",
         "Show the files of the timeline's bars chosen",
     );
     none(
+        Topic::View,
         "ui.timeline_subtree",
         "Timeline: folders inside",
         "Count the files of the folders inside too",
     );
     none(
+        Topic::Terminal,
         "ui.terminal",
         "Toggle terminal",
         "Show or hide the terminal",
     );
     none(
+        Topic::Terminal,
         "ui.terminal_copy",
         "Terminal: copy",
         "Copy the terminal's selection",
     );
     declare::<TerminalPaste>(
         app,
+        Topic::Terminal,
         "ui.terminal_paste",
         "Terminal: paste",
         "Paste into the terminal",
     );
     none(
+        Topic::Terminal,
         "ui.terminal_select_all",
         "Terminal: select all",
         "Select everything the terminal shows and kept",
     );
     none(
+        Topic::Terminal,
         "ui.terminal_clear",
         "Terminal: clear the history",
         "Forget the lines scrolled away above the terminal's screen",
     );
     none(
+        Topic::Terminal,
         "ui.terminal_paths",
         "Terminal: type the selection's paths",
         "Type the paths of the selected files at the terminal's prompt, quoted for its shell",
     );
     none(
+        Topic::Terminal,
         "ui.terminal_menu",
         "Terminal: menu",
         "Open the terminal's menu: copy, paste, its links",
     );
     declare::<Pages>(
         app,
+        Topic::Terminal,
         "ui.terminal_page",
         "Terminal: scroll",
         "Scroll the terminal by pages",
     );
     none(
+        Topic::Terminal,
         "ui.terminal_links",
         "Terminal: follow a link…",
         "Label the terminal's links for the keyboard",
@@ -1809,7 +1959,7 @@ pub fn declare_all(app: &App) {
         ("ui.menu_activate", "Run the item"),
         ("ui.menu_close", "Close the menu"),
     ] {
-        none(name, title, "A key in a menu");
+        none(Topic::Window, name, title, "A key in a menu");
     }
     for (name, title) in [
         ("ui.settings_close", "Close settings"),
@@ -1821,130 +1971,157 @@ pub fn declare_all(app: &App) {
         ("ui.settings_adjust", "Change the value"),
         ("ui.settings_move", "Move the record"),
     ] {
-        declare::<Delta>(app, name, title, "A key in the settings");
+        declare::<Delta>(app, Topic::Window, name, title, "A key in the settings");
     }
-    none("ui.quit", "Quit", "Close the window");
+    none(Topic::Skwir, "ui.quit", "Quit", "Close the window");
     // The preview.
     none(
+        Topic::View,
         "ui.toggle_preview",
         "Toggle preview panel",
         "Show or hide the preview panel",
     );
-    none("ui.preview_close", "Preview: close", "Close the preview");
     none(
+        Topic::Preview,
+        "ui.preview_close",
+        "Preview: close",
+        "Close the preview",
+    );
+    none(
+        Topic::Files,
         "ui.properties",
         "Properties",
         "Show the properties of the selection (or of the folder shown), opening the panel; hide them where they cover a preview",
     );
     declare::<Count>(
         app,
+        Topic::Files,
         "ui.properties_count",
         "Properties: count what folders hold",
         "Count the size, room taken, files and folders of what Properties shows (the selection, with several selected), or stop counting with `stop`",
     );
     declare::<Fold>(
         app,
+        Topic::Files,
         "ui.properties_fold",
         "Properties: fold a group",
         "Fold one of Properties' groups (`Checksums`, `Volume`…) or unfold it, for every item from now on",
     );
     declare::<Popup>(
         app,
+        Topic::Preview,
         "ui.preview_menu",
         "Preview menu",
         "Open or close one of the preview's menus",
     );
     none(
+        Topic::Preview,
         "ui.preview_open_external",
         "Preview: open externally",
         "Open the file shown with the desktop's application",
     );
     none(
+        Topic::Preview,
         "ui.preview_copy_path",
         "Preview: copy path",
         "Copy the path of the file shown",
     );
     declare::<Delta>(
         app,
+        Topic::Preview,
         "ui.preview_page",
         "Preview: next page",
         "Go a page, a section or a chapter on or back",
     );
     declare::<PreviewScroll>(
         app,
+        Topic::Preview,
         "ui.preview_scroll",
         "Preview: scroll",
         "Move what the preview shows a step up, down or sideways; where it fits, Left and Right go to the page or section before or after, and on the whole screen to the picture",
     );
     declare::<Amount>(
         app,
+        Topic::Preview,
         "ui.preview_seek",
         "Preview: seek",
         "Go seconds on or back in what plays",
     );
     declare::<Dir>(
         app,
+        Topic::Preview,
         "ui.preview_zoom",
         "Preview: zoom",
         "Zoom what the preview shows, size what it reads",
     );
     declare::<Object>(
         app,
+        Topic::Preview,
         "ui.inspect",
         "Preview action",
         "Do something in a structured preview (`action`: search, copy, outline, source, hex…)",
     );
     declare::<On>(
         app,
+        Topic::Preview,
         "ui.printed_pages",
         "Printed page numbers",
         "Count a book's pages as printed, where it lists them",
     );
     declare::<On>(
         app,
+        Topic::Preview,
         "ui.wrap_lines",
         "Wrap lines",
         "Wrap a text's long lines to the panel, or let them go on sideways",
     );
     none(
+        Topic::Preview,
         "ui.full_width",
         "Toggle full-width reading",
         "Read text across the whole panel",
     );
     declare::<Object>(
         app,
+        Topic::Notes,
         "ui.note",
         "Note",
         "Close a book's note, or go to where it is",
     );
     none(
+        Topic::Preview,
         "ui.reader_continuous",
         "Document: toggle continuous scrolling",
         "Scroll a document's pages as one, or one at a time",
     );
     declare::<Pointer>(
         app,
+        Topic::Preview,
         "ui.reader_pointer",
         "Document: pointer",
         "A press, a drag or a release on a document's page",
     );
     declare::<Page>(
         app,
+        Topic::Preview,
         "ui.reader_page",
         "Document: go to page",
         "Show a document's page",
     );
     none(
+        Topic::Preview,
         "ui.preview_goto",
         "Preview: go to page or chapter…",
         "Type the page to show, or a book's chapter",
     );
     none(
+        Topic::Preview,
         "ui.reader_page_submit",
         "Document: show the page typed",
         "Show the page typed",
     );
     none(
+        Topic::Preview,
         "ui.reader_page_cancel",
         "Document: leave the page field",
         "Leave the page field as it was",
@@ -1952,49 +2129,58 @@ pub fn declare_all(app: &App) {
     // What a document and a structured preview are both asked, one
     // command each, carried out as the one shown does it.
     none(
+        Topic::Preview,
         "ui.preview_copy",
         "Preview: copy",
         "Copy the text selected, else what is selected (a block), else all the preview shows",
     );
     none(
+        Topic::Preview,
         "ui.preview_select_all",
         "Preview: select all",
         "Select all the text the preview shows",
     );
     none(
+        Topic::Preview,
         "ui.preview_contents",
         "Preview: contents",
         "Show or hide the contents: a document's, a structured preview's headings",
     );
     declare::<On>(
         app,
+        Topic::Preview,
         "ui.contents_pin",
         "Preview: keep contents open",
         "Keep the contents open beside what is read, the content narrowed, or let choosing a part close them",
     );
     none(
+        Topic::Preview,
         "ui.preview_find",
         "Preview: find text",
         "Find text in what the preview shows",
     );
     none(
+        Topic::Preview,
         "ui.preview_find_close",
         "Preview: close find",
         "Close the preview's find field",
     );
     declare::<Delta>(
         app,
+        Topic::Preview,
         "ui.preview_match",
         "Preview: next search match",
         "Go to the next or previous match of what the find looks for",
     );
     none(
+        Topic::Preview,
         "ui.reader_search",
         "Document: search",
         "Search a document for what the find field holds",
     );
     declare::<PageLink>(
         app,
+        Topic::Preview,
         "ui.reader_link",
         "Document: follow a link",
         "Follow one of a page's links",
@@ -2002,138 +2188,168 @@ pub fn declare_all(app: &App) {
     // What plays.
     declare::<Object>(
         app,
+        Topic::Player,
         "ui.media_control",
         "Player: control",
         "Play, pause, seek or set the volume of what the preview plays",
     );
     none(
+        Topic::Player,
         "ui.media_pin",
         "Player: pin or let go of this track",
         "Keep what plays playing while the selection moves, or let it go",
     );
     declare::<On>(
         app,
+        Topic::Player,
         "ui.media_keep_playing",
         "Player: keep playing while you browse",
         "Keep playing when the selection moves",
     );
     declare::<On>(
         app,
+        Topic::Player,
         "ui.media_autoplay",
         "Player: play on selection",
         "Play what is selected at once",
     );
     declare::<Continue>(
         app,
+        Topic::Player,
         "ui.media_continue",
         "Player: when a track ends",
         "What plays when a track ends: nothing, the next one, or one shuffled",
     );
     declare::<Delta>(
         app,
+        Topic::Player,
         "ui.media_step",
         "Player: next track",
         "Select the next or previous track",
     );
     declare::<Scrub>(
         app,
+        Topic::Player,
         "ui.media_scrub",
         "Player: scrub",
         "Drag the playing position",
     );
     none(
+        Topic::Player,
         "ui.media_escape",
         "Player: leave",
         "Leave full screen, else close the preview",
     );
     none(
+        Topic::Preview,
         "ui.preview_fullscreen",
         "Preview: full screen",
         "Show the preview on the whole screen (a picture, pages, text, a film), or leave it",
     );
     none(
+        Topic::Preview,
         "ui.fullscreen_controls",
         "Full screen: controls",
         "Show or hide the bar over the preview on the whole screen",
     );
     declare::<Delta>(
         app,
+        Topic::Preview,
         "ui.fullscreen_step",
         "Full screen: next",
         "On the whole screen, show the next or previous picture of the pane, or turn the page",
     );
     none(
+        Topic::Preview,
         "ui.slideshow",
         "Preview: slideshow",
         "Play the pane's pictures one after another on the whole screen, from the one shown, or pause",
     );
     declare::<Pace>(
         app,
+        Topic::Preview,
         "ui.slideshow_pace",
         "Slideshow: pace",
         "How long a slideshow shows each picture, in seconds",
     );
     declare::<Player>(
         app,
+        Topic::Player,
         "ui.player",
         "Player",
         "Ask the pinned player something (play, pause, next, stop…)",
     );
     declare::<Amount>(
         app,
+        Topic::Player,
         "ui.player_volume",
         "Player: volume",
         "Change the pinned player's volume",
     );
     // The map.
-    declare::<Pan>(app, "ui.map_pan", "Map: pan", "Move the map");
+    declare::<Pan>(
+        app,
+        Topic::Preview,
+        "ui.map_pan",
+        "Map: pan",
+        "Move the map",
+    );
     // A 3D model (ADR-067).
     declare::<On>(
         app,
+        Topic::Preview,
         "ui.model_perspective",
         "Model: perspective",
         "Draw 3D models in perspective, nearer parts larger, or not",
     );
     declare::<On>(
         app,
+        Topic::Preview,
         "ui.model_smooth",
         "Model: smooth shading",
         "Shade 3D models smoothly across their faces, or each face flat",
     );
     declare::<Pan>(
         app,
+        Topic::Preview,
         "ui.model_turn",
         "Model: turn",
         "Go round the 3D model shown, by steps right (dx) and down (dy)",
     );
     declare::<Pan>(
         app,
+        Topic::Preview,
         "ui.model_pan",
         "Model: move",
         "Move the view of the 3D model shown, by steps right (dx) and down (dy)",
     );
     declare::<Delta>(
         app,
+        Topic::Preview,
         "ui.map_point",
         "Map: next place",
         "Go to the next place on the map (or the previous one), the map centred on it",
     );
     none(
+        Topic::Preview,
         "ui.map_open",
         "Map: open in Maps",
         "Open the place shown in the desktop's maps",
     );
     none(
+        Topic::Preview,
         "ui.map_view_fit",
         "Map: fit to its files",
         "Fit the Map view to its files",
     );
     none(
+        Topic::Preview,
         "ui.map_view_spread",
         "Map: spread the files at one place, or group them",
         "Spread the files at one place, or group them",
     );
     none(
+        Topic::Preview,
         "ui.map_view_search_area",
         "Map: search the pictures and videos of this area",
         "Search the pictures and videos taken in the area shown",

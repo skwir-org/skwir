@@ -62,7 +62,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 use skwir_core::app::{App, NotifyLevel};
 use skwir_core::cancel::CancelToken;
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::fs::reach::{self, Known, Remote, Thumbnails};
 use skwir_core::location::Location;
 use skwir_core::os_path::PathArg;
@@ -1537,7 +1537,7 @@ impl Plugin for RemotePlugin {
         }
         let remotes = self.remotes.clone();
         app.commands.register::<ConnectArgs, _>(
-            ID,
+            ID, Topic::Places,
             "remote.connect",
             "Connect to server",
             "Open a remote folder by its address (sftp://, smb://, dav://, ftp://, nfs://, afp://, rclone://)",
@@ -1556,6 +1556,7 @@ impl Plugin for RemotePlugin {
         let remotes = self.remotes.clone();
         app.commands.register::<DisconnectArgs, _>(
             ID,
+            Topic::Places,
             "remote.disconnect",
             "Disconnect",
             "Let go of a remote folder: what shows it goes home",
@@ -1566,7 +1567,7 @@ impl Plugin for RemotePlugin {
         );
         let remotes = self.remotes.clone();
         app.commands.register::<ThumbnailsArgs, _>(
-            ID,
+            ID, Topic::Places,
             "remote.thumbnails",
             "Thumbnails of a remote",
             "Choose when a remote folder's files show thumbnails: automatic, never, small or always",
@@ -1612,7 +1613,7 @@ impl Plugin for RemotePlugin {
         );
         let remotes = self.remotes.clone();
         app.commands.register::<ForgetPasswordArgs, _>(
-            ID,
+            ID, Topic::Places,
             "remote.forget_password",
             "Forget password",
             "Remove from the keyring the password Skwir keeps for a server (never one another program kept)",
@@ -1651,6 +1652,7 @@ impl Plugin for RemotePlugin {
         app.commands
             .register::<skwir_core::command::NoArgs, _>(
                 ID,
+                Topic::Places,
                 "remote.refresh",
                 "Refresh remote folders",
                 "Read again what is mounted and which servers the tools know",

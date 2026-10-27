@@ -18,7 +18,7 @@ use nucleo_matcher::{Config, Matcher, Utf32Str};
 use parking_lot::Mutex;
 use skwir_core::CancelToken;
 use skwir_core::app::{App, NotifyLevel};
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::entry::EntryId;
 use skwir_core::fs::hydrate_paths;
 use skwir_core::location::{
@@ -531,7 +531,7 @@ impl Plugin for JumpPlugin {
         let index = Arc::clone(&self.index);
         let gathered = Arc::clone(&self.gathered);
         app.commands.register::<CandidatesArgs, _>(
-            ID,
+            ID, Topic::Go,
             "jump.candidates",
             "Jump candidates",
             "Rank jump targets for a query, from what zoxide and the recent files list said last",
@@ -550,7 +550,7 @@ impl Plugin for JumpPlugin {
         let gathered = Arc::clone(&self.gathered);
         let lifetime = self.lifetime.lock().clone();
         app.commands.register::<ScoresArgs, _>(
-            ID,
+            ID, Topic::Go,
             "jump.scores",
             "Jump scores in a folder",
             "How much the user goes to each name of a folder, from what zoxide and the recent files list said last: a folder counts the folders within it",
@@ -568,6 +568,7 @@ impl Plugin for JumpPlugin {
         app.commands
             .register::<ToArgs, _>(
                 ID,
+                Topic::Go,
                 "jump.to",
                 "Jump to",
                 "Go to a directory, or to a file's directory selecting it",

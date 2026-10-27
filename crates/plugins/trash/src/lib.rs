@@ -27,7 +27,7 @@ use crossbeam_channel::Receiver;
 use parking_lot::Mutex;
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
-use skwir_core::command::{Invocation, NoArgs, Outcome};
+use skwir_core::command::{Invocation, NoArgs, Outcome, Topic};
 use skwir_core::entry::{Entry, EntryId, keys};
 use skwir_core::fs::stat::stat_path;
 use skwir_core::location::{
@@ -922,7 +922,7 @@ fn read_item(file: &Path) -> Option<Trashed> {
 
 fn register_commands(app: &App, trashes: &Trashes) {
     app.commands.register::<PutArgs, _>(
-        ID,
+        ID, Topic::Files,
         "trash.put",
         "Put in the trash",
         "Move files to the trash (plan): a pane's selection, or the entries given (files dropped on the Trash)",
@@ -940,7 +940,7 @@ fn register_commands(app: &App, trashes: &Trashes) {
         .plans();
     let t = trashes.clone();
     app.commands.register::<RestoreArgs, _>(
-        ID,
+        ID, Topic::Files,
         "trash.restore",
         "Restore from the trash",
         "Put files of the trash back where they came from (plan): the trash pane's selection, or the entries given",
@@ -977,6 +977,7 @@ fn register_commands(app: &App, trashes: &Trashes) {
         // (`ToolPane::Shown`), which it takes; it empties every trash.
         .register::<skwir_core::app::PaneArg, _>(
             ID,
+            Topic::Files,
             "trash.empty",
             "Empty the trash",
             "Delete every file in the trash for good (plan, irreversible)",
@@ -1013,7 +1014,7 @@ fn register_commands(app: &App, trashes: &Trashes) {
         .plans();
     let t = trashes.clone();
     app.commands.register::<NoArgs, _>(
-        ID,
+        ID, Topic::Files,
         "trash.list",
         "List the trash",
         "Return the files in the trash: each one's name, where it came from, where it is, and when it was put there",

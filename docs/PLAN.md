@@ -166,6 +166,10 @@ on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
 
+**From F1 by topic** (ADR-100, 2026-10-27):
+- F1 is not walked by `just a11y-check`: what a screen reader hears of it
+  is unchecked.
+
 **From the menus' overhaul** (ADR-099, 2026-10-27):
 - A submenu's row is not said to open one on Linux: AccessKit's AT-SPI
   adapter (0.19) maps no expanded state, for any element.

@@ -13,7 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::app::{App, NotifyLevel};
-use crate::command::{Form, Invocation, Outcome};
+use crate::command::{Form, Invocation, Outcome, Topic};
 use crate::entry::EntryId;
 use crate::location::{Location, SortSpec};
 use crate::os_path::PathArg;
@@ -690,7 +690,7 @@ pub(crate) fn register(app: &App) {
     );
 
     c.register::<NewTabArgs, _>(
-        "core",
+        "core", Topic::Tabs,
         "tab.new",
         "New tab",
         "Open a tab showing a location, or what the pane shows; shown at once unless `show` is false",
@@ -703,7 +703,7 @@ pub(crate) fn register(app: &App) {
         .shows();
 
     c.register::<OpenTabsArgs, _>(
-        "core",
+        "core", Topic::Tabs,
         "tab.open",
         "Open in new tab",
         "Open each selected folder in a tab of its own, behind the tab shown; files do not open in tabs",
@@ -747,6 +747,7 @@ pub(crate) fn register(app: &App) {
 
     c.register::<TabArg, _>(
         "core",
+        Topic::Tabs,
         "tab.close",
         "Close tab",
         "Close a tab (the one shown by default); the last tab stays. The notification offers Undo",
@@ -769,6 +770,7 @@ pub(crate) fn register(app: &App) {
 
     c.register::<ReopenTabArgs, _>(
         "core",
+        Topic::Tabs,
         "tab.reopen",
         "Reopen closed tab",
         "Open again the tab closed last, or the one a close reported, with its history",
@@ -781,6 +783,7 @@ pub(crate) fn register(app: &App) {
 
     let select = c.register::<SelectTabArgs, _>(
         "core",
+        Topic::Tabs,
         "tab.select",
         "Show tab",
         "Show a tab: by id, by position (negative from the right) or by steps from the one shown",
@@ -804,7 +807,6 @@ pub(crate) fn register(app: &App) {
                 serde_json::json!({ "delta": -1 }),
                 "Previous tab".to_owned(),
             ),
-            (serde_json::json!({ "index": -1 }), "Last tab".to_owned()),
         ]
         .into_iter()
         .chain((0..9).map(|index| {
@@ -813,7 +815,16 @@ pub(crate) fn register(app: &App) {
                 format!("Tab {}", index + 1),
             )
         }))
-        .map(|(args, title)| Form::new(args, title)),
+        .chain([(serde_json::json!({ "index": -1 }), "Last tab".to_owned())])
+        .map(|(args, title)| {
+            // A tab by its number, the last included, is one row of keys.
+            let form = Form::new(args, title);
+            if form.args.get("index").is_some() {
+                form.in_family("Go to a tab")
+            } else {
+                form
+            }
+        }),
     );
     // A key held down goes on from tab to tab, as browsers do.
     select.repeats(|args| args.get("delta").is_some());
@@ -821,6 +832,7 @@ pub(crate) fn register(app: &App) {
 
     let moving = c.register::<MoveTabArgs, _>(
         "core",
+        Topic::Tabs,
         "tab.move",
         "Move tab",
         "Put a tab at another position, or move it by steps",
@@ -847,14 +859,16 @@ pub(crate) fn register(app: &App) {
         },
     );
     moving.forms([
-        Form::new(serde_json::json!({ "delta": -1 }), "Move the tab left"),
-        Form::new(serde_json::json!({ "delta": 1 }), "Move the tab right"),
+        Form::new(serde_json::json!({ "delta": -1 }), "Move the tab left")
+            .in_family("Move the tab"),
+        Form::new(serde_json::json!({ "delta": 1 }), "Move the tab right")
+            .in_family("Move the tab"),
     ]);
     moving.repeats(|args| args.get("delta").is_some());
     moving.shows();
 
     c.register::<crate::command::NoArgs, _>(
-        "core",
+        "core", Topic::Tabs,
         "tab.list",
         "List tabs",
         "The tabs in order: each one's panes, their locations, which pane is active and which tab is shown",

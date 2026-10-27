@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use parking_lot::{Mutex, RwLock};
 
+use crate::command::Topic;
 use crate::os_path::PathArg;
 use serde::de::DeserializeOwned;
 use std::io::Write;
@@ -909,7 +910,7 @@ pub(crate) fn register(app: &crate::App) {
     ));
     app.commands
         .register::<CheckArgs, _>(
-            "core",
+            "core", Topic::Skwir,
             "settings.check",
             "Check settings",
             "Check a settings file, or settings given as a table, against the settings this skwir declares: fails with what is wrong (a value a setting does not take, a key no setting has), and notes the keys of owners it does not know",
@@ -951,7 +952,7 @@ pub(crate) fn register(app: &crate::App) {
         )
         .data();
     app.commands.register::<ApplyArgs, _>(
-        "core",
+        "core", Topic::Skwir,
         "settings.apply",
         "Save settings",
         "Change preferences, each key with the text its row in Settings takes; all of them are saved, or none",

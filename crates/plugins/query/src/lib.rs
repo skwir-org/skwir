@@ -26,7 +26,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use skwir_core::app::{App, NotifyLevel};
 use skwir_core::cancel::CancelToken;
-use skwir_core::command::{Invocation, NoArgs, Outcome};
+use skwir_core::command::{Invocation, NoArgs, Outcome, Topic};
 use skwir_core::location::Location;
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
@@ -568,7 +568,7 @@ impl Plugin for QueryPlugin {
         register_places(app);
 
         app.commands.register::<SearchArgs, _>(
-            ID,
+            ID, Topic::Find,
             "query.search",
             "Search",
             "Search, shown in the pane (then `entries` lists what it found; a search the pane shows already is left as it is, `refresh` lists it again): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`; `created`, `accessed`, and `taken` for a picture's camera clock), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `depth:2` bounds it. `root` (or `in:`) is where it looks",
@@ -600,6 +600,7 @@ impl Plugin for QueryPlugin {
 
         app.commands.register::<ForgetRecentArgs, _>(
             ID,
+            Topic::Find,
             "query.forget_recent",
             "Forget a recent search",
             "Take a search out of those the address field offers as run lately",
@@ -636,6 +637,7 @@ impl Plugin for QueryPlugin {
         let edits = editor.clone();
         app.commands.register::<SaveArgs, _>(
             ID,
+            Topic::Find,
             "query.save",
             "Save search",
             "Keep a search in the sidebar, the one the pane shows when `expr` is omitted",
@@ -664,6 +666,7 @@ impl Plugin for QueryPlugin {
         let edits = editor.clone();
         app.commands.register::<ForgetArgs, _>(
             ID,
+            Topic::Find,
             "query.forget",
             "Remove saved search",
             "Take a saved search out of the sidebar, named by its search or its name",
@@ -685,6 +688,7 @@ impl Plugin for QueryPlugin {
         let edits = editor.clone();
         app.commands.register::<RenameArgs, _>(
             ID,
+            Topic::Find,
             "query.rename",
             "Rename saved search",
             "Change the name a saved search shows in the sidebar",
@@ -698,6 +702,7 @@ impl Plugin for QueryPlugin {
         let edits = editor.clone();
         app.commands.register::<MoveArgs, _>(
             ID,
+            Topic::Find,
             "query.move",
             "Move saved search",
             "Put a saved search before another in the sidebar, or last",
@@ -714,6 +719,7 @@ impl Plugin for QueryPlugin {
         let edits = editor;
         app.commands.register::<EditArgs, _>(
             ID,
+            Topic::Find,
             "query.edit",
             "Edit saved search",
             "Change what a saved search looks for; its name and place in the sidebar stay",
@@ -728,6 +734,7 @@ impl Plugin for QueryPlugin {
         app.commands
             .register::<NoArgs, _>(
                 ID,
+                Topic::Find,
                 "query.list",
                 "List saved searches",
                 "Return the saved searches, in sidebar order",
@@ -735,7 +742,7 @@ impl Plugin for QueryPlugin {
             )
             .data();
         app.commands.register::<DescribeArgs, _>(
-            ID,
+            ID, Topic::Find,
             "query.describe",
             "Describe search",
             "The search's chips for the designer: each facet (words, kind, modified, taken, size, tag, content, where; created and accessed once set) with its value and the invocation every choice runs, then the parts no facet holds",
@@ -752,7 +759,7 @@ impl Plugin for QueryPlugin {
         )
         .data();
         app.commands.register::<TagChoicesArgs, _>(
-            ID,
+            ID, Topic::Find,
             "query.tag_choices",
             "Tags to refine by",
             "The Tag chip's picker: the tags on the pane's files, read from them, each refining the search (or what `refines` names: the folder's `narrowing` or `filter`)",
@@ -779,7 +786,7 @@ impl Plugin for QueryPlugin {
         // What the address field asks while it is typed in (`assist`).
         app.commands
             .register::<assist::TokensArgs, _>(
-                ID,
+                ID, Topic::Find,
                 "query.tokens",
                 "Pieces of a search",
                 "`[{ range, kind, facet?, message? }]`: the pieces of a search's text as the parser reads them (word, key, value, option, operator, or an error with the parser's message), byte ranges; a term still being typed at `caret` is not an error yet",
@@ -793,7 +800,7 @@ impl Plugin for QueryPlugin {
             .data();
         app.commands
             .register::<assist::CompleteArgs, _>(
-                ID,
+                ID, Topic::Find,
                 "query.complete",
                 "Complete a search",
                 "`{ range, items: [{ label, text, detail?, icon, tag? }], typing }`: what the term ending at `caret` (bytes; the end when omitted) can go on with, each item's `text` written in place of `range`: the keys a word starts, a key's values (kinds, the pane's tags, periods, sizes, stars); `typing` when that term is still incomplete",
@@ -808,7 +815,7 @@ impl Plugin for QueryPlugin {
             .data();
         app.commands
             .register::<assist::InterpretArgs, _>(
-                ID,
+                ID, Topic::Find,
                 "query.interpret",
                 "Read words as a search",
                 "`{ label, expr }` or null: plain words read as terms by rules (periods and years, kinds, extensions, sizes, the pane's tags), the rest kept as names; never applied by itself",
@@ -822,7 +829,7 @@ impl Plugin for QueryPlugin {
             .data();
         let similar_lifetime = lifetime.clone();
         app.commands.register::<SimilarArgs, _>(
-            ID,
+            ID, Topic::Find,
             "query.similar",
             "Find similar",
             "Search for files like the selected one: of the same kind, modified the same day, of a similar size, or sharing a tag, in the folder searched or shown",
@@ -854,7 +861,7 @@ impl Plugin for QueryPlugin {
             );
         }
         app.commands.register::<RefineArgs, _>(
-            ID,
+            ID, Topic::Find,
             "query.refine",
             "Refine search",
             "Change one facet of the pane's search (or start one in its folder) and show the result",
@@ -869,7 +876,7 @@ impl Plugin for QueryPlugin {
         )
         .shows();
         app.commands.register::<PaneOnly, _>(
-            ID,
+            ID, Topic::Find,
             "query.here",
             "This folder only",
             "Show the pane's search as the folder it looks in, filtered by its words, when the folder alone can tell them; else search that folder alone. A folder stays as it is",
@@ -899,7 +906,7 @@ impl Plugin for QueryPlugin {
         )
         .shows();
         app.commands.register::<PaneOnly, _>(
-            ID,
+            ID, Topic::Find,
             "query.below",
             "This folder and its subfolders",
             "Search the pane's folder and its subfolders for what narrows it: its narrowing, then the words typed over it",
@@ -927,7 +934,7 @@ impl Plugin for QueryPlugin {
         )
         .shows();
         app.commands.register::<NarrowArgs, _>(
-            ID,
+            ID, Topic::Find,
             "query.narrow",
             "Narrow folder",
             "Change one facet of what the pane's folder is narrowed to (its files of a kind, a year, with or without a tag), kept while it shows that folder or one under it; without `facet`, show everything again",
@@ -961,7 +968,7 @@ impl Plugin for QueryPlugin {
         )
         .shows();
         app.commands.register::<RefineArgs, _>(
-            ID,
+            ID, Topic::Find,
             "query.filter",
             "Filter folder",
             "Change one facet of the words filtering the pane's folder (typed over it in the address field), as `query.refine` changes a search's; the folder stays shown",
@@ -988,7 +995,7 @@ impl Plugin for QueryPlugin {
         .shows();
         app.commands
             .register::<PaneOnly, _>(
-                ID,
+                ID, Topic::Find,
                 "query.describe_filter",
                 "Describe folder filter",
                 "`{ depth, narrowing, filter }`: what narrows the pane's folder as a search's chips (`query.describe`), each choice changing it: how deep it looks (a folder's: this folder only, or its subfolders searched, `query.below`), the narrowing's set facets (`query.narrow`), then the words typed over it, set and not (`query.filter`), no facet the narrowing sets offered again but a tag",
@@ -1054,7 +1061,7 @@ impl Plugin for QueryPlugin {
             )
             .data();
         app.commands.register::<LocationArgs, _>(
-            ID,
+            ID, Topic::Find,
             "query.location",
             "Search location",
             "`{ location }`: the search for one facet's value (`tag` `work`, or `tag` alone for any tag) from `root` or the home folder, for whoever shows or runs a search without writing its syntax",

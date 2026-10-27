@@ -698,14 +698,24 @@ mod tests {
             })
         };
         app.commands
-            .register::<NoArgs, _>("test", "test.copy", "Copy a test text", "", move |_, _| {
-                copied()
-            })
+            .register::<NoArgs, _>(
+                "test",
+                skwir_core::command::Topic::Files,
+                "test.copy",
+                "Copy a test text",
+                "",
+                move |_, _| copied(),
+            )
             .reads();
         app.commands
-            .register::<NoArgs, _>("test", "test.rows", "Rows of a test panel", "", |_, _| {
-                Ok(Outcome::Value(serde_json::json!([])))
-            })
+            .register::<NoArgs, _>(
+                "test",
+                skwir_core::command::Topic::Files,
+                "test.rows",
+                "Rows of a test panel",
+                "",
+                |_, _| Ok(Outcome::Value(serde_json::json!([]))),
+            )
             .data();
         let offered = titles(&app, &[SortKey::Name]);
         assert!(offered.iter().any(|t| t == "Copy a test text"));

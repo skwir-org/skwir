@@ -21,7 +21,7 @@ use std::path::Path;
 use std::time::SystemTime;
 
 use skwir_core::app::App;
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::{Invocation, Outcome, Topic};
 use skwir_core::entry::{Value, keys};
 use skwir_core::op::{
     Change, EntryRef, Operation, Plan, RenameOrderError, RenameRequest, order_renames,
@@ -510,14 +510,14 @@ impl Plugin for RenameBulkPlugin {
     }
     fn register(&self, app: &App) {
         app.commands.register::<Args, _>(
-            ID,
+            ID, Topic::Files,
             "rename_bulk",
             "Rename several from a template",
             "Rename the selection, or the entries given, from a template, regex, and case rule (plan)",
             |a, app| Ok(Outcome::Plan(plan_bulk(app, a)?.plan)),
         )
         .plans();
-        app.commands.register::<PreviewArgs, _>(ID, "rename_bulk.preview", "Preview bulk rename", "Return the old → new names a bulk rename would produce (`renames`, the first `limit` of them when given) and how many there are (`count`)", |a, app| {
+        app.commands.register::<PreviewArgs, _>(ID, Topic::Files, "rename_bulk.preview", "Preview bulk rename", "Return the old → new names a bulk rename would produce (`renames`, the first `limit` of them when given) and how many there are (`count`)", |a, app| {
             let r = plan_bulk(app, a.args)?;
             // Display names for the dialog; the plan itself is lossless.
             let renames: Vec<(&Path, &Path)> = r
