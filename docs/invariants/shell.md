@@ -188,19 +188,56 @@ of bars, split or not.
 - Closing a split closes the pane `core.close_split` names
   (`layout::CloseSplit`); Split's tooltip says which.
 
-## The address field (`omnibox.rs`)
+## The address field (`omnibox.rs`, ADR-070, ADR-098)
 
-- Ctrl+F (`ui.search`) starts a search, with where it looks as a pill;
-  Ctrl+L edits the path; over a search, both edit the search.
-- Edited text opens a dropdown saying what Enter does: go to a path or a
-  scheme; search where the pill says (Enter) or home (Alt+Enter); search
-  contents (`query.refine`, facet `content`); a place Jump knows or a
-  scheme the words start (`tr`: the trash); `>` hands the rest to the
-  palette.
+- **A scope before the text.** The field may hold a token: where words
+  search. Ctrl+F (`ui.search`) starts with the folder shown, Ctrl+L with
+  none and the path selected, Ctrl+J (`ui.jump`) with none and nothing
+  typed, places first; over a search, Ctrl+F and Ctrl+L edit it, its
+  root the scope. Only the scope is a token; terms stay text.
+  - Backspace at the start of the text takes the scope away; Left there
+    selects the token first (`input::AtStart`, sent only where the field
+    asks, `send_start`).
+  - A click on the token, Down on it selected, Alt+Down
+    (`ui.omnibox_scopes`), or `@` typed first list scopes: the folder
+    shown, the one above, home, the whole disk, the sidebar's folders,
+    tags and places, those whose names go with what follows `@`; under
+    them the query plugin's "Search for “@…”", for a name that starts so.
+  - Ctrl+F on a highlighted row that has a scope (a folder, a tag, a
+    place) makes it the scope and clears the text for words; with none,
+    the folder shown becomes the scope of the text as it is.
+- **Rows come from sources** (`skwir_core::suggest`): each asked again at
+  every change of the text, in a job of its own in its lane, the jobs
+  before cancelled; an answer is kept by source until the next. Rows
+  about the text itself (what Enter does, completions, the reading,
+  other scopes) are taken only from an answer to that text; the others
+  stay while the next answer comes, so the list does not jump. Rows go
+  by `Section`, then rank; a row the arrows chose stays chosen when
+  answers arrive. The shell names no plugin: it runs the rows'
+  invocations and the core's commands (`filter`, `navigate`, `open`).
+  - The query plugin answers what Enter does with words (the search in
+    the scope, or why it cannot run: Enter then waits), what the term at
+    the caret goes on with, the words read as terms ("Did you mean",
+    applied only when picked), the same search elsewhere, and before
+    anything is typed with a scope the terms as buttons, recent and
+    saved searches; and the spans the text is drawn with.
+  - Jump, the tags plugin and the shell (`suggestions.rs`: other tabs,
+    the pane's history, the sidebar's places, a few commands with their
+    keys) answer the rest.
+  - The field's own source stays the paths and places it completes
+    (below), read in their lane.
+- **Before anything is typed**, the dropdown shows what the sources offer
+  then, nothing highlighted: Enter does what the text says (the location
+  shown again, a search's words again).
 - The keyboard never leaves the field (Up/Down are bound in its context).
   Rows run on press with `prevent_default`. The rows are a list box
   (`modal::options`); the row the arrows reach is the field's active
   descendant, so typing still reads back the field's text and caret.
+  Shift+Delete (`ui.omnibox_forget`) forgets a recent search highlighted.
+- **The text is drawn with the spans** the query plugin reads
+  (`TextInput::set_styles`, cleared when the text changes): keys in the
+  accent, values on `code_bg`, operators muted, what cannot be read with
+  a wavy line in `error`. The UI knows no query syntax.
 - **Completion (ADR-070, `complete.rs`).** A path lists the names of the
   folder typed that go on with the name typed: folders, then files, at
   most eight, matched as `complete.rs` says (case ignored unless a
@@ -208,7 +245,7 @@ of bars, split or not.
   only for a dot or where they are shown), ranked by `jump.scores`. Go is
   first only while no name is typed or none matches: otherwise Enter goes
   to the first name, whose rest is drawn after the text
-  (`TextInput::set_hint`).
+  (`TextInput::set_hint`). A source's row draws its `rest` the same way.
   - The folder typed is read on a worker, once while the field is typed
     in, the one read before stopped; a folder a pane lists gives its
     listing's names. Never on the UI thread: matching is in memory.
@@ -232,13 +269,22 @@ of bars, split or not.
   `file://` URI typed or pasted is read as the path it names here
   (`uri::path_of`, `Shell::omni_text`), the field keeping what was typed. A relative path with no folder shown (a search, a
   tag, the trash) goes nowhere, and says why.
-- A search is `query.search` with `expr` and `root`: the UI knows no query
-  syntax.
-- Words typed over a folder filter it at once (the core's `filter`,
-  applied by `Pane::order`, so selection ranges and views see only what is
-  shown; filtered-out entries are deselected). Showing another location
-  clears it; Escape (`filtered` key context) shows everything; once the
-  field lets go, the filter stays as a pill on the trail.
+- Enter pressed before the sources answered the text asks them there and
+  then (`suggest::gather`; they answer from memory), so what Enter runs
+  is always the text's.
+- **Words typed over a folder filter it at once**, as the core's `filter`
+  reads them through the query plugin (`narrow::read_filter`): the
+  longest start that parses; words, `name:` and `ext:` hold for folders
+  too, other terms for files, every folder staying; contents and a
+  picture's date or place wait for Enter, which the dropdown says; a
+  filter that reads metadata has every file's asked for. It runs at each
+  key on the window's thread, so a type is asked once per suffix
+  (`lang::Types`, as `mime::by_names` asks a selection): 6 to 13 ms a key
+  over 100 000 names in release. Showing another
+  location clears it; Escape (`filtered` key context) shows everything;
+  once the field lets go, its parts stay as pills after the trail, one
+  family with the narrowing's, each × the text without it. Ctrl+F over a
+  filtered folder edits its words.
 - A search's pills take the trail's place, so nothing on screen leads
   back: Escape with nothing selected goes to the folder it looks in (`up`,
   `search` in the key context). A tag location keeps its trail and is a

@@ -5553,3 +5553,68 @@ Asked by the user after the disk fell to 3 GB during a full run:
   dead code: it is behind `cfg(target_os = "linux")` now, as its caller
   was. Then `just lint`, `just test` (2252 passed) and `just check-cross`
   passed.
+
+### The address field as an omnibar (2026-10-26)
+
+Asked by the user ("an overhaul of the address / search bar … take
+inspiration from the browsers omnibars"), from a proposal page with
+mock-ups they reviewed and their answers to its open points, built that
+night (ADR-098):
+
+- **A scope before the text.** Ctrl+F puts the folder shown before the
+  text as a token, Ctrl+L none with the path selected, Ctrl+J none with
+  places first (the Jump overlay is gone, `ui.jump` opens the field).
+  Backspace at the start takes the scope away, Left selects it; a click,
+  Down on it, Alt+Down or `@` list scopes (the folder shown, the one
+  above, home, the whole disk, the sidebar's folders, tags, Recent);
+  Ctrl+F on a highlighted folder or place makes it the scope. A tag is
+  searched as the tag every match has from home; Recent is shown, what
+  it lists filtered (`navigate` takes `filter`).
+- **Rows from sources** (`skwir_core::suggest`, `Registry::suggesters`):
+  the query plugin's search or why it cannot run, the term at the caret
+  completed (`query.complete`), the words read as terms
+  (`query.interpret`), the same search elsewhere, terms as buttons,
+  recent and saved searches, the text's spans (`query.tokens`); Jump's
+  places; tags; the shell's tabs, history, sidebar places and commands.
+  The field no longer names `jump.candidates`, `query.search` or
+  `query.refine`. `ui.suggest` answers the rows for agents and scripts.
+- **The live filter is the search's reading** (`Registry::filter_readers`,
+  `narrow::read_filter`): `dunes jpg` shows `dunes.jpg` (the whole text
+  inside one name showed nothing), `kind:image tag:print` the prints and
+  every folder, `content:` waits for Enter; a text that does not read
+  leaves everything shown. Its parts are pills after the trail, one family
+  with Narrow by's, each × the text without it.
+- **The text is drawn with the query's spans** (`TextInput::set_styles`):
+  keys in the accent, values on `code_bg`, what cannot be read with a wavy
+  line.
+- **Recent searches** in the cache (`query.remember_searches`, on;
+  Shift+Delete forgets one), only the field's, never an agent's.
+- **Checked:** `just lint` and the default suite (2273 passed) on the
+  state before the last fixes, then the query and UI crates again (477)
+  and `just lint` after them. New tests: the merge of answers, the
+  filter's reading (words, terms on files with folders kept, a term still
+  typed, what waits, its parts), the query source's rows (the search,
+  an error, a value being typed, a reading, a tag's scope), styled runs.
+  A real window on Xvfb (debug build, a synthetic Field Guide with tags in
+  attributes and a zoxide history): Ctrl+F's token and term buttons, a
+  search run and then offered as recent, `dunes kind:im` drawn with its
+  key in the accent and `age` after the caret, Tab taking it, two terms
+  narrowing to the four prints with the folders, leaving the field to
+  pills and a pill's × taking its part off, `pdf last week` read as
+  "PDFs modified last week", `kind:pix` refused with the parser's message
+  and Enter waiting, `@` listing scopes, Ctrl+F on the highlighted Maps
+  making it the scope, Backspace taking it away, Ctrl+J with Back and
+  Jump's places.
+- **Found while checking:** Tab wrote the one file the filter left shown
+  (ADR-070's rule) rather than the value being completed: a source's
+  rest drawn after the text is now what Tab takes first, a path's names
+  keeping ADR-070's order. A text that did not read fell back to names
+  holding it and emptied the view (`kind:pix size>1`): everything stays.
+  A kind asked name by name cost 400 ms a key over 100 000 names in
+  release (`narrow::tests::a_key_over_a_hundred_thousand_names`,
+  ignored, run with `--release`); asked once per suffix it is 6 to 13 ms
+  (words 8 to 25 ms, as the machine's load moved), the first kind asked
+  in a process loading the type database (73 ms once).
+- **Not checked:** Windows and macOS (compiled by `check-cross`), the
+  dark look, Recent as a scope in a window, `ui.suggest` from an agent's
+  connection, a screen reader beyond `just a11y-check`.

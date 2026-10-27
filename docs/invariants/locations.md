@@ -125,7 +125,16 @@ and `notes.agree` are core `notes.*` commands.
 ## Searches
 
 - Pills and the address field: [shell.md](shell.md). The query language
-  belongs to the query plugin.
+  belongs to the query plugin, and so does what the address field offers
+  of it (ADR-098: `field.rs`, `assist.rs`), as a source like any other.
+- **Scopes (ADR-098).** Words search where the address field's scope
+  says: a folder is the search's root; a tag is searched as the tag every
+  match has, from the home folder; another place (Recent) is shown, what
+  it lists filtered by the words (`navigate` with `filter`). The whole
+  disk is `/`, which plocate may answer (below).
+- **Recent searches** are the query plugin's, kept in the cache (never in
+  the settings or the logs): only what the address field ran
+  (`remember`), never an agent's call.
 - **Narrowing.** Over a search with a tag, a bar (`narrow.rs`) offers
   tags within, other tags its files have, kinds and years, with counts
   from the results. A click refines (`query.refine`); Alt+click excludes a

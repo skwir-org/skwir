@@ -48,7 +48,7 @@ that work where the keyboard is.
 | `Alt+Left`, `Alt+Right` | Back, forward (hold or right-click Back or Forward for the history) |
 | `Alt+Home` | Home folder |
 | `Ctrl+L` | Type a path |
-| `Ctrl+J` | Jump |
+| `Ctrl+J` | Jump: the address, places first |
 | `Ctrl+Enter`, middle click | Open in a new tab behind this one |
 | `F5`, `Ctrl+R` | Refresh |
 | `Ctrl+D` | Keep the place shown in the sidebar |
@@ -58,16 +58,28 @@ that work where the keyboard is.
   trail starts at the deepest sidebar place that holds the folder, under
   its sidebar name; General › Show the full path starts it at `/`.
   Click beside the trail, or press `Ctrl+L`, to type.
-- **Typing in the address.** Words filter the folder shown as you type,
-  and stay after the trail as a pill with a funnel, as a Narrow by choice
-  does; `Escape` or its × shows everything again. A search, by contrast,
-  takes the trail's place; `Escape` with nothing selected goes back to the
-  folder it looks in. The dropdown says what `Enter` does
-  and offers the rest: a path goes there, words search the folder shown
-  (`Alt+Enter`: the home folder), `>` hands the rest to the palette.
+- **Typing in the address.** The first row says what `Enter` does; the
+  others offer the rest: a path's names (`Tab` completes), places you go
+  to, tags, other tabs, where the pane was, saved and recent searches,
+  commands with their keys. `>` hands the rest to the palette.
+- **Where words search.** `Ctrl+F` puts the folder shown before the text,
+  as a token: words search there. Click the token, press `Alt+Down`, or
+  type `@` first to search somewhere else (the folder above, home, the
+  whole disk, a sidebar folder, a tag, Recent); `Backspace` at the start
+  takes it away. With a folder or a place highlighted, `Ctrl+F` searches
+  in it.
+- **Words filter the folder shown** as you type: names hold the words,
+  and terms the folder can tell at once narrow it too (`kind:image`,
+  `size>1M`, `tag:draft`); what needs the files read (`content:`) waits
+  for `Enter`. Once you leave the field, each part stays after the trail
+  as a pill with a funnel, as a Narrow by choice does; `Escape` or a
+  pill's × shows more again. A search, by contrast, takes the trail's
+  place; `Escape` with nothing selected goes back to the folder it looks
+  in. `Alt+Enter` searches the home folder.
 - **Type the first letters of a name** in the file list to go to it.
-- **Jump** goes to a folder you used before, from zoxide's list and the
-  desktop's recent files, by a few letters of its name.
+- **Jump** (`Ctrl+J`) is the address with nothing typed: the folders you
+  go to most, from zoxide's list and the desktop's recent files, then
+  those whose names hold what you type.
 - **Recent** (in the sidebar, or `recent:`) lists the files the desktop
   says you used recently.
 
@@ -244,8 +256,15 @@ the text can be typed as is:
 | `in:"~/My Files"`, `depth:2`, `hidden:true` | where and how deep to look |
 | `a OR b`, `NOT a`, `(a b)` | either, not, together |
 
+- While you type, the address colors the terms it understands, completes
+  their values (`kind:` lists the kinds, `tag:` your tags, `modified:` the
+  periods) and says what it cannot read before you press `Enter`. Plain
+  words that read as terms (`pdf last week`) are offered as such under
+  the search of the words themselves.
 - `Alt+Enter` searches the home folder instead. `Ctrl+D` keeps a search
-  in the sidebar.
+  in the sidebar. The address offers your last searches when you press
+  `Ctrl+F`; `Shift+Delete` forgets one, and Settings › General › Remember
+  recent searches turns that off.
 - Over a search with tags, a bar offers what it can narrow to (the tags
   within, the files' kinds and years), each with a count. Over a folder,
   View › Narrow by shows the same bar.

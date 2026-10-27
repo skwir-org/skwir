@@ -166,6 +166,23 @@ on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
 
+**From the address field's overhaul** (ADR-098, 2026-10-26):
+- Search as you type: still a decision of its own (the user, 2026-10-26:
+  not now). The field filters the folder shown at once; the search of
+  the folders inside starts on Enter.
+- The model half of `query.ask` (Phase G): the field's "Did you mean"
+  reads words by rules only (`query.interpret`).
+- Recent as a scope is Recent shown, what it lists filtered by the words
+  (`navigate` with `filter`): what needs a file read (`content:`) waits,
+  as over a folder. A search of what any location lists, read and
+  walked, is still to make in the query plugin.
+- `ui.suggest` answers the sources' rows: a path's names are the field's
+  own (read in their lane) and not in it.
+- A plugin from outside cannot offer rows: sources are Rust
+  (`SuggestSource`); a command-shaped source would be its seam.
+- `?` alone listing what the field takes (the proposal's) is not built:
+  the footer under the rows says the keys of what is typed.
+
 **From the review of 2026-10-23** (fixed 2026-10-24, "Review fixes"
 above; each with the design its fixer proposed):
 - A cut file dims another folder's name of it: `Pending` keeps each
@@ -604,7 +621,9 @@ it left is in [What is left](#what-is-left).
   to 057); Properties (ADR-058); files on the desktop's clipboard
   (ADR-062); gpui from Zed's main branch (ADR-064); screen readers
   (ADR-065); address completion (ADR-070); the desktop's colors and
-  fonts (ADR-071, 073).
+  fonts (ADR-071, 073); the address field as an omnibar, a scope before
+  its text and rows from sources, Jump folded into it (ADR-098,
+  2026-10-26).
 - **Search:** words for people and named periods; dates the user's
   (ADR-017); facets, then pills in the address; saved searches (ADR-057);
   searches following changes; hints from indexes (ADR-026).
@@ -1669,7 +1688,8 @@ plugin off.
 - **G. Suggestions, organizing, the address** (ADR-095). `suggest`
   (pills, `suggest.tags`, `suggest.describe`, `suggest.peek`,
   `suggested:`), `organize` (`organize.into`, `organize.propose` with
-  the Groups facet, `organize.tags`), `query.ask` (rules without a
+  the Groups facet, `organize.tags`), `query.ask` (its rules built as
+  `query.interpret`, the address field's "Did you mean", ADR-098; rules without a
   provider, the model with one, always the parser's pills). *Done when:*
   "organize this folder" on a synthetic messy Downloads produces a
   correct, undoable plan with no language model, each step saying why;
