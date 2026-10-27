@@ -72,11 +72,13 @@ that work where the keyboard is.
 - **Words filter the folder shown** as you type: names hold the words,
   and terms the folder can tell at once narrow it too (`kind:image`,
   `size>1M`, `tag:draft`); what needs the files read (`content:`) waits
-  for `Enter`. Once you leave the field, each part stays after the trail
-  as a pill with a funnel, as a Narrow by choice does; `Escape` or a
-  pill's × shows more again. A search, by contrast, takes the trail's
-  place; `Escape` with nothing selected goes back to the folder it looks
-  in. `Alt+Enter` searches the home folder.
+  for `Enter`. Once you leave the field, each part stays right after the
+  trail as a pill with a funnel ("Kind: Images"), as a Narrow by choice
+  does: pressed, it offers its other values, and `+ Filter` adds another;
+  `Escape` or a pill's × shows more again. A search, by contrast, takes
+  the trail's place ("In Field Guide and below", its pills with a
+  magnifier or their facet's icon); `Escape` with nothing selected goes
+  back to the folder it looks in. `Alt+Enter` searches the home folder.
 - **Type the first letters of a name** in the file list to go to it.
 - **Jump** (`Ctrl+J`) is the address with nothing typed: the folders you
   go to most, from zoxide's list and the desktop's recent files, then

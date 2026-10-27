@@ -101,9 +101,8 @@ ADR-070 (the field's rows) and retires the Jump overlay.
    metadata has every file's asked for, and a type is asked once per
    suffix (`lang::Types`), so a key costs 6 to 13 ms over 100 000 names
    in release (400 ms asked name by name). Without the reader, names that
-   hold the text, as before. The typed filter's parts are pills after the
-   trail, one family with Narrow by's and a tag's (`ReadFilter::parts`,
-   each × the text without it).
+   hold the text, as before. The typed filter's facets are pills after
+   the trail, one family with Narrow by's and a tag's (amended below).
 6. **Recent searches** are those run from the field (`query.search` with
    `remember`, never an agent's), the last twenty, kept in the deletable
    cache under the query plugin's namespace, never logged; Shift+Delete
@@ -154,3 +153,13 @@ ADR-070 (the field's rows) and retires the Jump overlay.
   Jump finds each word unbroken in a path read from `~`
   (`rank_by_words`), in the name before its folders: its overlay's
   letters strewn over a whole path offered a row for nearly any search.
+- Amended 2026-10-27, again: what narrows a folder is the search's own
+  chips, one describer for both (`facets::describe_for`, `Refines`):
+  `query.describe_filter` says a folder's narrowing and words typed, each
+  choice changing it in place (`query.narrow`, `query.filter`), "+ Filter"
+  adding to the words. They follow the trail directly, each with a
+  funnel where a search's have their facet's icon, and give way with the
+  trail by width (`adaptive::Fit`). A search's first pill says "and
+  below". `ReadFilter::parts`, `Narrowed::pills` and `facets::parts`, the
+  second describer whose pills had other words ("Images", "with print"),
+  no menu and their own place at the field's end, are gone.

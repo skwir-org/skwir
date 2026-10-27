@@ -429,6 +429,7 @@ impl SettingsView {
                 crate::elements::adaptive::Fit {
                     variants: vec![self.choice_buttons(row, &focus, theme, cx), dropdown],
                     cuts: false,
+                    start: false,
                 }
                 .into_any_element()
             }

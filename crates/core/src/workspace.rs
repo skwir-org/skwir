@@ -587,7 +587,8 @@ type FilterCache = (Arc<[EntryId]>, u64, (u64, u64), Arc<[EntryId]>);
 /// the pane shows the folder it was set in or one under it
 /// (`Pane::replace_open`), let go of anywhere else. What it means is its
 /// setter's, the query plugin's `query.narrow`: the core keeps its words
-/// and pills and asks it of each file. Every folder is shown whatever it
+/// and asks it of each file; its pills are what the setter says of its
+/// words (`query.describe_filter`). Every folder is shown whatever it
 /// says, so what is under it can be reached.
 #[derive(Clone)]
 pub struct Narrowed {
@@ -596,8 +597,6 @@ pub struct Narrowed {
     /// Its words, in its setter's language (`kind:image modified:2024`),
     /// what a further choice changes.
     pub expr: String,
-    /// A pill each after the trail, each with what takes it off.
-    pub pills: Vec<Pill>,
     /// The facets it narrows by already (`kind`, `modified`), which the
     /// Narrow by bar does not offer again.
     pub set: Vec<String>,
@@ -631,9 +630,6 @@ pub struct ReadFilter {
     /// Whether an entry is shown. A file it cannot tell yet (its metadata
     /// is still to come) is not, until it can.
     pub keeps: Arc<dyn Fn(&Entry) -> bool + Send + Sync>,
-    /// A pill each after the trail: its words, the filter's text without
-    /// it (what its × leaves), and the tag it is about.
-    pub parts: Vec<FilterPart>,
     /// What only a search can tell (what files contain, where they were
     /// taken), left out until Enter: said where the count is.
     pub waits: Vec<String>,
@@ -645,29 +641,9 @@ pub struct ReadFilter {
 impl std::fmt::Debug for ReadFilter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ReadFilter")
-            .field("parts", &self.parts)
             .field("waits", &self.waits)
             .finish_non_exhaustive()
     }
-}
-
-/// A part of a filter typed, as its pill says it.
-#[derive(Clone, Debug, PartialEq)]
-pub struct FilterPart {
-    pub label: String,
-    /// The filter's text without this part.
-    pub without: String,
-    pub tag: Option<crate::metadata::TagRef>,
-}
-
-/// A pill: its words, and what takes it off.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Pill {
-    pub label: String,
-    pub remove: crate::command::Invocation,
-    /// The tag it narrows by (“with family”, “not family”): the pill
-    /// wears its color, hollow for the files without it.
-    pub tag: Option<crate::metadata::TagRef>,
 }
 
 /// Whether a pane shows an entry, by its id: listed by `listing` or one

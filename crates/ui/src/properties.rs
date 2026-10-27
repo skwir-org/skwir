@@ -1757,6 +1757,7 @@ fn heading(
             })
             .collect(),
         cuts: true,
+        start: false,
     });
     let fold = title.clone();
     div()

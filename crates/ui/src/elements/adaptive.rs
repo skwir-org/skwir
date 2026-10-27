@@ -129,7 +129,8 @@ impl Element for AdaptiveRow {
 /// (nothing, where it `cuts`). A neighbour with a minimum of its own
 /// (`flex_1().min_w(..)`) then takes what the widest leaves, or the
 /// control shrinks towards the narrowest; `prepaint` draws the richest
-/// version that fits the width it got, against its right edge. Like
+/// version that fits the width it got, against its right edge (its left,
+/// `start`, where it follows what it goes with). Like
 /// `AdaptiveRow`, versions share element ids, so focus survives a change
 /// of version.
 pub struct Fit {
@@ -138,6 +139,9 @@ pub struct Fit {
     /// cut as its own style says (a text's ellipsis): a folded group's
     /// gist. Else the narrowest is the least it takes.
     pub cuts: bool,
+    /// Drawn against its left edge: a narrower version stays by what it
+    /// follows (a trail's pills).
+    pub start: bool,
 }
 
 impl IntoElement for Fit {
@@ -224,11 +228,12 @@ impl Element for Fit {
             window,
             cx,
         );
-        let origin = bounds.origin
-            + gpui::point(
-                bounds.size.width - width,
-                (bounds.size.height - natural.height) / 2.,
-            );
+        let x = if self.start {
+            px(0.)
+        } else {
+            bounds.size.width - width
+        };
+        let origin = bounds.origin + gpui::point(x, (bounds.size.height - natural.height) / 2.);
         variant.prepaint_at(origin, window, cx);
         Some(selected)
     }

@@ -224,22 +224,23 @@ impl Address {
         for (i, kind) in self.kinds.iter().enumerate() {
             let mut without = self.clone();
             without.kinds.remove(i);
-            filters.push(Crumb::new(kind.title(), without.location()));
+            // Said as a search's facets are (`Kind: Images`).
+            filters.push(Crumb::new(
+                format!("Kind: {}", kind.title()),
+                without.location(),
+            ));
         }
         for (i, year) in self.years.iter().enumerate() {
             let mut without = self.clone();
             without.years.remove(i);
-            filters.push(Crumb::new(
-                format!("modified in {year}"),
-                without.location(),
-            ));
+            filters.push(Crumb::new(format!("Modified: {year}"), without.location()));
         }
         let switched = Address {
             deep: !self.deep,
             ..self.clone()
         };
         if self.deep {
-            filters.push(Crumb::new("with sub-tags", switched.location()));
+            filters.push(Crumb::new("With sub-tags", switched.location()));
         }
         Trail {
             base: self.root(),
@@ -1656,7 +1657,7 @@ mod tests {
             "going up keeps what narrows it"
         );
         let pills: Vec<&str> = trail.filters.iter().map(|c| c.label.as_str()).collect();
-        assert_eq!(pills, ["with family", "with sub-tags"]);
+        assert_eq!(pills, ["with family", "With sub-tags"]);
         let tags: Vec<Option<TagRef>> = trail.filters.iter().map(|c| c.tag.clone()).collect();
         assert_eq!(tags, [Some(TagRef::of("family")), None]);
         assert_eq!(

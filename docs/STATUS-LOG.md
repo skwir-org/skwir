@@ -5683,3 +5683,50 @@ those offered:
   a name); a real window on Xvfb: `pdf last week` offers no Go row,
   `field` the folder and files under Field Guide, `pdf` `pdf-exports`
   before `plateau.pdf`.
+
+### A folder's filter drawn as a search's (2026-10-27)
+
+- **Asked:** why a folder's filter pill sat at the field's end with the
+  trail kept, where a search's pills replace the trail. The end was the
+  trail's box taking all the room (to edit on a click), the pills after
+  it; keeping the trail was a decision (the folder is still shown, Back
+  does not undo a filter); the funnel was 9f1515e6's, so that a folder
+  filtered in place and a search below it would not look alike. The
+  user's choices: the pills right after the trail, the search's labels,
+  icons and menus, the funnel kept to tell them apart, nothing else
+  changed.
+- **One describer:** `facets::describe_for` with what a choice changes
+  (`Refines`: the search, `query.refine`; a folder's narrowing,
+  `query.narrow`; the words typed over it, the new `query.filter`). Over
+  a folder no where chip, nothing read from the files offered.
+  `query.describe_filter` answers a folder's narrowing (its set facets)
+  and words typed (set and not, for "+ Filter", but a facet the narrowing
+  sets). `ReadFilter::parts`, `FilterPart`, `Narrowed::pills`, `Pill`
+  and `facets::parts` are gone; the narrowing keeps `set`
+  (`facets::set_facets`). The tags plugin says its place's narrowings as
+  facets ("Kind: Images", "Modified: 2024", "With sub-tags"); its tags
+  are drawn as tags.
+- **The row:** `search_bar::Filters` per pane, read when the location,
+  the words or the narrowing change and the field is not typed in;
+  `after_trail` draws them with the search's `pill_row`, a funnel each,
+  in an `adaptive::Fit` (new `start`: drawn from its left edge), so trail
+  and pills give way by their widths; at the last fit a folder's pills
+  keep their funnel and leave their × to their menus. A search's first
+  pill reads "In Field Guide and below" unless it looks in the folder
+  only.
+- **Checked:** the query plugin's tests with the narrowing's chips (their
+  commands, no where, no contents offered, `Modified: 2001` read and
+  taken off by its chip's clear), `applied`; the UI, tags, query and core
+  crates (1059 tests); `just a11y-check` with a new check (the words
+  typed, F6 away, a pill described as this folder's only; Escape twice).
+  A real window on Xvfb: `kind:image tag:print` as "Kind: Images" and
+  `print` in its colors after the trail, the Kind menu adding Text and
+  code in place, the tag's × taking it off, "+ Filter" (Name, Modified,
+  Size, Tag) adding This month; Narrow by's Images with `dun` typed, "+
+  Filter" then without Kind or Name; the search beside it ("In Field Guide
+  and below", a magnifier); a tag place's `favorite`, its menu Remove; a
+  split pane's field.
+- **Seen:** in a field about 225 px wide, three filters keep their
+  funnels but their values are cut to nothing (the tooltip and the menu
+  say them).
+

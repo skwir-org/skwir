@@ -15,11 +15,18 @@
 //! the UI knows nothing of the query language: the text stays the one
 //! truth, which the address field edits as it is (Ctrl+L, or a click
 //! beside the pills).
+//!
+//! What narrows a folder is the same chips after its trail
+//! (`query.describe_filter`), each with a funnel, as no search's has: the
+//! location's own (a tag's `with`), Narrow by's, then the words typed over
+//! it, each opening its choices, which change it in place; "+ Filter"
+//! adds to the words typed.
 
 use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*, px};
 use serde::Deserialize;
 use skwir_core::command::{Invocation, Outcome};
-use skwir_core::metadata::TagRef;
+use skwir_core::location::Crumb;
+use skwir_core::metadata::{TAG_SEPARATOR, TagRef};
 use skwir_core::workspace::PaneId;
 
 use crate::elements::popover::PopoverAnchor;
@@ -123,6 +130,26 @@ impl Chips {
     }
 }
 
+/// What narrows the folder a pane shows, as the search's chips, read when
+/// it changed: the location's own (a tag's `with`), Narrow by's, then the
+/// words typed over it, set and not ("+ Filter" lists those not). None
+/// over a search, whose chips are its own.
+#[derive(Default)]
+pub struct Filters {
+    /// The location, words and narrowing they were read for.
+    key: String,
+    pub chips: Vec<Chip>,
+    /// What Narrow by's say, for the words of a folder narrowed to nothing.
+    pub narrowing: Vec<String>,
+}
+
+/// What the query plugin says of what narrows a folder.
+#[derive(Default, Deserialize)]
+struct FolderDescription {
+    narrowing: Vec<Chip>,
+    filter: Vec<Chip>,
+}
+
 /// What a pane's search popover shows: one chip's choices, or the facets
 /// not set ("+ Filter").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,10 +215,17 @@ impl Shell {
     }
 }
 
+/// Read the chips of what the pane being rendered shows: a search's, or
+/// what narrows its folder.
+pub fn sync(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
+    sync_search(shell, window, cx);
+    sync_filters(shell, window, cx);
+}
+
 /// Read the chips of the search the pane being rendered shows, when it
 /// shows another one than they were read for or the sidebar's names
 /// changed since; none for a folder.
-pub fn sync(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
+fn sync_search(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
     let pane = shell.pane;
     let location = shell
         .app
@@ -231,6 +265,145 @@ pub fn sync(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
     // A menu belongs to the search it was opened on.
     if shell.search_menu.as_ref().is_some_and(|m| m.pane == pane) {
         shell.close_search_chip(window, cx);
+    }
+}
+
+/// Read what narrows the folder the pane being rendered shows, when it,
+/// the words typed over it or its narrowing changed; not while the field
+/// is typed in, which shows the text.
+fn sync_filters(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
+    let pane = shell.pane;
+    if shell.ui().address.read(cx).is_focused(window) {
+        return;
+    }
+    let (typed, narrowed) = {
+        let ws = shell.app.workspace.read();
+        let p = ws.pane(pane);
+        (
+            p.and_then(|p| p.filter().map(str::to_owned)),
+            p.and_then(|p| p.narrowed().map(|n| n.expr.clone())),
+        )
+    };
+    let search = !shell.ui().chips.chips.is_empty();
+    let own = shell
+        .ui()
+        .place
+        .trail
+        .as_ref()
+        .map(|t| t.filters.clone())
+        .unwrap_or_default();
+    let key = if search {
+        String::new()
+    } else {
+        let location = shell
+            .app
+            .pane_location(pane)
+            .map(|l| l.to_string())
+            .unwrap_or_default();
+        format!("{location}\0{typed:?}\0{narrowed:?}")
+    };
+    if shell.ui().filters.key == key {
+        return;
+    }
+    let mut chips: Vec<Chip> = if search {
+        Vec::new()
+    } else {
+        own.iter().map(own_chip).collect()
+    };
+    let mut narrowing = Vec::new();
+    if !search && (typed.is_some() || narrowed.is_some()) {
+        let described: FolderDescription = shell
+            .app
+            .commands
+            .get("query.describe_filter")
+            .and_then(|_| {
+                let ask = Invocation::with_args(
+                    "query.describe_filter",
+                    &serde_json::json!({ "pane": pane }),
+                );
+                match shell.app.dispatch(&ask) {
+                    Ok(Outcome::Value(value)) => serde_json::from_value(value).ok(),
+                    _ => None,
+                }
+            })
+            .unwrap_or_default();
+        narrowing = described.narrowing.iter().map(Chip::label).collect();
+        let read = described.filter.iter().any(Chip::is_pill);
+        chips.extend(described.narrowing);
+        chips.extend(described.filter);
+        if let Some(text) = typed.filter(|_| !read) {
+            chips.push(typed_chip(&text));
+        }
+    }
+    shell.ui_mut().filters = Filters {
+        key,
+        chips,
+        narrowing,
+    };
+    // A menu belongs to what it was opened on.
+    if !search && shell.search_menu.as_ref().is_some_and(|m| m.pane == pane) {
+        shell.close_search_chip(window, cx);
+    }
+}
+
+/// A location's own narrowing (a tag's `with`) as a chip: a tag's as that
+/// tag, one left out as not tagged, the rest as the location says it;
+/// taking it off goes where the location leads without it.
+fn own_chip(crumb: &Crumb) -> Chip {
+    let (id, title, value, segments) = match &crumb.tag {
+        Some(tag) if !tag.lacks => (
+            "tag",
+            "Tag",
+            tag.name.clone(),
+            tag.name
+                .split(TAG_SEPARATOR)
+                .map(|label| Segment {
+                    label: label.to_owned(),
+                    command: None,
+                })
+                .collect(),
+        ),
+        Some(tag) => ("not_tag", "Not tagged", tag.name.clone(), Vec::new()),
+        None => ("own", "", crumb.label.clone(), Vec::new()),
+    };
+    Chip {
+        id: id.to_owned(),
+        title: title.to_owned(),
+        value: Some(value),
+        icon: "filter".to_owned(),
+        choices: Vec::new(),
+        clear: Some(Invocation::navigate(&crumb.location)),
+        segments,
+    }
+}
+
+/// The words typed when nothing read them into facets (the query plugin
+/// away, or no start of them reads), as typed: Edit types them again, its
+/// × shows everything, as Escape in the pane does.
+fn typed_chip(text: &str) -> Chip {
+    Chip {
+        id: "typed".to_owned(),
+        title: String::new(),
+        value: Some(format!("“{text}”")),
+        icon: "filter".to_owned(),
+        choices: vec![Choice {
+            label: "Edit…".to_owned(),
+            command: Invocation::with_args("ui.search", &serde_json::json!({ "text": text })),
+            active: false,
+        }],
+        clear: Some(Invocation::new("filter")),
+        segments: Vec::new(),
+    }
+}
+
+/// The chips the pane being rendered draws: its search's, or what narrows
+/// its folder.
+fn shown_chips(shell: &Shell) -> &[Chip] {
+    let search = &shell.ui().chips.chips;
+    if search.is_empty() {
+        &shell.ui().filters.chips
+    } else {
+        search
     }
 }
 
@@ -278,9 +451,97 @@ enum Fit {
     Tight,
 }
 
-/// The search's pills on one line, as `fit` says.
+/// The search's pills on one line, as `fit` says, then room that edits
+/// the text.
 fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>) -> AnyElement {
-    let chips = &shell.ui().chips.chips;
+    let least = if fit == Fit::Tight { 8. } else { 24. };
+    div()
+        .size_full()
+        .overflow_hidden()
+        .flex()
+        .items_center()
+        .gap(px(4.))
+        .px(px(3.))
+        .children(pill_row(shell, anchor, fit, false, cx))
+        .child(rest(shell, false, least, cx))
+        .into_any_element()
+}
+
+/// What is left after the pills, or after a trail: it edits the address as
+/// text, as a click on the trail does.
+fn rest(shell: &Shell, folder: bool, least: f32, cx: &mut Context<Shell>) -> AnyElement {
+    let pane = shell.pane;
+    div()
+        .id(("chip-rest", pane.0 as usize))
+        .role(gpui::Role::Button)
+        .aria_label(if folder {
+            "Edit the address as text"
+        } else {
+            "Edit the search as text"
+        })
+        .flex_1()
+        .min_w(px(least))
+        .h_full()
+        .cursor_text()
+        .on_click(cx.listener(move |this, _, window, cx| {
+            this.activate_pane(pane, cx);
+            this.run("ui.focus_address", serde_json::json!({}), window, cx);
+        }))
+        .into_any_element()
+}
+
+/// What follows a folder's trail: what narrows it as pills, each with a
+/// funnel, then room that edits the address (that room alone when nothing
+/// narrows it). The pills know their natural width (`adaptive::Fit`), so
+/// they and the trail give way alike, each by its width, and they draw
+/// the richest that fits what they got (`Fit`), right after the trail.
+pub fn after_trail(
+    shell: &Shell,
+    anchor: &PopoverAnchor,
+    cx: &mut Context<Shell>,
+) -> Vec<AnyElement> {
+    let mut after = Vec::new();
+    if shell.ui().chips.chips.is_empty() && !shell.ui().filters.chips.is_empty() {
+        after.push(
+            crate::elements::adaptive::Fit {
+                variants: [Fit::Full, Fit::Compact, Fit::Tight]
+                    .into_iter()
+                    .map(|fit| {
+                        // As wide as it is given, so the last fit shrinks
+                        // its pills there.
+                        div()
+                            .w_full()
+                            .h(px(24.))
+                            .overflow_hidden()
+                            .flex()
+                            .items_center()
+                            .gap(px(4.))
+                            .px(px(3.))
+                            .children(pill_row(shell, anchor, fit, true, cx))
+                            .into_any_element()
+                    })
+                    .collect(),
+                cuts: true,
+                start: true,
+            }
+            .into_any_element(),
+        );
+    }
+    after.push(rest(shell, true, 24., cx));
+    after
+}
+
+/// The pills of what the pane shows (`shown_chips`) as `fit` says, then
+/// "+ Filter" while a facet is not set. A folder's (`folder`) wear a
+/// funnel whatever the fit, a search's their facet's icon.
+fn pill_row(
+    shell: &Shell,
+    anchor: &PopoverAnchor,
+    fit: Fit,
+    folder: bool,
+    cx: &mut Context<Shell>,
+) -> Vec<AnyElement> {
+    let chips = shown_chips(shell);
     let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
     let open = shell
@@ -304,24 +565,19 @@ fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>
                 .enumerate()
                 .filter(|(_, c)| !c.is_scope() && c.is_pill()),
         );
-    let mut line = div()
-        .size_full()
-        .overflow_hidden()
-        .flex()
-        .items_center()
-        .gap(px(4.))
-        .px(px(3.));
+    let mut line: Vec<AnyElement> = Vec::new();
     let mut after_tag = false;
     for (shown, (i, chip)) in order.enumerate() {
         // Tags every match has, one after the other: "+" between them.
         let is_tag = chip.id == "tag" && !chip.segments.is_empty();
         if is_tag && after_tag {
-            line = line.child(
+            line.push(
                 div()
                     .flex_none()
                     .text_xs()
                     .text_color(theme.text_muted)
-                    .child("+"),
+                    .child("+")
+                    .into_any_element(),
             );
         }
         after_tag = is_tag;
@@ -341,7 +597,9 @@ fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>
         } else {
             theme.selection_text
         };
-        let tip = if chip.title.is_empty() {
+        let tip = if folder {
+            format!("{} · this folder only, not a search", chip.label())
+        } else if chip.title.is_empty() {
             "Part of the search no chip holds".to_owned()
         } else if fit != Fit::Full {
             // Its icon or its value alone: the tooltip says it all.
@@ -350,10 +608,14 @@ fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>
             chip.title.clone()
         };
         let icon = match (chip.is_scope(), fit) {
+            _ if folder => "filter".to_owned(),
             (true, _) => "folder".to_owned(),
             (false, Fit::Tight) => String::new(),
             (false, _) => chip.icon.clone(),
         };
+        // Its ×, but on a folder's at the last fit: the funnel stays, and
+        // what is left goes to the value (its menu removes it).
+        let crossed = chip.clear.is_some() && !(folder && fit == Fit::Tight);
         // Known by what it holds: one removed, the next that comes under
         // the pointer is not given its tooltip.
         let known = crate::elements::key_of((&chip.id, &chip.value, &chip.title, i));
@@ -380,13 +642,14 @@ fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>
             .h(px(22.))
             .rounded_full()
             .when(chip.is_scope(), |d| d.border_color(theme.border))
-            .when(chip.clear.is_some(), |d| d.pr(px(2.)))
+            .when(crossed, |d| d.pr(px(2.)))
             // The last fit: cut short rather than gone, its label keeping
             // both ends; the later a pill, the sooner it gives way, so the
             // first facet (the words typed, usually) stays readable.
             .when(fit == Fit::Tight, |mut d| {
                 d.style().flex_shrink = Some(1. + 3. * shown as f32);
-                d.min_w(px(32.))
+                // A funnel besides what is left of the value.
+                d.min_w(px(if folder { 48. } else { 32. }))
             });
         // A tag's categories go back up to them; the tag itself opens the
         // pill's choices, as the rest of it does.
@@ -398,7 +661,7 @@ fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>
         // A pointer's shortcut, not a focusable button: it goes with what
         // it removes, and a focused element that goes takes the keyboard
         // with it. The chip's own menu ends with Remove for the keyboard.
-        let pill = match chip.clear.clone() {
+        let pill = match chip.clear.clone().filter(|_| crossed) {
             Some(clear) => pill.child(crate::elements::pill::clear(
                 shell,
                 clear,
@@ -408,13 +671,17 @@ fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>
             )),
             None => pill,
         };
-        line = line.child(pill);
+        line.push(pill.into_any_element());
     }
     if fit != Fit::Tight && chips.iter().any(|c| !c.is_pill()) {
         let facets = Button::new(
             "chip-facets",
             "plus",
-            "Narrow the search by name, kind, date, size, tag or contents",
+            if folder {
+                "Filter this folder by name, kind, date, size or tag"
+            } else {
+                "Narrow the search by name, kind, date, size, tag or contents"
+            },
             "ui.search_chip",
         )
         .args(serde_json::json!({ "pane": pane, "facets": true }));
@@ -423,31 +690,18 @@ fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>
         } else {
             facets
         };
-        line = line.child(
+        line.push(
             facets
                 .anchor_if(anchor, from_filter)
                 .active(open == Some(Target::Facets))
                 .render(shell, cx)
                 .h(px(22.))
                 .rounded_full()
-                .border_color(theme.border),
+                .border_color(theme.border)
+                .into_any_element(),
         );
     }
-    // What is left edits the search as text, as a click beside the trail
-    // edits a path.
-    let rest = div()
-        .id(("chip-rest", pane.0 as usize))
-        .role(gpui::Role::Button)
-        .aria_label("Edit the search as text")
-        .flex_1()
-        .min_w(px(if fit == Fit::Tight { 8. } else { 24. }))
-        .h_full()
-        .cursor_text()
-        .on_click(cx.listener(move |this, _, window, cx| {
-            this.activate_pane(pane, cx);
-            this.run("ui.focus_address", serde_json::json!({}), window, cx);
-        }));
-    line.child(rest).into_any_element()
+    line
 }
 
 /// A tag's pill's segments: each category a link up to it, `›` between,
@@ -504,7 +758,7 @@ fn tag_segments(
 pub fn popup(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let pane = shell.pane;
     let menu = shell.search_menu.as_ref().filter(|m| m.pane == pane)?;
-    let chips = &shell.ui().chips.chips;
+    let chips = shown_chips(shell);
     let theme = cx.global::<Theme>().clone();
     let mut panel = toolbar::popup_panel(&menu.popup, "ui.search_chip", &theme, cx);
     match menu.target {

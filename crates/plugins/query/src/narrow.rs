@@ -1,17 +1,17 @@
 //! A folder narrowed: the Narrow by bar's choices over a folder ("images
 //! only", "2024"), kept while the pane shows it or a folder under it, as
 //! a locked filter is. Its words are a query's, written by
-//! [`facets::refine`]; the core keeps them (`workspace::Narrowed`) with
-//! the pills they read as and a test of each file, which reads what the
-//! listing knows of the file, never the file: what needs it read (what it
-//! contains, where and when it was taken) is a search's.
+//! [`facets::refine`]; the core keeps them (`workspace::Narrowed`) with a
+//! test of each file, which reads what the listing knows of the file,
+//! never the file: what needs it read (what it contains, where and when it
+//! was taken) is a search's. Its pills, and the filter's, are the search's
+//! chips (`query.describe_filter`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use skwir_core::command::Invocation;
 use skwir_core::entry::Entry;
-use skwir_core::workspace::{FilterPart, Narrowed, Pill, ReadFilter};
+use skwir_core::workspace::{Narrowed, ReadFilter};
 
 use crate::facets;
 use crate::lang::{self, Candidate, Expr, Term, Verdict};
@@ -29,22 +29,10 @@ pub fn narrowed(expr: &str, root: PathBuf) -> Result<Option<Narrowed>, String> {
                 .into(),
         );
     }
-    let (parts, set) = facets::parts(expr)?;
-    let pills = parts
-        .into_iter()
-        .map(|part| Pill {
-            label: part.label,
-            remove: Invocation::with_args(
-                "query.narrow",
-                &serde_json::json!({ "facet": part.facet, "value": part.value }),
-            ),
-            tag: part.tag,
-        })
-        .collect();
+    let set = facets::set_facets(expr)?;
     Ok(Some(Narrowed {
         root,
         expr: expr.to_owned(),
-        pills,
         set,
         keeps: {
             // Asked of every file at each redraw of the order, on the
@@ -79,11 +67,10 @@ fn keeps(test: &Expr, entry: &Entry, types: &lang::Types) -> bool {
 pub fn read_filter(text: &str) -> Option<ReadFilter> {
     let everything = || ReadFilter {
         keeps: Arc::new(|_| true),
-        parts: Vec::new(),
         waits: Vec::new(),
         metadata: false,
     };
-    let Some((q, read)) = longest_query(text) else {
+    let Some((q, _)) = longest_query(text) else {
         return Some(everything());
     };
     let items: Vec<Expr> = match q.expr.clone() {
@@ -119,21 +106,6 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
         }
     }
     let metadata = !files.is_empty();
-    let parts = facets::parts(&read)
-        .map(|(parts, _)| {
-            parts
-                .into_iter()
-                .filter_map(|part| {
-                    let without = facets::refine(&read, part.facet, part.value.as_deref()).ok()?;
-                    Some(FilterPart {
-                        label: part.label,
-                        without: facets::text_of(&without).unwrap_or(without),
-                        tag: part.tag,
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
     let names = Names::of(names);
     let files = and(files);
     let types = lang::Types::default();
@@ -154,7 +126,6 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
             }
             files.eval(&c, false) == Verdict::Yes
         }),
-        parts,
         waits: waits.into_iter().map(str::to_owned).collect(),
         metadata,
     })
@@ -238,6 +209,12 @@ impl Word {
     }
 }
 
+/// What of `text` a filter applies: its longest start that reads, whole
+/// words at a time; `None` when not even its first word reads.
+pub fn applied(text: &str) -> Option<String> {
+    longest_query(text).map(|(_, start)| start)
+}
+
 /// The query the longest start of `text` reads as, whole words at a time,
 /// and that start; `None` when not even its first word reads.
 fn longest_query(text: &str) -> Option<(lang::Query, String)> {
@@ -270,7 +247,7 @@ mod tests {
     use skwir_core::entry::{EntryId, EntryKind, FileId, Provenance, Value, keys};
     use skwir_core::{Entry, Metadata};
 
-    use super::read_filter;
+    use super::{applied, read_filter};
 
     fn entry(name: &str, kind: EntryKind, size: Option<u64>, tags: &[&str]) -> Entry {
         let id = EntryId::in_folder(
@@ -408,14 +385,13 @@ mod tests {
     }
 
     #[test]
-    fn each_part_is_a_pill_whose_cross_leaves_the_rest() {
-        let read = read_filter("dunes kind:image").expect("read");
-        let parts: Vec<(&str, &str)> = read
-            .parts
-            .iter()
-            .map(|p| (p.label.as_str(), p.without.as_str()))
-            .collect();
-        assert_eq!(parts, [("“dunes”", "kind:image"), ("Images", "dunes")]);
-        assert!(read.metadata);
+    fn a_filter_applies_its_longest_start_that_reads() {
+        assert_eq!(
+            applied("dunes kind:image").as_deref(),
+            Some("dunes kind:image")
+        );
+        assert_eq!(applied("dunes kind:im").as_deref(), Some("dunes"));
+        assert_eq!(applied("kind:im"), None);
+        assert!(read_filter("dunes kind:image").expect("read").metadata);
     }
 }

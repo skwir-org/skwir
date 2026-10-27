@@ -289,18 +289,29 @@ of bars, split or not.
   (`lang::Types`, as `mime::by_names` asks a selection): 6 to 13 ms a key
   over 100 000 names in release. Showing another
   location clears it; Escape (`filtered` key context) shows everything;
-  once the field lets go, its parts stay as pills after the trail, one
-  family with the narrowing's, each × the text without it. Ctrl+F over a
-  filtered folder edits its words.
+  once the field lets go, its facets stay as pills after the trail
+  (below). Ctrl+F over a filtered folder edits its words.
 - A search's pills take the trail's place, so nothing on screen leads
   back: Escape with nothing selected goes to the folder it looks in (`up`,
   `search` in the key context). A tag location keeps its trail and is a
   place: Escape never leaves it, as it never leaves a folder (Backspace
   and Alt+G do).
-- What narrows the folder shown (the filter typed, a Narrow by choice, a
-  tag location's `with`) is a pill after the trail with a funnel
-  (`filter`); a search's pills are drawn in the trail's place, its words
-  with the query's own icons. A funnel never stands for a search.
+- What narrows the folder shown (a tag location's `with`, Narrow by's
+  choices, the words typed) is the search's own chips right after the
+  trail, read once per change (`query.describe_filter`, `search_bar::
+  Filters`): the same labels and menus, each choice changing it in place
+  (`query.narrow`, `query.filter`, or going where the location leads
+  without it), and "+ Filter", which adds to the words typed and offers
+  no facet that reads the files. Each wears a funnel (`filter`), a
+  search's pills their facet's icons: a funnel never stands for a
+  search, nor a facet's icon for a folder narrowed. A search's pills take
+  the trail's place, the first saying "and below" unless it looks in the
+  folder only.
+- The trail and the pills after it give way alike, each by its natural
+  width (`adaptive::Fit`, drawn from its left edge): the trail wraps its
+  first places out, the pills draw the richest of the search's fits that
+  holds, a folder's keeping their funnel at the last, their × left to
+  their menus. The room after them edits the address.
 
 ### Search pills (`search_bar.rs`)
 

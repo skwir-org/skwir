@@ -66,6 +66,8 @@ pub struct PaneUi {
     pub narrow: crate::narrow::Narrow,
     /// The chips of the search it shows (`search_bar`).
     pub chips: crate::search_bar::Chips,
+    /// What narrows the folder it shows, as the same chips (`search_bar`).
+    pub filters: crate::search_bar::Filters,
     /// The trail and verbs of the location it shows, when that is no
     /// folder (`trail.rs`).
     pub place: crate::trail::Shown,
@@ -948,6 +950,7 @@ impl Shell {
             weight: crate::weight::Weight::default(),
             narrow: crate::narrow::Narrow::default(),
             chips: crate::search_bar::Chips::default(),
+            filters: crate::search_bar::Filters::default(),
             place: crate::trail::Shown::default(),
             trail_shown: std::rc::Rc::default(),
             placeholder_focus: cx.focus_handle(),

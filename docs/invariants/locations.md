@@ -147,7 +147,9 @@ and `notes.agree` are core `notes.*` commands.
   `Pane::order`), tested on what the listing knows, never by reading
   files. Folders always show; files wait for their metadata (the bar's
   count reads `Pane::unfiltered_order` on a worker) and stay hidden until
-  the test can tell.
+  the test can tell. The core keeps its words, not what they read as:
+  its pills, and the words typed's, are the query plugin's chips
+  (`query.describe_filter`), as a search's are.
 - A provider names its location (`LocationProvider::title`: `report in
   Papers`) for tabs and menus.
 - A search watches nothing, but sees Skwir's changes: after each plan the

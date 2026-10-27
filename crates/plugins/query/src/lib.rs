@@ -137,6 +137,16 @@ struct PaneOnly {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct TagChoicesArgs {
+    #[serde(default)]
+    pane: Option<PaneId>,
+    /// What a tag picked changes: `search` (the pane's, the default),
+    /// `narrowing` (`query.narrow`) or `filter` (`query.filter`).
+    #[serde(default)]
+    refines: facets::Refines,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct NarrowArgs {
     /// A facet as `query.refine` takes it (`kind`, `modified`, `created`,
     /// `accessed`, `also_tag`, `not_tag`, `drop_tag`…); omitted, the
@@ -731,11 +741,11 @@ impl Plugin for QueryPlugin {
             },
         )
         .data();
-        app.commands.register::<PaneOnly, _>(
+        app.commands.register::<TagChoicesArgs, _>(
             ID,
             "query.tag_choices",
             "Tags to refine by",
-            "The Tag chip's picker: the tags on the pane's files, read from them, each refining the search",
+            "The Tag chip's picker: the tags on the pane's files, read from them, each refining the search (or what `refines` names: the folder's `narrowing` or `filter`)",
             |a, app| {
                 // The tags plugin reads tags; without it, only a tag to type.
                 let counts = app
@@ -752,7 +762,7 @@ impl Plugin for QueryPlugin {
                         }
                     })
                     .unwrap_or_default();
-                Ok(Outcome::Value(facets::tag_choices(&counts)))
+                Ok(Outcome::Value(facets::tag_choices(&counts, a.refines)))
             },
         )
         .data();
@@ -881,6 +891,75 @@ impl Plugin for QueryPlugin {
             },
         )
         .shows();
+        app.commands.register::<RefineArgs, _>(
+            ID,
+            "query.filter",
+            "Filter folder",
+            "Change one facet of the words filtering the pane's folder (typed over it in the address field), as `query.refine` changes a search's; the folder stays shown",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let typed = app
+                    .workspace
+                    .read()
+                    .pane(pane)
+                    .and_then(|p| p.filter().map(str::to_owned))
+                    .unwrap_or_default();
+                // What it applies: a part that does not read is no facet.
+                let applied = narrow::applied(&typed).unwrap_or_default();
+                let refined = facets::refine(&applied, &a.facet, a.value.as_deref())
+                    .map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                let text = refined.trim();
+                app.dispatch(&Invocation::with_args(
+                    "filter",
+                    &serde_json::json!({ "text": (!text.is_empty()).then_some(text), "pane": pane }),
+                ))?;
+                Ok(Outcome::Done)
+            },
+        )
+        .shows();
+        app.commands
+            .register::<PaneOnly, _>(
+                ID,
+                "query.describe_filter",
+                "Describe folder filter",
+                "`{ narrowing, filter }`: what narrows the pane's folder as a search's chips (`query.describe`), each choice changing it: the narrowing's set facets (`query.narrow`), then the words typed over it, set and not (`query.filter`), no facet the narrowing sets offered again but a tag",
+                |a, app| {
+                    let pane = app.pane_or_active(a.pane);
+                    let (typed, narrowed) = {
+                        let ws = app.workspace.read();
+                        let p = ws
+                            .pane(pane)
+                            .ok_or_else(|| anyhow::anyhow!("no pane {}", pane.0))?;
+                        (
+                            p.filter().map(str::to_owned).unwrap_or_default(),
+                            p.narrowed().map(|n| n.expr.clone()),
+                        )
+                    };
+                    let tags_known = app.commands.get("tags.list").is_some();
+                    let chips = |r, expr: &str| {
+                        facets::describe_for(r, expr, tags_known, Some(app))
+                            .map(|d| d.chips)
+                            .map_err(|e| anyhow::anyhow!("query: {e}"))
+                    };
+                    let narrowing: Vec<facets::Chip> = match narrowed {
+                        Some(expr) => chips(facets::Refines::Narrowing, &expr)?
+                            .into_iter()
+                            .filter(|c| c.value.is_some())
+                            .collect(),
+                        None => Vec::new(),
+                    };
+                    let applied = narrow::applied(&typed).unwrap_or_default();
+                    let mut filter = chips(facets::Refines::Filter, &applied)?;
+                    filter.retain(|c| {
+                        c.value.is_some() || c.id == "tag" || !narrowing.iter().any(|n| n.id == c.id)
+                    });
+                    Ok(Outcome::Value(serde_json::json!({
+                        "narrowing": narrowing,
+                        "filter": filter,
+                    })))
+                },
+            )
+            .data();
         app.commands.register::<LocationArgs, _>(
             ID,
             "query.location",
@@ -1519,13 +1598,27 @@ mod tests {
                 &serde_json::json!({ "facet": facet, "value": value }),
             ))
         };
-        let pills = || -> Vec<String> {
-            let ws = app.workspace.read();
-            ws.pane(pane)
+        // Its pills, as the address draws them: the search's chips.
+        let chips = || -> Vec<serde_json::Value> {
+            match app
+                .dispatch(&Invocation::new("query.describe_filter"))
                 .unwrap()
-                .narrowed()
-                .map(|n| n.pills.iter().map(|p| p.label.clone()).collect())
-                .unwrap_or_default()
+            {
+                Outcome::Value(v) => v["narrowing"].as_array().unwrap().clone(),
+                _ => unreachable!(),
+            }
+        };
+        let pills = || -> Vec<String> {
+            chips()
+                .iter()
+                .map(|c| {
+                    format!(
+                        "{}: {}",
+                        c["title"].as_str().unwrap(),
+                        c["value"].as_str().unwrap()
+                    )
+                })
+                .collect()
         };
 
         go(&root);
@@ -1535,7 +1628,7 @@ mod tests {
             set(&["docs", "pics"]),
             "folders, and no file is a picture"
         );
-        assert_eq!(pills(), ["Images"]);
+        assert_eq!(pills(), ["Kind: Images"]);
         go(&pics);
         assert_eq!(shown(), set(&["cat.png", "dog.JPG"]), "kept below");
         go(tmp.path());
@@ -1581,14 +1674,9 @@ mod tests {
         }
         narrow("kind", "image").unwrap();
         assert_eq!(shown(), set(&["dog.JPG"]));
-        assert_eq!(pills(), ["Images", "modified in 2001"]);
+        assert_eq!(pills(), ["Kind: Images", "Modified: 2001"]);
         // A pill's own command takes it off.
-        let remove = {
-            let ws = app.workspace.read();
-            ws.pane(pane).unwrap().narrowed().unwrap().pills[0]
-                .remove
-                .clone()
-        };
+        let remove: Invocation = serde_json::from_value(chips()[0]["clear"].clone()).unwrap();
         app.dispatch(&remove).unwrap();
         assert_eq!(shown(), set(&["dog.JPG", "list.txt"]));
         assert!(
@@ -1655,7 +1743,7 @@ mod tests {
         };
         assert_eq!(chip("kind")["value"], "Images");
         assert_eq!(chip("size")["value"], ">1k");
-        assert_eq!(chip("where")["title"], "In it's here");
+        assert_eq!(chip("where")["title"], "In it's here and below");
         // A choice's command is what the UI runs: clearing the size.
         let clear: Invocation = serde_json::from_value(chip("size")["clear"].clone()).unwrap();
         app.dispatch(&clear).unwrap();
@@ -1759,7 +1847,7 @@ mod tests {
         assert!(
             d.chips
                 .iter()
-                .any(|c| c.id == "where" && c.title == "In Papers")
+                .any(|c| c.id == "where" && c.title == "In Papers and below")
         );
     }
 

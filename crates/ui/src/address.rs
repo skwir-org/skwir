@@ -9,10 +9,9 @@ use crate::{
     toolbar::{self, Button},
 };
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
-use skwir_core::command::Invocation;
 use skwir_core::location::{Crumb, Location, Tool, ToolPane};
 use skwir_core::registry::{ViewRole, ViewSpec};
-use skwir_core::workspace::{PaneId, Pill};
+use skwir_core::workspace::PaneId;
 use std::path::PathBuf;
 
 /// What the address field keeps before the view buttons fold into one.
@@ -784,10 +783,6 @@ enum Address {
         /// of, with the glyph that stands for it (`Shown::icon`): `Home ›
         /// 🏷 Tags`, so that its first place never reads as a folder.
         glyph: Option<(usize, &'static str)>,
-        /// What narrows it, each with what its × runs: a folder's
-        /// narrowing (`query.narrow`), or going where the location leads
-        /// without it.
-        filters: Vec<Pill>,
         /// The last place holds places, which a chevron after it lists
         /// (`Trail::holds_places`; a folder's folders).
         holds_places: bool,
@@ -807,9 +802,6 @@ struct PaneRow {
     /// The field's edge: focused, the active pane's, or none.
     edge: gpui::Hsla,
     location: Option<skwir_core::Location>,
-    /// What the names shown must hold, typed in the field (`omnibox.rs`),
-    /// when no reader read it into parts.
-    filter: Option<String>,
     /// The View menu or the view buttons' menu, open from this row.
     menu_open: Option<&'static str>,
     /// The menu of places open from this row, if one is.
@@ -866,45 +858,6 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                             .filter(|_| !trail.crumbs.is_empty())
                             .map(|icon| (own, icon)),
                         segments,
-                        // What narrows it: its location's own words (a tag's
-                        // `with`), and a folder's narrowing (pane state).
-                        filters: trail
-                            .filters
-                            .iter()
-                            .map(|filter| Pill {
-                                label: filter.label.clone(),
-                                remove: Invocation::navigate(&filter.location),
-                                tag: filter.tag.clone(),
-                            })
-                            .chain(
-                                pane.and_then(|p| p.narrowed())
-                                    .map(|n| n.pills.clone())
-                                    .unwrap_or_default(),
-                            )
-                            // The words typed, as the query plugin read
-                            // them: a pill each, one family with the
-                            // narrowing's (ADR-098).
-                            .chain(pane.and_then(|p| p.read_filter()).map_or_else(
-                                Vec::new,
-                                |read| {
-                                    read.parts
-                                        .iter()
-                                        .map(|part| Pill {
-                                            label: part.label.clone(),
-                                            remove: Invocation::with_args(
-                                                "filter",
-                                                &serde_json::json!({
-                                                    "text": (!part.without.trim().is_empty())
-                                                        .then(|| part.without.clone()),
-                                                    "pane": shell.pane,
-                                                }),
-                                            ),
-                                            tag: part.tag.clone(),
-                                        })
-                                        .collect()
-                                },
-                            ))
-                            .collect(),
                         holds_places: trail.holds_places,
                     }
                 }
@@ -917,9 +870,6 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             } else {
                 theme.surface
             },
-            filter: pane
-                .filter(|p| p.read_filter().is_none_or(|r| r.parts.is_empty()))
-                .and_then(|p| p.filter().map(str::to_owned)),
             location,
             // The View menu hangs from the active pane's button: the pane it
             // acts on.
@@ -1026,66 +976,6 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
     bar.into_any_element()
 }
 
-/// The filter typed in the field, once the field let go of the keyboard:
-/// pressed, it is typed in again (Enter then searches the folders inside);
-/// its × shows everything, as Escape in the pane does. A funnel, as every
-/// pill after the trail narrows the folder shown; a search's are its own,
-/// in place of the trail.
-fn filter_pill(shell: &Shell, filter: &str, cx: &mut Context<Shell>) -> AnyElement {
-    let button = Button::new(
-        "filter-pill",
-        "filter",
-        format!("Only the names in this folder holding “{filter}” (not a search)"),
-        "ui.search",
-    )
-    .args(serde_json::json!({ "text": filter }))
-    .label(format!("“{filter}”"))
-    .active(true);
-    // The core's `filter` with no text shows everything, as Escape does.
-    let remove = Invocation::new("filter");
-    crate::elements::pill::pill(shell, button, Some((remove, "Show every name".into())), cx)
-        .into_any_element()
-}
-
-/// What narrows a folder ("Images", `query.narrow`) or a location that
-/// reads as a trail ("with family", a tag location's), a pill after the
-/// trail: pressed (or Enter on it) or its ×, it is taken off. Kept while
-/// the trail is walked up and down, so it is drawn like the filter typed
-/// in the field; one by a tag in the tag's colors, as the Narrow by bar
-/// offered it, hollow for the files without it.
-fn narrowing_pill(shell: &Shell, i: usize, filter: &Pill, cx: &mut Context<Shell>) -> AnyElement {
-    let tip = taking_off(filter);
-    let button = Button::new(
-        gpui::SharedString::from(format!("narrowing-{i}")),
-        "filter",
-        tip.clone(),
-        filter.remove.name.to_string(),
-    )
-    .args(filter.remove.args.clone())
-    .label(filter.label.clone())
-    .active(true)
-    .tint(
-        filter
-            .tag
-            .as_ref()
-            .and_then(|tag| toolbar::Tint::of(tag, &shell.tag_colors)),
-    );
-    crate::elements::pill::pill(shell, button, Some((filter.remove.clone(), tip.into())), cx)
-        .into_any_element()
-}
-
-/// What taking a narrowing off does, for its pill's tooltip: the files
-/// without a tag (“not draft”) let those with it back in.
-fn taking_off(filter: &Pill) -> String {
-    match &filter.tag {
-        Some(tag) if tag.lacks => format!(
-            "Show the files tagged “{}” too",
-            skwir_core::metadata::tag_leaf(&tag.name)
-        ),
-        _ => format!("Not only {}: show the rest too", filter.label),
-    }
-}
-
 /// Back or Forward: its right button, or a long press as in a browser,
 /// lists the history that way.
 fn history_button(
@@ -1156,22 +1046,24 @@ fn pane_row(
     let address = match &row.address {
         Address::Pills => crate::search_bar::pills(shell, chip_anchor, cx)
             .unwrap_or_else(|| div().into_any_element()),
+        // What narrows it follows the trail, as a search's pills follow
+        // where it looks; the room after them edits the address.
         Address::Trail {
             segments,
             glyph,
-            filters,
             holds_places,
         } => div()
             .flex_1()
             .w(px(0.))
             .min_w_0()
             .h_full()
+            .overflow_hidden()
             .flex()
             .items_center()
             .child(
                 div()
                     .id(("address-trail", pane.0 as usize))
-                    .flex_1()
+                    .flex_initial()
                     .min_w_0()
                     .h_full()
                     .flex()
@@ -1193,17 +1085,7 @@ fn pane_row(
                         cx,
                     )),
             )
-            .children(
-                filters
-                    .iter()
-                    .enumerate()
-                    .map(|(i, filter)| narrowing_pill(shell, i, filter, cx)),
-            )
-            .children(
-                row.filter
-                    .as_deref()
-                    .map(|filter| filter_pill(shell, filter, cx)),
-            )
+            .children(crate::search_bar::after_trail(shell, chip_anchor, cx))
             .into_any_element(),
         // While a search is typed, where it looks stands before the text.
         Address::Text => div()
@@ -1727,38 +1609,12 @@ fn breadcrumbs(
 
 #[cfg(test)]
 mod tests {
-    use super::{ViewButtons, ViewSpec, crumbs, taking_off, tool_pane, toolbar_views};
+    use super::{ViewButtons, ViewSpec, crumbs, tool_pane, toolbar_views};
     use crate::sidebar::Root;
     use skwir_core::location::{Location, ToolPane};
     use skwir_core::workspace::PaneId;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-
-    /// A narrowing's tooltip says what taking it off shows: a tag left
-    /// out lets the files tagged so back in, without saying "not" twice.
-    #[test]
-    fn taking_a_narrowing_off_says_what_comes_back() {
-        use skwir_core::command::Invocation;
-        use skwir_core::metadata::TagRef;
-        use skwir_core::workspace::Pill;
-        let pill = |label: &str, tag| Pill {
-            label: label.into(),
-            remove: Invocation::new("query.narrow"),
-            tag,
-        };
-        assert_eq!(
-            taking_off(&pill("not draft", Some(TagRef::lacking("Status/draft")))),
-            "Show the files tagged “draft” too"
-        );
-        assert_eq!(
-            taking_off(&pill("with family", Some(TagRef::of("family")))),
-            "Not only with family: show the rest too"
-        );
-        assert_eq!(
-            taking_off(&pill("Images", None)),
-            "Not only Images: show the rest too"
-        );
-    }
 
     /// The shelf's Move and Copy go to the other pane's folder: not
     /// without a split, nor when the other pane shows the shelf too; the

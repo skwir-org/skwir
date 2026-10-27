@@ -460,6 +460,32 @@ def run(w):
     w.keys("Escape")
     check("Escape: back to the files", hears(w, f"list item {second!r} 2 of 4 selected focused"))
 
+    # Words typed over the folder filter it; the field let go, they are a
+    # pill after the path, described as this folder's, not a search's.
+    def filters():
+        found, stack = [], [w.frame()]
+        while stack:
+            node = stack.pop()
+            if node is None:
+                continue
+            if "this folder only" in (node.get_description() or ""):
+                found.append(node.get_name())
+            stack.extend(node.get_child_at_index(i) for i in range(node.get_child_count()))
+        return found
+
+    w.keys("ctrl+l", "ctrl+a")
+    w.type(second)
+    w.keys("F6")
+    check("F6: the words typed stay, a pill after the path said to filter this folder only",
+          until(lambda: any(second in (n or "") for n in filters()))
+          or print("  read:", filters()))
+    w.keys("Escape")
+    check("Escape: from the sidebar F6 reached back to the files, still filtered",
+          hears(w, f"list item {second!r} 1 of 1 selected focused"))
+    w.keys("Escape")
+    check("Escape in the files: everything shown again",
+          hears(w, f"list item {second!r} 2 of 4 selected focused"))
+
     # Into the Trash of the window's own data folder, and back.
     third, fourth = "café list.md", "report 2026.txt"
     announced = Announcements()

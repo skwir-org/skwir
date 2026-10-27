@@ -122,8 +122,8 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
     }
     // Narrowed down to nothing (`query.narrow`): say to what, and the way
     // back.
-    if let Some(narrowed) = state.narrowed() {
-        let to: Vec<&str> = narrowed.pills.iter().map(|p| p.label.as_str()).collect();
+    if state.narrowed().is_some() {
+        let to = &shell.ui().filters.narrowing;
         return Some(Placeholder {
             icon: "sliders",
             title: "No file here is what the folder is narrowed to".to_owned(),
