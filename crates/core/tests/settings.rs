@@ -118,15 +118,33 @@ fn headless_save_finishes_before_returning_and_reports_persistence_errors() {
         "callbacks completed too"
     );
 
-    std::fs::remove_file(&path).unwrap();
-    std::fs::create_dir(&path).unwrap();
+    // The save made to fail. Where modes hold, by a folder it may not
+    // write in: the file stays, so the settings' watcher, which reads a
+    // file gone as the defaults (`first` here), never sees it missing; a
+    // run so slow that it read between a removal and what replaced it
+    // took `first` for no change, saved nothing, and passed no error.
+    #[cfg(unix)]
+    let unblock = {
+        use std::os::unix::fs::PermissionsExt;
+        let folder = dir.path().to_path_buf();
+        std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+        move || {
+            std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+    };
+    #[cfg(not(unix))]
+    let unblock = {
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        || std::fs::remove_dir(&path).unwrap()
+    };
     assert!(app.dispatch(&command("first")).is_err());
     assert!(matches!(app.settings.save_status().1, SaveState::Failed(_)));
     assert_eq!(
         app.settings.get::<String>("sample.engine").as_deref(),
         Some("second")
     );
-    std::fs::remove_dir(&path).unwrap();
+    unblock();
     app.dispatch(&command("first")).unwrap();
     assert_eq!(
         Settings::load(&path)
