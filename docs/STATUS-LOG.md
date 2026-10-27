@@ -6024,3 +6024,57 @@ those offered:
 - **Not checked:** Wayland and the user's session; a server's Thumbnails
   submenu in a window (no remote in the fixture; its rows tested); a
   menu taller than the window with a submenu open.
+
+### The file menu, regrouped (2026-10-27)
+
+- **Asked:** the file menu "has grown messy, with different related
+  actions in different places (Compress with a password nearby run
+  command, etc.), and grouped actions not related (in More)"; "trash and
+  delete are more important than compress"; "maybe use more submenus".
+  Proposed as the menus page's version 2 with five choices; the user:
+  "Good, go ahead with your recommendations."
+- **Built** (ADR-099, decisions 6 to 9):
+  - One convention for every menu's hundreds (`registry::MenuItem`,
+    AGENTS.md): 0xx open it, 1xx copy and keep it, 2xx change it (the
+    destructive last, 280 to 299), 3xx make or find from it, 4xx views
+    and tools, 5xx describe it. Renumbered: the file menu's items in
+    ops-basic, archives, query, places, rename-bulk, edit-as-buffer; the
+    tag menus (tags' `browse.rs`); a server's (remote), the trash's, a
+    saved search's; the shell's tab, place, sidebar group, columns menus
+    and verbs. The sidebar group's places and sections are checks now,
+    not check icons.
+  - A submenu's row stands at its first item's order, with the first
+    icon among its items (`menu::rows_of`, `first_of`).
+  - Open With › (`open_with.menu` answers the type's other applications,
+    eight at most; Other Application… and Run Command… after them; Open
+    Folder With › on the background). Compress › (To ZIP, Choose
+    Format…, With a Password…). Find Similar › in 3xx. More and Notes
+    gone: Rename Several… in Rename's place with several files, Rating
+    and Comment… in the menu, the name tools in Tags ›.
+  - Tags › (`tags.files_menu`): the selection's tags then the pinned
+    ones, checked, unchecked or `Check::Partly` (a dash), pressing one
+    running `tags.toggle`; `registry::Check` replaces the bool. A check
+    in a submenu keeps the menu open; one at a menu's own level closes it.
+  - Paste only on the folder's background (`empty folder|drops`). The
+    palette names an item of a submenu by both ("Open With › Other
+    Application…").
+- **Checked:**
+  - rustfmt; clippy (`-D warnings`) on the 15 crates touched; their tests
+    by nextest: 1429 run, 1420 passed; the 9 that failed were the menu
+    tests changed on purpose (open-with's menu, the submenu's place,
+    updated) and, under the run's load, the settings race and five
+    `remote_configs` tests, which pass alone (13 of 13, 22 s) as does
+    open-with's 40 s one. Rewritten: the tags menu test (checks, partly,
+    pinned, one file all on); new assertions for Compress and Open With.
+  - `just a11y-check` passes, walking to Open With by its name: the row
+    is not said to expand (AccessKit's AT-SPI adapter maps no expanded
+    state; recorded in PLAN.md).
+  - A real window on Xvfb: a picture's menu (17 rows, 5 lines), Open With
+    › listing the type's applications, Tags › ticking favorite off and on
+    again with the menu open (the chip and the toast following), three
+    pictures, a folder, the background.
+  - A test click landed on "Open With …" of a menu my quick keys had
+    left open (xdotool's Escapes read as a held key, which closes once):
+    it opened the browser on the test display, under the test's home;
+    stopped by its pids, its profile removed with the fixture.
+  - Not run: `just release-check`, `just check-cross`.

@@ -167,13 +167,12 @@ what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
 
 **From the menus' overhaul** (ADR-099, 2026-10-27):
-- The file menu's order, proposed (the page's version 2): the hundreds
-  as open it, copy and keep it, change it (Move to Trash beside Rename),
-  make or find from it, describe it; More and Notes gone; Open With ›,
-  Compress ›, Tags › with a check per tag; Paste out of a file's menu;
-  a submenu at its first item's order. Waiting for the user's choices.
+- A submenu's row is not said to open one on Linux: AccessKit's AT-SPI
+  adapter (0.19) maps no expanded state, for any element.
 - A server's Thumbnails submenu not seen in a window; Windows and macOS
-  not compiled for it yet.
+  not compiled for the menus' changes yet.
+- The Open With submenu lists applications without their icons: menu
+  items take bundled icons only.
 
 **From the address field's overhaul** (ADR-098, 2026-10-26):
 - The model half of `query.ask` (Phase G): the field's "Did you mean"

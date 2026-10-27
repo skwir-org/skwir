@@ -1,9 +1,11 @@
 # ADR-099: Submenus beside their row, a setting on one row, one menu look
 
 Status: accepted, 2026-10-27, the user's go on the proposal "Menus:
-submenus beside, choices in a row" (a page shared in the session, mock-ups
-from the debug build's menus). Built and checked on Linux the same day
-(`docs/STATUS-LOG.md`, "Menus: submenus beside, choices in a row"); not
+submenus beside, choices in a row" (a page shared in the session,
+mock-ups from the debug build's menus); amended the same day by the
+user's go on its version 2 (the file menu's order, decisions 6 to 9).
+Built and checked on Linux the same day (`docs/STATUS-LOG.md`, "Menus:
+submenus beside, choices in a row" and "The file menu, regrouped"); not
 compiled for Windows or macOS yet (`just check-cross` not run).
 
 ## Context
@@ -66,9 +68,30 @@ compiled for Windows or macOS yet (`just check-cross` not run).
 - The keys reach everything the pointer does in a menu, submenus and
   settings included; `just a11y-check` walks into a submenu and back.
 
-## Not decided here
+## The file menu's order (amended 2026-10-27)
 
-The file menu's own order (which hundreds hold what, Paste on a file,
-Tags as one submenu with checks, Compress and Open With as submenus):
-proposed the same day as the page's version 2, waiting for the user's
-choices (`docs/PLAN.md`, "What is left").
+The user's go on the page's version 2, its five picks taken:
+
+6. **The hundreds, by what is done to what a menu is about**, in every
+   menu: 0xx open it, 1xx copy and keep it, 2xx change it (the
+   destructive last, 280 to 299: Move to Trash beside Rename), 3xx make
+   or find from it, 4xx the views and tools it opens, 5xx describe it,
+   9xx the end. A submenu's row stands at its first item's order, in that
+   item's group, rather than at the menu's end.
+7. **Related actions share a submenu named by what they do; More and
+   Notes go.** Open With › (the other applications for the selection's
+   types, `open_with.menu`; Other Application…, the chooser; Run
+   Command…), Compress › (To ZIP, Choose Format…, With a Password…), Find
+   Similar ›, Tags › (Edit Tags…, a check per tag, the name tools).
+   Rating and Comment… stand in the menu itself.
+8. **Tags › checks the selection's tags**, then the pinned ones, a dash
+   for a tag some files have (`Check::Partly`); a check in a submenu
+   keeps the menu open, its command toggling (`tags.toggle`). A tag's own
+   actions (its files here, its place, its color) are its chip's menu and
+   the sidebar's.
+9. **Paste is the folder's own menu's** (its background), never a file's:
+   it pasted into the folder shown anyway. **Rename Several…** takes
+   Rename's place with several files selected.
+
+A picture with two tags: 21 rows and 10 separators before, 17 and 5
+after.
