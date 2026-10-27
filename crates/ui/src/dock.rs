@@ -509,7 +509,7 @@ fn menu(
     let panels = FORMS
         .into_iter()
         .map(|kept| {
-            let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx);
+            let mut panel = toolbar::menu_panel(popup, "ui.toolbar_menu", theme, cx);
             let mut left = Vec::new();
             if !kept.steps {
                 let position = pinned.scrub.unwrap_or(state.position);

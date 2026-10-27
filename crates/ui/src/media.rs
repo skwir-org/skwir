@@ -1207,7 +1207,7 @@ pub const CONTINUE_POPUP: &str = "continue";
 fn continue_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let popup = shell.preview.menu.as_ref()?;
     Some(
-        crate::toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+        crate::toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
             .children(continue_rows(shell, theme, cx))
             .into_any_element(),
     )

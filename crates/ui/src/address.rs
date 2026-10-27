@@ -635,7 +635,7 @@ fn more_panel(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx);
+    let mut panel = toolbar::menu_panel(popup, "ui.toolbar_menu", theme, cx);
     let mut groups = layout_groups(shell);
     groups.push((
         "skwir",
@@ -944,7 +944,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
     if let Some(kind) = row.menu_open
         && let Some(popup) = &shell.toolbar_menu
     {
-        let mut panel = toolbar::popup_panel(popup, "ui.toolbar_menu", &theme, cx);
+        let mut panel = toolbar::menu_panel(popup, "ui.toolbar_menu", &theme, cx);
         let groups = match kind {
             VIEW_BUTTONS => view_buttons_menu(shell),
             GRID_CAPTIONS => grid_captions_menu(shell),

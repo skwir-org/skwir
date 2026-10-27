@@ -278,7 +278,7 @@ pub fn tools(bar: &mut Bar, shell: &Shell) {
             Rc::new(move |shell, theme, cx| {
                 let popup = shell.preview.menu.as_ref()?;
                 Some(
-                    crate::toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+                    crate::toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
                         .child(background_rows(shell, &backgrounds, theme, cx))
                         .into_any_element(),
                 )

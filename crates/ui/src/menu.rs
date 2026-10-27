@@ -1091,7 +1091,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         .role(gpui::Role::Menu)
         .aria_label("Context menu")
         .min_w(px(220.))
-        .py_1()
+        .p_1()
         .flex()
         .flex_col()
         .min_h_0()
@@ -1158,14 +1158,14 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     highlighted,
                     StatefulInteractiveElement::aria_active_descendant,
                 )
-                .mx_1()
+                .h(px(crate::toolbar::MENU_ROW))
+                .flex_none()
                 .px_2()
-                .py_1()
                 .when(nested, gpui::Styled::pl_6)
                 .flex()
                 .items_center()
                 .gap_2()
-                .rounded_sm()
+                .rounded_md()
                 .cursor_pointer()
                 .when(highlighted, |d| {
                     d.bg(theme.selection_bg).text_color(theme.selection_text)
@@ -1189,14 +1189,21 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
                     this.menu_activate(&row, window, cx);
                 }))
                 // An icon column, empty where an item has none, keeps titles aligned.
-                .child(div().size(px(15.)).flex_none().children(icon.map(|name| {
+                .child(div().size(px(16.)).flex_none().children(icon.map(|name| {
                     gpui::svg()
                         .path(format!("toolbar/{name}.svg"))
-                        .size(px(15.))
+                        .size(px(16.))
                         .text_color(muted)
                 })))
                 .child(div().flex_1().child(title))
-                .children(keys.map(|keys| div().pl_6().text_xs().text_color(muted).child(keys)))
+                .children(keys.map(|keys| {
+                    div()
+                        .flex_none()
+                        .pl_6()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(keys)
+                }))
                 .when(is_parent, |d| {
                     d.child(
                         gpui::svg()

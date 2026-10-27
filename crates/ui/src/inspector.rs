@@ -2593,7 +2593,7 @@ fn text_size_panel(
         .menu()
         .render(shell, cx);
     Some(
-        crate::toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+        crate::toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
             .child(
                 div()
                     .flex()

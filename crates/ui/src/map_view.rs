@@ -533,7 +533,7 @@ impl PaneView for MapView {
         }
         let popup = backgrounds.filter(|_| open).and_then(|backgrounds| {
             let popup = shell.toolbar_menu.as_ref()?;
-            let panel = toolbar::popup_panel(popup, "ui.toolbar_menu", &theme, cx).child(
+            let panel = toolbar::menu_panel(popup, "ui.toolbar_menu", &theme, cx).child(
                 crate::map_preview::background_rows(shell, &backgrounds, &theme, cx),
             );
             Some(self.background.popup(panel))

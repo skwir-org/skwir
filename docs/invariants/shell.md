@@ -93,6 +93,12 @@ Views are in [views.md](views.md); what locations decide, in
   but a popup's row that switches one of several choices it shows (which
   views have a button) keeps it open, its row keeping the keyboard
   (`Button::keeps_open`).
+- **One menu look.** A popup that is a menu (`toolbar::menu_panel`) is
+  drawn as a context menu is: on the chrome, as wide as its widest row,
+  rows of `toolbar::MENU_ROW` in the window's text with their keys, the
+  row under the pointer or the keyboard highlighted, and what is on said
+  by a check, never by the highlight. Its rows are `Button::menu`; a
+  context menu's rows (`menu::render`) keep the same metrics.
 - Toolbar popup rows are buttons: arrows walk them, Home/End reach the
   ends (`ui.toolbar_first`, `ui.toolbar_last`). The row reached scrolls
   into view in prepaint (`toolbar::RevealRow`, read from the focused

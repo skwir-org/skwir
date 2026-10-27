@@ -759,7 +759,7 @@ pub fn popup(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> 
     let menu = shell.search_menu.as_ref().filter(|m| m.pane == pane)?;
     let chips = shown_chips(shell);
     let theme = cx.global::<Theme>().clone();
-    let mut panel = toolbar::popup_panel(&menu.popup, "ui.search_chip", &theme, cx);
+    let mut panel = toolbar::menu_panel(&menu.popup, "ui.search_chip", &theme, cx);
     match menu.target {
         Target::Facets => {
             for (i, chip) in chips.iter().enumerate().filter(|(_, c)| !c.is_pill()) {

@@ -260,7 +260,7 @@ pub fn unit_popup(plain: &'static str) -> Popup {
             );
         }
         Some(
-            toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+            toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
                 .child(choices)
                 .into_any_element(),
         )
@@ -512,7 +512,7 @@ pub fn render(
         // One panel per variant; the row's choice picks it, this frame.
         let panels = (0..3)
             .map(|mode| {
-                let mut panel = toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+                let mut panel = toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
                     .max_h(px(480.))
                     .overflow_y_scroll();
                 let mut dropped = false;

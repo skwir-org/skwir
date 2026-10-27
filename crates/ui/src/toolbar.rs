@@ -298,6 +298,7 @@ impl Button {
             let named = self.label.clone().unwrap_or_else(|| self.title.clone());
             (named, described, keys.clone())
         });
+        let menu_keys = keys.clone().filter(|_| menu);
         let title: SharedString = match keys {
             Some(keys) => format!("{} · {keys}", self.title).into(),
             None => self.title,
@@ -313,6 +314,7 @@ impl Button {
             .map(crate::elements::clip::text)
             .map_or((None, None), |(label, clip)| (Some(label), Some(clip)));
         let id = self.id.clone();
+        let group = self.id.clone();
         let clicked = id.clone();
         // A tag's colors: the fill and the edge, then under the pointer.
         let tint = self.tint.map(|tint| {
@@ -351,39 +353,54 @@ impl Button {
                     .when(dropdown, |d| d.aria_expanded(open))
             })
             .relative()
-            .h(px(30.))
+            .h(px(if menu { MENU_ROW } else { 30. }))
             .min_w(px(30.))
             .flex_none()
             .px(px(6.))
             .flex()
             .items_center()
             .when(!menu, gpui::Styled::justify_center)
-            .when(menu, |d| d.w_full().px_2())
-            .gap(px(if menu { 10. } else { 6. }))
+            .gap(px(6.))
             .rounded_md()
             .border_1()
             .border_color(gpui::transparent_black())
             .text_xs()
             .whitespace_nowrap()
             .text_color(theme.text_muted)
+            // A popup's row, as a context menu's (`menu::render`): the
+            // window's text, the row under the pointer or the keyboard
+            // highlighted, what is on said by a check, not a fill.
+            .when(menu, |d| {
+                d.group(group.clone())
+                    .w_full()
+                    .px_2()
+                    .gap_2()
+                    .text_sm()
+                    .text_color(theme.text)
+            })
             // Keep the handle alive when navigation disables this button.
             // Dropping the focused handle would also lose ancestor shortcuts.
             .focusable()
             .tab_index(0)
             .tab_stop(enabled)
-            .when(self.active, |d| {
+            .when(self.active && !menu, |d| {
                 d.bg(theme.selection_bg).text_color(theme.selection_text)
             })
             .when_some(tint, |d, (fill, edge, _, _)| {
                 d.bg(fill).border_color(edge).text_color(theme.text)
             })
-            .when(enabled, |d| {
+            .when(enabled && !menu, |d| {
                 d.cursor_pointer()
                     .hover(|s| match tint {
                         Some((_, _, fill, edge)) => s.bg(fill).border_color(edge),
                         None => s.bg(theme.hover).text_color(theme.text),
                     })
                     .focus(|s| s.border_color(theme.accent))
+            })
+            .when(enabled && menu, |d| {
+                d.cursor_pointer()
+                    .hover(|s| s.bg(theme.selection_bg).text_color(theme.selection_text))
+                    .focus(|s| s.bg(theme.selection_bg).text_color(theme.selection_text))
             })
             .when(!enabled, |d| d.opacity(0.35))
             .tooltip(move |_, cx| {
@@ -393,11 +410,21 @@ impl Button {
                     .unwrap_or_else(|| title.clone());
                 tooltip(tip, cx)
             })
+            // A menu row without an icon keeps its slot, so labels line up,
+            // and says it is on with a check there.
             .when(menu && self.icon.is_empty(), |d| {
-                d.child(div().size(px(16.)).flex_none())
+                d.child(if self.active {
+                    menu_glyph("check", &group, &theme)
+                        .size(px(16.))
+                        .into_any_element()
+                } else {
+                    div().size(px(16.)).flex_none().into_any_element()
+                })
             })
             .when(!self.icon.is_empty(), |d| {
-                d.child(
+                d.child(if menu {
+                    menu_glyph(&self.icon, &group, &theme).size(px(16.))
+                } else {
                     svg()
                         .path(format!("toolbar/{}.svg", self.icon))
                         .text_color(if self.active && tint.is_none() {
@@ -406,17 +433,33 @@ impl Button {
                             theme.text_muted
                         })
                         .size(px(16.))
-                        .flex_none(),
-                )
+                        .flex_none()
+                })
             })
             // A label too long for a menu keeps both ends, as names do.
             .children(label.map(|label| {
                 div()
+                    .when(menu, gpui::Styled::flex_1)
                     .min_w_0()
                     .overflow_hidden()
                     .text_ellipsis_middle()
                     .child(label)
             }))
+            // A menu row says its keys, as a context menu's does.
+            .children(menu_keys.map(|keys| {
+                div()
+                    .flex_none()
+                    .pl_6()
+                    .text_xs()
+                    .text_color(theme.text_muted)
+                    .group_hover(group.clone(), |s| s.text_color(theme.selection_text))
+                    .child(keys)
+            }))
+            // On, with an icon of its own: the check after the words.
+            .when(
+                menu && self.active && !self.icon.is_empty() && self.icon != "check",
+                |d| d.child(menu_glyph("check", &group, &theme).size(px(14.))),
+            )
             .when(self.shape == Shape::Dropdown, |d| {
                 d.gap(px(2.)).child(
                     svg()
@@ -484,6 +527,20 @@ impl Button {
         )
         .control()
     }
+}
+
+/// The height of a menu's row: a popup's (`Button::menu`) and a context
+/// menu's (`menu::render`) alike.
+pub(crate) const MENU_ROW: f32 = 28.;
+
+/// A bundled icon on a menu's row, muted until the row under the pointer
+/// (its `group`) is highlighted.
+pub(crate) fn menu_glyph(icon: &str, group: &SharedString, theme: &Theme) -> gpui::Svg {
+    svg()
+        .path(format!("toolbar/{icon}.svg"))
+        .flex_none()
+        .text_color(theme.text_muted)
+        .group_hover(group.clone(), |s| s.text_color(theme.selection_text))
 }
 
 /// How long a press is held before it is a long press: GTK's default
@@ -773,6 +830,25 @@ pub fn popup_panel(
                 cx,
             );
         }))
+}
+
+/// A popup that is a menu, drawn as a context menu is (`menu::render`):
+/// on the chrome, its rows (`Button::menu`) with no room between them.
+pub fn menu_panel(
+    popup: &Popup,
+    close: &'static str,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Stateful<Div> {
+    // As wide as its widest row, keys included, within bounds: a long
+    // path keeps both its ends (`Button::label`).
+    popup_panel(popup, close, theme, cx)
+        .w_auto()
+        .min_w(px(240.))
+        .max_w(px(460.))
+        .p_1()
+        .gap_0()
+        .bg(theme.surface)
 }
 
 /// The key a button's id goes under in its key context.

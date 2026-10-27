@@ -507,7 +507,7 @@ pub fn panel(shell: &Shell, pane: PaneId, cx: &mut Context<Shell>) -> Option<Any
     // As tall as its rows, shrunk to the room the popover has below its
     // anchor: the list fills it, and draws the rows that fit.
     let tall = ROW * menu.rows.len() as f32 + 2. * toolbar::POPUP_PAD + 2.;
-    let panel = toolbar::popup_panel(&menu.popup, close, &theme, cx)
+    let panel = toolbar::menu_panel(&menu.popup, close, &theme, cx)
         .w(menu.width)
         .h(px(tall))
         .on_action(cx.listener(move |shell, action: &RunCommand, window, cx| {

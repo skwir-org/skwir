@@ -1002,7 +1002,7 @@ fn dates_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
             .render(shell, cx),
         );
     }
-    let panel = toolbar::popup_panel(popup, "ui.toolbar_menu", theme, cx).child(rows);
+    let panel = toolbar::menu_panel(popup, "ui.toolbar_menu", theme, cx).child(rows);
     // The strip is at the foot of the window: no room below it.
     Some(shell.timeline.dates.popup_above_for(
         &crate::elements::adaptive::Chosen::default(),

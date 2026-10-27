@@ -115,7 +115,7 @@ pub fn zoom_tools(bar: &mut Bar, shell: &Shell) {
         std::rc::Rc::new(|shell, theme, cx| {
             let popup = shell.preview.menu.as_ref()?;
             Some(
-                toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+                toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
                     .child(zoom_menu(shell, cx))
                     .into_any_element(),
             )
@@ -380,7 +380,7 @@ fn pace_popup(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
         );
     }
     Some(
-        toolbar::popup_panel(popup, "ui.preview_menu", theme, cx)
+        toolbar::menu_panel(popup, "ui.preview_menu", theme, cx)
             .child(rows)
             .into_any_element(),
     )
