@@ -973,10 +973,9 @@ mod tests {
     #[test]
     fn real_schemes_read_in_either_contrast() {
         // As read 2026-10-20 from Breeze 6.7.5's schemes, adw-gtk3 6.5 and
-        // Materia 20210322 (`kde_scheme`, `gtk_theme`; adw-gtk3's surface
-        // its sidebar's since 2026-10-27): bg, surface, text, text_muted,
-        // zebra, border, accent, selection, error, warning, success; 0
-        // where the scheme says none.
+        // Materia 20210322 (`kde_scheme`, `gtk_theme`): bg, surface, text,
+        // text_muted, zebra, border, accent, selection, error, warning,
+        // success; 0 where the scheme says none.
         let schemes: [(&str, [u32; 12]); 6] = [
             (
                 "Breeze Light",
@@ -995,14 +994,14 @@ mod tests {
             (
                 "adw-gtk3",
                 [
-                    0xffffff, 0xebebed, 0x333334, 0, 0, 0, 0x3584e4, 0x3584e4, 0xffffff, 0xba161e,
+                    0xffffff, 0xfafafb, 0x333334, 0, 0, 0, 0x3584e4, 0x3584e4, 0xffffff, 0xba161e,
                     0xbe8908, 0x26a169,
                 ],
             ),
             (
                 "adw-gtk3 dark",
                 [
-                    0x1d1d20, 0x2e2e32, 0xffffff, 0, 0, 0, 0x3584e4, 0x3584e4, 0xffffff, 0xd9777e,
+                    0x1d1d20, 0x222226, 0xffffff, 0, 0, 0, 0x3584e4, 0x3584e4, 0xffffff, 0xd9777e,
                     0xefc96c, 0x7dc7a5,
                 ],
             ),

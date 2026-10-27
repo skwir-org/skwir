@@ -157,13 +157,11 @@ impl Sheet {
         let opaque = |color: Rgba| [color[0], color[1], color[2]];
         let bg = opaque(self.color("theme_base_color")?);
         let on_bg = |name: &str| self.color(name).map(|color| over(color, bg));
-        // The chrome: a theme after libadwaita's names its sidebar's and
-        // its header bar's apart from its window's, which is as light as
-        // what is read (adw-gtk3's #fafafb on #ffffff, its sidebar
-        // #ebebed); GTK 3's own themes name the window's alone.
-        let surface = ["sidebar_bg_color", "headerbar_bg_color", "theme_bg_color"]
-            .into_iter()
-            .find_map(on_bg)?;
+        // The chrome is the window's, even where a theme after
+        // libadwaita's names a sidebar of its own: adw-gtk3's #ebebed on
+        // #ffffff was too strong; a window as light as what is read
+        // (its #fafafb) is set apart by the theme (`CHROME`, ADR-071).
+        let surface = on_bg("theme_bg_color")?;
         let selection_bg = on_bg("theme_selected_bg_color");
         let selection = selection_bg.zip(
             self.color("theme_selected_fg_color")
@@ -696,7 +694,7 @@ mod tests {
     }
 
     #[test]
-    fn the_chrome_is_the_sidebar_s_where_a_theme_names_one() {
+    fn the_chrome_is_the_window_s_where_a_theme_names_a_sidebar() {
         let dir = tempfile::tempdir().unwrap();
         let folders = [dir.path().to_path_buf()];
         let named = |extra: &str| format!("{}{extra}", full("#ffffff", "#333334"));
@@ -721,9 +719,9 @@ mod tests {
         );
         theme(dir.path(), "Window", &[("gtk-3.0/gtk.css", &named(""))]);
         let surface = |name| schemes(name, &folders).light.unwrap().surface;
-        assert!(near(surface("Sidebar"), 0xe0e0e0));
-        assert!(near(surface("Header"), 0xebebed));
-        assert!(near(surface("Window"), 0xf2f2f2), "the window's");
+        for name in ["Sidebar", "Header", "Window"] {
+            assert!(near(surface(name), 0xf2f2f2), "{name}: the window's");
+        }
     }
 
     #[test]

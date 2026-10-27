@@ -102,7 +102,7 @@ laid over).
    | Token | `kdeglobals` | GTK3 theme | Windows contrast theme |
    |---|---|---|---|
    | `bg`, `text` | `[Colors:View]` `BackgroundNormal`, `ForegroundNormal` | `theme_base_color`, `theme_text_color` | `COLOR_WINDOW`, `COLOR_WINDOWTEXT` |
-   | `surface` | `[Colors:Window]` `BackgroundNormal` | `sidebar_bg_color`, else `headerbar_bg_color`, else `theme_bg_color` (amended 2026-10-27) | `COLOR_BTNFACE` |
+   | `surface` | `[Colors:Window]` `BackgroundNormal` | `theme_bg_color` | `COLOR_BTNFACE` |
    | `text_muted` | `[Colors:View]` `ForegroundInactive` | derived | `COLOR_GRAYTEXT` |
    | `zebra` | `[Colors:View]` `BackgroundAlternate` | derived | derived |
    | `border` | derived | `borders` | `COLOR_WINDOWTEXT` |
@@ -311,24 +311,25 @@ laid over).
     accent takes it (a term's key, a link, a toast's action, Properties'
     actions, the status bar's proposals, the preview's trail pointed at);
     a label on a link keeps the accent as its fill (`label_fill`).
-  - **The chrome stands apart from what is read.** A GTK theme after
-    libadwaita's (adw-gtk3) names its window's color as light as its
-    view's (#fafafb on #ffffff) and its sidebar's and header bar's apart
-    (#ebebed; #2e2e32 on #1d1d20 dark): `surface` is
-    `sidebar_bg_color`, else `headerbar_bg_color`, else `theme_bg_color`.
-    And whatever a scheme says, `surface` reads apart from `bg` at
-    1.08:1 at least (`CHROME`): Obsidian's page and sidebar stand at
+  - **The chrome stands apart from what is read.** Whatever a scheme
+    says, `surface` reads apart from `bg` at 1.08:1 at least (`CHROME`);
+    a scheme closer than that has its `surface` moved in lightness, its
+    hue kept, as a foreground is. Obsidian's page and sidebar stand at
     1.08 (its documented base colors `--color-base-00` and `-20`,
     #ffffff and #f6f6f6, #1e1e1e and #262626; that the sidebar takes
     `-20` is remembered, not read in its documentation), Skwir's own
-    looks at 1.09, so they keep their colors; adw-gtk3 stands at 1.19
-    and 1.24 by its own colors. A scheme closer than that has its `surface` moved in
-    lightness, its hue kept, as a foreground is.
+    looks at 1.09, so they keep their colors. A GTK theme after
+    libadwaita's (adw-gtk3) names its window's color as light as its
+    view's (#fafafb on #ffffff, 1.02:1): it becomes #f6f6f7, and
+    #242428 on #1d1d20 dark. Its sidebar's own color
+    (`sidebar_bg_color`, #ebebed; #2e2e32 dark, 1.19:1 and 1.24:1) was
+    worn first; "it's too strong", the user said, so the chrome stays
+    the window's, set apart.
   - **`hover` is laid over what it is on**, translucent: the way from
     `bg` to its step carried to the edge of sRGB, at the opacity that
     shows the step on `bg` (`color::overlay`), so on the darker chrome
-    it darkens by as much; an opaque hover lighter than the sidebar
-    would have vanished there. Text is guarded on it laid on `bg` and on
+    it darkens by as much; an opaque one, a step from `bg`, showed less
+    there, and nothing on a chrome as dark as it. Text is guarded on it laid on `bg` and on
     `surface`; Skwir's dark `text_muted` moved from #9a9a9a to #9e9e9e
     for it. Where it must hide what is under it (Properties' actions
     over a row's words) it is laid on its ground first.
