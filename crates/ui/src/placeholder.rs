@@ -104,11 +104,17 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
     if !state.listing.is_complete() {
         return None;
     }
-    // Filtered by name down to nothing: say so, and the way back.
+    // Filtered down to nothing: say so, and the way back. Read by the
+    // query plugin, the words are more than names (ADR-098).
     if let Some(filter) = state.filter() {
+        let title = if state.read_filter().is_some() {
+            format!("Nothing here is “{filter}”")
+        } else {
+            format!("No name here holds “{filter}”")
+        };
         return Some(Placeholder {
             icon: "search",
-            title: format!("No name here holds “{filter}”"),
+            title,
             detail: "Press Enter in the address field to search the folders inside too.".to_owned(),
             action: Some(("Show everything", "filter")),
             problem: false,

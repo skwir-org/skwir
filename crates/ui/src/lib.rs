@@ -43,7 +43,6 @@ mod inspector;
 mod inspector_pictures;
 mod inspector_rows;
 mod inspector_text;
-pub mod jump;
 pub mod keymap;
 mod latest;
 pub mod layout;
@@ -89,6 +88,7 @@ pub mod shell;
 pub mod shortcuts;
 pub mod sidebar;
 pub mod status;
+pub mod suggestions;
 pub mod tabs;
 pub mod tags;
 pub mod terminal;
@@ -182,6 +182,8 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
     }
     // The shell's own commands, known to every surface as the others are.
     commands::declare_all(&app);
+    // What the shell offers the address field (ADR-098).
+    suggestions::register(&app);
     // What the desktop said when skwir last ran, then what it says
     // (ADR-071): its colors and fonts are the theme's (ADR-073).
     desktop_style::start(&app);

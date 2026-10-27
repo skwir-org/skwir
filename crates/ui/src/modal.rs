@@ -152,7 +152,6 @@ impl Shell {
         }
         let pickers = [
             self.choose.as_ref().map(|c| &c.input),
-            self.jump.as_ref().map(|j| &j.input),
             self.palette.as_ref().map(|p| &p.input),
         ];
         for input in pickers.into_iter().flatten() {
@@ -169,7 +168,6 @@ impl Shell {
     /// password, ADR-086) is asked, its Edit and Add having asked for it.
     pub fn modal_open_beside_settings(&self) -> bool {
         self.palette.is_some()
-            || self.jump.is_some()
             || self.choose.is_some()
             || self.tag_editor.is_some()
             || self.bulk.is_some()

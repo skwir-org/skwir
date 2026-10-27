@@ -19,7 +19,6 @@ use skwir_core::{App, Location, Plan};
 use crate::choose::ChooseState;
 use crate::icons::IconCache;
 use crate::input::{InputEvent, TextInput};
-use crate::jump::JumpState;
 use crate::keymap::{self, RunCommand};
 use crate::list::{ListState, Step};
 use crate::menu::MenuState;
@@ -34,7 +33,7 @@ use crate::usage::UsageState;
 use crate::view::{self, PaneView};
 use crate::views::grid::{DEFAULT_ZOOM, ZOOMS};
 use crate::{
-    address, jump, menu, palette, preview, prompts, renamebulk, review, sidebar, status, timeline,
+    address, menu, palette, preview, prompts, renamebulk, review, sidebar, status, timeline,
 };
 
 /// What the shell says when a command needs a selection and there is none.
@@ -85,7 +84,7 @@ pub struct PaneUi {
     /// What it will show first, still waiting for metadata.
     pub(crate) warm: Vec<skwir_core::EntryId>,
     /// The address field's events, and its hint taken.
-    _sub: (Subscription, Subscription),
+    _sub: (Subscription, Subscription, Subscription),
 }
 
 impl PaneUi {
@@ -348,7 +347,6 @@ pub struct Shell {
     /// A track kept playing while the selection moves (`player.rs`).
     pub player: crate::player::PlayerState,
     pub palette: Option<PaletteState>,
-    pub jump: Option<JumpState>,
     /// `ui.choose`: a list to pick one from.
     pub choose: Option<ChooseState>,
     /// `ui.tags_prompt`: the tags of the selection, to change.
@@ -699,7 +697,6 @@ impl Shell {
             preview: PreviewState::default(),
             player: crate::player::PlayerState::default(),
             palette: None,
-            jump: None,
             choose: None,
             tag_editor: None,
             tag_colors: crate::tags::TagColors::default(),
@@ -915,6 +912,15 @@ impl Shell {
             this.activate_pane(id, cx);
             this.omnibox_take_rest(cx);
         });
+        // Backspace or Left before the text: the scope's (`omnibox.rs`).
+        let start = cx.subscribe_in(
+            &address,
+            window,
+            move |this, _, at: &crate::input::AtStart, window, cx| {
+                this.activate_pane(id, cx);
+                this.omnibox_at_start(*at, window, cx);
+            },
+        );
         // Read the revision before the descriptors: a registration landing
         // between the two reads is then picked up by the next sync_views.
         let views_revision = self.app.registry.views.revision();
@@ -948,7 +954,7 @@ impl Shell {
             returning: true,
             anchor: None,
             warm: Vec::new(),
-            _sub: (sub, hint),
+            _sub: (sub, hint, start),
         }
     }
 
@@ -2118,7 +2124,9 @@ impl Shell {
     ) {
         let arg = |k: &str| args.get(k).and_then(|v| v.as_str()).map(str::to_owned);
         match name {
-            "focus_address" => self.omnibox_begin(false, None, window, cx),
+            "focus_address" => {
+                self.omnibox_begin(crate::omnibox::Begin::Path, None, window, cx);
+            }
             "focus_pane" => window.focus(&self.ui().focus, cx),
             "settings" => self.open_settings(args, window, cx),
             // The focused button and the open popup answer these; one
@@ -2177,8 +2185,6 @@ impl Shell {
                     self.palette_move(mv, cx);
                 } else if self.choose.is_some() {
                     self.choose_move(mv, cx);
-                } else if self.jump.is_some() {
-                    self.jump_move(mv, cx);
                 } else if self.tag_editor.is_some() {
                     self.tag_editor_move(mv, cx);
                 } else if self.settings.is_some() {
@@ -2301,7 +2307,9 @@ impl Shell {
             },
             // The address field, in search: where it looks as a pill, and a
             // text to start from (`content:`) typed after.
-            "search" => self.omnibox_begin(true, arg("text"), window, cx),
+            "search" => {
+                self.omnibox_begin(crate::omnibox::Begin::Search, arg("text"), window, cx);
+            }
             "omnibox_submit" => {
                 let flag =
                     |name: &str| args.get(name).and_then(serde_json::Value::as_bool) == Some(true);
@@ -2309,6 +2317,10 @@ impl Shell {
             }
             // Tab in the address field: what is typed completed.
             "omnibox_complete" => self.omnibox_complete(cx),
+            // Alt+Down in the address field: where else words could search.
+            "omnibox_scopes" => self.omnibox_scopes(cx),
+            // Shift+Delete there: a recent search forgotten.
+            "omnibox_forget" => self.omnibox_forget(window, cx),
             "tags_prompt" => {
                 let entries = args
                     .get("entries")
@@ -2342,7 +2354,8 @@ impl Shell {
             "open_url" => self.open_address(&arg("url").unwrap_or_default(), cx),
             // A file shown in its folder, from a link.
             "reveal" => self.reveal_command(args, window, cx),
-            "jump" => self.open_jump(window, cx),
+            // Jump is the address field, places first (ADR-098).
+            "jump" => self.omnibox_begin(crate::omnibox::Begin::Jump, None, window, cx),
             "rename_bulk_prompt" => self.open_bulk(window, cx),
             "rename_bulk_next" => self.bulk_focus_next(1, window, cx),
             "rename_bulk_prev" => self.bulk_focus_next(-1, window, cx),
@@ -3339,7 +3352,6 @@ impl Render for Shell {
             prompts::render_prompt(self, cx),
             crate::form::render(self, window, cx),
             prompts::render_confirm(self, cx),
-            jump::render(self, cx),
             crate::choose::render(self, cx),
             crate::tags::render(self, cx),
             renamebulk::render(self, window, cx),

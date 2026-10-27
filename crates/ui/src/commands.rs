@@ -207,6 +207,19 @@ mod args {
         backward: bool,
     }
 
+    /// What the address field is asked to offer (`ui.suggest`).
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct Suggest {
+        /// The text, as it would be typed in the address field.
+        pub(super) text: String,
+        /// Where words search, as a location (a folder, `tags:/x`); the
+        /// folder the pane shows when omitted.
+        #[serde(default)]
+        pub(super) scope: Option<String>,
+        #[serde(default)]
+        pub(super) pane: Option<skwir_core::workspace::PaneId>,
+    }
+
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Submit {
         /// Search the home folder instead of where the pill says.
@@ -1219,6 +1232,42 @@ fn declare<A: DeserializeOwned + JsonSchema + 'static>(
     declared.effect(effect_of(name));
 }
 
+/// `ui.suggest`: what the address field would offer for a text, answered
+/// here and now, by every source (`skwir_core::suggest::gather`), for an
+/// agent or a script; nothing in the window changes.
+fn declare_suggest(app: &App) {
+    app.commands
+        .register_raw::<args::Suggest, _>(
+            OWNER,
+            "ui.suggest",
+            "Address suggestions",
+            "What the address field offers for `text`: its rows, each with its section, title, detail and the invocation Enter runs, and the spans the text is drawn with",
+            |args, app| {
+                let a: args::Suggest = serde_json::from_value(args)?;
+                let pane = app.pane_or_active(a.pane);
+                let dir = app.pane_dir(pane).ok();
+                let scope = a
+                    .scope
+                    .as_deref()
+                    .map(skwir_core::Location::parse)
+                    .or_else(|| dir.as_ref().map(skwir_core::Location::from_path));
+                let ask = skwir_core::suggest::Ask {
+                    typed: crate::omnibox::typed_for(app, &a.text, true),
+                    caret: a.text.len(),
+                    text: a.text,
+                    scope,
+                    shown: app.pane_location(pane),
+                    dir,
+                    pane: Some(pane),
+                };
+                let cancel = app.lifetime().child();
+                let answer = skwir_core::suggest::gather(app, &ask, &cancel);
+                Ok(Outcome::Value(serde_json::to_value(answer)?))
+            },
+        )
+        .data();
+}
+
 /// Declare every `ui.*` command in the core's registry.
 #[allow(clippy::too_many_lines)] // One line of the table per command.
 pub fn declare_all(app: &App) {
@@ -1431,6 +1480,17 @@ pub fn declare_all(app: &App) {
         "Run the address's suggestion, search the home folder, or open the file it names",
     );
     none(
+        "ui.omnibox_scopes",
+        "Where to search",
+        "List the scopes the address field's words could search in, or close the list",
+    );
+    none(
+        "ui.omnibox_forget",
+        "Forget the suggestion",
+        "Forget the recent search highlighted in the address field's suggestions",
+    );
+    declare_suggest(app);
+    none(
         "ui.omnibox_complete",
         "Complete",
         "Complete what the address is typed: the part the names typed share, else the suggestion highlighted, a folder then listed",
@@ -1478,7 +1538,11 @@ pub fn declare_all(app: &App) {
         "Compare with copied",
         "Say whether the clipboard holds a text (a checksum a download page gives, one word of it or all), ignoring case",
     );
-    none("ui.jump", "Jump…", "Go to a folder or file Jump knows");
+    none(
+        "ui.jump",
+        "Jump…",
+        "Type in the address field, the places one goes to offered first",
+    );
     // The window.
     none("ui.palette", "Command palette", "Find a command and run it");
     declare::<ListMoveArgs>(

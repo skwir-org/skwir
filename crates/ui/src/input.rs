@@ -111,6 +111,24 @@ pub enum InputEvent {
 /// is taken (`TextInput::set_hint`). Only a field given hints sends it.
 pub struct HintTaken;
 
+/// Backspace or Left with the caret at the start of the text, nothing
+/// selected: what stands before the text (the address field's scope) is
+/// acted on. Sent only by a field that asked (`TextInput::send_start`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AtStart {
+    Backspace,
+    Left,
+}
+
+/// How a part of the text is drawn (`TextInput::set_styles`): its color, a
+/// tint behind it, a wavy line under it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Paint {
+    pub color: Option<gpui::Hsla>,
+    pub background: Option<gpui::Hsla>,
+    pub wavy: Option<gpui::Hsla>,
+}
+
 /// The text and selection an edit started from.
 type Snapshot = (SharedString, Range<usize>);
 
@@ -174,6 +192,7 @@ fn typed_at(range: &Range<usize>, text: &str) -> Option<Range<usize>> {
     typed.then(|| range.start..range.start + text.len())
 }
 
+#[allow(clippy::struct_excessive_bools)] // Independent states of a text field: masked, selecting, the selection's direction, what it says at its start.
 pub struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
@@ -197,11 +216,17 @@ pub struct TextInput {
     /// What the text may go on with, drawn muted after it while the cursor
     /// is at its end (`set_hint`).
     hint: Option<SharedString>,
+    /// Parts of the text drawn otherwise, by byte range (`set_styles`).
+    styles: Vec<(Range<usize>, Paint)>,
+    /// Whether Backspace and Left at the start are said (`AtStart`).
+    start_events: bool,
 }
 
 impl EventEmitter<InputEvent> for TextInput {}
 
 impl EventEmitter<HintTaken> for TextInput {}
+
+impl EventEmitter<AtStart> for TextInput {}
 
 impl TextInput {
     pub fn new(placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
@@ -220,7 +245,35 @@ impl TextInput {
             is_selecting: false,
             history: History::default(),
             hint: None,
+            styles: Vec::new(),
+            start_events: false,
         }
+    }
+
+    /// Draw these parts of the text otherwise, by byte range into it, until
+    /// the text changes or other styles are set; ranges that do not fit the
+    /// text are left out.
+    pub fn set_styles(&mut self, styles: Vec<(Range<usize>, Paint)>, cx: &mut Context<Self>) {
+        if styles != self.styles {
+            self.styles = styles;
+            cx.notify();
+        }
+    }
+
+    /// Say Backspace and Left at the start of the text (`AtStart`), where
+    /// something stands before it.
+    pub fn send_start(&mut self, on: bool) {
+        self.start_events = on;
+    }
+
+    /// Where the caret is, a byte offset into the text.
+    pub fn caret(&self) -> usize {
+        self.cursor_offset()
+    }
+
+    /// The caret is at the start, nothing selected.
+    fn at_start(&self) -> bool {
+        self.start_events && self.selected_range == (0..0)
     }
 
     /// Its name for assistive technology, where its placeholder is a hint
@@ -276,6 +329,7 @@ impl TextInput {
     /// Replace the whole text and put the cursor at the end.
     pub fn set_text(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.content = text.into();
+        self.styles.clear();
         // Text put here is where editing starts, not a step to take back.
         self.history.clear();
         let end = self.content.len();
@@ -293,6 +347,7 @@ impl TextInput {
             self.history.record(before, None);
         }
         self.content = text.to_owned().into();
+        self.styles.clear();
         let end = self.content.len();
         self.selected_range = end..end;
         self.selection_reversed = false;
@@ -358,7 +413,9 @@ impl TextInput {
     // ------------------------------------------------------------ actions
 
     fn left(&mut self, _: &Left, _: &mut Window, cx: &mut Context<Self>) {
-        if self.selected_range.is_empty() {
+        if self.at_start() {
+            cx.emit(AtStart::Left);
+        } else if self.selected_range.is_empty() {
             self.move_to(self.previous_boundary(self.cursor_offset()), cx);
         } else {
             self.move_to(self.selected_range.start, cx);
@@ -425,6 +482,10 @@ impl TextInput {
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        if self.at_start() {
+            cx.emit(AtStart::Backspace);
+            return;
+        }
         if self.selected_range.is_empty() {
             self.select_to(self.previous_boundary(self.cursor_offset()), cx);
         }
@@ -478,6 +539,7 @@ impl TextInput {
 
     fn restore(&mut self, (content, selected): Snapshot, cx: &mut Context<Self>) {
         self.content = content;
+        self.styles.clear();
         self.selected_range = selected;
         self.selection_reversed = false;
         self.marked_range = None;
@@ -705,6 +767,7 @@ impl EntityInputHandler for TextInput {
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
+        self.styles.clear();
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.marked_range.take();
         cx.emit(InputEvent::Changed);
@@ -732,6 +795,7 @@ impl EntityInputHandler for TextInput {
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
+        self.styles.clear();
         self.marked_range = if new_text.is_empty() {
             None
         } else {
@@ -928,15 +992,22 @@ impl Element for TextElement {
             .into_iter()
             .filter(|r| r.len > 0)
             .collect()
-        } else if hint.is_some() {
-            let muted = TextRun {
-                len: display_text.len() - typed_len,
-                color: theme.text_muted,
-                ..run.clone()
-            };
-            vec![run, muted]
         } else {
-            vec![run]
+            let mut runs = if masked || input.content.is_empty() || input.styles.is_empty() {
+                vec![run.clone()]
+            } else {
+                styled_runs(&run, &input.content, &input.styles)
+            };
+            if hint.is_some() {
+                runs.push(TextRun {
+                    len: display_text.len() - typed_len,
+                    color: theme.text_muted,
+                    background_color: None,
+                    underline: None,
+                    ..run
+                });
+            }
+            runs
         };
 
         let font_size = style.font_size.to_pixels(window.rem_size());
@@ -1172,9 +1243,92 @@ fn snapped(text: &str, offset: usize) -> usize {
     offset
 }
 
+/// `run` cut where `styles` draw parts of `text` otherwise. The styles are
+/// taken in order of their start; one that overlaps the one before, or
+/// does not fall on character boundaries, is left out.
+fn styled_runs(run: &TextRun, text: &str, styles: &[(Range<usize>, Paint)]) -> Vec<TextRun> {
+    let mut sorted: Vec<&(Range<usize>, Paint)> = styles.iter().collect();
+    sorted.sort_by_key(|(range, _)| range.start);
+    let mut runs = Vec::new();
+    let mut at = 0;
+    for (range, paint) in sorted {
+        if range.start < at
+            || range.end > text.len()
+            || range.is_empty()
+            || !text.is_char_boundary(range.start)
+            || !text.is_char_boundary(range.end)
+        {
+            continue;
+        }
+        if range.start > at {
+            runs.push(TextRun {
+                len: range.start - at,
+                ..run.clone()
+            });
+        }
+        runs.push(TextRun {
+            len: range.end - range.start,
+            color: paint.color.unwrap_or(run.color),
+            background_color: paint.background,
+            underline: paint.wavy.map(|color| UnderlineStyle {
+                color: Some(color),
+                thickness: px(1.0),
+                wavy: true,
+            }),
+            ..run.clone()
+        });
+        at = range.end;
+    }
+    if at < text.len() {
+        runs.push(TextRun {
+            len: text.len() - at,
+            ..run.clone()
+        });
+    }
+    runs
+}
+
 #[cfg(test)]
 mod tests {
     use super::{History, scrolled, snapped, typed_at, unit_at, units, utf16_to_utf8};
+
+    #[test]
+    fn styles_cut_the_run_where_they_fall_and_leave_out_what_does_not_fit() {
+        let run = gpui::TextRun {
+            len: 0,
+            font: gpui::font("Inter"),
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+            position: gpui::RunPosition::Baseline,
+        };
+        let key = super::Paint {
+            color: Some(gpui::red()),
+            ..super::Paint::default()
+        };
+        let wrong = super::Paint {
+            wavy: Some(gpui::red()),
+            ..super::Paint::default()
+        };
+        // `dunes kind:pix`: the key, the error; one style past the text,
+        // one inside a character, one overlapping.
+        let text = "dunes kind:pix é";
+        let styles = vec![
+            (6..11, key),
+            (6..14, wrong),
+            (11..14, wrong),
+            (15..16, key),
+            (40..41, key),
+        ];
+        let runs = super::styled_runs(&run, text, &styles);
+        let lens: Vec<usize> = runs.iter().map(|r| r.len).collect();
+        assert_eq!(lens, [6, 5, 3, 3]);
+        assert_eq!(lens.iter().sum::<usize>(), text.len());
+        assert_eq!(runs[1].color, gpui::red());
+        assert!(runs[2].underline.is_some_and(|u| u.wavy));
+        assert!(runs[3].underline.is_none());
+    }
 
     #[test]
     fn a_screen_reader_counts_the_units_the_caret_moves_by() {

@@ -807,7 +807,8 @@ struct PaneRow {
     /// The field's edge: focused, the active pane's, or none.
     edge: gpui::Hsla,
     location: Option<skwir_core::Location>,
-    /// What the names shown must hold, typed in the field (`omnibox.rs`).
+    /// What the names shown must hold, typed in the field (`omnibox.rs`),
+    /// when no reader read it into parts.
     filter: Option<String>,
     /// The View menu or the view buttons' menu, open from this row.
     menu_open: Option<&'static str>,
@@ -880,6 +881,29 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                                     .map(|n| n.pills.clone())
                                     .unwrap_or_default(),
                             )
+                            // The words typed, as the query plugin read
+                            // them: a pill each, one family with the
+                            // narrowing's (ADR-098).
+                            .chain(pane.and_then(|p| p.read_filter()).map_or_else(
+                                Vec::new,
+                                |read| {
+                                    read.parts
+                                        .iter()
+                                        .map(|part| Pill {
+                                            label: part.label.clone(),
+                                            remove: Invocation::with_args(
+                                                "filter",
+                                                &serde_json::json!({
+                                                    "text": (!part.without.trim().is_empty())
+                                                        .then(|| part.without.clone()),
+                                                    "pane": shell.pane,
+                                                }),
+                                            ),
+                                            tag: part.tag.clone(),
+                                        })
+                                        .collect()
+                                },
+                            ))
                             .collect(),
                         holds_places: trail.holds_places,
                     }
@@ -893,7 +917,9 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             } else {
                 theme.surface
             },
-            filter: pane.and_then(|p| p.filter().map(str::to_owned)),
+            filter: pane
+                .filter(|p| p.read_filter().is_none_or(|r| r.parts.is_empty()))
+                .and_then(|p| p.filter().map(str::to_owned)),
             location,
             // The View menu hangs from the active pane's button: the pane it
             // acts on.
@@ -1188,7 +1214,7 @@ fn pane_row(
             .relative()
             .flex()
             .items_center()
-            .children(crate::omnibox::scope_pill(shell, cx))
+            .children(crate::omnibox::scope_token(shell, cx))
             .child(
                 div()
                     .flex_1()

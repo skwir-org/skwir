@@ -481,10 +481,9 @@ def run(w):
           and within(w.focused())[:2] == ["Tags", "Tag editor"])
     w.keys("Escape")
 
+    # Jump is the address field, places first (ADR-098).
     w.cmd("ui.jump")
-    check("Jump: its field, in its dialog",
-          until(lambda: w.focused().get_role_name() == "entry"
-                and within(w.focused())[0] == "Jump"))
+    check("Jump: the address field", hears(w, "entry 'Address' focused"))
     w.keys("Escape")
     check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
 
