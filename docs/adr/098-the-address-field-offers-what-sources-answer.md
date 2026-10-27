@@ -163,3 +163,12 @@ ADR-070 (the field's rows) and retires the Jump overlay.
   below". `ReadFilter::parts`, `Narrowed::pills` and `facets::parts`, the
   second describer whose pills had other words ("Images", "with print"),
   no menu and their own place at the field's end, are gone.
+- Amended 2026-10-27, a third time: the rows and the field are one card,
+  as a browser's address bar draws them. The rows hung from the field's
+  right end (`popup_right`, 530f71c3) to keep the names being filtered in
+  sight; the rows grew to cover the list either way, while the text is
+  typed and read at the field's left. The card stands around the field
+  (`popup_around`), its text drawn above it (deferred one priority
+  higher), and says what the live filter keeps in its first line. The
+  user chose it from three mock-ups (from the right, attached under the
+  field, merged).

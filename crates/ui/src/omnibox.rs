@@ -67,6 +67,15 @@ const READING_SAID: Duration = Duration::from_millis(200);
 /// The most scopes listed.
 const SCOPES: usize = 10;
 
+/// How far the field's card reaches beyond the field: before, above and
+/// after it.
+const CARD_PAD: f32 = 5.;
+/// The least width of the field's card, in a narrow pane.
+const CARD_LEAST: f32 = 430.;
+/// Where the field's card is drawn among deferred draws (the popups'): the
+/// field's text draws one above it.
+pub(crate) const CARD_PRIORITY: usize = 3;
+
 /// How the field takes the keyboard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Begin {
@@ -1415,6 +1424,12 @@ impl Shell {
         });
     }
 
+    /// Whether the field's card is drawn: it is typed in and has rows. The
+    /// field's text then draws above the card (`address::pane_row`).
+    pub fn omnibox_card(&self) -> bool {
+        self.ui().omni.is_some() && !self.suggestions().is_empty()
+    }
+
     /// The dropdown's rows for the active pane's text, first the one Enter
     /// runs.
     fn suggestions(&self) -> &[Row] {
@@ -2209,19 +2224,48 @@ pub fn dropdown(
         .as_ref()
         .filter(|(_, since, _)| since.elapsed() >= READING_SAID)
         .map(|(folder, ..)| format!("Reading {}…", folder.display()));
-    let panel = div()
-        .min_w(px(360.))
-        .max_w(px(560.))
+    // What the words typed over a folder keep, as the footer counts it:
+    // the card hides the top of the list they narrow.
+    let kept = (!shell.ui().place.search)
+        .then(|| {
+            let ws = shell.app.workspace.read();
+            let p = ws.pane(pane)?;
+            p.filter()?;
+            let total = p.listing.sorted(p.sort).len();
+            Some(format!(
+                "This folder as you type: {} of {}",
+                crate::format::thousands(shell.ui().list.sorted.len()),
+                crate::format::count(total, "item")
+            ))
+        })
+        .flatten();
+    // The field's card: its top is the field, which draws itself above it
+    // (`Shell::omnibox_card`), the rows under a line.
+    let rows = div()
         .p_1()
         .flex()
         .flex_col()
-        .rounded_lg()
-        .border_1()
+        .border_t_1()
         .border_color(theme.border)
-        .bg(theme.bg)
-        .text_color(theme.text)
-        .shadow_md()
-        .occlude()
+        .children(kept.map(|kept| {
+            div()
+                .px_2()
+                .pt_1()
+                .pb_1()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .child(
+                    gpui::svg()
+                        .path("toolbar/filter.svg")
+                        .size(px(13.))
+                        .flex_none()
+                        .text_color(theme.text_muted),
+                )
+                .child(kept)
+        }))
         .child(list)
         .children(reading.map(|reading| {
             div()
@@ -2243,7 +2287,24 @@ pub fn dropdown(
                 .text_color(theme.text_muted)
                 .child(footer(shell, typed, omni.scopes)),
         );
-    Some(anchor.popup_right(panel))
+    let panel = div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .rounded_xl()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.bg)
+        .text_color(theme.text)
+        .shadow_md()
+        .occlude()
+        .child(
+            div()
+                .flex_none()
+                .h(px(CARD_PAD + crate::address::FIELD_HEIGHT - 1.)),
+        )
+        .child(rows);
+    Some(anchor.popup_around(CARD_PRIORITY, px(CARD_PAD), px(CARD_LEAST), panel))
 }
 
 #[cfg(test)]

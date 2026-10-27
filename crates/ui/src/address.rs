@@ -16,6 +16,8 @@ use std::path::PathBuf;
 
 /// What the address field keeps before the view buttons fold into one.
 const FIELD_MIN: f32 = 180.;
+/// The address field's height, which the field's card leaves for it.
+pub(crate) const FIELD_HEIGHT: f32 = 30.;
 /// A pane row's height, and the sidebar header's.
 pub const PANE_ROW_HEIGHT: f32 = 42.;
 
@@ -1088,24 +1090,32 @@ fn pane_row(
             .children(crate::search_bar::after_trail(shell, chip_anchor, cx))
             .into_any_element(),
         // While a search is typed, where it looks stands before the text.
-        Address::Text => div()
-            .flex_1()
-            .w(px(0.))
-            .min_w_0()
-            .h_full()
-            .relative()
-            .flex()
-            .items_center()
-            .children(crate::omnibox::scope_token(shell, cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .px_2()
-                    .child(shell.ui().address.clone()),
-            )
-            .child(omni_anchor.marker())
-            .into_any_element(),
+        // Over the field's card (`omnibox::dropdown`), the text draws above
+        // the card, where it is typed.
+        Address::Text => {
+            let typed = div()
+                .flex_1()
+                .w(px(0.))
+                .min_w_0()
+                .h_full()
+                .flex()
+                .items_center()
+                .children(crate::omnibox::scope_token(shell, cx))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .px_2()
+                        .child(shell.ui().address.clone()),
+                );
+            if shell.omnibox_card() {
+                gpui::deferred(typed)
+                    .with_priority(crate::omnibox::CARD_PRIORITY + 1)
+                    .into_any_element()
+            } else {
+                typed.into_any_element()
+            }
+        }
     };
     // Tab completes while there is something to complete (`completes`).
     let mut context = gpui::KeyContext::default();
@@ -1117,7 +1127,7 @@ fn pane_row(
         .id(("address-field", pane.0 as usize))
         .flex_1()
         .min_w(px(FIELD_MIN))
-        .h(px(30.))
+        .h(px(FIELD_HEIGHT))
         .flex()
         .items_center()
         .rounded_md()
@@ -1125,7 +1135,9 @@ fn pane_row(
         .border_color(row.edge)
         .bg(theme.bg)
         .key_context(context)
-        .child(address);
+        .child(address)
+        // The field's card stands around all of it (`popup_around`).
+        .child(omni_anchor.marker());
     // Keep what the pane shows in the sidebar, a folder as a bookmark or a
     // search as a saved search, while a plugin keeps such locations:
     // filled when it is kept, and pressing it then takes it back with the

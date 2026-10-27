@@ -27,9 +27,9 @@ impl PopoverAnchor {
         )
     }
 
-    /// `panel` under the anchor's right edge, reaching left: what it
-    /// covers is at the right of what the anchor is over (the address
-    /// field's dropdown leaves the names of the list below it in sight).
+    /// `panel` under the anchor's right edge, reaching left: it stays
+    /// where it is as what is before the anchor comes and goes (the view
+    /// buttons' menu).
     pub fn popup_right(&self, panel: impl IntoElement) -> AnyElement {
         let mut panel = Some(panel.into_any_element());
         hang(
@@ -39,6 +39,59 @@ impl PopoverAnchor {
             Room::Side,
             move || panel.take(),
         )
+    }
+
+    /// `panel` around what the anchor is over: `pad` before, above and
+    /// after it, at least `least` wide, moved left to stay in the window
+    /// but never short of the anchor's right edge. The address field's
+    /// card (ADR-098): its top is the field, which draws itself above the
+    /// card (deferred at a higher priority), so the text stays where it is
+    /// typed.
+    pub fn popup_around(
+        &self,
+        priority: usize,
+        pad: Pixels,
+        least: Pixels,
+        panel: impl IntoElement,
+    ) -> AnyElement {
+        let anchor = self.0.clone();
+        let panel = panel.into_any_element();
+        gpui::deferred(
+            canvas(
+                move |_, window, cx| {
+                    let bounds = anchor.get()?;
+                    let viewport = window.viewport_size();
+                    let width = (bounds.size.width + pad * 2.).max(least);
+                    let right = (viewport.width - MARGIN).max(bounds.right() + pad);
+                    let left = (bounds.left() - pad).min(right - width).max(px(0.));
+                    let top = bounds.top() - pad;
+                    let room = (viewport.height - top - MARGIN).max(px(120.));
+                    let mut popup = gpui::div()
+                        .w(width)
+                        .max_h(room)
+                        .flex()
+                        .flex_col()
+                        .child(panel)
+                        .into_any_element();
+                    popup.layout_as_root(
+                        size(AvailableSpace::Definite(width), AvailableSpace::MaxContent),
+                        window,
+                        cx,
+                    );
+                    popup.prepaint_at(gpui::point(left, top), window, cx);
+                    Some(popup)
+                },
+                |_, popup, window, cx| {
+                    if let Some(mut popup) = popup {
+                        popup.paint(window, cx);
+                    }
+                },
+            )
+            .absolute()
+            .size(px(0.)),
+        )
+        .with_priority(priority)
+        .into_any_element()
     }
 
     /// A popup whose content depends on the variant an adaptive row chose:

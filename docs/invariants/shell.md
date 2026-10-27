@@ -229,6 +229,17 @@ of bars, split or not.
     in the name before its folders, never letters strewn over a path.
   - The field's own source stays the paths and places it completes
     (below), read in their lane.
+- **The rows and the field are one card** (ADR-098, amended): typed in
+  and with rows, the field's card stands around it (`popover::
+  popup_around`, at the popups' priority), from just before its left
+  edge, as wide as the field (at least 430 px, moved left to stay in the
+  window, never short of the field's right edge); the rows go under a
+  line where the eye already is. The field's text and scope draw above
+  the card (deferred one priority higher, `omnibox::CARD_PRIORITY`), so
+  their key context, focus and pointer stay theirs; the card's top leaves
+  them the field's height (`address::FIELD_HEIGHT`), never a size read in
+  `render`. Over a folder the words filter, the card's first line counts
+  what they keep, as the footer does: the card hides the list's top.
 - **`?` alone** lists what the field takes: the shell's grammar (a path,
   a place's address from the schemes providers open, `@`, words, `>`)
   and the query plugin's terms with examples; Enter or Tab writes the

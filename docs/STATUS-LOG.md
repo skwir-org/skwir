@@ -5730,3 +5730,32 @@ those offered:
   funnels but their values are cut to nothing (the tooltip and the menu
   say them).
 
+### The address field's rows as one card with it (2026-10-27)
+
+- **Asked:** why the rows hang from the field's right end, when the text
+  is typed and read at its left. The reason was 530f71c3's: words typed
+  over a folder filter it at once, and rows from the left would hide the
+  names being filtered. The rows have grown (the search, its reading, Go,
+  Recent, Tabs, Search in) and cover the list either way. Three mock-ups
+  were added to the omnibar page (from the right, attached, merged); the
+  user chose merged.
+- **Built:** `PopoverAnchor::popup_around` hangs a panel around its
+  anchor, sized from the anchor's bounds in the deferred prepaint: 5 px
+  before, above and after it, at least 430 px wide, moved left to stay in
+  the window but never short of the anchor's right edge. The field's
+  marker is now on the whole field (its keep and tag buttons under the
+  card while typing). `omnibox::dropdown` is that card: the field's room
+  (`address::FIELD_HEIGHT`, no size read in `render`), a line, a first
+  line saying what the filter keeps over a folder ("This folder as you
+  type: 8 of 13 items", the footer's count), the rows. The field's scope
+  and text are deferred one priority above the card
+  (`Shell::omnibox_card`), so they draw above it in their place with
+  their key context, focus and pointer.
+- **Checked:** a real window on Xvfb: Ctrl+F and `jpg` (the card around
+  the field, the count, Down moving the highlight), a click into the text
+  above the card placing the caret (`x` typed before `jpg`), Ctrl+L with
+  `~/Pro` in a split pane (the card at 430 px over the pane's view
+  buttons, the completion drawn). `just a11y-check` on the debug build
+  passed: the field, its text read back, the rows as a list box beside
+  it, the scope's token.
+
