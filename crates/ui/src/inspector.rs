@@ -564,7 +564,41 @@ pub struct State {
     pub(crate) bytes: Option<crate::bytes_view::BytesView>,
     /// A table or bytes wider than the panel, scrolled sideways.
     sideways: gpui::ScrollHandle,
+    /// The tools the sections of this file offered (`Offered`).
+    offered: Offered,
 }
+
+/// What the bar of a file looked at one way has offered: a tool one of its
+/// sections offered (a sheet, a chapter, a part) stays for the others,
+/// disabled where one has nothing for it, so turning a page never adds a
+/// button or takes one away (previews.md, "The toolbar"). Gathered as each
+/// section arrives (`State::arrived`); another way of looking at the file
+/// (its kind: the source, the bytes, 3D) and another file start again.
+#[allow(clippy::struct_excessive_bools)] // One a tool, each offered or not.
+#[derive(Clone, Copy, Default)]
+struct Offered {
+    kind: Option<InspectionKind>,
+    contents: bool,
+    folds: bool,
+    sized: bool,
+    whole: bool,
+}
+
+impl Offered {
+    fn add(&mut self, data: &Inspection) {
+        if self.kind != Some(data.kind) {
+            *self = Offered {
+                kind: Some(data.kind),
+                ..Offered::default()
+            };
+        }
+        self.contents |= has_contents(data);
+        self.folds |= folds(data);
+        self.sized |= !data.blocks.is_empty();
+        self.whole |= data.whole_available;
+    }
+}
+
 impl State {
     /// Whether what is shown is wider than the panel: lines that do not
     /// wrap, a table or bytes. The arrows then move it sideways rather than
@@ -604,6 +638,7 @@ impl Default for State {
             text: None,
             bytes: None,
             sideways: gpui::ScrollHandle::new(),
+            offered: Offered::default(),
         }
     }
 }
@@ -731,6 +766,7 @@ impl State {
             self.request.source = origin.1.source;
         }
         self.section_input = None;
+        self.offered.add(data);
         self.page_starts = page_starts(data);
         (self.at_edge, self.turn) = (0, crate::reader_scroll::WheelTurn::default());
         if std::mem::take(&mut self.land_at_end) {
@@ -1882,8 +1918,10 @@ impl Shell {
             || (action == "back" && self.preview.inspection.request.target.is_none());
         if nested {
             // Another file is shown, or the container again: how the last
-            // one was looked at (a provider, a page, a search) was its own.
+            // one was looked at (a provider, a page, a search) was its own,
+            // and so were the tools its sections offered.
             self.preview.inspection.request = InspectRequest::default();
+            self.preview.inspection.offered = Offered::default();
             // A track stepped to by the player says so after this.
             self.preview.autoplay = None;
         }
@@ -1939,8 +1977,9 @@ impl Shell {
                 }
             }
             // All of this file, past the bounds that keep a preview quick:
-            // for this file only, never remembered.
-            "whole" => state.request.whole = true,
+            // for this file only, never remembered. The lit button asks
+            // for the quick preview again (`on`: false).
+            "whole" => state.request.whole = args["on"].as_bool().unwrap_or(true),
             "page" => {
                 state.request.offset = args["offset"].as_u64().unwrap_or(0);
                 state.request.target = None;
@@ -2267,8 +2306,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         crate::preview_bar::close_tool(&mut bar, shell, theme);
     }
     // Numbered sections (a book's chapters) are gone through as a
-    // document's pages are: previous, the number as a field, next, the
-    // buttons there even when there is nowhere to go.
+    // document's pages are: previous, the number as a field, next.
     let numbered = data.sections > 0;
     // Counted by printed pages, the same tools turn and show those.
     let printed = counts_printed(shell, data);
@@ -2303,7 +2341,12 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             .args(args.unwrap_or_else(|| serde_json::json!({})))
             .enabled(enabled)
     };
-    if numbered || previous.is_some() {
+    // A file of more than one section (sheets, pages of rows, parts) has
+    // both arrows on every one of them, the one with nowhere to go
+    // disabled, as a document's are: every section but a lone one has a
+    // neighbour.
+    let paged = numbered || previous.is_some() || next.is_some();
+    if paged {
         bar.push(Item::button(
             Slot::Navigate,
             2,
@@ -2346,7 +2389,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             theme,
         );
     }
-    if numbered || next.is_some() {
+    if paged {
         bar.push(Item::button(
             Slot::Navigate,
             2,
@@ -2359,7 +2402,11 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         crate::preview_toolbar::picture_tools(&mut bar, shell);
     }
 
-    if data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book {
+    // What a section of the file offered stays for its others, disabled
+    // where one has nothing for it (`Offered`).
+    let offered = state.offered;
+    if offered.contents {
+        let contents = has_contents(data);
         bar.push(Item::button(
             Slot::Lead,
             1,
@@ -2369,7 +2416,8 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                 label::CONTENTS,
                 "ui.preview_contents",
             )
-            .active(state.outline),
+            .active(state.outline && contents)
+            .enabled(contents),
         ));
     }
 
@@ -2395,11 +2443,12 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
         )));
     }
     // Folding is offered where there is something to fold.
-    if data.kind == InspectionKind::Archive || !data.folds.is_empty() {
+    if offered.folds {
+        let folding = folds(data);
         bar.push(Item::button(
             Slot::View,
             0,
-            button("inspect-expand-all", "unfold", "Expand all", "expand_all"),
+            button("inspect-expand-all", "unfold", "Expand all", "expand_all").enabled(folding),
         ));
         bar.push(Item::button(
             Slot::View,
@@ -2409,16 +2458,18 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                 "fold",
                 "Collapse all",
                 "collapse_all",
-            ),
+            )
+            .enabled(folding),
         ));
     }
     // Text size, as a document's zoom: smaller, the size as a picker,
     // larger; the same keeps, so both rows give way alike.
-    if !data.blocks.is_empty() {
+    let sized = !data.blocks.is_empty();
+    if offered.sized {
         bar.push(Item::button(
             Slot::View,
             1,
-            button("inspect-smaller", "minus", "Smaller text", "smaller"),
+            button("inspect-smaller", "minus", "Smaller text", "smaller").enabled(sized),
         ));
         bar.push(
             Item::button(
@@ -2431,14 +2482,15 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                     "ui.preview_menu",
                 )
                 .args(serde_json::json!({"kind":"text"}))
-                .label(text_size_label(state.font_size)),
+                .label(text_size_label(state.font_size))
+                .enabled(sized),
             )
             .opens("text"),
         );
         bar.push(Item::button(
             Slot::View,
             1,
-            button("inspect-larger", "plus", "Larger text", "larger"),
+            button("inspect-larger", "plus", "Larger text", "larger").enabled(sized),
         ));
         bar.popups.push((
             "text",
@@ -2448,14 +2500,13 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
     // What is read in a column may take the whole panel instead: the
     // Reading width preference, from where it shows. It stands where a
     // document's Fit width does, after the size, and goes to More first.
-    if !data.blocks.is_empty()
-        && matches!(data.kind, InspectionKind::Markdown | InspectionKind::Book)
-    {
+    if offered.sized && matches!(data.kind, InspectionKind::Markdown | InspectionKind::Book) {
         bar.push(Item::button(
             Slot::View,
             0,
             Button::new("inspect-full-width", "width", "Full width", "ui.full_width")
-                .active(shell.reading_measure.is_none()),
+                .active(shell.reading_measure.is_none())
+                .enabled(sized),
         ));
     }
     // How the file is shown, after its size, as a document's Continuous is:
@@ -2485,9 +2536,12 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             .active(data.kind == InspectionKind::Model),
         ));
     }
-    // What was cut short to stay quick: all of it, asked.
-    if data.whole_available {
-        crate::preview_bar::whole_tool(&mut bar);
+    // What was cut short to stay quick: all of it, asked, and lit while
+    // so, also where the way of looking changed since (the source). 3D
+    // reads the whole model as it turns, which is no Full preview.
+    let whole = request.whole && data.kind != InspectionKind::Model;
+    if offered.whole || whole {
+        crate::preview_bar::whole_tool(&mut bar, whole, whole || data.whole_available);
     }
     if data.source_available {
         bar.push(Item::button(
@@ -2518,17 +2572,26 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
                 .active(shell.prefs.wrap_lines),
         ));
     }
-    // Numbered sections say where they are in their field.
+    // Numbered sections say where they are in their field. What the others
+    // say changes with them (a sheet's name, lines as they are counted), so
+    // it takes the room the tools leave, cut short, and never decides which
+    // of them fit: its natural width is its least.
     if !caption.is_empty() && !numbered {
         let (caption, muted) = (caption.to_owned(), theme.text_muted);
-        bar.push(Item::widget(Slot::View, 0, move |_, _| {
-            div()
-                .text_xs()
-                .whitespace_nowrap()
-                .text_color(muted)
-                .child(caption.clone())
-                .into_any_element()
-        }));
+        bar.push(
+            Item::widget(Slot::View, 0, move |_, _| {
+                div()
+                    .flex_1()
+                    .w_0()
+                    .min_w(px(64.))
+                    .text_xs()
+                    .truncate()
+                    .text_color(muted)
+                    .child(caption.clone())
+                    .into_any_element()
+            })
+            .fills(),
+        );
     }
 
     if finds(data.kind) {
@@ -2650,6 +2713,12 @@ pub fn notice(display: &Display) -> Option<String> {
 /// Whether what is shown has contents: headings, or a book's chapters.
 fn has_contents(data: &Inspection) -> bool {
     data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book
+}
+
+/// Whether what is shown has something to fold: an archive's folders, a
+/// code block's ranges.
+fn folds(data: &Inspection) -> bool {
+    data.kind == InspectionKind::Archive || !data.folds.is_empty()
 }
 
 /// What is shown in the shared contents, while they are open and there
@@ -3707,6 +3776,45 @@ mod tests {
         assert!(state.outline, "the next chapter keeps them open");
         state.arrived(&chapter(1), true);
         assert!(state.outline, "the chapter read again too");
+    }
+
+    /// What a part of a file offered stays for its other parts, which
+    /// disable it instead (`bar`); its source, another way of looking,
+    /// gathers its own, and so does a new file.
+    #[test]
+    fn a_tool_a_part_offered_stays_for_the_others() {
+        use super::*;
+        let part = |kind, position, heading, cut| {
+            Display::new(
+                Inspection {
+                    kind,
+                    position,
+                    blocks: vec![Block {
+                        text: "Text".into(),
+                        heading,
+                        ..Block::default()
+                    }],
+                    whole_available: cut,
+                    previous: position.checked_sub(1),
+                    next: Some(position + 1).filter(|next| *next < 3),
+                    ..Inspection::default()
+                },
+                &crate::code_preview::CodeTheme::own(false),
+            )
+        };
+        let mut state = State::default();
+        state.arrived(&part(InspectionKind::Markdown, 0, 1, true), false);
+        state.arrived(&part(InspectionKind::Markdown, 1, 0, false), false);
+        let offered = state.offered;
+        assert!(offered.contents && offered.whole && offered.sized);
+        assert!(!offered.folds, "nothing offered folding");
+        state.arrived(&part(InspectionKind::Code, 1, 0, false), false);
+        assert!(
+            !state.offered.contents && !state.offered.whole,
+            "the source offers its own"
+        );
+        let state = State::default();
+        assert!(!state.offered.contents, "a new file starts again");
     }
 
     /// The part shown: a book's chapter by the section shown and where in

@@ -1,7 +1,8 @@
 # ADR-068: Full preview reads one file past the bounds that keep a preview quick
 
 Status: accepted, 2026-10-19. Built and checked on Linux; Windows and
-macOS compiled.
+macOS compiled. Amended 2026-10-28 (the button stays with the file: lit
+while on, disabled on a section it shows no more of).
 
 ## Context
 
@@ -45,7 +46,11 @@ macOS compiled.
    `inspection::TooLarge`. The panel offers Full preview for those and no
    other: a text file refused is shown as written with the button, any
    other file says why with the button (`PreviewContent::TooLarge`), and a
-   file past the larger bound says so with none.
+   file past the larger bound says so with none. Offered once, it stays
+   with the file (amended 2026-10-28): lit while on, where a click asks
+   for the quick preview again (`ui.inspect` `whole` with `on`), and
+   disabled on a section of it (a sheet, a chapter) it would show no
+   more of, so neither asking nor turning a page takes the button away.
 4. **No setting.** The bounds are not the user's to set: one number would
    cut across bounds each preview chose for its own cost, and a setting
    raised once makes every preview slow for the sake of one file. The

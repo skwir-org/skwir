@@ -20,7 +20,10 @@ contributors). The rules for working on preview code are in
   Properties fills the panel when there is nothing to preview. Click a value
   to copy it.
 - **The bar** holds the tools of the kind shown; in a narrow panel the
-  less used ones move into More. Every tool is also a palette command
+  less used ones move into More. Its tools stay as you go through a
+  file: on a workbook's first sheet or a book's last chapter the arrow
+  with nowhere to go is greyed out, not gone, and so is a tool another
+  part of the file had a use for. Every tool is also a palette command
   (`Preview: …`, `Player: …`).
 - **Fullscreen.** A picture, a document's pages, text, a film or music
   goes on the whole screen with the bar's Fullscreen button, `F`, or a
@@ -62,9 +65,10 @@ contributors). The rules for working on preview code are in
   [Limits](#limits)). A file past them is shown in part (a long
   document's first blocks, a wide table's first columns, a large
   archive's first members), as its text, or not at all, and says so;
-  **Full preview** in the bar then reads all of it, up to larger bounds.
-  It applies to that file only, while it is shown: the next file, or the
-  same one selected again, is quick again.
+  **Full preview** in the bar then reads all of it, up to larger bounds,
+  and stays lit; click it again for the quick preview. It applies to that
+  file only, while it is shown: the next file, or the same one selected
+  again, is quick again.
 - **Find.** `Ctrl+F` searches the preview that has the keyboard; the
   search button is always there. Searching again continues after the
   last match: a text file is searched whole, either way and around its

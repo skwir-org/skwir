@@ -318,8 +318,10 @@ pub fn close_tool(bar: &mut Bar, shell: &Shell, theme: &Theme) {
 
 /// Full preview: all of a file a preview cut short or refused to stay
 /// quick, read again past those bounds (`InspectRequest::whole`), for this
-/// file only. The same tool in every kind's bar that has it.
-pub fn whole_tool(bar: &mut Bar) {
+/// file only. The same tool in every kind's bar that has it: lit while `on`,
+/// where a click asks for the quick preview again, and disabled where it
+/// would show no more (`enabled`) rather than gone.
+pub fn whole_tool(bar: &mut Bar, on: bool, enabled: bool) {
     bar.push(Item::button(
         Slot::View,
         2,
@@ -329,8 +331,10 @@ pub fn whole_tool(bar: &mut Bar) {
             "All of this file, past the size a preview keeps to",
             "ui.inspect",
         )
-        .args(serde_json::json!({"action":"whole"}))
-        .label(label::WHOLE),
+        .args(serde_json::json!({"action":"whole","on":!on}))
+        .label(label::WHOLE)
+        .active(on)
+        .enabled(enabled),
     ));
 }
 

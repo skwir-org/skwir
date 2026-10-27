@@ -61,7 +61,9 @@ is binding, like `AGENTS.md`.
   Full preview would not lift never offers it. The panel shows a refused
   text file as written with Full preview offered (`source_instead`), any
   other as `PreviewContent::TooLarge`, and puts **Full preview** in the
-  bar for both (`preview_bar::whole_tool`).
+  bar for both (`preview_bar::whole_tool`). Asked, it stays, lit, where a
+  click asks for the quick preview again; a section of the file it would
+  show no more of has it disabled (`inspector::Offered`, "The toolbar").
 - **For the file shown only.** `whole` lives in the panel's request,
   reset with the file (`cancel_preview`) and for a member gone down into;
   never in a type's memory (`SourceTypes`, `TurnedTypes`) nor the
@@ -846,6 +848,18 @@ is still to come are in `docs/preview-frame.md`.
 - An item states the narrowest of the three variants that still shows
   it (`keep`). Text and a page give way alike: a tool in the same place
   has the same `keep`.
+- **A tool stays while its file is shown.** Turning a page, a sheet or a
+  chapter never adds a button or takes one away: one that cannot act
+  where the user is, is disabled, as the reader's are. A file of more
+  than one section has both arrows on every one, the one with nowhere to
+  go disabled. What one section offered (Contents, folding, the text
+  size, Full preview) stays for the others (`inspector::Offered`,
+  gathered as each arrives); another file starts again, and so does
+  another way of looking at it (its kind: the source, the bytes, 3D),
+  which has tools of its own. A tool a click turns on stays, lit (Source,
+  Full preview). What a section says of itself (a sheet's name, lines as
+  they are counted) takes the room the tools leave, cut short, and never
+  decides which of them fit: its natural width is its least.
 - Copy has no button: it is Ctrl+C and the content's right-click menu
   (`Shell::open_preview_menu`), where people look for it. An action too
   rare for a button in any variant (View as hex) is `Item::menu_only`,

@@ -6302,3 +6302,34 @@ those offered:
   "Search “#print”", Enter showing the four files tagged print under a
   print pill; `#3` showing nothing found and Names. Not run:
   `just check-cross`, `just a11y-check`, `just release-check`.
+
+### A preview's tools stay as its pages turn (2026-10-28, ADR-068 amended)
+
+- **Built:** a file of more than one section (a workbook's sheets, a
+  table's pages of rows, a document's parts, a font's character sheets,
+  a book's chapters) has both arrows on every section, the one with
+  nowhere to go disabled, as the reader's are; before, the arrow went
+  away on the first and last. What a section offered (Contents, Expand
+  and Collapse all, the text size and Full width, Full preview) stays
+  for the file's other sections, disabled where one has nothing for it
+  (`inspector::Offered`, gathered in `State::arrived`, started again for
+  another file, a member, or another kind: the source, the bytes, 3D).
+  Full preview stays once asked, lit, a click going back to the quick
+  preview (`ui.inspect` `whole` with `on`; the palette's still asks for
+  it), in the picture's bar too and after Source. The caption beside
+  the tools (a sheet's name and rows, lines as they are counted) takes
+  the room they leave, cut short, instead of deciding which variant of
+  the bar fits: a longer sheet name hid the caption and could send the
+  widest variant's buttons to More. Rule in `docs/invariants/previews.md`
+  ("The toolbar", Full preview), the guide's bar and Full preview.
+- **Checked:** rustfmt; clippy (`-D warnings`) and the tests of
+  `skwir-ui` (393 passed, among them what a part offered staying for
+  the others and the source gathering its own). On Xvfb at 1280 × 860,
+  a debug build: a synthetic workbook of three sheets shows both arrows
+  on each, Previous disabled on the first and Next on the last, and the
+  caption on all three, cut short where long; a CSV of 100 columns shows
+  Full preview, lit after the click with every column read, unlit again
+  with "6 rows cut to 64 columns" after a second click, and still lit in
+  Source. Not checked in a window: books, documents' parts, fonts and
+  the picture's bar (their bars take the same code). Not run:
+  `just check-cross`, `just a11y-check`, `just release-check`.

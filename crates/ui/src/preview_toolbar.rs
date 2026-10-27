@@ -227,9 +227,11 @@ pub fn render(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> AnyEleme
     if image {
         zoom_tools(&mut bar, shell);
     }
-    // Refused to stay quick: all of it, asked.
-    if matches!(shell.preview.content, Some(PreviewContent::TooLarge(_))) {
-        crate::preview_bar::whole_tool(&mut bar);
+    // Refused to stay quick: all of it, asked, and lit while so (a picture
+    // decoded whole, or past even Full preview's bounds).
+    let whole = shell.preview.inspection.request.whole;
+    if whole || matches!(shell.preview.content, Some(PreviewContent::TooLarge(_))) {
+        crate::preview_bar::whole_tool(&mut bar, whole, true);
     }
     if shell.walks_pictures() {
         picture_tools(&mut bar, shell);
