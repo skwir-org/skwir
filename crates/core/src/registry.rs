@@ -579,6 +579,14 @@ pub struct KeyBinding {
     pub when: Option<String>,
 }
 
+/// What reads a filter's text into a test of what the listing knows
+/// (`workspace::ReadFilter`); `None` when it cannot read it, and names
+/// that hold the text are shown.
+#[derive(Clone)]
+pub struct FilterReader(
+    pub Arc<dyn Fn(&str) -> Option<crate::workspace::ReadFilter> + Send + Sync>,
+);
+
 /// All UI registries.
 pub struct Registry {
     pub views: Contributions<ViewSpec>,
@@ -597,6 +605,11 @@ pub struct Registry {
     /// What plugins know of the remotes mounted (ADR-077): each one's
     /// address, name and thumbnails, by its mount point.
     pub remotes: Contributions<crate::fs::reach::Known>,
+    /// What the address field offers as it is typed in (ADR-098).
+    pub suggesters: Contributions<crate::suggest::Suggester>,
+    /// What reads the words typed over a folder into a test (ADR-098, the
+    /// query plugin's); the first registered is asked.
+    pub filter_readers: Contributions<FilterReader>,
     /// The names the user gave sidebar places (ADR-034), by group and
     /// `Place::key`: the sidebar publishes its arrangement's, so a tab, a
     /// toast and `tab.list` name a place as the sidebar does.
@@ -619,6 +632,8 @@ impl Default for Registry {
             keepers: Contributions::gated(Arc::clone(&gate)),
             aspects: Contributions::gated(Arc::clone(&gate)),
             remotes: Contributions::gated(Arc::clone(&gate)),
+            suggesters: Contributions::gated(Arc::clone(&gate)),
+            filter_readers: Contributions::gated(Arc::clone(&gate)),
             titles: RwLock::default(),
             gate,
         }
@@ -672,6 +687,8 @@ impl Registry {
         self.keepers.remove_owner(owner);
         self.aspects.remove_owner(owner);
         self.remotes.remove_owner(owner);
+        self.suggesters.remove_owner(owner);
+        self.filter_readers.remove_owner(owner);
     }
 }
 

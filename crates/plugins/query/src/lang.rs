@@ -91,6 +91,35 @@ use grep_regex::RegexMatcher;
 use skwir_core::entry::{EntryKind, Metadata, Value, keys};
 use skwir_platform::calendar::{Calendar, Period, civil_day, civil_from_days};
 
+/// Types asked by name once per suffix (`.jpg`, `.tar.gz`), as
+/// `mime::by_names` asks a large selection: the filter typed over a folder
+/// tests every name at each key, and a hundred thousand names asked one by
+/// one cost the window's thread most of a second. A name with no suffix is
+/// asked as it is; one only a whole-name pattern knows (`CMakeLists.txt`)
+/// takes its suffix's type. Kept for one filter, let go of with it.
+#[derive(Default)]
+pub struct Types(
+    parking_lot::Mutex<std::collections::HashMap<String, Option<skwir_platform::mime::Mime>>>,
+);
+
+impl Types {
+    /// The type `name` says, its suffix's.
+    pub fn of(&self, name: &OsStr) -> Option<skwir_platform::mime::Mime> {
+        let text = name.to_string_lossy();
+        let start = text.len() - text.trim_start_matches('.').len();
+        let Some(at) = text[start..].find('.') else {
+            return skwir_platform::mime::by_name(name);
+        };
+        let suffix = &text[start + at..];
+        if let Some(known) = self.0.lock().get(suffix) {
+            return known.clone();
+        }
+        let found = skwir_platform::mime::by_name(OsStr::new(&format!("file{suffix}")));
+        self.0.lock().insert(suffix.to_owned(), found.clone());
+        found
+    }
+}
+
 /// A parsed query: the boolean expression plus walk options.
 #[derive(Clone, Debug)]
 pub struct Query {
@@ -1381,7 +1410,8 @@ impl fmt::Display for Query {
 // ---------------------------------------------------------------- needs
 
 impl Expr {
-    fn any_term(&self, pred: &dyn Fn(&Term) -> bool) -> bool {
+    /// Whether one of its terms is what `pred` asks.
+    pub fn any_term(&self, pred: &dyn Fn(&Term) -> bool) -> bool {
         match self {
             Expr::Term(t) => pred(t),
             Expr::Not(e) => e.any_term(pred),
@@ -1537,6 +1567,8 @@ pub struct Candidate<'a> {
     opens: Option<(EntryKind, &'a OsStr)>,
     /// Without it, a place or `taken` term is never decided.
     late: Option<Late<'a>>,
+    /// Types asked once per suffix, for many names at each key ([`Types`]).
+    types: Option<&'a Types>,
     /// The name as text, and lowercased, computed once for all the terms.
     text: Cow<'a, str>,
     lowered: OnceCell<String>,
@@ -1556,6 +1588,7 @@ impl<'a> Candidate<'a> {
             metadata,
             opens: (kind != EntryKind::Symlink).then_some((kind, name)),
             late: None,
+            types: None,
             text: name.to_string_lossy(),
             lowered: OnceCell::new(),
         }
@@ -1566,6 +1599,22 @@ impl<'a> Candidate<'a> {
         Candidate {
             opens: Some((entry.opens(), entry.type_name())),
             ..Candidate::new(&entry.name, entry.kind, path, Some(&entry.metadata))
+        }
+    }
+
+    /// The same candidate, its type asked of `types`.
+    #[must_use]
+    pub fn with_types(mut self, types: &'a Types) -> Self {
+        self.types = Some(types);
+        self
+    }
+
+    /// The type the name that says it gives, asked of the candidate's
+    /// [`Types`] when it has them.
+    fn type_of(&self, name: &OsStr) -> Option<skwir_platform::mime::Mime> {
+        match self.types {
+            Some(types) => types.of(name),
+            None => skwir_platform::mime::by_name(name),
         }
     }
 
@@ -1656,9 +1705,7 @@ impl Term {
                 // A folder, a pipe, a device: what it is, whatever its name.
                 Some((kind, name)) => yes_no(match kind.inode_type() {
                     Some(inode) => g.is_match(inode),
-                    None => {
-                        skwir_platform::mime::by_name(name).is_some_and(|m| g.is_match(m.as_str()))
-                    }
+                    None => c.type_of(name).is_some_and(|m| g.is_match(m.as_str())),
                 }),
             },
             Term::Kind(kinds) => {
@@ -1672,7 +1719,7 @@ impl Term {
                         Verdict::No
                     }
                     Some((_, name)) => yes_no(
-                        skwir_platform::mime::by_name(name)
+                        c.type_of(name)
                             .is_some_and(|m| kinds.iter().any(|k| is_kind(&m, *k))),
                     ),
                 }

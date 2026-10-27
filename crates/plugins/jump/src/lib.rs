@@ -337,6 +337,101 @@ fn go(app: &App, pane: PaneId, path: &Path, cancel: &CancelToken) -> anyhow::Res
     Ok(())
 }
 
+/// What the address field offers of what Jump knows (ADR-098): the folders
+/// and files one goes to whose names go with the words, the best first;
+/// before anything is typed with no scope, those one goes to most.
+struct Places {
+    index: Arc<Mutex<Index>>,
+    gathered: Arc<FirstGathering>,
+    lifetime: CancelToken,
+}
+
+/// How many places the address field shows.
+const FIELD_PLACES: usize = 5;
+
+/// A folder as a row says it: from `~` under the home folder.
+fn from_home(path: &Path) -> String {
+    match skwir_core::os_path::home()
+        .and_then(|home| path.strip_prefix(home).ok().map(Path::to_path_buf))
+    {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
+}
+
+impl skwir_core::suggest::SuggestSource for Places {
+    fn id(&self) -> &'static str {
+        ID
+    }
+
+    fn answers(&self, ask: &skwir_core::suggest::Ask) -> bool {
+        use skwir_core::suggest::Typed;
+        match ask.typed {
+            Typed::Words => ask.words().chars().count() >= 2,
+            Typed::Nothing => ask.scope.is_none(),
+            _ => false,
+        }
+    }
+
+    fn suggest(
+        &self,
+        app: &App,
+        ask: &skwir_core::suggest::Ask,
+        _: &CancelToken,
+    ) -> skwir_core::suggest::Answer {
+        use skwir_core::suggest::{Answer, Section, Suggestion, Typed};
+        first_need(&self.gathered, &self.index, &self.lifetime, app);
+        let query = if ask.typed == Typed::Words {
+            ask.words()
+        } else {
+            ""
+        };
+        let ranked = {
+            let ix = self.index.lock();
+            rank(query, &ix.dirs, &ix.files, FIELD_PLACES + 1)
+        };
+        refresh(&self.index, &self.lifetime, app);
+        let shown = ask.dir.as_deref();
+        let rows = ranked
+            .into_iter()
+            .filter(|c| Some(c.path.as_path()) != shown)
+            .take(FIELD_PLACES)
+            .enumerate()
+            .map(|(i, c)| {
+                let dir = c.kind == "dir";
+                let name = c.path.file_name().map_or_else(
+                    || c.path.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                );
+                let mut row = Suggestion::new(Section::Go, name)
+                    .icon(if dir { "folder" } else { "open" })
+                    .rank(i32::try_from(i).unwrap_or(i32::MAX) + 20)
+                    .runs(Invocation::with_args(
+                        "jump.to",
+                        &serde_json::json!({ "path": PathArg::from(c.path.clone()), "pane": ask.pane }),
+                    ));
+                if let Some(parent) = c.path.parent() {
+                    row.detail = Some(from_home(parent));
+                }
+                if dir {
+                    row.scope = Some(Location::from_path(&c.path));
+                } else {
+                    row.open = Some(Invocation::with_args(
+                        "open",
+                        &serde_json::json!({ "entries": [PathArg::from(c.path.clone())], "pane": ask.pane }),
+                    ));
+                }
+                row
+            })
+            .collect();
+        Answer {
+            rows,
+            spans: Vec::new(),
+        }
+    }
+}
+
 impl Plugin for JumpPlugin {
     fn id(&self) -> &'static str {
         ID
@@ -357,6 +452,15 @@ impl Plugin for JumpPlugin {
     fn register(&self, app: &App) {
         let lifetime = app.lifetime().child();
         *self.lifetime.lock() = lifetime.clone();
+        // The places one goes to, offered by the address field (ADR-098).
+        app.registry.suggesters.add(
+            ID,
+            skwir_core::suggest::Suggester::new(Places {
+                index: Arc::clone(&self.index),
+                gathered: Arc::clone(&self.gathered),
+                lifetime: lifetime.clone(),
+            }),
+        );
         let index = Arc::clone(&self.index);
         let gathered = Arc::clone(&self.gathered);
         app.commands.register::<CandidatesArgs, _>(

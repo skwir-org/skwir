@@ -25,6 +25,10 @@ struct Snapshot {
     places: Vec<std::sync::Arc<str>>,
     /// Who knows of the remotes mounted (ADR-077), alike.
     remotes: Vec<std::sync::Arc<str>>,
+    /// What the address field offers (ADR-098), by who offers it.
+    suggesters: Vec<std::sync::Arc<str>>,
+    /// What reads the words typed over a folder (the query plugin).
+    filter_readers: Vec<std::sync::Arc<str>>,
     /// What keeps a kind of location in the sidebar (bookmarks, searches).
     keepers: Vec<String>,
     /// Other ways to see a folder, each a button of its address (its tags).
@@ -83,6 +87,8 @@ fn snapshot(app: &App) -> Snapshot {
         property_sources: app.registry.property_sources.all().len(),
         places: app.registry.places.owners(),
         remotes: app.registry.remotes.owners(),
+        suggesters: app.registry.suggesters.owners(),
+        filter_readers: app.registry.filter_readers.owners(),
         keepers: app
             .registry
             .keepers

@@ -10,7 +10,9 @@
 
 #[cfg(test)]
 mod any_input;
+pub mod assist;
 pub mod facets;
+pub mod field;
 pub mod lang;
 pub mod narrow;
 pub mod plocate;
@@ -61,6 +63,19 @@ struct SearchArgs {
     root: Option<PathArg>,
     #[serde(default)]
     pane: Option<PaneId>,
+    /// Remember it among the recent searches the address field offers
+    /// (what the field runs says so); never for an agent's call.
+    #[serde(default)]
+    remember: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+struct ForgetRecentArgs {
+    /// The search's words, as remembered.
+    expr: String,
+    /// Where it looked, as remembered.
+    #[serde(default)]
+    root: Option<PathArg>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -488,6 +503,17 @@ impl Plugin for QueryPlugin {
         app.wake();
     }
 
+    fn on_settings_changed(&self, app: &App, keys: &[String]) {
+        if keys.iter().any(|k| k == field::REMEMBER_KEY)
+            && !app
+                .settings
+                .get::<bool>(field::REMEMBER_KEY)
+                .unwrap_or(true)
+        {
+            field::forget_all(app);
+        }
+    }
+
     fn capabilities(&self) -> skwir_core::permissions::Capabilities {
         use skwir_core::permissions::Capability;
         skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
@@ -543,10 +569,44 @@ impl Plugin for QueryPlugin {
                     None => app.pane_dir(pane).ok(),
                 };
                 app.navigate(pane, &location_for(&a.expr, root.as_deref()))?;
+                if a.remember && skwir_core::permissions::agent_call().is_none() {
+                    field::remember(app, &a.expr, root.as_deref());
+                }
                 Ok(Outcome::Done)
             },
         )
         .shows();
+
+        app.commands.register::<ForgetRecentArgs, _>(
+            ID,
+            "query.forget_recent",
+            "Forget a recent search",
+            "Take a search out of those the address field offers as run lately",
+            |a, app| {
+                let root = a.root.map(|r| std::path::PathBuf::from(r.as_os_str()));
+                field::forget(app, &a.expr, root.as_deref());
+                Ok(Outcome::Done)
+            },
+        );
+        app.settings.declare(
+            SettingSpec::toggle(
+                field::REMEMBER_KEY,
+                "Remember recent searches",
+                "The address field offers the searches run from it lately, kept in the cache; turned off, they are forgotten.",
+                true,
+            )
+            .page(skwir_core::settings::page::GENERAL)
+            .section("Address"),
+        );
+        // What the address field offers as it is typed in, and how words
+        // typed over a folder filter it (ADR-098).
+        app.registry
+            .suggesters
+            .add(ID, skwir_core::suggest::Suggester::new(field::Field));
+        app.registry.filter_readers.add(
+            ID,
+            skwir_core::registry::FilterReader(Arc::new(narrow::read_filter)),
+        );
 
         let editor = Editor {
             saving: Arc::clone(&self.saving),
@@ -695,6 +755,50 @@ impl Plugin for QueryPlugin {
             },
         )
         .data();
+        // What the address field asks while it is typed in (`assist`).
+        app.commands
+            .register::<assist::TokensArgs, _>(
+                ID,
+                "query.tokens",
+                "Pieces of a search",
+                "`[{ range, kind, facet?, message? }]`: the pieces of a search's text as the parser reads them (word, key, value, option, operator, or an error with the parser's message), byte ranges; a term still being typed at `caret` is not an error yet",
+                |a, _| {
+                    let caret = a.caret.unwrap_or(a.text.len()).min(a.text.len());
+                    Ok(Outcome::Value(serde_json::to_value(assist::tokens_at(
+                        &a.text, caret,
+                    ))?))
+                },
+            )
+            .data();
+        app.commands
+            .register::<assist::CompleteArgs, _>(
+                ID,
+                "query.complete",
+                "Complete a search",
+                "`{ range, items: [{ label, text, detail?, icon, tag? }], typing }`: what the term ending at `caret` (bytes; the end when omitted) can go on with, each item's `text` written in place of `range`: the keys a word starts, a key's values (kinds, the pane's tags, periods, sizes, stars); `typing` when that term is still incomplete",
+                |a, app| {
+                    let caret = a.caret.unwrap_or(a.text.len());
+                    let tags = assist::pane_tags(app, a.pane);
+                    Ok(Outcome::Value(serde_json::to_value(assist::complete(
+                        &a.text, caret, &tags,
+                    ))?))
+                },
+            )
+            .data();
+        app.commands
+            .register::<assist::InterpretArgs, _>(
+                ID,
+                "query.interpret",
+                "Read words as a search",
+                "`{ label, expr }` or null: plain words read as terms by rules (periods and years, kinds, extensions, sizes, the pane's tags), the rest kept as names; never applied by itself",
+                |a, app| {
+                    let tags = assist::pane_tags(app, a.pane);
+                    Ok(Outcome::Value(serde_json::to_value(assist::interpret(
+                        &a.text, &tags,
+                    ))?))
+                },
+            )
+            .data();
         let similar_lifetime = lifetime.clone();
         app.commands.register::<SimilarArgs, _>(
             ID,

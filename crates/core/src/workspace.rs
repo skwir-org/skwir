@@ -558,10 +558,13 @@ pub struct Pane {
     /// The order `order` last gave, what is shown: where a cursor whose
     /// entry leaves the view goes from (`Selection::retain_near`).
     shown: parking_lot::Mutex<Option<Arc<[EntryId]>>>,
-    /// Only the entries whose name holds this are shown (`Pane::order`):
-    /// what is typed in the address field before Enter searches. The
-    /// pane's like its sort; showing another location clears it.
+    /// What is typed in the address field before Enter searches: only
+    /// the entries it keeps are shown (`Pane::order`). The pane's like its
+    /// sort; showing another location clears it.
     filter: Option<Arc<str>>,
+    /// The filter as the filter's reader read it (ADR-098), a test of
+    /// what the listing knows; `None`: names that hold the text.
+    read: Option<Arc<ReadFilter>>,
     /// Changes with the filter.
     filter_version: u64,
     /// What the folder's files are narrowed to, kept below the folder it
@@ -619,6 +622,44 @@ impl Narrowed {
     }
 }
 
+/// What words typed over a folder keep, as the filter's reader read them
+/// (ADR-098, the query plugin's): a test of what the listing knows, never
+/// of the file. A word finds names, of folders too; any other term holds
+/// for files, and every folder stays, as a narrowing keeps them.
+#[derive(Clone)]
+pub struct ReadFilter {
+    /// Whether an entry is shown. A file it cannot tell yet (its metadata
+    /// is still to come) is not, until it can.
+    pub keeps: Arc<dyn Fn(&Entry) -> bool + Send + Sync>,
+    /// A pill each after the trail: its words, the filter's text without
+    /// it (what its × leaves), and the tag it is about.
+    pub parts: Vec<FilterPart>,
+    /// What only a search can tell (what files contain, where they were
+    /// taken), left out until Enter: said where the count is.
+    pub waits: Vec<String>,
+    /// Whether it asks what the files' metadata says: the pane asks for
+    /// every file's.
+    pub metadata: bool,
+}
+
+impl std::fmt::Debug for ReadFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ReadFilter")
+            .field("parts", &self.parts)
+            .field("waits", &self.waits)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A part of a filter typed, as its pill says it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilterPart {
+    pub label: String,
+    /// The filter's text without this part.
+    pub without: String,
+    pub tag: Option<crate::metadata::TagRef>,
+}
+
 /// A pill: its words, and what takes it off.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pill {
@@ -637,10 +678,11 @@ fn shows<'a>(
     kept: &'a [Kept],
     expanded: &'a [Opened],
     filter: Option<&'a str>,
+    read: Option<&'a ReadFilter>,
     narrowed: Option<&'a Narrowed>,
     sort: SortSpec,
 ) -> impl Fn(EntryId) -> bool + 'a {
-    let filter = filter.map(NameFilter::new);
+    let filter = TextFilter::of(filter, read);
     let top = listing.shows(sort);
     let opened: Vec<_> = opened(kept, expanded)
         .map(|(_, k)| (&k.listing, k.listing.shows(sort)))
@@ -655,18 +697,41 @@ fn shows<'a>(
             .find_map(|(l, shows)| l.get(id).map(|e| (e, shows(id))));
         match found {
             Some((e, true)) => {
-                filter.as_ref().is_none_or(|f| f.holds(&e.name))
-                    && narrowed.is_none_or(|n| n.shows(e))
+                filter.as_ref().is_none_or(|f| f.keeps(e)) && narrowed.is_none_or(|n| n.shows(e))
             }
             _ => false,
         }
     }
 }
 
+/// The pane's filter as it is asked of each entry: its reader's test, or
+/// names that hold the text.
+enum TextFilter<'a> {
+    Names(NameFilter<'a>),
+    Read(&'a ReadFilter),
+}
+
+impl<'a> TextFilter<'a> {
+    fn of(text: Option<&'a str>, read: Option<&'a ReadFilter>) -> Option<Self> {
+        match (text, read) {
+            (Some(_), Some(read)) => Some(TextFilter::Read(read)),
+            (Some(text), None) => Some(TextFilter::Names(NameFilter::new(text))),
+            (None, _) => None,
+        }
+    }
+
+    fn keeps(&self, entry: &Entry) -> bool {
+        match self {
+            TextFilter::Names(names) => names.holds(&entry.name),
+            TextFilter::Read(read) => (read.keeps)(entry),
+        }
+    }
+}
+
 /// Whether the pane shows `entry`: its name holds the filter, and the
 /// narrowing keeps it.
-fn shown(filter: Option<&NameFilter>, narrowed: Option<&Narrowed>, entry: &Entry) -> bool {
-    filter.is_none_or(|f| f.holds(&entry.name)) && narrowed.is_none_or(|n| n.shows(entry))
+fn shown(filter: Option<&TextFilter>, narrowed: Option<&Narrowed>, entry: &Entry) -> bool {
+    filter.is_none_or(|f| f.keeps(entry)) && narrowed.is_none_or(|n| n.shows(entry))
 }
 
 /// Whether `name` holds `filter`: anywhere in it, case ignored unless the
@@ -738,6 +803,7 @@ impl Pane {
             order_cache: parking_lot::Mutex::new(None),
             shown: parking_lot::Mutex::new(None),
             filter: None,
+            read: None,
             filter_version: 0,
             narrowed: None,
             asked_by: None,
@@ -843,7 +909,7 @@ impl Pane {
             self.expanded.clear();
             self.expanded_changed();
         }
-        self.set_filter(None);
+        self.set_filter(None, None);
         // A narrowing stays below the folder it was set in.
         let below = |n: &Narrowed| {
             let open = self.location().and_then(Location::path);
@@ -883,15 +949,23 @@ impl Pane {
         self.filter_version
     }
 
-    /// Show only the entries whose name holds `text` (empty or `None`:
-    /// all). What is selected and no longer shown is deselected, as a
-    /// hidden file is: a Delete must not take what cannot be seen.
-    pub(crate) fn set_filter(&mut self, text: Option<&str>) {
+    /// The filter as its reader read it: its parts, what waits for a
+    /// search; `None` while names are filtered by the text, or nothing is.
+    pub fn read_filter(&self) -> Option<&ReadFilter> {
+        self.read.as_deref()
+    }
+
+    /// Show only the entries `text` keeps (empty or `None`: all), as
+    /// `read` tests them, else those whose name holds it. What is selected
+    /// and no longer shown is deselected, as a hidden file is: a Delete
+    /// must not take what cannot be seen.
+    pub(crate) fn set_filter(&mut self, text: Option<&str>, read: Option<ReadFilter>) {
         let text = text.map(str::trim).filter(|t| !t.is_empty());
         if self.filter.as_deref() == text {
             return;
         }
         self.filter = text.map(Arc::from);
+        self.read = text.and(read).map(Arc::new);
         self.filter_changed();
     }
 
@@ -1323,6 +1397,7 @@ impl Pane {
             &self.kept,
             &self.expanded,
             self.filter.as_deref(),
+            self.read.as_deref(),
             self.narrowed.as_ref(),
             self.sort,
         );
@@ -1341,6 +1416,7 @@ impl Pane {
             &self.kept,
             &self.expanded,
             self.filter.as_deref(),
+            self.read.as_deref(),
             self.narrowed.as_ref(),
             self.sort,
         )(id)
@@ -1693,7 +1769,8 @@ impl Pane {
         }
         // A narrowing reads metadata, which changes the listings' versions
         // and not always their order.
-        let listings = if self.narrowed.is_some() {
+        let listings = if self.narrowed.is_some() || self.read.as_ref().is_some_and(|r| r.metadata)
+        {
             (self.listing.version(), self.tree_version)
         } else {
             (0, 0)
@@ -1706,7 +1783,7 @@ impl Pane {
         {
             return Arc::clone(order);
         }
-        let filter = self.filter.as_deref().map(NameFilter::new);
+        let filter = TextFilter::of(self.filter.as_deref(), self.read.as_deref());
         let (filter, narrowed) = (filter.as_ref(), self.narrowed.as_ref());
         let order: Arc<[EntryId]> = all
             .iter()
@@ -2363,7 +2440,7 @@ mod tests {
             file: crate::FileId::new(1, ino),
             at: 0,
         }));
-        p.set_filter(Some("ÉTÉ"));
+        p.set_filter(Some("ÉTÉ"), None);
         assert!(p.selection.is_empty());
     }
 

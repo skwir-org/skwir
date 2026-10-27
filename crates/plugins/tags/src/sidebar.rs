@@ -67,6 +67,11 @@ fn rename(tag: &str) -> Invocation {
 }
 
 /// Where a tag's pill leads: its tag folder of the home folder.
+pub(crate) fn location_of(tag: &str) -> String {
+    location(tag)
+}
+
+/// Where a tag's pill leads: its tag folder of the home folder.
 fn location(tag: &str) -> String {
     crate::location::Address {
         tag: Some(tag.to_owned()),

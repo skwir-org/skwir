@@ -375,6 +375,77 @@ fn selected(app: &App, vocabulary: &Vocabulary, a: PaneArgs) -> anyhow::Result<s
     }))
 }
 
+/// What the address field offers of the tags: those whose names go with
+/// the words, pinned ones first, then the most recently used.
+struct TagSuggestions {
+    vocabulary: Arc<Vocabulary>,
+}
+
+/// How many tags the address field shows.
+const FIELD_TAGS: usize = 3;
+
+impl skwir_core::suggest::SuggestSource for TagSuggestions {
+    fn id(&self) -> &'static str {
+        ID
+    }
+
+    fn answers(&self, ask: &skwir_core::suggest::Ask) -> bool {
+        ask.typed == skwir_core::suggest::Typed::Words && ask.words().chars().count() >= 2
+    }
+
+    fn suggest(
+        &self,
+        app: &App,
+        ask: &skwir_core::suggest::Ask,
+        _: &CancelToken,
+    ) -> skwir_core::suggest::Answer {
+        use skwir_core::suggest::{Answer, Section, Suggestion};
+        let words = ask.words().to_lowercase();
+        let mut found: Vec<(i32, String)> = known(sidebar::pinned(app), self.vocabulary.known())
+            .into_iter()
+            .filter_map(|tag| {
+                let leaf = skwir_core::metadata::tag_leaf(&tag).to_lowercase();
+                let rank = if leaf.starts_with(&words) {
+                    0
+                } else if tag.to_lowercase().contains(&words) {
+                    1
+                } else {
+                    return None;
+                };
+                Some((rank, tag))
+            })
+            .collect();
+        found.sort_by_key(|(rank, _)| *rank);
+        let rows = found
+            .into_iter()
+            .take(FIELD_TAGS)
+            .enumerate()
+            .map(|(i, (rank, tag))| {
+                let location = skwir_core::location::Location::parse(&sidebar_location(&tag));
+                let mut row = Suggestion::new(Section::Go, skwir_core::metadata::tag_leaf(&tag))
+                    .detail(format!("Tag · {tag}"))
+                    .rank(rank * 10 + i32::try_from(i).unwrap_or(0) + 5)
+                    .runs(Invocation::with_args(
+                        "navigate",
+                        &serde_json::json!({ "location": location.arg(), "pane": ask.pane }),
+                    ));
+                row.tag = Some(skwir_core::metadata::TagRef::of(&tag));
+                row.scope = Some(location);
+                row
+            })
+            .collect();
+        Answer {
+            rows,
+            spans: Vec::new(),
+        }
+    }
+}
+
+/// Where a tag leads in the sidebar: its folder of tagged files.
+fn sidebar_location(tag: &str) -> String {
+    sidebar::location_of(tag)
+}
+
 /// The tags to offer: those pinned first, in their order, then the rest
 /// known, the most recently used first.
 fn known(pinned: Vec<String>, known: Vec<String>) -> Vec<String> {
@@ -578,6 +649,14 @@ impl Plugin for TagsPlugin {
             .section("Tags"),
         );
         let index = index::TagIndex::new(Some(app.cache.namespace(ID)), app, lifetime.clone());
+        // The tags whose names go with words typed in the address field,
+        // each going to its folder of tagged files (ADR-098).
+        app.registry.suggesters.add(
+            ID,
+            skwir_core::suggest::Suggester::new(TagSuggestions {
+                vocabulary: Arc::clone(&vocabulary),
+            }),
+        );
         app.metadata.register(
             ID,
             Arc::new(attrs::AttributesProvider {
