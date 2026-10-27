@@ -5962,3 +5962,65 @@ those offered:
   window (their tests pass); the README's screenshots, in Skwir's own
   colors, were not made again (its accent text a little darker).
 
+
+### Menus: submenus beside, choices in a row (2026-10-27)
+
+- **Asked:** "The submenus in contextual menus are not standard and a
+  bit confusing … is there a blocker?"; menu options with several
+  choices ("Split direction", "Preview position") as submenus or "a
+  button row aligned right on the lines"; the View menu reorganized "in
+  the same spirit". A proposal page with mock-ups (four steps, five
+  choices with my picks); the user: "Yes, perfect, go with your
+  recommendations." Then: regroup the file menu ("trash and delete are
+  more important than compress", More and Notes mix unrelated actions):
+  proposed as the page's version 2, waiting for the user's choices.
+- **Found:** submenus unfolded in place because of a comment that gpui
+  could not nest deferred draws; the gpui vendored on 2026-10-18 does
+  (`prepaint_deferred_draws` in rounds), and a sibling deferred draw at
+  a higher priority works anyway. Two menu families: context menus (31
+  px rows, keys) and toolbar popups (34 px, titles, no keys, the current
+  value filled like the hovered row). Plugins wrote state into titles.
+- **Built** (ADR-099), in four commits:
+  - cab66e25: popups that are menus draw as the context menu
+    (`toolbar::menu_panel`, `MENU_ROW`, keys, checks).
+  - 0eefc000: submenus beside their row (`PopoverAnchor::popup_beside`,
+    hover intent `menu::REST`, Right/Left, click-outside counting the
+    submenu, `aria_active_descendant_for` for its rows).
+  - 20b2deaf: `MenuItem::checked` and `choice` (`Choice`, `ChoiceLook`);
+    a choice drawn as one row (buttons, swatches, stars), a ring the keys
+    move and Enter chooses, the menu kept open; tags' colors, the rating
+    (answered by `tags.menu` with the selection's), a server's Thumbnails
+    and Connect at Login, "One … Tag at a Time" moved onto them;
+    `ui.menu_expand`/`collapse` repeat while held.
+  - 7dcf211d: View (tiles, Sort by with its direction, size on one row:
+    24 lines to 11) and More (check rows, three settings of segments: 21
+    lines to 10); `toolbar::MenuPart`, `Button::segment`, `Button::tile`,
+    Left/Right walking a setting's values.
+- **Checked:**
+  - Per commit: rustfmt, clippy (`-D warnings`) on the crates touched
+    (skwir-ui, skwir-core, the plugins whose items changed, skwir), and
+    their tests by nextest: skwir-ui whole (385), the tags plugin (65),
+    the remote plugin's, `remote_login`, `plugins_toggle`. New tests:
+    a submenu's items beside its row, separators with the submenus'
+    rows, a choice drawn as one row or as rows naming its value.
+  - `just a11y-check` on the debug build after each of the last three
+    commits, with two new checks: Right on a submenu's row says its
+    first item in a menu named by the row (a radio item of Rating, in
+    Notes), Left goes back. It caught the first star unclaimed while
+    "No rating" was chosen, and Left choosing instead of going back:
+    both fixed (the first star says none; a ring the keys move).
+  - A real window on Xvfb (the debug build, a synthetic folder): the
+    context menu, View and More drawn alike; a submenu opened by resting
+    on its row, moved up at the window's foot, flipped left at its right
+    edge, a click on its row running it (Open Tag), walked by keys; three
+    stars hovered and set with the menu open; a tag's color set by a
+    swatch, then by the keys (six presses, six values) and Enter, the
+    sidebar's pill following; View's sort by size, Largest, the grid
+    chosen with the menu open; More's preview at the bottom (the
+    toolbar's icon following), Split walked by Left/Right and Enter.
+  - `just release-check` was not run (the user's routine); nor was
+    `just check-cross`: the change was not compiled for Windows or
+    macOS.
+- **Not checked:** Wayland and the user's session; a server's Thumbnails
+  submenu in a window (no remote in the fixture; its rows tested); a
+  menu taller than the window with a submenu open.
