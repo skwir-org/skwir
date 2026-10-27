@@ -1261,7 +1261,19 @@ fn declare_suggest(app: &App) {
                     pane: Some(pane),
                 };
                 let cancel = app.lifetime().child();
-                let answer = skwir_core::suggest::gather(app, &ask, &cancel);
+                let mut answer = skwir_core::suggest::gather(app, &ask, &cancel);
+                // A path's names are the field's own: read here, in the
+                // caller's thread, as the field reads them in their lane.
+                if ask.typed == skwir_core::suggest::Typed::Path {
+                    let names = crate::omnibox::path_suggestions(
+                        app,
+                        ask.text.trim_start(),
+                        ask.dir.as_deref(),
+                        ask.pane,
+                        &cancel,
+                    );
+                    answer.rows.splice(0..0, names);
+                }
                 Ok(Outcome::Value(serde_json::to_value(answer)?))
             },
         )

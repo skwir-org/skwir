@@ -38,7 +38,7 @@ impl SuggestSource for Field {
 
     fn answers(&self, ask: &Ask) -> bool {
         match ask.typed {
-            Typed::Words | Typed::Scope => true,
+            Typed::Words | Typed::Scope | Typed::Help => true,
             Typed::Nothing => ask.scope.is_some(),
             Typed::Path | Typed::Place => false,
         }
@@ -51,6 +51,7 @@ impl SuggestSource for Field {
                 rows: vec![at_words(app, ask)],
                 spans: Vec::new(),
             },
+            Typed::Help => terms(),
             _ => typed(app, ask),
         }
     }
@@ -78,12 +79,13 @@ fn scope_said(app: &App, scope: &Location) -> String {
 
 /// The search of `expr` in `scope`, as the field runs it: a folder is its
 /// root, a tag adds itself as a term every match has, searched from home;
-/// any other place (Recent) is shown, what it lists filtered by `expr`.
+/// any other place (Recent) is searched as what it lists (`in:recent:`).
 pub fn search(expr: &str, scope: &Location, ask: &Ask) -> Invocation {
     if scope.path().is_none() && &*scope.scheme != "tags" {
+        let expr = format!("{expr} in:{}", lang::quote(&scope.to_string()));
         return Invocation::with_args(
-            "navigate",
-            &serde_json::json!({ "location": scope.arg(), "pane": ask.pane, "filter": expr }),
+            "query.search",
+            &serde_json::json!({ "expr": expr.trim(), "pane": ask.pane, "remember": true }),
         );
     }
     let (expr, root) = match (scope.path(), &*scope.scheme) {
@@ -256,6 +258,32 @@ fn typed(app: &App, ask: &Ask) -> Answer {
     Answer { rows, spans }
 }
 
+/// How many terms `?` lists.
+const TERMS_SHOWN: usize = 10;
+
+/// `?` alone: the terms of a search, each with examples, the most asked
+/// first; Enter or Tab writes the key.
+fn terms() -> Answer {
+    let rows = assist::terms()
+        .into_iter()
+        .take(TERMS_SHOWN)
+        .enumerate()
+        .map(|(rank, (written, icon, example))| {
+            let mut row = Suggestion::new(Section::Syntax, written.clone())
+                .detail(example)
+                .icon(icon)
+                .rank(i32::try_from(rank).unwrap_or(0));
+            row.typed = true;
+            row.completion = Some(written);
+            row
+        })
+        .collect();
+    Answer {
+        rows,
+        spans: Vec::new(),
+    }
+}
+
 /// `@…` typed: below the scopes the shell lists, the words searched as
 /// they are, for a name that starts with `@`.
 fn at_words(app: &App, ask: &Ask) -> Suggestion {
@@ -297,17 +325,25 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
         rows.push(row);
     }
     for (rank, recent) in recent(app).into_iter().take(RECENT_SHOWN).enumerate() {
-        let scope = recent
-            .root
-            .as_ref()
-            .map(Location::from_path)
+        // Where it looked, as its own text says it (`in:recent:`, a folder
+        // typed) or as it was run; its words without it.
+        let said = lang::parse(&recent.expr).ok().and_then(|q| {
+            q.within
+                .clone()
+                .or_else(|| q.root_given.then(|| Location::from_path(&q.root)))
+        });
+        let scope = said
+            .or_else(|| recent.root.as_ref().map(Location::from_path))
             .or_else(|| scope_of(ask));
         let Some(scope) = scope else { continue };
-        let mut row = Suggestion::new(Section::Recent, recent.expr.clone())
+        let words = crate::facets::text_of(&recent.expr)
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| recent.expr.clone());
+        let mut row = Suggestion::new(Section::Recent, words.clone())
             .detail(format!("in {}", app.location_title(&scope)))
             .icon("recent")
             .rank(i32::try_from(rank).unwrap_or(0))
-            .runs(search(&recent.expr, &scope, ask));
+            .runs(search(&words, &scope, ask));
         row.typed = true;
         row.forget = Some(Invocation::with_args(
             "query.forget_recent",

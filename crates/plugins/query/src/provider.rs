@@ -149,6 +149,21 @@ impl LocationProvider for QueryProvider {
 
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let query = lang::parse(&location.rest).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+        // A search of what a place lists (`in:recent:`), not a walk.
+        if let Some(place) = query.within.clone() {
+            let app = self
+                .app
+                .upgrade()
+                .ok_or_else(|| anyhow::anyhow!("the app has ended"))?;
+            return crate::within::open(
+                &app,
+                location.clone(),
+                query,
+                &place,
+                &ctx,
+                &self.lifetime,
+            );
+        }
         // Whether the root is a folder is I/O (a sleeping disk can block
         // it): the walk checks, and reports a listing error.
         anyhow::ensure!(
@@ -557,7 +572,7 @@ impl Shared {
 
 /// Decide with the entry's stat and metadata, reading content and the
 /// fields asked of it (a place) last.
-fn full_match(q: &Query, entry: &Entry, path: &Path, late: Late<'_>) -> bool {
+pub(crate) fn full_match(q: &Query, entry: &Entry, path: &Path, late: Late<'_>) -> bool {
     let Some(expr) = &q.expr else {
         return true;
     };

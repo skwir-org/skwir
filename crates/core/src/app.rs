@@ -1858,10 +1858,6 @@ pub struct NavigateArgs {
     #[serde(default, with = "crate::os_path::opt")]
     #[schemars(with = "Option<PathArg>")]
     pub select: Option<std::ffi::OsString>,
-    /// Words that filter what it lists, as `filter` reads them: a search
-    /// of what a location lists (Recent searched from the address field).
-    #[serde(default)]
-    pub filter: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
@@ -2189,20 +2185,12 @@ mod builtin {
             "core",
             "navigate",
             "Go to location",
-            "Open a path or location in a pane, an entry of it selected once listed when `select` names one, what it lists filtered by `filter` as `filter` reads it",
+            "Open a path or location in a pane, an entry of it selected once listed when `select` names one",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 app.navigate(pane, &Location::parse_os(a.location.as_os_str()))?;
                 if let Some(name) = a.select {
                     app.reveal(pane, name);
-                }
-                if let Some(text) = a.filter.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
-                    let reader = app.registry.filter_readers.all().into_iter().next();
-                    let read = reader.and_then(|reader| (reader.0)(text));
-                    if let Some(p) = app.workspace.write().pane_mut(pane) {
-                        p.set_filter(Some(text), read);
-                    }
-                    app.wake();
                 }
                 Ok(Outcome::Done)
             },

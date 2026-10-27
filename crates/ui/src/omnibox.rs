@@ -162,6 +162,13 @@ enum Row {
         text: String,
         rest: Option<String>,
     },
+    /// What the field takes (`?`): Enter or Tab writes `example`.
+    Help {
+        label: String,
+        detail: String,
+        icon: &'static str,
+        example: String,
+    },
     /// Where words could search: Enter makes it the scope.
     Scope {
         location: Location,
@@ -178,6 +185,7 @@ impl Row {
     fn completion(&self) -> Option<&str> {
         match self {
             Row::Name { text, .. } | Row::Offered { text, .. } => Some(text),
+            Row::Help { example, .. } => Some(example),
             Row::Source(s) => s.completion.as_deref(),
             _ => None,
         }
@@ -210,6 +218,7 @@ impl Row {
         match self {
             Row::Source(s) => s.section,
             Row::Scope { .. } => Section::Scopes,
+            Row::Help { .. } => Section::Help,
             _ => Section::Run,
         }
     }
@@ -218,9 +227,10 @@ impl Row {
     fn key(&self) -> (Section, String) {
         let title = match self {
             Row::Go => String::new(),
-            Row::Name { label, .. } | Row::Offered { label, .. } | Row::Scope { label, .. } => {
-                label.clone()
-            }
+            Row::Name { label, .. }
+            | Row::Offered { label, .. }
+            | Row::Scope { label, .. }
+            | Row::Help { label, .. } => label.clone(),
             Row::Source(s) => s.title.clone(),
         };
         (self.section(), title)
@@ -264,6 +274,8 @@ pub fn typed_for(app: &skwir_core::App, text: &str, edited: bool) -> Typed {
     let typed = text.trim_start();
     if !edited || typed.trim().is_empty() {
         Typed::Nothing
+    } else if typed.trim() == "?" {
+        Typed::Help
     } else if typed.starts_with('@') {
         Typed::Scope
     } else if complete::is_path(typed) {
@@ -273,6 +285,63 @@ pub fn typed_for(app: &skwir_core::App, text: &str, edited: bool) -> Typed {
     } else {
         Typed::Words
     }
+}
+
+/// A path's names as rows, read here and now: what `ui.suggest` answers
+/// for a path (the field reads the folder typed in its lane as it is
+/// typed). Folders first, the best first, as the field ranks them; Enter
+/// goes to a folder, shows a file selected in its folder.
+pub fn path_suggestions(
+    app: &skwir_core::App,
+    text: &str,
+    base: Option<&Path>,
+    pane: Option<skwir_core::workspace::PaneId>,
+    cancel: &CancelToken,
+) -> Vec<Suggestion> {
+    let (dir, typed) = complete::split(text);
+    let home = home();
+    let Some(folder) = complete::resolve(dir, base, home.as_deref()) else {
+        return Vec::new();
+    };
+    let resolved = complete::folders(app, &folder, false, cancel);
+    let (found, _) = complete::rank(&resolved.folders, typed, false);
+    found
+        .into_iter()
+        .enumerate()
+        .map(|(rank, m)| {
+            let folder = &resolved.folders[m.folder];
+            let name = &folder.names[m.index];
+            let path = folder.path.join(&name.exact);
+            let run = if name.dir {
+                serde_json::json!({ "location": PathArg::from(path.clone()), "pane": pane })
+            } else {
+                serde_json::json!({
+                    "location": PathArg::from(folder.path.clone()),
+                    "select": PathArg::from(PathBuf::from(&name.exact)),
+                    "pane": pane,
+                })
+            };
+            let mut row = Suggestion::new(Section::Go, name.text.clone())
+                .detail(complete::written(&folder.path, text, home.as_deref()))
+                .icon(if name.dir { "folder" } else { "open" })
+                .rank(i32::try_from(rank).unwrap_or(i32::MAX))
+                .runs(Invocation::with_args("navigate", &run));
+            let sep = complete::separator_of(text);
+            row.completion = Some(format!(
+                "{dir}{}{}",
+                name.text,
+                if name.dir {
+                    sep.to_string()
+                } else {
+                    String::new()
+                }
+            ));
+            if name.dir {
+                row.scope = Some(Location::from_path(&path));
+            }
+            row
+        })
+        .collect()
 }
 
 /// What a scope is called on its token and in the rows: the root of the
@@ -312,7 +381,7 @@ fn paint(kind: SpanKind, theme: &Theme) -> Option<Paint> {
             ..Paint::default()
         }),
         SpanKind::Value => Some(Paint {
-            background: Some(theme.code_bg),
+            background: Some(theme.term),
             ..Paint::default()
         }),
         SpanKind::Operator => Some(Paint {
@@ -364,7 +433,12 @@ impl Shell {
         let (scope, initial, select) = if !chips.chips.is_empty() && how != Begin::Jump {
             let given = text.is_some();
             (
-                Some(Location::from_path(&chips.root)),
+                Some(
+                    chips
+                        .within
+                        .clone()
+                        .unwrap_or_else(|| Location::from_path(&chips.root)),
+                ),
                 text.unwrap_or_else(|| chips.text.clone()),
                 !given,
             )
@@ -1118,6 +1192,12 @@ impl Shell {
         };
         // A scope chosen, or a row that only writes text, keeps the field.
         match &chosen {
+            Some(Row::Help { example, .. }) => {
+                let example = example.clone();
+                let address = self.ui().address.clone();
+                address.update(cx, |input, cx| input.replace_all(&example, cx));
+                return;
+            }
             Some(Row::Scope { location, .. }) => {
                 let location = location.clone();
                 if let Some(omni) = self.ui_mut().omni.as_mut() {
@@ -1210,7 +1290,7 @@ impl Shell {
                     self.run(&run.name, run.args, window, cx);
                 }
             }
-            Some(Row::Scope { .. }) => {}
+            Some(Row::Scope { .. } | Row::Help { .. }) => {}
         }
         cx.notify();
     }
@@ -1427,6 +1507,11 @@ impl Shell {
                 rows.extend(sources);
                 (rows, None)
             }
+            Typed::Help => {
+                let mut rows = self.help_rows();
+                rows.extend(sources);
+                (rows, None)
+            }
             Typed::Path => {
                 let (mut rows, shared) = self.path_rows(typed_text);
                 rows.extend(sources);
@@ -1439,6 +1524,74 @@ impl Shell {
                 (rows, shared)
             }
         }
+    }
+
+    /// What the field takes, each with an example Enter writes: a path, a
+    /// place's address (the schemes providers open), a scope, words, a
+    /// command. The terms of a search are the query plugin's rows.
+    fn help_rows(&self) -> Vec<Row> {
+        let home = if cfg!(windows) { "~\\" } else { "~/" };
+        // The places the sidebar shows by address first (the trash, Recent,
+        // tags), then any other scheme a provider opens.
+        let mut schemes: Vec<String> = Vec::new();
+        let shown = self
+            .app
+            .registry
+            .places
+            .all()
+            .into_iter()
+            .map(|place| place.location.scheme.to_string());
+        let opened = self.app.schemes().into_iter().map(|s| s.to_string());
+        for scheme in shown.chain(opened) {
+            let address = format!("{scheme}:");
+            let searches = self
+                .app
+                .provider(&scheme)
+                .is_none_or(|p| p.searches(&Location::new(&scheme, "")));
+            if scheme != PATH_SCHEME && !searches && !schemes.contains(&address) {
+                schemes.push(address);
+            }
+        }
+        let mut rows = vec![Row::Help {
+            label: format!("{home}   /   ./"),
+            detail: "A path; Tab completes its names".into(),
+            icon: "folder",
+            example: home.into(),
+        }];
+        if let Some(first) = schemes.first().cloned() {
+            rows.push(Row::Help {
+                label: schemes
+                    .iter()
+                    .take(4)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("   "),
+                detail: "A place, by its address".into(),
+                icon: "open",
+                example: first,
+            });
+        }
+        rows.extend([
+            Row::Help {
+                label: "@".into(),
+                detail: "Where words search: the folder above, home, a tag…".into(),
+                icon: "layers",
+                example: "@".into(),
+            },
+            Row::Help {
+                label: "words".into(),
+                detail: "Search where the scope says; they filter the folder at once".into(),
+                icon: "search",
+                example: String::new(),
+            },
+            Row::Help {
+                label: ">".into(),
+                detail: "A command, by its name, in the palette".into(),
+                icon: "command",
+                example: ">".into(),
+            },
+        ]);
+        rows
     }
 
     /// Where words could search, those whose names go with `words`: the
@@ -1670,7 +1823,7 @@ pub fn scope_token(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
     let (bg, fg) = if omni.token || omni.scopes {
         (theme.selection_bg, theme.selection_text)
     } else {
-        (theme.code_bg, theme.accent)
+        (theme.term, theme.accent)
     };
     Some(
         div()
@@ -1767,6 +1920,15 @@ fn drawn(shell: &Shell, row: &Row, text: &str) -> Drawn {
             detail,
             ..
         } => plain(icon, label.clone(), detail.clone()),
+        Row::Help {
+            label,
+            detail,
+            icon,
+            ..
+        } => Drawn {
+            typed: true,
+            ..plain(icon, label.clone(), Some(detail.clone()))
+        },
         Row::Source(s) => Drawn {
             icon: s.icon.clone().unwrap_or_else(|| "search".to_owned()),
             tag: s.tag.clone(),
@@ -1783,6 +1945,7 @@ fn drawn(shell: &Shell, row: &Row, text: &str) -> Drawn {
 /// What the keys of the highlighted row do.
 fn keys_of(row: &Row) -> &'static str {
     match row {
+        Row::Help { .. } => "Enter · Tab writes it",
         Row::Name { dir: false, .. } => "Enter · Shift+Enter opens",
         Row::Source(s) if s.error => "Enter waits",
         Row::Source(s) if s.forget.is_some() => "Enter · Shift+Delete forgets it",
@@ -1818,6 +1981,7 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
             "Tab completes; Shift+Enter opens a file; Ctrl+F on a folder searches in it."
         }
         Typed::Scope => "Enter searches there.",
+        Typed::Help => "Enter or Tab writes the example; Escape goes back.",
         Typed::Words => "Tab completes; Alt+Enter searches the home folder; Escape goes back.",
     };
     waits.map_or_else(|| keys.to_owned(), |w| w + keys)

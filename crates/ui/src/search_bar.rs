@@ -84,6 +84,8 @@ struct Description {
     root: std::path::PathBuf,
     #[serde(default)]
     text: String,
+    #[serde(default)]
+    within: Option<skwir_core::Location>,
 }
 
 /// The chips of the location a pane shows, read when it changed or the
@@ -98,6 +100,8 @@ pub struct Chips {
     pub chips: Vec<Chip>,
     pub root: std::path::PathBuf,
     pub text: String,
+    /// The place it looks within instead of `root` (`in:recent:`).
+    pub within: Option<skwir_core::Location>,
 }
 
 impl Chips {
@@ -222,6 +226,7 @@ pub fn sync(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
         chips: described.chips,
         root: described.root,
         text: described.text,
+        within: described.within,
     };
     // A menu belongs to the search it was opened on.
     if shell.search_menu.as_ref().is_some_and(|m| m.pane == pane) {

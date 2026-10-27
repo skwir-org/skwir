@@ -19,6 +19,7 @@ pub mod plocate;
 pub mod provider;
 pub mod saved;
 pub mod similar;
+pub mod within;
 
 use std::sync::Arc;
 
@@ -210,7 +211,7 @@ struct EditArgs {
 /// The location string for `expr` rooted at `root` (unless `expr` names a
 /// root with `in:`, as the parser reads it).
 pub fn location_for(expr: &str, root: Option<&std::path::Path>) -> Location {
-    let has_root = lang::parse(expr).is_ok_and(|q| q.root_given);
+    let has_root = lang::parse(expr).is_ok_and(|q| q.root_given || q.within.is_some());
     let rest = match root {
         Some(r) if !has_root => format!("{expr} in:{}", lang::quote_os(r.as_os_str())),
         _ => expr.to_owned(),

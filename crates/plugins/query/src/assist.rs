@@ -81,6 +81,16 @@ const fn key(
     }
 }
 
+/// The terms a search takes, the most asked first: each key as written
+/// before its value (`kind:`), its icon and examples of values.
+/// What `?` in the address field lists.
+pub fn terms() -> Vec<(String, &'static str, &'static str)> {
+    KEYS.iter()
+        .filter(|k| !k.option)
+        .map(|k| (format!("{}:", k.name), k.icon, k.example))
+        .collect()
+}
+
 fn key_info(name: &str) -> Option<&'static KeyInfo> {
     KEYS.iter().find(|k| k.name == name)
 }

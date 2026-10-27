@@ -112,6 +112,10 @@ pub struct Description {
     #[serde(with = "skwir_core::os_path")]
     pub root: std::path::PathBuf,
     pub text: String,
+    /// The place it looks within instead of a folder (`in:recent:`): the
+    /// scope of whoever edits it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub within: Option<skwir_core::location::Location>,
 }
 
 /// A query cut into facets. Each keeps the text it prints as, so a
@@ -618,6 +622,7 @@ pub fn text_of(expr: &str) -> Option<String> {
 fn without_root(p: &Parts, q: &Query) -> String {
     p.write(&Query {
         root_given: false,
+        within: None,
         ..q.clone()
     })
 }
@@ -775,7 +780,11 @@ pub fn describe(
         segments: Vec::new(),
     });
 
-    let folder = crate::place_name(app, &q.root);
+    let folder = match (&q.within, app) {
+        (Some(place), Some(app)) => app.location_title(place),
+        (Some(place), None) => place.to_string(),
+        (None, _) => crate::place_name(app, &q.root),
+    };
     let mut where_value = Vec::new();
     if q.depth == Some(1) {
         where_value.push("this folder only");
@@ -788,23 +797,28 @@ pub fn describe(
         title: format!("In {folder}"),
         value: (!where_value.is_empty()).then(|| where_value.join(", ")),
         icon: "list".into(),
-        choices: vec![
-            Choice {
-                label: "This folder and its subfolders".into(),
-                command: refine_invocation("where", Some("subtree")),
-                active: q.depth.is_none(),
-            },
-            Choice {
-                label: "This folder only".into(),
-                command: refine_invocation("where", Some("here")),
-                active: q.depth == Some(1),
-            },
-            Choice {
-                label: "Hidden files".into(),
-                command: refine_invocation("where", Some("hidden")),
-                active: q.hidden,
-            },
-        ],
+        // A place is searched as it lists, never below it.
+        choices: if q.within.is_some() {
+            Vec::new()
+        } else {
+            vec![
+                Choice {
+                    label: "This folder and its subfolders".into(),
+                    command: refine_invocation("where", Some("subtree")),
+                    active: q.depth.is_none(),
+                },
+                Choice {
+                    label: "This folder only".into(),
+                    command: refine_invocation("where", Some("here")),
+                    active: q.depth == Some(1),
+                },
+                Choice {
+                    label: "Hidden files".into(),
+                    command: refine_invocation("where", Some("hidden")),
+                    active: q.hidden,
+                },
+            ]
+        },
         clear: None,
         segments: Vec::new(),
     });
@@ -830,6 +844,7 @@ pub fn describe(
         chips,
         root: q.root,
         text,
+        within: q.within,
     })
 }
 

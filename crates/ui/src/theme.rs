@@ -21,7 +21,9 @@
 //!   `find_*` for what a find found in text,
 //!   `drop_target` under a drag, `on_accent` for text and glyphs on an
 //!   `accent` fill, `handle` for an edge being dragged, `band` and
-//!   `band_edge` for the rubber band, `block_hover` and `block_selected`
+//!   `band_edge` for the rubber band, `term` behind what the query
+//!   understood in the address field (a term's value, the scope's token),
+//!   `block_hover` and `block_selected`
 //!   for a block of the Usage map pointed at and chosen, over any fill,
 //!   `block_text` for what is written on one, `block_rest` for
 //!   a block that stands for several entries (the smaller ones, the
@@ -106,6 +108,10 @@ pub struct Theme {
     /// The rubber band sweeping files: its fill and its edge.
     pub band: Hsla,
     pub band_edge: Hsla,
+    /// Behind what the query understood in the address field: a term's
+    /// value, the scope's token (ADR-098). A mark of the accent, as the
+    /// band is, a little stronger: it is behind text that reads on it.
+    pub term: Hsla,
     /// Laid over a picture of a page: selected text, and a search match.
     pub page_selection: Hsla,
     pub page_match: Hsla,
@@ -540,6 +546,7 @@ impl Theme {
             handle: accent.opacity(0.35),
             band: accent.opacity(0.14),
             band_edge: accent.opacity(0.8),
+            term: accent.opacity(0.18),
             page_selection: accent.opacity(0.35),
             page_match: kept.page_match,
             find_match: kept.find_match,

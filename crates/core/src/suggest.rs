@@ -46,6 +46,8 @@ pub enum Typed {
     Place,
     /// `@` and what follows: where to search.
     Scope,
+    /// `?` alone: what the field takes.
+    Help,
 }
 
 /// What a source is asked.
@@ -101,6 +103,10 @@ impl Ask {
 pub enum Section {
     /// What Enter does: first, never titled.
     Run,
+    /// What the field takes, each with an example (`?`).
+    Help,
+    /// The terms of a search, each with examples of its values (`?`).
+    Syntax,
     /// Scopes to search in (`@`, the token's list).
     Scopes,
     /// What the text being typed goes on with: a term, a value.
@@ -130,6 +136,8 @@ impl Section {
     pub fn title(self) -> Option<&'static str> {
         Some(match self {
             Section::Run => return None,
+            Section::Help => "What the field takes",
+            Section::Syntax => "Terms of a search",
             Section::Scopes | Section::SearchIn => "Search in",
             Section::Complete => "Complete",
             Section::Reading => "Did you mean",

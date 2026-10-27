@@ -331,6 +331,18 @@ def children_of(w, role, name):
     return []
 
 
+def names_of(w):
+    """Every name in the window, wherever it is."""
+    names, stack = [], [w.frame()]
+    while stack:
+        node = stack.pop()
+        if node is None:
+            continue
+        names.append(node.get_name())
+        stack.extend(node.get_child_at_index(i) for i in range(node.get_child_count()))
+    return names
+
+
 def options_of(w, name):
     """The names of the options of list box `name`, wherever it is."""
     stack = [w.frame()]
@@ -432,6 +444,19 @@ def run(w):
     check("Down: the suggestion reached, said as focused",
           until(lambda: said(w.focused()).startswith(f"list item {w.files.name!r}")
                 and has(w.focused(), "selected")))
+    w.keys("Escape")
+    check("Escape: back to the files", hears(w, f"list item {second!r} 2 of 4 selected focused"))
+
+    # Ctrl+F: where words search stands before the text (ADR-098).
+    w.keys("ctrl+f")
+    check("Ctrl+F: the field, where words search a button before it, named so",
+          hears(w, "entry 'Address' focused")
+          and until(lambda: f"Searching in {w.files.name}" in names_of(w))
+          or print("  named:", [n for n in names_of(w) if n and n.startswith("Searching")]))
+    w.type("?")
+    check("? alone: what the field takes, the terms of a search among the options",
+          until(lambda: any(o and o.startswith("kind:") for o in options_of(w, "Suggestions")))
+          or print("  read:", options_of(w, "Suggestions")))
     w.keys("Escape")
     check("Escape: back to the files", hears(w, f"list item {second!r} 2 of 4 selected focused"))
 

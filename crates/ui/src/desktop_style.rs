@@ -359,6 +359,7 @@ mod tests {
         assert_ne!(theme.accent, Theme::light().accent);
         // Its marks and its selection follow it; the tags keep theirs.
         assert_eq!(theme.band, theme.accent.opacity(0.14));
+        assert_eq!(theme.term, theme.accent.opacity(0.18));
         assert_eq!(theme.tags, Theme::light().tags);
         // The other look, for code kept in it, wears it too.
         assert_eq!(theme.in_look(true).desktop, theme.desktop);

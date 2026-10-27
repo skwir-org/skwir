@@ -131,6 +131,9 @@ pub struct Query {
     pub case_sensitive: bool,
     /// Whether `in:` was given explicitly.
     pub root_given: bool,
+    /// A place whose files are searched instead of a folder's
+    /// (`in:recent:`, ADR-098): what it lists, never below.
+    pub within: Option<skwir_core::location::Location>,
 }
 
 #[derive(Clone, Debug)]
@@ -502,6 +505,7 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
     let toks = tokenize(text)?;
     // Options first, since `case:` changes how patterns compile.
     let mut root = None;
+    let mut within = None;
     let mut depth = None;
     let mut hidden = false;
     let mut case_sensitive = false;
@@ -513,7 +517,10 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
                     if w.value.is_empty() {
                         return Err(ParseError("in: expects a folder".into()));
                     }
-                    root = Some(expand_root(w));
+                    match place_of(w) {
+                        Some(place) => within = Some(place),
+                        None => root = Some(expand_root(w)),
+                    }
                     continue;
                 }
                 Some("depth") => {
@@ -570,7 +577,21 @@ pub fn parse_in(text: &str, now: SystemTime, cal: &Calendar) -> Result<Query, Pa
         hidden,
         case_sensitive,
         root_given,
+        within,
     })
+}
+
+/// The place an `in:` names when it is not a folder: a scheme of two
+/// letters at least before its colon (`recent:`, `tags:/Places`); one
+/// letter is a Windows drive, and a path is a folder.
+fn place_of(w: &Word) -> Option<skwir_core::location::Location> {
+    let text = std::str::from_utf8(&w.value).ok()?;
+    let (scheme, _) = text.split_once(':')?;
+    (scheme.len() >= 2
+        && scheme
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-'))
+    .then(|| skwir_core::location::Location::parse(text))
 }
 
 /// The `in:` folder; an unquoted `~` is the home folder (`~/`, and on
@@ -1391,7 +1412,9 @@ impl fmt::Display for Query {
         if let Some(e) = &self.expr {
             parts.push(e.to_string());
         }
-        if self.root_given {
+        if let Some(within) = &self.within {
+            parts.push(format!("in:{}", quote(&within.to_string())));
+        } else if self.root_given {
             parts.push(format!("in:{}", quote_os(self.root.as_os_str())));
         }
         if let Some(d) = self.depth {
