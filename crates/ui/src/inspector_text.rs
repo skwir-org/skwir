@@ -320,7 +320,7 @@ fn labelled(
     }
     let cap = HighlightStyle {
         color: Some(style.label_text),
-        background_color: Some(style.link),
+        background_color: Some(style.label_fill),
         font_weight: Some(gpui::FontWeight::BOLD),
         ..HighlightStyle::default()
     };

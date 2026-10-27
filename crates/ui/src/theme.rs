@@ -5,7 +5,8 @@
 //!
 //! - surfaces: what is read (lists, text, code, tables, bytes, prose) is on
 //!   `bg` in `text`; `surface` is chrome (bars, headers, the sidebar, the
-//!   letterbox around a picture or a page). `code_bg` sets a code block or a
+//!   letterbox around a picture or a page), told apart from `bg` at
+//!   1.08:1 at least (`CHROME`). `code_bg` sets a code block or a
 //!   table header apart on `bg`, unless the code theme chosen brings its
 //!   own background (`code`, `code_preview::Palette`), `zebra` tints
 //!   alternate rows. `picture_backdrop` is behind a picture whose ink,
@@ -14,8 +15,10 @@
 //!   (`reading.code_appearance`) is drawn with that look's tokens
 //!   (`in_look`). `text_muted` is for secondary facts (line numbers,
 //!   captions), never for the data.
-//! - color: the fields of [`Theme`]. State colors are tokens too: `hover` for
-//!   whatever is under the pointer, `selection_*` for what is chosen,
+//! - color: the fields of [`Theme`]. `accent_text` is the accent written
+//!   as text (a link, a key, what is chosen on `term`); `accent` marks and
+//!   fills. State colors are tokens too: `hover`, laid over whatever is
+//!   under the pointer on any ground, `selection_*` for what is chosen,
 //!   `success`/`warning`/`error` for outcomes, `scrim` behind a dialog,
 //!   `stage` behind a picture, a page or a film on the whole screen,
 //!   `find_*` for what a find found in text,
@@ -59,13 +62,16 @@
 //! scheme's look when it has one look's (`Theme::look`). The other
 //! grounds and lines (`zebra`, `code_bg`, `hover`,
 //! `border`, a derived selection) are `Steps` in Oklab from `bg` towards
-//! `text`, tinted by the accent; the marks of the accent (`band`,
-//! `handle`, `chart`…) are it, fainter. Then the contrast is guarded:
-//! text reads at 4.5:1 on every ground it is drawn on, the accent at 3:1
-//! on `bg` and `surface` (7:1 and 4.5:1 when the desktop asks for more,
-//! `Contrast::More`), a color that does not moved in lightness, its hue
-//! kept (`color::readable`); a fill under text (the accent, the
-//! selection) gives way when no lightness of its text reads on it. A new
+//! `text`, tinted by the accent, `hover` as an overlay that shows its step
+//! on `bg` (`color::overlay`); the marks of the accent (`band`,
+//! `handle`, `chart`, `term`…) are it, fainter. Then the contrast is
+//! guarded: text reads at 4.5:1 on every ground it is drawn on (`hover`
+//! laid on `bg` and on `surface`), `accent_text` there and on `term`, the
+//! accent at 3:1 on `bg` and `surface` (7:1 and 4.5:1 when the desktop
+//! asks for more, `Contrast::More`), a color that does not moved in
+//! lightness, its hue kept (`color::readable`); a fill under text (the
+//! accent, the selection) gives way when no lightness of its text reads
+//! on it. A new
 //! token is derived here, or kept (`Kept`) when no desktop's colors
 //! change what it means; never a literal beside the others.
 
@@ -83,12 +89,19 @@ pub struct Theme {
     pub code_bg: Hsla,
     /// Alternate rows of a table or of a byte dump, on `bg`.
     pub zebra: Hsla,
-    /// Background of the row or control under the pointer.
+    /// Laid over the row or control under the pointer, whatever it is
+    /// on (`bg`, `surface`): translucent, it darkens or lightens either
+    /// by as much (`color::overlay`). Where it must hide what is under
+    /// it, it is laid on its ground (`bg.blend(hover)`).
     pub hover: Hsla,
     pub border: Hsla,
     pub text: Hsla,
     pub text_muted: Hsla,
     pub accent: Hsla,
+    /// The accent written as text (a link, a term's key, what is chosen
+    /// on `term`): it reads as text does wherever text is drawn, and on
+    /// `term`. `accent` itself is a mark and a fill, read at 3:1.
+    pub accent_text: Hsla,
     pub selection_bg: Hsla,
     pub selection_text: Hsla,
     pub error: Hsla,
@@ -109,8 +122,9 @@ pub struct Theme {
     pub band: Hsla,
     pub band_edge: Hsla,
     /// Behind what the query understood in the address field: a term's
-    /// value, the scope's token (ADR-098). A mark of the accent, as the
-    /// band is, a little stronger: it is behind text that reads on it.
+    /// value, the scope's token (ADR-098), the depth chosen. A mark of the
+    /// accent, as the band is, a little stronger: it is behind text that
+    /// reads on it, `text` or `accent_text`.
     pub term: Hsla,
     /// Laid over a picture of a page: selected text, and a search match.
     pub page_selection: Hsla,
@@ -327,6 +341,11 @@ impl Step {
     }
 }
 
+/// How far the chrome (`surface`) stands from what is read (`bg`) at
+/// least: skwir's own looks stand at 1.09:1, a notes app's sidebar from
+/// its page at 1.08:1 (Obsidian's, ADR-071's amendment of 2026-10-27).
+const CHROME: f32 = 1.08;
+
 /// A look's steps: fitted to the hand-picked palettes they replaced
 /// (2026-10-19), which skwir's base, stepped, gives again within two
 /// units of a channel (the dark selection within five: it takes the
@@ -487,7 +506,12 @@ impl Theme {
         } else {
             Kept::light()
         };
-        let (bg, surface) = (base.bg, base.surface);
+        let bg = base.bg;
+        // The chrome stands apart from what is read, at least as far as a
+        // notes app's sidebar from its page: a scheme whose window is as
+        // light as its view (a GTK theme's) has it moved towards its text
+        // or away, whichever is nearer, its hue kept.
+        let surface = color::readable(base.surface, &[bg], CHROME);
         // The accent marks `bg` and `surface` (a focus ring, a switch that
         // is on) and is a fill under `on_accent`: white, or the darkest of
         // the look where that reads better.
@@ -508,7 +532,8 @@ impl Theme {
         let step = |step: Step| step.of(from, to, hue);
         let zebra = base.zebra.unwrap_or_else(|| step(steps.zebra));
         let code_bg = step(steps.code_bg);
-        let hover = step(steps.hover);
+        let hover = color::overlay(bg, step(steps.hover));
+        let term = accent.opacity(0.18);
         let border = base.border.unwrap_or_else(|| step(steps.border));
         let border = match contrast {
             Contrast::Normal => border,
@@ -519,10 +544,19 @@ impl Theme {
             .unwrap_or_else(|| (step(steps.selection_bg), step(steps.selection_text)));
         let (selection_text, selection_bg) =
             color::readable_on(selection_text, selection_bg, text_ratio);
-        let grounds = [bg, surface, code_bg, zebra, hover];
+        let grounds = [
+            bg,
+            surface,
+            code_bg,
+            zebra,
+            bg.blend(hover),
+            surface.blend(hover),
+        ];
         let text = guarded("text", base.text, &grounds, text_ratio);
         let text_muted = base.text_muted.unwrap_or_else(|| step(steps.text_muted));
         let text_muted = guarded("text_muted", text_muted, &grounds, text_ratio);
+        let termed = [grounds.as_slice(), &[bg.blend(term), surface.blend(term)]].concat();
+        let accent_text = guarded("accent_text", accent, &termed, text_ratio);
         let outcome = |name, color| guarded(name, color, &[bg, surface], text_ratio);
 
         Theme {
@@ -535,6 +569,7 @@ impl Theme {
             text,
             text_muted,
             accent,
+            accent_text,
             selection_bg,
             selection_text,
             error: outcome("error", base.error),
@@ -546,7 +581,7 @@ impl Theme {
             handle: accent.opacity(0.35),
             band: accent.opacity(0.14),
             band_edge: accent.opacity(0.8),
-            term: accent.opacity(0.18),
+            term,
             page_selection: accent.opacity(0.35),
             page_match: kept.page_match,
             find_match: kept.find_match,
@@ -780,7 +815,19 @@ mod tests {
 
     fn groups(t: &Theme, contrast: Contrast) -> Vec<Group> {
         let (text, mark) = contrast.ratios();
-        let grounds = vec![t.bg, t.surface, t.code_bg, t.zebra, t.hover];
+        let grounds = vec![
+            t.bg,
+            t.surface,
+            t.code_bg,
+            t.zebra,
+            t.bg.blend(t.hover),
+            t.surface.blend(t.hover),
+        ];
+        let termed = [
+            grounds.as_slice(),
+            &[t.bg.blend(t.term), t.surface.blend(t.term)],
+        ]
+        .concat();
         let on = |name, fg, grounds: &[Hsla], ratio, fill| Group {
             name,
             fg,
@@ -803,6 +850,8 @@ mod tests {
             on("warning", t.warning, &[t.bg, t.surface], text, false),
             on("success", t.success, &[t.bg, t.surface], text, false),
             on("accent", t.accent, &[t.bg, t.surface], mark, false),
+            on("accent_text", t.accent_text, &termed, text, false),
+            on("surface", t.surface, &[t.bg], CHROME, false),
         ];
         if contrast == Contrast::More {
             groups.push(on("border", t.border, &[t.bg, t.surface], 3., false));
@@ -893,7 +942,7 @@ mod tests {
         for (token, was) in [
             (light.zebra, 0xf4f5f6),
             (light.code_bg, 0xf0f1f3),
-            (light.hover, 0xe9eef7),
+            (light.bg.blend(light.hover), 0xe9eef7),
             (light.border, 0xd8d8d8),
             (light.block_rest, 0xdcdcdc),
             (light.map_grid, 0xe6e6e6),
@@ -906,11 +955,13 @@ mod tests {
         for (token, was) in [
             (dark.zebra, 0x232323),
             (dark.code_bg, 0x292b2f),
-            (dark.hover, 0x2b3038),
+            (dark.bg.blend(dark.hover), 0x2b3038),
             (dark.border, 0x3a3a3a),
             (dark.block_rest, 0x383838),
             (dark.map_grid, 0x2c2c2c),
-            (dark.text_muted, 0x9a9a9a),
+            // A little lighter than picked (0x9a9a9a): it reads on the
+            // hover laid on the sidebar too (2026-10-27).
+            (dark.text_muted, 0x9e9e9e),
             (dark.selection_text, 0xffffff),
         ] {
             assert!(near(token, was, 2.5), "{was:06x}: {:?}", token.to_rgb());
@@ -922,9 +973,10 @@ mod tests {
     #[test]
     fn real_schemes_read_in_either_contrast() {
         // As read 2026-10-20 from Breeze 6.7.5's schemes, adw-gtk3 6.5 and
-        // Materia 20210322 (`kde_scheme`, `gtk_theme`): bg, surface, text,
-        // text_muted, zebra, border, accent, selection, error, warning,
-        // success; 0 where the scheme says none.
+        // Materia 20210322 (`kde_scheme`, `gtk_theme`; adw-gtk3's surface
+        // its sidebar's since 2026-10-27): bg, surface, text, text_muted,
+        // zebra, border, accent, selection, error, warning, success; 0
+        // where the scheme says none.
         let schemes: [(&str, [u32; 12]); 6] = [
             (
                 "Breeze Light",
@@ -943,14 +995,14 @@ mod tests {
             (
                 "adw-gtk3",
                 [
-                    0xffffff, 0xfafafb, 0x333334, 0, 0, 0, 0x3584e4, 0x3584e4, 0xffffff, 0xba161e,
+                    0xffffff, 0xebebed, 0x333334, 0, 0, 0, 0x3584e4, 0x3584e4, 0xffffff, 0xba161e,
                     0xbe8908, 0x26a169,
                 ],
             ),
             (
                 "adw-gtk3 dark",
                 [
-                    0x1d1d20, 0x222226, 0xffffff, 0, 0, 0, 0x3584e4, 0x3584e4, 0xffffff, 0xd9777e,
+                    0x1d1d20, 0x2e2e32, 0xffffff, 0, 0, 0, 0x3584e4, 0x3584e4, 0xffffff, 0xd9777e,
                     0xefc96c, 0x7dc7a5,
                 ],
             ),

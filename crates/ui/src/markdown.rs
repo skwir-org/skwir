@@ -72,7 +72,8 @@ pub struct MarkdownStyle {
     /// While the links in view are labelled: by block, each label at the
     /// start of its link (`links.rs`).
     pub labels: Option<std::rc::Rc<std::collections::HashMap<usize, Vec<(usize, SharedString)>>>>,
-    /// A label's text, on `link`.
+    /// A label's fill and its text.
+    pub label_fill: Hsla,
     pub label_text: Hsla,
     /// While a find is open: what it marks (`inspector_text::Sought`), in
     /// the theme's `find_*`.
@@ -110,7 +111,7 @@ impl MarkdownStyle {
         Self {
             text: theme.text,
             text_muted: theme.text_muted,
-            link: theme.accent,
+            link: theme.accent_text,
             selection_bg: theme.selection_bg,
             border: theme.border,
             body_size,
@@ -147,6 +148,7 @@ impl MarkdownStyle {
             font: None,
             armed_link: None,
             labels: None,
+            label_fill: theme.accent,
             label_text: theme.on_accent,
             sought: None,
             find_match: theme.find_match,

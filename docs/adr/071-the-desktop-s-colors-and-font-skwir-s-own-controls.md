@@ -6,8 +6,9 @@ read and followed (the accent, more contrast, the font). Steps 3 and 4
 built 2026-10-20: Plasma's scheme, followed, and GTK3 themes' colors.
 macOS and Windows are not read yet. Amended 2026-10-19 (two switches,
 the font at the window's opening), again by ADR-073 (the font a choice
-among the system's, three of them, followed live), and 2026-10-20 (steps
-3 and 4).
+among the system's, three of them, followed live), 2026-10-20 (steps
+3 and 4) and 2026-10-27 (the accent as text, the chrome apart, the hover
+laid over).
 
 ## Context
 
@@ -101,7 +102,7 @@ among the system's, three of them, followed live), and 2026-10-20 (steps
    | Token | `kdeglobals` | GTK3 theme | Windows contrast theme |
    |---|---|---|---|
    | `bg`, `text` | `[Colors:View]` `BackgroundNormal`, `ForegroundNormal` | `theme_base_color`, `theme_text_color` | `COLOR_WINDOW`, `COLOR_WINDOWTEXT` |
-   | `surface` | `[Colors:Window]` `BackgroundNormal` | `theme_bg_color` | `COLOR_BTNFACE` |
+   | `surface` | `[Colors:Window]` `BackgroundNormal` | `sidebar_bg_color`, else `headerbar_bg_color`, else `theme_bg_color` (amended 2026-10-27) | `COLOR_BTNFACE` |
    | `text_muted` | `[Colors:View]` `ForegroundInactive` | derived | `COLOR_GRAYTEXT` |
    | `zebra` | `[Colors:View]` `BackgroundAlternate` | derived | derived |
    | `border` | derived | `borders` | `COLOR_WINDOWTEXT` |
@@ -123,7 +124,8 @@ among the system's, three of them, followed live), and 2026-10-20 (steps
    sixteen colors (a terminal's palette is its emulator's, not the
    desktop's) and the code themes (`reading.code_*`).
 5. **Contrast is guarded.** Text on every surface it is drawn on (`bg`,
-   `surface`, `code_bg`, `zebra`, `hover`), `selection_text` on
+   `surface`, `code_bg`, `zebra`, `hover`; `accent_text` there and on
+   `term`, amended 2026-10-27), `selection_text` on
    `selection_bg`, `on_accent` on `accent` and `error`, `warning`,
    `success` on `bg` and `surface` reach 4.5:1; `accent` on `bg` and
    `surface` reaches 3:1 (a focus ring, a switch that is on). A
@@ -294,3 +296,39 @@ among the system's, three of them, followed live), and 2026-10-20 (steps
   - **Not checked:** a Plasma, Xfce, Cinnamon or MATE session; the
     session's own display. macOS and Windows compile the scheme's types
     and read none (step 5).
+- 2026-10-27: the accent as text, the chrome apart, the hover laid over.
+  The user, of the address field: "the place pill at the beginning of
+  the bar, and the folder / subfolder selected highlight have colors
+  with not enough contrast which makes the text tiring to read", and of
+  the window: "a bit more contrast between sidebar … and file view
+  background … a similar contrast as Obsidian does".
+  - **The accent written as text is a token of its own**, `accent_text`:
+    the accent guarded as text is (4.5:1, 7:1 for more contrast) on every
+    ground text is drawn on and on `term` laid on `bg` and `surface`.
+    `accent` stays a mark and a fill, at 3:1. The pill and the chosen
+    depth were the accent on `term`: 3.06:1 in adw-gtk3's light look,
+    3.5:1 in its dark one and in Skwir's light one. Every text in the
+    accent takes it (a term's key, a link, a toast's action, Properties'
+    actions, the status bar's proposals, the preview's trail pointed at);
+    a label on a link keeps the accent as its fill (`label_fill`).
+  - **The chrome stands apart from what is read.** A GTK theme after
+    libadwaita's (adw-gtk3) names its window's color as light as its
+    view's (#fafafb on #ffffff) and its sidebar's and header bar's apart
+    (#ebebed; #2e2e32 on #1d1d20 dark): `surface` is
+    `sidebar_bg_color`, else `headerbar_bg_color`, else `theme_bg_color`.
+    And whatever a scheme says, `surface` reads apart from `bg` at
+    1.08:1 at least (`CHROME`): Obsidian's page and sidebar stand at
+    1.08 (its documented base colors `--color-base-00` and `-20`,
+    #ffffff and #f6f6f6, #1e1e1e and #262626; that the sidebar takes
+    `-20` is remembered, not read in its documentation), Skwir's own
+    looks at 1.09, so they keep their colors; adw-gtk3 stands at 1.19
+    and 1.24 by its own colors. A scheme closer than that has its `surface` moved in
+    lightness, its hue kept, as a foreground is.
+  - **`hover` is laid over what it is on**, translucent: the way from
+    `bg` to its step carried to the edge of sRGB, at the opacity that
+    shows the step on `bg` (`color::overlay`), so on the darker chrome
+    it darkens by as much; an opaque hover lighter than the sidebar
+    would have vanished there. Text is guarded on it laid on `bg` and on
+    `surface`; Skwir's dark `text_muted` moved from #9a9a9a to #9e9e9e
+    for it. Where it must hide what is under it (Properties' actions
+    over a row's words) it is laid on its ground first.

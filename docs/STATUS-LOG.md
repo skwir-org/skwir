@@ -5905,3 +5905,56 @@ those offered:
     selected, Down "New tab".
 - **Not checked:** Wayland and the user's session; the dark look (drawn
   from the same tokens).
+
+### Text in the accent that reads, the sidebar apart from the files (2026-10-27)
+
+- **Asked:** "the place pill at the beginning of the bar, and the folder
+  / subfolder selected highlight have colors with not enough contrast
+  which makes the text tiring to read" (light and dark), "and any other
+  place this color combination is used"; and "a bit more contrast
+  between sidebar … and file view background … a similar contrast as
+  Obsidian does".
+- **Found:** both were the accent as 12 px text on `term` (the accent at
+  18%), a pair no guard looked at: the accent is guarded as a mark, at
+  3:1. Measured in the window: #3584e4 on #dbe9fa, 3.06:1, in the
+  adw-gtk3 look the user's session wears (the portal names the theme);
+  3.5:1 in its dark look and in Skwir's light one. And adw-gtk3's
+  window color, read as the chrome, is #fafafb beside a #ffffff list:
+  1.02:1, where its own sidebar and header bar are #ebebed.
+- **Built** (ADR-071, amended):
+  - `accent_text`, the accent guarded as text on every ground text is
+    drawn on and on `term`; the pill, the chosen depth (its glyph and
+    keys too), a term's key, links, a toast's action, Properties'
+    actions, the status bar's proposals and the preview's trail take it.
+    A link's label keeps the accent as its fill (`label_fill`).
+  - The GTK3 chrome from `sidebar_bg_color`, else `headerbar_bg_color`,
+    else `theme_bg_color`; and a floor, `surface` apart from `bg` at
+    1.08:1 (`CHROME`; Obsidian's page and sidebar, Skwir's own at 1.09
+    keep their colors).
+  - `hover` translucent (`color::overlay`), so it darkens the darker
+    chrome by as much as the list; text guarded on it laid on either.
+    Properties' actions, which cover a row's words, lay it on `bg`.
+- **Checked:**
+  - `just release-check` passed (2308 tests, smoke, a11y, the readers,
+    bench, release tools).
+  - New tests: an overlay shows its step on its ground and the same
+    change on another; a theme's sidebar color taken before its header
+    bar's and its window's; `accent_text` on `term` and `surface` apart
+    from `bg` in Skwir's looks, the six real schemes and 400 random
+    ones, in both contrasts. Skwir's dark `text_muted` moved from
+    #9a9a9a to #9e9e9e (the hand-picked test says so).
+  - A real window on Xvfb, the debug build, `GTK_THEME=adw-gtk3`, the
+    field open on Ctrl+F, pixels read from the screenshots: light, the
+    pill's and the chosen depth's text #005db7 on #dbe9fa (5.25:1, from
+    3.06), the sidebar, the status bar and the pane's row #ebebed beside
+    the #ffffff list, a sidebar row pointed at #dce1ea, a file row
+    pointed at #eff4fb as before; two more tabs, the strip #ebebed with
+    the tab shown a white card and a tab pointed at darker. Dark: text
+    #6eadff on #223043 (5.8:1, from 3.5), the sidebar #2e2e32 beside
+    #1d1d20, a row pointed at #39404d. Skwir's own light look: #1656d0
+    on #d5e1f7 (4.9:1, from 3.5), the sidebar #f0f0f0 beside #fafafa as
+    before.
+- **Not checked:** the user's session itself; Plasma's schemes in a
+  window (their tests pass); the README's screenshots, in Skwir's own
+  colors, were not made again (its accent text a little darker).
+

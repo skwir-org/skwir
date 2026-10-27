@@ -5150,7 +5150,7 @@ fn trail(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> gpui::Div {
                 .truncate()
                 .text_color(theme.text_muted)
                 .cursor_pointer()
-                .hover(|d| d.text_color(theme.accent))
+                .hover(|d| d.text_color(theme.accent_text))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     cx.stop_propagation();
                     this.run(

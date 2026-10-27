@@ -1,8 +1,9 @@
 //! Colors as they are seen: Oklab (Björn Ottosson's), where a step of
 //! lightness looks the same size in every hue, and WCAG 2's contrast of
 //! two colors. The theme derives its tokens in Oklab and guards their
-//! contrast with `readable` and `readable_on` (ADR-071); a picture's
-//! backdrop asks `contrast` too (`backdrop::behind`).
+//! contrast with `readable` and `readable_on` (ADR-071), its hover an
+//! `overlay`; a picture's backdrop asks `contrast` too
+//! (`backdrop::behind`).
 
 use gpui::{Hsla, Rgba};
 
@@ -188,6 +189,35 @@ pub fn readable_on(fg: Hsla, ground: Hsla, ratio: f32) -> (Hsla, Hsla) {
     }
 }
 
+/// The translucent color that, laid over `ground` (as gpui lays one, in
+/// sRGB), shows `seen`: the way from one to the other carried on to the
+/// edge of sRGB, at the opacity that comes back to `seen`. Laid over
+/// another ground it makes the same change there, so a hover reads on
+/// the chrome as on what is read.
+pub fn overlay(ground: Hsla, seen: Hsla) -> Hsla {
+    let (from, to) = (ground.to_rgb(), seen.to_rgb());
+    let from = [from.r, from.g, from.b];
+    let way = [to.r - from[0], to.g - from[1], to.b - from[2]];
+    // How many times the way fits before a channel leaves 0 to 1.
+    let reach = from
+        .iter()
+        .zip(way)
+        .filter(|(_, d)| d.abs() > 1e-4)
+        .map(|(c, d)| if d > 0. { (1. - c) / d } else { -c / d })
+        .fold(f32::INFINITY, f32::min);
+    if !reach.is_finite() || reach <= 1. {
+        return seen;
+    }
+    let [r, g, b] = [0, 1, 2].map(|i| (from[i] + way[i] * reach).clamp(0., 1.));
+    Rgba {
+        r,
+        g,
+        b,
+        a: 1. / reach,
+    }
+    .into()
+}
+
 /// `lab`'s hue at the lightness whose luminance is `target`: the lightest
 /// at or under it, or (`over`) the darkest at or over it.
 fn at_luminance(lab: Oklab, alpha: f32, target: f32, over: bool) -> Hsla {
@@ -284,6 +314,22 @@ mod tests {
         let on = readable(gpui::white(), &[fill], 4.5);
         assert!(ratio(on, fill) >= 4.5);
         assert!(luminance(on) < luminance(fill));
+    }
+
+    #[test]
+    fn an_overlay_shows_on_its_ground_what_was_seen_and_the_same_change_elsewhere() {
+        let (ground, seen) = (hex(0xfafafa), hex(0xe9eef7));
+        let hover = overlay(ground, seen);
+        assert!(hover.a > 0. && hover.a < 1.);
+        assert!(close(ground.blend(hover), seen));
+        // On a darker ground, darker still, by about as much.
+        let chrome = hex(0xebebed);
+        let on = chrome.blend(hover);
+        assert!(luminance(on) < luminance(chrome));
+        let (here, there) = (ratio(seen, ground), ratio(on, chrome));
+        assert!((here - there).abs() < 0.02, "{here} {there}");
+        // Nothing to change: what was seen.
+        assert_eq!(overlay(ground, ground), ground);
     }
 
     #[test]

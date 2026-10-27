@@ -434,7 +434,7 @@ fn paint(kind: SpanKind, theme: &Theme) -> Option<Paint> {
     match kind {
         SpanKind::Word => None,
         SpanKind::Key => Some(Paint {
-            color: Some(theme.accent),
+            color: Some(theme.accent_text),
             ..Paint::default()
         }),
         SpanKind::Value => Some(Paint {
@@ -2263,7 +2263,7 @@ pub fn scope_token(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
     let (bg, fg) = if omni.token || omni.scopes {
         (theme.selection_bg, theme.selection_text)
     } else {
-        (theme.term, theme.accent)
+        (theme.term, theme.accent_text)
     };
     Some(
         div()
@@ -2505,7 +2505,7 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
             .gap(px(6.))
             .rounded_md()
             .cursor_pointer()
-            .when(on, |d| d.bg(theme.term).text_color(theme.accent))
+            .when(on, |d| d.bg(theme.term).text_color(theme.accent_text))
             .when(!on, |d| {
                 d.text_color(theme.text_muted).hover(move |s| s.bg(hover))
             })
@@ -2532,7 +2532,11 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
                     .path(format!("toolbar/{icon}.svg"))
                     .size(px(13.))
                     .flex_none()
-                    .text_color(if on { theme.accent } else { theme.text_muted }),
+                    .text_color(if on {
+                        theme.accent_text
+                    } else {
+                        theme.text_muted
+                    }),
             )
             .child(label)
             .children(keys.map(|keys| {
@@ -2541,7 +2545,12 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
                     .rounded_sm()
                     .border_1()
                     .border_color(theme.border)
-                    .text_color(theme.text_muted)
+                    // On `term`, what reads there.
+                    .text_color(if on {
+                        theme.accent_text
+                    } else {
+                        theme.text_muted
+                    })
                     .child(keys)
             }))
     };

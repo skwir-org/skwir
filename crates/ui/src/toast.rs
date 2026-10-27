@@ -794,7 +794,7 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 )
                 // Its buttons are not part of what is announced.
                 .aria_live(gpui::Live::Off)
-                .text_color(theme.accent)
+                .text_color(theme.accent_text)
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.dismiss_toast(cx);
                     this.run(&action.command, action.args.clone(), window, cx);

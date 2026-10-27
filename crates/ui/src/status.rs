@@ -285,7 +285,7 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         .into_iter()
         .flatten()
         .collect();
-        bar = bar.child(div().text_color(theme.accent).child(words.join(" · ")));
+        bar = bar.child(div().text_color(theme.accent_text).child(words.join(" · ")));
     }
     // What a plugin counts (the shelf's items) announces itself only
     // when it counts something, in its words; a click opens what it counts.

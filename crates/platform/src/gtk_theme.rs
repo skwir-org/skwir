@@ -156,8 +156,14 @@ impl Sheet {
     pub(crate) fn scheme(&self) -> Option<Scheme> {
         let opaque = |color: Rgba| [color[0], color[1], color[2]];
         let bg = opaque(self.color("theme_base_color")?);
-        let surface = opaque(self.color("theme_bg_color")?);
         let on_bg = |name: &str| self.color(name).map(|color| over(color, bg));
+        // The chrome: a theme after libadwaita's names its sidebar's and
+        // its header bar's apart from its window's, which is as light as
+        // what is read (adw-gtk3's #fafafb on #ffffff, its sidebar
+        // #ebebed); GTK 3's own themes name the window's alone.
+        let surface = ["sidebar_bg_color", "headerbar_bg_color", "theme_bg_color"]
+            .into_iter()
+            .find_map(on_bg)?;
         let selection_bg = on_bg("theme_selected_bg_color");
         let selection = selection_bg.zip(
             self.color("theme_selected_fg_color")
@@ -687,6 +693,37 @@ mod tests {
         );
         let night = schemes("Night", &folders);
         assert!(night.light.is_none() && night.dark.is_some());
+    }
+
+    #[test]
+    fn the_chrome_is_the_sidebar_s_where_a_theme_names_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let folders = [dir.path().to_path_buf()];
+        let named = |extra: &str| format!("{}{extra}", full("#ffffff", "#333334"));
+        theme(
+            dir.path(),
+            "Sidebar",
+            &[(
+                "gtk-3.0/gtk.css",
+                &named(
+                    "@define-color headerbar_bg_color #ebebed;\n\
+                     @define-color sidebar_bg_color #e0e0e0;\n",
+                ),
+            )],
+        );
+        theme(
+            dir.path(),
+            "Header",
+            &[(
+                "gtk-3.0/gtk.css",
+                &named("@define-color headerbar_bg_color #ebebed;\n"),
+            )],
+        );
+        theme(dir.path(), "Window", &[("gtk-3.0/gtk.css", &named(""))]);
+        let surface = |name| schemes(name, &folders).light.unwrap().surface;
+        assert!(near(surface("Sidebar"), 0xe0e0e0));
+        assert!(near(surface("Header"), 0xebebed));
+        assert!(near(surface("Window"), 0xf2f2f2), "the window's");
     }
 
     #[test]

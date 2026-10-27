@@ -1840,7 +1840,7 @@ fn links(
             .children(actions.into_iter().enumerate().map(|(a, (words, action))| {
                 div()
                     .id(("detail-action", id * 8 + a))
-                    .text_color(theme.accent)
+                    .text_color(theme.accent_text)
                     .hover(gpui::Styled::underline)
                     .child(words)
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -1945,7 +1945,8 @@ fn row_element(
                 .py(px(3.))
                 .pl_3()
                 .rounded_sm()
-                .bg(theme.hover)
+                // Over the row's words: opaque, as the row it covers is.
+                .bg(theme.bg.blend(theme.hover))
                 .invisible()
                 .group_hover(ROW, gpui::Styled::visible)
         }))
