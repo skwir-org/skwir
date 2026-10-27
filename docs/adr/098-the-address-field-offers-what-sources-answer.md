@@ -73,8 +73,8 @@ ADR-070 (the field's rows) and retires the Jump overlay.
      before anything is typed with a scope, the terms as buttons, the
      recent searches and the saved ones; the text's spans
      (`query.tokens`).
-   - Jump: the folders and files one goes to, those one goes to most
-     before anything is typed.
+   - Jump: the folders and files one goes to whose paths hold every
+     word unbroken, those one goes to most before anything is typed.
    - The tags plugin: tags whose names go with the words.
    - The shell (`suggestions.rs`, owner `ui`): the window's other tabs,
      where the pane was (Back), the sidebar's places and saved searches,
@@ -151,3 +151,6 @@ ADR-070 (the field's rows) and retires the Jump overlay.
   path's names; what the query understood is drawn on a token of its own,
   `Theme::term` (the accent at 18%, as the band is a mark of it), which
   the code background, nearly the page's own in the light look, was not.
+  Jump finds each word unbroken in a path read from `~`
+  (`rank_by_words`), in the name before its folders: its overlay's
+  letters strewn over a whole path offered a row for nearly any search.

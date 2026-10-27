@@ -5666,3 +5666,20 @@ those offered:
 - **Seen, left as it was:** Jump ranks a multi-word text against whole
   paths, so `pdf last week` offers `packing-list.txt` (from `Drafts` and
   `Field`); the field asked it the same way before.
+
+### Jump's rows in the address field (2026-10-27)
+
+- **The rows Jump offers** under words in the address field match each
+  word unbroken in the path as the row shows it, from `~` (the home
+  folder's own path matches nothing), in the name before its folders and
+  at a word's start before within one; among equals the most used come
+  first (`jump::rank_by_words`). The overlay's matching (each word's
+  letters in order anywhere in the whole path, times zoxide's score)
+  offered a row for nearly any search: `pdf last week` gave
+  `packing-list.txt`. `jump.candidates` keeps it for the CLI and agents.
+- **Checked:** Jump's tests with a new one (`pdf last week` and the home
+  folder's name match nothing; `field` puts the name before the
+  folders; `drafts guide`; the most used among equals; a word within
+  a name); a real window on Xvfb: `pdf last week` offers no Go row,
+  `field` the folder and files under Field Guide, `pdf` `pdf-exports`
+  before `plateau.pdf`.

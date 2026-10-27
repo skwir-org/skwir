@@ -224,6 +224,9 @@ of bars, split or not.
   - Jump, the tags plugin and the shell (`suggestions.rs`: other tabs,
     the pane's history, the sidebar's places, a few commands with their
     keys) answer the rest.
+  - Words are mostly a search, so a source offers a row only for words it
+    finds as the row reads: Jump each word unbroken in the path from `~`,
+    in the name before its folders, never letters strewn over a path.
   - The field's own source stays the paths and places it completes
     (below), read in their lane.
 - **`?` alone** lists what the field takes: the shell's grammar (a path,

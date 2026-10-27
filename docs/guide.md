@@ -80,7 +80,7 @@ that work where the keyboard is.
 - **Type the first letters of a name** in the file list to go to it.
 - **Jump** (`Ctrl+J`) is the address with nothing typed: the folders you
   go to most, from zoxide's list and the desktop's recent files, then
-  those whose names hold what you type.
+  those whose paths hold every word you type, their own names first.
 - **Recent** (in the sidebar, or `recent:`) lists the files the desktop
   says you used recently.
 

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::Receiver;
-use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo_matcher::pattern::{Atom, AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 use parking_lot::Mutex;
 use skwir_core::CancelToken;
@@ -54,7 +54,6 @@ pub fn rank(
     files: &[xbel::Recent],
     limit: usize,
 ) -> Vec<Candidate> {
-    let now = SystemTime::now();
     let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
     let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
     let mut buf = Vec::new();
@@ -66,40 +65,109 @@ pub fn rank(
             .score(Utf32Str::new(s, &mut buf), &mut matcher)
             .map(f64::from)
     };
-    let mut out: Vec<Candidate> = Vec::new();
-    for d in dirs {
-        let s = d.path.to_string_lossy();
-        if let Some(f) = fuzzy(&s) {
-            out.push(Candidate {
-                path: d.path.clone(),
-                score: f * (1.0 + d.score),
-                kind: "dir",
-                source: "zoxide",
-            });
-        }
-    }
-    for r in files {
-        let s = r.path.to_string_lossy();
-        if let Some(f) = fuzzy(&s) {
-            let days = now
-                .duration_since(r.visited)
-                .map_or(f64::MAX, |d| d.as_secs_f64() / 86_400.0);
-            let recency = 1.0 / (1.0 + days);
-            out.push(Candidate {
-                path: r.path.clone(),
-                score: f * (1.0 + recency),
-                kind: "file",
-                source: "recent",
-            });
-        }
-    }
-    out.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    let mut out: Vec<Candidate> = used(dirs, files)
+        .filter_map(|mut c| {
+            c.score *= fuzzy(&c.path.to_string_lossy())?;
+            Some(c)
+        })
+        .collect();
+    out.sort_by(|a, b| b.score.total_cmp(&a.score));
     out.truncate(limit);
     out
+}
+
+/// Rank for the address field (ADR-098), where words are mostly a search:
+/// each word is found unbroken in the path as a row shows it (from `~`
+/// under `home`, so the home folder's own path matches nothing), in the
+/// name before its folders, at a word's start before within one. Among
+/// equals the most used come first, as with nothing typed.
+pub fn rank_by_words(
+    words: &str,
+    home: Option<&Path>,
+    dirs: &[zoxide::ZEntry],
+    files: &[xbel::Recent],
+    limit: usize,
+) -> Vec<Candidate> {
+    let atoms: Vec<Atom> = words
+        .split_whitespace()
+        .map(|w| {
+            Atom::new(
+                w,
+                CaseMatching::Smart,
+                Normalization::Smart,
+                AtomKind::Substring,
+                false,
+            )
+        })
+        .collect();
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let mut found: Vec<(u32, Candidate)> = used(dirs, files)
+        .filter_map(|c| {
+            let name = c
+                .path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let folders = c
+                .path
+                .parent()
+                .map(|p| shown_from(p, home))
+                .unwrap_or_default();
+            let mut points = 0;
+            for atom in &atoms {
+                points += match found_in(atom, &name, &mut matcher) {
+                    Some(start) => 2 + u32::from(start),
+                    None => u32::from(found_in(atom, &folders, &mut matcher)?),
+                };
+            }
+            Some((points, c))
+        })
+        .collect();
+    found.sort_by(|(a, x), (b, y)| b.cmp(a).then(y.score.total_cmp(&x.score)));
+    found.into_iter().take(limit).map(|(_, c)| c).collect()
+}
+
+/// Whether `atom` is found in `text`, and found at a word's start: after
+/// a character that is no letter or digit, or as a capital after a small
+/// letter.
+fn found_in(atom: &Atom, text: &str, matcher: &mut Matcher) -> Option<bool> {
+    let mut buf = Vec::new();
+    let mut at = Vec::new();
+    let text = Utf32Str::new(text, &mut buf);
+    atom.indices(text, matcher, &mut at)?;
+    let first = at.first().copied()?;
+    if first == 0 {
+        return Some(true);
+    }
+    let (before, here) = (text.get(first - 1), text.get(first));
+    Some(!before.is_alphanumeric() || (before.is_lowercase() && here.is_uppercase()))
+}
+
+/// What zoxide and the desktop's recent files know, scored by use alone:
+/// a folder by zoxide's score, a file by how lately it was opened.
+fn used<'a>(
+    dirs: &'a [zoxide::ZEntry],
+    files: &'a [xbel::Recent],
+) -> impl Iterator<Item = Candidate> + 'a {
+    let now = SystemTime::now();
+    let dirs = dirs.iter().map(|d| Candidate {
+        path: d.path.clone(),
+        score: 1.0 + d.score,
+        kind: "dir",
+        source: "zoxide",
+    });
+    let files = files.iter().map(move |r| {
+        let days = now
+            .duration_since(r.visited)
+            .map_or(f64::MAX, |d| d.as_secs_f64() / 86_400.0);
+        Candidate {
+            path: r.path.clone(),
+            score: 1.0 + 1.0 / (1.0 + days),
+            kind: "file",
+            source: "recent",
+        }
+    });
+    dirs.chain(files)
 }
 
 /// How much the user goes to a name of a folder (`jump.scores`).
@@ -338,7 +406,7 @@ fn go(app: &App, pane: PaneId, path: &Path, cancel: &CancelToken) -> anyhow::Res
 }
 
 /// What the address field offers of what Jump knows (ADR-098): the folders
-/// and files one goes to whose names go with the words, the best first;
+/// and files one goes to whose paths hold every word (`rank_by_words`);
 /// before anything is typed with no scope, those one goes to most.
 struct Places {
     index: Arc<Mutex<Index>>,
@@ -349,11 +417,9 @@ struct Places {
 /// How many places the address field shows.
 const FIELD_PLACES: usize = 5;
 
-/// A folder as a row says it: from `~` under the home folder.
-fn from_home(path: &Path) -> String {
-    match skwir_core::os_path::home()
-        .and_then(|home| path.strip_prefix(home).ok().map(Path::to_path_buf))
-    {
+/// A folder as a row says it: from `~` under `home`.
+fn shown_from(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
         Some(rest) => format!("~/{}", rest.display()),
         None => path.display().to_string(),
@@ -382,14 +448,15 @@ impl skwir_core::suggest::SuggestSource for Places {
     ) -> skwir_core::suggest::Answer {
         use skwir_core::suggest::{Answer, Section, Suggestion, Typed};
         first_need(&self.gathered, &self.index, &self.lifetime, app);
-        let query = if ask.typed == Typed::Words {
-            ask.words()
-        } else {
-            ""
-        };
+        let home = skwir_core::os_path::home();
         let ranked = {
             let ix = self.index.lock();
-            rank(query, &ix.dirs, &ix.files, FIELD_PLACES + 1)
+            if ask.typed == Typed::Words {
+                let (dirs, files) = (&ix.dirs, &ix.files);
+                rank_by_words(ask.words(), home.as_deref(), dirs, files, FIELD_PLACES + 1)
+            } else {
+                rank("", &ix.dirs, &ix.files, FIELD_PLACES + 1)
+            }
         };
         refresh(&self.index, &self.lifetime, app);
         let shown = ask.dir.as_deref();
@@ -412,7 +479,7 @@ impl skwir_core::suggest::SuggestSource for Places {
                         &serde_json::json!({ "path": PathArg::from(c.path.clone()), "pane": ask.pane }),
                     ));
                 if let Some(parent) = c.path.parent() {
-                    row.detail = Some(from_home(parent));
+                    row.detail = Some(shown_from(parent, home.as_deref()));
                 }
                 if dir {
                     row.scope = Some(Location::from_path(&c.path));
@@ -844,6 +911,59 @@ mod tests {
         assert!(rank("zzzzqq", &dirs, &files, 10).is_empty());
         let all = rank("", &dirs, &files, 2);
         assert_eq!(all.len(), 2, "limit applies");
+    }
+
+    #[test]
+    fn the_field_finds_each_word_unbroken_the_name_first() {
+        let z = |score, path: &str| zoxide::ZEntry {
+            score,
+            path: path.into(),
+        };
+        let dirs = vec![
+            z(80.0, "/home/kim/Drafts"),
+            z(3.0, "/home/kim/Drafts/Field Guide"),
+            z(1.0, "/home/kim/wip/fieldwork"),
+            z(5.0, "/home/kim/a/notes"),
+            z(50.0, "/home/kim/b/notes"),
+        ];
+        let files = vec![xbel::Recent {
+            path: "/home/kim/Drafts/Field Guide/packing-list.txt".into(),
+            mime: None,
+            visited: SystemTime::now(),
+        }];
+        let home = Some(Path::new("/home/kim"));
+        let paths = |words| -> Vec<PathBuf> {
+            rank_by_words(words, home, &dirs, &files, 10)
+                .into_iter()
+                .map(|c| c.path)
+                .collect()
+        };
+        let guide = "/home/kim/Drafts/Field Guide";
+        let list = "/home/kim/Drafts/Field Guide/packing-list.txt";
+        assert!(
+            paths("pdf last week").is_empty(),
+            "letters strewn over a path are no match"
+        );
+        assert!(
+            paths("kim").is_empty(),
+            "the home folder's path matches nothing"
+        );
+        assert_eq!(
+            paths("field"),
+            [guide, "/home/kim/wip/fieldwork", list].map(PathBuf::from),
+            "in the name before the folders, then the most used"
+        );
+        assert_eq!(paths("drafts guide"), [guide, list].map(PathBuf::from));
+        assert_eq!(
+            paths("notes"),
+            ["/home/kim/b/notes", "/home/kim/a/notes"].map(PathBuf::from),
+            "among equals, the most used"
+        );
+        assert_eq!(
+            paths("ld gui"),
+            [guide, list].map(PathBuf::from),
+            "within a word too"
+        );
     }
 
     #[cfg(unix)]
