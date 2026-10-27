@@ -144,6 +144,10 @@ pub(crate) fn tooltip(text: SharedString, cx: &mut App) -> AnyView {
 }
 
 #[derive(Clone)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent states of one button: on, usable, keeping its popup open, given now by Automatic"
+)]
 pub struct Button {
     id: SharedString,
     icon: SharedString,
@@ -160,6 +164,9 @@ pub struct Button {
     hold: Option<Box<(SharedString, serde_json::Value)>>,
     /// A popup's row that leaves the popup open when pressed (`keeps_open`).
     keeps_open: bool,
+    /// What an automatic value does now, while it is the one chosen: a
+    /// dashed outline (`now`).
+    now: bool,
 }
 
 /// A tag's colors on a button (a narrowing by that tag), in place of
@@ -192,6 +199,12 @@ enum Shape {
     /// A row of a popup menu: full width, left-aligned, with an icon slot
     /// that stays when the icon is empty so labels line up.
     MenuRow,
+    /// One value of a setting on a popup's row (`MenuPart::Choice`):
+    /// small, its icon or a word, filled when chosen.
+    Segment,
+    /// One value among a popup's tiles (`MenuPart::Tiles`): its icon
+    /// over its name, filled when chosen.
+    Tile,
 }
 impl Button {
     pub fn new(
@@ -214,6 +227,7 @@ impl Button {
             shape: Shape::Tool,
             hold: None,
             keeps_open: false,
+            now: false,
         }
     }
     pub fn title(&self) -> SharedString {
@@ -229,6 +243,25 @@ impl Button {
     }
     pub fn menu(mut self) -> Self {
         self.shape = Shape::MenuRow;
+        self
+    }
+    /// One value of a setting on a popup's row (`MenuPart::Choice`); the
+    /// popup stays open once it is chosen, for another.
+    pub fn segment(mut self) -> Self {
+        self.shape = Shape::Segment;
+        self.keeps_open = true;
+        self
+    }
+    /// One value among a popup's tiles (`MenuPart::Tiles`); the popup
+    /// stays open once it is chosen.
+    pub fn tile(mut self) -> Self {
+        self.shape = Shape::Tile;
+        self.keeps_open = true;
+        self
+    }
+    /// What the automatic value, chosen, does now: this value, outlined.
+    pub fn now(mut self, now: bool) -> Self {
+        self.now = now;
         self
     }
     /// Draw the chevron of a button that opens a menu.
@@ -288,6 +321,10 @@ impl Button {
         let enabled = self.enabled;
         let keeps_open = self.keeps_open;
         let menu = self.shape == Shape::MenuRow;
+        let (segment, tiled) = (self.shape == Shape::Segment, self.shape == Shape::Tile);
+        // A value of a setting, filled when chosen rather than highlighted.
+        let value = segment || tiled;
+        let now = self.now && !self.active;
         // The shortcut comes from the keymap, never from the title: it
         // follows what is bound, and goes when its plugin does.
         let keys = shell.keys_for(&command, &args);
@@ -378,22 +415,36 @@ impl Button {
                     .text_sm()
                     .text_color(theme.text)
             })
+            .when(segment, |d| d.h(px(22.)).min_w(px(26.)).gap(px(4.)))
+            .when(tiled, |d| {
+                d.h(px(52.))
+                    .w_full()
+                    .flex_col()
+                    .gap(px(5.))
+                    .text_color(theme.text)
+            })
             // Keep the handle alive when navigation disables this button.
             // Dropping the focused handle would also lose ancestor shortcuts.
             .focusable()
             .tab_index(0)
             .tab_stop(enabled)
-            .when(self.active && !menu, |d| {
+            .when(self.active && !menu && !value, |d| {
                 d.bg(theme.selection_bg).text_color(theme.selection_text)
             })
+            .when(self.active && value, |d| {
+                d.bg(theme.term).text_color(theme.accent_text)
+            })
+            .when(now, |d| d.border_dashed().border_color(theme.accent))
             .when_some(tint, |d, (fill, edge, _, _)| {
                 d.bg(fill).border_color(edge).text_color(theme.text)
             })
             .when(enabled && !menu, |d| {
                 d.cursor_pointer()
-                    .hover(|s| match tint {
-                        Some((_, _, fill, edge)) => s.bg(fill).border_color(edge),
-                        None => s.bg(theme.hover).text_color(theme.text),
+                    .when(!(value && active), |d| {
+                        d.hover(|s| match tint {
+                            Some((_, _, fill, edge)) => s.bg(fill).border_color(edge),
+                            None => s.bg(theme.hover).text_color(theme.text),
+                        })
                     })
                     .focus(|s| s.border_color(theme.accent))
             })
@@ -427,12 +478,18 @@ impl Button {
                 } else {
                     svg()
                         .path(format!("toolbar/{}.svg", self.icon))
-                        .text_color(if self.active && tint.is_none() {
-                            theme.selection_text
-                        } else {
-                            theme.text_muted
+                        .text_color(match (self.active && tint.is_none(), value) {
+                            (true, true) => theme.accent_text,
+                            (true, false) => theme.selection_text,
+                            (false, _) => theme.text_muted,
                         })
-                        .size(px(16.))
+                        .size(px(if tiled {
+                            18.
+                        } else if segment {
+                            15.
+                        } else {
+                            16.
+                        }))
                         .flex_none()
                 })
             })
@@ -508,7 +565,13 @@ impl Button {
         // (`Shell::reveal_focused_row`).
         crate::modal::pressed_with(
             button,
-            |keys| keys.set(ROW, id),
+            |keys| {
+                keys.set(ROW, id);
+                // Left and Right walk a setting's values (`keymap`).
+                if value {
+                    keys.add(CHOICE);
+                }
+            },
             move |this, window, cx| {
                 // The release of a long press: what it held ran instead.
                 if this
@@ -850,6 +913,95 @@ pub fn menu_panel(
         .gap_0()
         .bg(theme.surface)
 }
+
+/// What a popup that is a menu holds, top to bottom (`menu_parts`).
+pub enum MenuPart {
+    /// A group's name, with a button at its end (View's Buttons…).
+    Title(SharedString, Option<Button>),
+    /// A line between groups.
+    Line,
+    /// A row (`Button::menu`).
+    Row(Button),
+    /// A setting named, its values after its name (`Button::segment`).
+    Choice(SharedString, Vec<Button>),
+    /// Values as tiles, four to a row (`Button::tile`).
+    Tiles(Vec<Button>),
+}
+
+/// `panel` holding `parts`, as a context menu holds its rows.
+pub fn menu_parts(
+    mut panel: Stateful<Div>,
+    parts: Vec<MenuPart>,
+    shell: &Shell,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Stateful<Div> {
+    for part in parts {
+        panel = panel.child(match part {
+            MenuPart::Title(title, button) => div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_between()
+                .h(px(26.))
+                .pl_2()
+                .pt_1()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .child(title)
+                .children(button.map(|button| button.render(shell, cx).h(px(22.))))
+                .into_any_element(),
+            MenuPart::Line => div()
+                .flex_none()
+                .my_1()
+                .h(px(1.))
+                .bg(theme.border)
+                .into_any_element(),
+            MenuPart::Row(button) => button.render(shell, cx).into_any_element(),
+            MenuPart::Choice(name, values) => div()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_2()
+                .h(px(MENU_ROW + 4.))
+                .px_2()
+                .child(div().size(px(16.)).flex_none())
+                .child(
+                    div()
+                        .flex_1()
+                        .pr_4()
+                        .text_sm()
+                        .text_color(theme.text)
+                        .child(name),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .gap(px(2.))
+                        .p(px(2.))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.bg)
+                        .children(values.into_iter().map(|value| value.render(shell, cx))),
+                )
+                .into_any_element(),
+            MenuPart::Tiles(values) => div()
+                .grid()
+                .grid_cols(4)
+                .gap(px(2.))
+                .pb_1()
+                .children(values.into_iter().map(|value| value.render(shell, cx)))
+                .into_any_element(),
+        });
+    }
+    panel
+}
+
+/// The flag a value's key context carries (`Button::segment`,
+/// `Button::tile`): Left and Right walk to the values beside it.
+pub(crate) const CHOICE: &str = "choice";
 
 /// The key a button's id goes under in its key context.
 const ROW: &str = "row";

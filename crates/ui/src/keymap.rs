@@ -178,6 +178,10 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("up", "ui.toolbar_prev", Some("toolbar_popup")),
     ("home", "ui.toolbar_first", Some("toolbar_popup")),
     ("end", "ui.toolbar_last", Some("toolbar_popup")),
+    // A setting's values on one row of a popup, or its tiles: Left and
+    // Right walk them too (`toolbar::CHOICE`).
+    ("left", "ui.toolbar_prev", Some("toolbar_button choice")),
+    ("right", "ui.toolbar_next", Some("toolbar_button choice")),
     ("escape", "ui.preview_find_close", Some("preview_find")),
     ("secondary-,", "ui.settings", None),
     ("f1", "ui.shortcuts", None),

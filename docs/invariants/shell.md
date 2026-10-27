@@ -93,7 +93,14 @@ Views are in [views.md](views.md); what locations decide, in
   it stays closed. Any button's click closes the open popup the same way,
   but a popup's row that switches one of several choices it shows (which
   views have a button) keeps it open, its row keeping the keyboard
-  (`Button::keeps_open`).
+  (`Button::keeps_open`), as does a setting's value.
+- **A setting in a popup is one row** (`toolbar::MenuPart::Choice`): its
+  name, then its values (`Button::segment`), an icon each, Automatic in
+  words; or tiles, four to a row (`Button::tile`). The value chosen is
+  filled; while Automatic is chosen, the value it gives now is outlined,
+  and Automatic's tooltip says why. Left and Right walk the values as Up
+  and Down do (their key context's `toolbar::CHOICE`), Enter or Space
+  chooses, and the popup stays open.
 - **One menu look.** A popup that is a menu (`toolbar::menu_panel`) is
   drawn as a context menu is: on the chrome, as wide as its widest row,
   rows of `toolbar::MENU_ROW` in the window's text with their keys, the
@@ -152,8 +159,12 @@ of bars, split or not.
     where it differs from the role, so a view added later comes with its
     role's. The view shown always keeps its button, so the group never
     goes and always says which view is shown.
-  - The View menu (views, sort, hidden files, zoom, Fill thumbnails) hangs
-    from the active pane's row.
+  - The View menu hangs from the active pane's row: every view as a tile
+    (Buttons… at the end of their title), the sort keys with the direction
+    on the Sort by row in the key's words, what is shown (hidden files,
+    Narrow by, Fill thumbnails…), and the size on one row. More holds the
+    panels without a button (Timeline, Terminal) and the layout's
+    settings, one row each (`address::layout_values`).
   - Two `AdaptiveRow` variants: all buttons while the address keeps
     `FIELD_MIN`, else one button opening the View menu. The address has
     no width of its own when variants are measured.

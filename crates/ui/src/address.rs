@@ -6,7 +6,7 @@ use crate::{
     keymap,
     shell::Shell,
     theme::Theme,
-    toolbar::{self, Button},
+    toolbar::{self, Button, MenuPart},
 };
 use gpui::{AnyElement, Context, Window, div, prelude::*, px};
 use skwir_core::location::{Crumb, Location, Tool, ToolPane};
@@ -235,46 +235,46 @@ fn menu_item(button: Button, label: impl Into<gpui::SharedString>) -> Button {
     button.label(label).menu()
 }
 
-/// The View menu, in its titled groups: how the active pane shows
-/// its folder, never how the window is arranged (that is in More, under
-/// Layout). It starts with every view, the lenses the pane row leaves out
-/// included: a narrow pane row has only the button that opens it.
-fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
+/// The View menu: how the active pane shows its folder, never how the
+/// window is arranged (that is More's). Every view as a tile, the lenses
+/// the pane row leaves out included (a narrow pane row has only the button
+/// that opens this menu); the sort, its direction on the row of its name;
+/// what is shown; the size, on one row.
+fn view_options(shell: &Shell) -> Vec<MenuPart> {
     use skwir_core::SortKey;
-    let mut views: Vec<Button> = shell
+    let views: Vec<Button> = shell
         .available_views()
         .into_iter()
         .map(|spec| {
             view_button(shell, &spec, "menu-view")
                 .label(spec.title.clone())
-                .menu()
+                .tile()
         })
         .collect();
     // Where one looks for them first; the buttons' right-click says the same.
-    views.push(menu_item(
-        Button::new(
-            "menu-view-buttons",
-            "pin",
-            "Choose which views have a button beside the address",
-            "ui.toolbar_menu",
-        )
-        .args(serde_json::json!({ "kind": VIEW_BUTTONS })),
-        "Buttons…",
-    ));
+    let buttons = Button::new(
+        "menu-view-buttons",
+        "",
+        "Choose which views have a button beside the address",
+        "ui.toolbar_menu",
+    )
+    .args(serde_json::json!({ "kind": VIEW_BUTTONS }))
+    .label("Buttons…");
     let spec = shell.sort_spec();
     // By name, then by what each column that sorts shows, in its words.
-    let order: Vec<Button> = shell
+    let order: Vec<MenuPart> = shell
         .sort_keys()
         .into_iter()
         .map(|(label, sort_key)| {
             let current = spec.key == sort_key;
-            // The current key again keeps its direction: the next group says it.
+            // The current key again keeps its direction: the row of its
+            // name says it.
             let args = if current {
                 serde_json::json!({"key": sort_key, "ascending": spec.ascending})
             } else {
                 serde_json::json!({"key": sort_key})
             };
-            menu_item(
+            MenuPart::Row(menu_item(
                 Button::new(
                     format!("sort-{sort_key:?}"),
                     if current { "check" } else { "" },
@@ -282,41 +282,43 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
                     "sort",
                 )
                 .args(args)
-                .active(current),
+                .active(current)
+                .keeps_open(),
                 label,
-            )
+            ))
         })
         .collect();
-    // Each key names its directions in its own words.
-    let (up, down) = match spec.key {
-        SortKey::Name => ("A to Z", "Z to A"),
-        SortKey::Size => ("Smallest first", "Largest first"),
-        SortKey::Modified | SortKey::Deleted => ("Oldest first", "Newest first"),
-        SortKey::Rating => ("Lowest first", "Highest first"),
+    // Each key names its directions in its own words, short on the row,
+    // whole in the tooltip.
+    let ((up, up_tip), (down, down_tip)) = match spec.key {
+        SortKey::Name => (("A to Z", "A to Z"), ("Z to A", "Z to A")),
+        SortKey::Size => (("Smallest", "Smallest first"), ("Largest", "Largest first")),
+        SortKey::Modified | SortKey::Deleted => {
+            (("Oldest", "Oldest first"), ("Newest", "Newest first"))
+        }
+        SortKey::Rating => (("Lowest", "Lowest first"), ("Highest", "Highest first")),
     };
-    let direction: Vec<Button> = [(true, up), (false, down)]
+    let direction: Vec<Button> = [(true, "up", up, up_tip), (false, "down", down, down_tip)]
         .into_iter()
-        .map(|(ascending, label)| {
-            let current = spec.ascending == ascending;
-            menu_item(
-                Button::new(
-                    if ascending {
-                        "sort-ascending"
-                    } else {
-                        "sort-descending"
-                    },
-                    if current { "check" } else { "" },
-                    label,
-                    "sort",
-                )
-                .args(serde_json::json!({"ascending": ascending}))
-                .active(current),
-                label,
+        .map(|(ascending, icon, label, tip)| {
+            Button::new(
+                if ascending {
+                    "sort-ascending"
+                } else {
+                    "sort-descending"
+                },
+                icon,
+                tip,
+                "sort",
             )
+            .args(serde_json::json!({"ascending": ascending}))
+            .label(label)
+            .active(spec.ascending == ascending)
+            .segment()
         })
         .collect();
     let mut show = vec![menu_item(
-        Button::new("menu-hidden", "eye", "Show hidden files", "toggle_hidden")
+        Button::new("menu-hidden", "", "Show hidden files", "toggle_hidden")
             .active(spec.show_hidden),
         "Hidden files",
     )];
@@ -328,7 +330,7 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         show.push(menu_item(
             Button::new(
                 "menu-companions",
-                "layers",
+                "",
                 "Also list the files that keep another file's notes beside it (a Mac's ._ files, sidecars)",
                 "settings.apply",
             )
@@ -347,7 +349,7 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
             show.push(menu_item(
                 Button::new(
                     format!("menu-toggle-{i}"),
-                    if toggle.on { "check" } else { "" },
+                    "",
                     toggle.label.clone(),
                     "navigate",
                 )
@@ -365,7 +367,7 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         show.push(menu_item(
             Button::new(
                 "menu-narrow-folders",
-                "sliders",
+                "",
                 "Offer the kinds, years and tags of a folder's files above them, to show only those",
                 "ui.narrow_folders",
             )
@@ -378,7 +380,7 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
         show.push(menu_item(
             Button::new(
                 "menu-grid-fill",
-                "crop",
+                "",
                 "Crop thumbnails in the grid to fill their box",
                 "ui.grid_fill",
             )
@@ -409,37 +411,54 @@ fn view_options(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
             "Collapse all",
         ));
     }
-    // Only where the view sizes something (`PaneView::zooms`).
-    let mut size = Vec::new();
+    let mut parts = vec![
+        MenuPart::Title("Views".into(), Some(buttons)),
+        MenuPart::Tiles(views),
+        MenuPart::Line,
+        MenuPart::Choice("Sort by".into(), direction),
+    ];
+    parts.extend(order);
+    parts.push(MenuPart::Line);
+    parts.extend(show.into_iter().map(MenuPart::Row));
+    // Only where the view sizes something (`PaneView::zooms`): smaller, as
+    // it was, larger, the keys in the tooltips.
     let zooms = shell.view_zooms();
-    let words = if zooms == crate::view::Zooms::Levels {
-        crate::usage::STEPS
-    } else {
-        [
-            ("Larger", "Larger (or Ctrl and the wheel)"),
-            ("Smaller", "Smaller (or Ctrl and the wheel)"),
-            ("Default size", "Default size"),
-        ]
-    };
     if zooms != crate::view::Zooms::Nothing {
-        for ((dir, icon), (label, tip)) in [("in", "plus"), ("out", "minus"), ("reset", "fit")]
-            .into_iter()
-            .zip(words)
-        {
-            size.push(menu_item(
-                Button::new(format!("zoom-{dir}"), icon, tip, "ui.zoom")
-                    .args(serde_json::json!({"dir": dir})),
-                label,
-            ));
-        }
+        let words = if zooms == crate::view::Zooms::Levels {
+            crate::usage::STEPS
+        } else {
+            [
+                ("Larger", "Larger (or Ctrl and the wheel)"),
+                ("Smaller", "Smaller (or Ctrl and the wheel)"),
+                ("Default size", "Default size"),
+            ]
+        };
+        let [larger, smaller, reset] = words;
+        let size = [
+            ("out", "minus", None, smaller.1),
+            ("reset", "", Some("Default"), reset.1),
+            ("in", "plus", None, larger.1),
+        ]
+        .into_iter()
+        .map(|(dir, icon, label, tip)| {
+            let button = Button::new(format!("zoom-{dir}"), icon, tip, "ui.zoom")
+                .args(serde_json::json!({"dir": dir}))
+                .segment();
+            match label {
+                Some(label) => button.label(label),
+                None => button,
+            }
+        })
+        .collect();
+        parts.push(MenuPart::Line);
+        let name = if zooms == crate::view::Zooms::Levels {
+            "Levels"
+        } else {
+            "Size"
+        };
+        parts.push(MenuPart::Choice(name.into(), size));
     }
-    vec![
-        ("Views", views),
-        ("Sort by", order),
-        ("Order", direction),
-        ("Show", show),
-        ("Zoom", size),
-    ]
+    parts
 }
 
 /// What the grid's tiles say under their names: each caption that applies
@@ -518,127 +537,148 @@ fn view_buttons_menu(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
     vec![("View buttons", rows)]
 }
 
-/// More's Layout groups: the panels without a button of their own, then
-/// where the split's panes and the preview go.
-fn layout_groups(shell: &Shell) -> Vec<(&'static str, Vec<Button>)> {
-    let mut panels = vec![menu_item(
-        Button::new("menu-timeline", "calendar", "Timeline", "ui.timeline")
-            .active(shell.timeline.open),
+/// More's layout: the panels without a button of their own, checked
+/// while open, then where the split's panes, the preview and a file of an
+/// archive go, each a setting on one row.
+fn layout_parts(shell: &Shell) -> Vec<MenuPart> {
+    let mut parts = vec![MenuPart::Row(menu_item(
+        Button::new("menu-timeline", "", "Timeline", "ui.timeline").active(shell.timeline.open),
         "Timeline",
-    )];
+    ))];
     // The terminal is a plugin's: without it, nothing says it exists.
     if shell.app.terminals.provider().is_some() {
-        panels.push(menu_item(
-            Button::new("menu-terminal", "terminal", "Terminal", "ui.terminal")
-                .active(shell.terminal.open),
+        parts.push(MenuPart::Row(menu_item(
+            Button::new("menu-terminal", "", "Terminal", "ui.terminal").active(shell.terminal.open),
             "Terminal",
-        ));
+        )));
     }
-    vec![
-        ("Layout", panels),
-        ("Split direction", layout_items(shell, "panes")),
-        ("Preview position", layout_items(shell, "preview")),
-        ("File in an archive", layout_items(shell, "member")),
-    ]
+    parts.extend([
+        MenuPart::Line,
+        MenuPart::Choice("Split".into(), layout_values(shell, "panes")),
+        MenuPart::Choice("Preview".into(), layout_values(shell, "preview")),
+        MenuPart::Choice("File in an archive".into(), layout_values(shell, "member")),
+    ]);
+    parts
 }
 
-fn layout_items(shell: &Shell, what: &'static str) -> Vec<Button> {
+/// The values of one of the layout's settings (`what`: `panes`,
+/// `preview`, `member`): Automatic, in words, then the two places as
+/// icons. Automatic chosen, the place it gives now is outlined, and its
+/// tooltip says why.
+fn layout_values(shell: &Shell, what: &'static str) -> Vec<Button> {
     use crate::layout::{Member, Panes, Preview};
     let layout = &shell.layout;
-    let mut automatic = "Follow the window's shape: stacked when it is taller than wide";
-    let choices: [(&str, &str, bool); 3] = if what == "member" {
+    // Each value: its argument, icon, words, whether it is chosen, and
+    // whether Automatic gives it now.
+    let (automatic, values): (&str, [(&str, &str, &str, bool, bool); 2]) = match what {
         // Where a file of an archive, or an attachment, is previewed beside
         // the view it came from; Automatic follows the panel's shape.
-        automatic = "Follow the preview panel's shape: under the archive's files when it is \
-                     at the right, at their right when it is at the bottom";
-        [
+        "member" => {
+            let beside = layout.member.beside(layout.bottom());
             (
-                "auto",
-                if layout.member.beside(layout.bottom()) {
-                    "Automatic (on the right)"
-                } else {
-                    "Automatic (at the bottom)"
-                },
-                layout.member == Member::Auto,
-            ),
-            ("right", "On the right", layout.member == Member::Right),
-            ("bottom", "At the bottom", layout.member == Member::Bottom),
-        ]
-    } else if what == "panes" {
-        [
-            (
-                "auto",
-                if layout.tall() {
-                    "Automatic (one above the other)"
-                } else {
-                    "Automatic (side by side)"
-                },
-                layout.panes == Panes::Auto,
-            ),
-            ("row", "Side by side", layout.panes == Panes::Row),
-            (
-                "column",
-                "One above the other",
-                layout.panes == Panes::Column,
-            ),
-        ]
-    } else {
-        [
-            (
-                "auto",
-                if layout.tall() {
-                    "Automatic (at the bottom)"
-                } else {
-                    "Automatic (on the right)"
-                },
-                layout.preview == Preview::Auto,
-            ),
-            ("right", "On the right", layout.preview == Preview::Right),
-            ("bottom", "At the bottom", layout.preview == Preview::Bottom),
-        ]
-    };
-    choices
-        .into_iter()
-        .map(|(value, label, current)| {
-            let tip = if value == "auto" { automatic } else { label };
-            menu_item(
-                Button::new(
-                    format!("layout-{what}-{value}"),
-                    if current { "check" } else { "" },
-                    tip,
-                    "ui.layout",
-                )
-                .args(serde_json::json!({ what: value }))
-                .active(current),
-                label,
+                "Automatic: under the archive's files while the preview is at the right, at \
+                 their right while it is at the bottom",
+                [
+                    (
+                        "right",
+                        "preview",
+                        "On the right",
+                        layout.member == Member::Right,
+                        beside,
+                    ),
+                    (
+                        "bottom",
+                        "preview-bottom",
+                        "At the bottom",
+                        layout.member == Member::Bottom,
+                        !beside,
+                    ),
+                ],
             )
+        }
+        "panes" => (
+            "Automatic: one above the other while the window is taller than wide, else side \
+             by side",
+            [
+                (
+                    "row",
+                    "split",
+                    "Side by side",
+                    layout.panes == Panes::Row,
+                    !layout.tall(),
+                ),
+                (
+                    "column",
+                    "split-rows",
+                    "One above the other",
+                    layout.panes == Panes::Column,
+                    layout.tall(),
+                ),
+            ],
+        ),
+        _ => (
+            "Automatic: at the bottom while the window is taller than wide, else on the right",
+            [
+                (
+                    "right",
+                    "preview",
+                    "On the right",
+                    layout.preview == Preview::Right,
+                    !layout.tall(),
+                ),
+                (
+                    "bottom",
+                    "preview-bottom",
+                    "At the bottom",
+                    layout.preview == Preview::Bottom,
+                    layout.tall(),
+                ),
+            ],
+        ),
+    };
+    let auto = !values.iter().any(|(_, _, _, chosen, _)| *chosen);
+    let mut buttons = vec![
+        Button::new(format!("layout-{what}-auto"), "", automatic, "ui.layout")
+            .args(serde_json::json!({ what: "auto" }))
+            .label("Auto")
+            .active(auto)
+            .segment(),
+    ];
+    buttons.extend(values.into_iter().map(|(value, icon, words, chosen, now)| {
+        Button::new(format!("layout-{what}-{value}"), icon, words, "ui.layout")
+            .args(serde_json::json!({ what: value }))
+            .active(chosen)
+            .now(auto && now)
+            .segment()
+    }));
+    buttons
+}
+
+/// A popup's titled groups as its parts, a group with nothing to offer
+/// left out, title and all.
+fn titled(groups: Vec<(&'static str, Vec<Button>)>) -> Vec<MenuPart> {
+    groups
+        .into_iter()
+        .filter(|(_, items)| !items.is_empty())
+        .flat_map(|(title, items)| {
+            std::iter::once(MenuPart::Title(title.into(), None))
+                .chain(items.into_iter().map(MenuPart::Row))
         })
         .collect()
 }
 
-/// A group's title in a popup menu.
-fn group_title(title: &'static str, theme: &Theme) -> gpui::Div {
-    div()
-        .px_2()
-        .pt_2()
-        .pb_1()
-        .text_xs()
-        .text_color(theme.text_muted)
-        .child(title)
-}
-
-/// The More menu: what has no button, the window's layout, New tab, the
-/// palette, Settings and About.
+/// The More menu: the panels without a button, the window's layout, New
+/// tab, the palette, Settings and About.
 fn more_panel(
     shell: &Shell,
     popup: &toolbar::Popup,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
-    let mut panel = toolbar::menu_panel(popup, "ui.toolbar_menu", theme, cx);
-    let mut groups = layout_groups(shell);
-    groups.push((
-        "skwir",
+    let panel = toolbar::menu_panel(popup, "ui.toolbar_menu", theme, cx);
+    let mut parts = layout_parts(shell);
+    parts.push(MenuPart::Line);
+    parts.extend(
         [
             (
                 Button::new("menu-new-tab", "tab-new", "New tab", "tab.new"),
@@ -667,16 +707,9 @@ fn more_panel(
             ),
         ]
         .into_iter()
-        .map(|(button, label)| menu_item(button, label))
-        .collect(),
-    ));
-    for (title, items) in groups.into_iter().filter(|(_, items)| !items.is_empty()) {
-        panel = panel.child(group_title(title, theme));
-        for item in items {
-            panel = panel.child(item.render(shell, cx));
-        }
-    }
-    panel.into_any_element()
+        .map(|(button, label)| MenuPart::Row(menu_item(button, label))),
+    );
+    toolbar::menu_parts(panel, parts, shell, theme, cx).into_any_element()
 }
 
 /// The window's own tools have no row of their own: each area owns its
@@ -945,18 +978,12 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         && let Some(popup) = &shell.toolbar_menu
     {
         let mut panel = toolbar::menu_panel(popup, "ui.toolbar_menu", &theme, cx);
-        let groups = match kind {
-            VIEW_BUTTONS => view_buttons_menu(shell),
-            GRID_CAPTIONS => grid_captions_menu(shell),
+        let parts = match kind {
+            VIEW_BUTTONS => titled(view_buttons_menu(shell)),
+            GRID_CAPTIONS => titled(grid_captions_menu(shell)),
             _ => view_options(shell),
         };
-        // A group with nothing to offer here is left out, title and all.
-        for (title, items) in groups.into_iter().filter(|(_, items)| !items.is_empty()) {
-            panel = panel.child(group_title(title, &theme));
-            for item in items {
-                panel = panel.child(item.render(shell, cx));
-            }
-        }
+        panel = toolbar::menu_parts(panel, parts, shell, &theme, cx);
         // Which views have a button hangs from the buttons' right edge,
         // which stays where it is as buttons come and go under it.
         bar = bar.child(if kind == VIEW_BUTTONS {
