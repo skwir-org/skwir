@@ -46,15 +46,20 @@ pub fn narrowed(expr: &str, root: PathBuf) -> Result<Option<Narrowed>, String> {
         expr: expr.to_owned(),
         pills,
         set,
-        keeps: Arc::new(move |entry| keeps(&test, entry)),
+        keeps: {
+            // Asked of every file at each redraw of the order, on the
+            // window's thread: a type once per suffix (`lang::Types`).
+            let types = lang::Types::default();
+            Arc::new(move |entry| keeps(&test, entry, &types))
+        },
     }))
 }
 
 /// Whether `entry` is what `test` asks, from what the listing knows of
 /// it: until its metadata comes, what depends on it is not known, and
 /// the file is not shown.
-fn keeps(test: &Expr, entry: &Entry) -> bool {
-    let mut c = Candidate::of_entry(entry, Path::new(&entry.name));
+fn keeps(test: &Expr, entry: &Entry, types: &lang::Types) -> bool {
+    let mut c = Candidate::of_entry(entry, Path::new(&entry.name)).with_types(types);
     if !entry.metadata.is_hydrated() {
         c.metadata = None;
     }
@@ -129,32 +134,108 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
                 .collect()
         })
         .unwrap_or_default();
-    let names = and(names);
+    let names = Names::of(names);
     let files = and(files);
     let types = lang::Types::default();
     Some(ReadFilter {
         keeps: Arc::new(move |entry| {
-            let mut c = Candidate::of_entry(entry, Path::new(&entry.name)).with_types(&types);
-            if names
-                .as_ref()
-                .is_some_and(|t| t.eval(&c, false) != Verdict::Yes)
-            {
+            if !names.hold(entry) {
                 return false;
             }
             if entry.is_dir() {
                 return true;
             }
+            let Some(files) = &files else {
+                return true;
+            };
+            let mut c = Candidate::of_entry(entry, Path::new(&entry.name)).with_types(&types);
             if !entry.metadata.is_hydrated() {
                 c.metadata = None;
             }
-            files
-                .as_ref()
-                .is_none_or(|t| t.eval(&c, false) == Verdict::Yes)
+            files.eval(&c, false) == Verdict::Yes
         }),
         parts,
         waits: waits.into_iter().map(str::to_owned).collect(),
         metadata,
     })
+}
+
+/// What a filter's name terms ask of every entry at each key, over folders
+/// of a hundred thousand names: plain words each found in the name as the
+/// query finds them (case ignored unless `case:sensitive`), byte by byte
+/// where both are ASCII, never making a candidate of the entry; anything
+/// else (a glob, `ext:`, an OR) as the query evaluates it.
+enum Names {
+    None,
+    Words(Vec<Word>),
+    Expr(Expr),
+}
+
+/// A word to find in names: lowercased unless case counts.
+struct Word {
+    text: String,
+    case_sensitive: bool,
+}
+
+impl Names {
+    fn of(items: Vec<Expr>) -> Self {
+        let words: Option<Vec<Word>> = items
+            .iter()
+            .map(|item| match item {
+                Expr::Term(Term::Name(p)) if p.glob.is_none() => Some(Word {
+                    text: if p.case_sensitive {
+                        p.text.clone()
+                    } else {
+                        p.text.to_lowercase()
+                    },
+                    case_sensitive: p.case_sensitive,
+                }),
+                _ => None,
+            })
+            .collect();
+        match (words, and(items)) {
+            (_, None) => Names::None,
+            (Some(words), Some(_)) => Names::Words(words),
+            (None, Some(expr)) => Names::Expr(expr),
+        }
+    }
+
+    fn hold(&self, entry: &Entry) -> bool {
+        match self {
+            Names::None => true,
+            Names::Words(words) => words.iter().all(|w| w.in_name(&entry.name)),
+            Names::Expr(expr) => {
+                let c = Candidate::of_entry(entry, Path::new(&entry.name));
+                expr.eval(&c, false) == Verdict::Yes
+            }
+        }
+    }
+}
+
+impl Word {
+    /// Whether `name` holds it, as `NamePat` finds a word.
+    fn in_name(&self, name: &std::ffi::OsStr) -> bool {
+        let bytes = name.as_encoded_bytes();
+        let needle = self.text.as_bytes();
+        if needle.is_empty() {
+            return true;
+        }
+        if self.text.is_ascii() && bytes.is_ascii() {
+            return if self.case_sensitive {
+                bytes.windows(needle.len()).any(|w| w == needle)
+            } else {
+                bytes
+                    .windows(needle.len())
+                    .any(|w| w.eq_ignore_ascii_case(needle))
+            };
+        }
+        let text = name.to_string_lossy();
+        if self.case_sensitive {
+            text.contains(&self.text)
+        } else {
+            text.to_lowercase().contains(&self.text)
+        }
+    }
 }
 
 /// The query the longest start of `text` reads as, whole words at a time,
@@ -236,6 +317,17 @@ mod tests {
     #[test]
     fn every_word_holds_on_its_own_as_the_search_reads_it() {
         assert_eq!(kept("dunes jpg", &folder()), ["dunes.jpg"]);
+        // Case ignored as the search ignores it, unless it is asked to count.
+        assert_eq!(kept("DUNES JPG", &folder()), ["dunes.jpg"]);
+        assert_eq!(kept("README", &folder()), ["README.md"]);
+        assert!(kept("readme case:sensitive", &folder()).is_empty());
+        // Not ASCII, and a glob: as the query matches them.
+        let names = vec![
+            entry("Été.txt", EntryKind::File, Some(1), &[]),
+            entry("hiver.txt", EntryKind::File, Some(1), &[]),
+        ];
+        assert_eq!(kept("été", &names), ["Été.txt"]);
+        assert_eq!(kept("h*.txt", &names), ["hiver.txt"]);
     }
 
     #[test]
@@ -287,6 +379,18 @@ mod tests {
                 entry(&format!("file-{i:06}.jpg"), kind, Some(i), &[])
             })
             .collect();
+        // The type database is loaded once in a process: not a key's cost.
+        let _ = skwir_platform::mime::by_name(OsStr::new("warm.jpg"));
+        let narrowed = super::narrowed("kind:image", std::path::PathBuf::from("/x"))
+            .expect("narrowed")
+            .expect("set");
+        let start = std::time::Instant::now();
+        let kept = names.iter().filter(|e| narrowed.shows(e)).count();
+        eprintln!(
+            "{:>24}: {kept:>6} kept in {:?}",
+            "Narrow by kind:image",
+            start.elapsed()
+        );
         for text in [
             "file-0420",
             "dunes jpg",
