@@ -516,6 +516,19 @@ def run(w):
     check("Shift+F10: the context menu, its first item said as focused",
           until(lambda: w.focused().get_role_name() == "menu item"
                 and within(w.focused())[0] == "Context menu"))
+    # The last submenu's row stands just before Properties, the menu's end.
+    w.keys("End", "Up")
+    row = w.focused().get_name()
+    w.keys("Right")
+    check("Right on a submenu's row: its first item said as focused, in a menu named by that row",
+          until(lambda: w.focused().get_role_name() == "menu item"
+                and within(w.focused())[0] == row)
+          or print("  row:", row, "focused:", said(w.focused()), within(w.focused())))
+    w.keys("Left")
+    check("Left: back to the submenu's row, in the context menu",
+          until(lambda: w.focused().get_name() == row
+                and within(w.focused())[0] == "Context menu")
+          or print("  focused:", said(w.focused()), within(w.focused())))
     w.keys("Escape")
     check("Escape: back to the entry", hears(w, f"list item {first!r} 1 of 4 selected focused"))
 

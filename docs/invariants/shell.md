@@ -72,7 +72,8 @@ Views are in [views.md](views.md); what locations decide, in
 
 - Anchor popovers to their visible trigger through `elements/popover.rs`,
   measured in the current prepaint.
-- gpui cannot nest deferred draws: peek stays in the normal overlay tree
+- A deferred draw inside another is drawn in a later round (gpui since
+  2026-10-18, ten deep). Peek stays in the normal overlay tree
   and defers its popovers, below modal dialogs. The settings dialog is not
   deferred (its dropdowns are) and stays the shell root's last overlay
   child.
@@ -414,7 +415,16 @@ of bars, split or not.
   gives (`pane`, always; a place's `location`, a tag's `tags`): one that
   refuses an argument answers nothing, unsaid
   (`crates/skwir/tests/plugins_toggle.rs` gives every source its menu's).
-- Rare items set `submenu` (expanded in place). Give items an `icon`.
+- Rare items set `submenu`. Give items an `icon`.
+- **A submenu opens beside its row** (`PopoverAnchor::popup_beside`):
+  its first row level with its row, on the right or, without room, on
+  the left, moved up to stay in the window. The submenus' rows stand
+  together before the menu's end under one line. The pointer opens one
+  after resting `menu::REST` on its row, or at once with a click; resting
+  on another row closes it, reaching it in time keeps it. Right, Enter or
+  Space open it and move into it; Left or Escape go back to its row. A
+  press on it is no press outside the menu (`MenuState::in_sub`). A
+  submenu holds no submenu.
 - **Never taller than the window.** The menu stands where it opened (at
   the pointer, or under the keyboard's row), moved to stay in the
   window, and takes at most the window's height less its margins, in

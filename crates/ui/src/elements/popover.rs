@@ -186,6 +186,63 @@ impl PopoverAnchor {
         )
     }
 
+    /// A submenu beside the row the anchor is over: its first row level
+    /// with that row, `inset` being the room between its panel's edge and
+    /// its rows, the panel meeting the menu's. On the row's right, or its
+    /// left where the window has no room for it there; moved up to stay in
+    /// the window, and as tall as the window at most. Measured, then
+    /// placed, in the deferred prepaint, after the row's (`priority`
+    /// above the menu's).
+    pub fn popup_beside(&self, priority: usize, inset: Pixels, panel: AnyElement) -> AnyElement {
+        let anchor = self.0.clone();
+        gpui::deferred(
+            canvas(
+                move |_, window, cx| {
+                    let row = anchor.get()?;
+                    let view = window.viewport_size();
+                    let mut popup = gpui::div()
+                        .flex()
+                        .flex_col()
+                        .max_h((view.height - MARGIN * 2.).max(px(120.)))
+                        .child(panel)
+                        .into_any_element();
+                    let size = popup.layout_as_root(
+                        size(AvailableSpace::MaxContent, AvailableSpace::MaxContent),
+                        window,
+                        cx,
+                    );
+                    // Its panel's edge meets the menu's: the row's edge
+                    // plus the menu's own inset, less the two borders.
+                    let reach = inset - px(2.);
+                    let x = if row.right() + reach + size.width <= view.width - MARGIN {
+                        row.right() + reach
+                    } else {
+                        (row.left() - reach - size.width).max(MARGIN)
+                    };
+                    let y = (row.top() - inset)
+                        .min(view.height - MARGIN - size.height)
+                        .max(MARGIN);
+                    popup.prepaint_at(gpui::point(x, y), window, cx);
+                    Some(popup)
+                },
+                |_, popup, window, cx| {
+                    if let Some(mut popup) = popup {
+                        popup.paint(window, cx);
+                    }
+                },
+            )
+            .absolute()
+            .size(px(0.)),
+        )
+        .with_priority(priority)
+        .into_any_element()
+    }
+
+    /// Where the anchor was drawn this frame, if it was.
+    pub fn bounds(&self) -> Option<Bounds<Pixels>> {
+        self.0.get()
+    }
+
     /// Mark where the anchor is, for an element that draws what it is
     /// over itself, from its prepaint (the terminal's cursor cell).
     pub fn mark(&self, bounds: Bounds<Pixels>) {

@@ -418,8 +418,9 @@ pub struct Aspect {
 /// fails `kind:` and does not count for `has:`. These two are for menus:
 /// a key binding's `when` is the pane's key context, which has no types.
 ///
-/// `submenu` moves a rarely used item under a parent row of that name,
-/// after the other groups. `icon` names a bundled symbolic icon.
+/// `submenu` moves a rarely used item under a row of that name, after the
+/// other groups, which opens its items beside it. `icon` names a bundled
+/// symbolic icon.
 ///
 /// `order` sorts items and groups them: the hundreds digit is the group and
 /// the UI draws a separator between groups. Convention for `context`:
@@ -478,7 +479,7 @@ impl MenuItem {
         self
     }
 
-    /// Folded into the group `submenu`, which the menu expands in place.
+    /// Folded into the group `submenu`, which opens beside its row.
     #[must_use]
     pub fn submenu(mut self, submenu: &str) -> Self {
         self.submenu = Some(submenu.to_owned());
