@@ -39,8 +39,9 @@ impl Ask for NoOne {
 }
 
 /// A system of the test's own where the phone `UDI` names is, its serial
-/// the one GVfs names it by.
-fn system(base: &Path) -> PathBuf {
+/// the one GVfs names it by: each test's apart, as the mount point Skwir
+/// makes for its address is (the tests share the runtime folder).
+fn system(base: &Path, serial: &str) -> PathBuf {
     let system = base.join("system");
     let folder = system.join("sys/devices/pci0000:00/usb9/9-1");
     std::fs::create_dir_all(&folder).unwrap();
@@ -51,7 +52,7 @@ fn system(base: &Path) -> PathBuf {
     std::fs::create_dir_all(&udev).unwrap();
     std::fs::write(
         udev.join("c189:1037"),
-        "E:ID_MTP_DEVICE=1\nE:ID_SERIAL=Example_Phone_0123\n",
+        format!("E:ID_MTP_DEVICE=1\nE:ID_SERIAL={serial}\n"),
     )
     .unwrap();
     system
@@ -101,7 +102,8 @@ fn a_phone_kmtpd_holds_opens_through_it_and_is_let_go_of() {
         "Example Phone",
         &[("/DCIM/", b""), ("/DCIM/It's 1.jpg", b"a picture")],
     );
-    let connector: Arc<dyn Connector> = Arc::new(kmtp(&bus, system(&base), false));
+    let connector: Arc<dyn Connector> =
+        Arc::new(kmtp(&bus, system(&base, "Example_Phone_0123"), false));
     let remotes = Remotes::with(vec![connector]);
     let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
     app.plugins
@@ -175,13 +177,17 @@ fn kmtpd_is_never_loaded_off_kde_s_desktop_and_loaded_on_it() {
     };
     let base = fixture("unloaded");
     let unloaded = Unloaded::serve(&bus.address);
-    let address = Address::parse("mtp://Example_Phone_0123/").unwrap();
+    let address = Address::parse("mtp://Example_Phone_4567/").unwrap();
 
     // Off KDE's desktop: asked what `/modules` holds, nothing addressed to
     // kmtpd, nothing offered, the address left to the next tool.
-    let elsewhere = kmtp(&bus, system(&base), false);
+    let elsewhere = kmtp(&bus, system(&base, "Example_Phone_4567"), false);
     assert!(!elsewhere.opens(&address));
-    let remotes = Remotes::with(vec![Arc::new(kmtp(&bus, system(&base), false))]);
+    let remotes = Remotes::with(vec![Arc::new(kmtp(
+        &bus,
+        system(&base, "Example_Phone_4567"),
+        false,
+    ))]);
     let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
     app.plugins
         .add(Arc::new(RemotePlugin::with(remotes.clone())), &app);
@@ -196,7 +202,7 @@ fn kmtpd_is_never_loaded_off_kde_s_desktop_and_loaded_on_it() {
     drop(app);
 
     // On KDE's desktop: asked as Dolphin would, which loads it.
-    let on_kde = kmtp(&bus, system(&base), true);
+    let on_kde = kmtp(&bus, system(&base, "Example_Phone_4567"), true);
     assert!(!on_kde.opens(&address), "it held nothing once asked");
     assert!(
         !unloaded.asked().is_empty(),
