@@ -2313,6 +2313,10 @@ impl Shell {
             "search" => {
                 self.omnibox_begin(crate::omnibox::Begin::Search, arg("text"), window, cx);
             }
+            // The same, this folder only: its words filter it.
+            "filter" => {
+                self.omnibox_begin(crate::omnibox::Begin::Filter, arg("text"), window, cx);
+            }
             "omnibox_submit" => {
                 let flag =
                     |name: &str| args.get(name).and_then(serde_json::Value::as_bool) == Some(true);
@@ -2991,8 +2995,14 @@ impl Shell {
             }
             if location != self.ui().address_shown {
                 self.ui_mut().address_shown.clone_from(&location);
+                // The field typed in keeps what is typed: what the words
+                // show as they are typed (a search, ADR-098) changes the
+                // location under it.
                 let address = self.ui().address.clone();
-                address.update(cx, |i, cx| i.set_text(location, cx));
+                let typed_in = self.ui().omni.is_some() && address.read(cx).is_focused(window);
+                if !typed_in {
+                    address.update(cx, |i, cx| i.set_text(location, cx));
+                }
             }
         }
         self.pane = saved;

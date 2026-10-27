@@ -1,15 +1,20 @@
 //! The address field as the one place to type (ADR-070, ADR-098): a path,
 //! a search, a place to go to, a scope to search in, or a command.
 //!
-//! The field may hold a scope before its text, a token: where words search.
-//! Ctrl+F (`ui.search`) starts with the folder shown as the scope, Ctrl+L
-//! (`ui.focus_address`) with none and the path selected, Ctrl+J
-//! (`ui.jump`) with none and nothing typed, places first. Over a search,
-//! Ctrl+F and Ctrl+L edit it, its root as the scope. Backspace at the start
-//! of the text takes the scope away (Left there selects it first); a click
-//! on the token, Down on it, Alt+Down, or `@` typed first in an empty field
-//! list where else to search. Ctrl+F on a highlighted folder or place
-//! makes it the scope.
+//! The field may hold a scope before its text, a token: where words look.
+//! Words look as deep as the field says (ADR-098, `Depth`): in the folder
+//! shown alone, filtered at each key, or in it and its subfolders, searched
+//! a pause after the last key. Ctrl+Shift+F (`ui.filter`) starts with the
+//! folder shown as the scope, this folder only; Ctrl+F (`ui.search`) with
+//! its subfolders too; while typing, each switches to its own depth and
+//! keeps the words, as the switch on the card's first line does. Ctrl+L
+//! (`ui.focus_address`) starts with no scope and the path selected, words
+//! then filtering the folder shown; Ctrl+J (`ui.jump`) with none and
+//! nothing typed, places first. Over a search, Ctrl+F and Ctrl+L edit it,
+//! its root as the scope. Backspace at the start of the text takes the
+//! scope away (Left there selects it first); a click on the token, Down on
+//! it, Alt+Down, or `@` typed first in an empty field list where else to
+//! search. Ctrl+F on a highlighted folder or place makes it the scope.
 //!
 //! What the dropdown offers comes from sources (`skwir_core::suggest`):
 //! each asked again at every change of the text, each in a job of its own,
@@ -25,15 +30,20 @@
 //! (`LocationProvider::complete`). Rows are put in their sections' order;
 //! an answer arriving later never moves the row the arrows chose.
 //!
-//! Words typed over a folder filter it at once (the core's `filter`, which
-//! the query plugin reads: words find names, terms the listing can decide
-//! hold for files). The text is drawn with the spans the query plugin
-//! reads in it (`query.tokens`): keys in the accent, values tinted, what
-//! cannot be read underlined.
+//! Words typed over a folder, this folder only, filter it at once (the
+//! core's `filter`, which the query plugin reads: words find names, terms
+//! the listing can decide hold for files). With its subfolders, the search
+//! Enter would run is shown as they are typed (`Suggestion::live`), in
+//! place of one step of the pane's history: the field's own, which Escape
+//! takes back. A search that reads the files, or looks below a folder on a
+//! server, waits for Enter. The text is drawn with the spans the query
+//! plugin reads in it (`query.tokens`): keys in the accent, values tinted,
+//! what cannot be read underlined.
 //!
 //! Tab completes (`ui.omnibox_complete`); Right or End at the end takes
-//! what is drawn after the text; Enter runs the highlighted row, Alt+Enter
-//! its search in the home folder, Shift+Enter opens a file it names;
+//! what is drawn after the text; Enter keeps the words shown and gives the
+//! files the keyboard, or runs the highlighted row; Alt+Enter runs the
+//! search in the home folder, Shift+Enter opens a file a path names;
 //! Shift+Delete forgets a recent search (`ui.omnibox_forget`). The
 //! keyboard never leaves the field: Up and Down move through the dropdown
 //! (bound in the address bar's context), a click on a row runs it without
@@ -67,6 +77,9 @@ const READING_SAID: Duration = Duration::from_millis(200);
 /// The most scopes listed.
 const SCOPES: usize = 10;
 
+/// How long after the last key a search below the folder is shown.
+const LIVE_PAUSE: Duration = Duration::from_millis(400);
+
 /// How far the field's card reaches beyond the field: before, above and
 /// after it.
 const CARD_PAD: f32 = 5.;
@@ -79,18 +92,43 @@ pub(crate) const CARD_PRIORITY: usize = 3;
 /// How the field takes the keyboard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Begin {
-    /// Ctrl+F: words search where the pane is.
+    /// Ctrl+F: words search where the pane is, and below.
     Search,
+    /// Ctrl+Shift+F: words filter the folder shown.
+    Filter,
     /// Ctrl+L: the path, selected.
     Path,
     /// Ctrl+J: nothing typed, places first.
     Jump,
 }
 
+/// How deep words look (ADR-098).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Depth {
+    /// The folder shown alone: filtered at each key.
+    #[default]
+    Here,
+    /// It and its subfolders: searched a pause after the last key.
+    Below,
+}
+
 /// A pane's field while it is being typed in.
-#[allow(clippy::struct_excessive_bools)] // Independent states of the field: its token, its list, edited, a row chosen.
+#[allow(clippy::struct_excessive_bools)] // Independent states of the field: its token, its list, edited, a row chosen, a step taken.
 #[derive(Default)]
 pub struct Omni {
+    /// How deep words look.
+    pub depth: Depth,
+    /// What the pane showed, and its filter and narrowing, when the field
+    /// took the keyboard: what Escape shows again.
+    before: Option<Before>,
+    /// The field showed a location of its own (a search as it is typed, a
+    /// search's folder to filter): one step of the pane's history, which
+    /// it shows in place and Escape takes back.
+    stepped: bool,
+    /// The words whose search the pane shows, shown as typed.
+    shown: Option<String>,
+    /// The search shown once the pause after the last key is over.
+    pending: Option<gpui::Task<()>>,
     /// Where words search, drawn as a token before the text; `None`: the
     /// field goes anywhere (words then search the folder shown).
     pub scope: Option<Location>,
@@ -130,6 +168,16 @@ pub struct Omni {
     asked: Option<(Ask, CancelToken)>,
     /// Each source's last answer, and the text and scope it answered.
     answers: Vec<(String, (String, Option<Location>), Answer)>,
+}
+
+/// What a pane showed when its field took the keyboard.
+struct Before {
+    location: Option<Location>,
+    /// Where words filter: the location shown, or the folder a search
+    /// shown looks in (the place it lists).
+    folder: Option<Location>,
+    filter: Option<String>,
+    narrowed: Option<skwir_core::workspace::Narrowed>,
 }
 
 impl Drop for Omni {
@@ -419,9 +467,11 @@ impl Shell {
 
     /// Give the active pane's field the keyboard, as `how` says, with
     /// `text` to start from. A pane showing a search edits that search,
-    /// its root as the scope (Ctrl+J starts anew). With the field already
-    /// typed in, Ctrl+F makes the folder or place highlighted the scope,
-    /// else gives the field the folder shown as its scope.
+    /// its root as the scope (Ctrl+J starts anew); this folder only
+    /// (Ctrl+Shift+F), the folder it looks in shows, filtered by its words.
+    /// With the field already typed in, Ctrl+F makes the folder or place
+    /// highlighted the scope, else words look below the folder; Ctrl+Shift+F
+    /// brings them back to the folder alone.
     pub fn omnibox_begin(
         &mut self,
         how: Begin,
@@ -429,17 +479,46 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if how == Begin::Search && text.is_none() && self.ui().omni.is_some() {
-            let focused = self.ui().address.read(cx).is_focused(window);
-            if focused {
-                self.scope_from_highlight(window, cx);
+        if matches!(how, Begin::Search | Begin::Filter)
+            && text.is_none()
+            && self.ui().omni.is_some()
+            && self.ui().address.read(cx).is_focused(window)
+        {
+            if how == Begin::Search && self.scope_from_highlight(window, cx) {
                 return;
             }
+            let depth = if how == Begin::Search {
+                Depth::Below
+            } else {
+                Depth::Here
+            };
+            return self.set_depth(depth, window, cx);
         }
         let pane = self.pane;
         let chips = &self.ui().chips;
         let shown_dir = self.app.pane_dir(pane).ok();
-        let (scope, initial, select) = if !chips.chips.is_empty() && how != Begin::Jump {
+        let over_search = !chips.chips.is_empty();
+        // Where words filter: the folder shown, or the one a search looks
+        // in (the place it lists).
+        let folder = if over_search {
+            Some(
+                chips
+                    .within
+                    .clone()
+                    .unwrap_or_else(|| Location::from_path(&chips.root)),
+            )
+        } else {
+            self.app.pane_location(pane)
+        };
+        let depth = match how {
+            Begin::Search => Depth::Below,
+            // Over a search, words are its, looking where it looks.
+            Begin::Path | Begin::Jump if over_search => Depth::Below,
+            Begin::Filter | Begin::Path | Begin::Jump => Depth::Here,
+        };
+        // A search's words over the folder alone filter it at once.
+        let filters_search = how == Begin::Filter && over_search;
+        let (scope, initial, select) = if over_search && how != Begin::Jump {
             let given = text.is_some();
             (
                 Some(
@@ -453,8 +532,8 @@ impl Shell {
             )
         } else {
             match how {
-                // A folder filtered: its words, to edit.
-                Begin::Search => (
+                // A folder filtered: its words, to edit, as deep as asked.
+                Begin::Search | Begin::Filter => (
                     shown_dir.as_ref().map(Location::from_path).or_else(|| {
                         self.app
                             .pane_location(pane)
@@ -479,9 +558,21 @@ impl Shell {
             }
         };
         let given = !initial.is_empty() && !select;
+        let before = {
+            let ws = self.app.workspace.read();
+            let p = ws.pane(pane);
+            Before {
+                location: p.and_then(|p| p.location().cloned()),
+                folder,
+                filter: p.and_then(|p| p.filter().map(str::to_owned)),
+                narrowed: p.and_then(|p| p.narrowed().cloned()),
+            }
+        };
         let mut omni = Omni::default();
         omni.scope = scope;
-        omni.edited = given;
+        omni.edited = given || (filters_search && !initial.is_empty());
+        omni.depth = depth;
+        omni.before = Some(before);
         self.ui_mut().omni = Some(omni);
         let placeholder = self.placeholder();
         let address = self.ui().address.clone();
@@ -495,8 +586,12 @@ impl Shell {
             }
             input.focus(window, cx);
         });
-        if given {
-            self.omnibox_changed(window, cx);
+        // Over a search, this folder only: the folder it looks in shows.
+        if filters_search {
+            self.show_here(window, cx);
+        }
+        if given || filters_search {
+            self.omnibox_changed_keep_edit(window, cx);
         } else {
             self.ask_suggestions(window, cx);
             self.refresh_rows(cx);
@@ -504,48 +599,265 @@ impl Shell {
         cx.notify();
     }
 
-    /// What the empty field says: where words search, or what it takes.
-    fn placeholder(&self) -> String {
-        match self.ui().omni.as_ref().and_then(|o| o.scope.as_ref()) {
-            Some(scope) => format!("Search {}, or type a path", scope_name(&self.app, scope)),
-            None => "A path, a place, or words to search".to_owned(),
+    /// How deep words look changed, or is asked to (Ctrl+F, Ctrl+Shift+F,
+    /// the switch on the card): the scope says where, the pane shows what
+    /// the words keep there, the words kept.
+    pub(crate) fn set_depth(&mut self, depth: Depth, window: &mut Window, cx: &mut Context<Self>) {
+        let shown_dir = self.app.pane_dir(self.pane).ok().map(Location::from_path);
+        let typed = !self.omni_text(cx).trim().is_empty();
+        let Some(omni) = self.ui_mut().omni.as_mut() else {
+            return;
+        };
+        omni.depth = depth;
+        // Words given, switched: they are what is looked for.
+        omni.edited |= typed;
+        omni.token = false;
+        omni.scopes = false;
+        let folder = omni.before.as_ref().and_then(|b| b.folder.clone());
+        match depth {
+            // The folder alone: the token names it, as it did.
+            Depth::Here if omni.scope.is_some() => omni.scope = folder,
+            Depth::Below if omni.scope.is_none() => omni.scope = shown_dir.or(folder),
+            Depth::Here | Depth::Below => {}
+        }
+        if depth == Depth::Here {
+            self.show_here(window, cx);
+        }
+        let placeholder = self.placeholder();
+        let address = self.ui().address.clone();
+        address.update(cx, |input, cx| input.set_placeholder(placeholder, cx));
+        self.omnibox_changed_keep_edit(window, cx);
+        // A switch is asked for: what it shows comes now, not after a pause.
+        if depth == Depth::Below {
+            self.show_live(window, cx);
         }
     }
 
-    /// Ctrl+F in the field: the folder or place highlighted becomes the
-    /// scope, the text then cleared for words; without one, the folder
-    /// shown becomes the scope of the text as it is.
-    fn scope_from_highlight(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// The words look in the folder alone: it shows, the search shown as
+    /// they were typed taken back, or, over a search, the folder it looks
+    /// in shown in place of the field's step.
+    fn show_here(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.pane;
+        let Some(omni) = self.ui_mut().omni.as_mut() else {
+            return;
+        };
+        omni.pending = None;
+        omni.shown = None;
+        let Some(before) = &omni.before else {
+            return;
+        };
+        let Some(folder) = before.folder.clone() else {
+            return;
+        };
+        let back = omni.stepped && before.location.as_ref() == Some(&folder);
+        if self.app.pane_location(pane).as_ref() == Some(&folder) {
+            return;
+        }
+        if back {
+            self.take_back(cx);
+            return;
+        }
+        self.step(cx);
+        if let Err(error) = self.app.navigate_in_place(pane, &folder) {
+            tracing::warn!("address: {error:#}");
+        }
+    }
+
+    /// The field takes a step of the pane's history of its own, once: what
+    /// it shows goes in its place, and Escape takes it back.
+    fn step(&mut self, _cx: &mut Context<Self>) {
+        let pane = self.pane;
+        let Some(omni) = self.ui_mut().omni.as_mut() else {
+            return;
+        };
+        if omni.stepped {
+            return;
+        }
+        omni.stepped = true;
+        if let Err(error) = self.app.step_here(pane) {
+            tracing::warn!("address: {error:#}");
+        }
+    }
+
+    /// The field's step taken back: the pane shows what it showed when the
+    /// field took the keyboard, narrowed as it was.
+    fn take_back(&mut self, cx: &mut Context<Self>) {
+        let pane = self.pane;
+        let Some(omni) = self.ui_mut().omni.as_mut() else {
+            return;
+        };
+        omni.pending = None;
+        omni.shown = None;
+        if !std::mem::take(&mut omni.stepped) {
+            return;
+        }
+        let narrowed = omni.before.as_ref().and_then(|b| b.narrowed.clone());
+        if let Err(error) = self.app.take_step_back(pane) {
+            tracing::warn!("address: {error:#}");
+        }
+        // Showing the search let go of the narrowing; showing the folder
+        // again puts it back.
+        if let Some(narrowed) = narrowed
+            && let Some(p) = self.app.workspace.write().pane_mut(pane)
+            && p.narrowed().is_none()
+        {
+            p.set_narrowed(Some(narrowed));
+        }
+        cx.notify();
+    }
+
+    /// Words looking below the folder: what they find is shown once the
+    /// pause after the last key is over, the search waiting before
+    /// dropped; none typed, what was shown before.
+    fn schedule_live(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.pane;
+        let Some(omni) = self.ui_mut().omni.as_mut() else {
+            return;
+        };
+        omni.pending = None;
+        if omni.depth != Depth::Below {
+            return;
+        }
+        let task = cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(LIVE_PAUSE).await;
+            this.update_in(cx, |shell, window, cx| {
+                // Still typed in, in a pane of the tab shown.
+                if shell
+                    .panes
+                    .iter()
+                    .any(|ui| ui.id == pane && ui.omni.is_some())
+                {
+                    shell.with_pane(pane, |shell| shell.show_live(window, cx));
+                }
+            })
+            .ok();
+        });
+        if let Some(omni) = self.ui_mut().omni.as_mut() {
+            omni.pending = Some(task);
+        }
+    }
+
+    /// Show the search of the words typed, as typed (`Suggestion::live`):
+    /// in place of the field's step. Words whose search waits for Enter
+    /// leave the pane as it is; no words, what it showed before.
+    fn show_live(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let raw = self.omni_text(cx);
+        let words = raw.trim().to_owned();
+        let pane = self.pane;
+        let over_search = self
+            .app
+            .pane_location(pane)
+            .is_some_and(|l| self.app.is_search(&l));
+        let typed = self.typed_of(&raw, true);
+        let Some(omni) = self.ui_mut().omni.as_mut() else {
+            return;
+        };
+        omni.pending = None;
+        if omni.depth != Depth::Below || omni.shown.as_deref() == Some(words.as_str()) {
+            return;
+        }
+        if words.is_empty() || typed != Typed::Words {
+            return self.take_back(cx);
+        }
+        // A search's words as they were given: it is what shows.
+        if !omni.edited && over_search {
+            omni.shown = Some(words);
+            return;
+        }
+        let Some(live) = self.run_row(&raw, cx).and_then(|row| row.live) else {
+            return;
+        };
+        self.step(cx);
+        // Dispatched directly, as the filter is: what is typed is not traced.
+        match self.app.dispatch(&live) {
+            Ok(_) => {
+                if let Some(omni) = self.ui_mut().omni.as_mut() {
+                    omni.shown = Some(words);
+                }
+            }
+            Err(error) => tracing::warn!("{}: {error:#}", live.name),
+        }
+        cx.notify();
+    }
+
+    /// The row that says what Enter runs with the words `raw` (the search,
+    /// or why it cannot run): from an answer to them, else asked now.
+    fn run_row(&mut self, raw: &str, cx: &mut Context<Self>) -> Option<Suggestion> {
+        if !self.has_fresh_run(raw) {
+            self.fresh_rows_now(raw, cx);
+        }
+        let omni = self.ui().omni.as_ref()?;
+        omni.answers
+            .iter()
+            .filter(|(_, (asked, scope), _)| asked == raw && *scope == omni.scope)
+            .flat_map(|(.., answer)| answer.rows.iter())
+            .find(|row| row.section == Section::Run)
+            .cloned()
+    }
+
+    /// What the empty field says: where words search, or what it takes.
+    fn placeholder(&self) -> String {
+        let omni = self.ui().omni.as_ref();
+        match omni.and_then(|o| o.scope.as_ref().map(|s| (s, o.depth))) {
+            Some((scope, Depth::Here)) => {
+                format!("Filter {}, or type a path", scope_name(&self.app, scope))
+            }
+            Some((scope, Depth::Below)) => format!(
+                "Search {} and below, or type a path",
+                scope_name(&self.app, scope)
+            ),
+            None if omni.is_some_and(|o| o.depth == Depth::Below) => {
+                "A path, a place, or words to search".to_owned()
+            }
+            None => "A path, a place, or words to filter".to_owned(),
+        }
+    }
+
+    /// Ctrl+F in the field on a highlighted folder or place: it becomes
+    /// the scope, words looking below it, the text cleared for them.
+    /// Whether one was highlighted.
+    fn scope_from_highlight(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let row = self
             .ui()
             .omni
             .as_ref()
             .and_then(|o| o.highlighted.and_then(|i| o.rows.get(i)))
             .and_then(Row::scope);
-        let shown = self.app.pane_dir(self.pane).ok().map(Location::from_path);
+        let Some(scope) = row else {
+            return false;
+        };
         let Some(omni) = self.ui_mut().omni.as_mut() else {
-            return;
+            return false;
         };
-        let clear = match row {
-            Some(scope) => {
-                omni.scope = Some(scope);
-                true
-            }
-            None if omni.scope.is_none() && shown.is_some() => {
-                omni.scope = shown;
-                false
-            }
-            None => return,
-        };
+        omni.scope = Some(scope);
         omni.token = false;
         omni.scopes = false;
-        self.scope_changed(clear, window, cx);
+        self.scope_changed(true, window, cx);
+        true
     }
 
     /// The scope changed: the placeholder says it, the text is cleared when
     /// `clear` (a scope chosen for words still to type), and the sources
     /// are asked again.
     fn scope_changed(&mut self, clear: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // Another place than the one words filter is searched; no scope,
+        // words filter the folder shown.
+        if let Some(omni) = self.ui_mut().omni.as_mut() {
+            let folder = omni.before.as_ref().and_then(|b| b.folder.clone());
+            omni.depth = match &omni.scope {
+                None => Depth::Here,
+                Some(scope) if Some(scope) != folder.as_ref() => Depth::Below,
+                Some(_) => omni.depth,
+            };
+        }
+        if self
+            .ui()
+            .omni
+            .as_ref()
+            .is_some_and(|o| o.depth == Depth::Here)
+        {
+            self.show_here(window, cx);
+        }
         let placeholder = self.placeholder();
         let address = self.ui().address.clone();
         address.update(cx, |input, cx| {
@@ -596,11 +908,13 @@ impl Shell {
         self.ask_suggestions(window, cx);
         self.ask_completions(text.trim_start(), window, cx);
         self.refresh_rows(cx);
+        self.schedule_live(window, cx);
     }
 
-    /// Words typed over a folder (not a search: its text is the query)
-    /// show only what they keep, at once, in memory (the core's `filter`,
-    /// read by the query plugin); Enter then searches the folders inside.
+    /// Words typed over a folder (not a search: its text is the query),
+    /// looking in it alone, show only what they keep, at once, in memory
+    /// (the core's `filter`, read by the query plugin); looking below it,
+    /// they filter nothing.
     fn filter_as_typed(&mut self, words: &str) {
         let pane = self.pane;
         let filters = self
@@ -610,7 +924,12 @@ impl Shell {
         if !filters {
             return;
         }
-        let wanted = (!words.is_empty()).then_some(words);
+        let here = self
+            .ui()
+            .omni
+            .as_ref()
+            .is_none_or(|o| o.depth == Depth::Here);
+        let wanted = (here && !words.is_empty()).then_some(words);
         let current = self
             .app
             .workspace
@@ -879,15 +1198,25 @@ impl Shell {
             .filter(|_| omni.chosen)
             .and_then(|i| omni.rows.get(i))
             .map(Row::key);
+        // Words show what they keep as typed: Enter keeps it, unless the
+        // first row says what Enter does instead (a search that waits for
+        // it, or why it cannot run).
+        let first = match typed {
+            _ if omni.scopes => (!rows.is_empty()).then_some(0),
+            Typed::Nothing => None,
+            Typed::Words => rows
+                .first()
+                .filter(|r| r.section() == Section::Run)
+                .map(|_| 0),
+            _ => (!rows.is_empty()).then_some(0),
+        };
         omni.highlighted = match &kept {
             Some(key) => rows.iter().position(|r| r.key() == *key),
-            None if typed == Typed::Nothing && !omni.scopes => None,
-            None => (!rows.is_empty()).then_some(0),
+            None => first,
         };
         if kept.is_some() && omni.highlighted.is_none() {
             omni.chosen = false;
-            omni.highlighted =
-                (!rows.is_empty() && (typed != Typed::Nothing || omni.scopes)).then_some(0);
+            omni.highlighted = first;
         }
         omni.rows = rows;
         omni.shared = shared;
@@ -1155,8 +1484,11 @@ impl Shell {
 
     /// Enter (the row highlighted), Alt+Enter (`everywhere`: the search in
     /// the home folder) or Shift+Enter (`open`: a file named is opened,
-    /// not shown in its folder). Text not edited does what it says: the
-    /// location shown goes there again, a search's words search again.
+    /// not shown in its folder). Words with no row chosen keep what they
+    /// show, and the files take the keyboard (ADR-098): the folder
+    /// filtered, or the search below it, run now when it waited for Enter.
+    /// Text not edited does what it says: the location shown goes there
+    /// again.
     pub fn omnibox_submit(
         &mut self,
         everywhere: bool,
@@ -1166,20 +1498,31 @@ impl Shell {
     ) {
         let raw = self.omni_text(cx);
         let text = raw.trim().to_owned();
-        let (edited, highlighted) = self
+        let (edited, highlighted, depth, scoped) = self
             .ui()
             .omni
             .as_ref()
-            .map_or((false, None), |o| (o.edited, o.highlighted));
+            .map_or((false, None, Depth::Here, false), |o| {
+                (o.edited, o.highlighted, o.depth, o.scope.is_some())
+            });
         let typed = self.typed_of(&raw, edited);
-        // A search's words not edited: its first row runs it again.
-        let unedited_search = !edited && !text.is_empty() && !self.ui().chips.chips.is_empty();
-        if unedited_search && let Some(omni) = self.ui_mut().omni.as_mut() {
-            omni.edited = true;
+        let on_run = highlighted
+            .and_then(|i| self.suggestions().get(i))
+            .is_some_and(|r| r.section() == Section::Run);
+        // Words, or a search's words as given, with nothing chosen but what
+        // Enter does.
+        let words =
+            typed == Typed::Words || (typed == Typed::Nothing && scoped && !text.is_empty());
+        if words && (highlighted.is_none() || on_run) && !everywhere && !open {
+            if depth == Depth::Below && !self.keep_search(&raw, window, cx) {
+                return;
+            }
+            self.omnibox_end(cx);
+            window.focus(&self.ui().focus, cx);
+            cx.notify();
+            return;
         }
-        let rows = if unedited_search {
-            self.fresh_rows_now(&raw, cx)
-        } else if typed == Typed::Words && !self.has_fresh_run(&raw) {
+        let rows = if typed == Typed::Words && !self.has_fresh_run(&raw) {
             // Typed faster than the sources answered: ask them here.
             self.fresh_rows_now(&raw, cx)
         } else {
@@ -1190,11 +1533,11 @@ impl Shell {
                 .unwrap_or_default()
         };
         let chosen = if everywhere {
-            rows.iter().find_map(|r| match r {
-                Row::Source(s) if s.alt.is_some() => Some(r.clone()),
-                _ => None,
-            })
-        } else if unedited_search || (edited && highlighted.is_none() && typed != Typed::Nothing) {
+            // The search Enter runs, hidden while it shows as typed.
+            self.run_row(&raw, cx)
+                .filter(|s| s.alt.is_some())
+                .map(|s| Row::Source(Box::new(s)))
+        } else if edited && highlighted.is_none() && typed != Typed::Nothing {
             rows.first().cloned()
         } else {
             highlighted.and_then(|i| rows.get(i)).cloned()
@@ -1216,7 +1559,14 @@ impl Shell {
                 let clear = typed == Typed::Scope;
                 return self.scope_changed(clear, window, cx);
             }
-            Some(Row::Source(s)) if s.run.is_none() => {
+            // Over the folder alone, a term completed or the words read as
+            // terms filter it: Enter writes them, as Tab does.
+            Some(Row::Source(s))
+                if s.run.is_none()
+                    || (depth == Depth::Here
+                        && matches!(s.section, Section::Complete | Section::Reading)
+                        && s.completion.is_some()) =>
+            {
                 if let Some(text) = s.completion.clone() {
                     let address = self.ui().address.clone();
                     address.update(cx, |input, cx| input.replace_all(&text, cx));
@@ -1232,6 +1582,9 @@ impl Shell {
         let named = complete::is_path(&text)
             .then(|| self.typed_folder(raw.trim_start()))
             .flatten();
+        // A row goes from what the pane showed: the search shown as typed
+        // was the field's, never a step of its own.
+        self.take_back(cx);
         self.omnibox_end(cx);
         window.focus(&self.ui().focus, cx);
         match chosen {
@@ -1304,11 +1657,54 @@ impl Shell {
         cx.notify();
     }
 
-    /// Whether an answer to `text` holds what Enter runs with words.
+    /// Enter on words looking below the folder: the search shown as they
+    /// were typed is kept, else shown now (or run, when it waited for
+    /// Enter), remembered as Enter's searches are. False when it cannot
+    /// run: its row says why, and the field stays.
+    fn keep_search(&mut self, raw: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(row) = self.run_row(raw, cx) else {
+            return true;
+        };
+        let Some(run) = row.run.clone() else {
+            self.set_status(row.title.clone(), true, cx);
+            return false;
+        };
+        let words = raw.trim();
+        let pane = self.pane;
+        let over_search = self
+            .app
+            .pane_location(pane)
+            .is_some_and(|l| self.app.is_search(&l));
+        let Some(omni) = self.ui_mut().omni.as_mut() else {
+            return true;
+        };
+        omni.pending = None;
+        let shown = omni.shown.as_deref() == Some(words) || (!omni.edited && over_search);
+        if !shown {
+            match row.live {
+                Some(live) => {
+                    self.step(cx);
+                    if let Err(error) = self.app.dispatch(&live) {
+                        tracing::warn!("{}: {error:#}", live.name);
+                    }
+                }
+                // It goes from what the pane showed.
+                None => self.take_back(cx),
+            }
+        }
+        // A search the pane shows already stays as it is: it is remembered.
+        self.run(&run.name, run.args, window, cx);
+        true
+    }
+
+    /// Whether an answer to `text`, in the scope as it is, holds what Enter
+    /// runs with words.
     fn has_fresh_run(&self, text: &str) -> bool {
         self.ui().omni.as_ref().is_some_and(|o| {
-            o.answers.iter().any(|(_, (asked, _), a)| {
-                asked == text && a.rows.iter().any(|r| r.section == Section::Run)
+            o.answers.iter().any(|(_, (asked, scope), a)| {
+                asked == text
+                    && *scope == o.scope
+                    && a.rows.iter().any(|r| r.section == Section::Run)
             })
         })
     }
@@ -1392,8 +1788,9 @@ impl Shell {
         );
     }
 
-    /// Escape: the list of scopes closes; else the field shows where the
-    /// pane is again, all of it.
+    /// Escape: the list of scopes closes; else the pane shows what it
+    /// showed when the field took the keyboard, filtered as it was, and the
+    /// field shows where it is again, all of it.
     pub fn omnibox_cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(omni) = self.ui_mut().omni.as_mut()
             && (omni.scopes || omni.token)
@@ -1403,8 +1800,15 @@ impl Shell {
             self.refresh_rows(cx);
             return;
         }
+        let filter = self
+            .ui()
+            .omni
+            .as_ref()
+            .and_then(|o| o.before.as_ref())
+            .and_then(|b| b.filter.clone());
+        self.take_back(cx);
         self.omnibox_end(cx);
-        self.set_filter(None);
+        self.set_filter(filter.as_deref());
         let shown = self.ui().address_shown.clone();
         let address = self.ui().address.clone();
         address.update(cx, |input, cx| input.set_text(shown, cx));
@@ -1462,6 +1866,15 @@ impl Shell {
         };
         let typed = self.typed_of(text, omni.edited);
         let scope = omni.scope.clone();
+        // The search Enter runs with words is no row while they show what
+        // they keep as typed: over the folder alone, or below it as typed.
+        // It is one while it waits for Enter, or cannot run.
+        let quiet = |r: &Suggestion| {
+            typed == Typed::Words
+                && r.section == Section::Run
+                && !r.error
+                && (omni.depth == Depth::Here || r.live.is_some())
+        };
         // The sources' rows answering this text: a section about the text
         // itself only from an answer to it, the others while the next
         // answer comes, so the list does not jump at each key.
@@ -1491,6 +1904,7 @@ impl Shell {
             skwir_core::suggest::merge(answers)
                 .rows
                 .into_iter()
+                .filter(|row| !quiet(row))
                 .map(|mut row| {
                     if row.section == Section::Actions && row.keys.is_none() {
                         row.keys = row
@@ -1509,7 +1923,11 @@ impl Shell {
         match typed {
             Typed::Nothing | Typed::Words => {
                 let mut rows = sources;
-                if typed == Typed::Words && rows.is_empty() {
+                // No source answers words: they name a place to go to.
+                let answered = omni.answers.iter().any(|(_, asked, a)| {
+                    asked.0 == text && a.rows.iter().any(|r| r.section == Section::Run)
+                });
+                if typed == Typed::Words && rows.is_empty() && !answered {
                     rows.push(Row::Go);
                 }
                 if typed == Typed::Words {
@@ -1835,6 +2253,13 @@ pub fn scope_token(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
     let theme = cx.global::<Theme>().clone();
     let name = scope_name(&shell.app, scope);
     let pane = shell.pane;
+    // How deep words look: a funnel over the folder alone, a magnifier
+    // below a folder; a place searched as it lists wears its own glyph.
+    let glyph = match omni.depth {
+        Depth::Here => "filter",
+        Depth::Below if scope.path().is_some() => "search",
+        Depth::Below => scope_glyph(&shell.app, scope),
+    };
     let (bg, fg) = if omni.token || omni.scopes {
         (theme.selection_bg, theme.selection_text)
     } else {
@@ -1857,8 +2282,10 @@ pub fn scope_token(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
             .text_color(fg)
             .cursor_pointer()
             .when(shell.a11y, |d| {
-                d.role(gpui::Role::Button)
-                    .aria_label(format!("Searching in {name}"))
+                d.role(gpui::Role::Button).aria_label(match omni.depth {
+                    Depth::Here => format!("Filtering {name}"),
+                    Depth::Below => format!("Searching {name} and below"),
+                })
             })
             // The field keeps the keyboard: the token acts on the press.
             .on_mouse_down(
@@ -1872,7 +2299,7 @@ pub fn scope_token(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
             )
             .child(
                 gpui::svg()
-                    .path(format!("toolbar/{}.svg", scope_glyph(&shell.app, scope)))
+                    .path(format!("toolbar/{glyph}.svg"))
                     .size(px(13.))
                     .flex_none()
                     .text_color(fg),
@@ -1975,31 +2402,185 @@ fn keys_of(row: &Row) -> &'static str {
 
 /// What the line under the rows says the keys do, for what is typed.
 fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
-    let scoped = shell.ui().omni.as_ref().is_some_and(|o| o.scope.is_some());
+    let omni = shell.ui().omni.as_ref();
+    let scoped = omni.is_some_and(|o| o.scope.is_some());
+    let here = omni.is_none_or(|o| o.depth == Depth::Here);
+    // What the folder alone cannot tell: a search's, below it.
     let waits = shell
         .app
         .workspace
         .read()
         .pane(shell.pane)
         .and_then(|p| p.read_filter().map(|r| r.waits.clone()))
-        .filter(|w| !w.is_empty() && typed == Typed::Words)
-        .map(|w| format!("{} wait for Enter. ", w.join(" and ")));
+        .filter(|w| !w.is_empty() && typed == Typed::Words && here)
+        .map(|w| format!("{} need a search: Ctrl+F. ", cap(&w.join(" and "))));
     let keys = match typed {
         _ if listing_scopes => "Enter searches there; Escape keeps the scope.",
+        Typed::Nothing if scoped && here => {
+            "Words filter this folder; Backspace takes the scope away, @ lists others; > for a command."
+        }
         Typed::Nothing if scoped => {
-            "Words search there; Backspace takes the scope away, @ lists others; > for a command."
+            "Words search there and below; Backspace takes the scope away, @ lists others; > for a command."
         }
         Typed::Nothing => {
-            "A path (/ or ~), a place, or words; Ctrl+F searches the folder shown; > for a command."
+            "A path (/ or ~), a place, or words to filter; Ctrl+F searches below; > for a command."
         }
         Typed::Path | Typed::Place => {
             "Tab completes; Shift+Enter opens a file; Ctrl+F on a folder searches in it."
         }
         Typed::Scope => "Enter searches there.",
         Typed::Help => "Enter or Tab writes the example; Escape goes back.",
-        Typed::Words => "Tab completes; Alt+Enter searches the home folder; Escape goes back.",
+        Typed::Words if here => "Enter goes to the files; Tab completes; Escape goes back.",
+        Typed::Words => {
+            "Enter goes to the files; Tab completes; Alt+Enter searches the home folder; Escape goes back."
+        }
     };
     waits.map_or_else(|| keys.to_owned(), |w| w + keys)
+}
+
+/// `text` with its first letter capital.
+fn cap(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
+/// The card's first line while words are typed, or about to be: how deep
+/// they look, a switch with each side's keys, and what they keep there
+/// (the card hides the top of the list they change).
+fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    let omni = shell.ui().omni.as_ref()?;
+    let words_mode = match typed {
+        Typed::Words => true,
+        Typed::Nothing => omni.scope.is_some(),
+        _ => false,
+    };
+    if omni.scopes || !words_mode {
+        return None;
+    }
+    let theme = cx.global::<Theme>().clone();
+    let pane = shell.pane;
+    let a11y = shell.a11y;
+    let raw = shell.omni_text(cx);
+    let words = raw.trim();
+    let say = match omni.depth {
+        Depth::Here => {
+            let ws = shell.app.workspace.read();
+            ws.pane(pane).filter(|p| p.filter().is_some()).map(|p| {
+                format!(
+                    "As you type: {} of {}",
+                    crate::format::thousands(shell.ui().list.sorted.len()),
+                    crate::format::count(p.listing.sorted(p.sort).len(), "item")
+                )
+            })
+        }
+        Depth::Below if words.is_empty() => None,
+        Depth::Below if omni.shown.as_deref() == Some(words) => Some(format!(
+            "{} found",
+            crate::format::thousands(shell.ui().list.sorted.len())
+        )),
+        Depth::Below => omni
+            .answers
+            .iter()
+            .filter(|(_, (asked, _), _)| *asked == raw)
+            .flat_map(|(.., answer)| answer.rows.iter())
+            .find(|row| row.section == Section::Run)
+            .and_then(|row| match () {
+                () if row.error => None,
+                () if row.live.is_some() => Some("As you type".to_owned()),
+                () => Some("Enter searches".to_owned()),
+            }),
+    };
+    let segment = |depth: Depth, icon: &str, label: &'static str, command: &str| {
+        let on = omni.depth == depth;
+        let keys = shell.keys_for(command, &serde_json::json!({}));
+        let hover = theme.hover;
+        div()
+            .id(("omnibox-depth", depth as usize))
+            .h(px(24.))
+            .px(px(8.))
+            .flex()
+            .items_center()
+            .gap(px(6.))
+            .rounded_md()
+            .cursor_pointer()
+            .when(on, |d| d.bg(theme.term).text_color(theme.accent))
+            .when(!on, |d| {
+                d.text_color(theme.text_muted).hover(move |s| s.bg(hover))
+            })
+            .when(a11y, |d| {
+                d.role(gpui::Role::Button).aria_label(match (depth, on) {
+                    (Depth::Here, true) => "This folder only, chosen",
+                    (Depth::Here, false) => "This folder only",
+                    (Depth::Below, true) => "This folder and its subfolders, chosen",
+                    (Depth::Below, false) => "This folder and its subfolders",
+                })
+            })
+            // The field keeps the keyboard: the switch acts on the press.
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    window.prevent_default();
+                    this.activate_pane(pane, cx);
+                    this.set_depth(depth, window, cx);
+                }),
+            )
+            .child(
+                gpui::svg()
+                    .path(format!("toolbar/{icon}.svg"))
+                    .size(px(13.))
+                    .flex_none()
+                    .text_color(if on { theme.accent } else { theme.text_muted }),
+            )
+            .child(label)
+            .children(keys.map(|keys| {
+                div()
+                    .px(px(4.))
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(theme.border)
+                    .text_color(theme.text_muted)
+                    .child(keys)
+            }))
+    };
+    Some(
+        div()
+            .px_1()
+            .pt_1()
+            .pb_1()
+            .flex()
+            .items_center()
+            .gap_2()
+            .text_xs()
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .p(px(2.))
+                    .gap(px(2.))
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(theme.border)
+                    .child(segment(Depth::Here, "filter", "This folder", "ui.filter"))
+                    .child(segment(
+                        Depth::Below,
+                        "search",
+                        "And subfolders",
+                        "ui.search",
+                    )),
+            )
+            .child(div().flex_1())
+            .children(say.map(|say| {
+                div()
+                    .flex_none()
+                    .px_1()
+                    .text_color(theme.text_muted)
+                    .child(say)
+            }))
+            .into_any_element(),
+    )
 }
 
 /// The dropdown under the field of the pane being rendered, while it is
@@ -2224,21 +2805,8 @@ pub fn dropdown(
         .as_ref()
         .filter(|(_, since, _)| since.elapsed() >= READING_SAID)
         .map(|(folder, ..)| format!("Reading {}…", folder.display()));
-    // What the words typed over a folder keep, as the footer counts it:
-    // the card hides the top of the list they narrow.
-    let kept = (!shell.ui().place.search)
-        .then(|| {
-            let ws = shell.app.workspace.read();
-            let p = ws.pane(pane)?;
-            p.filter()?;
-            let total = p.listing.sorted(p.sort).len();
-            Some(format!(
-                "This folder as you type: {} of {}",
-                crate::format::thousands(shell.ui().list.sorted.len()),
-                crate::format::count(total, "item")
-            ))
-        })
-        .flatten();
+    // How deep words look, and what they keep there.
+    let depth = depth_line(shell, typed, cx);
     // The field's card: its top is the field, which draws itself above it
     // (`Shell::omnibox_card`), the rows under a line.
     let rows = div()
@@ -2247,25 +2815,7 @@ pub fn dropdown(
         .flex_col()
         .border_t_1()
         .border_color(theme.border)
-        .children(kept.map(|kept| {
-            div()
-                .px_2()
-                .pt_1()
-                .pb_1()
-                .flex()
-                .items_center()
-                .gap_2()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child(
-                    gpui::svg()
-                        .path("toolbar/filter.svg")
-                        .size(px(13.))
-                        .flex_none()
-                        .text_color(theme.text_muted),
-                )
-                .child(kept)
-        }))
+        .children(depth)
         .child(list)
         .children(reading.map(|reading| {
             div()

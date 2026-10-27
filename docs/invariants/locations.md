@@ -151,7 +151,9 @@ and `notes.agree` are core `notes.*` commands.
   its pills, and the words typed's, are the query plugin's chips
   (`query.describe_filter`), as a search's are.
 - A provider names its location (`LocationProvider::title`: `report in
-  Papers`) for tabs and menus.
+  Papers`) for tabs and menus. A search's trail is the folder it looks in
+  (the place it lists, `in:recent:`), then itself: the address draws the
+  first part, and its pills for the rest (ADR-098).
 - A search watches nothing, but sees Skwir's changes: after each plan the
   query plugin (`provider::Searches`, an executor observer) re-checks the
   touched files under each open search's root and updates rows without

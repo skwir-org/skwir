@@ -99,15 +99,31 @@ impl LocationProvider for QueryProvider {
         ))
     }
 
-    /// A search is in the folder it looks in: Up goes there.
+    /// A search is in the folder it looks in, or the place it searches as
+    /// it lists (`in:recent:`): Up goes there, and the address shows that
+    /// trail, the search as pills after it.
     fn trail(&self, location: &Location) -> Option<skwir_core::location::Trail> {
         let query = lang::parse(&location.rest).ok()?;
+        let app = self.app.upgrade();
+        let own = skwir_core::location::Crumb::new(
+            crate::suggested_name(app.as_deref(), &location.rest),
+            location.clone(),
+        );
+        let (base, crumbs) = match query.within {
+            Some(place) => {
+                let title = app
+                    .as_deref()
+                    .map_or_else(|| place.to_string(), |app| app.location_title(&place));
+                (
+                    None,
+                    vec![skwir_core::location::Crumb::new(title, place), own],
+                )
+            }
+            None => (Some(query.root), vec![own]),
+        };
         Some(skwir_core::location::Trail {
-            base: Some(query.root),
-            crumbs: vec![skwir_core::location::Crumb::new(
-                crate::suggested_name(self.app.upgrade().as_deref(), &location.rest),
-                location.clone(),
-            )],
+            base,
+            crumbs,
             filters: Vec::new(),
             toggles: Vec::new(),
             holds_places: false,

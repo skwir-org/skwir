@@ -617,6 +617,22 @@ pub fn text_of(expr: &str) -> Option<String> {
     Some(without_root(&Parts::of(&q), &q))
 }
 
+/// The words of the search `expr` as the filter of the folder it looks
+/// in (ADR-098): `None` when the folder alone cannot tell them (they read
+/// the files, look among hidden files, or search a place as it lists).
+pub fn as_filter(expr: &str) -> Option<String> {
+    let q = lang::parse(expr).ok()?;
+    if q.within.is_some() || q.hidden || q.reads_files() {
+        return None;
+    }
+    Some(Parts::of(&q).write(&Query {
+        root_given: false,
+        within: None,
+        depth: None,
+        ..q.clone()
+    }))
+}
+
 /// Written as `refine` writes a query back: names as typed.
 fn without_root(p: &Parts, q: &Query) -> String {
     p.write(&Query {
@@ -802,45 +818,37 @@ pub fn describe_for(
         });
     }
 
-    // A folder's narrowing says nothing of where: the trail does.
+    // A folder's narrowing says nothing of where: the trail does. A
+    // search's trail is its folder's (ADR-098): this chip says how deep
+    // it looks, and switches it; a place is searched as it lists.
     if search {
-        let folder = match (&q.within, app) {
-            (Some(place), Some(app)) => app.location_title(place),
-            (Some(place), None) => place.to_string(),
-            (None, _) => crate::place_name(app, &q.root),
+        let (title, icon) = match (&q.within, app) {
+            (Some(place), Some(app)) => (format!("In {}", app.location_title(place)), "list"),
+            (Some(place), None) => (format!("In {place}"), "list"),
+            (None, _) if q.depth == Some(1) => ("This folder only".to_owned(), "filter"),
+            (None, _) => ("And subfolders".to_owned(), "search"),
         };
-        let mut where_value = Vec::new();
-        if q.depth == Some(1) {
-            where_value.push("this folder only");
-        }
-        if q.hidden {
-            where_value.push("hidden files");
-        }
         chips.push(Chip {
             id: "where".into(),
-            // Below the folder unless it says this folder only; a place
-            // is searched as it lists.
-            title: if q.within.is_none() && q.depth.is_none() {
-                format!("In {folder} and below")
-            } else {
-                format!("In {folder}")
-            },
-            value: (!where_value.is_empty()).then(|| where_value.join(", ")),
-            icon: "list".into(),
+            title,
+            value: q.hidden.then(|| "hidden files".to_owned()),
+            icon: icon.into(),
             // A place is searched as it lists, never below it.
             choices: if q.within.is_some() {
                 Vec::new()
             } else {
                 vec![
+                    // The folder filtered by the words, when it alone
+                    // can tell them (`query.here`).
+                    Choice {
+                        label: "This folder only".into(),
+                        command: Invocation::new("query.here"),
+                        active: q.depth == Some(1),
+                    },
                     Choice {
                         label: "This folder and its subfolders".into(),
                         command: refine_invocation(r, "where", Some("subtree")),
                         active: q.depth.is_none(),
-                    },
-                    Choice {
-                        label: "This folder only".into(),
-                        command: refine_invocation(r, "where", Some("here")),
-                        active: q.depth == Some(1),
                     },
                     Choice {
                         label: "Hidden files".into(),
@@ -962,8 +970,10 @@ mod tests {
         assert_eq!(chip(&d, "size").value.as_deref(), Some(">1M"));
         assert_eq!(chip(&d, "tag").value.as_deref(), Some("work"));
         assert_eq!(chip(&d, "content").value.as_deref(), Some("total"));
-        assert_eq!(chip(&d, "where").title, "In data");
-        assert_eq!(chip(&d, "where").value.as_deref(), Some("this folder only"));
+        // Where it looks is the trail's; the chip says how deep.
+        assert_eq!(chip(&d, "where").title, "This folder only");
+        assert_eq!(chip(&d, "where").icon, "filter");
+        assert_eq!(chip(&d, "where").value, None);
         let advanced: Vec<_> = d
             .chips
             .iter()

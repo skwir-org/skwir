@@ -511,6 +511,7 @@ const SHOWS: &[&str] = &[
     "ui.tags_prompt",
     "ui.focus_address",
     "ui.search",
+    "ui.filter",
     "ui.search_chip",
     "ui.history_menu",
     "ui.subfolder_menu",
@@ -1483,7 +1484,13 @@ pub fn declare_all(app: &App) {
         app,
         "ui.search",
         "Search…",
-        "Start a search where the pane is, from a text",
+        "Search the folder shown and its subfolders from the address field, from a text; typed in, look below the folder",
+    );
+    declare::<Text>(
+        app,
+        "ui.filter",
+        "Filter…",
+        "Filter the folder shown from the address field as you type, its subfolders left out, from a text; typed in, look in the folder alone",
     );
     declare::<Submit>(
         app,

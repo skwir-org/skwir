@@ -167,9 +167,6 @@ what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
 
 **From the address field's overhaul** (ADR-098, 2026-10-26):
-- Search as you type: still a decision of its own (the user, 2026-10-26:
-  not now). The field filters the folder shown at once; the search of
-  the folders inside starts on Enter.
 - The model half of `query.ask` (Phase G): the field's "Did you mean"
   reads words by rules only (`query.interpret`).
 - A plugin from outside cannot offer rows: sources are Rust

@@ -5759,3 +5759,89 @@ those offered:
   passed: the field, its text read back, the rows as a list box beside
   it, the scope's token.
 
+
+### Filter and search as one field, with a switch for subfolders (2026-10-27)
+
+- **Asked:** the user found the filter and the search still apart: the
+  same words filtered a folder as typed and searched its subfolders on
+  Enter, and only the bar said which afterwards. Their idea, refined on
+  the omnibar page (mock-ups, then their choices): one field, a switch
+  for how deep words look, both sides as you type; Ctrl+L then words
+  this folder; a search keeps its folder's trail; a server waits for
+  Enter; 400 ms after the last key elsewhere. Ctrl+I, proposed first, is
+  Properties (`secondary-i`, missed at first and said so): the user
+  chose Ctrl+Shift+F for this folder, Ctrl+F staying the subfolders.
+- **Built:**
+  - Core: `App::navigate_in_place` (a location in place of the step
+    shown; one shown already left as it is), `App::take_step_back`
+    (`Pane::take_step_back`: the step before shown, the one taken back
+    and those ahead gone), `navigate`'s `in_place`; `Suggestion::live`,
+    what shows as words are typed.
+  - Query: the Run row's `live` (`query.search` in place, not
+    remembered), none for what reads the files, the whole disk, or a
+    folder on a server (`fs::reach::of`); `query.search`'s `in_place`,
+    and a search the pane shows left as it is (remembered); the where
+    chip says how deep ("And subfolders", "This folder only") with
+    `query.here` (the folder filtered by the search's words when it alone
+    can tell them, `facets::as_filter`, else searched alone); a folder's
+    `depth` chip in `query.describe_filter`, with `query.below` (its
+    narrowing and words searched below it); a search's trail is its
+    folder's, or the place it lists (`in:recent:`); a reading's
+    completion is its terms.
+  - UI: `omnibox::Depth` and the switch on the card's first line (each
+    side's keys from the keymap, what the words keep there: "As you type:
+    8 of 13 items", "2 found", "Enter searches"); `ui.filter` on
+    Ctrl+Shift+F; Ctrl+F and Ctrl+Shift+F in the field switch, keeping
+    the words; the search shown `LIVE_PAUSE` after the last key in the
+    field's one step (`step_here`, then in place), the waiting one
+    dropped, and only for a pane of the tab shown; Enter keeps what is
+    shown and gives the files the keys (the search remembered, or run
+    when it waited; a row chosen goes from what the pane showed); Escape
+    takes the step back and puts back the folder's filter and narrowing;
+    the address never written into the field typed in; the Run row no
+    row while words show as typed; the token a funnel or a magnifier. At
+    rest a search keeps its folder's trail, the depth pill first (a
+    dropdown), a lean fit where it is its icon alone before the others
+    shrink. `has_fresh_run` compares the scope too.
+- **Checked:**
+  - `just release-check` passed (2303 tests, smoke, a11y, the readers,
+    bench, release tools); the query plugin's new test (a folder's
+    words below it and back, a contents search back to its folder alone,
+    a search shown again no step), the field's (`live` for words, none
+    for contents, a value being typed, the whole disk), core's (one step
+    in place, taken back whole, never the first).
+  - A real window on Xvfb, the debug build: Ctrl+Shift+F and `jpg` (the
+    switch, "8 of 13 items"), Ctrl+F there (the search shown, "8 found",
+    the text kept), retyped `dunes` ("1 found"), Enter (the trail and
+    pills, a lean fit), Escape in the files (the folder), the depth
+    pill's menu and This folder only (the folder filtered by its words),
+    Ctrl+F over a filtered folder then Escape in the field (the folder
+    and its filter back, Forward off), Back after a search kept (the
+    folder, the first step), Ctrl+L `pdf` (this folder, no token) then
+    Ctrl+F ("2 found"), `content:filter` ("Enter searches", its row
+    highlighted, Enter ran it, Back to the folder: the step shown as
+    typed was taken back). Then, after reading the diff again, two bugs
+    found and fixed: Ctrl+J over a search went to its folder (the step to
+    the folder alone ran for any key, not Ctrl+Shift+F alone), and the
+    folder alone over a search, its words not edited, showed unfiltered
+    (words as given read as nothing typed). Checked after: Ctrl+F `dunes`
+    Enter, Ctrl+Shift+F over that search (its folder, "1 of 13 items",
+    the words selected), Escape (the search again, Forward off), Ctrl+J
+    over it (nothing shown changed).
+  - Typed over `bench-data/deep1m` (a million entries), `f`, `0`, `0`
+    each after more than the pause: three searches, the last "100,000
+    found"; the window's CPU 1114 %, 1073 %, 662 %, 47 %, then 1 to 2 %
+    within four seconds, and 0 to 1 % after Escape (`top`, one-second
+    samples): no walk went on.
+  - `just a11y-check` on the debug build: the token named "Searching
+    <folder> and below", Ctrl+Shift+F in the field "Filtering <folder>"
+    with "This folder only, chosen" (a new check), the filter's pills.
+- **Also:** `just test` stopped once on the kmtp worker's
+  `kmtpd_is_never_loaded_off_kde_s_desktop_and_loaded_on_it`: it and the
+  test before it reached one address (`mtp://Example_Phone_0123/`), whose
+  mount point Skwir names by it in the runtime folder the tests share,
+  so run at once one found the other's mount. Each passes alone; each
+  test's phone now has its serial (701735fd).
+- **Not checked:** a folder on a server waiting for Enter (no way to
+  mark one remote in a test; the branch is `fs::reach::of`); Wayland and
+  the user's session.

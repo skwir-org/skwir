@@ -58,27 +58,34 @@ that work where the keyboard is.
   trail starts at the deepest sidebar place that holds the folder, under
   its sidebar name; General › Show the full path starts it at `/`.
   Click beside the trail, or press `Ctrl+L`, to type.
-- **Typing in the address.** The first row says what `Enter` does; the
-  others offer the rest: a path's names (`Tab` completes), places you go
-  to, tags, other tabs, where the pane was, saved and recent searches,
-  commands with their keys. `>` hands the rest to the palette; `?` alone
-  lists what the address takes.
-- **Where words search.** `Ctrl+F` puts the folder shown before the text,
-  as a token: words search there. Click the token, press `Alt+Down`, or
-  type `@` first to search somewhere else (the folder above, home, the
-  whole disk, a sidebar folder, a tag, Recent); `Backspace` at the start
-  takes it away. With a folder or a place highlighted, `Ctrl+F` searches
-  in it.
-- **Words filter the folder shown** as you type: names hold the words,
-  and terms the folder can tell at once narrow it too (`kind:image`,
-  `size>1M`, `tag:draft`); what needs the files read (`content:`) waits
-  for `Enter`. Once you leave the field, each part stays right after the
-  trail as a pill with a funnel ("Kind: Images"), as a Narrow by choice
-  does: pressed, it offers its other values, and `+ Filter` adds another;
-  `Escape` or a pill's × shows more again. A search, by contrast, takes
-  the trail's place ("In Field Guide and below", its pills with a
-  magnifier or their facet's icon); `Escape` with nothing selected goes
-  back to the folder it looks in. `Alt+Enter` searches the home folder.
+- **Typing in the address.** The rows offer what the text can do: a
+  path's names (`Tab` completes, the first is what `Enter` does), places
+  you go to, tags, other tabs, where the pane was, saved and recent
+  searches, commands with their keys. `>` hands the rest to the palette;
+  `?` alone lists what the address takes.
+- **Finding: this folder, or its subfolders too.** `Ctrl+Shift+F` looks
+  in the folder shown alone, `Ctrl+F` in it and its subfolders; while
+  you type, each key switches to its side and keeps the words, as the
+  switch at the top of the list does. Either way the files show what the
+  words keep as you type: the folder filtered at once, or, below it, the
+  search after a short pause (one that reads the files, `content:`, or
+  looks below a folder on a server, waits for `Enter`). `Enter` keeps
+  it and gives the files the keys (type a name to reach it); `Escape`
+  goes back to how it was. Words typed after `Ctrl+L` filter the folder
+  shown.
+- **Where words look.** The folder stands before the text as a token, a
+  funnel on it for the folder alone, a magnifier below it. Click the
+  token, press `Alt+Down`, or type `@` first to search somewhere else
+  (the folder above, home, the whole disk, a sidebar folder, a tag,
+  Recent); `Backspace` at the start takes it away. With a folder or a
+  place highlighted, `Ctrl+F` searches in it.
+- **What words keep stays after the trail**, as pills: first how deep
+  they look (a funnel, or a magnifier; pressed, it switches), then each
+  part ("Kind: Images"), as a Narrow by choice does: pressed, it offers
+  its other values, and `+ Filter` adds another. A folder's pills wear a
+  funnel, a search's their facet's icon. `Escape` with nothing selected
+  shows the folder whole, from a search too. `Alt+Enter` searches the
+  home folder.
 - **Type the first letters of a name** in the file list to go to it.
 - **Jump** (`Ctrl+J`) is the address with nothing typed: the folders you
   go to most, from zoxide's list and the desktop's recent files, then
@@ -238,10 +245,11 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
 
 ## Searching
 
-`Ctrl+F` starts a search in the folder shown. A search is a place, with
-Back, tabs and the sidebar like any folder. Its address shows what it
-looks for as pills: click one to change it, **+ Filter** adds one, and
-the text can be typed as is:
+`Ctrl+F` searches the folder shown and its subfolders as you type. A
+search is a place, with Back, tabs and the sidebar like any folder. Its
+address keeps the folder's trail and shows what it looks for as pills
+after it: click one to change it, **+ Filter** adds one, and the text
+can be typed as is:
 
 | Text | Finds |
 | --- | --- |

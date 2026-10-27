@@ -191,10 +191,41 @@ of bars, split or not.
 ## The address field (`omnibox.rs`, ADR-070, ADR-098)
 
 - **A scope before the text.** The field may hold a token: where words
-  search. Ctrl+F (`ui.search`) starts with the folder shown, Ctrl+L with
-  none and the path selected, Ctrl+J (`ui.jump`) with none and nothing
-  typed, places first; over a search, Ctrl+F and Ctrl+L edit it, its
-  root the scope. Only the scope is a token; terms stay text.
+  look. Ctrl+Shift+F (`ui.filter`) and Ctrl+F (`ui.search`) start with
+  the folder shown, Ctrl+L with none and the path selected, Ctrl+J
+  (`ui.jump`) with none and nothing typed, places first; over a search,
+  Ctrl+F and Ctrl+L edit it, its root the scope, and Ctrl+Shift+F shows
+  the folder it looks in filtered by its words. Only the scope is a
+  token; terms stay text.
+- **How deep words look** (`omnibox::Depth`, ADR-098, amended): in the
+  folder shown alone, or in it and its subfolders. Ctrl+Shift+F starts
+  on the first (and so does Ctrl+L, words then filtering the folder
+  shown), Ctrl+F on the second; typed in, each switches to its own,
+  keeping the words, as the switch on the card's first line does, which
+  says each side's keys (`keys_for`) and what the words keep there. The
+  token wears a funnel for the folder alone, a magnifier below it (a
+  place searched as it lists, its own glyph). Another scope chosen is
+  searched; none, words filter the folder shown.
+  - The folder alone is the folder's own listing, filtered at each key
+    (below): still a folder to paste into, drop on or make things in.
+  - Below it is the search Enter runs, shown as the words are typed
+    (`Suggestion::live`), `LIVE_PAUSE` (400 ms) after the last key, the
+    one waiting before dropped; a switch shows it at once. It goes in
+    place of one step of the pane's history, the field's own
+    (`App::step_here`, then `navigate_in_place`): Back from it goes to
+    what was shown before. A search that reads the files (contents, a
+    picture's date or place), looks over the whole disk, or below a
+    folder on a server (each walk round trips) waits for Enter, and the
+    first row says so (the query plugin leaves `live` empty).
+  - Enter with no row chosen keeps what the words show and gives the
+    files the keyboard: the folder filtered; the search shown, now
+    remembered (`query.search` leaves a search shown as it is), or run
+    when it waited. A row chosen goes from what the pane showed: the
+    field's step is taken back first.
+  - Escape takes the field's step back (`App::take_step_back`, as if it
+    had never been gone to), puts back the filter and the narrowing the
+    folder had, and gives the files the keyboard. The pane's address is
+    never written into the field while it is typed in.
   - Backspace at the start of the text takes the scope away; Left there
     selects the token first (`input::AtStart`, sent only where the field
     asks, `send_start`).
@@ -205,7 +236,7 @@ of bars, split or not.
     them the query plugin's "Search for “@…”", for a name that starts so.
   - Ctrl+F on a highlighted row that has a scope (a folder, a tag, a
     place) makes it the scope and clears the text for words; with none,
-    the folder shown becomes the scope of the text as it is.
+    words look below the folder shown, its scope.
 - **Rows come from sources** (`skwir_core::suggest`): each asked again at
   every change of the text, in a job of its own in its lane, the jobs
   before cancelled; an answer is kept by source until the next. Rows
@@ -238,8 +269,9 @@ of bars, split or not.
   the card (deferred one priority higher, `omnibox::CARD_PRIORITY`), so
   their key context, focus and pointer stay theirs; the card's top leaves
   them the field's height (`address::FIELD_HEIGHT`), never a size read in
-  `render`. Over a folder the words filter, the card's first line counts
-  what they keep, as the footer does: the card hides the list's top.
+  `render`. While words are typed, or about to be, the card's first line
+  is how deep they look (above) and what they keep there, the folder's
+  count or the search's: the card hides the list's top.
 - **`?` alone** lists what the field takes: the shell's grammar (a path,
   a place's address from the schemes providers open, `@`, words, `>`)
   and the query plugin's terms with examples; Enter or Tab writes the
@@ -290,23 +322,28 @@ of bars, split or not.
 - Enter pressed before the sources answered the text asks them there and
   then (`suggest::gather`; they answer from memory), so what Enter runs
   is always the text's.
-- **Words typed over a folder filter it at once**, as the core's `filter`
-  reads them through the query plugin (`narrow::read_filter`): the
-  longest start that parses; words, `name:` and `ext:` hold for folders
-  too, other terms for files, every folder staying; contents and a
-  picture's date or place wait for Enter, which the dropdown says; a
+- **Words typed over a folder, looking in it alone, filter it at once**,
+  as the core's `filter` reads them through the query plugin
+  (`narrow::read_filter`): the longest start that parses; words, `name:`
+  and `ext:` hold for folders too, other terms for files, every folder
+  staying; contents and a picture's date or place need a search below
+  it, which the footer says; a
   filter that reads metadata has every file's asked for. It runs at each
   key on the window's thread, so a type is asked once per suffix
   (`lang::Types`, as `mime::by_names` asks a selection): 6 to 13 ms a key
   over 100 000 names in release. Showing another
   location clears it; Escape (`filtered` key context) shows everything;
   once the field lets go, its facets stay as pills after the trail
-  (below). Ctrl+F over a filtered folder edits its words.
-- A search's pills take the trail's place, so nothing on screen leads
-  back: Escape with nothing selected goes to the folder it looks in (`up`,
-  `search` in the key context). A tag location keeps its trail and is a
-  place: Escape never leaves it, as it never leaves a folder (Backspace
-  and Alt+G do).
+  (below). Ctrl+Shift+F over a filtered folder edits its words, Ctrl+F
+  takes them below it. Over the folder alone, the search's row is none,
+  and a term completed or the words read as terms are written by Enter,
+  as by Tab.
+- A search keeps the trail of the folder it looks in (the place it
+  lists, `in:recent:`: `LocationProvider::trail`), its own crumb drawn
+  as its pills; Escape with nothing selected goes to that folder (`up`,
+  `search` in the key context), as Escape in a folder filtered shows it
+  whole. A tag location keeps its trail and is a place: Escape never
+  leaves it, as it never leaves a folder (Backspace and Alt+G do).
 - What narrows the folder shown (a tag location's `with`, Narrow by's
   choices, the words typed) is the search's own chips right after the
   trail, read once per change (`query.describe_filter`, `search_bar::
@@ -315,19 +352,26 @@ of bars, split or not.
   without it), and "+ Filter", which adds to the words typed and offers
   no facet that reads the files. Each wears a funnel (`filter`), a
   search's pills their facet's icons: a funnel never stands for a
-  search, nor a facet's icon for a folder narrowed. A search's pills take
-  the trail's place, the first saying "and below" unless it looks in the
-  folder only.
+  search, nor a facet's icon for a folder narrowed. The first pill says
+  how deep the words look, a dropdown: a folder's "This folder only"
+  (`query.describe_filter`'s `depth`), its subfolders searched for its
+  narrowing and words (`query.below`); a search's "And subfolders" (or
+  "This folder only", searched so), its folder filtered by its words
+  when the folder alone can tell them, else searched alone
+  (`query.here`). Its tooltip says the key that does the same from the
+  field.
 - The trail and the pills after it give way alike, each by its natural
   width (`adaptive::Fit`, drawn from its left edge): the trail wraps its
-  first places out, the pills draw the richest of the search's fits that
-  holds, a folder's keeping their funnel at the last, their × left to
-  their menus. The room after them edits the address.
+  first places out, the pills draw the richest of their fits that holds
+  (the depth pill its icon alone first), a folder's keeping their funnel
+  at the last, their × left to their menus. The room after them edits
+  the address.
 
 ### Search pills (`search_bar.rs`)
 
-- A search shows as pills: where it looks, each facet `query.describe`
-  says is set, then "+ Filter". Each choice runs the invocation the plugin
+- A search shows as pills after its folder's trail: how deep it looks,
+  each facet `query.describe` says is set, then "+ Filter". Each choice
+  runs the invocation the plugin
   gave (`query.refine`, or `ui.ask` for a typed value), and navigates, so
   Back undoes it.
 - The query plugin owns the meaning (`facets.rs`). Pills are read once
@@ -335,8 +379,8 @@ of bars, split or not.
   frame.
 - The text is the one truth: a part no facet holds is a pill of its own;
   clicking beside the pills edits the text.
-- The pills are one line, the richest that fits (`search_bar::Fit`, an
-  `AdaptiveRow`): every pill as it reads; else where it looks and
+- The pills are one line, the richest that fits (`search_bar::Fit`):
+  every pill as it reads; else how deep as its icon; else that and
   "+ Filter" as icons and each facet as its icon and value; else the
   facets' values alone, cut short with both ends kept, the later giving
   way first. Nothing is hidden by wrapping: a facet narrowed away is

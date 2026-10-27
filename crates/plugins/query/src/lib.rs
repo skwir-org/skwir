@@ -68,6 +68,10 @@ struct SearchArgs {
     /// (what the field runs says so); never for an agent's call.
     #[serde(default)]
     remember: bool,
+    /// Show it in place of the step the pane shows, with no step of its
+    /// own: a search shown as its words are typed (ADR-098).
+    #[serde(default)]
+    in_place: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -566,7 +570,7 @@ impl Plugin for QueryPlugin {
             ID,
             "query.search",
             "Search",
-            "Search, shown in the pane (then `entries` lists what it found): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`; `created`, `accessed`, and `taken` for a picture's camera clock), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `depth:2` bounds it. `root` (or `in:`) is where it looks",
+            "Search, shown in the pane (then `entries` lists what it found; a search the pane shows already is left as it is, `refresh` lists it again): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`; `created`, `accessed`, and `taken` for a picture's camera clock), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `depth:2` bounds it. `root` (or `in:`) is where it looks",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 lang::parse(&a.expr).map_err(|e| anyhow::anyhow!("query: {e}"))?;
@@ -579,7 +583,12 @@ impl Plugin for QueryPlugin {
                     // A pane showing another query searches from home.
                     None => app.pane_dir(pane).ok(),
                 };
-                app.navigate(pane, &location_for(&a.expr, root.as_deref()))?;
+                let location = location_for(&a.expr, root.as_deref());
+                if a.in_place {
+                    app.navigate_in_place(pane, &location)?;
+                } else if app.pane_location(pane).as_ref() != Some(&location) {
+                    app.navigate(pane, &location)?;
+                }
                 if a.remember && skwir_core::permissions::agent_call().is_none() {
                     field::remember(app, &a.expr, root.as_deref());
                 }
@@ -857,6 +866,64 @@ impl Plugin for QueryPlugin {
             },
         )
         .shows();
+        app.commands.register::<PaneOnly, _>(
+            ID,
+            "query.here",
+            "This folder only",
+            "Show the pane's search as the folder it looks in, filtered by its words, when the folder alone can tell them; else search that folder alone. A folder stays as it is",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let Some(search) = app.pane_location(pane).filter(|l| &*l.scheme == SCHEME) else {
+                    return Ok(Outcome::Done);
+                };
+                let q = lang::parse(&search.rest).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                if q.within.is_some() {
+                    anyhow::bail!("a place is searched as it lists, never below it");
+                }
+                if let Some(words) = facets::as_filter(&search.rest) {
+                    app.navigate(pane, &Location::from_path(&q.root))?;
+                    let words = words.trim();
+                    app.dispatch(&Invocation::with_args(
+                        "filter",
+                        &serde_json::json!({ "text": (!words.is_empty()).then_some(words), "pane": pane }),
+                    ))?;
+                } else {
+                    let refined = facets::refine(&search.rest, "where", Some("here"))
+                        .map_err(|e| anyhow::anyhow!("query: {e}"))?;
+                    app.navigate(pane, &Location::new(SCHEME, refined))?;
+                }
+                Ok(Outcome::Done)
+            },
+        )
+        .shows();
+        app.commands.register::<PaneOnly, _>(
+            ID,
+            "query.below",
+            "This folder and its subfolders",
+            "Search the pane's folder and its subfolders for what narrows it: its narrowing, then the words typed over it",
+            |a, app| {
+                let pane = app.pane_or_active(a.pane);
+                let (folder, typed, narrowed) = {
+                    let ws = app.workspace.read();
+                    let p = ws
+                        .pane(pane)
+                        .ok_or_else(|| anyhow::anyhow!("no pane {}", pane.0))?;
+                    let folder = p.location().and_then(Location::path).ok_or_else(|| {
+                        anyhow::anyhow!("only a folder's subfolders are searched")
+                    })?;
+                    (
+                        folder,
+                        p.filter().map(str::to_owned).unwrap_or_default(),
+                        p.narrowed().map(|n| n.expr.clone()).unwrap_or_default(),
+                    )
+                };
+                let applied = narrow::applied(&typed).unwrap_or_default();
+                let expr = format!("{narrowed} {applied}");
+                app.navigate(pane, &location_for(expr.trim(), Some(&folder)))?;
+                Ok(Outcome::Done)
+            },
+        )
+        .shows();
         app.commands.register::<NarrowArgs, _>(
             ID,
             "query.narrow",
@@ -922,10 +989,10 @@ impl Plugin for QueryPlugin {
                 ID,
                 "query.describe_filter",
                 "Describe folder filter",
-                "`{ narrowing, filter }`: what narrows the pane's folder as a search's chips (`query.describe`), each choice changing it: the narrowing's set facets (`query.narrow`), then the words typed over it, set and not (`query.filter`), no facet the narrowing sets offered again but a tag",
+                "`{ depth, narrowing, filter }`: what narrows the pane's folder as a search's chips (`query.describe`), each choice changing it: how deep it looks (a folder's: this folder only, or its subfolders searched, `query.below`), the narrowing's set facets (`query.narrow`), then the words typed over it, set and not (`query.filter`), no facet the narrowing sets offered again but a tag",
                 |a, app| {
                     let pane = app.pane_or_active(a.pane);
-                    let (typed, narrowed) = {
+                    let (typed, narrowed, folder) = {
                         let ws = app.workspace.read();
                         let p = ws
                             .pane(pane)
@@ -933,6 +1000,7 @@ impl Plugin for QueryPlugin {
                         (
                             p.filter().map(str::to_owned).unwrap_or_default(),
                             p.narrowed().map(|n| n.expr.clone()),
+                            p.location().is_some_and(Location::is_path),
                         )
                     };
                     let tags_known = app.commands.get("tags.list").is_some();
@@ -953,7 +1021,30 @@ impl Plugin for QueryPlugin {
                     filter.retain(|c| {
                         c.value.is_some() || c.id == "tag" || !narrowing.iter().any(|n| n.id == c.id)
                     });
+                    // How deep the words look: a folder's alone, its
+                    // subfolders searched for them (ADR-098).
+                    let depth = folder.then(|| facets::Chip {
+                        id: "where".into(),
+                        title: "This folder only".into(),
+                        value: None,
+                        icon: "filter".into(),
+                        choices: vec![
+                            facets::Choice {
+                                label: "This folder only".into(),
+                                command: Invocation::new("query.here"),
+                                active: true,
+                            },
+                            facets::Choice {
+                                label: "This folder and its subfolders".into(),
+                                command: Invocation::new("query.below"),
+                                active: false,
+                            },
+                        ],
+                        clear: None,
+                        segments: Vec::new(),
+                    });
                     Ok(Outcome::Value(serde_json::json!({
+                        "depth": depth,
                         "narrowing": narrowing,
                         "filter": filter,
                     })))
@@ -1550,6 +1641,93 @@ mod tests {
         assert_eq!(app.work_dir(pane).unwrap(), root.join("docs"));
     }
 
+    /// How deep words look switches both ways (ADR-098): a folder's words
+    /// searched below it, a search shown as its folder filtered by its
+    /// words, or that folder alone searched when it cannot tell them; and
+    /// a search shown again is no step of its own.
+    #[test]
+    fn words_switch_between_the_folder_alone_and_its_subfolders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("it's here");
+        std::fs::create_dir(&root).unwrap();
+        tree(&root);
+        let docs = root.join("docs");
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        let names = || -> BTreeSet<String> {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            p.order()
+                .iter()
+                .filter_map(|id| p.entry(*id))
+                .map(|e| e.name_str().into_owned())
+                .collect()
+        };
+        let value = |name: &str| match app.dispatch(&Invocation::new(name)).unwrap() {
+            Outcome::Value(v) => v,
+            other => panic!("{other:?}"),
+        };
+        let run = |command: &serde_json::Value| {
+            let command: Invocation = serde_json::from_value(command.clone()).unwrap();
+            app.dispatch(&command).unwrap();
+            assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        };
+        app.navigate(pane, &Location::from_path(&docs)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        app.dispatch(&Invocation::with_args(
+            "filter",
+            &serde_json::json!({ "text": "txt" }),
+        ))
+        .unwrap();
+        assert_eq!(names(), set(&["notes.txt"]));
+        // The folder's words, searched below it.
+        let depth = value("query.describe_filter")["depth"].clone();
+        assert_eq!(depth["title"], "This folder only");
+        assert_eq!(depth["choices"][0]["active"], true);
+        run(&depth["choices"][1]["command"]);
+        assert!(app.is_search(&app.pane_location(pane).unwrap()));
+        assert_eq!(names(), set(&["notes.txt", "old.txt"]));
+        // The search, as its folder filtered by its words.
+        let chips = value("query.describe")["chips"].clone();
+        let place = chips
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "where")
+            .unwrap()
+            .clone();
+        assert_eq!(place["title"], "And subfolders");
+        run(&place["choices"][0]["command"]);
+        assert_eq!(app.pane_location(pane), Some(Location::from_path(&docs)));
+        let filter = app
+            .workspace
+            .read()
+            .pane(pane)
+            .unwrap()
+            .filter()
+            .map(str::to_owned);
+        assert_eq!(filter.as_deref(), Some("txt"));
+        assert_eq!(names(), set(&["notes.txt"]));
+        // What the folder alone cannot tell is searched there alone.
+        app.navigate(pane, &location_for("content:needle", Some(&docs)))
+            .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        run(&serde_json::json!({ "name": "query.here" }));
+        let shown = app.pane_location(pane).unwrap();
+        assert_eq!(lang::parse(&shown.rest).unwrap().depth, Some(1));
+        assert_eq!(names(), set(&["notes.txt"]));
+        // Shown already, a search stays as it is.
+        let steps = || app.workspace.read().pane(pane).unwrap().history.len();
+        let before = steps();
+        app.dispatch(&Invocation::with_args(
+            "query.search",
+            &serde_json::json!({ "expr": shown.rest }),
+        ))
+        .unwrap();
+        assert_eq!(steps(), before);
+    }
+
     /// A folder narrowed shows its folders and the files the narrowing
     /// keeps, stays narrowed below where it was set and no further, and
     /// waits for what a file's metadata says before showing it.
@@ -1743,7 +1921,7 @@ mod tests {
         };
         assert_eq!(chip("kind")["value"], "Images");
         assert_eq!(chip("size")["value"], ">1k");
-        assert_eq!(chip("where")["title"], "In it's here and below");
+        assert_eq!(chip("where")["title"], "And subfolders");
         // A choice's command is what the UI runs: clearing the size.
         let clear: Invocation = serde_json::from_value(chip("size")["clear"].clone()).unwrap();
         app.dispatch(&clear).unwrap();
@@ -1827,8 +2005,9 @@ mod tests {
         assert_eq!(names(), set(&["may day.mp4"]));
     }
 
-    /// A search's folder is named as the sidebar names it: its title and
-    /// its pill say the name the user gave the place there.
+    /// A search's folder is named as the sidebar names it: its title says
+    /// the name the user gave the place there, and its trail is that
+    /// folder's, its pill saying how deep it looks.
     #[test]
     fn a_search_names_its_folder_as_the_sidebar_does() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1847,7 +2026,7 @@ mod tests {
         assert!(
             d.chips
                 .iter()
-                .any(|c| c.id == "where" && c.title == "In Papers and below")
+                .any(|c| c.id == "where" && c.title == "And subfolders")
         );
     }
 

@@ -180,6 +180,13 @@ pub struct Suggestion {
     /// a value still to type), and the row says why.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<Invocation>,
+    /// What shows as the words are typed, a pause after the last key: the
+    /// search Enter runs, shown in place of the step the pane shows and
+    /// not remembered. `None`: it waits for Enter (it reads the files, or
+    /// looks below a folder on a server, where each walk costs round
+    /// trips).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live: Option<Invocation>,
     /// What Alt+Enter runs instead (the same search in the home folder).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alt: Option<Invocation>,
@@ -224,6 +231,7 @@ impl Suggestion {
             typed: false,
             detail_typed: false,
             run: None,
+            live: None,
             alt: None,
             open: None,
             completion: None,

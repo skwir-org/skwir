@@ -842,6 +842,38 @@ impl App {
         self.show(pane, location, |p| p.go_on(location.clone(), left))
     }
 
+    /// Show `location` in `pane` in place of the step it shows, with no
+    /// step of its own: Back goes where the step before led (a search
+    /// shown as its words are typed, ADR-098). A location the pane shows
+    /// already is left as it is.
+    pub fn navigate_in_place(&self, pane: PaneId, location: &Location) -> anyhow::Result<()> {
+        let location = &self.reached_in(pane, location)?;
+        if self.pane_location(pane).as_ref() == Some(location) {
+            return Ok(());
+        }
+        self.show(pane, location, |p| p.replace_here(location.clone()))
+    }
+
+    /// Take back the step `pane` shows, as if it had never been gone to:
+    /// the step before is shown again, and the one taken back and those
+    /// ahead of it go (Escape in the address field after a search shown as
+    /// it was typed). Nothing at the first step.
+    pub fn take_step_back(&self, pane: PaneId) -> anyhow::Result<()> {
+        let before = {
+            let ws = self.workspace.read();
+            let p = ws
+                .pane(pane)
+                .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+            p.history_pos
+                .checked_sub(1)
+                .and_then(|pos| p.history.get(pos).cloned())
+        };
+        match before {
+            Some(location) => self.show(pane, &location, crate::workspace::Pane::take_step_back),
+            None => Ok(()),
+        }
+    }
+
     /// `location` as `pane` reaches it: a relative path (`./`, `../`) is
     /// the folder shown's, never the process's (shell.md), `..` read as
     /// the trail reads it; refused where the pane shows no folder (a
@@ -1858,6 +1890,11 @@ pub struct NavigateArgs {
     #[serde(default, with = "crate::os_path::opt")]
     #[schemars(with = "Option<PathArg>")]
     pub select: Option<std::ffi::OsString>,
+    /// Put it in place of the step the pane shows, with no step of its
+    /// own: Back goes where the step before led. A location already shown
+    /// is then left as it is.
+    #[serde(default)]
+    pub in_place: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
@@ -2185,10 +2222,15 @@ mod builtin {
             "core",
             "navigate",
             "Go to location",
-            "Open a path or location in a pane, an entry of it selected once listed when `select` names one",
+            "Open a path or location in a pane, an entry of it selected once listed when `select` names one; `in_place` puts it in place of the step the pane shows, with no step of its own",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                app.navigate(pane, &Location::parse_os(a.location.as_os_str()))?;
+                let location = Location::parse_os(a.location.as_os_str());
+                if a.in_place {
+                    app.navigate_in_place(pane, &location)?;
+                } else {
+                    app.navigate(pane, &location)?;
+                }
                 if let Some(name) = a.select {
                     app.reveal(pane, name);
                 }
@@ -3210,5 +3252,42 @@ mod tests {
         assert_eq!(app.pane_location(pane).as_ref(), Some(&c));
         let ws = app.workspace.read();
         assert_eq!(ws.pane(pane).unwrap().history.last(), Some(&c));
+    }
+
+    /// A search shown as it is typed: one step, each change in its place,
+    /// and taken back whole (ADR-098).
+    #[test]
+    fn a_step_shown_in_place_is_one_and_is_taken_back_whole() {
+        use crate::Location;
+        let tmp = tempfile::tempdir().unwrap();
+        let [a, b, c, d] = ["a", "b", "c", "d"].map(|name| {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir(&dir).unwrap();
+            Location::from_path(dir)
+        });
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        let pane = app.workspace.read().active_id();
+        let history = || {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            (p.history.clone(), p.history_pos)
+        };
+        app.navigate(pane, &a).unwrap();
+        app.navigate(pane, &b).unwrap();
+        app.step_here(pane).unwrap();
+        app.navigate_in_place(pane, &c).unwrap();
+        app.navigate_in_place(pane, &d).unwrap();
+        assert_eq!(history(), (vec![a.clone(), b.clone(), d.clone()], 2));
+        // What is shown already is left as it is.
+        app.navigate_in_place(pane, &d).unwrap();
+        assert_eq!(history(), (vec![a.clone(), b.clone(), d.clone()], 2));
+        app.take_step_back(pane).unwrap();
+        assert_eq!(app.pane_location(pane).as_ref(), Some(&b));
+        assert_eq!(history(), (vec![a.clone(), b.clone()], 1));
+        // The first step is never taken back.
+        app.take_step_back(pane).unwrap();
+        app.take_step_back(pane).unwrap();
+        assert_eq!(app.pane_location(pane).as_ref(), Some(&a));
+        assert_eq!(history(), (vec![a], 0));
     }
 }

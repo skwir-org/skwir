@@ -6,7 +6,8 @@
 //! here too (`assist::tokens_at`): the field draws them, knowing no syntax.
 //!
 //! The searches run from the field are remembered (`recent`), unless the
-//! user turned that off.
+//! user turned that off. What Enter runs is also shown as the words are
+//! typed, where that costs little (`live`).
 
 use std::path::{Path, PathBuf};
 
@@ -110,6 +111,25 @@ pub fn search(expr: &str, scope: &Location, ask: &Ask) -> Invocation {
     )
 }
 
+/// The search of `expr` in `scope` shown as its words are typed (ADR-098):
+/// in place of the step the pane shows, not remembered. None where each
+/// search costs: one that reads the files, the whole disk, a folder on a
+/// server (each walk round trips); those wait for Enter.
+fn live(expr: &str, scope: &Location, ask: &Ask) -> Option<Invocation> {
+    if lang::parse(expr).ok()?.reads_files() {
+        return None;
+    }
+    if let Some(path) = scope.path()
+        && (path.parent().is_none() || skwir_core::fs::reach::of(&path).is_some())
+    {
+        return None;
+    }
+    let mut run = search(expr, scope, ask);
+    run.args["remember"] = false.into();
+    run.args["in_place"] = true.into();
+    Some(run)
+}
+
 /// The rows for words typed.
 fn typed(app: &App, ask: &Ask) -> Answer {
     let text = ask.text.as_str();
@@ -180,6 +200,8 @@ fn typed(app: &App, ask: &Ask) -> Answer {
         if let Some(item) = first {
             row.completion = Some(with(item));
             row.rest = rest_of(item);
+        } else {
+            row.live = live(&expr, &scope, ask);
         }
         rows.push(row);
     }
@@ -200,13 +222,15 @@ fn typed(app: &App, ask: &Ask) -> Answer {
         }
         rows.push(row);
     }
-    // The words read as terms, offered below the search of the words.
+    // The words read as terms, offered below the search of the words; Tab
+    // writes them (and Enter, over a folder filtered alone).
     if let Some(reading) = assist::interpret(words, &tags) {
         let mut row = Suggestion::new(Section::Reading, reading.label)
             .detail(reading.expr.clone())
             .icon("sliders")
             .runs(search(&reading.expr, &scope, ask));
         row.detail_typed = true;
+        row.completion = Some(reading.expr.clone());
         rows.push(row);
     }
     // The same search elsewhere: the folder shown, home, the whole disk,
@@ -479,9 +503,28 @@ mod tests {
         assert_eq!(run.args["expr"], "dunes jpg");
         assert_eq!(run.args["root"], "/data/guide");
         assert!(r[0].alt.is_some(), "Alt+Enter searches home");
+        // Shown as the words are typed, in place and not remembered.
+        let live = r[0].live.as_ref().expect("shown as typed");
+        assert_eq!(live.args["expr"], "dunes jpg");
+        assert_eq!(live.args["in_place"], true);
+        assert_eq!(live.args["remember"], false);
         let r = rows("kind:pix");
         assert!(r[0].error && r[0].run.is_none());
         assert!(r[0].title.contains("pix"), "{}", r[0].title);
+    }
+
+    #[test]
+    fn what_reads_the_files_or_walks_the_disk_waits_for_enter() {
+        let r = rows("content:filter");
+        assert!(r[0].run.is_some() && r[0].live.is_none());
+        let r = rows("dunes kind:im");
+        assert!(r[0].live.is_none(), "a value still typed");
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let mut disk = ask("dunes");
+        disk.scope = Some(Location::from_path(std::path::MAIN_SEPARATOR_STR));
+        let r = Field.suggest(&app, &disk, &CancelToken::new()).rows;
+        assert!(r[0].run.is_some() && r[0].live.is_none());
     }
 
     #[test]

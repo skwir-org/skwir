@@ -172,3 +172,28 @@ ADR-070 (the field's rows) and retires the Jump overlay.
   higher), and says what the live filter keeps in its first line. The
   user chose it from three mock-ups (from the right, attached under the
   field, merged).
+- Amended 2026-10-27, a fourth time: how deep words look is one switch,
+  and both sides show as typed; search as you type, left open above, is
+  decided so. The same words gave a filter or a search by a key (typed
+  over a folder they filtered it, Enter searched below it), and only the
+  bar said afterwards which. Now Ctrl+Shift+F (`ui.filter`) opens the
+  field on the folder alone, Ctrl+F on it and its subfolders; typed in,
+  each switches and keeps the words, as the switch on the card's first
+  line does (`omnibox::Depth`). The folder alone is still its own
+  listing filtered at each key, a folder to paste into; below it, the
+  search Enter runs shows 400 ms after the last key
+  (`Suggestion::live`), in place of one step of history the field takes
+  (`App::step_here`, `App::navigate_in_place`, `navigate`'s `in_place`)
+  and Escape takes back (`App::take_step_back`), the folder's filter and
+  narrowing with it. A search that reads the files, looks over the whole
+  disk or below a folder on a server waits for Enter (no `live`). Enter
+  keeps what is shown and gives the files the keyboard; `query.search`
+  leaves a search shown as it is and remembers it. At rest a search
+  keeps its folder's trail (a place's, `in:recent:`), its first pill
+  saying how deep and switching it (`query.here`: the folder filtered by
+  the search's words when it alone can tell them, else searched alone;
+  `query.below`: a folder's narrowing and words searched below it). Two
+  engines stay behind the one look: listing a folder twice to make it a
+  search of depth 1 would lose what a folder is. Ctrl+I, proposed first
+  and Dolphin's filter key, stays Properties, as in GNOME's Files and a
+  Mac's Get Info. The user chose it from mock-ups.

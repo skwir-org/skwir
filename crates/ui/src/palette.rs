@@ -239,6 +239,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.map_open", "{}", "Map: open in Maps"),
     ("ui.peek", "{}", "Peek"),
     ("ui.search", "{}", "Search…"),
+    ("ui.filter", "{}", "Filter…"),
     ("ui.history_menu", "{}", "Back: history…"),
     (
         "ui.history_menu",

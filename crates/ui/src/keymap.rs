@@ -222,6 +222,9 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     // GNOME's and a Mac's Get Info.
     ("alt-enter", "ui.properties", None),
     ("secondary-i", "ui.properties", None),
+    // The address field on the folder shown alone (Ctrl+F, the query
+    // plugin's, looks below it too): its words filter it as typed.
+    ("ctrl-shift-f", "ui.filter", None),
     ("f3", "ui.split", None),
     ("space", "ui.peek_close", Some("peek")),
     ("escape", "ui.peek_close", Some("peek")),

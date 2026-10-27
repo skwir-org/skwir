@@ -1,8 +1,9 @@
 //! The search designer: a pane that shows a search draws it in its address
-//! field as pills, one per facet the query plugin describes as set
-//! (`query.describe`): where it looks first, then the words, the kinds of
-//! file, when, size, tag, contents, and any part of the search no facet
-//! holds. "+ Filter" lists the facets not set. A pill opens its choices in
+//! field as pills after the trail of the folder it looks in (ADR-098), one
+//! per facet the query plugin describes as set (`query.describe`): how deep
+//! it looks first (its subfolders, or this folder only), then the words,
+//! the kinds of file, when, size, tag, contents, and any part of the search
+//! no facet holds. "+ Filter" lists the facets not set. A pill opens its choices in
 //! a popover anchored to it; a choice runs the invocation the plugin gave
 //! (`query.refine`, or `ui.ask` for a value to type), which moves the pane
 //! to the refined search, so Back undoes a choice. A set pill has a button
@@ -17,7 +18,8 @@
 //! beside the pills).
 //!
 //! What narrows a folder is the same chips after its trail
-//! (`query.describe_filter`), each with a funnel, as no search's has: the
+//! (`query.describe_filter`), each with a funnel, as no search's has: how
+//! deep its words look (this folder only, or its subfolders searched), the
 //! location's own (a tag's `with`), Narrow by's, then the words typed over
 //! it, each opening its choices, which change it in place; "+ Filter"
 //! adds to the words typed.
@@ -146,6 +148,9 @@ pub struct Filters {
 /// What the query plugin says of what narrows a folder.
 #[derive(Default, Deserialize)]
 struct FolderDescription {
+    /// How deep its words look: a folder's.
+    #[serde(default)]
+    depth: Option<Chip>,
     narrowing: Vec<Chip>,
     filter: Vec<Chip>,
 }
@@ -329,6 +334,7 @@ fn sync_filters(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
             .unwrap_or_default();
         narrowing = described.narrowing.iter().map(Chip::label).collect();
         let read = described.filter.iter().any(Chip::is_pill);
+        chips.extend(described.depth);
         chips.extend(described.narrowing);
         chips.extend(described.filter);
         if let Some(text) = typed.filter(|_| !read) {
@@ -378,8 +384,8 @@ fn own_chip(crumb: &Crumb) -> Chip {
 }
 
 /// The words typed when nothing read them into facets (the query plugin
-/// away, or no start of them reads), as typed: Edit types them again, its
-/// × shows everything, as Escape in the pane does.
+/// away, or no start of them reads), as typed: Edit types them again over
+/// the folder alone, its × shows everything, as Escape in the pane does.
 fn typed_chip(text: &str) -> Chip {
     Chip {
         id: "typed".to_owned(),
@@ -388,7 +394,7 @@ fn typed_chip(text: &str) -> Chip {
         icon: "filter".to_owned(),
         choices: vec![Choice {
             label: "Edit…".to_owned(),
-            command: Invocation::with_args("ui.search", &serde_json::json!({ "text": text })),
+            command: Invocation::with_args("ui.filter", &serde_json::json!({ "text": text })),
             active: false,
         }],
         clear: Some(Invocation::new("filter")),
@@ -407,64 +413,23 @@ fn shown_chips(shell: &Shell) -> &[Chip] {
     }
 }
 
-/// The search the pane being rendered shows, as pills for its address
-/// field: where it looks, each facet set, "+ Filter", then room that edits
-/// the text when clicked. `None` when there are no chips (a folder, or the
-/// query plugin away): the field shows text. `anchor` goes to what the
-/// open popover hangs from. No width of its own, like the trail.
-pub fn pills(shell: &Shell, anchor: &PopoverAnchor, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    if shell.ui().chips.chips.is_empty() {
-        return None;
-    }
-    // The richest that fits (`Fit`): the words searched stay in view
-    // however narrow the pane.
-    Some(
-        div()
-            .flex_1()
-            .w(px(0.))
-            .min_w_0()
-            .h(px(24.))
-            .child(crate::elements::adaptive::AdaptiveRow {
-                variants: [Fit::Full, Fit::Compact, Fit::Tight]
-                    .into_iter()
-                    .map(|fit| line(shell, anchor, fit, cx))
-                    .collect(),
-                height: 24.,
-                chosen: None,
-            })
-            .into_any_element(),
-    )
-}
-
-/// How the search's pills fit their room, richest first.
+/// How the pills fit their room, richest first.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Fit {
     /// Every pill as it reads.
     Full,
-    /// Where it looks and "+ Filter" as their icons alone, the facets as
-    /// their icon and value (`🔍 rapport`), each said in full in its
+    /// Every pill as it reads but how deep it looks, its icon alone: the
+    /// words before it.
+    Lean,
+    /// How deep it looks and "+ Filter" as their icons alone, the facets
+    /// as their icon and value (`🔍 rapport`), each said in full in its
     /// tooltip.
     Compact,
     /// The facets alone, each its value without icon (`rapport` for
-    /// "Name: rapport", said in full in its tooltip). Where it looks and
-    /// the facets to add are the field's, with Ctrl+F or a click beside.
+    /// "Name: rapport"), a folder's keeping its funnel, each said in full
+    /// in its tooltip. How deep and the facets to add are the field's,
+    /// with Ctrl+F or a click beside.
     Tight,
-}
-
-/// The search's pills on one line, as `fit` says, then room that edits
-/// the text.
-fn line(shell: &Shell, anchor: &PopoverAnchor, fit: Fit, cx: &mut Context<Shell>) -> AnyElement {
-    let least = if fit == Fit::Tight { 8. } else { 24. };
-    div()
-        .size_full()
-        .overflow_hidden()
-        .flex()
-        .items_center()
-        .gap(px(4.))
-        .px(px(3.))
-        .children(pill_row(shell, anchor, fit, false, cx))
-        .child(rest(shell, false, least, cx))
-        .into_any_element()
 }
 
 /// What is left after the pills, or after a trail: it edits the address as
@@ -490,21 +455,23 @@ fn rest(shell: &Shell, folder: bool, least: f32, cx: &mut Context<Shell>) -> Any
         .into_any_element()
 }
 
-/// What follows a folder's trail: what narrows it as pills, each with a
-/// funnel, then room that edits the address (that room alone when nothing
-/// narrows it). The pills know their natural width (`adaptive::Fit`), so
-/// they and the trail give way alike, each by its width, and they draw
-/// the richest that fits what they got (`Fit`), right after the trail.
+/// What follows a trail: a search's pills, or what narrows a folder, each
+/// with a funnel; then room that edits the address (that room alone when
+/// nothing narrows it). The pills know their natural width
+/// (`adaptive::Fit`), so they and the trail give way alike, each by its
+/// width, and they draw the richest that fits what they got (`Fit`),
+/// right after the trail.
 pub fn after_trail(
     shell: &Shell,
     anchor: &PopoverAnchor,
     cx: &mut Context<Shell>,
 ) -> Vec<AnyElement> {
     let mut after = Vec::new();
-    if shell.ui().chips.chips.is_empty() && !shell.ui().filters.chips.is_empty() {
+    let folder = shell.ui().chips.chips.is_empty();
+    if !shown_chips(shell).is_empty() {
         after.push(
             crate::elements::adaptive::Fit {
-                variants: [Fit::Full, Fit::Compact, Fit::Tight]
+                variants: [Fit::Full, Fit::Lean, Fit::Compact, Fit::Tight]
                     .into_iter()
                     .map(|fit| {
                         // As wide as it is given, so the last fit shrinks
@@ -517,7 +484,7 @@ pub fn after_trail(
                             .items_center()
                             .gap(px(4.))
                             .px(px(3.))
-                            .children(pill_row(shell, anchor, fit, true, cx))
+                            .children(pill_row(shell, anchor, fit, folder, cx))
                             .into_any_element()
                     })
                     .collect(),
@@ -527,7 +494,7 @@ pub fn after_trail(
             .into_any_element(),
         );
     }
-    after.push(rest(shell, true, 24., cx));
+    after.push(rest(shell, folder, 24., cx));
     after
 }
 
@@ -597,7 +564,9 @@ fn pill_row(
         } else {
             theme.selection_text
         };
-        let tip = if folder {
+        let tip = if chip.is_scope() {
+            depth_tip(shell, chip, folder)
+        } else if folder {
             format!("{} · this folder only, not a search", chip.label())
         } else if chip.title.is_empty() {
             "Part of the search no chip holds".to_owned()
@@ -609,9 +578,8 @@ fn pill_row(
         };
         let icon = match (chip.is_scope(), fit) {
             _ if folder => "filter".to_owned(),
-            (true, _) => "folder".to_owned(),
             (false, Fit::Tight) => String::new(),
-            (false, _) => chip.icon.clone(),
+            _ => chip.icon.clone(),
         };
         // Its ×, but on a folder's at the last fit: the funnel stays, and
         // what is left goes to the value (its menu removes it).
@@ -628,11 +596,15 @@ fn pill_row(
         .args(serde_json::json!({ "pane": pane, "chip": i }));
         match fit {
             _ if is_tag => {}
-            Fit::Full => button = button.label(chip.label()),
-            Fit::Compact if chip.is_scope() => {}
+            Fit::Lean | Fit::Compact if chip.is_scope() => {}
+            Fit::Full | Fit::Lean => button = button.label(chip.label()),
             Fit::Compact | Fit::Tight => {
                 button = button.label(chip.value.clone().unwrap_or_else(|| chip.label()));
             }
+        }
+        // How deep it looks opens its choices, as a menu's button does.
+        if chip.is_scope() && !chip.choices.is_empty() {
+            button = button.dropdown();
         }
         let pill = button
             .active(!chip.is_scope())
@@ -685,7 +657,7 @@ fn pill_row(
             "ui.search_chip",
         )
         .args(serde_json::json!({ "pane": pane, "facets": true }));
-        let facets = if fit == Fit::Full {
+        let facets = if matches!(fit, Fit::Full | Fit::Lean) {
             facets.label("Filter")
         } else {
             facets
@@ -702,6 +674,33 @@ fn pill_row(
         );
     }
     line
+}
+
+/// What a pill saying how deep words look tells: what it means, and the
+/// key that switches it from the address field.
+fn depth_tip(shell: &Shell, chip: &Chip, folder: bool) -> String {
+    let keys = |command: &str| {
+        shell
+            .keys_for(command, &serde_json::json!({}))
+            .map(|keys| format!(" ({keys})"))
+            .unwrap_or_default()
+    };
+    let here = chip.choices.first().is_some_and(|c| c.active);
+    match () {
+        () if chip.choices.is_empty() => format!("{} · searched as it lists", chip.label()),
+        () if folder => format!(
+            "The words filter this folder only · its subfolders too are searched{}",
+            keys("ui.search")
+        ),
+        () if here => format!(
+            "The search looks in this folder only · its subfolders too{}",
+            keys("ui.search")
+        ),
+        () => format!(
+            "The search looks in the subfolders too · this folder only{}",
+            keys("ui.filter")
+        ),
+    }
 }
 
 /// A tag's pill's segments: each category a link up to it, `›` between,

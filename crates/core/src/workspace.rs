@@ -832,6 +832,25 @@ impl Pane {
         }
     }
 
+    /// Take the current step of `history` back, as if it had never been
+    /// gone to: the step before is current again, and the one taken back
+    /// goes with those ahead of it. The entry the cursor was on when that
+    /// step was left is selected again once the listing has it.
+    pub(crate) fn take_step_back(&mut self) {
+        let Some(before) = self.history_pos.checked_sub(1) else {
+            return;
+        };
+        self.history.truncate(self.history_pos);
+        self.left_at.truncate(self.history.len());
+        self.history_pos = before;
+        let again = self.left_at.get(before).copied().flatten().map(|id| {
+            let mut selection = Selection::default();
+            selection.set([id]);
+            selection
+        });
+        self.set_restore(again);
+    }
+
     /// Go to step `pos` of `history` (Back, Forward), which is `location`,
     /// the one now shown: `left`, the entry the cursor was on, is kept for
     /// the step left, and the entry the cursor was on when `pos` was left

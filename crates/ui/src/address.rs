@@ -789,8 +789,6 @@ enum Address {
         /// (`Trail::holds_places`; a folder's folders).
         holds_places: bool,
     },
-    /// A search, as pills (`search_bar::pills`).
-    Pills,
     /// The text: while it is being edited (Ctrl+L, or a click beside the
     /// trail or the pills), and for other locations.
     Text,
@@ -845,22 +843,26 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
             back: pane.is_some_and(|p| p.history_pos > 0),
             forward: pane.is_some_and(|p| p.history_pos + 1 < p.history.len()),
             // Every location as a trail (a folder's from the sidebar's
-            // place that holds it), a search as its pills.
+            // place that holds it); a search as the trail of the folder it
+            // looks in, its pills after it (ADR-098).
             address: match &shell.ui().place.trail {
                 _ if focused => Address::Text,
-                _ if !shell.ui().chips.chips.is_empty() => Address::Pills,
                 Some(trail) => {
-                    let segments = crate::trail::segments(trail, roots);
+                    let mut segments = crate::trail::segments(trail, roots);
+                    let search = shell.ui().place.search;
                     let own = segments.len() - trail.crumbs.len();
+                    if search {
+                        segments.truncate(segments.len() - 1);
+                    }
                     Address::Trail {
                         glyph: shell
                             .ui()
                             .place
                             .icon
-                            .filter(|_| !trail.crumbs.is_empty())
+                            .filter(|_| !trail.crumbs.is_empty() && !search)
                             .map(|icon| (own, icon)),
                         segments,
-                        holds_places: trail.holds_places,
+                        holds_places: trail.holds_places && !search,
                     }
                 }
                 None => Address::Text,
@@ -1042,14 +1044,13 @@ fn pane_row(
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
-    // A folder reads as a trail of places and a search as pills; the text
-    // field takes over while it is being edited. No width of its own: the
-    // field's minimum is what a variant is measured with.
+    // A location reads as a trail of places, a search's or what narrows a
+    // folder as pills after it; the text field takes over while it is
+    // being edited. No width of its own: the field's minimum is what a
+    // variant is measured with.
     let address = match &row.address {
-        Address::Pills => crate::search_bar::pills(shell, chip_anchor, cx)
-            .unwrap_or_else(|| div().into_any_element()),
-        // What narrows it follows the trail, as a search's pills follow
-        // where it looks; the room after them edits the address.
+        // The pills follow the trail; the room after them edits the
+        // address.
         Address::Trail {
             segments,
             glyph,

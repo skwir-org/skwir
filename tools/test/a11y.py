@@ -447,12 +447,22 @@ def run(w):
     w.keys("Escape")
     check("Escape: back to the files", hears(w, f"list item {second!r} 2 of 4 selected focused"))
 
-    # Ctrl+F: where words search stands before the text (ADR-098).
+    # Ctrl+F: where words look stands before the text, and how deep
+    # (ADR-098): the folder and its subfolders; Ctrl+Shift+F in the field,
+    # the folder alone, as the switch on the card's first line says.
+    def looking():
+        return [n for n in names_of(w) if n and ("folder" in n or n.startswith(("Searching", "Filtering")))]
+
     w.keys("ctrl+f")
     check("Ctrl+F: the field, where words search a button before it, named so",
           hears(w, "entry 'Address' focused")
-          and until(lambda: f"Searching in {w.files.name}" in names_of(w))
-          or print("  named:", [n for n in names_of(w) if n and n.startswith("Searching")]))
+          and until(lambda: f"Searching {w.files.name} and below" in names_of(w))
+          or print("  named:", looking()))
+    w.keys("ctrl+shift+f")
+    check("Ctrl+Shift+F there: the words look in the folder alone, the switch says so",
+          until(lambda: f"Filtering {w.files.name}" in names_of(w)
+                and "This folder only, chosen" in names_of(w))
+          or print("  named:", looking()))
     w.type("?")
     check("? alone: what the field takes, the terms of a search among the options",
           until(lambda: any(o and o.startswith("kind:") for o in options_of(w, "Suggestions")))
