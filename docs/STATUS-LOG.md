@@ -6107,3 +6107,39 @@ those offered:
   Xvfb: the Tags submenu's chips, the sidebar's suggested tags, a pinned
   one, the one shown, the Tags section's menu, the trail. Not run:
   `just release-check`, `just check-cross`.
+
+### Ctrl+Shift+Space on layouts where Shift+Space types a space of its own (2026-10-27)
+
+- **Asked:** "Ctrl+Shift+Space doesn't seem to work to open/close the side
+  preview panel, though the binding is advertised in Preview button
+  tooltip. Is this binding obsolete?"; then, of the first fix, whether it
+  matched other apps and systems or was a patch for one user's niche.
+- **Found:** not obsolete. The user's layout is French Ergo-L, whose
+  Shift+Space types a narrow no-break space (U+202F, xkeyboard-config's
+  `fr(ergol)`). gpui named the key after its keysym, `u202f`, so
+  `ctrl-shift-space` never matched; the keymap's comment named the case
+  and F11 as the fallback, but the tooltip shows Ctrl+Shift+Space.
+  Hyprland binds nothing on Ctrl+Shift+Space. Not one user's case:
+  xkeyboard-config gives Shift+Space another character in bépo,
+  bépo-AFNOR, a Swiss variant and others, and in the options
+  `nbsp:level2` and `nbsp:zwnj2…` (a zero-width non-joiner). Windows
+  names the space bar by its virtual key; Qt matches a shortcut held with
+  Shift by the key's unshifted symbol (`QXkbCommon::possibleKeyCombinations`),
+  never for AltGr's levels; GTK 4 matches against the keysym typed at the
+  same level (`gdk_key_event_matches`) and seems to miss it.
+- **Built:** gpui patch 0039, on Linux: a key whose unshifted symbol is
+  Space, at the level Shift alone gives it, is `space` to bindings; what
+  AltGr gives stays its own; what it types stays its `key_char`. A first
+  version named any key typing one whitespace character `space`: it missed
+  the zero-width non-joiner and turned AltGr+Space (a no-break space on
+  AFNOR) into Space; replaced before it was pushed.
+- **Checked:** `the_space_bar_with_shift_is_space_whatever_it_types`
+  (keymaps from xkeyboard-config: Ergo-L's and `ir` with `nbsp:zwnj2`
+  give `space` with Shift and keep what they type; AFNOR's AltGr+Space
+  stays `nobreakspace`), run by `python3 tools/gpui/check.py gpui_linux`
+  with the clipboard's tests (6 passed). The patch applied with `git apply`
+  to the file as vendored before gives the vendored file. On Xvfb with
+  `setxkbmap -layout fr -variant ergol`: Ctrl+Shift+Space opens the preview
+  panel and closes it. Not checked: Wayland (the same function serves
+  both), the whole `just gpui-check`, `just release-check`; macOS and
+  Windows, whose keystrokes are made elsewhere.

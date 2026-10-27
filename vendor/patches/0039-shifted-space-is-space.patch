@@ -1,0 +1,98 @@
+0039 shifted-space-is-space: the space bar with Shift is Space to key bindings, whatever the layout types there (a no-break space, a narrow one, a zero-width non-joiner)
+
+diff --git a/crates/gpui_linux/src/linux/platform.rs b/crates/gpui_linux/src/linux/platform.rs
+index 40f80661..6e221581 100644
+--- a/crates/gpui_linux/src/linux/platform.rs
++++ b/crates/gpui_linux/src/linux/platform.rs
+@@ -1452,6 +1452,17 @@ fn guess_ascii(keycode: Keycode, shift: bool) -> Option<char> {
+     Some(c)
+ }
+ 
++/// Whether `keycode` is a key whose unshifted symbol is Space, at the level
++/// Shift alone gives it: as Qt matches a shortcut held with Shift by the
++/// key's unshifted symbol. What AltGr gives (level three and above) stays
++/// its own.
++#[cfg(any(feature = "wayland", feature = "x11"))]
++fn shifts_space(state: &State, keycode: Keycode) -> bool {
++    let layout = state.key_get_layout(keycode);
++    state.key_get_level(keycode, layout) == 1
++        && state.get_keymap().key_get_syms_by_level(keycode, layout, 0) == [Keysym::space]
++}
++
+ #[cfg(any(feature = "wayland", feature = "x11"))]
+ pub(super) fn keystroke_from_xkb(
+     state: &State,
+@@ -1460,7 +1471,14 @@ pub(super) fn keystroke_from_xkb(
+ ) -> gpui::Keystroke {
+     let key_utf32 = state.key_get_utf32(keycode);
+     let key_utf8 = state.key_get_utf8(keycode);
+-    let key_sym = state.key_get_one_sym(keycode);
++    // The space bar is Space with Shift too, whatever the layout types there
++    // (a no-break space, a narrow one, a zero-width non-joiner): bindings
++    // name `shift-space`, never those. What it types stays its `key_char`.
++    let key_sym = if modifiers.shift && shifts_space(state, keycode) {
++        Keysym::space
++    } else {
++        state.key_get_one_sym(keycode)
++    };
+ 
+     let key = match key_sym {
+         Keysym::Return => "enter".to_owned(),
+@@ -1769,6 +1787,57 @@ mod tests {
+         );
+     }
+ 
++    /// The keystroke of the space bar with `held` down (evdev keycodes plus
++    /// eight: 50 Shift, 108 AltGr) on `layout(variant)` with `options`.
++    #[cfg(any(feature = "wayland", feature = "x11"))]
++    fn space_with(
++        layout: &str,
++        variant: &str,
++        options: Option<&str>,
++        held: &[u32],
++        modifiers: gpui::Modifiers,
++    ) -> gpui::Keystroke {
++        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
++        let keymap = xkb::Keymap::new_from_names(
++            &context,
++            "evdev",
++            "pc105",
++            layout,
++            variant,
++            options.map(str::to_owned),
++            xkb::COMPILE_NO_FLAGS,
++        )
++        .expect("a layout of xkeyboard-config");
++        let mut state = State::new(&keymap);
++        for &key in held {
++            state.update_key(Keycode::new(key), xkb::KeyDirection::Down);
++        }
++        keystroke_from_xkb(&state, modifiers, Keycode::new(65))
++    }
++
++    #[cfg(any(feature = "wayland", feature = "x11"))]
++    #[test]
++    fn the_space_bar_with_shift_is_space_whatever_it_types() {
++        let control_shift = gpui::Modifiers {
++            control: true,
++            shift: true,
++            ..Default::default()
++        };
++        // French Ergo-L: Shift+Space types a narrow no-break space.
++        let ergol = space_with("fr", "ergol", None, &[50], control_shift);
++        assert_eq!(ergol.key, "space");
++        assert!(ergol.modifiers.control && ergol.modifiers.shift);
++        assert_eq!(ergol.key_char.as_deref(), Some("\u{202f}"));
++        // A zero-width non-joiner on Shift+Space, as Persian typists set it.
++        let zwnj = space_with("ir", "", Some("nbsp:zwnj2"), &[50], control_shift);
++        assert_eq!(zwnj.key, "space");
++        assert_eq!(zwnj.key_char.as_deref(), Some("\u{200c}"));
++        // What AltGr gives stays its own: AFNOR's no-break space.
++        let afnor = space_with("fr", "afnor", None, &[108], gpui::Modifiers::default());
++        assert_eq!(afnor.key_char.as_deref(), Some("\u{a0}"));
++        assert_ne!(afnor.key, "space");
++    }
++
+     #[test]
+     fn test_is_within_click_distance() {
+         let zero = Point::new(px(0.0), px(0.0));

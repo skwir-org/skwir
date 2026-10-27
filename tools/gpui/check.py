@@ -45,7 +45,8 @@ RUNS = [
     # All of them: the atlas (an upload to a removed texture), the context
     # and the renderer.
     ("gpui_wgpu", [], []),
-    ("gpui_linux", [], ["clipboard"]),
+    # The clipboard (0024), and the space bar with Shift (0039).
+    ("gpui_linux", [], ["clipboard", "the_space_bar_with_shift"]),
 ]
 
 

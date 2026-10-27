@@ -68,6 +68,7 @@ at the vendored commit.
 | `0036-no-icu` | A jump list's removed entries are read without ICU's `u_strlen`, so gpui needs no icuuc.dll | — |
 | `0037-middle-ellipsis-over-clamped-lines` | A clamped text cut in the middle keeps its first lines, and its last ends as the text does | — |
 | `0038-press-cancels-a-waiting-tooltip` | A press cancels a tooltip still waiting to show | — |
+| `0039-shifted-space-is-space` | The space bar with Shift is Space to key bindings whatever the layout types there (Linux) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -578,6 +579,30 @@ tooltip now also drops a waiting one (`cancel_waiting_tooltip`), as other
 toolkits do; the next move over the element waits again.
 `tooltip_waiting_to_show_is_cancelled_by_a_press` covers it, and
 `just gpui-check` runs upstream's tooltip tests beside it.
+
+### 0039: The space bar with Shift is Space
+
+On layouts where Shift+Space types a character of its own, the key arrived
+named after that keysym, so no binding on `shift-space` or `ctrl-shift-space`
+could fire: Skwir's Ctrl+Shift+Space for the preview, which its tooltip
+names, did nothing there. In xkeyboard-config: French Ergo-L and bépo-AFNOR
+(a narrow no-break space), bépo, a Swiss variant and others (a no-break
+space), and the options `nbsp:level2` (a no-break space) and `nbsp:zwnj2…`
+(a zero-width non-joiner, as Persian typists set it).
+
+`keystroke_from_xkb` now takes a key whose unshifted symbol is `space`, at
+the level Shift alone gives it, as `space`: Qt matches a shortcut held with
+Shift by the key's unshifted symbol the same way, and Windows names the
+space bar by its virtual key whatever it types. What AltGr gives (level
+three and above: AFNOR's no-break space) stays its own, as in Qt. What the
+key types stays the keystroke's `key_char`, so a text field still gets it.
+Only the space bar: a shifted punctuation key keeps its symbol, which
+gpui's bindings name (`ctrl-?`). GTK 4 matches a shortcut against the
+keysym typed, at the same level, and seems to miss this case.
+
+`the_space_bar_with_shift_is_space_whatever_it_types` builds the keymaps
+from xkeyboard-config: Ergo-L's and `ir` with `nbsp:zwnj2` give `space`
+with Shift, and keep what they type; AFNOR's AltGr+Space stays its own.
 
 ## Adding or changing a patch
 

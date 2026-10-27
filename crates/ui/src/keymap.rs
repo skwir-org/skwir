@@ -216,9 +216,9 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("enter", "ui.accept", Some("confirm")),
     ("escape", "ui.dismiss", Some("confirm")),
     ("space", "ui.peek", Some("pane")),
+    // The space bar with Shift is Space whatever the layout types there (a
+    // narrow no-break space on French Ergo-L): gpui patch 0039, on Linux.
     ("ctrl-shift-space", "ui.toggle_preview", None),
-    // Layouts where shift+space types a character (fr: U+202F) never
-    // produce `ctrl-shift-space`; F11 is the layout-independent fallback.
     // F3 splits and F11 shows the side panel, as in Dolphin; inside a
     // document F3 stays "next match", the deeper context wins.
     ("f11", "ui.toggle_preview", None),
