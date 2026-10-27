@@ -3381,7 +3381,7 @@ impl Render for Shell {
             (toast, None)
         };
         let sequence = crate::sequence::render(self, cx);
-        let shortcuts = crate::shortcuts::render(self, cx);
+        let shortcuts = crate::shortcuts::render(self, window, cx);
         let about = crate::about::render(self, cx);
         let overlays = [
             address::more_popup(self, cx),

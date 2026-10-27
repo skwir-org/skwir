@@ -6143,3 +6143,46 @@ those offered:
   panel and closes it. Not checked: Wayland (the same function serves
   both), the whole `just gpui-check`, `just release-check`; macOS and
   Windows, whose keystrokes are made elsewhere.
+
+### Finding a shortcut by what it does or by its keys (2026-10-27)
+
+- **Asked:** "add filtering feature in keyboard settings and shortcuts
+  quick help panel, so we can quickly find the shortcut associated to an
+  action".
+- **Found:** F1 had no field; the Keyboard page could find an action by
+  keys pressed (**Find by keys**) and through the dialog's search, which
+  mixes the actions into every setting found and matched one substring
+  of the title, place, command or keys as written (`Ctrl+Shift+T`):
+  `ctrl t` found nothing, `shift t` nothing, `rename f2` nothing.
+- **Built:**
+  - `keymap::finds`, one matcher for the three: every word in the
+    action's title, place or command; or, when the text names keys (a
+    `+`, a modifier, a named key), a binding holding every key named, the
+    other words in the action's, with the usual other names (`control`,
+    `esc`, `pgdn`, `Page Down`, `cmd`…): `ctrl t` finds Ctrl+T and
+    Ctrl+Shift+T, `rename f2` Rename… on F2. A letter is a key there, so
+    `ctrl t` is no search for Ctrl+Tab's "Next tab"; alone, it is a
+    word.
+  - The Keyboard page's filter, a row of its own above the list with
+    **Find by keys** beside it: it narrows what With keys, All actions or
+    Changed by you show, unfolds the keys inside dialogs and menus that
+    match, says when nothing does. Escape empties it, then closes; Enter
+    goes to the first action. `ui.settings` takes `filter` with `page`.
+  - F1's field, which has the keyboard when it opens: it narrows the
+    places here and lists, under Elsewhere, the bindings that do not run
+    here (another place, a condition that does not hold) by place and
+    condition. Words match a place's name, never its conditions ("not in
+    the trash" is no answer to "trash"). Escape empties it, then closes;
+    Tab walks the field, **All shortcuts…** and ✕; **All shortcuts…**
+    takes what was typed to the Keyboard page. The panel keeps its width
+    and its top while the list narrows.
+- **Checked:** rustfmt; clippy (`-D warnings`) on skwir-ui and skwir;
+  skwir-ui's tests (386, among them
+  `a_search_finds_by_words_or_by_the_keys_it_names` and the rows' test
+  with the filter) and skwir's keymap and command tests (9). On Xvfb: F1
+  filtered by `trash`, `ctrl t`, `rename` and `rename f2` (Elsewhere: the
+  sidebar's Rename it), Escape emptying then closing, Tab to **All shortcuts…** and
+  Enter opening the Keyboard page filtered by `copy`; there, `ctrl+shift+t`
+  and Enter to its row, Escape twice closing; the dialog's search finding
+  `ctrl shift t`. Not run: `just a11y-check` (it walks neither F1 nor the
+  Keyboard page), `just release-check`, `just check-cross`.

@@ -424,7 +424,9 @@ prompt, quoted for your shell.
 ## Keys
 
 Settings › Keyboard lists every action with its keys, by where they
-work. Click a key to change or free it, or **+** to add one, then press
+work. Type in its filter what an action does or its keys (`rename`,
+`ctrl+t`, `Ctrl Shift`) to narrow the list, or press the keys with **Find
+by keys**. Click a key to change or free it, or **+** to add one, then press
 the keys (or type them, for those your desktop keeps); before you save,
 it says what those keys do now there. **New shortcut…** binds a command
 that needs a value, such as a folder to go to; **Changed by you** lists
@@ -433,8 +435,10 @@ a plugin you turn off waits for it. Settings › Plugins › **Vim keys** (off b
 file list yazi's keys: `hjkl` to move, `Space` to pick, `v` for a range,
 `y`, `x`, `p` to copy, cut and paste, `/` to find, and `g` and `,`
 sequences. While it is on, typed letters no longer jump to names. `F1`
-lists what applies where you are, and after the first key of a sequence
-a hint shows what can follow.
+lists what applies where you are; type to narrow it, and to find what
+the other places' keys do too. **All shortcuts…** opens Settings ›
+Keyboard with what you typed. After the first key of a sequence a hint
+shows what can follow.
 
 ## Settings
 

@@ -749,7 +749,17 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 
 - **F1** (`shortcuts.rs`) lists the bindings of the focused element's
   key contexts; a new context needs only a name in
-  `keymap::context_label`. A command run three times with the pointer gets
+  `keymap::context_label`. Its field has the keyboard when it opens:
+  what is typed narrows the list and finds the bindings that do not run
+  here too ("Elsewhere", each under its place and condition). Escape
+  empties the field, then closes. **All shortcuts…** opens the Keyboard
+  page with what was typed (`ui.settings { page, filter }`).
+- **One way to find a shortcut** (`keymap::finds`), for F1, the Keyboard
+  page's filter and the Settings search: every word in what the action
+  does, its place (never its conditions: "not in the trash" is no answer
+  to "trash") or its command; or, when the text names keys (a `+`, a
+  modifier, a named key alone: `ctrl t`, `Shift+Delete`, `F2`), a
+  binding holding them all. A letter alone is a word. A command run three times with the pointer gets
   one hint naming its shortcut, once ever: call `Shell::note_pointer_use`
   from new pointer-only entry points.
 - **Layers (ADR-024),** lowest first: plugin defaults

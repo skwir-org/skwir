@@ -460,6 +460,10 @@ mod args {
         /// A page to show (`plugins`, a plugin's id).
         #[serde(default)]
         page: Option<String>,
+        /// What the Keyboard page's list is narrowed to, with `page`
+        /// `keyboard`: words of the actions' or keys (`ctrl+t`).
+        #[serde(default)]
+        filter: Option<String>,
     }
 
     #[derive(Deserialize, JsonSchema)]

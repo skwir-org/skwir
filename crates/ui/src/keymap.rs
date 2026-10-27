@@ -1545,6 +1545,181 @@ pub fn display_keys(keys: &str) -> String {
         .join(" ")
 }
 
+/// Whether what was typed to find a shortcut finds this one (the Keyboard
+/// page's filter, the Settings search, F1's): every word of `query` in its
+/// `words` (its title, its place, its command); or, where `query` names
+/// keys (a `+`, a modifier, a named key: `ctrl+t`, `Ctrl T`, `f2`,
+/// `shift-delete`), one of its `bindings` (GPUI notation) holding every
+/// key named, the other words in its `words`: `ctrl t` finds Ctrl+T and
+/// Ctrl+Shift+T, `rename f2` Rename… on F2. A letter is a key there, never
+/// a word. `query` is matched ignoring case.
+pub fn finds(query: &str, words: &[&str], bindings: &[&str]) -> bool {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return true;
+    }
+    let said = words.join(" ").to_lowercase();
+    if query.split_whitespace().all(|word| said.contains(word)) {
+        return true;
+    }
+    let mut tokens: Vec<String> = Vec::new();
+    for part in query
+        .split(|c: char| c.is_whitespace() || c == '+' || c == '-')
+        .filter(|part| !part.is_empty())
+    {
+        // `Page Down` in two words.
+        if let ("up" | "down", Some("page")) = (part, tokens.last().map(String::as_str)) {
+            tokens.pop();
+            tokens.push(format!("page{part}"));
+        } else {
+            tokens.push(part.to_owned());
+        }
+    }
+    let names_keys = query.contains('+')
+        || tokens.iter().any(|token| {
+            let key = key_word(token);
+            KEY_MODIFIERS.contains(&key) || named_key(key)
+        });
+    names_keys
+        && bindings.iter().any(|binding| {
+            let parts = key_parts(binding);
+            tokens.iter().all(|token| {
+                parts.iter().any(|part| part == key_word(token))
+                    // `ctrl t` is no search for Ctrl+Tab, "Next tab".
+                    || (token.chars().count() > 1 && said.contains(token.as_str()))
+            })
+        })
+}
+
+/// The modifiers as a search names them, after `key_word`.
+const KEY_MODIFIERS: [&str; 5] = ["ctrl", "alt", "shift", "super", "fn"];
+
+/// A word of a search for keys, as GPUI names the key: `Control` is
+/// `ctrl`, `Esc` is `escape`.
+fn key_word(word: &str) -> &str {
+    match word {
+        "control" | "ctl" => "ctrl",
+        "option" | "opt" => "alt",
+        "cmd" | "command" | "win" | "meta" | "logo" | "platform" => "super",
+        "esc" => "escape",
+        "del" => "delete",
+        "return" => "enter",
+        "pgup" => "pageup",
+        "pgdn" => "pagedown",
+        "ins" => "insert",
+        other => other,
+    }
+}
+
+/// Whether `word` names a key alone, a search for it being one for keys.
+fn named_key(word: &str) -> bool {
+    word.strip_prefix('f')
+        .is_some_and(|n| !n.is_empty() && n.parse::<u8>().is_ok())
+        || [
+            "escape",
+            "enter",
+            "delete",
+            "backspace",
+            "space",
+            "tab",
+            "home",
+            "end",
+            "pageup",
+            "pagedown",
+            "insert",
+            "up",
+            "down",
+            "left",
+            "right",
+            "menu",
+        ]
+        .contains(&word)
+}
+
+/// A binding's modifiers and keys, every stroke's, as `key_word` names
+/// them.
+fn key_parts(binding: &str) -> Vec<String> {
+    binding
+        .split_whitespace()
+        .flat_map(|stroke| match Keystroke::parse(stroke) {
+            Ok(stroke) => {
+                let held = stroke.modifiers;
+                [
+                    (held.control, "ctrl"),
+                    (held.alt, "alt"),
+                    (held.shift, "shift"),
+                    (held.platform, "super"),
+                    (held.function, "fn"),
+                ]
+                .into_iter()
+                .filter(|(on, _)| *on)
+                .map(|(_, name)| name.to_owned())
+                .chain([stroke.key.to_lowercase()])
+                .collect::<Vec<_>>()
+            }
+            Err(_) => vec![stroke.to_lowercase()],
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod finds_tests {
+    use super::finds;
+
+    #[test]
+    fn a_search_finds_by_words_or_by_the_keys_it_names() {
+        let next_tab = (
+            ["Next tab", "Anywhere", "tab.next"],
+            ["ctrl-tab", "ctrl-pagedown"],
+        );
+        let reopen = (
+            ["Reopen closed tab", "Anywhere", "tab.reopen"],
+            ["ctrl-shift-t"],
+        );
+        let rename = (["Rename…", "File list", "ui.rename_prompt"], ["f2"]);
+        let found = |query: &str, (words, keys): &([&str; 3], [&str; 2])| finds(query, words, keys);
+        let one = |query: &str, (words, keys): &([&str; 3], [&str; 1])| finds(query, words, keys);
+        // Words, every one, in any of its words, whatever their case.
+        assert!(found("next TAB", &next_tab));
+        assert!(found("tab.next", &next_tab));
+        assert!(!found("next window", &next_tab));
+        assert!(one("closed", &reopen));
+        // Keys, as people write them.
+        assert!(found("ctrl+tab", &next_tab));
+        assert!(found("Ctrl Page Down", &next_tab));
+        assert!(found("control pgdn", &next_tab));
+        assert!(one("ctrl+shift+t", &reopen));
+        assert!(one("ctrl t", &reopen), "the keys held among more");
+        assert!(!found("ctrl t", &next_tab), "a letter is a key, not a word");
+        assert!(one("F2", &rename));
+        assert!(!one("f3", &rename));
+        // Words and keys together.
+        assert!(one("rename f2", &rename));
+        assert!(!one("rename f3", &rename));
+        assert!(found("next ctrl", &next_tab));
+        let trash = (["Move to trash", "File list", "ui.trash"], ["delete"]);
+        let erase = (
+            ["Delete permanently", "File list", "ui.delete"],
+            ["shift-delete"],
+        );
+        assert!(one("shift delete", &erase));
+        assert!(!one("shift delete", &trash));
+        assert!(one("Shift+Del", &erase));
+        // A letter alone is a word, not a key: "q" is no search for Ctrl+Q.
+        assert!(!finds(
+            "q",
+            &["Close window", "Anywhere", "window.close"],
+            &["ctrl-q"]
+        ));
+        assert!(finds(
+            "ctrl q",
+            &["Close window", "Anywhere", "window.close"],
+            &["ctrl-q"]
+        ));
+        assert!(finds("", &["anything"], &[]));
+    }
+}
+
 fn valid_keys(keys: &str) -> bool {
     !keys.is_empty() && keys.split_whitespace().all(|k| Keystroke::parse(k).is_ok())
 }

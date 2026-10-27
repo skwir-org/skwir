@@ -1656,7 +1656,7 @@ impl Render for SettingsView {
                     }
                 }
                 Page::Keyboard => {
-                    toolbar = Some(self.keys_toolbar(&theme, cx));
+                    toolbar = Some(self.keys_toolbar(&theme, window, cx));
                     if self.keys.new.is_some() {
                         content = Some(self.new_shortcut_page(&theme, window, cx));
                     } else if self.keys.as_records {

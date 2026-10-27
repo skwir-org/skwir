@@ -1223,25 +1223,53 @@ impl SettingsView {
         cx: &mut Context<Self>,
     ) -> Self {
         let search = cx.new(|cx| TextInput::new("Search settings", cx));
-        let subscriptions = vec![cx.subscribe_in(
-            &search,
-            window,
-            |this, input, event: &InputEvent, window, cx| match event {
-                InputEvent::Changed => {
-                    this.scroll.set_offset(gpui::Point::default());
-                    cx.notify();
-                }
-                InputEvent::Cancel => {
-                    if input.read(cx).text().is_empty() {
-                        cx.emit(SettingsEvent::Close);
-                    } else {
-                        input.update(cx, |input, cx| input.set_text("", cx));
+        let keys = crate::settings_keys_view::KeysPage::new(bound, cx);
+        let filter = keys.filter.clone();
+        let subscriptions = vec![
+            cx.subscribe_in(
+                &search,
+                window,
+                |this, input, event: &InputEvent, window, cx| match event {
+                    InputEvent::Changed => {
+                        this.scroll.set_offset(gpui::Point::default());
                         cx.notify();
                     }
-                }
-                InputEvent::Submit => this.step_focus(1, window, cx),
-            },
-        )];
+                    InputEvent::Cancel => {
+                        if input.read(cx).text().is_empty() {
+                            cx.emit(SettingsEvent::Close);
+                        } else {
+                            input.update(cx, |input, cx| input.set_text("", cx));
+                            cx.notify();
+                        }
+                    }
+                    InputEvent::Submit => this.step_focus(1, window, cx),
+                },
+            ),
+            // The Keyboard page's filter: Escape empties it, then closes;
+            // Enter goes to the list it narrowed.
+            cx.subscribe_in(
+                &filter,
+                window,
+                |this, input, event: &InputEvent, window, cx| match event {
+                    InputEvent::Changed => {
+                        this.keys.list.scroll_to_item(0, gpui::ScrollStrategy::Top);
+                        cx.notify();
+                    }
+                    InputEvent::Cancel => {
+                        if input.read(cx).text().is_empty() {
+                            cx.emit(SettingsEvent::Close);
+                        } else {
+                            input.update(cx, |input, cx| input.set_text("", cx));
+                            cx.notify();
+                        }
+                    }
+                    InputEvent::Submit => {
+                        window.focus(&this.keys.focus, cx);
+                        this.keys_key("first", window, cx);
+                    }
+                },
+            ),
+        ];
         let app_unfolded = app
             .settings
             .get::<Vec<String>>(UNFOLDED_KEY)
@@ -1254,7 +1282,7 @@ impl SettingsView {
             plugins_revision: app.plugins.revision(),
             sourced: HashMap::new(),
             read_only: app.settings.read_only(),
-            keys: crate::settings_keys_view::KeysPage::new(bound, cx),
+            keys,
             app,
             page: Page::General,
             search,
@@ -2021,6 +2049,15 @@ impl SettingsView {
                 page => self.go(page, cx),
             }
         }
+        if let Some(filter) = text("filter").filter(|_| self.page == Page::Keyboard) {
+            self.keys.find = None;
+            self.keys
+                .filter
+                .update(cx, |input, cx| input.set_text(filter, cx));
+            self.keys.list.scroll_to_item(0, gpui::ScrollStrategy::Top);
+            window.focus(&self.keys.filter.focus_handle(cx), cx);
+            return;
+        }
         window.focus(&self.nav, cx);
     }
 
@@ -2239,7 +2276,8 @@ impl Focusable for SettingsView {
 // ------------------------------------------------------------ hosting
 
 impl crate::shell::Shell {
-    /// Open the dialog, or point the open one at `{ key }` / `{ page }`.
+    /// Open the dialog, or point the open one at `{ key }` / `{ page }`
+    /// (and the Keyboard page's `{ filter }`).
     pub fn open_settings(
         &mut self,
         target: &serde_json::Value,

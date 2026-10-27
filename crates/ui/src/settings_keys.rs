@@ -115,16 +115,11 @@ impl Action {
         .then_some(first.conditions.as_str())
     }
 
+    /// Whether a search finds it, by its words or by its keys
+    /// (`keymap::finds`).
     fn matches(&self, query: &str) -> bool {
-        query.is_empty()
-            || [&self.title, &self.place, &self.command]
-                .iter()
-                .any(|text| text.to_lowercase().contains(query))
-            || self.chips.iter().any(|chip| {
-                keymap::display_keys(&chip.keys)
-                    .to_lowercase()
-                    .contains(query)
-            })
+        let keys: Vec<&str> = self.chips.iter().map(|chip| chip.keys.as_str()).collect();
+        keymap::finds(query, &[&self.title, &self.place, &self.command], &keys)
     }
 
     fn has_keys(&self, keys: &str) -> bool {
@@ -315,25 +310,31 @@ pub(crate) enum Row {
 }
 
 /// The rows the page lists: what `show` asks for, or what matches `query`
-/// (lowercase), every action included, or the actions bound to `keys`
-/// (`keymap::normal_keys`). The keys inside dialogs and menus are folded
-/// unless `inside` is open, or a search or a filter looks for them.
+/// (the dialog's search), every action included, or the actions bound to
+/// `keys` (`keymap::normal_keys`); of those, what the page's `filter`
+/// finds. The keys inside dialogs and menus are folded unless `inside` is
+/// open, or a search or a filter looks for them.
 pub(crate) fn rows(
     keyboard: &Keyboard,
     show: Show,
     query: &str,
+    filter: &str,
     keys: Option<&str>,
     inside: bool,
 ) -> Vec<Row> {
-    let looking = !query.is_empty() || keys.is_some() || show == Show::Changed;
-    let wanted = |action: &Action| match keys {
-        Some(keys) => action.has_keys(keys),
-        None if !query.is_empty() => action.matches(query),
-        None => match show {
-            Show::Keyed => !action.chips.is_empty(),
-            Show::All => true,
-            Show::Changed => action.changed(),
-        },
+    let looking =
+        !query.is_empty() || !filter.is_empty() || keys.is_some() || show == Show::Changed;
+    let wanted = |action: &Action| {
+        let asked = match keys {
+            Some(keys) => action.has_keys(keys),
+            None if !query.is_empty() => action.matches(query),
+            None => match show {
+                Show::Keyed => !action.chips.is_empty(),
+                Show::All => true,
+                Show::Changed => action.changed(),
+            },
+        };
+        asked && action.matches(filter)
     };
     let mut rows = Vec::new();
     let mut place: Option<&str> = None;
@@ -837,7 +838,7 @@ mod tests {
             ("command", "toggle_hidden"),
         ])];
         let (keyboard, _) = read(&app, &mine);
-        let folded = rows(&keyboard, Show::Keyed, "", None, false);
+        let folded = rows(&keyboard, Show::Keyed, "", "", None, false);
         assert_eq!(folded[0], Row::Place("Anywhere".into()));
         let Some(Row::Inside { open: false, count }) = folded.last() else {
             panic!("{:?}", folded.last());
@@ -849,9 +850,9 @@ mod tests {
                 .any(|row| matches!(row, Row::Place(p) if p == super::NO_KEYS)),
             "nothing without keys unless asked"
         );
-        let all = rows(&keyboard, Show::All, "", None, false);
+        let all = rows(&keyboard, Show::All, "", "", None, false);
         assert!(all.contains(&Row::Place(super::NO_KEYS.into())));
-        let changed = rows(&keyboard, Show::Changed, "", None, false);
+        let changed = rows(&keyboard, Show::Changed, "", "", None, false);
         let titles: Vec<&str> = changed
             .iter()
             .filter_map(|row| match row {
@@ -860,14 +861,32 @@ mod tests {
             })
             .collect();
         assert_eq!(titles, ["Toggle hidden files"]);
-        let found = rows(&keyboard, Show::Keyed, "", Some("ctrl-j"), false);
+        let found = rows(&keyboard, Show::Keyed, "", "", Some("ctrl-j"), false);
         assert!(found.contains(&Row::Place("Anywhere".into())));
         // A search finds actions without keys too.
-        let searched = rows(&keyboard, Show::Keyed, "sort by rating", None, false);
+        let searched = rows(&keyboard, Show::Keyed, "sort by rating", "", None, false);
         assert!(
             searched
                 .iter()
                 .any(|row| matches!(row, Row::Action(i) if keyboard.actions[*i].chips.is_empty()))
+        );
+        // The page's filter narrows what it shows, by words or by keys.
+        let titles = |rows: &[Row]| -> Vec<String> {
+            rows.iter()
+                .filter_map(|row| match row {
+                    Row::Action(i) => Some(keyboard.actions[*i].title.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let filtered = rows(&keyboard, Show::Keyed, "", "hidden files", None, false);
+        assert_eq!(titles(&filtered), ["Toggle hidden files"]);
+        let by_keys = rows(&keyboard, Show::Keyed, "", "ctrl+j", None, false);
+        assert_eq!(titles(&by_keys), ["Toggle hidden files"]);
+        let keyed = rows(&keyboard, Show::Keyed, "", "sort by rating", None, false);
+        assert!(
+            titles(&keyed).len() < titles(&searched).len(),
+            "a filter keeps to what the page shows"
         );
     }
 

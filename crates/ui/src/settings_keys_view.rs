@@ -11,7 +11,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, App, Bounds, Context, Entity, FocusHandle, Keystroke, Pixels, Point,
+    AnyElement, App, Bounds, Context, Entity, FocusHandle, Focusable, Keystroke, Pixels, Point,
     ScrollStrategy, SharedString, Subscription, UniformListDecoration, UniformListScrollHandle,
     Window, div, prelude::*, px,
 };
@@ -52,6 +52,9 @@ pub(crate) struct KeysPage {
     pub inside: bool,
     /// Keys whose actions are listed, as `keymap::normal_keys` writes them.
     pub find: Option<String>,
+    /// What narrows the list: words of the actions' or keys
+    /// (`keymap::finds`).
+    pub filter: Entity<TextInput>,
     /// The action the keyboard is on, and which of its keys: its chips,
     /// then its +.
     pub cursor: Option<(ActionId, usize)>,
@@ -65,6 +68,7 @@ pub(crate) struct KeysPage {
 struct Asked {
     show: Show,
     query: String,
+    filter: String,
     find: Option<String>,
     inside: bool,
     generation: u64,
@@ -82,6 +86,7 @@ impl KeysPage {
             show: Show::default(),
             inside: false,
             find: None,
+            filter: cx.new(|cx| TextInput::new("Filter by action or keys", cx)),
             cursor: None,
             editor: None,
             new: None,
@@ -232,12 +237,18 @@ impl SettingsView {
         self.keys.rows.take();
     }
 
-    /// The rows for `query`, kept until what is asked or the keymap
-    /// changes.
-    fn key_rows(&self, query: &str) -> Rc<Vec<Row>> {
+    /// The rows for `query`, the dialog's search, or else what the page
+    /// asks for: kept until that or the keymap changes.
+    fn key_rows(&self, query: &str, cx: &App) -> Rc<Vec<Row>> {
+        let filter = if query.is_empty() {
+            self.keys.filter.read(cx).text().trim().to_owned()
+        } else {
+            String::new()
+        };
         let asked = Asked {
             show: self.keys.show,
             query: query.to_owned(),
+            filter,
             find: self.keys.find.clone(),
             inside: self.keys.inside,
             generation: self.keys.generation,
@@ -251,6 +262,7 @@ impl SettingsView {
             &self.keys.keyboard,
             asked.show,
             query,
+            &asked.filter,
             asked.find.as_deref(),
             asked.inside,
         ));
@@ -280,7 +292,12 @@ impl SettingsView {
 
     /// The page under its title: what to show and the ways in, then the
     /// list, or the new shortcut's form, or the records as stored.
-    pub(crate) fn keys_toolbar(&mut self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+    pub(crate) fn keys_toolbar(
+        &mut self,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let changed = self
             .keys
             .keyboard
@@ -332,6 +349,17 @@ impl SettingsView {
                 })),
             );
         }
+        let new = self.handle("keys-new", cx);
+        self.stop(&new, None, None);
+        // The list's own filter, where the list is shown.
+        let listed = self.keys.new.is_none() && !self.keys.as_records;
+        let filter = listed.then(|| {
+            let focus = self.keys.filter.focus_handle(cx);
+            self.stop(&focus, None, None);
+            let input = &self.keys.filter;
+            let focused = input.read(cx).is_focused(window);
+            controls::field(input, None, focused, false, Some("search"), theme)
+        });
         let find = self.handle("keys-find", cx);
         self.stop(&find, None, None);
         let finding = match &self.keys.find {
@@ -361,8 +389,6 @@ impl SettingsView {
             }))
             .into_any_element(),
         };
-        let new = self.handle("keys-new", cx);
-        self.stop(&new, None, None);
         let records = self.handle("keys-records", cx);
         self.stop(&records, None, None);
         let as_records = self.keys.as_records;
@@ -399,7 +425,6 @@ impl SettingsView {
                     .gap_2()
                     .child(segmented)
                     .child(div().flex_1())
-                    .child(finding)
                     .child(
                         controls::button(
                             "keys-new",
@@ -413,6 +438,16 @@ impl SettingsView {
                             this.open_new_shortcut(window, cx);
                         })),
                     ),
+            )
+            // The ways to find an action: what it does or its keys, typed,
+            // or its keys pressed.
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(filter.unwrap_or_else(|| div().flex_1()))
+                    .child(finding),
             )
             // What waits, and the records as they are stored: small, as
             // what most never need.
@@ -468,19 +503,23 @@ impl SettingsView {
     /// Every row asked for, in a list that draws those in view: hundreds
     /// of bindings were built at every frame the dialog drew.
     pub(crate) fn keys_list(&mut self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let rows = self.key_rows("");
+        let rows = self.key_rows("", cx);
         let focus = self.keys.focus.clone();
         self.stop(&focus, None, None);
         if rows.is_empty() {
+            let filter = self.keys.filter.read(cx).text().trim();
             return div()
                 .flex_1()
                 .px_6()
                 .py_6()
                 .track_focus(&focus)
                 .text_color(cx.global::<Theme>().text_muted)
-                .child(match self.keys.show {
-                    Show::Changed => "You changed no keys yet.",
-                    _ => "No action has these keys.",
+                .child(match (self.keys.show, filter.is_empty()) {
+                    (Show::Keyed, false) => format!("No shortcut matches “{filter}”."),
+                    (Show::All, false) => format!("No action matches “{filter}”."),
+                    (Show::Changed, false) => format!("No key you changed matches “{filter}”."),
+                    (Show::Changed, true) => "You changed no keys yet.".to_owned(),
+                    _ => "No action has these keys.".to_owned(),
                 })
                 .into_any_element();
         }
@@ -830,7 +869,7 @@ impl SettingsView {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> usize {
-        let rows = self.key_rows(query);
+        let rows = self.key_rows(query, cx);
         let focus = self.keys.focus.clone();
         let focused = focus.contains_focused(window, cx);
         let mut found = 0;
@@ -1692,7 +1731,7 @@ impl SettingsView {
     /// actions it found.
     pub(crate) fn keys_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) {
         let query = self.query(cx);
-        let rows = self.key_rows(&query);
+        let rows = self.key_rows(&query, cx);
         let actions: Vec<(usize, usize)> = rows
             .iter()
             .enumerate()
