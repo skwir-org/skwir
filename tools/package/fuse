@@ -1,0 +1,6 @@
+# The helpers that work only where the system lets a user mount FUSE
+# (/dev/fuse, and fusermount3 on PATH), which no package can carry. The
+# package checks (appimage/check.py, linux/check.sh) accept their probe
+# saying it cannot work only in a root that has no FUSE, and only once the
+# helper has answered `--build` as skwir's own build.
+skwir-kmtp-worker

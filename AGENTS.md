@@ -393,8 +393,10 @@ working in an area, also read that area's rules (see
   `ctrl-?` and `ctrl-+`; `ctrl-shift-?` parses and never fires.
 - `when` is a space-separated list of tokens that must all hold:
   `selection`, `single`, `dir`, `file`, `empty`, `folder`, `search`,
-  `sweep`, `place`, `refs`, `drops`, `creates`, `restores`, `completes`,
-  and a place by its token (`pane`, `address`, `palette`, `sidebar`,
+  `sweep`, `place`, `refs`, `drops`, `creates`, `restores`, `split` (the
+  panes split), `filtered` (a folder filtered by name), `completes`,
+  `labelling` (a preview's links labelled for keys), and a place by its
+  token (`pane`, `address`, `palette`, `sidebar`,
   `preview`, `menu`…, each listed once in `keymap::PLACES` with its key
   context and what F1 calls it). `a|b` holds when either does, `!a` when it does not.
 - Menu `order` groups by its hundreds, by what is done to what the menu
@@ -536,7 +538,8 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
 - Clippy runs pedantic with the allowances in the root `Cargo.toml`; an
   allowance in code needs a reason in a comment.
 - A new helper program is listed in `tools/package/programs` (and
-  `tools/package/optional` when a package of its own holds it), in the
+  `tools/package/optional` when a package of its own holds it,
+  `tools/package/fuse` when it works only where the system has FUSE), in the
   packages' file lists (`crates/skwir/Cargo.toml`'s metadata, the
   PKGBUILDs: `skwir-git`'s functions stay the release's, which
   `release-tools-check` compares), in `tools/package/macos/programs` and

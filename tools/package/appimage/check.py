@@ -143,6 +143,40 @@ def check_media(app, work):
         assert "CRITICAL" not in output, "media runtime or plugin scanner reported a critical error"
 
 
+def fuse_here():
+    """Whether this system lets a user mount FUSE, as the helpers
+    tools/package/fuse lists need: its device, and the program that mounts
+    it on PATH."""
+    return os.path.exists("/dev/fuse") and any(shutil.which(name) for name in ("fusermount3", "fusermount"))
+
+
+def listed(name):
+    """A list of tools/package: one program a line, `#` starting a comment."""
+    lines = (ROOT / "tools/package" / name).read_text().splitlines()
+    return [line for line in lines if line and not line.startswith("#")]
+
+
+def check_helpers(app, build):
+    """Every helper starts as skwir's own build (`--build`) and works here
+    (`--probe`). One that needs FUSE, in a root without it, may only say
+    so: the systems the package goes to may have none either."""
+    fuse = set(listed("fuse"))
+    for program in listed("programs"):
+        if program == "skwir":
+            continue
+        helper = app / "usr/lib/skwir" / program
+        said = run([helper, "--build"], capture_output=True, text=True).stdout.strip()
+        assert said == build, (program, "is not skwir's build", said, build)
+        probe = subprocess.run([str(helper), "--probe"], capture_output=True, text=True, timeout=240)
+        why = (probe.stderr.strip().splitlines() or ["(it said nothing)"])[-1]
+        if probe.returncode == 0:
+            print(f"ok: {program} --probe", flush=True)
+        elif program in fuse and not fuse_here():
+            print(f"ok: {program} --build; this root has no FUSE, as its probe says: {why}", flush=True)
+        else:
+            raise AssertionError(f"{program} --probe failed: {why}")
+
+
 def check_window(app, work, launcher):
     # Reuse the real-window harness, then exercise a packaged helper
     # through its user-facing command and a host program through Skwir.
@@ -212,12 +246,10 @@ def main():
         check_elf(app)
         if artifact.name.endswith(".AppImage"):
             run([artifact, "--version"], env=dict(os.environ, APPIMAGE_EXTRACT_AND_RUN="1"))
-        run([app / launcher, "--version"])
-        programs = (ROOT / "tools/package/programs").read_text().splitlines()
-        for program in programs:
-            if program != "skwir":
-                run([app / "usr/lib/skwir" / program, "--probe"])
-                print(f"ok: {program} --probe", flush=True)
+        said = run([app / launcher, "--version"], capture_output=True, text=True).stdout.strip()
+        print(said, flush=True)
+        assert said.startswith("skwir "), said
+        check_helpers(app, said.removeprefix("skwir "))
         for engine in ("pdfium", "poppler", "mupdf"):
             worker = "skwir-pdf-worker" if engine == "pdfium" else f"skwir-{engine}-worker"
             run(["python3", ROOT / "tools/pdf/check.py", "--engine", engine,

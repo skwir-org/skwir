@@ -3,11 +3,13 @@
 # the system they were installed on. Every program skwir always has
 # (tools/package/programs, but those tools/package/optional lists) is
 # where skwir finds it and works: skwir finds its libraries, each helper
-# answers `--probe` (the PDFium helper finding the library the package
-# carries). An optional one is absent, or there and working; installed
-# `minimal` (without what the packages only recommend), it may be there
-# with its libraries absent, which its probe says, as skwir's settings
-# do. skwir's licence and PDFium's notices are installed, and the
+# answers `--build` as skwir's own build and `--probe` (the PDFium helper
+# finding the library the package carries). An optional one is absent, or
+# there and working; installed `minimal` (without what the packages only
+# recommend), it may be there with its libraries absent, which its probe
+# says, as skwir's settings do. One that needs FUSE (tools/package/fuse)
+# may say it cannot work where the system has none, as a test root has
+# not. skwir's licence and PDFium's notices are installed, and the
 # libraries skwir opens at run time are there, and so are the desktop
 # entry and its icon.
 #
@@ -19,6 +21,16 @@ failed=0
 optional() {
     grep -qx "$1" "$here/optional"
 }
+fuse() {
+    grep -qx "$1" "$here/fuse"
+}
+# Whether this system lets a user mount FUSE: its device, and the program
+# that mounts it on PATH.
+fuse_here() {
+    [ -e /dev/fuse ] && { command -v fusermount3 || command -v fusermount; } >/dev/null
+}
+# skwir's build, as `skwir --version` says it: every helper's `--build`.
+build=""
 said="$(mktemp)"
 while read -r program; do
     found=""
@@ -41,12 +53,20 @@ while read -r program; do
             ldd "$found" | grep "not found"
             failed=1
         else
-            echo "ok: $found"
+            build="$("$found" --version | sed 's/^skwir //')"
+            echo "ok: $found ($build)"
         fi
     elif "$found" --probe >/dev/null 2>"$said"; then
-        echo "works: $found"
+        if [ "$("$found" --build 2>/dev/null)" = "$build" ]; then
+            echo "works: $found"
+        else
+            echo "not skwir's build ($build): $found"
+            failed=1
+        fi
     elif [ "$minimal" = minimal ] && optional "$program"; then
         echo "not working without what is only recommended: $found ($(head -c 120 "$said" | head -1))"
+    elif fuse "$program" && ! fuse_here && [ "$("$found" --build 2>/dev/null)" = "$build" ]; then
+        echo "starts, but this system has no FUSE, as it says: $found ($(head -c 120 "$said" | head -1))"
     else
         echo "does not work: $found ($(head -c 200 "$said" | head -1))"
         failed=1
