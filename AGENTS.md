@@ -329,7 +329,10 @@ working in an area, also read that area's rules (see
   question to a program that answers slowly) to a thread of its own:
   zbus queues and drops nothing, so a listener that stops reading holds
   every user of the connection. What it serves there it takes back when
-  it ends (the media controls' objects and name).
+  it ends (the media controls' objects and name). A question that must be
+  given up on after a while (a GVfs monitor, `kiod6`) opens a connection
+  of its own with a call timeout, closed once answered: the shared one
+  has none, and a call there to a program that hangs waits for good.
 - **Waking.** Send listing events through `OpenContext::channel` /
   `EventSink`, which wake the UI after enqueueing. Other background
   results call `App::wake` or a captured `waker_handle` after publishing

@@ -31,11 +31,17 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-10-21)
+## Current status (2026-10-28)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
   version 0.2.0, released 2026-10-20 on GitHub and the AUR's three
-  bases; 0.1.0 was [released](#release-01-linux) 2026-10-13. Phases 0 to
+  bases; 0.1.0 was [released](#release-01-linux) 2026-10-13. Since
+  0.2.0, toward 0.3.0: servers configured from Skwir (ADR-086, ADR-087),
+  phones listed before they are mounted and KDE's reached through kmtpd
+  (ADR-096, ADR-097), the address field as one field for filtering and
+  searching (ADR-098), menus with submenus (ADR-099), F1 by topic
+  (ADR-100); on 2026-10-28 gpui from Zed's main of that week, Rust
+  1.99.1, PDFium chromium/8125, and a whole review fixed (below). Phases 0 to
   4, 5a and 6 pass their gates. Maps and Notes everywhere are built,
   their gates not closed, as is much that no phase planned
   ([Built beyond the plan](#built-beyond-the-plan)).
@@ -153,6 +159,29 @@ user's folders, by their choice). Decided on the night: a toast's Undo
 takes back its own plan (ADR-079 amended); `player.request` stays
 unasked for agents (commands.md); the PKGBUILDs' Maintainer lines stay.
 
+## Review fixes (2026-10-28)
+
+Before 0.3.0, nine reviewers read what changed since the review of
+2026-10-23 (`b7643e46..6248aa2a`) and the release's consistency: about
+105 findings, 6 high. Five fixers, each owning its files, fixed them in
+one tree; the integrator checked and committed them by area
+(`docs/STATUS-LOG.md`, 2026-10-28). What is left is under "What is
+left", "From the review of 2026-10-28".
+
+| Area | Fixed | In part | Not a bug | Left |
+| --- | --- | --- | --- | --- |
+| Window: address field, menus, forms | 15 | 1 | | 1 (to the integrator) |
+| Views, tags, plugins | 25 | 3 | 2 | 2 |
+| Core, operations, query, helpers' host | 19 | 1 | 2 | 1 |
+| Remote folders and the phone helper | 28 | 1 | | 1 |
+| Release: changelog, docs, packages | 12 | | | 1 (the screenshots) |
+
+The six highs are fixed: rows offered before typing run; drops and
+pastes onto the Trash and the Shelf pass the argument check; what an
+agent's call opens is checked once resolved, not as written; Windows'
+logon task's rclone says its port; the package checks accept the phone
+helper's honest "no FUSE here"; the changelog covers 0.3.
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -165,6 +194,33 @@ closes an item removes its line; work that leaves one adds it here.
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
+
+**From the review of 2026-10-28** (fixed the same day, "Review fixes
+(2026-10-28)" below; each with its fixer's proposed design in
+`docs/STATUS-LOG.md`):
+- The shell still branches on the `tags` and `recent` schemes
+  (`suggestions::scope_of`) and names `query.search` for the Search
+  button: a provider capability (words can search this location; All
+  Tags is no scope) would replace both.
+- ops-basic knows its paste's plan by the changes it describes, not its
+  id: an `Executor::observe_plans(owner, Fn(PlanId, &[Change]))` hook
+  would let it remember the plan.
+- A copied (not cut) file pasted in the Trash is trashed: to decide
+  whether Ctrl+V of a copy there is refused.
+- The tables plugin picks the spreadsheet and SQLite readers by
+  extension; the sidebar's top tags count hidden files and folders under
+  network mounts below home; files inside a folder hidden by Windows'
+  mark stay known to the tags index; a `._` file Skwir will not rewrite
+  is refused with "its volume keeps no notes" (a `Wrote::Refused` reason).
+- Listeners that ended with the session bus (the desktop's style, the
+  media controls) do not subscribe again when it comes back.
+- A move into a trash on another volume ignores a removal waiting its
+  turn (`Moved::waits`); `Footprint::conflicts` counts any shared store as
+  a conflict, so `undo_of` of one trashing is refused after another.
+- Windows' key setup never falls back to SFTP; a Skwir that crashes
+  leaves its own wsdd discovering.
+- `core/tests/settings.rs`'s two waits on the waker timed out under a
+  load of ~45, three times, then passed: watch for a flake.
 
 **From F1 by topic** (ADR-100, 2026-10-27):
 - F1 is not walked by `just a11y-check`: what a screen reader hears of it
@@ -198,10 +254,6 @@ above; each with the design its fixer proposed):
 - A network plugin's sandbox shares the host's abstract sockets: a
   seccomp filter or a user-mode network, an ADR-045 amendment.
 - `platform::filesystem` calls `statfs` directly: no core seam.
-- The remote harnesses take their servers and tools from the registry's
-  nixpkgs, not the flake's: pinned, the flake's rclone 1.75.1 failed
-  Skwir's rclone mounts ("daemon exited with error code 1"), which the
-  registry's 1.75.2 passes. Pin them once the flake's nixpkgs moves.
 - The NFS/AFP harness (`tools/test/gvfs-nfs-afp.sh`) fails (seen
   2026-10-26, the same at 162dc59d): once
   `gvfs_opens_an_nfs_address_below_its_export` has mounted the export

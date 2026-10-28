@@ -6488,3 +6488,88 @@ those offered:
   duplicate gone). Not taken: sha2, base64, png, skrifa, tiny-skia,
   resvg, zbus 6 and getrandom 0.4, which gpui or its crates still pin at
   the older version: each would build a second copy.
+
+### Review before 0.3.0, and its fixes (2026-10-28)
+
+- **The review:** nine reviewers read `b7643e46..6248aa2a` (what changed
+  since the review of 2026-10-23) in five areas, then four more what the
+  first five did not reach, and one the release's consistency: about 105
+  findings, 6 high. Their reports, pinned to 6248aa2a, stayed in the
+  session's scratchpad. Five fixers then fixed them in this tree, each
+  owning its files; a finding judged wrong says why, one left gives its
+  design (PLAN, "From the review of 2026-10-28").
+- **Window: the address field, menus, forms** (fix-shell): rows offered
+  before typing run (Ctrl+J's places, tabs, Back, recent and saved
+  searches); the field lets go when it loses focus, the search after the
+  pause replaces only what the pane showed and is keyed by words and
+  scope; a source's row runs over the folder as it was filtered; words
+  get no dead Go row; Tab takes a row reached before typing; the card
+  names the bound keys; the Jump place is gone from the key places; a
+  form's pick and choice lists each keep their own highlight; form
+  options are known by their item; a popup's setting row is a radio
+  group; `ui.suggest` asks with no scope unless given one; drops and
+  pastes onto the Trash and the Shelf send only the arguments their
+  command takes (`paste_on_places.rs`); ops-basic's paste flag follows
+  its plan's changes (not its id: left). ADR-098 and ADR-099 corrected.
+- **Views, tags, plugins** (fix-views): the timeline asks its status
+  after a wake only, and keeps an unchanged chart; the bars' cache holds
+  the bars and their colours; their pan takes `should_handle_scroll`; a
+  range longer than the window keeps what lies past it; TSV by type; a
+  tag exported as a folder Windows takes; tags' and name tags' jobs end
+  with their plugin; Edit as Buffer from what the pane shows; MPRIS
+  offers one rate where nothing seeks; the Tags submenu sends what its
+  check shows (`tags.toggle` takes `on`), for files only, and a tag only
+  part of the selection is known to have shows a dash; a passphrase
+  forgotten from a script is gone when it answers; the sidebar's ring
+  goes with its place; Open With answers nothing past 1000 selected; a
+  token for marks on tag colours (`Theme::on_tag`).
+- **Core, operations, query, the helpers' host** (fix-core): what an
+  agent's call opens is checked once resolved (relative paths, `..`,
+  `path:`, `in:`, a provider's `folders_read`), and errors to it hide
+  paths in folders marked private; a privacy look asked from inside its
+  remote's lane looks in place; a tag rename's past tense is built, not
+  replaced; `take_step_back` and a pane's filter (read again when its
+  reader's plugin turns off or on) keep up with the pane; an undone
+  action no longer goes on by itself when its server answers; `undo_of`
+  waits for a redo asked before it; Disconnect counts queued actions;
+  case folding asks the nearest folder that tells; plugins from outside
+  run in their files' lane, and a late read of a call given up matches
+  no file of the next; the home trash is resolved off the window thread;
+  the session bus is connected again after it ends; the query plugin
+  takes a tag scope from its provider, makes the same search elsewhere
+  of the words typed, writes recent searches on a worker, keeps an OR
+  in its brackets, keeps only the latest check of an entry, and says an
+  unclosed quote.
+- **Remote folders, the phone helper** (fix-remote): Nearby drains
+  Avahi's signals on their own thread (75 services in its test; the bus
+  let go of after); Windows' logon task logs rclone's port; a forced
+  Eject quits rclone; Connect at Login takes the server's mount options
+  (and `nfsmount` on a Mac without macFUSE), rewritten when they change;
+  rclone's sessions on macOS beside the mounts; `--password-command`
+  quoted as rclone reads it; a cancelled phone mount leaves no server;
+  a remote is removed only once unmounted; no encryption while entries
+  connect at login; on Windows, a session's port answers from Skwir's own
+  rclone before any secret is sent; one `schtasks` per refresh;
+  the rclone forms keep switches and typed secrets across a refusal,
+  list names again before creating, refuse an agent's advanced options,
+  cut a sign-in on Cancel, keep a union's order, delete a new remote
+  given up on; public links with `/`; an added server opens in the pane
+  that asked; wsdd checked as it starts; GVfs names parsed as addresses;
+  "A new key" only where its name is free; Nearby's stale rows go. The
+  remote harnesses take the flake's nixpkgs (rclone 1.75.2). Why the
+  plugin's questions open short-lived bus connections is in AGENTS.md,
+  `bus.rs` and remote.md.
+- **Release** (fix-release, committed 8662deb6..0cc0203d): the package
+  checks accept a FUSE helper's honest "no" (`tools/package/fuse`), the
+  packages name the remote tools, CHANGELOG covers 0.3, the guide has
+  servers, prose names no version (release.py checks), patches 0040 and
+  0041 have notes, six allowances say why. PLAN's status is current.
+- **Checked:** rustfmt; `cargo clippy --workspace --all-targets` (`-D
+  warnings`); `cargo nextest run --workspace` (2348 tests: 2346 passed,
+  the 2 Mermaid failures fixed by 3a4dcf62 and passing since); each
+  fixer's own tests and new regression tests (listed in their reports),
+  three of them seen failing without their fix. Not run: `just
+  check-cross` after the fixes (the disk filled during it, twice, to
+  0 bytes: `just prune` freed 27 and 18 GB), `just remote-check`,
+  `just a11y-check`, `just smoke`, `just bench-check`, `just
+  release-check`, any window check of the fixes.
