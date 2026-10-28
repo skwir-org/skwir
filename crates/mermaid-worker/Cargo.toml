@@ -9,7 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 # The Rust Mermaid Zed also uses; SVG only, made for resvg.
-merman = { version = "0.8.0-alpha.6", default-features = false, features = ["svg"] }
+merman = { version = "0.8.0", default-features = false, features = ["svg", "all-diagrams"] }
 
 [lints]
 workspace = true

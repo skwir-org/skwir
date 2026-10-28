@@ -6468,3 +6468,23 @@ those offered:
   `cargo deny check` (advisories, bans, licences, sources ok; mupdf's
   manifests still name the deprecated `AGPL-3.0`). The notices are made
   again once the semver-breaking updates are in.
+
+### The helpers' semver-breaking updates, part one (2026-10-28)
+
+- **Updated:** the Poppler helper to poppler-rs 0.26 with glib and
+  cairo-rs 0.22, the media helper to GStreamer's bindings 0.25 (767df945).
+- **Fixed:** merman 0.8.0 (taken by `cargo update` out of its alpha)
+  draws only the diagram types its features ask for: the Mermaid helper
+  refused every diagram ("Unsupported diagram type: flowchart-v2"). It
+  now asks for `all-diagrams`, as the alpha drew them all.
+- **Checked:** the two helpers' clippy and tests, `just poppler-check`,
+  `just media-check` (1080p, 30.3 frames a second, none dropped; the
+  first frame 5 s under a load of ~40); the Mermaid helper's and the
+  markdown plugin's tests (28 passed). Not run: Windows' and macOS's
+  media helper. Left: pdfium-render 0.9, djvu-rs 0.43, ogeom 0.11,
+  merman 0.9, wasmtime 50 with wit-component and wit-bindgen, the HTML
+  crates (scraper, selectors, cssparser, markup5ever), rusqlite 0.41,
+  calamine 0.37, yaml-rust2 0.13, toml 1 and windows 0.62 (each a
+  duplicate gone). Not taken: sha2, base64, png, skrifa, tiny-skia,
+  resvg, zbus 6 and getrandom 0.4, which gpui or its crates still pin at
+  the older version: each would build a second copy.
