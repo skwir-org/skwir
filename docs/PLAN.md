@@ -198,10 +198,6 @@ leave (ADR-077).
 **From the review of 2026-10-28** (fixed the same day, "Review fixes
 (2026-10-28)" below; each with its fixer's proposed design in
 `docs/STATUS-LOG.md`):
-- The shell still branches on the `tags` and `recent` schemes
-  (`suggestions::scope_of`) and names `query.search` for the Search
-  button: a provider capability (words can search this location; All
-  Tags is no scope) would replace both.
 - The tables plugin picks the spreadsheet and SQLite readers by
   extension; the sidebar's top tags count hidden files and folders under
   network mounts below home; files inside a folder hidden by Windows'

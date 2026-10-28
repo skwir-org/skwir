@@ -1276,6 +1276,12 @@ impl LocationProvider for Provider {
         Address::parse(&location.rest).tags_shown()
     }
 
+    /// A tag's place is searched as the tags it says of all it lists; the
+    /// top, every tag, lists tags and is no scope.
+    fn searchable(&self, location: &Location) -> bool {
+        !Address::parse(&location.rest).tags_shown().is_empty()
+    }
+
     /// A folder's tags, first in its menu of what it holds, as its trail
     /// goes on into them (`Photos › Tags`): narrowed as the trail shown
     /// has them, when it goes on into them.

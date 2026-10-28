@@ -260,13 +260,13 @@ impl Row {
     }
 
     /// Where Ctrl+F on the row searches.
-    fn scope(&self) -> Option<Location> {
+    fn scope(&self, app: &skwir_core::App) -> Option<Location> {
         match self {
             Row::Name {
                 path, dir: true, ..
             } => Some(Location::from_path(path)),
             Row::Offered { location, .. } | Row::Scope { location, .. } => {
-                crate::suggestions::scope_of(location)
+                crate::suggestions::scope_of(app, location)
             }
             Row::Source(s) => s.scope.clone(),
             _ => None,
@@ -558,7 +558,7 @@ impl Shell {
                     shown_dir.as_ref().map(Location::from_path).or_else(|| {
                         self.app
                             .pane_location(pane)
-                            .filter(|l| crate::suggestions::scope_of(l).is_some())
+                            .filter(|l| self.app.searchable(l))
                     }),
                     text.or_else(|| {
                         self.app
@@ -849,7 +849,7 @@ impl Shell {
             .omni
             .as_ref()
             .and_then(|o| o.highlighted.and_then(|i| o.rows.get(i)))
-            .and_then(Row::scope);
+            .and_then(|row| row.scope(&self.app));
         let Some(scope) = row else {
             return false;
         };
@@ -2163,11 +2163,11 @@ impl Shell {
         );
         let mut rank = 10;
         for place in self.app.registry.places.all() {
-            if place.hidden || crate::suggestions::scope_of(&place.location).is_none() {
+            // A folder, a tag, Recent: where words can search
+            // (`App::searchable`), never every tag, the trash or the shelf.
+            if place.hidden || !self.app.searchable(&place.location) {
                 continue;
             }
-            // A folder, a tag, Recent: the trash and the shelf are not
-            // scopes (`suggestions::scope_of`).
             add(
                 place.location.clone(),
                 Some(crate::suggestions::said(&place.location)),
@@ -2498,7 +2498,7 @@ fn keys_of(shell: &Shell, row: &Row) -> String {
             "forgets it",
         ),
         Row::Source(s) if s.run.is_none() && s.completion.is_some() => and(tab(), ""),
-        _ if row.scope().is_some() && !matches!(row, Row::Scope { .. }) => {
+        _ if row.scope(&shell.app).is_some() && !matches!(row, Row::Scope { .. }) => {
             and(key("ui.search", serde_json::json!({})), "searches in it")
         }
         _ if row.completion().is_some() => and(tab(), ""),

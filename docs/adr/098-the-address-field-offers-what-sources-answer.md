@@ -211,3 +211,11 @@ ADR-070 (the field's rows) and retires the Jump overlay.
   each `#` word as a name (Search in › Names), for a name that has one.
   Searches are still written with `tag:` (saved searches, agents, the
   pills' rewriting, `?`): a shell reads `#` as a comment.
+- Amended 2026-10-28, again: a place is a scope where its provider says
+  words can search it (`LocationProvider::searchable`, `App::searchable`:
+  a folder, a tag's place, Recent), never every tag (`tags:/`, which
+  lists tags) nor the trash; the shell had tested the schemes `tags` and
+  `recent`, and so took every tag as a scope. The field's Search button
+  shows while a source searches words (`SuggestSource::searches`,
+  `suggest::searched`: the query plugin's), where it had tested for
+  `query.search`, which §9 says the field no longer names.

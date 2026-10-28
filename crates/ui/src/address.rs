@@ -1167,11 +1167,19 @@ fn pane_row(
         // The field's card stands around all of it (`popup_around`).
         .child(omni_anchor.marker());
     // Search, as Ctrl+F: the field is where words search (ADR-098), and
-    // nothing else in sight says so. Offered where Ctrl+F has a folder, a
-    // tag or Recent to look in, or a search to edit, while something
-    // searches; gone while the field is typed in, its token wearing the
-    // same magnifier.
-    if let Some(title) = search_title(shell, row) {
+    // nothing else in sight says so. Offered where Ctrl+F has a place to
+    // look in or a search to edit, while a source searches; gone while
+    // the field is typed in, its token wearing the same magnifier.
+    let title = matches!(row.address, Address::Trail { .. })
+        .then(|| {
+            search_title(
+                &shell.app,
+                row.location.as_ref(),
+                !shell.ui().chips.chips.is_empty(),
+            )
+        })
+        .flatten();
+    if let Some(title) = title {
         field = field.child(
             Button::new(format!("search-{}", pane.0), "search", title, "ui.search")
                 .render(shell, cx)
@@ -1288,25 +1296,29 @@ fn pane_row(
     line.into_any_element()
 }
 
-/// What the field's Search button says, as Ctrl+F does it: a search shown
-/// edited, a folder searched with its subfolders, a tag or Recent
-/// searched. `None` while the field is typed in, where words cannot look
-/// (the trash), or while nothing searches.
-fn search_title(shell: &Shell, row: &PaneRow) -> Option<String> {
-    if !matches!(row.address, Address::Trail { .. })
-        || shell.app.commands.get("query.search").is_none()
-    {
+/// What the field's Search button says over `location`, as Ctrl+F does
+/// it: a search shown (`editing`) edited, a folder searched with its
+/// subfolders, another place words can search (`App::searchable`: a tag,
+/// Recent) searched. `None` where words cannot look (every tag, the
+/// trash), or while no source searches them (`suggest::searched`: the
+/// query plugin off).
+pub fn search_title(
+    app: &skwir_core::App,
+    location: Option<&Location>,
+    editing: bool,
+) -> Option<String> {
+    if !skwir_core::suggest::searched(app) {
         return None;
     }
-    if !shell.ui().chips.chips.is_empty() {
+    if editing {
         return Some("Edit this search".to_owned());
     }
-    let location = row.location.as_ref()?;
-    if location.is_path() {
-        return Some("Search this folder and its subfolders".to_owned());
-    }
-    crate::suggestions::scope_of(location)
-        .map(|scope| format!("Search {}", shell.app.location_title(&scope)))
+    let location = location.filter(|l| app.searchable(l))?;
+    Some(if location.is_path() {
+        "Search this folder and its subfolders".to_owned()
+    } else {
+        format!("Search {}", app.location_title(location))
+    })
 }
 
 /// The pane a location's tool is run with (`ToolPane`), or `None` while

@@ -809,6 +809,14 @@ impl App {
             .is_some_and(|provider| provider.searches(location))
     }
 
+    /// Whether words typed in the address field can search in `location`,
+    /// as their scope (`LocationProvider::searchable`): `false` for a
+    /// scheme no provider opens.
+    pub fn searchable(&self, location: &Location) -> bool {
+        self.provider(&location.scheme)
+            .is_some_and(|provider| provider.searchable(location))
+    }
+
     /// What a pane showing `location` says when it lists nothing
     /// (`LocationProvider::empty_state`).
     pub fn empty_state(&self, location: &Location) -> Option<crate::location::EmptyState> {
@@ -3441,5 +3449,47 @@ mod tests {
         app.navigate(pane, &Location::parse("../it's keys"))
             .unwrap();
         assert_eq!(app.pane_dir(pane).unwrap(), keys, "the user goes there");
+    }
+
+    /// Whether words can search a place is its provider's answer, whatever
+    /// its scheme: one the shell has never heard of says yes for a place
+    /// and no for its top; a folder is searched; what no provider opens is
+    /// not.
+    #[test]
+    fn a_scope_is_what_its_provider_says() {
+        use crate::Location;
+        use crate::location::{LocationProvider, OpenContext, OpenLocation};
+        use std::sync::Arc;
+
+        struct Shelves;
+        impl LocationProvider for Shelves {
+            fn scheme(&self) -> &'static str {
+                "shelves"
+            }
+            fn open(&self, _: &Location, _: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
+                anyhow::bail!("never opened here")
+            }
+            fn searchable(&self, location: &Location) -> bool {
+                location.rest != "/"
+            }
+        }
+        struct Bins;
+        impl LocationProvider for Bins {
+            fn scheme(&self) -> &'static str {
+                "bins"
+            }
+            fn open(&self, _: &Location, _: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
+                anyhow::bail!("never opened here")
+            }
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        app.register_provider("test", Arc::new(Shelves));
+        app.register_provider("test", Arc::new(Bins));
+        assert!(app.searchable(&Location::new("shelves", "/l'été/naïve")));
+        assert!(!app.searchable(&Location::new("shelves", "/")), "its top");
+        assert!(!app.searchable(&Location::new("bins", "")), "says nothing");
+        assert!(!app.searchable(&Location::new("unknown", "/x")));
+        assert!(app.searchable(&Location::from_path(tmp.path().join("it's here"))));
     }
 }

@@ -40,6 +40,11 @@ impl LocationProvider for PathProvider {
         let path = crate::os_path::absolute(&path)?.to_path_buf();
         Ok(PathLocation::open(location.clone(), path, ctx))
     }
+
+    /// Words search a folder and its subfolders.
+    fn searchable(&self, _location: &Location) -> bool {
+        true
+    }
 }
 
 struct Shared {

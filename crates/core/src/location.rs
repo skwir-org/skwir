@@ -392,6 +392,17 @@ pub trait LocationProvider: Send + Sync {
         false
     }
 
+    /// Whether words typed in the address field can search what `location`
+    /// lists, with it as their scope (ADR-098): a folder and its
+    /// subfolders, a tag's files, Recent's. The field offers it as one:
+    /// Ctrl+F there and on its row, its Search button, the scopes listed
+    /// (`App::searchable`). Not a place that lists places (every tag), nor
+    /// one words cannot look in (the trash); a search is edited, not
+    /// searched within. Answered from the text alone, like `title`.
+    fn searchable(&self, _location: &Location) -> bool {
+        false
+    }
+
     /// The tags `location` says of every entry it lists, each of which has
     /// them or a tag within them: a tag's place, its tag (and those it is
     /// narrowed to: files that also have one); a search, the `tag:` terms

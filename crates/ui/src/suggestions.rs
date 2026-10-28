@@ -6,7 +6,7 @@
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::Invocation;
-use skwir_core::location::{Location, PATH_SCHEME};
+use skwir_core::location::Location;
 use skwir_core::suggest::{Answer, Ask, Section, SuggestSource, Suggester, Suggestion, Typed};
 
 /// The most rows a source of places or commands gives for words.
@@ -60,11 +60,11 @@ pub fn said(location: &Location) -> String {
     }
 }
 
-/// Where Ctrl+F on a row of `location` searches: a folder, a tag, Recent;
-/// `None` for what words cannot search in.
-pub fn scope_of(location: &Location) -> Option<Location> {
-    (&*location.scheme == PATH_SCHEME || matches!(&*location.scheme, "tags" | "recent"))
-        .then(|| location.clone())
+/// Where Ctrl+F on a row of `location` searches: itself, where its
+/// provider says words can search it (`App::searchable`: a folder, a tag,
+/// Recent); `None` for what words cannot search in (every tag, the trash).
+pub fn scope_of(app: &App, location: &Location) -> Option<Location> {
+    app.searchable(location).then(|| location.clone())
 }
 
 fn navigate(location: &Location, ask: &Ask) -> Invocation {
@@ -166,7 +166,7 @@ impl SuggestSource for History {
                     ));
                 // A folder says where it is; a search's title says it all.
                 row.detail = location.path().is_some().then(|| said(&location));
-                row.scope = scope_of(&location);
+                row.scope = scope_of(app, &location);
                 row
             })
             .collect();
@@ -209,7 +209,7 @@ impl SuggestSource for Places {
                     .icon(crate::trail::glyph(app, &place.location))
                     .rank(rank)
                     .runs(navigate(&place.location, ask));
-                row.scope = scope_of(&place.location);
+                row.scope = scope_of(app, &place.location);
                 Some((rank, row))
             })
             .collect();

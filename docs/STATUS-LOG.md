@@ -6619,3 +6619,19 @@ stopped them once for about an hour.
   540 passed, `scheduler`'s panicking-job test failed under a load of
   about 65, passed alone once), clippy, `just check-windows`. Not
   checked: a real removable drive.
+- **A place says whether words search it** (night-scope):
+  `LocationProvider::searchable` (folders, a tag's place, Recent; never
+  All Tags, the trash or the shelf) and `App::searchable` replace the
+  shell's `scope_of` test of the `tags` and `recent` schemes: Ctrl+F,
+  the rows' scopes, the `@` list and the Search button ask it. The
+  button shows while a suggestion source searches words
+  (`SuggestSource::searches`, the query plugin's field), no longer by
+  testing for `query.search`, which `crates/ui` names nowhere now. All
+  Tags is no scope. Checked: clippy on core, ui, query, tags, jump and
+  the binary; nextest of the related core and plugin tests (74), all of
+  `skwir-ui` (394), the new `search_scope.rs` (2, both seen failing
+  with the old scheme test put back); `just check-windows`. On Xvfb: the
+  button's tooltip on a folder ("Search this folder and its
+  subfolders"), a tag and Recent; none on All Tags or the trash;
+  Ctrl+F's scope token on each; the `@` list without the trash, the
+  shelf or All Tags.

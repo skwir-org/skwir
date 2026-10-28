@@ -163,8 +163,9 @@ server and network. Undo history is cleared when Skwir exits.
   A folder's filter is drawn as a search's pills, right after its trail, and a
   search keeps its folder's trail. `dunes jpg` finds `dunes.jpg`; `#print` is
   `tag:print`, and `#` alone offers the tags. A Search button ends the field
-  ("Search this folder and its subfolders", "Edit this search"). Taking a
-  search's last pill away shows its place whole.
+  ("Search this folder and its subfolders", "Edit this search"), on a folder,
+  a tag or Recent; All Tags, the Trash and the shelf are no place to search in.
+  Taking a search's last pill away shows its place whole.
 - **Menus**: a submenu opens beside its row, as elsewhere on the desktop; an
   item's state is a check or a choice, never words in its title; a setting
   with a few values is one row of buttons, swatches or stars. View and More are

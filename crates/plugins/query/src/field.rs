@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::Invocation;
-use skwir_core::location::{Location, PATH_SCHEME};
+use skwir_core::location::Location;
 use skwir_core::os_path::PathArg;
 use skwir_core::suggest::{self, Answer, Ask, Section, SuggestSource, Suggestion, Typed};
 
@@ -43,6 +43,11 @@ impl SuggestSource for Field {
             Typed::Nothing => ask.scope.is_some(),
             Typed::Path | Typed::Place => false,
         }
+    }
+
+    /// Words typed in a scope are searched there: what Enter runs.
+    fn searches(&self) -> bool {
+        true
     }
 
     fn suggest(&self, app: &App, ask: &Ask, _: &CancelToken) -> Answer {
@@ -525,12 +530,6 @@ pub fn forget_all(app: &App) {
     change(app, Vec::clear);
 }
 
-/// Whether `location` is one Ctrl+F could search: a folder, or a place
-/// that says the tags of all it lists (a tag's, `search`).
-pub fn searchable(app: &App, location: &Location) -> bool {
-    &*location.scheme == PATH_SCHEME || tagged(app, location).is_some()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,7 +674,6 @@ mod tests {
         let folder = search(&app, "dunes", &Location::from_path("/data/guide"), &a);
         assert_eq!(folder.args["expr"], "dunes");
         assert_eq!(folder.args["remember"], true);
-        assert!(searchable(&app, &tag) && !searchable(&app, &Location::new("tagged", "/")));
     }
 
     /// The same search elsewhere is the words typed, never the scope's own

@@ -271,12 +271,25 @@ of bars, split or not.
     asks, `send_start`).
   - A click on the token, Down on it selected, Alt+Down
     (`ui.omnibox_scopes`), or `@` typed first list scopes: the folder
-    shown, the one above, home, the whole disk, the sidebar's folders,
-    tags and places, those whose names go with what follows `@`; under
+    shown, the one above, home, the whole disk, the sidebar's places
+    words can search, those whose names go with what follows `@`; under
     them the query plugin's "Search for “@…”", for a name that starts so.
-  - Ctrl+F on a highlighted row that has a scope (a folder, a tag, a
-    place) makes it the scope and clears the text for words; with none,
+  - Ctrl+F on a highlighted row that has a scope (a folder, a tag,
+    Recent) makes it the scope and clears the text for words; with none,
     words look below the folder shown, its scope.
+  - What is a scope is its provider's answer (`App::searchable`,
+    `LocationProvider::searchable`): a folder, a tag, Recent; never every
+    tag, the trash or the shelf. Ctrl+F, the rows, the scopes listed and
+    the Search button ask it, never a scheme.
+- **The Search button** (`address::search_title`) ends the field, as
+  Ctrl+F (`ui.search`): nothing else in sight says the field searches.
+  "Search this folder and its subfolders" on a folder, "Search" and the
+  place's title where words can search it (a tag, Recent), "Edit this
+  search" over one; none where words cannot look (every tag, the
+  trash), while the field is typed in (its token wears the magnifier),
+  or while no source searches words (`suggest::searched`, a source's
+  `SuggestSource::searches`: the query plugin off). It names no
+  command of a plugin.
 - **Rows come from sources** (`skwir_core::suggest`): each asked again at
   every change of the text, in a job of its own in its lane, the jobs
   before cancelled; an answer is kept by source until the next. Rows

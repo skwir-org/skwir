@@ -10,7 +10,9 @@
 //! the places one goes to, the tags plugin the tags, the shell the tabs,
 //! the history, the sidebar's places and the commands. The field merges
 //! the answers by section; `ui.suggest` gathers them for an agent or a
-//! script ([`gather`]).
+//! script ([`gather`]). A source that searches the words says so
+//! ([`SuggestSource::searches`]): the field offers its Search button while
+//! one does ([`searched`]).
 //!
 //! A source answers from what it keeps or reads cheaply; what may wait (a
 //! folder on a remote) runs in that remote's lane ([`SuggestSource::lane`]),
@@ -318,6 +320,14 @@ pub trait SuggestSource: Send + Sync {
     /// reading anything.
     fn answers(&self, ask: &Ask) -> bool;
 
+    /// Whether it answers words typed in a scope with their search there
+    /// (the query plugin's): what the field's Search button stands for
+    /// ([`searched`]). Where none does, words only go to places and run
+    /// commands.
+    fn searches(&self) -> bool {
+        false
+    }
+
     /// The lane its job runs in: a remote's when it reads a path there.
     fn lane(&self, _ask: &Ask) -> Lane {
         Lane::SHARED
@@ -363,6 +373,16 @@ pub fn merge(answers: impl IntoIterator<Item = (String, Answer)>) -> Answer {
     }
     rows.sort_by_key(|row| (row.section, row.rank));
     Answer { rows, spans }
+}
+
+/// Whether a source searches words typed in a scope
+/// ([`SuggestSource::searches`]): asked as the field is drawn, of each
+/// under the registry's read lock, nothing cloned.
+pub fn searched(app: &App) -> bool {
+    app.registry
+        .suggesters
+        .find_map(|s| s.0.searches().then_some(()))
+        .is_some()
 }
 
 /// Every source's answer to `ask`, asked one after another on the caller's
@@ -428,5 +448,48 @@ mod tests {
         assert_eq!(json["section"], "recent");
         let back: Suggestion = serde_json::from_value(json).unwrap();
         assert_eq!(back, r);
+    }
+
+    struct Source {
+        id: &'static str,
+        searches: bool,
+    }
+
+    impl SuggestSource for Source {
+        fn id(&self) -> &'static str {
+            self.id
+        }
+        fn answers(&self, ask: &Ask) -> bool {
+            ask.typed == Typed::Words
+        }
+        fn searches(&self) -> bool {
+            self.searches
+        }
+        fn suggest(&self, _: &App, _: &Ask, _: &CancelToken) -> Answer {
+            Answer::default()
+        }
+    }
+
+    /// Words are searched while a source says it searches them, whoever
+    /// it is; one that answers words without searching them is not one,
+    /// and its owner withdrawn takes it away.
+    #[test]
+    fn words_are_searched_while_a_source_searches_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(crate::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let places = Source {
+            id: "places",
+            searches: false,
+        };
+        app.registry.suggesters.add("goes", Suggester::new(places));
+        assert!(!searched(&app), "it only goes places");
+        let finder = Source {
+            id: "finder",
+            searches: true,
+        };
+        app.registry.suggesters.add("finds", Suggester::new(finder));
+        assert!(searched(&app));
+        app.registry.suggesters.remove_owner("finds");
+        assert!(!searched(&app));
     }
 }

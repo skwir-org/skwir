@@ -628,6 +628,12 @@ impl LocationProvider for RecentProvider {
             "The files you open in your applications are listed here, as the desktop records them.",
         ))
     }
+
+    /// Words search the recent files, as they are listed.
+    fn searchable(&self, _location: &Location) -> bool {
+        true
+    }
+
     fn open(&self, location: &Location, ctx: OpenContext) -> anyhow::Result<Arc<dyn OpenLocation>> {
         Ok(RecentLocation::open(location.clone(), ctx))
     }
