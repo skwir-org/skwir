@@ -3,11 +3,11 @@
 # publishes it. tools/package/pdfium.sh fetches and checks them; the AUR's
 # PKGBUILD names the same release and sums. To update: a newer release's
 # tag and sums here and in the PKGBUILD, with a skwir release.
-release chromium/8086
-pdfium-linux-x64.tgz 588577cf52dabc1a444988bac841920df54cc2f141801424de97ab04f4fbb935
-pdfium-linux-arm64.tgz e7e2fe4686925618330103cb167950aca5a84bb00fd977a41b86be59dd1480a2
-pdfium-mac-univ.tgz ceb8dff448db2a2b15ac52e1360427edc3461f2b51cb4579b1462f1a931087d5
-pdfium-mac-arm64.tgz e98679e052c07edbb5a627980902abb823d4b3f35744d877bd21668bd9fc13ab
-pdfium-mac-x64.tgz 933a85a138f6027243c56bff8676375c33ceeb767401389415ffc44d689ca85d
-pdfium-win-x64.tgz 1fd8af952832dbb0eb16d9249f68fe09e5f5ebf7c3dd9f6066ea2720cc28487d
-pdfium-win-arm64.tgz 1799b8034e6d64946fec0ae79f3edfc8ba58ccd80c70a46194803b1eba408344
+release chromium/8125
+pdfium-linux-x64.tgz e1c3ce6e270cb5e0c20816b379ad9f2c1309972697c505f508de92bf5e7d6659
+pdfium-linux-arm64.tgz 8b8818f2ec57d1b213d952ca6d7f0ffeca9d0110487d0e20ad83ba918bc92efa
+pdfium-mac-univ.tgz 0cf06803b9a4acc489fc967a1b05990622ca1cf41fa027ff9cc89eeab9b19279
+pdfium-mac-arm64.tgz 4939bd935ac83ddc09a3a4f038bc43a19cea1660316a3667f26cb07a070e139d
+pdfium-mac-x64.tgz 8a5193535b80c7215d8932f6647ae5097465b6dba2811602c21e120c2af112b0
+pdfium-win-x64.tgz 9a964261760cff52570aabf038ab346d3a5034dd8b30d0d5fe8861235d356b8b
+pdfium-win-arm64.tgz d394ba61991fb53f4d87f70988035f337d9e73f2bd2c3c1b966df8c43fcabb05

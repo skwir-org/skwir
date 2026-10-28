@@ -6430,3 +6430,15 @@ those offered:
   Ctrl+L to the address field, typing filtering, Ctrl+A selecting what was
   typed; idle 10 ticks of CPU in 10 s. Not run: `just gpui-check-windows`,
   `just release-check`.
+
+### PDFium chromium/8125 in the packages (2026-10-28)
+
+- **Updated:** `tools/package/pdfium.lock` and the AUR's PKGBUILDs (and
+  their `.SRCINFO`) from bblanchon/pdfium-binaries chromium/8086 to
+  chromium/8125 (PDFium 158.0.8125.0, published 2026-10-26), each
+  archive's SHA-256 as the release's API gives it.
+- **Checked:** `tools/package/pdfium.sh linux-x64` fetched it and its sum
+  held; `tools/pdf/check.py` with the debug pdf helper on that library
+  passed (pages, first page alone, rotation and crop, text geometry,
+  links, outlines, search, limits, a corrupt PDF), and the helper's
+  tests. Windows' and macOS's archives are not tried.
