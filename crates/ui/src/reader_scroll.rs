@@ -277,8 +277,10 @@ fn landing(
 
 /// Whether a page shown a page at a time, scrolled to `offset` of `-most`
 /// (its `ScrollHandle`'s), is at its edge toward `toward` (-1 up, 1 down):
-/// an arrow there turns the page. The handle clamps to exactly these
-/// bounds, so they are compared exactly.
+/// an arrow or the wheel there turns the page. The handle clamps to
+/// exactly these bounds, so they are compared exactly, as numbers: gpui
+/// orders `Pixels` totally, -0 below 0, so a page that fits (offset and
+/// most 0) was never at its bottom edge for `-offset >= most` in `Pixels`.
 fn at_page_edge(offset: f32, most: f32, toward: i32) -> bool {
     if toward > 0 {
         -offset >= most
@@ -437,14 +439,10 @@ impl Shell {
         let delta = event.delta.pixel_delta(window.line_height());
         let pending = self.preview.phase != crate::preview::PreviewPhase::Idle;
         let scroll = &mut self.preview.reader.scroll;
-        // The handle clamps to exactly these bounds, so compare them exactly.
         let offset = scroll.single.offset();
         let maximum = scroll.single.max_offset();
-        let at_edge = if delta.y < px(0.) {
-            -offset.y >= maximum.y
-        } else {
-            offset.y >= px(0.)
-        };
+        let toward = if delta.y < px(0.) { 1 } else { -1 };
+        let at_edge = at_page_edge(offset.y.into(), maximum.y.into(), toward);
         let vertical = delta.y.abs() > delta.x.abs();
         if !at_edge
             || !vertical
@@ -1161,7 +1159,7 @@ mod tests {
     }
 
     #[test]
-    fn an_arrow_turns_a_page_only_at_its_edge() {
+    fn an_arrow_or_the_wheel_turns_a_page_only_at_its_edge() {
         // A page taller than the panel: 800 to scroll.
         assert!(at_page_edge(0., 800., -1), "Up at the top");
         assert!(!at_page_edge(0., 800., 1), "Down at the top scrolls");
@@ -1171,6 +1169,9 @@ mod tests {
         // A page that fits turns either way at once.
         assert!(at_page_edge(0., 0., 1));
         assert!(at_page_edge(0., 0., -1));
+        // A handle at its top holds 0 or -0 alike: a page that fits is at
+        // both its edges, so the wheel turns it either way.
+        assert!(at_page_edge(-0., 0., 1) && at_page_edge(-0., 0., -1));
     }
 
     #[test]

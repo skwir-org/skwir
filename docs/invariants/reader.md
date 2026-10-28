@@ -122,6 +122,14 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   the page, `reader_wheel`; so do Up and Down at its edge, `reader_arrow`,
   waiting while a turn is on its way, so a held key starts the next page
   at its top).
+- **The wheel turns a page a notch** a page at a time, past the page's
+  edge: a page that fits (Fit) is at both its edges, so every notch turns
+  it. The wheel and the arrows ask one question, `at_page_edge`, in
+  numbers: gpui orders `Pixels` totally, -0 below 0, so the same test in
+  `Pixels` never found a page that fits at its bottom edge, and the wheel
+  turned such pages back but never on. A notch that comes while a turn
+  is on its way is dropped (`WheelTurn`), so a trackpad's momentum never
+  runs through the document.
 - Overdraw measurement varies between frames: keep prefetch neighbours
   explicit so a later layout does not cancel work it just requested.
 

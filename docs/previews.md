@@ -91,7 +91,7 @@ contributors). The rules for working on preview code are in
 | `Ctrl+I`, `Alt+Enter` | Anywhere | Properties |
 | `Ctrl+F`; `F3`, `Shift+F3` | Preview | Find; next or previous match |
 | `Ctrl+C`, `Ctrl+A` | Preview | Copy; select all |
-| Up, Down | Reader, picture, structured previews | Scroll; a page read a page at a time turns at its edge |
+| Up, Down; the wheel | Reader, picture, structured previews | Scroll; a page read a page at a time turns at its edge, a page a notch of the wheel |
 | Left, Right | Reader, picture, structured previews | Scroll sideways when wider than the panel; else previous or next page or section (not a picture) |
 | `Page Up`, `Page Down` | Reader | Previous or next page |
 | `[`, `]` | Reader, book | Previous or next page or chapter |

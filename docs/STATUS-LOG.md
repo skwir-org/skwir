@@ -6333,3 +6333,24 @@ those offered:
   Source. Not checked in a window: books, documents' parts, fonts and
   the picture's bar (their bars take the same code). Not run:
   `just check-cross`, `just a11y-check`, `just release-check`.
+
+### The wheel turns a page read a page at a time (2026-10-28)
+
+- **Fixed:** in the reader a page at a time, the wheel never turned on
+  from a page that fits the panel (Fit): `reader_wheel` asked whether the
+  page was at its bottom edge as `-offset >= most` in `Pixels`, which
+  gpui orders totally, -0 below 0, so a page with nothing to scroll was
+  never there; back worked, and so did a page taller than the panel once
+  scrolled to its end. The wheel now asks `at_page_edge` in numbers, as
+  the arrows already did: one question for both. A notch turns one
+  page; one that comes while a turn is on its way is still dropped
+  (`WheelTurn`). Rule in `docs/invariants/reader.md`, the guide's keys.
+- **Checked:** rustfmt; clippy (`-D warnings`) and the tests of
+  `skwir-ui` (the edge test asks -0 too). On Xvfb at 1280 × 860, a debug
+  build, a synthetic PDF of six pages at Fit: five notches down 0.8 s
+  apart went from page 1 to 6, one at a time, and two up back to 4
+  (before the fix, three notches down left it on page 1, the handler
+  seeing offset and most at 0 and no edge); five notches 40 ms apart
+  turned three pages. Not checked: a trackpad, a high-resolution wheel
+  (Wayland's value120 in parts of a notch), the session's Wayland.
+  Not run: `just check-cross`, `just release-check`.
