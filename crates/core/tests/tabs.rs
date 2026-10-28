@@ -16,7 +16,7 @@ use skwir_core::workspace::{PaneId, TabId};
 
 const WAIT: Duration = Duration::from_secs(10);
 
-#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::needless_pass_by_value)] // Callers write `json!(…)` in place.
 fn run(app: &App, name: &str, args: serde_json::Value) -> Outcome {
     app.dispatch(&Invocation::with_args(name, &args))
         .unwrap_or_else(|e| panic!("{name}: {e:#}"))

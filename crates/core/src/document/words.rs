@@ -120,7 +120,7 @@ pub fn chars(runs: &[Run]) -> Vec<TextChar> {
                 .collect::<Vec<f32>>()
         });
         for (k, letter) in letters.iter().enumerate() {
-            #[allow(clippy::cast_precision_loss)]
+            #[allow(clippy::cast_precision_loss)] // A character's place in its run.
             let (left, right) = match &edges {
                 Some(edges) => (edges[k], edges.get(k + 1).copied().unwrap_or(x + width)),
                 None => (x + each * k as f32, x + each * (k + 1) as f32),

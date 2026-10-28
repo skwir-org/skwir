@@ -218,7 +218,7 @@ fn covering(sorted: &str, language: &str) -> Face {
 /// names when it knows it (Chinese, Japanese, Korean, Urdu), else the
 /// script's main language. Latin is left to `MuPDF`'s own fonts.
 fn written_in(script: u32, language: u32) -> Option<&'static str> {
-    #[allow(non_upper_case_globals)]
+    #[allow(non_upper_case_globals)] // MuPDF's C names (`FZ_LANG_zh_Hant`).
     let named = match language {
         FZ_LANG_ja => Some("ja"),
         FZ_LANG_ko => Some("ko"),

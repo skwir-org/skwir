@@ -15,7 +15,7 @@ pub(crate) const PART_BLOCKS: usize = limits::BLOCKS * 3 / 4;
 
 /// How a run of text looks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-#[allow(clippy::struct_excessive_bools)]
+#[allow(clippy::struct_excessive_bools)] // A run's styles, each on or off alone.
 pub(crate) struct Look {
     pub bold: bool,
     pub italic: bool,

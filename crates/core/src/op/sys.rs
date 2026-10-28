@@ -645,7 +645,7 @@ pub(super) fn opened_to_owner(current: &Permissions) -> Permissions {
     #[cfg(not(unix))]
     {
         let mut opened = current.clone();
-        #[allow(clippy::permissions_set_readonly_false)]
+        #[allow(clippy::permissions_set_readonly_false)] // Not Unix: no bits for others.
         opened.set_readonly(false);
         opened
     }

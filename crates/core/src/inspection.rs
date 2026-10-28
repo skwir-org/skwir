@@ -366,7 +366,7 @@ pub enum Script {
     Subscript,
 }
 #[derive(Clone, Debug, Default)]
-#[allow(clippy::struct_excessive_bools)]
+#[allow(clippy::struct_excessive_bools)] // A run's styles, each on or off alone.
 pub struct Run {
     pub range: std::ops::Range<usize>,
     pub color: Option<[u8; 3]>,
