@@ -6788,3 +6788,14 @@ stopped them once for about an hour.
   (the one worker survives), and bounds its wait at 60 s. Checked:
   clippy on core and tags, the tags plugin's tests (71), the scheduler
   test, slowed and not.
+- **At the end**: `just lint-all` passed on 7ca582b5 (rustfmt,
+  workspace clippy, Windows' and macOS's cross clippy), with
+  `CARGO_INCREMENTAL=0` after `target/debug/incremental` (142 GB of
+  incremental sessions) was removed to make room; `release-check`
+  below runs it again. The README's screenshots were made again with
+  `just screenshots` on 412d912c and looked at, and their text read by
+  OCR: only the script's synthetic home (Places, one bookmark
+  "Projects", the tags draft, favorite and print, the "Field Guide"
+  files), no drive, server, path or name of this machine (the script
+  hides the drives and network). `just release-check` was then run on
+  this commit; its result is in the night's report to the user.
