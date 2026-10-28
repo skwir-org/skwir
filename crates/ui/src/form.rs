@@ -7,9 +7,11 @@
 //!
 //! Enter answers the form from its fields (or picks the choice a list
 //! highlights), Escape and Cancel give no answer, Tab walks the fields and
-//! buttons. A field folded under More Options is shown once unfolded, or
-//! when the plugin gave it a value. A list (a long choice, a pick) moves
-//! with the arrows, filtered by what is typed.
+//! buttons. A field folded under More Options is shown once unfolded (a
+//! plugin that wants a field in sight leaves it unfolded: core's `Field`).
+//! A list (a long choice, a pick) moves with the arrows, filtered by what
+//! is typed: a choice unfolded, else the form's pick. A pick keeps its own
+//! highlight, its value, whatever a choice's list does meanwhile.
 
 use gpui::{
     AnyElement, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*,
@@ -39,10 +41,12 @@ enum Control {
         focus: FocusHandle,
         input: Option<Entity<TextInput>>,
     },
-    /// A pick from a long list: the filter, the choices it leaves.
+    /// A pick from a long list: the filter, the choices it leaves, and
+    /// the one highlighted, which is its value.
     Pick {
         input: Entity<TextInput>,
         shown: Vec<usize>,
+        picker: Picker,
     },
     Link {
         focus: FocusHandle,
@@ -59,7 +63,7 @@ pub struct FormState {
     more_focus: FocusHandle,
     /// The choice whose list is unfolded under it, by field.
     open: Option<usize>,
-    /// The highlight in the list shown (an unfolded choice's, a pick's).
+    /// The highlight in the unfolded choice's list (a pick keeps its own).
     picker: Picker,
     /// Why the answer was refused (a field needed is empty).
     refusal: Option<String>,
@@ -151,8 +155,8 @@ impl FormState {
                     input: Some(input), ..
                 } => input.read(cx).text().trim().to_owned(),
                 Control::Choice { value, .. } => value.clone(),
-                Control::Pick { shown, .. } => shown
-                    .get(self.picker.highlighted)
+                Control::Pick { shown, picker, .. } => shown
+                    .get(picker.highlighted)
                     .and_then(|&at| choices(field).get(at))
                     .map(|choice| choice.value.clone())
                     .unwrap_or_default(),
@@ -163,25 +167,48 @@ impl FormState {
         values
     }
 
-    /// The choices of the list shown, as `(field, its choices' indices)`.
-    fn listed(&self, cx: &gpui::App) -> Option<(usize, Vec<usize>)> {
-        if let Some((at, Control::Pick { shown, .. })) = self
-            .controls
-            .iter()
-            .enumerate()
-            .find(|(_, c)| matches!(c, Control::Pick { .. }))
-        {
-            return Some((at, shown.clone()));
-        }
-        let at = self.open?;
+    /// The field whose list the arrows and Enter act on: a choice
+    /// unfolded, else the form's pick.
+    fn listed(&self) -> Option<usize> {
+        self.open.or_else(|| {
+            self.controls
+                .iter()
+                .position(|c| matches!(c, Control::Pick { .. }))
+        })
+    }
+
+    /// The choices field `at` lists, as indices of its choices: a pick's
+    /// those its filter leaves, a choice's those that match what is typed
+    /// in it.
+    fn shown_of(&self, at: usize, cx: &gpui::App) -> Option<Vec<usize>> {
         let field = self.form.fields.get(at)?;
-        let typed = match self.controls.get(at)? {
-            Control::Choice {
-                input: Some(input), ..
-            } => input.read(cx).text().to_owned(),
-            _ => String::new(),
-        };
-        Some((at, matching(choices(field), &typed)))
+        match self.controls.get(at)? {
+            Control::Pick { shown, .. } => Some(shown.clone()),
+            Control::Choice { input, .. } => {
+                let typed = input
+                    .as_ref()
+                    .map(|input| input.read(cx).text().to_owned())
+                    .unwrap_or_default();
+                Some(matching(choices(field), &typed))
+            }
+            _ => None,
+        }
+    }
+
+    /// The highlight in field `at`'s list: a pick's own, else the
+    /// unfolded choice's.
+    fn picker_of(&mut self, at: usize) -> &mut Picker {
+        match self.controls.get_mut(at) {
+            Some(Control::Pick { picker, .. }) => picker,
+            _ => &mut self.picker,
+        }
+    }
+
+    fn highlight_of(&self, at: usize) -> Picker {
+        match self.controls.get(at) {
+            Some(Control::Pick { picker, .. }) => *picker,
+            _ => self.picker,
+        }
     }
 }
 
@@ -249,9 +276,18 @@ impl Shell {
                 Kind::Pick { choices } => {
                     let input = self.form_input(field, "Type to filter", at, &mut subs, window, cx);
                     input.update(cx, |i, cx| i.set_text(String::new(), cx));
+                    // A pick starts on the choice the asker gave.
+                    let mut picker = Picker::default();
+                    if let Some(at) = choices.iter().position(|c| c.value == field.value) {
+                        picker.go(ListMove::First, choices.len());
+                        for _ in 0..at {
+                            picker.step(1, choices.len());
+                        }
+                    }
                     Control::Pick {
                         input,
                         shown: (0..choices.len()).collect(),
+                        picker,
                     }
                 }
                 Kind::Link => Control::Link {
@@ -273,18 +309,6 @@ impl Shell {
             }
             controls.push(control);
         }
-        // A pick starts on the choice the asker gave.
-        let mut picker = Picker::default();
-        for (field, control) in asked.form.fields.iter().zip(&controls) {
-            if let (Kind::Pick { choices }, Control::Pick { .. }) = (&field.kind, control)
-                && let Some(at) = choices.iter().position(|c| c.value == field.value)
-            {
-                picker.go(ListMove::First, choices.len());
-                for _ in 0..at {
-                    picker.step(1, choices.len());
-                }
-            }
-        }
         let state = FormState {
             id: asked.id,
             refusal: asked.form.error.clone(),
@@ -293,7 +317,7 @@ impl Shell {
             more: false,
             more_focus: cx.focus_handle(),
             open: None,
-            picker,
+            picker: Picker::default(),
             back_focus: cx.focus_handle(),
             cancel_focus: cx.focus_handle(),
             accept_focus: cx.focus_handle(),
@@ -358,9 +382,13 @@ impl Shell {
             return;
         };
         match form.controls.get_mut(at) {
-            Some(Control::Pick { input, shown }) => {
+            Some(Control::Pick {
+                input,
+                shown,
+                picker,
+            }) => {
                 *shown = matching(choices(field), input.read(cx).text());
-                form.picker = Picker::default();
+                *picker = Picker::default();
             }
             Some(Control::Choice { input: Some(_), .. }) => {
                 form.open = Some(at);
@@ -389,19 +417,29 @@ impl Shell {
         self.form_answer(false, window, cx);
     }
 
-    /// Choose a choice of the unfolded list: `row` of what it shows, else
-    /// the highlighted one. A pick answers the form with it.
-    fn form_choose(&mut self, row: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+    /// Choose from a list: `clicked`, a row of what field's list shows,
+    /// else the highlighted choice of the list the keys act on
+    /// (`FormState::listed`). A pick answers the form with it.
+    fn form_choose(
+        &mut self,
+        clicked: Option<(usize, usize)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(form) = self.form.as_mut() else {
             return;
         };
-        let Some((at, shown)) = form.listed(cx) else {
+        let Some(at) = clicked.map(|(at, _)| at).or_else(|| form.listed()) else {
             return;
         };
-        if let Some(row) = row {
-            form.picker.highlighted = row;
+        let Some(shown) = form.shown_of(at, cx) else {
+            return;
+        };
+        let picker = form.picker_of(at);
+        if let Some((_, row)) = clicked {
+            picker.highlighted = row;
         }
-        let Some(&chosen) = shown.get(form.picker.highlighted) else {
+        let Some(&chosen) = shown.get(picker.highlighted) else {
             return;
         };
         let Some(field) = form.form.fields.get(at) else {
@@ -466,10 +504,13 @@ impl Shell {
         let Some(form) = self.form.as_mut() else {
             return false;
         };
-        let Some((_, shown)) = form.listed(cx) else {
+        let Some(at) = form.listed() else {
             return false;
         };
-        form.picker.go(mv, shown.len());
+        let Some(shown) = form.shown_of(at, cx) else {
+            return false;
+        };
+        form.picker_of(at).go(mv, shown.len());
         cx.notify();
         true
     }
@@ -845,11 +886,8 @@ fn choice_list(
     cx: &mut Context<Shell>,
 ) -> AnyElement {
     let all = choices(field);
-    let shown = state
-        .listed(cx)
-        .filter(|(listed, _)| *listed == at)
-        .map(|(_, shown)| shown)
-        .unwrap_or_default();
+    let shown = state.shown_of(at, cx).unwrap_or_default();
+    let picker = state.highlight_of(at);
     let field_focus = match state.controls.get(at) {
         Some(
             Control::Pick { input, .. }
@@ -864,7 +902,6 @@ fn choice_list(
         _ => state.cancel_focus.clone(),
     };
     let (start, end) = {
-        let picker = state.picker;
         let top = picker.top.min(shown.len());
         // The highlight kept in sight within these rows.
         let top = if picker.highlighted >= top + rows {
@@ -908,12 +945,13 @@ fn choice_list(
                     .child(choice.section.clone()),
             );
         }
-        let highlighted = row == state.picker.highlighted;
+        let highlighted = row == picker.highlighted;
         let named = shell
             .a11y
             .then(|| SharedString::from(choice.shown().to_owned()));
         let item = div()
-            .id(SharedString::from(format!("form-option-{at}-{row}")))
+            // Known by its choice: filtered, another stands at its row.
+            .id(crate::elements::known_by("form-option", (at, index)))
             .px_2()
             .py_1()
             .mx_1()
@@ -936,7 +974,7 @@ fn choice_list(
                 )
             })
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.form_choose(Some(row), window, cx);
+                this.form_choose(Some((at, row)), window, cx);
             }));
         list = list.child(modal::option(item, named, row, highlighted, &field_focus));
     }

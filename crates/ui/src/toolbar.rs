@@ -368,8 +368,12 @@ impl Button {
             .is_some_and(|reveal| reveal.row.as_ref() == Some(&id));
         let button = div()
             .id(self.id)
+            // A setting's value is one of a radio group (`MenuPart::Choice`,
+            // `MenuPart::Tiles`), checked when chosen (ADR-099).
             .role(if menu {
                 gpui::Role::MenuItem
+            } else if value {
+                gpui::Role::RadioButton
             } else {
                 gpui::Role::Button
             })
@@ -380,11 +384,11 @@ impl Button {
                     .aria_disabled(!enabled)
                     // What it stands for is on: the view shown, the
                     // history's place, a narrowing applied.
-                    .when(active, |d| {
+                    .when(active || value, |d| {
                         if menu {
                             d.aria_selected(true)
                         } else {
-                            d.aria_toggled(gpui::Toggled::True)
+                            d.aria_toggled(active.into())
                         }
                     })
                     .when(dropdown, |d| d.aria_expanded(open))
@@ -972,10 +976,16 @@ pub fn menu_parts(
                         .pr_4()
                         .text_sm()
                         .text_color(theme.text)
-                        .child(name),
+                        .child(name.clone()),
                 )
                 .child(
+                    // To a screen reader, the setting is a radio group named
+                    // by its row, its values radio buttons (ADR-099), as a
+                    // context menu's setting (`menu::choice_element`).
                     div()
+                        .id(crate::elements::known_by("popup-choice", &name))
+                        .role(gpui::Role::RadioGroup)
+                        .when(shell.a11y, |d| d.aria_label(name))
                         .flex()
                         .flex_none()
                         .gap(px(2.))
@@ -988,6 +998,8 @@ pub fn menu_parts(
                 )
                 .into_any_element(),
             MenuPart::Tiles(values) => div()
+                .id("popup-tiles")
+                .role(gpui::Role::RadioGroup)
                 .grid()
                 .grid_cols(4)
                 .gap(px(2.))

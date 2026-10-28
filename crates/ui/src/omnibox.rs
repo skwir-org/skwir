@@ -125,8 +125,10 @@ pub struct Omni {
     /// search's folder to filter): one step of the pane's history, which
     /// it shows in place and Escape takes back.
     stepped: bool,
-    /// The words whose search the pane shows, shown as typed.
-    shown: Option<String>,
+    /// The words whose search the pane shows, shown as typed, and the
+    /// scope it looks in: the same words in another scope are another
+    /// search.
+    shown: Option<(String, Option<Location>)>,
     /// The search shown once the pause after the last key is over.
     pending: Option<gpui::Task<()>>,
     /// Where words search, drawn as a token before the text; `None`: the
@@ -360,10 +362,29 @@ pub fn path_suggestions(
     let Some(folder) = complete::resolve(dir, base, home.as_deref()) else {
         return Vec::new();
     };
+    // An agent's call (`permissions::as_agent`) reads no folder that is
+    // private or on a machine not reached yet, as the text resolves, and
+    // is told no private name (ADR-044).
+    let agent = skwir_core::permissions::agent_call();
+    let mut check = agent
+        .as_ref()
+        .map(skwir_core::permissions::Privacy::checker);
+    if check
+        .as_mut()
+        .is_some_and(|check| check.admits(&folder).is_err())
+    {
+        return Vec::new();
+    }
     let resolved = complete::folders(app, &folder, false, cancel);
     let (found, _) = complete::rank(&resolved.folders, typed, false);
     found
         .into_iter()
+        .filter(|m| {
+            check.as_mut().is_none_or(|check| {
+                let folder = &resolved.folders[m.folder];
+                !check.holds(&folder.path.join(&folder.names[m.index].exact))
+            })
+        })
         .enumerate()
         .map(|(rank, m)| {
             let folder = &resolved.folders[m.folder];
@@ -711,6 +732,9 @@ impl Shell {
     /// dropped; none typed, what was shown before.
     fn schedule_live(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pane = self.pane;
+        // What the pane shows now: shown another way since (a place
+        // clicked, Back), it is not the field's to replace.
+        let shown = self.app.pane_location(pane);
         let Some(omni) = self.ui_mut().omni.as_mut() else {
             return;
         };
@@ -721,11 +745,13 @@ impl Shell {
         let task = cx.spawn_in(window, async move |this, cx| {
             cx.background_executor().timer(LIVE_PAUSE).await;
             this.update_in(cx, |shell, window, cx| {
-                // Still typed in, in a pane of the tab shown.
+                // Still typed in, in a pane of the tab shown, showing what
+                // it showed.
                 if shell
                     .panes
                     .iter()
                     .any(|ui| ui.id == pane && ui.omni.is_some())
+                    && shell.app.pane_location(pane) == shown
                 {
                     shell.with_pane(pane, |shell| shell.show_live(window, cx));
                 }
@@ -753,15 +779,16 @@ impl Shell {
             return;
         };
         omni.pending = None;
-        if omni.depth != Depth::Below || omni.shown.as_deref() == Some(words.as_str()) {
+        let searched = (words, omni.scope.clone());
+        if omni.depth != Depth::Below || omni.shown.as_ref() == Some(&searched) {
             return;
         }
-        if words.is_empty() || typed != Typed::Words {
+        if searched.0.is_empty() || typed != Typed::Words {
             return self.take_back(cx);
         }
         // A search's words as they were given: it is what shows.
         if !omni.edited && over_search {
-            omni.shown = Some(words);
+            omni.shown = Some(searched);
             return;
         }
         let Some(live) = self.run_row(&raw, cx).and_then(|row| row.live) else {
@@ -772,7 +799,7 @@ impl Shell {
         match self.app.dispatch(&live) {
             Ok(_) => {
                 if let Some(omni) = self.ui_mut().omni.as_mut() {
-                    omni.shown = Some(words);
+                    omni.shown = Some(searched);
                 }
             }
             Err(error) => tracing::warn!("{}: {error:#}", live.name),
@@ -840,9 +867,13 @@ impl Shell {
     /// `clear` (a scope chosen for words still to type), and the sources
     /// are asked again.
     fn scope_changed(&mut self, clear: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = !clear && !self.omni_text(cx).trim().is_empty();
         // Another place than the one words filter is searched; no scope,
         // words filter the folder shown.
         if let Some(omni) = self.ui_mut().omni.as_mut() {
+            // Words given (a search's), looked for elsewhere: they are what
+            // is looked for, as a switch makes them.
+            omni.edited |= typed;
             let folder = omni.before.as_ref().and_then(|b| b.folder.clone());
             omni.depth = match &omni.scope {
                 None => Depth::Here,
@@ -870,6 +901,17 @@ impl Shell {
             omni.edited = false;
         }
         self.omnibox_changed_keep_edit(window, cx);
+        // The words searched in another scope: what they find there shows
+        // now, as a switch's does, never the last scope's.
+        if typed
+            && self
+                .ui()
+                .omni
+                .as_ref()
+                .is_some_and(|o| o.depth == Depth::Below)
+        {
+            self.show_live(window, cx);
+        }
     }
 
     /// The field's text changed: the dropdown follows, the folder typed is
@@ -1582,13 +1624,22 @@ impl Shell {
         let named = complete::is_path(&text)
             .then(|| self.typed_folder(raw.trim_start()))
             .flatten();
+        let filter = self
+            .ui()
+            .omni
+            .as_ref()
+            .and_then(|o| o.before.as_ref())
+            .and_then(|b| b.filter.clone());
         // A row goes from what the pane showed: the search shown as typed
         // was the field's, never a step of its own.
         self.take_back(cx);
         self.omnibox_end(cx);
         window.focus(&self.ui().focus, cx);
         match chosen {
-            _ if text.is_empty() => {
+            // Nothing typed, nothing chosen: what the text says, the
+            // location shown again. A row offered before anything is typed
+            // (a place one goes to, a tab, a recent search) runs below.
+            None | Some(Row::Go) if text.is_empty() => {
                 self.set_filter(None);
                 let shown = self.ui().address_shown.clone();
                 let address = self.ui().address.clone();
@@ -1648,6 +1699,10 @@ impl Shell {
                 } else {
                     s.run.clone()
                 };
+                // It runs over the pane as it was, filtered as it was (as
+                // Escape puts it back): the words typed were the field's.
+                // A row that goes elsewhere leaves the filter behind.
+                self.set_filter(filter.as_deref());
                 if let Some(run) = run {
                     self.run(&run.name, run.args, window, cx);
                 }
@@ -1679,7 +1734,11 @@ impl Shell {
             return true;
         };
         omni.pending = None;
-        let shown = omni.shown.as_deref() == Some(words) || (!omni.edited && over_search);
+        let shown = omni
+            .shown
+            .as_ref()
+            .is_some_and(|(shown, scope)| shown == words && *scope == omni.scope)
+            || (!omni.edited && over_search);
         if !shown {
             match row.live {
                 Some(live) => {
@@ -1788,6 +1847,33 @@ impl Shell {
         );
     }
 
+    /// Pane `pane`'s field lost the keyboard while typed in (a click on a
+    /// place or the files, Tab, F6): it lets go. What its words show stays,
+    /// as Enter keeps it (the folder filtered, the search shown as typed,
+    /// its step kept), the search waiting for the pause is dropped, and the
+    /// field shows where the pane is again. A state left behind would act
+    /// later on whatever the pane shows by then.
+    pub(crate) fn omnibox_left(
+        &mut self,
+        pane: skwir_core::workspace::PaneId,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ui) = self.pane_ui_mut(pane) else {
+            return;
+        };
+        if ui.omni.take().is_none() {
+            return;
+        }
+        let (address, shown) = (ui.address.clone(), ui.address_shown.clone());
+        address.update(cx, |input, cx| {
+            input.set_hint(None, cx);
+            input.set_styles(Vec::new(), cx);
+            input.send_start(false);
+            input.set_text(shown, cx);
+        });
+        cx.notify();
+    }
+
     /// Escape: the list of scopes closes; else the pane shows what it
     /// showed when the field took the keyboard, filtered as it was, and the
     /// field shows where it is again, all of it.
@@ -1849,11 +1935,20 @@ impl Shell {
     }
 
     /// Whether Tab completes the active pane's text (the `completes` key
-    /// context): a completion is offered, or words leave one name shown.
+    /// context): a completion is offered, or words leave one name shown;
+    /// before anything is typed, the row the arrows reached writes one (a
+    /// term to add).
     pub fn omnibox_completes(&self, cx: &gpui::App) -> bool {
-        let Some(omni) = self.ui().omni.as_ref().filter(|o| o.edited) else {
+        let Some(omni) = self.ui().omni.as_ref() else {
             return false;
         };
+        if !omni.edited {
+            return omni
+                .highlighted
+                .filter(|_| omni.chosen)
+                .and_then(|i| omni.rows.get(i))
+                .is_some_and(|r| r.completion().is_some());
+        }
         omni.one_shown.is_some()
             || omni.rows.iter().any(|r| r.completion().is_some())
             || matches!(self.omni_text(cx).trim_start(), "~" | "." | "..")
@@ -1921,15 +2016,11 @@ impl Shell {
         }
         let typed_text = text.trim_start();
         match typed {
+            // Words with no source answering them (the query plugin off,
+            // its answer not in yet) offer no "Go to": Enter keeps what
+            // they show, as with any words.
             Typed::Nothing | Typed::Words => {
                 let mut rows = sources;
-                // No source answers words: they name a place to go to.
-                let answered = omni.answers.iter().any(|(_, asked, a)| {
-                    asked.0 == text && a.rows.iter().any(|r| r.section == Section::Run)
-                });
-                if typed == Typed::Words && rows.is_empty() && !answered {
-                    rows.push(Row::Go);
-                }
                 if typed == Typed::Words {
                     rows.extend(self.scheme_rows(text.trim()));
                 }
@@ -2384,27 +2475,55 @@ fn drawn(shell: &Shell, row: &Row, text: &str) -> Drawn {
     }
 }
 
-/// What the keys of the highlighted row do.
-fn keys_of(row: &Row) -> &'static str {
+/// What the keys of the highlighted row do, by the keys bound to them
+/// (`keys_for`: a scheme or the user may bind others; one bound to none
+/// is not said). Enter and Escape are the field's own.
+fn keys_of(shell: &Shell, row: &Row) -> String {
+    let key = |command: &str, args: serde_json::Value| shell.keys_for(command, &args);
+    let and = |keys: Option<String>, does: &str| match keys {
+        Some(keys) if does.is_empty() => format!("Enter · {keys}"),
+        Some(keys) => format!("Enter · {keys} {does}"),
+        None => "Enter".to_owned(),
+    };
+    let tab = || key("ui.omnibox_complete", serde_json::json!({}));
     match row {
-        Row::Help { .. } => "Enter · Tab writes it",
-        Row::Name { dir: false, .. } => "Enter · Shift+Enter opens",
-        Row::Source(s) if s.error => "Enter waits",
-        Row::Source(s) if s.forget.is_some() => "Enter · Shift+Delete forgets it",
-        Row::Source(s) if s.run.is_none() && s.completion.is_some() => "Enter · Tab",
+        Row::Help { .. } => and(tab(), "writes it"),
+        Row::Name { dir: false, .. } => and(
+            key("ui.omnibox_submit", serde_json::json!({ "open": true })),
+            "opens",
+        ),
+        Row::Source(s) if s.error => "Enter waits".to_owned(),
+        Row::Source(s) if s.forget.is_some() => and(
+            key("ui.omnibox_forget", serde_json::json!({})),
+            "forgets it",
+        ),
+        Row::Source(s) if s.run.is_none() && s.completion.is_some() => and(tab(), ""),
         _ if row.scope().is_some() && !matches!(row, Row::Scope { .. }) => {
-            "Enter · Ctrl+F searches in it"
+            and(key("ui.search", serde_json::json!({})), "searches in it")
         }
-        _ if row.completion().is_some() => "Enter · Tab",
-        _ => "Enter",
+        _ if row.completion().is_some() => and(tab(), ""),
+        _ => "Enter".to_owned(),
     }
 }
 
-/// What the line under the rows says the keys do, for what is typed.
+/// What the line under the rows says the keys do, for what is typed: the
+/// keys bound (`keys_for`), a phrase whose command has none left out.
 fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
     let omni = shell.ui().omni.as_ref();
     let scoped = omni.is_some_and(|o| o.scope.is_some());
     let here = omni.is_none_or(|o| o.depth == Depth::Here);
+    let key = |command: &str, args: serde_json::Value, does: &str| {
+        shell
+            .keys_for(command, &args)
+            .map(|keys| format!("{keys} {does}"))
+    };
+    let search = |does: &str| key("ui.search", serde_json::json!({}), does);
+    let tab = || key("ui.omnibox_complete", serde_json::json!({}), "completes");
+    let said = |phrases: Vec<Option<String>>| {
+        let phrases: Vec<String> = phrases.into_iter().flatten().collect();
+        format!("{}.", phrases.join("; "))
+    };
+    let plain = |text: &str| Some(text.to_owned());
     // What the folder alone cannot tell: a search's, below it.
     let waits = shell
         .app
@@ -2413,29 +2532,60 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
         .pane(shell.pane)
         .and_then(|p| p.read_filter().map(|r| r.waits.clone()))
         .filter(|w| !w.is_empty() && typed == Typed::Words && here)
-        .map(|w| format!("{} need a search: Ctrl+F. ", cap(&w.join(" and "))));
+        .map(|w| {
+            let what = cap(&w.join(" and "));
+            match shell.keys_for("ui.search", &serde_json::json!({})) {
+                Some(keys) => format!("{what} need a search: {keys}. "),
+                None => format!("{what} need a search. "),
+            }
+        });
     let keys = match typed {
-        _ if listing_scopes => "Enter searches there; Escape keeps the scope.",
+        _ if listing_scopes => "Enter searches there; Escape keeps the scope.".to_owned(),
         Typed::Nothing if scoped && here => {
             "Words filter this folder; Backspace takes the scope away, @ lists others; > for a command."
+                .to_owned()
         }
         Typed::Nothing if scoped => {
             "Words search there and below; Backspace takes the scope away, @ lists others; > for a command."
+                .to_owned()
         }
-        Typed::Nothing => {
-            "A path (/ or ~), a place, or words to filter; Ctrl+F searches below; > for a command."
-        }
-        Typed::Path | Typed::Place => {
-            "Tab completes; Shift+Enter opens a file; Ctrl+F on a folder searches in it."
-        }
-        Typed::Scope => "Enter searches there.",
-        Typed::Help => "Enter or Tab writes the example; Escape goes back.",
-        Typed::Words if here => "Enter goes to the files; Tab completes; Escape goes back.",
-        Typed::Words => {
-            "Enter goes to the files; Tab completes; Alt+Enter searches the home folder; Escape goes back."
-        }
+        Typed::Nothing => said(vec![
+            plain("A path (/ or ~), a place, or words to filter"),
+            search("searches below"),
+            plain("> for a command"),
+        ]),
+        Typed::Path | Typed::Place => said(vec![
+            tab(),
+            key(
+                "ui.omnibox_submit",
+                serde_json::json!({ "open": true }),
+                "opens a file",
+            ),
+            search("on a folder searches in it"),
+        ]),
+        Typed::Scope => "Enter searches there.".to_owned(),
+        Typed::Help => said(vec![
+            plain("Enter writes how it starts"),
+            key("ui.omnibox_complete", serde_json::json!({}), "too"),
+            plain("Escape goes back"),
+        ]),
+        Typed::Words if here => said(vec![
+            plain("Enter goes to the files"),
+            tab(),
+            plain("Escape goes back"),
+        ]),
+        Typed::Words => said(vec![
+            plain("Enter goes to the files"),
+            tab(),
+            key(
+                "ui.omnibox_submit",
+                serde_json::json!({ "everywhere": true }),
+                "searches the home folder",
+            ),
+            plain("Escape goes back"),
+        ]),
     };
-    waits.map_or_else(|| keys.to_owned(), |w| w + keys)
+    waits.map_or_else(|| keys.clone(), |w| w + &keys)
 }
 
 /// `text` with its first letter capital.
@@ -2476,10 +2626,17 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
             })
         }
         Depth::Below if words.is_empty() => None,
-        Depth::Below if omni.shown.as_deref() == Some(words) => Some(format!(
-            "{} found",
-            crate::format::thousands(shell.ui().list.sorted.len())
-        )),
+        Depth::Below
+            if omni
+                .shown
+                .as_ref()
+                .is_some_and(|(shown, scope)| shown == words && *scope == omni.scope) =>
+        {
+            Some(format!(
+                "{} found",
+                crate::format::thousands(shell.ui().list.sorted.len())
+            ))
+        }
         Depth::Below => omni
             .answers
             .iter()
@@ -2721,7 +2878,13 @@ pub fn dropdown(
                     .clone()
                     .or_else(|| {
                         matches!(row, Row::Source(s) if s.alt.is_some())
-                            .then(|| "Alt+Enter".to_owned())
+                            .then(|| {
+                                shell.keys_for(
+                                    "ui.omnibox_submit",
+                                    &serde_json::json!({ "everywhere": true }),
+                                )
+                            })
+                            .flatten()
                     })
                     .map(|k| div().text_color(muted).child(k)),
             );
@@ -2729,7 +2892,7 @@ pub fn dropdown(
             continue;
         }
         let keys = if highlighted {
-            Some(keys_of(row).to_owned())
+            Some(keys_of(shell, row))
         } else {
             d.keys.clone()
         };

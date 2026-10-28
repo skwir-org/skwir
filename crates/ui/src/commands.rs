@@ -212,8 +212,10 @@ mod args {
     pub(super) struct Suggest {
         /// The text, as it would be typed in the address field.
         pub(super) text: String,
-        /// Where words search, as a location (a folder, `tags:/x`); the
-        /// folder the pane shows when omitted.
+        /// Where words search, as a location (a folder, `tags:/x`). When
+        /// omitted, none, as Ctrl+L and Ctrl+J start the field: words then
+        /// search the folder the pane shows, and the tabs, the history and
+        /// the places one goes to are offered too.
         #[serde(default)]
         pub(super) scope: Option<String>,
         #[serde(default)]
@@ -1283,11 +1285,7 @@ fn declare_suggest(app: &App) {
                 let a: args::Suggest = serde_json::from_value(args)?;
                 let pane = app.pane_or_active(a.pane);
                 let dir = app.pane_dir(pane).ok();
-                let scope = a
-                    .scope
-                    .as_deref()
-                    .map(skwir_core::Location::parse)
-                    .or_else(|| dir.as_ref().map(skwir_core::Location::from_path));
+                let scope = a.scope.as_deref().map(skwir_core::Location::parse);
                 let ask = skwir_core::suggest::Ask {
                     typed: crate::omnibox::typed_for(app, &a.text, true),
                     caret: a.text.len(),

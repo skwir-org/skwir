@@ -828,11 +828,25 @@ impl Shell {
             // Back where it came from.
             return true;
         }
-        let mut drop = drop.clone().with("pane", from).with(
-            "move",
-            how.map_or(!window.modifiers().control, |how| how == DropOp::Move),
-        );
-        if let Some((false, holder)) = held {
+        // What the drop says goes only where its command takes it: a
+        // tag's drop is told whether the files move and from where, the
+        // trash's and the shelf's take the files alone, and an argument a
+        // command does not take is refused (`CommandSpec::accepts`).
+        let spec = self.app.commands.get(&drop.name);
+        let takes = |name: &str| spec.as_ref().is_some_and(|spec| spec.accepts(name));
+        let mut drop = drop.clone();
+        if takes("pane") {
+            drop = drop.with("pane", from);
+        }
+        if takes("move") {
+            drop = drop.with(
+                "move",
+                how.map_or(!window.modifiers().control, |how| how == DropOp::Move),
+            );
+        }
+        if let Some((false, holder)) = held
+            && takes("from")
+        {
             drop = drop.with("from", holder.to_string());
         }
         self.run(&drop.name, drop.args, window, cx);

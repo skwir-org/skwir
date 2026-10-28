@@ -33,9 +33,10 @@ compiled for Windows or macOS yet (`just check-cross` not run).
    up to stay in the window (`PopoverAnchor::popup_beside`, a deferred
    draw above the menu's). The pointer opens it after resting on its row
    (`menu::REST`, 250 ms) or with a click; Right, Enter or Space open it
-   and move into it, Left or Escape go back. The submenus' rows stand
-   together before the menu's end under one line. A submenu holds no
-   submenu.
+   and move into it, Left or Escape go back. ~~The submenus' rows stand
+   together before the menu's end under one line.~~ (Amended by decision
+   6: a submenu's row stands at its first item's order, in its group.) A
+   submenu holds no submenu.
 2. **State is said, never written into a title.** `MenuItem::checked`
    is an item's on or off; `MenuItem::choice` (`registry::Choice`) makes
    items the values of one setting, told apart by `ChoiceLook`: icons,

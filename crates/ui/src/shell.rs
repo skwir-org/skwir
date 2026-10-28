@@ -85,8 +85,9 @@ pub struct PaneUi {
     pub(crate) anchor: Option<(skwir_core::EntryId, usize, f32)>,
     /// What it will show first, still waiting for metadata.
     pub(crate) warm: Vec<skwir_core::EntryId>,
-    /// The address field's events, and its hint taken.
-    _sub: (Subscription, Subscription, Subscription),
+    /// The address field's events, its hint taken, the start of its text,
+    /// and its focus lost.
+    _sub: (Subscription, Subscription, Subscription, Subscription),
 }
 
 impl PaneUi {
@@ -929,6 +930,17 @@ impl Shell {
                 this.omnibox_at_start(*at, window, cx);
             },
         );
+        // The field let go of while typed in (a click elsewhere, Tab, F6):
+        // what it shows stays, as Enter keeps it, and nothing waits to
+        // show (`omnibox_left`). The window put behind another keeps it.
+        let left = {
+            let handle = gpui::Focusable::focus_handle(address.read(cx), cx);
+            cx.on_blur(&handle, window, move |this, window, cx| {
+                if window.is_window_active() {
+                    this.omnibox_left(id, cx);
+                }
+            })
+        };
         // Read the revision before the descriptors: a registration landing
         // between the two reads is then picked up by the next sync_views.
         let views_revision = self.app.registry.views.revision();
@@ -963,7 +975,7 @@ impl Shell {
             returning: true,
             anchor: None,
             warm: Vec::new(),
-            _sub: (sub, hint, start),
+            _sub: (sub, hint, start, left),
         }
     }
 

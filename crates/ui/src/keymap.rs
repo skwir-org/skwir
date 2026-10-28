@@ -79,7 +79,6 @@ pub const MODEL: &str = "ModelPreview";
 /// The pinned player's dock.
 pub const PLAYER: &str = "Player";
 pub const REVIEW: &str = "Review";
-pub const JUMP: &str = "Jump";
 /// `ui.choose`'s picker.
 pub const CHOOSE: &str = "Choose";
 /// A form a plugin asks the user to fill (`crate::form`).
@@ -372,34 +371,34 @@ const BUILTIN_ARGS: &[(&str, &str, &str, Option<&str>)] = &[
         r#"{"toward":"later"}"#,
         Some("timeline"),
     ),
-    // The lists one picks from while typing (the palette, a choice, Jump,
-    // the tag editor, the address's suggestions, a long list of choices in
-    // Settings): one command, the same
+    // The lists one picks from while typing (the palette, a choice, a
+    // form's, the tag editor, the address's suggestions, a long list of
+    // choices in Settings): one command, the same
     // keys, the arrows round their ends, the page keys a page at a time.
     // What a question lists before deleting scrolls by the same keys.
     (
         "up",
         "ui.list_move",
         r#"{"delta":-1}"#,
-        Some("palette|jump|choose|form|tag_editor|address|review|confirm|setting_choices"),
+        Some("palette|choose|form|tag_editor|address|review|confirm|setting_choices"),
     ),
     (
         "down",
         "ui.list_move",
         r#"{"delta":1}"#,
-        Some("palette|jump|choose|form|tag_editor|address|review|confirm|setting_choices"),
+        Some("palette|choose|form|tag_editor|address|review|confirm|setting_choices"),
     ),
     (
         "pageup",
         "ui.list_move",
         r#"{"to":"page_up"}"#,
-        Some("palette|jump|choose|form|tag_editor|address|review|confirm|setting_choices"),
+        Some("palette|choose|form|tag_editor|address|review|confirm|setting_choices"),
     ),
     (
         "pagedown",
         "ui.list_move",
         r#"{"to":"page_down"}"#,
-        Some("palette|jump|choose|form|tag_editor|address|review|confirm|setting_choices"),
+        Some("palette|choose|form|tag_editor|address|review|confirm|setting_choices"),
     ),
     // The cursor in the file list (`ui.cursor`): the arrows select what
     // they reach, Shift extends, Ctrl moves the cursor alone (and
@@ -1251,7 +1250,6 @@ pub(crate) const PLACES: &[Place] = &[
     place("terminal", TERMINAL, "Terminal"),
     place("timeline", TIMELINE, "Timeline"),
     inside("palette", PALETTE, "Command palette"),
-    inside("jump", JUMP, "Jump"),
     inside("choose", CHOOSE, "Choosing from a list"),
     inside("form", FORM, "Forms"),
     inside("tag_editor", TAG_EDITOR, "Tag editor"),
@@ -2843,7 +2841,7 @@ mod tests {
         for when in [
             "pane single !restores",
             "pane selection|folder",
-            "palette|jump|choose",
+            "palette|choose|form",
             "sidebar",
             "split",
         ] {
@@ -2869,8 +2867,8 @@ mod tests {
         let settings = super::place_of(&context_of(Some("setting_control")));
         assert_eq!(settings.place, "Settings");
         assert!(settings.inside);
-        let lists = super::place_of(&context_of(Some("palette|jump")));
-        assert_eq!(lists.place, "Command palette, Jump");
+        let lists = super::place_of(&context_of(Some("palette|form")));
+        assert_eq!(lists.place, "Command palette, Forms");
         assert!(lists.inside);
         let own = super::place_of("UsageMap && selection");
         assert_eq!(own.place, "UsageMap");

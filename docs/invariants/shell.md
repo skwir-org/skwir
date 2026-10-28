@@ -249,11 +249,23 @@ of bars, split or not.
     files the keyboard: the folder filtered; the search shown, now
     remembered (`query.search` leaves a search shown as it is), or run
     when it waited. A row chosen goes from what the pane showed: the
-    field's step is taken back first.
+    field's step is taken back first, and a source's row runs over the
+    folder filtered as it was (as Escape puts it back), never by the
+    words typed. Words no source answers (the query plugin off) offer no
+    Go row: Enter keeps what they show.
   - Escape takes the field's step back (`App::take_step_back`, as if it
     had never been gone to), puts back the filter and the narrowing the
     folder had, and gives the files the keyboard. The pane's address is
     never written into the field while it is typed in.
+  - The field lets go when it loses the keyboard in a window still
+    active (a click on a place or the files, Tab, F6; `omnibox_left`):
+    what its words show stays, as Enter keeps it, the search waiting for
+    its pause is dropped, and the field shows where the pane is. No state
+    of the field outlives its focus to act on what the pane shows later.
+  - A search shown after the pause replaces only what the pane showed
+    when it was asked (a place clicked meanwhile stays), and is known by
+    its words and its scope (`Omni::shown`): another scope chosen with
+    words typed shows its own search at once, as a switch does.
   - Backspace at the start of the text takes the scope away; Left there
     selects the token first (`input::AtStart`, sent only where the field
     asks, `send_start`).
@@ -302,11 +314,17 @@ of bars, split or not.
   count or the search's: the card hides the list's top.
 - **`?` alone** lists what the field takes: the shell's grammar (a path,
   a place's address from the schemes providers open, `@`, words, `>`)
-  and the query plugin's terms with examples; Enter or Tab writes the
-  example.
+  and the query plugin's terms with examples; Enter or Tab writes how the
+  row starts (`~/`, a scheme, `@`, `>`, a term's key such as `kind:`),
+  never the example.
 - **Before anything is typed**, the dropdown shows what the sources offer
   then, nothing highlighted: Enter does what the text says (the location
-  shown again, a search's words again).
+  shown again, a search's words again). A row the arrows reach runs as
+  any row (a place, a tab, a recent search), and Tab takes one that
+  writes text (`completes` holds for it).
+- The card says the keys bound (`keys_for`: its footer, the highlighted
+  row's, the depth switch), never keys written in its words: a scheme or
+  the user may bind others, and one bound to none is not said.
 - The keyboard never leaves the field (Up/Down are bound in its context).
   Rows run on press with `prevent_default`. The rows are a list box
   (`modal::options`); the row the arrows reach is the field's active

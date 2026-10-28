@@ -54,9 +54,11 @@ struct Clipboard {
     /// their location says (`Verbs::export`); in a place, given to it.
     places: Vec<skwir_core::Location>,
     /// The cut was pasted on a place (a tag's), as a plan that gives the
-    /// files their notes there: each is done once that plan gave it them
-    /// (`follow`), kept while it is refused, fails or is cancelled.
-    pasted: bool,
+    /// files their notes there: what that plan's steps change. Each file
+    /// is done once a plan of those changes alone gave it them (`follow`),
+    /// kept while the plan is refused, dismissed, fails or is cancelled;
+    /// another plan's notes (a rating, another tag) leave it there.
+    pasted: Vec<Change>,
 }
 
 /// `clipboard_paste`: into a pane, from Skwir's clipboard or, when given,
@@ -209,7 +211,13 @@ fn follow(clipboard: &Mutex<Clipboard>, changes: &[Change], app: &App) {
         return;
     }
     let before = c.entries.len();
-    let (cut, pasted) = (c.cut, c.pasted);
+    // The plan the cut was pasted as: its changes, and none other's. The
+    // observer hears no plan's id; the changes a plan made are its own.
+    let pasted = !c.pasted.is_empty() && changes.iter().all(|change| c.pasted.contains(change));
+    if pasted {
+        c.pasted.clear();
+    }
+    let cut = c.cut;
     let follow = skwir_core::op::Follow::new(changes);
     let noted: Vec<&std::path::Path> = changes
         .iter()
@@ -313,18 +321,30 @@ fn paste_on_place(
     if !invocation.args.is_object() {
         invocation.args = serde_json::json!({});
     }
+    // The files always; what else a paste says only where the drop's
+    // command takes it: a tag's is told whether they move, the places and
+    // where from, the trash's and the shelf's take the files alone, and an
+    // argument a command does not take is refused (`CommandSpec::accepts`).
+    let spec = app.commands.get(&invocation.name);
+    let takes = |name: &str| spec.as_ref().is_some_and(|spec| spec.accepts(name));
     invocation.args["entries"] = serde_json::json!(entries);
-    invocation.args["move"] = serde_json::json!(cut);
-    invocation.args["places"] =
-        serde_json::json!(places.iter().map(ToString::to_string).collect::<Vec<_>>());
-    if let Some(from) = from {
+    if takes("move") {
+        invocation.args["move"] = serde_json::json!(cut);
+    }
+    if takes("places") {
+        invocation.args["places"] =
+            serde_json::json!(places.iter().map(ToString::to_string).collect::<Vec<_>>());
+    }
+    if let Some(from) = from
+        && takes("from")
+    {
         invocation.args["from"] = serde_json::json!(from.to_string());
     }
     let outcome = app.dispatch(&invocation)?;
     if cut && own {
-        if let Outcome::Plan(_) = &outcome {
+        if let Outcome::Plan(plan) = &outcome {
             // Done once that plan applies (`follow`).
-            clipboard.lock().pasted = true;
+            clipboard.lock().pasted = plan.steps.iter().map(|step| step.describe()).collect();
         } else {
             *clipboard.lock() = Clipboard::default();
             app.pending.clear();
@@ -548,7 +568,7 @@ impl Plugin for OpsBasicPlugin {
                     cut: false,
                     from,
                     places,
-                    pasted: false,
+                    pasted: Vec::new(),
                 };
                 Ok(outcome)
             },
@@ -570,7 +590,7 @@ impl Plugin for OpsBasicPlugin {
                     cut: true,
                     from,
                     places,
-                    pasted: false,
+                    pasted: Vec::new(),
                 };
                 Ok(outcome)
             },

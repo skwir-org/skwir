@@ -126,7 +126,9 @@ ADR-070 (the field's rows) and retires the Jump overlay.
 10. **`?` alone lists what the field takes** (amended 2026-10-27): the
     shell's own grammar (a path, a place's address from the schemes
     providers open, `@`, words, `>`) and the query plugin's terms with
-    examples (`Section::Syntax`); Enter or Tab writes the example.
+    examples (`Section::Syntax`); Enter or Tab writes how a row starts
+    (`~/`, a scheme, `@`, `>`, a term's key such as `kind:`), never its
+    example, which is not text to type as it is (corrected 2026-10-28).
 
 ## Consequences
 
