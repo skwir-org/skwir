@@ -1430,16 +1430,31 @@ impl Executor {
 
     /// The actions under way that touch something at or below `tree`, by
     /// what they are called: what letting go of a mount there would cut
-    /// (Eject). One cancelled is not: what it still waits for there, it
-    /// gave up on.
+    /// (Eject). Those running, and those waiting their turn (for the
+    /// server, the disk, a slot), their footprints worked out; a plan not
+    /// measured yet by the paths its steps name. One cancelled is not: what
+    /// it still waits for there, it gave up on.
     pub fn under_way_in(&self, tree: &Path) -> Vec<String> {
-        self.lane
-            .lock()
+        let lane = self.lane.lock();
+        let running = lane
             .started
             .iter()
             .filter(|begun| !begun.cancel.is_cancelled() && begun.footprint.touches(tree))
-            .map(|begun| begun.named.clone())
-            .collect()
+            .map(|begun| begun.named.clone());
+        let waiting = lane
+            .queue
+            .iter()
+            .filter(|job| !job.cancel.is_cancelled())
+            .filter(|job| match (&job.footprint, &job.work) {
+                (Some(footprint), _) => footprint.touches(tree),
+                (None, Work::Execute { plan, .. }) => plan.steps.iter().any(|step| {
+                    let change = step.describe();
+                    change.paths().any(|path| path.starts_with(tree))
+                }),
+                (None, Work::Replay(..)) => false,
+            })
+            .map(|job| self.named(job));
+        running.chain(waiting).collect()
     }
 
     /// Whether a plan, an undo or a redo runs or waits its turn.
@@ -1633,8 +1648,9 @@ impl Executor {
     }
 
     /// The entry the undo queued at `i` takes, which the plan `of` made
-    /// (`JournalEntry::asked`), and its steps: unless that plan has not
-    /// ended (the undo waits for it, as Undo does, ADR-079, 9), or a plan
+    /// (`JournalEntry::asked`), and its steps: unless that plan, or a redo
+    /// asked before the undo, has not ended (the undo waits for it, as Undo
+    /// does, ADR-079, 9), or a plan
     /// asked after it, its entry still in the history, running or
     /// waiting, touched what it did (`Footprint::conflicts`): undone
     /// first, in the order asked, it would put back each state; this one
@@ -1652,7 +1668,19 @@ impl Executor {
             } => unended(Some(plan.id), continues.as_ref().map(|c| c.seq), at),
             Work::Replay(..) => false,
         });
-        if queued || lane.started.iter().any(|b| unended(b.plan, b.joins, at)) {
+        // A redo asked before it may put back an entry asked after this
+        // one, which then must not have touched what it did: decided once
+        // the redo ended.
+        let redoing = lane
+            .queue
+            .iter()
+            .take(i)
+            .any(|job| matches!(job.work, Work::Replay(Direction::Redo, _)))
+            || lane
+                .started
+                .iter()
+                .any(|b| b.plan.is_none() && b.adds == Direction::Undo);
+        if queued || redoing || lane.started.iter().any(|b| unended(b.plan, b.joins, at)) {
             return Named::Waits;
         }
         let Some(entry) = entry else {
@@ -2106,6 +2134,22 @@ impl Executor {
         }
     }
 
+    /// What the plan whose entry is at `seq` had left when a step's error
+    /// stopped it goes, the action being undone: it never goes on by
+    /// itself once its server answers, nor is retried (what it left of a
+    /// file cut short removed, out of the lock).
+    fn let_go_of_stopped(&self, seq: u64) {
+        let gone: VecDeque<Stopped> = {
+            let mut stopped = self.stopped.lock();
+            let (gone, kept) = std::mem::take(&mut *stopped)
+                .into_iter()
+                .partition(|s| s.seq == seq);
+            *stopped = kept;
+            gone
+        };
+        drop(gone);
+    }
+
     /// Take back the entry `target` of one stack and journal what takes
     /// that back on the other, the run `touched` what it says. A run that
     /// stops partway stays on its stack to be retried; its steps are
@@ -2128,6 +2172,9 @@ impl Executor {
             return Some(self.refuse(&Plan::new(title), RunKind::Undo, reason, None));
         }
         let mut entry = self.journal.lock().take(direction, target?)?;
+        if direction == Direction::Undo {
+            self.let_go_of_stopped(entry.seq);
+        }
         let title = match direction {
             Direction::Undo => format!("undo {}", entry.title),
             Direction::Redo => entry.title.clone(),
@@ -3445,6 +3492,63 @@ mod tests {
                 ExecEvent::GoesOn { .. } | ExecEvent::WaitsForServer { .. }
             )),
             "never waited for its server"
+        );
+    }
+
+    /// An action undone while it waits for its server never goes on by
+    /// itself once the server answers, nor is retried: what it had left
+    /// goes with what it did.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_action_undone_while_it_waits_for_its_server_does_not_go_on() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("t-")
+            .tempdir_in(base)
+            .unwrap();
+        let served = tmp.path().join("served share");
+        std::fs::create_dir(&served).unwrap();
+        crate::fs::reach::pretend_remote(&served);
+        let executor = Executor::new(Scheduler::new(2));
+        executor.set_server_look(Duration::from_millis(100));
+        let mode = |mode: u32| {
+            std::fs::set_permissions(&served, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let here = tmp.path().join("it's here");
+        let plan = Plan::with_steps(
+            "make folders",
+            vec![
+                Box::new(super::super::Mkdir { path: here.clone() }) as Box<dyn Operation>,
+                Box::new(super::super::Mkdir {
+                    path: served.join("there"),
+                }),
+            ],
+        );
+        mode(0o000);
+        let r = executor.execute_blocking(&plan, &CancelToken::new());
+        assert!(r.error.is_some() && r.applied == 1, "{r:?}");
+        events_until(
+            &executor,
+            |e| matches!(e, ExecEvent::WaitsForServer { plan: p } if *p == plan.id),
+        );
+        let undone = executor
+            .undo_of_blocking(plan.id, &CancelToken::new())
+            .unwrap();
+        assert!(undone.error.is_none() && !here.exists(), "{undone:?}");
+        assert!(!executor.can_retry(plan.id) && executor.last_stopped().is_none());
+        executor.events().try_iter().for_each(drop);
+        mode(0o755);
+        // Several looks at the server, answering.
+        std::thread::sleep(Duration::from_millis(600));
+        assert!(!served.join("there").exists() && !here.exists());
+        assert!(
+            executor
+                .events()
+                .try_iter()
+                .all(|e| !matches!(e, ExecEvent::GoesOn { .. })),
+            "it did not go on"
         );
     }
 

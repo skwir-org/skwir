@@ -44,7 +44,7 @@ A call about files names each as a `File`:
 
 | Field | Type | |
 | --- | --- | --- |
-| `handle` | u32 | Reads its bytes (`read`); valid while the call is answered. |
+| `handle` | u32 | Reads its bytes (`read`); valid while the call is answered. Each call's handles are its own (never assume `1`): a read of a call given up reaches no file of the next. |
 | `name` | string | A name that is not UTF-8 is shown lossily. |
 | `path` | string | For display only. |
 | `mime` | string, optional | When known. |

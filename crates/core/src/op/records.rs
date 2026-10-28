@@ -1,8 +1,9 @@
 //! Where a trash keeps an item and what it says of it (ADR-034, ADR-035):
 //! freedesktop.org's trash (`files/x` and `info/x.trashinfo`, text) and,
 //! on Windows, the Recycle Bin (`$Rxxxxxx.ext` and `$Ixxxxxx.ext` beside
-//! it in `$Recycle.Bin\<SID>`, a binary record). Read from paths alone,
-//! but what a record says, which is read from its bytes: a volume's trash
+//! it in `$Recycle.Bin\<SID>`, a binary record). Read from paths alone
+//! (where the home trash's links lead looked up once, on a worker), but
+//! what a record says, which is read from its bytes: a volume's trash
 //! by its names (`.Trash-<uid>`, `.Trash/<uid>`), the home trash by where
 //! it is (`$XDG_DATA_HOME/Trash`), never a folder merely named `Trash`.
 
@@ -80,23 +81,38 @@ pub(crate) fn home_trash() -> Option<PathBuf> {
     crate::xdg::data_home().map(|data| data.join("Trash"))
 }
 
-/// Whether `trash` is the home trash: as named, or as its links resolve
-/// (`/home` a link to `/var/home`), which is looked up once.
-fn is_home_trash(trash: &Path) -> bool {
-    static HOME: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
-    HOME.get_or_init(|| {
+/// The home trash as named, and as its links resolve (`/home` a link to
+/// `/var/home`): looked up once ([`resolve_home_trash`]).
+static HOME_TRASH: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
+
+/// Look up once where the home trash's links lead, which reads the disk:
+/// on a worker, as the app starts (`App::new`), so the window's thread
+/// never does (a home on a server that answers slowly).
+pub(crate) fn resolve_home_trash() {
+    HOME_TRASH.get_or_init(|| {
         let Some(named) = home_trash() else {
             return Vec::new();
         };
         let resolved = named
             .parent()
-            .and_then(|data| std::fs::canonicalize(data).ok())
+            .and_then(|data| crate::os_path::canonical(data).ok())
             .map(|data| data.join("Trash"))
             .filter(|resolved| *resolved != named);
         std::iter::once(named).chain(resolved).collect()
-    })
-    .iter()
-    .any(|home| home == trash)
+    });
+}
+
+/// Whether `trash` is the home trash: as named, or as its links resolve,
+/// looked up where reading may wait; on the window's thread, as named
+/// until a worker has looked them up.
+fn is_home_trash(trash: &Path) -> bool {
+    if !crate::scheduler::on_window_thread() {
+        resolve_home_trash();
+    }
+    match HOME_TRASH.get() {
+        Some(homes) => homes.iter().any(|home| home == trash),
+        None => home_trash().as_deref() == Some(trash),
+    }
 }
 
 /// freedesktop: a trash is the home trash (`$XDG_DATA_HOME/Trash`), or

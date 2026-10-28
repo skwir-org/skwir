@@ -19,7 +19,8 @@ use zbus::blocking::Connection;
 
 static SESSION: Mutex<Option<Connection>> = Mutex::new(None);
 
-/// The session bus's connection, made when first asked, kept after.
+/// The session bus's connection, made when first asked, kept until it
+/// ends (the session's bus started again): the next asking makes another.
 ///
 /// # Errors
 /// When there is no session bus (a headless run).
@@ -31,6 +32,17 @@ pub fn session() -> zbus::Result<Connection> {
     let bus = Connection::session()?;
     *held = Some(bus.clone());
     Ok(bus)
+}
+
+/// Let go of `bus` as the session's connection if it is the one kept: it
+/// ended, and what asks next is given a connection that works.
+fn let_go_of_ended(bus: &Connection) {
+    let mut held = SESSION.lock().unwrap_or_else(PoisonError::into_inner);
+    if held.as_ref().is_some_and(|kept| {
+        kept.server_guid() == bus.server_guid() && kept.unique_name() == bus.unique_name()
+    }) {
+        *held = None;
+    }
 }
 
 /// Call `told` with each signal on `bus` that one of `rules` matches, on a
@@ -65,10 +77,18 @@ pub fn listen(
     mut told: impl FnMut(&zbus::Message),
 ) {
     // Woken when stopped, as the connection is not closed: by a thread
-    // waiting for the stop (a token says it on a channel).
+    // waiting for the stop (a token says it on a channel), or for this
+    // listening to end, the bus gone first.
+    struct Ends(CancelToken);
+    impl Drop for Ends {
+        fn drop(&mut self) {
+            self.0.cancel();
+        }
+    }
+    let listening = Ends(stop.child());
     let ended = Arc::new(event_listener::Event::new());
     {
-        let (ended, signal) = (Arc::clone(&ended), stop.subscribe());
+        let (ended, signal) = (Arc::clone(&ended), listening.0.subscribe());
         let waiting = std::thread::Builder::new()
             .name("skwir-bus-end".into())
             .spawn(move || {
@@ -109,8 +129,13 @@ pub fn listen(
             })
             .await;
             match next {
-                // Stopped, or the bus gone.
-                None | Some(None) => return,
+                // Stopped.
+                None => return,
+                // The bus gone: whoever asks next connects again.
+                Some(None) => {
+                    let_go_of_ended(bus);
+                    return;
+                }
                 Some(Some(Ok(message))) => told(&message),
                 Some(Some(Err(_))) => {}
             }

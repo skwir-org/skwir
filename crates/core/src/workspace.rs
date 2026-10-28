@@ -832,14 +832,27 @@ impl Pane {
         }
     }
 
-    /// Take the current step of `history` back, as if it had never been
-    /// gone to: the step before is current again, and the one taken back
-    /// goes with those ahead of it. The entry the cursor was on when that
-    /// step was left is selected again once the listing has it.
-    pub(crate) fn take_step_back(&mut self) {
-        let Some(before) = self.history_pos.checked_sub(1) else {
+    /// Take step `from` of `history` back, as if it had never been gone
+    /// to: the step before, `location`, the one now shown, is current
+    /// again, and the one taken back goes with those ahead of it. The entry
+    /// the cursor was on when that step was left is selected again once the
+    /// listing has it. A history that changed since `from` was read (a
+    /// navigation from elsewhere meanwhile, an agent's) no longer has it
+    /// there: what is shown is a step of its own, `left` kept for the step
+    /// left, as `go_to` does.
+    pub(crate) fn take_step_back(
+        &mut self,
+        from: usize,
+        location: &Location,
+        left: Option<EntryId>,
+    ) {
+        let Some(before) = from.checked_sub(1) else {
             return;
         };
+        if self.history_pos != from || self.history.get(before) != Some(location) {
+            self.go_on(location.clone(), left);
+            return;
+        }
         self.history.truncate(self.history_pos);
         self.left_at.truncate(self.history.len());
         self.history_pos = before;
@@ -961,6 +974,17 @@ impl Pane {
         }
         self.filter = text.map(Arc::from);
         self.read = text.and(read).map(Arc::new);
+        self.filter_changed();
+    }
+
+    /// The filter's text read again by `read`, the reader there is now
+    /// (a plugin that reads filters turned on or off): `None` filters by
+    /// names. Its text stays.
+    pub(crate) fn read_filter_again(&mut self, read: Option<ReadFilter>) {
+        if self.filter.is_none() {
+            return;
+        }
+        self.read = read.map(Arc::new);
         self.filter_changed();
     }
 

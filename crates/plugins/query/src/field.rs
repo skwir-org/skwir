@@ -79,26 +79,29 @@ fn scope_said(app: &App, scope: &Location) -> String {
 }
 
 /// The search of `expr` in `scope`, as the field runs it: a folder is its
-/// root, a tag adds itself as a term every match has, searched from home;
-/// any other place (Recent) is searched as what it lists (`in:recent:`).
-pub fn search(expr: &str, scope: &Location, ask: &Ask) -> Invocation {
-    if scope.path().is_none() && &*scope.scheme != "tags" {
-        let expr = format!("{expr} in:{}", lang::quote(&scope.to_string()));
-        return Invocation::with_args(
-            "query.search",
-            &serde_json::json!({ "expr": expr.trim(), "pane": ask.pane, "remember": true }),
-        );
-    }
-    let (expr, root) = match (scope.path(), &*scope.scheme) {
-        (Some(path), _) => (expr.to_owned(), Some(path)),
-        (None, "tags") => {
-            let tag = scope.rest.trim_start_matches('/');
-            (
-                format!("tag:{} {expr}", lang::quote(tag)).trim().to_owned(),
-                skwir_core::os_path::home(),
-            )
-        }
-        _ => (expr.to_owned(), None),
+/// root; a place of tags (a tag's) adds each tag it says of all it lists
+/// (`LocationProvider::tags_shown`) as a term every match has, searched
+/// from the folder it is of, else home; any other place (Recent) is
+/// searched as what it lists (`in:recent:`).
+pub fn search(app: &App, expr: &str, scope: &Location, ask: &Ask) -> Invocation {
+    let (expr, root) = if let Some(path) = scope.path() {
+        (expr.to_owned(), Some(path))
+    } else {
+        let Some((tags, base)) = tagged(app, scope) else {
+            let expr = format!("{expr} in:{}", lang::quote(&scope.to_string()));
+            return Invocation::with_args(
+                "query.search",
+                &serde_json::json!({ "expr": expr.trim(), "pane": ask.pane, "remember": true }),
+            );
+        };
+        let terms: Vec<String> = tags
+            .iter()
+            .map(|tag| format!("tag:{}", lang::quote(tag)))
+            .collect();
+        (
+            format!("{} {expr}", terms.join(" ")).trim().to_owned(),
+            base.or_else(skwir_core::os_path::home),
+        )
     };
     Invocation::with_args(
         "query.search",
@@ -111,11 +114,23 @@ pub fn search(expr: &str, scope: &Location, ask: &Ask) -> Invocation {
     )
 }
 
+/// The tags `scope` says of everything it lists, as its provider says
+/// them (a tag's place: its tag and those it is narrowed to), and the
+/// folder it is of (`Trail::base`); `None` for a place that says none.
+fn tagged(app: &App, scope: &Location) -> Option<(Vec<String>, Option<PathBuf>)> {
+    let provider = app.provider(&scope.scheme)?;
+    if provider.searches(scope) {
+        return None;
+    }
+    let tags = provider.tags_shown(scope);
+    (!tags.is_empty()).then(|| (tags, provider.trail(scope).and_then(|t| t.base)))
+}
+
 /// The search of `expr` in `scope` shown as its words are typed (ADR-098):
 /// in place of the step the pane shows, not remembered. None where each
 /// search costs: one that reads the files, the whole disk, a folder on a
 /// server (each walk round trips); those wait for Enter.
-fn live(expr: &str, scope: &Location, ask: &Ask) -> Option<Invocation> {
+fn live(app: &App, expr: &str, scope: &Location, ask: &Ask) -> Option<Invocation> {
     if lang::parse(expr).ok()?.reads_files() {
         return None;
     }
@@ -124,7 +139,7 @@ fn live(expr: &str, scope: &Location, ask: &Ask) -> Option<Invocation> {
     {
         return None;
     }
-    let mut run = search(expr, scope, ask);
+    let mut run = search(app, expr, scope, ask);
     run.args["remember"] = false.into();
     run.args["in_place"] = true.into();
     Some(run)
@@ -178,30 +193,37 @@ fn typed(app: &App, ask: &Ask) -> Answer {
     // text cannot be searched yet.
     let first = completed.items.first().filter(|_| completed.typing);
     let problem = assist::problem(text, caret);
+    // What is searched: the words typed, the value being typed taken; in
+    // the scope, and elsewhere below.
+    let expr = first.map_or_else(|| words.to_owned(), |item| with(item).trim().to_owned());
     if let Some(problem) = problem.filter(|_| first.is_none()) {
         let mut row = Suggestion::new(Section::Run, problem).icon("warning");
         row.error = true;
         rows.push(row);
     } else if completed.typing && first.is_none() {
-        let mut row = Suggestion::new(Section::Run, "Type a value to search").icon("warning");
+        let said = if assist::quote_open(text) {
+            "Close the quote to search"
+        } else {
+            "Type a value to search"
+        };
+        let mut row = Suggestion::new(Section::Run, said).icon("warning");
         row.error = true;
         rows.push(row);
     } else {
-        let expr = first.map_or_else(|| words.to_owned(), |item| with(item).trim().to_owned());
         let mut row = Suggestion::new(Section::Run, format!("Search “{expr}”"))
             .detail(scope_said(app, &scope))
             .icon("search")
-            .runs(search(&expr, &scope, ask));
+            .runs(search(app, &expr, &scope, ask));
         if let Some(home) = skwir_core::os_path::home().map(Location::from_path)
             && home != scope
         {
-            row.alt = Some(search(&expr, &home, ask));
+            row.alt = Some(search(app, &expr, &home, ask));
         }
         if let Some(item) = first {
             row.completion = Some(with(item));
             row.rest = rest_of(item);
         } else {
-            row.live = live(&expr, &scope, ask);
+            row.live = live(app, &expr, &scope, ask);
         }
         rows.push(row);
     }
@@ -218,7 +240,7 @@ fn typed(app: &App, ask: &Ask) -> Answer {
         row.rest = rest_of(item);
         row.tag = item.tag.as_deref().map(skwir_core::metadata::TagRef::of);
         if !is_key {
-            row.run = Some(search(with(item).trim(), &scope, ask));
+            row.run = Some(search(app, with(item).trim(), &scope, ask));
         }
         rows.push(row);
     }
@@ -228,20 +250,15 @@ fn typed(app: &App, ask: &Ask) -> Answer {
         let mut row = Suggestion::new(Section::Reading, reading.label)
             .detail(reading.expr.clone())
             .icon("sliders")
-            .runs(search(&reading.expr, &scope, ask));
+            .runs(search(app, &reading.expr, &scope, ask));
         row.detail_typed = true;
         row.completion = Some(reading.expr.clone());
         rows.push(row);
     }
     // The same search elsewhere: the folder shown, home, the whole disk,
-    // and the files that contain the words.
+    // and the files that contain the words. Made of the words typed, never
+    // of the scope's search (a place's `in:`, a tag's term).
     if !rows.first().is_some_and(|r| r.error) {
-        let expr = rows
-            .first()
-            .and_then(|r| r.run.as_ref())
-            .and_then(|r| r.args.get("expr"))
-            .and_then(|e| e.as_str())
-            .map_or_else(|| words.to_owned(), str::to_owned);
         let shown = ask.dir.as_ref().map(Location::from_path);
         let home = skwir_core::os_path::home().map(Location::from_path);
         let disk = Location::from_path(PathBuf::from(std::path::MAIN_SEPARATOR_STR));
@@ -263,7 +280,7 @@ fn typed(app: &App, ask: &Ask) -> Answer {
                 Suggestion::new(Section::SearchIn, title)
                     .icon(icon)
                     .rank(rank)
-                    .runs(search(&expr, &other, ask)),
+                    .runs(search(app, &expr, &other, ask)),
             );
         }
         if lang::parse(words).is_ok_and(|q| !q.reads_files()) && assist::only_words(words) {
@@ -272,6 +289,7 @@ fn typed(app: &App, ask: &Ask) -> Answer {
                     .icon("contents")
                     .rank(3)
                     .runs(search(
+                        app,
                         &format!("content:{}", lang::quote(words)),
                         &scope,
                         ask,
@@ -286,7 +304,7 @@ fn typed(app: &App, ask: &Ask) -> Answer {
                     .detail(names.clone())
                     .icon("search")
                     .rank(4)
-                    .runs(search(&names, &scope, ask)),
+                    .runs(search(app, &names, &scope, ask)),
             );
         }
     }
@@ -329,7 +347,7 @@ fn at_words(app: &App, ask: &Ask) -> Suggestion {
         .detail(scope_said(app, &scope))
         .icon("search")
         .rank(1)
-        .runs(search(&expr, &scope, ask))
+        .runs(search(app, &expr, &scope, ask))
 }
 
 /// Before anything is typed, with a scope: the terms to add, the searches
@@ -378,7 +396,7 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
             .detail(format!("in {}", app.location_title(&scope)))
             .icon("recent")
             .rank(i32::try_from(rank).unwrap_or(0))
-            .runs(search(&words, &scope, ask));
+            .runs(search(app, &words, &scope, ask));
         row.typed = true;
         row.forget = Some(Invocation::with_args(
             "query.forget_recent",
@@ -449,6 +467,34 @@ fn keep(app: &App, list: &[Recent]) {
     }
 }
 
+/// Change the searches remembered as `edit` says, one change at a time
+/// (each reads and writes the cache's file): on a worker when asked on the
+/// window's thread, which a cache on a sleeping disk must not hold; where
+/// it is asked anywhere else (a script's call, a test).
+fn change(app: &App, edit: impl FnOnce(&mut Vec<Recent>) + Send + 'static) {
+    static CHANGING: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+    let changed = |app: &App| {
+        let _one = CHANGING.lock();
+        let mut list = recent(app);
+        edit(&mut list);
+        keep(app, &list);
+    };
+    if !skwir_core::scheduler::on_window_thread() {
+        return changed(app);
+    }
+    let weak = app.weak();
+    app.scheduler.spawn(
+        skwir_core::scheduler::Priority::Background,
+        "query.recent",
+        app.lifetime().child(),
+        move || {
+            if let Some(app) = weak.upgrade() {
+                changed(&app);
+            }
+        },
+    );
+}
+
 /// Remember a search run from the field, first; an older run of it goes.
 /// Nothing is said of it in the logs: what is looked for is the user's.
 pub fn remember(app: &App, expr: &str, root: Option<&Path>) {
@@ -459,28 +505,30 @@ pub fn remember(app: &App, expr: &str, root: Option<&Path>) {
         expr: expr.trim().to_owned(),
         root: root.map(Path::to_path_buf),
     };
-    let mut list = recent(app);
-    list.retain(|r| *r != run);
-    list.insert(0, run);
-    list.truncate(RECENT);
-    keep(app, &list);
+    change(app, move |list| {
+        list.retain(|r| *r != run);
+        list.insert(0, run);
+        list.truncate(RECENT);
+    });
 }
 
 /// Forget a search remembered.
 pub fn forget(app: &App, expr: &str, root: Option<&Path>) {
-    let mut list = recent(app);
-    list.retain(|r| !(r.expr == expr && r.root.as_deref() == root));
-    keep(app, &list);
+    let (expr, root) = (expr.to_owned(), root.map(Path::to_path_buf));
+    change(app, move |list| {
+        list.retain(|r| !(r.expr == expr && r.root == root));
+    });
 }
 
 /// The searches remembered are let go of: the user turned remembering off.
 pub fn forget_all(app: &App) {
-    keep(app, &[]);
+    change(app, Vec::clear);
 }
 
-/// Whether `location` is one Ctrl+F could search: a folder or a tag.
-pub fn searchable(location: &Location) -> bool {
-    &*location.scheme == PATH_SCHEME || &*location.scheme == "tags"
+/// Whether `location` is one Ctrl+F could search: a folder, or a place
+/// that says the tags of all it lists (a tag's, `search`).
+pub fn searchable(app: &App, location: &Location) -> bool {
+    &*location.scheme == PATH_SCHEME || tagged(app, location).is_some()
 }
 
 #[cfg(test)]
@@ -580,14 +628,85 @@ mod tests {
         assert!(r.iter().any(|s| s.section == Section::SearchIn));
     }
 
+    /// A place of tags, as a tags plugin answers for one narrowed and in a
+    /// folder: what it says of everything it lists, and that folder.
+    struct Tagged;
+
+    impl skwir_core::location::LocationProvider for Tagged {
+        fn scheme(&self) -> &'static str {
+            "tagged"
+        }
+        fn open(
+            &self,
+            _: &Location,
+            _: skwir_core::location::OpenContext,
+        ) -> anyhow::Result<std::sync::Arc<dyn skwir_core::location::OpenLocation>> {
+            anyhow::bail!("never opened here")
+        }
+        fn tags_shown(&self, location: &Location) -> Vec<String> {
+            match location.rest.as_str() {
+                "/" => Vec::new(),
+                _ => vec!["Places/France".to_owned(), "C#".to_owned()],
+            }
+        }
+        fn trail(&self, _: &Location) -> Option<skwir_core::location::Trail> {
+            Some(skwir_core::location::Trail {
+                base: Some(PathBuf::from("/data/it's photos")),
+                ..skwir_core::location::Trail::default()
+            })
+        }
+    }
+
+    /// A tag's place adds its tags, as its provider says them, never as its
+    /// text is written (escaped, narrowed), searched from the folder it is
+    /// of; a place that says no tag is searched as what it lists.
     #[test]
-    fn a_tag_scope_searches_home_for_the_tag() {
+    fn a_tag_scope_searches_for_the_tags_its_provider_says() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        app.register_provider("test", std::sync::Arc::new(Tagged));
         let a = ask("dunes");
-        let tag = Location::new("tags", "/Places/France");
-        let run = search("dunes", &tag, &a);
-        assert_eq!(run.args["expr"], "tag:Places/France dunes");
-        let folder = search("dunes", &Location::from_path("/data/guide"), &a);
+        let tag = Location::new("tagged", "/Places/France?with=C%23");
+        let run = search(&app, "dunes", &tag, &a);
+        assert_eq!(run.args["expr"], "tag:Places/France tag:C# dunes");
+        assert_eq!(run.args["root"], "/data/it's photos");
+        let all = search(&app, "dunes", &Location::new("tagged", "/"), &a);
+        assert_eq!(all.args["expr"], "dunes in:tagged:/");
+        let folder = search(&app, "dunes", &Location::from_path("/data/guide"), &a);
         assert_eq!(folder.args["expr"], "dunes");
         assert_eq!(folder.args["remember"], true);
+        assert!(searchable(&app, &tag) && !searchable(&app, &Location::new("tagged", "/")));
+    }
+
+    /// The same search elsewhere is the words typed, never the scope's own
+    /// search (a place's `in:`).
+    #[test]
+    fn the_same_search_elsewhere_is_of_the_words_typed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let mut recent = ask("dunes");
+        recent.scope = Some(Location::new("recent", ""));
+        let r = Field.suggest(&app, &recent, &CancelToken::new()).rows;
+        assert_eq!(r[0].run.as_ref().unwrap().args["expr"], "dunes in:recent:");
+        let elsewhere: Vec<&Suggestion> = r
+            .iter()
+            .filter(|s| s.section == Section::SearchIn)
+            .collect();
+        let folder = elsewhere
+            .iter()
+            .find(|s| s.icon.as_deref() == Some("folder"))
+            .expect("the folder");
+        assert_eq!(folder.run.as_ref().unwrap().args["expr"], "dunes");
+        assert_eq!(folder.run.as_ref().unwrap().args["root"], "/data/guide");
+    }
+
+    #[test]
+    fn a_quote_not_closed_says_so() {
+        let r = rows(r#""my file"#);
+        assert!(
+            r[0].error && r[0].title == "Close the quote to search",
+            "{}",
+            r[0].title
+        );
     }
 }

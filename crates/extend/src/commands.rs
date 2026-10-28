@@ -124,7 +124,16 @@ fn run(
         title.to_owned(),
     );
     let cancel = app.lifetime().child();
-    app.scheduler.spawn(
+    // What it asks reads the files it is handed (their types, privacy):
+    // in their remote's lane, where a server that stops answering holds
+    // only its own (ADR-077).
+    let lane = refs
+        .iter()
+        .map(|r| skwir_core::fs::reach::lane(&r.path))
+        .find(|lane| !lane.is_shared())
+        .unwrap_or(skwir_core::scheduler::Lane::SHARED);
+    app.scheduler.spawn_in(
+        lane,
         Priority::Normal,
         "plugin-command",
         cancel.clone(),

@@ -309,11 +309,16 @@ impl PluginHost {
         // The gate closes before the withdrawal, so a worker of the plugin
         // that publishes in between cannot bring its items back.
         app.registry.set_owner_enabled(id, enabled);
+        let readers = app.registry.filter_readers.owners();
         if enabled {
             plugin.register(app);
         } else {
             app.unregister_owner(id);
             plugin.on_disable(app);
+        }
+        // What a pane's filter keeps is the reader's there is now.
+        if app.registry.filter_readers.owners() != readers {
+            app.read_filters_again();
         }
         app.settings
             .set(&Self::setting_key(id), toml::Value::Boolean(enabled));

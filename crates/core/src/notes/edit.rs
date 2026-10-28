@@ -300,27 +300,43 @@ impl SetNotes {
             );
         }
         if let Some(change) = &self.change_tags {
-            let mut said = Vec::new();
+            // Each part said both ways at once: a name or a tag may hold
+            // any word.
+            let mut said: Vec<(String, String)> = Vec::new();
             for r in &change.rename {
                 said.push(match &r.to {
-                    Some(to) => format!("rename the tag “{}” to “{to}” on “{name}”", r.from),
-                    None => format!("take {} off “{name}”", r.from),
+                    Some(to) => (
+                        format!("rename the tag “{}” to “{to}” on “{name}”", r.from),
+                        format!("renamed the tag “{}” to “{to}” on “{name}”", r.from),
+                    ),
+                    None => (
+                        format!("take {} off “{name}”", r.from),
+                        format!("took {} off “{name}”", r.from),
+                    ),
                 });
             }
             if !change.add.is_empty() {
-                said.push(format!("tag “{name}” {}", change.add.join(", ")));
+                let added = change.add.join(", ");
+                said.push((
+                    format!("tag “{name}” {added}"),
+                    format!("tagged “{name}” {added}"),
+                ));
             }
-            let taken: Vec<&String> = change.remove.iter().chain(&change.within).collect();
+            let taken: Vec<&str> = change
+                .remove
+                .iter()
+                .chain(&change.within)
+                .map(String::as_str)
+                .collect();
             if !taken.is_empty() {
-                let taken: Vec<&str> = taken.iter().map(|t| t.as_str()).collect();
-                said.push(format!("take {} off “{name}”", taken.join(", ")));
+                let taken = taken.join(", ");
+                said.push((
+                    format!("take {taken} off “{name}”"),
+                    format!("took {taken} off “{name}”"),
+                ));
             }
-            let will = said.join(" and ");
-            let did = will
-                .replacen("rename ", "renamed ", 1)
-                .replacen("tag “", "tagged “", 1)
-                .replacen("take ", "took ", 1);
-            return (will, did, keys::TAGS);
+            let (will, did): (Vec<String>, Vec<String>) = said.into_iter().unzip();
+            return (will.join(" and "), did.join(" and "), keys::TAGS);
         }
         if let Some(tags) = &self.tags {
             return if tags.is_empty() {
@@ -773,6 +789,47 @@ impl Operation for RestoreNotes {
 mod tests {
     use super::*;
     use crate::notes::{Holds, Kept, NotesStore};
+
+    /// A change of tags is said in the past as it was said to come, part by
+    /// part, whatever words the file's name and the tags hold.
+    #[test]
+    fn a_tag_change_is_said_as_done_part_by_part() {
+        let entry = EntryRef::new(
+            crate::entry::FileId::new(1, 1),
+            "/files/take rename tag “x”.txt",
+        );
+        let change = TagChange {
+            add: vec!["new".into()],
+            remove: vec!["old".into()],
+            rename: vec![
+                TagRename {
+                    from: "a".into(),
+                    to: Some("b".into()),
+                },
+                TagRename {
+                    from: "c".into(),
+                    to: Some("d".into()),
+                },
+            ],
+            ..TagChange::default()
+        };
+        let edit = SetNotes::new(Arc::new(NoteStores::default()), entry, Policy::default())
+            .change_tags(change);
+        let (will, did, _) = edit.words();
+        let name = "take rename tag “x”.txt";
+        assert_eq!(
+            will,
+            format!(
+                "rename the tag “a” to “b” on “{name}” and rename the tag “c” to “d” on “{name}” and tag “{name}” new and take old off “{name}”"
+            )
+        );
+        assert_eq!(
+            did,
+            format!(
+                "renamed the tag “a” to “b” on “{name}” and renamed the tag “c” to “d” on “{name}” and tagged “{name}” new and took old off “{name}”"
+            )
+        );
+    }
 
     fn home_tempdir() -> tempfile::TempDir {
         let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");

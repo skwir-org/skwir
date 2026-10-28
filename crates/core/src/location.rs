@@ -402,6 +402,15 @@ pub trait LocationProvider: Send + Sync {
         Vec::new()
     }
 
+    /// The folders opening `location` reads what is under, as its text
+    /// resolves them: a search's root, or what the place it searches
+    /// within reads. An agent's call opens it only when none is private
+    /// or would reach another machine (`App::open_location`, ADR-044).
+    /// Answered from the text alone, like `title`.
+    fn folders_read(&self, _location: &Location) -> Vec<PathBuf> {
+        Vec::new()
+    }
+
     /// What a pane showing `location` says when it lists nothing, in the
     /// user's words: what the place holds and how it fills ("The shelf is
     /// empty"). Answered from the text alone, like `title`.

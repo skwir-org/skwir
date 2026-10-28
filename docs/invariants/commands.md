@@ -139,8 +139,18 @@ control plugin's `run`:
   (`App::ask`, a `Review::Question`). A user-only command is refused and
   not listed.
 - Its plans say "An agent proposes" (`Plan::by`).
+- What it opens is checked as it resolves, never only as its arguments
+  are written: a relative path read in the pane's folder, a folder's
+  location (`path:`), a search's `in:`. `App::open_location` refuses an
+  agent's call a location whose folders (`App::folders_read`: a folder
+  itself, else `LocationProvider::folders_read`, which a provider that
+  reads folders a location's text names answers) are private or would
+  reach another machine (`Checker::admits`); code that reads a folder
+  typed for it otherwise (the address field's names for `ui.suggest`)
+  asks `permissions::agent_call` itself.
 - Every private path is removed from what it is answered
-  (`Checker::redact`).
+  (`Checker::redact`): a string that is one, or that writes one within
+  it (an error, a plan's title), a marked folder's as a listed one's.
 - Redaction removes what an answer names, not what it counted. So the
   call runs as an agent's (`permissions::as_agent`), where the selection a
   command is handed (`App::targets`, `selected_refs`) has no private file,

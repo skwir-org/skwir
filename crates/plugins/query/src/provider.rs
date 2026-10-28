@@ -147,6 +147,24 @@ impl LocationProvider for QueryProvider {
             })
             .unwrap_or_default()
     }
+
+    /// Its root, or what the place it searches within reads (a folder
+    /// written `in:path:/…` among them): what an agent's call may open.
+    fn folders_read(&self, location: &Location) -> Vec<std::path::PathBuf> {
+        match lang::parse(&location.rest) {
+            Ok(query) => match query.within {
+                Some(place) => self
+                    .app
+                    .upgrade()
+                    .map(|app| app.folders_read(&place))
+                    .unwrap_or_default(),
+                None => vec![query.root],
+            },
+            // Refused when opened: nothing is read.
+            Err(_) => Vec::new(),
+        }
+    }
+
     fn icon(&self, _location: &Location) -> Option<&'static str> {
         Some("search")
     }

@@ -490,10 +490,21 @@ thread_local! {
 }
 
 thread_local! {
-    /// The job the calling worker runs now: its pool and sequence number,
-    /// for [`progress`].
-    static RUNNING: std::cell::RefCell<Option<(std::sync::Weak<Inner>, u64)>> =
+    /// The job the calling worker runs now: its pool, sequence number and
+    /// lane, for [`progress`] and [`running_lane`].
+    static RUNNING: std::cell::RefCell<Option<(std::sync::Weak<Inner>, u64, Lane)>> =
         const { std::cell::RefCell::new(None) };
+}
+
+/// The lane of the job the calling thread runs, `None` outside a job: work
+/// already in a remote's lane reads there in place, never queueing behind
+/// itself for a turn of the lane it holds (a privacy check a field's read
+/// asks, `permissions::Checker`).
+pub fn running_lane() -> Option<Lane> {
+    RUNNING
+        .try_with(|running| running.borrow().as_ref().map(|(_, _, lane)| *lane))
+        .ok()
+        .flatten()
 }
 
 /// Say that the job the calling thread runs goes on: a job that serves
@@ -501,7 +512,7 @@ thread_local! {
 /// long it has run (`Scheduler::stalled`). Nothing outside a job.
 pub fn progress() {
     let _ = RUNNING.try_with(|running| {
-        if let Some((pool, seq)) = &*running.borrow()
+        if let Some((pool, seq, _)) = &*running.borrow()
             && let Some(inner) = pool.upgrade()
             && let Some(began) = inner.queue.lock().began.get_mut(seq)
         {
@@ -759,7 +770,9 @@ fn worker(inner: &Arc<Inner>, standing_in: bool) {
 fn run(inner: &Arc<Inner>, task: Task) {
     let t = Instant::now();
     JOB.with(|job| *job.borrow_mut() = Some(task.cancel.clone()));
-    RUNNING.with(|running| *running.borrow_mut() = Some((Arc::downgrade(inner), task.seq)));
+    RUNNING.with(|running| {
+        *running.borrow_mut() = Some((Arc::downgrade(inner), task.seq, task.lane));
+    });
     // A job that panics (a malformed file in a third-party parser, for
     // instance) must not take the worker thread with it: the pool is
     // never respawned, and the caller would wait forever for a result.

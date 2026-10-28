@@ -435,6 +435,14 @@ impl App {
                 move || under_way.sweep_left(),
             );
         }
+        // Where the home trash's links lead, which telling a trashed item
+        // asks: looked up here, never on the window's thread.
+        app.scheduler.spawn(
+            Priority::Background,
+            "trash.home",
+            app.lifetime.child(),
+            op::records::resolve_home_trash,
+        );
         builtin::register(&app);
         crate::notes::commands::register(&app);
         // General's own settings before the tabs': a page shows its
@@ -649,6 +657,42 @@ impl App {
         }
     }
 
+    /// Read every pane's filter again with the filter reader there is now
+    /// (`Registry::filter_readers`), its text kept: a plugin that reads
+    /// filters turned off leaves nothing of its reading in a pane, names
+    /// filtered instead, and turned on reads them (`PluginHost`).
+    pub(crate) fn read_filters_again(&self) {
+        let filters: Vec<(PaneId, Arc<str>)> = self
+            .workspace
+            .read()
+            .panes()
+            .iter()
+            .filter_map(|p| Some((p.id, Arc::from(p.filter()?))))
+            .collect();
+        if filters.is_empty() {
+            return;
+        }
+        // Read before the workspace's lock: the reader is a plugin's.
+        let reader = self.registry.filter_readers.all().into_iter().next();
+        let read: Vec<(PaneId, Arc<str>, Option<crate::workspace::ReadFilter>)> = filters
+            .into_iter()
+            .map(|(pane, text)| {
+                let read = reader.as_ref().and_then(|reader| (reader.0)(&text));
+                (pane, text, read)
+            })
+            .collect();
+        let mut ws = self.workspace.write();
+        for (pane, text, read) in read {
+            if let Some(p) = ws.pane_mut(pane)
+                && p.filter() == Some(&*text)
+            {
+                p.read_filter_again(read);
+            }
+        }
+        drop(ws);
+        self.wake();
+    }
+
     /// Let go of what panes show and keep of `schemes`, which nothing opens
     /// any more (their plugin turned off): a pane showing one goes home, as
     /// one whose volume went does, and what one keeps beside it or opened in
@@ -680,8 +724,40 @@ impl App {
 
     // ------------------------------------------------------------ locations
 
+    /// The folders opening `location` reads under: a folder itself, else
+    /// what its provider says (`LocationProvider::folders_read`).
+    pub fn folders_read(&self, location: &Location) -> Vec<PathBuf> {
+        match location.path() {
+            Some(path) => vec![path],
+            None => self
+                .provider(&location.scheme)
+                .map(|provider| provider.folders_read(location))
+                .unwrap_or_default(),
+        }
+    }
+
+    /// An agent's call running on this thread (`permissions::as_agent`)
+    /// opens no location whose folders are private or would reach another
+    /// machine, as they resolve: a relative path read in the pane's folder,
+    /// `path:` text, a search's `in:` (ADR-044). Anyone else's opens.
+    fn agent_may_open(&self, location: &Location) -> anyhow::Result<()> {
+        let Some(privacy) = crate::permissions::agent_call() else {
+            return Ok(());
+        };
+        let mut check = privacy.checker();
+        self.folders_read(location)
+            .iter()
+            .try_for_each(|folder| check.admits(folder))
+    }
+
     /// Open a location without attaching it to a pane.
     pub fn open_location(&self, location: &Location) -> anyhow::Result<Arc<dyn OpenLocation>> {
+        self.agent_may_open(location)?;
+        self.open_admitted(location)
+    }
+
+    /// `open_location`, what an agent's call may open checked already.
+    fn open_admitted(&self, location: &Location) -> anyhow::Result<Arc<dyn OpenLocation>> {
         let provider = self
             .provider(&location.scheme)
             .ok_or_else(|| anyhow::anyhow!("no provider for scheme `{}`", location.scheme))?;
@@ -859,19 +935,22 @@ impl App {
     /// ahead of it go (Escape in the address field after a search shown as
     /// it was typed). Nothing at the first step.
     pub fn take_step_back(&self, pane: PaneId) -> anyhow::Result<()> {
-        let before = {
+        let (from, before) = {
             let ws = self.workspace.read();
             let p = ws
                 .pane(pane)
                 .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-            p.history_pos
+            let before = p
+                .history_pos
                 .checked_sub(1)
-                .and_then(|pos| p.history.get(pos).cloned())
+                .and_then(|pos| p.history.get(pos).cloned());
+            (p.history_pos, before)
         };
-        match before {
-            Some(location) => self.show(pane, &location, crate::workspace::Pane::take_step_back),
-            None => Ok(()),
-        }
+        let Some(location) = before else {
+            return Ok(());
+        };
+        let left = self.cursor_of(pane);
+        self.show(pane, &location, |p| p.take_step_back(from, &location, left))
     }
 
     /// `location` as `pane` reaches it: a relative path (`./`, `../`) is
@@ -960,6 +1039,8 @@ impl App {
         from: Option<&Location>,
         then: impl FnOnce(&mut crate::workspace::Pane),
     ) -> anyhow::Result<()> {
+        // A location kept open beside the pane is shown without opening it.
+        self.agent_may_open(location)?;
         let kept = self
             .workspace
             .write()
@@ -969,7 +1050,7 @@ impl App {
         let (open, listing) = match kept {
             Some(kept) => kept,
             None => (
-                self.open_location(location)?,
+                self.open_admitted(location)?,
                 crate::Listing::with_companions(Arc::clone(&self.companions)),
             ),
         };
@@ -3310,6 +3391,55 @@ mod tests {
         app.take_step_back(pane).unwrap();
         app.take_step_back(pane).unwrap();
         assert_eq!(app.pane_location(pane).as_ref(), Some(&a));
-        assert_eq!(history(), (vec![a], 0));
+        assert_eq!(history(), (vec![a.clone()], 0));
+        // A navigation from elsewhere lands between reading the step
+        // before and taking it back: what is shown is a step of its own.
+        app.navigate(pane, &b).unwrap();
+        let from = history().1;
+        app.navigate(pane, &c).unwrap();
+        app.workspace
+            .write()
+            .pane_mut(pane)
+            .unwrap()
+            .take_step_back(from, &a, None);
+        assert_eq!(history(), (vec![a.clone(), b, c, a], 3));
+    }
+
+    /// What an agent's call opens is checked as it resolves, never as its
+    /// argument is written: a relative path read in the pane's folder, a
+    /// folder's location (`path:`), `..` around an automount point; the
+    /// user's own call opens it.
+    #[test]
+    fn an_agent_opens_no_private_folder_however_it_is_written() {
+        use crate::Location;
+        use crate::permissions::{Privacy, as_agent};
+        let tmp = tempfile::tempdir().unwrap();
+        let keys = tmp.path().join("it's keys");
+        let open = tmp.path().join("open notes");
+        std::fs::create_dir_all(keys.join("old")).unwrap();
+        std::fs::create_dir(&open).unwrap();
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&open)).unwrap();
+        let privacy = Privacy::folders([keys.clone()]);
+        let agent = |location: &str| {
+            as_agent(privacy.clone(), || {
+                app.navigate(pane, &Location::parse(location))
+            })
+        };
+        let error = agent("../it's keys/old").expect_err("relative");
+        assert!(error.to_string().contains("private"), "{error:#}");
+        assert!(agent(&format!("path:{}", keys.display())).is_err());
+        assert!(
+            as_agent(privacy.clone(), || app
+                .open_location(&Location::from_path(&keys)))
+            .is_err(),
+            "listed without showing it"
+        );
+        assert_eq!(app.pane_dir(pane).unwrap(), open, "the pane stays");
+        agent("../open notes").unwrap();
+        app.navigate(pane, &Location::parse("../it's keys"))
+            .unwrap();
+        assert_eq!(app.pane_dir(pane).unwrap(), keys, "the user goes there");
     }
 }

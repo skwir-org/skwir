@@ -374,10 +374,34 @@ fn folded(name: &std::ffi::OsStr) -> String {
 
 /// Whether the folder `dir` tells no case apart: an entry there whose
 /// name has a letter of case is found under its other case, else the
-/// folder itself in its own (on the same volume). Where nothing tells,
-/// taken to: a dry run never lets through two names that may be one.
-/// Asked only when two spellings meet.
+/// folder itself in its own (on the same volume). A folder that cannot
+/// tell (made earlier in the plan, empty, or holding no name of case, as
+/// `2024`) is as the nearest folder holding it that can, on its volume: a
+/// folder made takes its parent's way. Where nothing tells, taken to: a
+/// dry run never lets through two names that may be one. Asked only when
+/// two spellings meet.
 fn folds_case(dir: &Path) -> bool {
+    let Some(base) = dir
+        .ancestors()
+        .find(|folder| crate::fs::stat::id_of(folder).is_some())
+    else {
+        return true;
+    };
+    let volume = crate::fs::stat::id_of(base).map(|id| id.dev);
+    for folder in base.ancestors() {
+        if crate::fs::stat::id_of(folder).map(|id| id.dev) != volume {
+            break;
+        }
+        if let Some(folds) = tells_case(folder) {
+            return folds;
+        }
+    }
+    true
+}
+
+/// Whether `dir` tells no case apart, as `folds_case` reads it there:
+/// `None` when nothing there tells.
+fn tells_case(dir: &Path) -> Option<bool> {
     let swapped = |name: &std::ffi::OsStr| {
         let name = name.to_str()?;
         let other: String = name
@@ -401,7 +425,7 @@ fn folds_case(dir: &Path) -> bool {
             if let Some(other) = swapped(&entry.file_name())
                 && let Some(folds) = found_as(&entry.path(), &dir.join(other))
             {
-                return folds;
+                return Some(folds);
             }
         }
     }
@@ -411,9 +435,9 @@ fn folds_case(dir: &Path) -> bool {
             == crate::fs::stat::id_of(dir).map(|id| id.dev)
         && let Some(folds) = found_as(dir, &parent.join(other))
     {
-        return folds;
+        return Some(folds);
     }
-    true
+    None
 }
 
 /// A copy a plan made of a file with several names: where it is now, the
@@ -1501,6 +1525,12 @@ mod tests {
         // Linux's tmp folders tell case apart; other systems' may not.
         if cfg!(target_os = "linux") {
             assert!(!folds_case(tmp.path()));
+            // An empty folder holding no name of case, and one still to be
+            // made in it, are as the folder holding them.
+            let empty = tmp.path().join("2024");
+            std::fs::create_dir(&empty).unwrap();
+            assert!(!folds_case(&empty));
+            assert!(!folds_case(&empty.join("made in the plan")));
         }
     }
 

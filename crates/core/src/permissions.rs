@@ -330,6 +330,89 @@ fn expand(text: &str, home: Option<&Path>) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
+/// The path `text` is as an argument writes one: absolute, from the home
+/// folder (`~/…`), or a folder's location (`path:/…`, `Location::parse`).
+/// A relative path is read where it is resolved (`Checker::admits`).
+fn path_named(text: &str) -> Option<PathBuf> {
+    let text = text
+        .strip_prefix(crate::location::PATH_SCHEME)
+        .and_then(|rest| rest.strip_prefix(':'))
+        .unwrap_or(text);
+    let path = Path::new(text);
+    if path.is_absolute() {
+        return Some(path.to_owned());
+    }
+    if text.starts_with('~') {
+        return expand(text, crate::os_path::home().as_deref());
+    }
+    None
+}
+
+/// What an agent is told of a path that would reach another machine.
+fn reaches_another_machine(path: &Path) -> String {
+    format!(
+        "looking up {} would make the system reach another machine, which an agent may not do unasked: the user opens it in skwir first",
+        path.display()
+    )
+}
+
+/// What an agent is told of a private path it named or would open.
+const NAMES_PRIVATE: &str =
+    "this names a private folder, which skwir keeps from agents (Settings, Privacy)";
+
+/// At most so many paths are looked for written in one text.
+const WRITTEN_PATHS: usize = 64;
+
+/// The absolute paths written in `text` beyond the text itself (which
+/// [`path_named`] reads): from where each starts (the text's start, or
+/// after a space, a quote, a bracket or a punctuation mark: `in:/x`, “/x”;
+/// never inside a word) to the text's end, and to each place a quote or a
+/// punctuation mark ends it (`/x/diary: it is taken` names `/x/diary`), a
+/// word too after the text's start. One the text starts with keeps its
+/// spaces: a name holds them.
+fn written_paths(text: &str) -> Vec<&Path> {
+    const ENDS: &str = "\"”’»)]}>,;:";
+    let mut found = Vec::new();
+    let mut before: Option<char> = None;
+    for (at, c) in text.char_indices() {
+        let starts = before
+            .replace(c)
+            .is_none_or(|b| b.is_whitespace() || "\"'“”‘’«»([{<:=,;".contains(b));
+        let rest = &text[at..];
+        if !starts || !Path::new(rest).is_absolute() {
+            continue;
+        }
+        if at > 0 {
+            found.push(Path::new(rest));
+        }
+        for (end, e) in rest.char_indices().skip(1) {
+            let ends = ENDS.contains(e) || (at > 0 && (e.is_whitespace() || e == '\''));
+            let cut = Path::new(&rest[..end]);
+            if ends && cut.is_absolute() {
+                found.push(cut);
+            }
+            if found.len() >= WRITTEN_PATHS {
+                return found;
+            }
+        }
+    }
+    found
+}
+
+/// While an agent's call runs on this thread ([`as_agent`]), refuse what
+/// reading `path` would reach as [`Checker::admits`] does: where a location
+/// or a text typed is resolved to what is read, whatever its argument said.
+/// Anyone else's call reads what it reads.
+///
+/// # Errors
+/// Saying why, as an agent is told.
+pub fn agent_may_read(path: &Path) -> anyhow::Result<()> {
+    match agent_call() {
+        Some(privacy) => privacy.checker().admits(path),
+        None => Ok(()),
+    }
+}
+
 /// Checks paths against a [`Privacy`], remembering the markers it read.
 ///
 /// What it reads of a path on a remote (its links resolved, its folders'
@@ -411,9 +494,11 @@ impl Checker<'_> {
         Arc::clone(self.resolved_folders.insert(Arc::new(folders)))
     }
 
-    /// What `look` says of `path`: here, where it is on no remote or the
-    /// privacy has no workers; else in its remote's lane, `None` when the
-    /// server did not answer in time.
+    /// What `look` says of `path`: here, where it is on no remote, the
+    /// privacy has no workers or the caller already runs in its remote's
+    /// lane (a field read there, which a look queued in the lane would wait
+    /// behind); else in that lane, `None` when the server did not answer in
+    /// time.
     fn answered<T: Send + 'static>(
         &mut self,
         path: &Path,
@@ -423,7 +508,7 @@ impl Checker<'_> {
             return Some(look());
         };
         let lane = lane_reached(path);
-        if lane == Lane::SHARED {
+        if lane == Lane::SHARED || crate::scheduler::running_lane() == Some(lane) {
             return Some(look());
         }
         if self.unanswered.contains(&lane) {
@@ -455,25 +540,44 @@ impl Checker<'_> {
     /// a share by its server's name (`\\host\share`), whether connected
     /// or not being nothing the system says unasked (a drive letter is
     /// this machine's). A server mounted already is no other machine: its
-    /// mount stands where the automount point was.
+    /// mount stands where the automount point was. Its `..` are taken as
+    /// written (`/tmp/../net/host` is below `/net`): it is never read.
     pub fn reaches_elsewhere(&mut self, path: &Path) -> bool {
-        !self.here().holds(path, Path::new(LOCAL_ROOT))
+        let path = lexical(path);
+        !self.here().holds(&path, Path::new(LOCAL_ROOT))
     }
 
     fn here(&mut self) -> &Here {
         self.here.get_or_insert_with(Here::now)
     }
 
-    /// The first path `value` names (a string that is one, a path written
-    /// as its bytes) that looking up would reach another machine for
-    /// ([`Checker::reaches_elsewhere`]): an agent naming it is refused
-    /// before anything reads it.
+    /// Refuse what an agent's call would open or read at `path` (ADR-044):
+    /// a path looking up would reach another machine for, or a private one,
+    /// by its name or what it resolves to. Where a relative path or a
+    /// location's text is resolved (`App::open_location`, the address
+    /// field's names), what is checked is what would be read, never the
+    /// argument's text.
+    ///
+    /// # Errors
+    /// Saying why, as an agent is told.
+    pub fn admits(&mut self, path: &Path) -> anyhow::Result<()> {
+        if self.reaches_elsewhere(path) {
+            anyhow::bail!(reaches_another_machine(path));
+        }
+        anyhow::ensure!(!self.holds(path), NAMES_PRIVATE);
+        Ok(())
+    }
+
+    /// The first path `value` names (a string that is one, a folder's
+    /// location, a path written as its bytes) that looking up would reach
+    /// another machine for ([`Checker::reaches_elsewhere`]): an agent naming
+    /// it is refused before anything reads it.
     pub fn elsewhere_in(&mut self, value: &Value) -> Option<PathBuf> {
         match value {
-            Value::String(text) => {
-                let path = Path::new(text);
-                (path.is_absolute() && self.reaches_elsewhere(path)).then(|| path.to_owned())
-            }
+            Value::String(text) => path_named(text)
+                .into_iter()
+                .chain(written_paths(text).into_iter().map(Path::to_path_buf))
+                .find(|path| self.reaches_elsewhere(path)),
             Value::Array(items) => items.iter().find_map(|item| self.elsewhere_in(item)),
             Value::Object(object) => {
                 if let Some(path) = bytes_path(object)
@@ -487,9 +591,10 @@ impl Checker<'_> {
         }
     }
 
-    /// The first private path `value` names: a string that is a path, or
-    /// that holds a private folder listed (a location's text, a title), or
-    /// a path written as its bytes.
+    /// The first private path `value` names: a string that is a path or a
+    /// folder's location, or that holds a private folder listed or a
+    /// private path written in it (a location's text, a title, an error),
+    /// or a path written as its bytes.
     pub fn named_in(&mut self, value: &Value) -> Option<PathBuf> {
         match value {
             Value::String(text) => self.in_text(text),
@@ -507,22 +612,26 @@ impl Checker<'_> {
     }
 
     fn in_text(&mut self, text: &str) -> Option<PathBuf> {
-        let path = Path::new(text);
-        if path.is_absolute() && self.holds(path) {
-            return Some(path.to_owned());
-        }
-        // A path from the home folder, as a location may be written.
-        if text.starts_with('~')
-            && let Some(path) = expand(text, crate::os_path::home().as_deref())
+        if let Some(path) = path_named(text)
             && self.holds(&path)
         {
             return Some(path);
         }
-        self.privacy
+        if let Some(folder) = self
+            .privacy
             .folders
             .iter()
             .find(|folder| holds_folder(text, folder))
-            .cloned()
+        {
+            return Some(folder.clone());
+        }
+        // A path written in the text (an error, a plan's title, a search's
+        // `in:`), a marked folder's too; resolving one reads only as far as
+        // what exists.
+        written_paths(text)
+            .into_iter()
+            .find(|path| self.holds(path))
+            .map(Path::to_path_buf)
     }
 
     /// `value` without what names a private path: an object whose `path`
@@ -563,10 +672,7 @@ impl Checker<'_> {
             return false;
         };
         match path {
-            Value::String(text) => {
-                let path = Path::new(text);
-                path.is_absolute() && self.holds(path)
-            }
+            Value::String(text) => path_named(text).is_some_and(|path| self.holds(&path)),
             Value::Object(object) => bytes_path(object).is_some_and(|path| self.holds(&path)),
             _ => false,
         }
@@ -834,6 +940,53 @@ mod tests {
         );
     }
 
+    /// A path is found however an argument writes it: a folder's location
+    /// (`path:`), within a search's text (`in:`), quoted in an error; a
+    /// marked folder's as a listed one's. `..` never hides an automount.
+    #[test]
+    fn a_path_is_found_as_a_location_or_written_in_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let diary = tmp.path().join("it's a diary");
+        std::fs::create_dir_all(diary.join("2026")).unwrap();
+        std::fs::write(diary.join(MARKER), "").unwrap();
+        let open = tmp.path().join("open notes");
+        std::fs::create_dir(&open).unwrap();
+        let net = tmp.path().join("net");
+        let privacy = Privacy {
+            folders: vec![],
+            marker: true,
+            workers: None,
+        };
+        let here = || Here::with_automounts([net.clone()]);
+        let mut check = privacy.checker_in(here());
+        let note = diary.join("2026").join("note.txt");
+        let as_location = format!("path:{}", note.display());
+        assert_eq!(
+            check.named_in(&json!({ "location": as_location })),
+            Some(note.clone())
+        );
+        let search = format!("in:{} report", diary.display());
+        assert!(check.named_in(&json!({ "expr": search })).is_some());
+        let error = format!("cannot copy “{}”: it is taken", note.display());
+        assert_eq!(check.redact(json!(error)), json!(WITHHELD));
+        let public = format!("cannot copy “{}”: it is taken", open.join("a").display());
+        assert_eq!(check.redact(json!(public.clone())), json!(public));
+        assert!(check.admits(&note).is_err() && check.admits(&open).is_ok());
+        // Below an automount point, however it is written.
+        let around = tmp.path().join("open notes/../net/host/share");
+        assert!(check.reaches_elsewhere(&around));
+        assert!(check.admits(&around).is_err());
+        let location = format!("path:{}", around.display());
+        assert!(
+            check
+                .elsewhere_in(&json!({ "location": location }))
+                .is_some()
+        );
+        let search = format!("in:{} x", net.join("host").display());
+        assert!(check.elsewhere_in(&json!({ "expr": search })).is_some());
+        assert_eq!(check.elsewhere_in(&json!({ "expr": "in:recent: x" })), None);
+    }
+
     /// On Windows a share named by its server's name connects to that
     /// server when looked up: never read for an agent.
     #[cfg(windows)]
@@ -1081,6 +1234,61 @@ mod tests {
             "answering, it is checked"
         );
         assert!(!privacy.holds(&link.join("note")));
+    }
+
+    /// A check asked by a job already in a remote's lane (a field read
+    /// there) looks in place: queued in that lane, it would wait behind
+    /// the job asking it and the lane's other jobs.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_check_asked_in_its_remote_s_lane_looks_in_place() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::{Duration, Instant};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let point = tmp.path().join("server's share");
+        std::fs::create_dir(&point).unwrap();
+        std::fs::write(point.join("note"), "public").unwrap();
+        crate::fs::reach::pretend_remote(&point);
+        let workers = Scheduler::new(4);
+        let lane = crate::fs::reach::lane(&point);
+        let released = Arc::new(AtomicBool::new(false));
+        // The lane's other turns are taken.
+        for _ in 1..crate::scheduler::LANE_RUNS {
+            let released = Arc::clone(&released);
+            workers.spawn_in(
+                lane,
+                Priority::Normal,
+                "held",
+                crate::cancel::CancelToken::new(),
+                move || {
+                    while !released.load(Ordering::SeqCst) {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                },
+            );
+        }
+        let privacy = Privacy {
+            folders: vec![tmp.path().join("keys")],
+            marker: true,
+            workers: None,
+        }
+        .looked_at_by(workers.clone());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let asked = Instant::now();
+        workers.spawn_in(
+            lane,
+            Priority::Normal,
+            "field",
+            crate::cancel::CancelToken::new(),
+            move || {
+                let _ = tx.send(privacy.holds(&point.join("note")));
+            },
+        );
+        let private = rx.recv_timeout(Duration::from_secs(10)).unwrap();
+        released.store(true, Ordering::SeqCst);
+        assert!(!private, "checked, and public");
+        assert!(asked.elapsed() < crate::fs::reach::NOT_ANSWERING);
     }
 
     /// The private folders as the settings say them: records, or paths

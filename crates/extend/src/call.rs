@@ -22,16 +22,28 @@ pub(crate) trait Transport: Send + Sync {
 #[derive(Clone)]
 pub(crate) struct Call {
     files: Vec<PathBuf>,
+    /// The handle of its first file: each call's are its own, so a read a
+    /// program sends late, for a call given up, never reaches the next
+    /// call's files.
+    first: u32,
     read: bool,
     cancel: CancelToken,
 }
 
+/// The handle the next call's first file takes.
+static NEXT_HANDLE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
 impl Call {
-    /// A call about `files` (handle 1 is the first), for a plugin granted
+    /// A call about `files`, handles of its own, for a plugin granted
     /// `granted`, given up when `cancel` fires.
     pub fn new(files: Vec<PathBuf>, granted: Capabilities, cancel: CancelToken) -> Call {
+        let count = u32::try_from(files.len()).unwrap_or(u32::MAX).max(1);
+        let first = NEXT_HANDLE
+            .fetch_add(count, std::sync::atomic::Ordering::Relaxed)
+            .max(1);
         Call {
             files,
+            first,
             read: granted.has(Capability::Read),
             cancel,
         }
@@ -41,7 +53,7 @@ impl Call {
     pub fn describe(&self, n: usize, mime: Option<String>) -> File {
         let path = &self.files[n];
         File {
-            handle: u32::try_from(n + 1).unwrap_or(u32::MAX),
+            handle: u32::try_from(n).map_or(u32::MAX, |n| self.first.wrapping_add(n)),
             name: path
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
@@ -53,7 +65,7 @@ impl Call {
     }
 
     pub fn path(&self, handle: u32) -> Option<&Path> {
-        let n = usize::try_from(handle).ok()?.checked_sub(1)?;
+        let n = usize::try_from(handle.wrapping_sub(self.first)).ok()?;
         self.files.get(n).map(PathBuf::as_path)
     }
 
@@ -103,17 +115,40 @@ mod tests {
         std::fs::write(&file, b"0123456789").unwrap();
         let readable = Capabilities::of(&[Capability::Read]);
         let call = Call::new(vec![file.clone()], readable, CancelToken::new());
-        assert_eq!(call.read(1, 2, 3), Ok(b"234".to_vec()));
-        assert_eq!(call.read(1, 8, 100), Ok(b"89".to_vec()), "fewer at the end");
-        assert!(call.read(2, 0, 1).is_err(), "no such file in the call");
-        assert!(call.read(0, 0, 1).is_err());
         let described = call.describe(0, Some("application/octet-stream".into()));
-        assert_eq!((described.handle, described.size), (1, Some(10)));
+        assert_eq!(described.size, Some(10));
+        let one = described.handle;
+        assert_eq!(call.read(one, 2, 3), Ok(b"234".to_vec()));
+        assert_eq!(
+            call.read(one, 8, 100),
+            Ok(b"89".to_vec()),
+            "fewer at the end"
+        );
+        assert!(
+            call.read(one + 1, 0, 1).is_err(),
+            "no such file in the call"
+        );
+        assert!(call.read(one - 1, 0, 1).is_err());
+        // The next call's files are its own: a late read of this one's
+        // handle reaches none of them.
+        let next = Call::new(vec![file.clone()], readable, CancelToken::new());
+        assert!(next.read(one, 0, 1).is_err(), "another call's handle");
+        assert_eq!(
+            next.read(next.describe(0, None).handle, 0, 1),
+            Ok(b"0".to_vec())
+        );
         let blind = Call::new(vec![file], Capabilities::NONE, CancelToken::new());
-        assert!(blind.read(1, 0, 1).unwrap_err().contains("may not read"));
+        let handle = blind.describe(0, None).handle;
+        assert!(
+            blind
+                .read(handle, 0, 1)
+                .unwrap_err()
+                .contains("may not read")
+        );
         let cancel = CancelToken::new();
         let given_up = Call::new(vec![tmp.path().join("bytes.bin")], readable, cancel.clone());
+        let handle = given_up.describe(0, None).handle;
         cancel.cancel();
-        assert_eq!(given_up.read(1, 0, 1), Err("cancelled".into()));
+        assert_eq!(given_up.read(handle, 0, 1), Err("cancelled".into()));
     }
 }

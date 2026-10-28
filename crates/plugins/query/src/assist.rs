@@ -457,6 +457,12 @@ pub fn problem(text: &str, caret: usize) -> Option<String> {
 
 // ---------------------------------------------------------------- complete
 
+/// Whether the last term of `text` opens a quote it does not close: what
+/// is still typed then is the quoted text, not a value.
+pub fn quote_open(text: &str) -> bool {
+    matches!(lex(text).last(), Some(Lexeme::Word(w)) if w.unterminated)
+}
+
 /// What the term ending at the caret can go on with.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct Completed {

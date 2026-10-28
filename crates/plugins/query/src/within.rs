@@ -22,6 +22,16 @@ use skwir_core::scheduler::Priority;
 use crate::lang::{Late, Query};
 use crate::provider::full_match;
 
+/// The matches shown, with their paths, and each entry's check under way:
+/// the latest asked of it, which alone may show it or take it back. An
+/// entry gone, or tested again, meanwhile has none, or another.
+#[derive(Default)]
+struct Shown {
+    paths: HashMap<EntryId, PathBuf>,
+    checking: HashMap<EntryId, u64>,
+    asked: u64,
+}
+
 /// A search within a place.
 pub struct Within {
     location: Location,
@@ -42,8 +52,8 @@ struct Shared {
     pending: AtomicUsize,
     listed: AtomicBool,
     completed: AtomicBool,
-    /// The matches shown, with their paths.
-    shown: Mutex<HashMap<EntryId, PathBuf>>,
+    /// The matches shown, and the checks under way.
+    shown: Mutex<Shown>,
     /// Entries whose metadata was asked for, to be tested once it comes.
     asked: Mutex<HashSet<EntryId>>,
 }
@@ -62,9 +72,9 @@ pub fn open(
         &*place.scheme != crate::SCHEME,
         "a search cannot look within another search"
     );
-    let provider = app
-        .provider(&place.scheme)
-        .ok_or_else(|| anyhow::anyhow!("nothing opens {place}"))?;
+    let provider = app.provider(&place.scheme).ok_or_else(|| {
+        anyhow::anyhow!("nothing opens {place}: a folder is written as its whole path")
+    })?;
     let (tx, rx) = ctx.channel();
     let lifetime = ctx.cancel.linked(plugin);
     let shared = Arc::new(Shared {
@@ -77,7 +87,7 @@ pub fn open(
         pending: AtomicUsize::new(0),
         listed: AtomicBool::new(false),
         completed: AtomicBool::new(false),
-        shown: Mutex::new(HashMap::new()),
+        shown: Mutex::new(Shown::default()),
         asked: Mutex::new(HashSet::new()),
     });
     // The place's events wake a drain of them on a worker, never the window.
@@ -170,7 +180,14 @@ impl Shared {
             };
             if entry.metadata.is_hydrated() || entry.is_place() {
                 this.asked.lock().remove(&entry.id);
-                ready.push((entry, path));
+                let check = {
+                    let mut shown = this.shown.lock();
+                    shown.asked += 1;
+                    let check = shown.asked;
+                    shown.checking.insert(entry.id, check);
+                    check
+                };
+                ready.push((entry, path, check));
             } else if this.asked.lock().insert(entry.id) {
                 unknown.push(entry.id);
             }
@@ -178,7 +195,7 @@ impl Shared {
         if !unknown.is_empty() {
             inner.hydrate(&unknown, Priority::Normal);
         }
-        for (lane, batch) in reach::by_lane(ready, |(_, path)| path.as_path()) {
+        for (lane, batch) in reach::by_lane(ready, |(_, path, _)| path.as_path()) {
             this.pending.fetch_add(1, Ordering::AcqRel);
             let s = Arc::clone(this);
             let cancel = this.lifetime.child();
@@ -198,8 +215,8 @@ impl Shared {
     }
 
     /// Decide each entry, and show what holds, take back what no longer
-    /// does.
-    fn check(&self, batch: Vec<(Entry, PathBuf)>, cancel: &CancelToken) {
+    /// does: each by its latest check alone (`Shown::checking`).
+    fn check(&self, batch: Vec<(Entry, PathBuf, u64)>, cancel: &CancelToken) {
         let late = Late {
             fields: &self.ctx.fields,
             cancel,
@@ -207,20 +224,24 @@ impl Shared {
         let mut added = Vec::new();
         let mut updated = Vec::new();
         let mut removed = Vec::new();
-        for (entry, path) in batch {
+        for (entry, path, check) in batch {
             if cancel.is_cancelled() {
                 return;
             }
             let holds = full_match(&self.query, &entry, &path, late);
             let mut shown = self.shown.lock();
-            match (holds, shown.contains_key(&entry.id)) {
+            if shown.checking.get(&entry.id) != Some(&check) {
+                continue;
+            }
+            shown.checking.remove(&entry.id);
+            match (holds, shown.paths.contains_key(&entry.id)) {
                 (true, false) => {
-                    shown.insert(entry.id, path);
+                    shown.paths.insert(entry.id, path);
                     added.push(entry);
                 }
                 (true, true) => updated.push(entry),
                 (false, true) => {
-                    shown.remove(&entry.id);
+                    shown.paths.remove(&entry.id);
                     removed.push(entry.id);
                 }
                 (false, false) => {}
@@ -237,12 +258,16 @@ impl Shared {
         }
     }
 
-    /// The place's entries `ids` are gone: so are their matches.
+    /// The place's entries `ids` are gone: so are their matches, and what
+    /// their checks under way would say.
     fn forget(&self, ids: Vec<EntryId>) {
         let gone: Vec<EntryId> = {
             let mut shown = self.shown.lock();
             ids.into_iter()
-                .filter(|id| shown.remove(id).is_some())
+                .filter(|id| {
+                    shown.checking.remove(id);
+                    shown.paths.remove(id).is_some()
+                })
                 .collect()
         };
         if !gone.is_empty() {
@@ -279,7 +304,7 @@ impl OpenLocation for Within {
     }
 
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {
-        self.shared.shown.lock().get(&id).cloned()
+        self.shared.shown.lock().paths.get(&id).cloned()
     }
 
     fn refresh(&self) {

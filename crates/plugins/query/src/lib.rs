@@ -236,6 +236,16 @@ pub fn location_for(expr: &str, root: Option<&std::path::Path>) -> Location {
     Location::new(SCHEME, rest)
 }
 
+/// `expr` as one part of a search that also holds another: in brackets
+/// when its terms are joined by an OR, which binds looser than the AND
+/// between the parts (`kind:image (dunes OR pines)`).
+fn grouped(expr: &str) -> String {
+    match lang::parse(expr) {
+        Ok(query) if matches!(query.expr, Some(lang::Expr::Or(_))) => format!("({expr})"),
+        _ => expr.to_owned(),
+    }
+}
+
 /// Where a search refined from `before` to `after` is shown: the search,
 /// unless the change took its last term away, which leaves the place it
 /// looked in (its trail's: the folder, or what it lists), as Escape goes
@@ -942,7 +952,8 @@ impl Plugin for QueryPlugin {
                     )
                 };
                 let applied = narrow::applied(&typed).unwrap_or_default();
-                let expr = format!("{narrowed} {applied}");
+                // Both hold: an OR typed stays within its own words.
+                let expr = format!("{} {}", grouped(&narrowed), grouped(&applied));
                 app.navigate(pane, &location_for(expr.trim(), Some(&folder)))?;
                 Ok(Outcome::Done)
             },
@@ -2431,5 +2442,87 @@ mod tests {
                 "walked after disable: {ev:?}"
             );
         }
+    }
+
+    /// The plugin turned off leaves nothing of its reading of a pane's
+    /// filter: names are filtered by its text; turned on, it reads it.
+    #[test]
+    fn a_filter_is_read_again_as_the_plugin_is_turned_off_and_on() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("t");
+        std::fs::create_dir(&root).unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        app.dispatch(&Invocation::with_args(
+            "filter",
+            &serde_json::json!({ "text": "kind:image", "pane": pane }),
+        ))
+        .unwrap();
+        let read = || {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            (p.filter().map(str::to_owned), p.read_filter().is_some())
+        };
+        assert_eq!(read(), (Some("kind:image".to_owned()), true));
+        assert!(app.plugins.set_enabled(ID, false, &app));
+        assert_eq!(read(), (Some("kind:image".to_owned()), false));
+        assert!(app.plugins.set_enabled(ID, true, &app));
+        assert_eq!(read(), (Some("kind:image".to_owned()), true));
+    }
+
+    /// An agent's search never looks in a private folder, however its
+    /// `in:` writes it: from the home folder, as a folder's location, or
+    /// through `..`; the user's does.
+    #[test]
+    fn an_agent_searches_no_private_folder() {
+        use skwir_core::permissions::{Privacy, as_agent};
+        let tmp = tempfile::tempdir().unwrap();
+        let keys = tmp.path().join("it's keys");
+        let open = tmp.path().join("open");
+        std::fs::create_dir_all(&keys).unwrap();
+        std::fs::create_dir_all(&open).unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&open)).unwrap();
+        let privacy = Privacy::folders([keys.clone()]);
+        let search = |expr: String| {
+            let call = Invocation::with_args(
+                "query.search",
+                &serde_json::json!({ "expr": expr, "pane": pane }),
+            );
+            as_agent(privacy.clone(), || app.dispatch(&call))
+        };
+        let quoted = |path: &Path| lang::quote_os(path.as_os_str());
+        for expr in [
+            format!("x in:{}", quoted(&keys)),
+            format!("x in:{}", quoted(&open.join("..").join("it's keys"))),
+            format!("x in:{}", lang::quote(&format!("path:{}", keys.display()))),
+        ] {
+            assert!(search(expr.clone()).is_err(), "{expr}");
+        }
+        assert_eq!(app.pane_dir(pane).unwrap(), open, "the pane stays");
+        search(format!("x in:{}", quoted(&open))).unwrap();
+        let user = Invocation::with_args(
+            "query.search",
+            &serde_json::json!({ "expr": format!("x in:{}", quoted(&keys)), "pane": pane }),
+        );
+        app.dispatch(&user).unwrap();
+    }
+
+    /// A part joined by an OR keeps it within its own words once another
+    /// part is added: AND binds tighter.
+    #[test]
+    fn an_or_typed_stays_within_its_words() {
+        assert_eq!(grouped("dunes OR pines"), "(dunes OR pines)");
+        assert_eq!(grouped("kind:image"), "kind:image");
+        assert_eq!(grouped(""), "");
+        let both = format!("{} {}", grouped("kind:image"), grouped("dunes OR pines"));
+        assert!(matches!(
+            lang::parse(&both).unwrap().expr,
+            Some(lang::Expr::And(_))
+        ));
     }
 }

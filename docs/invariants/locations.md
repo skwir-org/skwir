@@ -28,6 +28,7 @@ the others with no UI branch.
 | a place's kind | `keys::PLACE_KIND` |
 | what an open location holds | `OpenLocation::holds` |
 | what its text typed goes on with | `LocationProvider::complete` (ADR-070) |
+| the folders opening it reads (an agent's call refused a private one) | `LocationProvider::folders_read`, `App::folders_read` |
 
 A folder is a location like the others: its trail is a `Trail`, its
 chevrons list `App::places_in`, and Shift+F5/F6 give the selection to the
@@ -131,15 +132,19 @@ and `notes.agree` are core `notes.*` commands.
   to what a word is (`#print` is `tag:print`) is made in both, and
   `quote` writes a name that would read otherwise (`"#3"`).
 - **Scopes (ADR-098).** Words search where the address field's scope
-  says: a folder is the search's root; a tag is searched as the tag every
-  match has, from the home folder; another place (Recent) is searched as
+  says: a folder is the search's root; a place that says the tags of all
+  it lists (a tag's, `LocationProvider::tags_shown`) is searched as those
+  tags every match has, from the folder it is of (`Trail::base`), else
+  home, never by reading its text; another place (Recent) is searched as
   what it lists (`in:recent:`, `within.rs`): opened through its provider,
   each entry tested as the walk tests a file, what it contains read in
   its lane, nothing below an entry reached; a search within a search is
   refused. The whole disk is `/`, which plocate may answer (below).
 - **Recent searches** are the query plugin's, kept in the cache (never in
   the settings or the logs): only what the address field ran
-  (`remember`), never an agent's call.
+  (`remember`), never an agent's call; written on a worker, one change at
+  a time, never on the window's thread. The rows of the same search
+  elsewhere are of the words typed, never of the scope's own search.
 - **Narrowing.** Over a search with a tag, a bar (`narrow.rs`) offers
   tags within, other tags its files have, kinds and years, with counts
   from the results. A click refines (`query.refine`); Alt+click excludes a
