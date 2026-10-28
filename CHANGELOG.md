@@ -273,7 +273,9 @@ server and network. Undo history is cleared when Skwir exits.
   you typed, rather than at the bottom of the window; so does the hex view's
   "Match at 0x…". A protected EPUB says so rather than show its encrypted
   chapters, and a film made to be stretched (anamorphic) shows its poster in
-  its own shape. Mermaid's architecture diagrams are drawn.
+  its own shape. Mermaid's architecture diagrams are drawn, and a STEP or IGES
+  model whose curved faces close on themselves without a seam (a cylinder, a
+  dome, a torus) is drawn whole, most parts faster and with fewer triangles.
 - **Fixed from 0.2**: a document read in continuous scrolling had a scrollbar
   that ended at the last page visited; it measures every page. A long name in
   the grid wraps on up to three lines again. Going from one PDF to another in

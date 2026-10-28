@@ -71,7 +71,10 @@ macOS compiled. Amended the same day: IGES files are read alike.
   comes back empty, which the panel says; a hemisphere on a disc lands up
   to 20 mm off; a cone to a point is 0.08 mm off at the finest chords. A
   file of triangles only is refused with ogeom's reason. Updates to ogeom
-  are taken as any dependency's, re-scored on step-conformance.
+  are taken as any dependency's, re-scored on step-conformance. Amended
+  2026-10-28: since ogeom 0.11.5, a B-spline face closed all round with
+  no seam edge is read (the three such files of step-conformance close
+  with no face missing); the corpus meshes in 17 s instead of 42 s.
 - IGES, amended the same day: ogeom reads it too (`read_iges`), so an
   IGES file (`model/iges`) is meshed as a STEP file is, the global
   section giving the program and the IGES version. Twelve SolidWorks
