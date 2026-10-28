@@ -6735,3 +6735,8 @@ stopped them once for about an hour.
   platform, its tests (287), `extended_previews` and `any_file` (17,
   email included), the documents, email, EPUB and Markdown plugins
   (68). `just previews-check` covers the archive and audio helpers only.
+- **yaml-rust2 0.13** (night-crates) in the structured-data plugin,
+  without its `encoding` feature (0.13 caps encoding_rs below the
+  tree's 0.8.42; the plugin parses text already decoded). Removes
+  foldhash 0.1 and hashbrown 0.15. Checked: clippy and the plugin's
+  tests (9, YAML folds included).

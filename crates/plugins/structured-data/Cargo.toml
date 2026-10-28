@@ -12,7 +12,9 @@ skwir-platform.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 toml_edit = "0.25"
-yaml-rust2 = "0.10"
+# Its parser alone, on text already decoded: the `encoding` feature would
+# hold encoding_rs below the version the tree has.
+yaml-rust2 = { version = "0.13", default-features = false }
 
 [dev-dependencies]
 tempfile.workspace = true
