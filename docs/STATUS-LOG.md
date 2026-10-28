@@ -6770,3 +6770,8 @@ stopped them once for about an hour.
   SQLite 3.45.3 or newer, and the AppImage's Ubuntu 22.04 root has
   3.37.2 (PLAN); tried, its tests passed on Linux and under Wine, and
   reverted.
+- **Deny and notices**: `just deny` passes; its three ignores of zip
+  8.6's advisories went with calamine 0.37's zip 9 (`deny.toml` keeps an
+  empty list and says why). `just notices` made the packages' notices
+  again for the day's updates (this morning's included) and
+  `notices-check` passes.

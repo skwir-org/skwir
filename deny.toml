@@ -17,17 +17,9 @@ version = 2
 # and resvg) is that dependency's to replace.
 unmaintained = "workspace"
 yanked = "deny"
-# zip 8.6's extraction is unsafe: links that reach outside the destination,
-# Unix permissions applied through links, set-user-id bits kept. 9.0 fixes
-# it, and skwir's crates and rbook use 9. calamine 0.36.1, its latest
-# release, still reads spreadsheets through 8.6, members by name in memory,
-# never `extract`, as skwir does everywhere. Drop these once calamine moves
-# to zip 9.
-ignore = [
-    { id = "RUSTSEC-2026-0367", reason = "zip 8.6 only through calamine, which never extracts" },
-    { id = "RUSTSEC-2026-0368", reason = "zip 8.6 only through calamine, which never extracts" },
-    { id = "RUSTSEC-2026-0369", reason = "zip 8.6 only through calamine, which never extracts" },
-]
+# An advisory ignored is listed here with its reason (none now: zip 8.6's,
+# held by calamine 0.36, went with calamine 0.37's zip 9 on 2026-10-28).
+ignore = []
 
 [licenses]
 version = 2
