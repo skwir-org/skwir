@@ -4,12 +4,16 @@
 //! they move and from where), and a cut pasted on a tag is done by that
 //! paste's plan alone.
 
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use skwir_core::app::{App, AppConfig};
-use skwir_core::command::{Invocation, Outcome};
+use skwir_core::command::Invocation;
+#[cfg(unix)]
+use skwir_core::command::Outcome;
 use skwir_core::location::Location;
 use skwir_core::workspace::PaneId;
 

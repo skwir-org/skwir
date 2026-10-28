@@ -6568,8 +6568,10 @@ those offered:
   warnings`); `cargo nextest run --workspace` (2348 tests: 2346 passed,
   the 2 Mermaid failures fixed by 3a4dcf62 and passing since); each
   fixer's own tests and new regression tests (listed in their reports),
-  three of them seen failing without their fix. Not run: `just
-  check-cross` after the fixes (the disk filled during it, twice, to
-  0 bytes: `just prune` freed 27 and 18 GB), `just remote-check`,
+  three of them seen failing without their fix; `just check-windows`
+  after the fixes (it found two imports of `paste_on_places.rs` only its
+  Unix tests use, gated since). The disk filled to 0 bytes twice during
+  these runs: `just prune` freed 27 and 18 GB. Not run: `just
+  check-macos`, `just remote-check`,
   `just a11y-check`, `just smoke`, `just bench-check`, `just
   release-check`, any window check of the fixes.
