@@ -63,7 +63,9 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   for the window (`App::request_front`).
 - Mutating commands return a `Plan` ([operations.md](operations.md)). No
   command applies a plan it makes or is given (`apply_plan` hands it
-  back): the caller decides.
+  back): the caller decides. A plugin that must know when a plan it
+  returned applied hears it by the plan's id (`Executor::observe_plans`),
+  never by what its steps describe.
 - **Effects (ADR-044).** A command says what it does when registered
   (`command::Effect`: `register(..).reads()`, `.shows()`, `.plans()`,
   `.user_only()`); this decides what an agent may run. A command that says

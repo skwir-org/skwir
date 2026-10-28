@@ -202,9 +202,6 @@ leave (ADR-077).
   (`suggestions::scope_of`) and names `query.search` for the Search
   button: a provider capability (words can search this location; All
   Tags is no scope) would replace both.
-- ops-basic knows its paste's plan by the changes it describes, not its
-  id: an `Executor::observe_plans(owner, Fn(PlanId, &[Change]))` hook
-  would let it remember the plan.
 - The tables plugin picks the spreadsheet and SQLite readers by
   extension; the sidebar's top tags count hidden files and folders under
   network mounts below home; files inside a folder hidden by Windows'
@@ -212,9 +209,12 @@ leave (ADR-077).
   is refused with "its volume keeps no notes" (a `Wrote::Refused` reason).
 - Listeners that ended with the session bus (the desktop's style, the
   media controls) do not subscribe again when it comes back.
-- A move into a trash on another volume ignores a removal waiting its
-  turn (`Moved::waits`); `Footprint::conflicts` counts any shared store as
-  a conflict, so `undo_of` of one trashing is refused after another.
+- A trash across filesystems whose original's removal waits is tested
+  by unit tests only (`fs::volume` has no stand-in for a removable
+  drive); a part restored whose item's removal never came still refuses
+  its undo ("in its place in the trash").
+- `core/tests/scheduler.rs`'s `a_panicking_job_leaves_the_pool_able_to_run_later_jobs`
+  failed twice under a load of about 65 (2026-10-28), then passed.
 - Windows' key setup never falls back to SFTP; a Skwir that crashes
   leaves its own wsdd discovering.
 - `core/tests/settings.rs`'s two waits on the waker timed out under a

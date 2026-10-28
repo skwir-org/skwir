@@ -1719,6 +1719,64 @@ fn trashed(original: &Path) -> Option<(PathBuf, PathBuf)> {
     Some((info, item))
 }
 
+/// The toast's Undo of one trashing, another trashed since: each put an
+/// item of its own in the trash, nothing in common, so the first is taken
+/// back alone (the trash they share counted once as what both touched,
+/// and refused it). The item of a trashing deleted for good since is what
+/// it did, touched: that Undo is refused, nothing taken back.
+#[cfg(target_os = "linux")]
+#[test]
+fn undo_of_one_trashing_is_not_refused_for_another() {
+    let tmp = Scratch::new();
+    let root = tmp.path().join("tree");
+    std::fs::create_dir_all(root.join("one")).unwrap();
+    std::fs::create_dir_all(root.join("l’autre")).unwrap();
+    let app = app(tmp.path());
+    let trash = |path: &Path| {
+        let plan = Plan::with_steps(
+            "trash",
+            vec![Box::new(Trash {
+                entry: file(path, "x"),
+            })],
+        );
+        apply(&app, &plan);
+        plan.id
+    };
+    let (a, b) = (root.join("one/it's a.txt"), root.join("l’autre/b.txt"));
+    let first = trash(&a);
+    trash(&b);
+    let r = app
+        .executor
+        .undo_of_blocking(first, app.lifetime())
+        .unwrap();
+    assert!(r.error.is_none(), "{:?}", r.error);
+    assert!(a.exists(), "taken back");
+    assert!(
+        !b.exists() && trashed(&b).is_some(),
+        "the other still trashed"
+    );
+
+    let again = trash(&a);
+    let (_, item) = trashed(&a).expect("in the trash");
+    apply(
+        &app,
+        &Plan::with_steps(
+            "delete",
+            vec![Box::new(Delete {
+                entry: EntryRef::from_path(&item).unwrap(),
+            })],
+        ),
+    );
+    let r = app
+        .executor
+        .undo_of_blocking(again, app.lifetime())
+        .unwrap();
+    let error = r.error.unwrap_or_default();
+    assert!(error.contains("touched what it did"), "{error}");
+    assert_eq!(r.applied, 0);
+    assert!(!a.exists());
+}
+
 /// What leaves the trash takes the companions trashed with it, and undone
 /// puts them back as the trash had them: an item moved elsewhere, a
 /// folder restored into one there again.

@@ -128,9 +128,11 @@ server and network. Undo history is cleared when Skwir exits.
 - **Actions at once**: a rename, a new folder or a tag no longer waits behind a
   long copy it shares nothing with, and copies between different disks or
   servers run together (four actions at most); two long ones on one disk still
-  take turns, which ends sooner than sharing it. Undo takes back the last thing
-  you asked for, and waits for it if it still runs; a toast's Undo takes back
-  the action it reports.
+  take turns, which ends sooner than sharing it. Moves to the trash, and tag
+  changes in different folders, run together too. Undo takes back the last
+  thing you asked for, and waits for it if it still runs; a toast's Undo takes
+  back the action it reports, even after an unrelated move to the trash or tag
+  change.
 - **Retry**: an action an error stopped (a server gone, a disk full, a drive
   pulled out) is retried from where it stopped, from its message or
   `skwir cmd retry`. A large file goes on from what got across once its last
@@ -273,7 +275,10 @@ server and network. Undo history is cleared when Skwir exits.
   opens, nor does turning to a PDF's hex view. Files copied (not cut) and
   pasted in the Trash are refused, rather than the files themselves being
   trashed; the same goes for Shift+F5 to a pane showing the Trash. A drag onto
-  the Trash still trashes, whatever keys are held.
+  the Trash still trashes, whatever keys are held. Undoing a move to the trash on
+  another drive whose original stayed (it changed during the copy, or could
+  not be removed) no longer fails with "is there again": the trash's copy is
+  taken back when nothing would be lost.
 - **Scripts and agents**: a file selected, a folder opened or a sort changed by
   `skwir cmd` or an agent shows in the window at once, not at the next move of
   the mouse. An agent's changes are always reviewed and its private folders

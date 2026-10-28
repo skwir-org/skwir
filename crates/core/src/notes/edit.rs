@@ -390,7 +390,7 @@ impl SetNotes {
 
 impl Operation for SetNotes {
     /// The file, the names of its folder (its sidecars, a name holding
-    /// tags renamed), and the notes' stores (ADR-079).
+    /// tags renamed), and its record in the notes' stores (ADR-079).
     fn footprint(
         &self,
         _: &crate::op::footprint::Volumes,
@@ -398,7 +398,7 @@ impl Operation for SetNotes {
         Some(
             crate::op::footprint::Footprint::default()
                 .made(&self.entry.path)
-                .store(crate::op::footprint::NOTES),
+                .record_in(crate::op::footprint::NOTES),
         )
     }
     fn kind(&self) -> &'static str {
@@ -692,7 +692,7 @@ impl RestoreNotes {
 
 impl Operation for RestoreNotes {
     /// The file, the names of its folder (its sidecars, a name holding
-    /// tags renamed), and the notes' stores (ADR-079).
+    /// tags renamed), and its record in the notes' stores (ADR-079).
     fn footprint(
         &self,
         _: &crate::op::footprint::Volumes,
@@ -700,7 +700,7 @@ impl Operation for RestoreNotes {
         Some(
             crate::op::footprint::Footprint::default()
                 .made(&self.entry.path)
-                .store(crate::op::footprint::NOTES),
+                .record_in(crate::op::footprint::NOTES),
         )
     }
     fn kind(&self) -> &'static str {

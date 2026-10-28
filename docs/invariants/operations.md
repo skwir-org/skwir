@@ -105,8 +105,14 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   a partition its disk), a remote by its mount, a volume kept in memory
   by its own; a volume whose disks cannot be told (all of them on macOS
   and Windows, a ZFS pool) meets every disk. Two plans making names
-  in one folder meet. Each running plan has its bar; what waits is
-  listed under them, each saying what it waits for (`Executor::waiting`:
+  in one folder meet. A store several actions keep (a volume's trash,
+  the notes') is kept whole by a step that reads, takes or empties what
+  it holds (a restore, an item deleted for good or moved), which meets
+  every action keeping it; a file trashed adds an item of its own (its
+  record made new) and a notes edit writes its file's record
+  (`Footprint::record_in`): two such meet only where their paths do,
+  and a toast's Undo of one is not refused for the other. Each running
+  plan has its bar; what waits is listed under them, each saying what it waits for (`Executor::waiting`:
   an action asked before it that it meets, by its title; the disk; the
   server; one of the four to end); a paused plan keeps what it holds. The journal keeps
   the order asked (`JournalEntry::seq`): Undo takes the last plan asked,
@@ -140,6 +146,17 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   retried as Retry would (`ExecEvent::GoesOn`, its card says "going
   on"), three times at most a server. Nothing is read to classify an
   error: its words are the system's, translated.
+- **Observers.** A plugin that keeps paths of its own follows what each
+  finished run changed (`Executor::observe`: the steps applied and found
+  done, in plan order, undos and redos included). One that returned a
+  plan and waits for it to apply knows it by its id
+  (`Executor::observe_plans`): the plan asked's (`Plan::id`, kept from
+  the command through a proposal, the review and `App::apply_whole`),
+  its retries' too, going on by itself included, which continue it
+  (`Continues::origin`); an undo's or a redo's run is told by an id of
+  its own, which names no plan asked. Never by the changes it
+  describes: another plan, a redo, makes the same (ops-basic's paste on
+  a tag). Both are withdrawn with their owner (`App::unregister_owner`).
 - The bar counts items, the current item's bytes moving it between two
   counts; a one-item plan counts bytes (`toast::bar`).
 - **Quit** asks while a plan runs (its key or the window's close button,
@@ -473,7 +490,8 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   drive (`StepContext::after_write_out`, batched so write-outs stay a
   tenth of the plan's time), and keeps an original that changed after its
   copy began. A move whose original's removal waits (here, or for the
-  plan's end after a batch) is undone by an `Unmove`: where the original
+  plan's end after a batch) is undone by an `Unmove` (a trash by an
+  `Untrash`, [The trash](#the-trash)): where the original
   stayed (the same file there; on a mount that makes numbers up,
   anything), the move left a copy, taken back as a copy's undo takes it
   (`CopyUndo`: to the trash, or for good only while the original is whole
@@ -527,7 +545,18 @@ The trash plugin reads ([locations.md](locations.md)); the core acts.
   one of its own) copies, then removes the original; failing there, it
   leaves nothing the trash does not list (`builtin::failed_across`):
   while the original is whole the copy goes with its record, once part
-  of it went the copy stays, listed (`OriginalStays`).
+  of it went the copy stays, listed (`OriginalStays`). Where that
+  removal waits (a write-out onto a drive that can be unplugged), the
+  trash is undone by an `Untrash`: where the original stayed (told as
+  an `Unmove` tells it), the trash holds a copy, which goes for good
+  with its record only while the original is whole as it was copied
+  and the copy as it was made, else both stay; the companions trashed
+  with it come back where their places are free; where it went, a
+  restore.
+- An item moved out of a trash (restored, a part restored, a companion
+  taken with its file) takes its record along once it left
+  (`builtin::record_goes`): at once, or where its removal waits for a
+  write-out, once that came; should it not, the record stays with it.
 - `.trashinfo` is parsed one way (`op::parse_trash_info`).
 - An item is its record: two names of one file trashed apart are two
   items (ADR-049), and Empty Trash removes every record.

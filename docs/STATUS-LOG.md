@@ -6588,3 +6588,34 @@ those offered:
   `paste_on_places.rs` (its new test seen failing without the refusal),
   ops-basic's, the trash plugin's and the shell's drop tests. Shift+F5
   is compiled only: not tried in a window.
+
+### What the review left, before 0.3.0 (2026-10-28, afternoon and night)
+
+The user's choice: before 0.3.0, the remaining crate majors, the two
+structural items and every low finding the review left (PLAN, "From
+the review of 2026-10-28"). Five agents in one tree, each owning its
+files; the integrator checked and committed each part. The usage limit
+stopped them once for about an hour.
+
+- **Operations** (night-core): `Executor::observe_plans`
+  (`op::PlanObserver`) tells observers the id of the plan asked; a
+  retry's is the plan it continues (`Continues::origin`), an undo's or
+  redo's its own run's. ops-basic keeps its paste's plan id, so another
+  plan making the same changes leaves a cut waiting, and a paste
+  stopped partway ends the cut when its retry applies.
+  `Footprint::record_in` (ADR-079 amended): trashings and notes edits
+  claim a record of their own in their store, restores and items
+  deleted or moved from the trash the store whole, so a toast's Undo of
+  one trashing is no longer refused after another, and they run at
+  once. A trash across filesystems whose original's removal waits
+  (`Moved::waits`) gets `Untrash` as its inverse (the original stayed:
+  the trash's copy goes back only when nothing is lost), and a trash
+  record goes only once its item has left (`record_goes`). Tests:
+  `paste_on_places::a_cut_pasted_on_a_tag_is_not_done_by_another_plan_of_its_changes`
+  and `ops::undo_of_one_trashing_is_not_refused_for_another` seen
+  failing before their fix, `a_record_goes_once_its_item_left_the_trash`
+  seen failing with its deferral disabled, the executor's and
+  `Untrash`'s unit tests; nextest of `skwir-core` and ops-basic (541:
+  540 passed, `scheduler`'s panicking-job test failed under a load of
+  about 65, passed alone once), clippy, `just check-windows`. Not
+  checked: a real removable drive.

@@ -215,3 +215,56 @@ fn a_cut_pasted_on_a_tag_is_done_by_that_plan_alone() {
     assert!(r.error.is_none(), "{:?}", r.error);
     until(&s.app, "the cut done", || s.app.pending.get().is_empty());
 }
+
+/// A cut pasted on a tag, and another plan of the very same changes (the
+/// file dropped on that tag apart from the paste), its undo and its redo
+/// applied: the file stays cut, the paste's plan being known by its id,
+/// not by what it changes. Its own plan, applied, makes it done.
+#[cfg(unix)]
+#[test]
+fn a_cut_pasted_on_a_tag_is_not_done_by_another_plan_of_its_changes() {
+    let s = setup();
+    s.app
+        .plugins
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &s.app);
+    let file: &Path = &s.root.join("draft's.txt");
+    take(&s, "draft's.txt", "clipboard_cut");
+    let family = skwir_plugin_tags::location::Address {
+        tag: Some("family".to_owned()),
+        scope: Some(s.root.clone()),
+        ..Default::default()
+    }
+    .location();
+    go(&s, &family);
+    let Outcome::Plan(paste) = s.app.dispatch(&Invocation::new("clipboard_paste")).unwrap() else {
+        panic!("a plan that gives the tag")
+    };
+    // The same drop on the tag, asked apart from the paste.
+    let mut drop = s.app.verbs(&family).drop.expect("a tag takes files");
+    drop.args["entries"] = serde_json::json!([skwir_core::os_path::PathArg::from(file)]);
+    drop.args["move"] = serde_json::json!(true);
+    let Outcome::Plan(same) = s.app.dispatch(&drop).unwrap() else {
+        panic!("a plan that gives the tag")
+    };
+    let changes = |plan: &skwir_core::op::Plan| -> Vec<skwir_core::op::Change> {
+        plan.steps.iter().map(|step| step.describe()).collect()
+    };
+    assert_eq!(changes(&same), changes(&paste), "the very same changes");
+    assert_ne!(same.id, paste.id);
+    let r = s.app.executor.execute_blocking(&same, s.app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    s.app.pump();
+    assert_eq!(s.app.pending.get().len(), 1, "still cut");
+    // Its undo and its redo, which gives the tag again: replays, no paste.
+    let undone = s.app.executor.undo_blocking(s.app.lifetime()).unwrap();
+    assert!(undone.error.is_none(), "{:?}", undone.error);
+    let redone = s.app.executor.redo_blocking(s.app.lifetime()).unwrap();
+    assert!(redone.error.is_none(), "{:?}", redone.error);
+    assert!(redone.applied > 0, "the tag given again");
+    s.app.pump();
+    assert_eq!(s.app.pending.get().len(), 1, "still cut");
+    // The paste's own plan, the tag there already: done.
+    let r = s.app.executor.execute_blocking(&paste, s.app.lifetime());
+    assert!(r.error.is_none(), "{:?}", r.error);
+    until(&s.app, "the cut done", || s.app.pending.get().is_empty());
+}

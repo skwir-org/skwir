@@ -175,6 +175,15 @@ pub struct Transfer {
 /// map, wake), and never wait for the executor.
 pub type ChangeObserver = Arc<dyn Fn(&[Change]) + Send + Sync>;
 
+/// A [`ChangeObserver`] told also which plan made the changes: the id of
+/// the plan asked (`Plan::id`, as `apply`, a proposal and the toast keep
+/// it), its retries' too, those of a plan going on by itself included,
+/// which continue it; an undo's or a redo's run is no plan asked, and is
+/// told by its own id, which names none (`ExecEvent::Started`). So a
+/// plugin that dispatched a plan knows when that plan, and no other of
+/// the same changes, applied.
+pub type PlanObserver = Arc<dyn Fn(PlanId, &[Change]) + Send + Sync>;
+
 /// One journaled change and the plan that takes it back.
 #[derive(Debug)]
 pub struct JournalEntry {
@@ -313,6 +322,8 @@ enum Work {
 /// file cut short, to go on from.
 struct Continues {
     seq: u64,
+    /// The plan asked, which it continues: what observers are told.
+    origin: PlanId,
     partial: Option<super::staging::Partial>,
     waits: Waits,
     /// It goes on by itself, its server answering again (ADR-080, 9):
@@ -326,6 +337,8 @@ struct Stopped {
     plan: PlanId,
     /// Where its entry is, or would be, in the history.
     seq: u64,
+    /// The plan asked, which a retry continues (`Continues::origin`).
+    origin: PlanId,
     /// Its steps from the one that failed on, unfolded and settled.
     rest: Plan,
     /// What it left of a large file cut short, kept until it is retried
@@ -357,6 +370,8 @@ struct Waits {
 struct Run {
     seq: u64,
     first: Option<u64>,
+    /// The plan asked, which a retry continues: what observers are told.
+    origin: PlanId,
     touched: Arc<Footprint>,
 }
 
@@ -494,7 +509,7 @@ pub struct Executor {
     /// Plans being applied, so a surface can pause or cancel one by id and
     /// read its byte progress.
     running: Mutex<Vec<Active>>,
-    observers: Contributions<ChangeObserver>,
+    observers: Contributions<PlanObserver>,
     companions: Mutex<Arc<crate::companions::Companions>>,
     /// The transfers plugins contributed: a batch of copies to or from a
     /// remote is made by one that serves it (ADR-078).
@@ -989,6 +1004,12 @@ impl Executor {
     /// Tell `observer` what each finished plan changed, until `owner`'s
     /// observers are removed (`App::unregister_owner` does).
     pub fn observe(&self, owner: &str, observer: ChangeObserver) {
+        self.observe_plans(owner, Arc::new(move |_, changes| observer(changes)));
+    }
+
+    /// Tell `observer` what each finished plan changed and which plan it
+    /// was ([`PlanObserver`]), until `owner`'s observers are removed.
+    pub fn observe_plans(&self, owner: &str, observer: PlanObserver) {
         self.observers.add(owner, observer);
     }
 
@@ -1103,6 +1124,7 @@ impl Executor {
         let at = stopped.iter().position(|s| s.plan == plan)?;
         let Stopped {
             seq,
+            origin,
             rest,
             partial,
             waits: was,
@@ -1113,6 +1135,7 @@ impl Executor {
             whole: true,
             continues: Some(Box::new(Continues {
                 seq,
+                origin,
                 partial,
                 waits: waits(was),
                 by_itself,
@@ -1864,9 +1887,10 @@ impl Executor {
         touched: Arc<Footprint>,
     ) -> ExecResult {
         let whole = whole && !cancel.is_cancelled();
-        let (first, partial, waits) = continues.map_or((None, None, Waits::default()), |c| {
-            (Some(c.seq), c.partial, c.waits)
-        });
+        let (first, origin, partial, waits) = continues
+            .map_or((None, plan.id, None, Waits::default()), |c| {
+                (Some(c.seq), c.origin, c.partial, c.waits)
+            });
         let companions = Arc::clone(&self.companions.lock());
         // Shown from here, as asked, Pause and Cancel reaching it: its
         // checks may read whole trees (a paste onto what is there whole).
@@ -1898,7 +1922,7 @@ impl Executor {
         // the id it is told by now, with what it would go on from.
         let kept = |plan: &Plan, partial| {
             if let Some(first) = first {
-                self.stash(plan.id, first, plan.clone(), partial, waits.clone());
+                self.stash(plan.id, first, origin, plan.clone(), partial, waits.clone());
             }
         };
         match settled {
@@ -1942,6 +1966,7 @@ impl Executor {
                 let run = Run {
                     seq,
                     first,
+                    origin,
                     touched,
                 };
                 self.run_execute(&plan, cancel, &run, partial, &waits, shown)
@@ -2024,9 +2049,10 @@ impl Executor {
         let Run {
             seq,
             first,
+            origin,
             ref touched,
         } = *run;
-        self.apply_plan(plan, cancel, shown, partial, |r, inverse, stop| {
+        self.apply_plan(plan, origin, cancel, shown, partial, |r, inverse, stop| {
             let mut j = self.journal.lock();
             // In its place in the order asked: plans that ran beside it
             // touched nothing it did (ADR-079). A retry in the place of
@@ -2096,13 +2122,14 @@ impl Executor {
                     down: false,
                     tries,
                 };
-                self.stash(plan.id, place, rest, partial, waits);
+                self.stash(plan.id, place, origin, rest, partial, waits);
             }
         })
     }
 
     /// Keep `rest`, what the plan `plan` had left when it stopped, for
-    /// Retry, its entry at `seq`, with what it left of a file cut short;
+    /// Retry, its entry at `seq`, continuing the plan asked `origin`, with
+    /// what it left of a file cut short;
     /// the oldest let go past [`STOPPED_KEPT`] (what it left removed).
     /// Waiting for its server (`waits`), it is asked whether it answers
     /// again (`look_for`).
@@ -2110,6 +2137,7 @@ impl Executor {
         &self,
         plan: PlanId,
         seq: u64,
+        origin: PlanId,
         rest: Plan,
         partial: Option<super::staging::Partial>,
         waits: Waits,
@@ -2120,6 +2148,7 @@ impl Executor {
             stopped.push_back(Stopped {
                 plan,
                 seq,
+                origin,
                 rest,
                 partial,
                 waits,
@@ -2214,7 +2243,7 @@ impl Executor {
         run.title = title;
         let id = run.id;
         let shown = self.show(&run, cancel, direction.into());
-        let r = self.apply_plan(&run, cancel, shown, None, |r, back, _| {
+        let r = self.apply_plan(&run, id, cancel, shown, None, |r, back, _| {
             // This run's inverses come first: its steps were applied after
             // the ones an earlier, interrupted attempt already took back.
             let mut steps = back.map(|p| p.steps).unwrap_or_default();
@@ -2285,10 +2314,12 @@ impl Executor {
     /// says it finished: whoever hears `Finished` (the toast's Undo, Redo
     /// and Retry) finds the journal as the plan left it. It is told where
     /// a step's error stopped the plan, if one did. A retry's copies go on
-    /// from `partial`, what the run it retries left of a file.
+    /// from `partial`, what the run it retries left of a file. Observers
+    /// hear what held as the plan `origin`'s ([`PlanObserver`]).
     fn apply_plan(
         &self,
         plan: &Plan,
+        origin: PlanId,
         cancel: &CancelToken,
         shown: Shown<'_>,
         partial: Option<super::staging::Partial>,
@@ -2491,7 +2522,7 @@ impl Executor {
         });
         if !held.is_empty() {
             for observer in self.observers.all() {
-                observer(&held);
+                observer(origin, &held);
             }
         }
         result
@@ -2812,6 +2843,50 @@ mod tests {
             ["unmade /srv/c", "unmade /srv/b", "unmade /srv/a"]
         );
         assert!(!executor.can_undo());
+    }
+
+    /// An observer of plans hears what held as the plan asked's, its
+    /// retries' too (the second continuing the first), and an undo and a
+    /// redo, which make the very same changes, by ids that name no plan
+    /// asked; withdrawn with its owner.
+    #[test]
+    fn observers_of_plans_hear_the_plan_asked_and_its_retries_by_its_id() {
+        let executor = Executor::new(Scheduler::new(2));
+        let heard = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let sink = Arc::clone(&heard);
+        executor.observe_plans(
+            "test",
+            Arc::new(move |plan, changes| sink.lock().push((plan, changes.len()))),
+        );
+        let server = Server::new();
+        server.down.store(true, Ordering::SeqCst);
+        let plan = server.plan("upload", &["/srv/a", "/srv/b", "/srv/c"], "/srv/b");
+        let r = executor.execute_blocking(&plan, &CancelToken::new());
+        assert_eq!(r.applied, 1);
+        server.blocked.store(true, Ordering::SeqCst);
+        executor.retry_blocking(plan.id, &CancelToken::new());
+        let again = executor.last_stopped().expect("still to retry");
+        assert_ne!(again, plan.id, "its run told by an id of its own");
+        server.blocked.store(false, Ordering::SeqCst);
+        server.down.store(false, Ordering::SeqCst);
+        let r = executor.retry_blocking(again, &CancelToken::new()).unwrap();
+        assert_eq!((r.applied, r.error), (2, None));
+        assert_eq!(*heard.lock(), [(plan.id, 1), (plan.id, 2)]);
+        heard.lock().clear();
+
+        executor.undo_blocking(&CancelToken::new()).unwrap();
+        executor.redo_blocking(&CancelToken::new()).unwrap();
+        let replays = std::mem::take(&mut *heard.lock());
+        assert_eq!(replays.len(), 2, "{replays:?}");
+        assert!(
+            replays
+                .iter()
+                .all(|&(id, changes)| id != plan.id && id != again && changes == 3),
+            "{replays:?}"
+        );
+        executor.remove_observers("test");
+        executor.undo_blocking(&CancelToken::new()).unwrap();
+        assert!(heard.lock().is_empty(), "withdrawn with its owner");
     }
 
     /// A plan asked after a stopped one put an entry after it: the retry's

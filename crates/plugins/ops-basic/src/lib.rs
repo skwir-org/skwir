@@ -36,7 +36,7 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 use skwir_core::app::{App, PaneArg, TargetsArgs};
 use skwir_core::command::{ClipboardArg, Invocation, Outcome, Topic, WantsClipboard};
-use skwir_core::op::{Change, Copy, EntryRef, Move, Operation, Plan};
+use skwir_core::op::{Change, Copy, EntryRef, Move, Operation, Plan, PlanId};
 use skwir_core::plugin::Plugin;
 use skwir_core::registry::{KeyBinding, MenuItem};
 use skwir_core::workspace::PaneId;
@@ -53,12 +53,13 @@ struct Clipboard {
     /// Places cut or copied (a tag's): pasted in a folder, copied there as
     /// their location says (`Verbs::export`); in a place, given to it.
     places: Vec<skwir_core::Location>,
-    /// The cut was pasted on a place (a tag's), as a plan that gives the
-    /// files their notes there: what that plan's steps change. Each file
-    /// is done once a plan of those changes alone gave it them (`follow`),
-    /// kept while the plan is refused, dismissed, fails or is cancelled;
-    /// another plan's notes (a rating, another tag) leave it there.
-    pasted: Vec<Change>,
+    /// The cut was pasted on a place (a tag's), as this plan, which gives
+    /// the files their notes there. Each file is done once that plan, or
+    /// its retry, gave it them (`follow`), kept while the plan is refused,
+    /// dismissed, fails or is cancelled; another plan's notes (a rating,
+    /// another tag, the same tag given apart, an undo's or a redo's) leave
+    /// it there.
+    pasted: Option<PlanId>,
 }
 
 /// `clipboard_paste`: into a pane, from Skwir's clipboard or, when given,
@@ -205,18 +206,15 @@ fn publish(app: &App, entries: &[EntryRef], cut: bool) {
 /// it, as does one pasted on a place once given its notes there; once
 /// none is left, nothing waits for a paste. So a paste that is refused,
 /// fails or is cancelled keeps what was cut.
-fn follow(clipboard: &Mutex<Clipboard>, changes: &[Change], app: &App) {
+fn follow(clipboard: &Mutex<Clipboard>, plan: PlanId, changes: &[Change], app: &App) {
     let mut c = clipboard.lock();
     if c.entries.is_empty() {
         return;
     }
     let before = c.entries.len();
-    // The plan the cut was pasted as: its changes, and none other's. The
-    // observer hears no plan's id; the changes a plan made are its own.
-    let pasted = !c.pasted.is_empty() && changes.iter().all(|change| c.pasted.contains(change));
-    if pasted {
-        c.pasted.clear();
-    }
+    // The plan the cut was pasted as, by its id: kept until the clipboard
+    // is, a retry of what it had left continuing it.
+    let pasted = c.pasted == Some(plan);
     let cut = c.cut;
     let follow = skwir_core::op::Follow::new(changes);
     let noted: Vec<&std::path::Path> = changes
@@ -350,7 +348,7 @@ fn paste_on_place(
     if cut && own {
         if let Outcome::Plan(plan) = &outcome {
             // Done once that plan applies (`follow`).
-            clipboard.lock().pasted = plan.steps.iter().map(|step| step.describe()).collect();
+            clipboard.lock().pasted = Some(plan.id);
         } else {
             *clipboard.lock() = Clipboard::default();
             app.pending.clear();
@@ -574,7 +572,7 @@ impl Plugin for OpsBasicPlugin {
                     cut: false,
                     from,
                     places,
-                    pasted: Vec::new(),
+                    pasted: None,
                 };
                 Ok(outcome)
             },
@@ -596,7 +594,7 @@ impl Plugin for OpsBasicPlugin {
                     cut: true,
                     from,
                     places,
-                    pasted: Vec::new(),
+                    pasted: None,
                 };
                 Ok(outcome)
             },
@@ -636,11 +634,11 @@ impl Plugin for OpsBasicPlugin {
             .plans();
         let cb = Arc::clone(&self.clipboard);
         let weak = app.weak();
-        app.executor.observe(
+        app.executor.observe_plans(
             ID,
-            Arc::new(move |changes| {
+            Arc::new(move |plan, changes| {
                 if let Some(app) = weak.upgrade() {
-                    follow(&cb, changes, &app);
+                    follow(&cb, plan, changes, &app);
                 }
             }),
         );

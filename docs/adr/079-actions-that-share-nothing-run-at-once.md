@@ -50,7 +50,15 @@ one lane (`op::executor`) and operations.md's "Running".
      file, so they are covered" missed a write in place and a companions'
      folder);
    - `store(S)`: something several actions keep: a volume's trash (its
-     `files` and `info`), the tags index, a plugin's store.
+     `files` and `info`), the tags index, a plugin's store. Amended
+     2026-10-28: a claim is on the store whole (it reads, takes or
+     empties what it holds: a restore, an item deleted for good) or only
+     on a record of its own there (`Footprint::record_in`: a file
+     trashed, its record made new; a notes edit, its file's record,
+     which its paths name). Two claims meet on a store when one is on
+     it whole; two records of their own meet only where their paths
+     do. Two trashings conflicted before, so a toast's Undo of one was
+     refused after the other.
 
    Two claims conflict when a `write(A)` meets any claim on a path
    within `A` or above it, a `names(F)` meets a `read` or `write` of a

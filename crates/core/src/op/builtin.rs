@@ -1355,15 +1355,7 @@ impl Unmove {
         }
         let at = &self.original.path;
         let whole = || self.copied_as.is_some() && made_state(at) == self.copied_as;
-        // Where a mount makes numbers up, what is there is all it says.
-        let stayed = match crate::fs::stat::id_of(at) {
-            None => false,
-            Some(id) if id.lasts() && self.original.id.lasts() && !keeps_no_trash(at) => {
-                id == self.original.id
-            }
-            Some(_) => true,
-        };
-        if !stayed {
+        if !stayed(&self.original) {
             return Ok(&self.back);
         }
         match &self.copy_undo {
@@ -1374,6 +1366,18 @@ impl Unmove {
                 display_name(at)
             )),
         }
+    }
+}
+
+/// Whether the original of a move across volumes whose removal waited
+/// stayed where it was: the same file there, told by its identity; where
+/// a mount makes numbers up, anything there, which is all it says.
+fn stayed(original: &EntryRef) -> bool {
+    let at = &original.path;
+    match crate::fs::stat::id_of(at) {
+        None => false,
+        Some(id) if id.lasts() && original.id.lasts() && !keeps_no_trash(at) => id == original.id,
+        Some(_) => true,
     }
 }
 
@@ -2617,10 +2621,12 @@ impl super::Effect for Trash {
         &self,
         volumes: &super::footprint::Volumes,
     ) -> Option<super::footprint::Footprint> {
+        // An item of its own: its record is made new, under the first
+        // name free (`put_trash`), the system's trash naming one too.
         Some(
             super::footprint::Footprint::default()
                 .made_with(&self.entry.path, volumes)
-                .store(super::footprint::TRASH),
+                .record_in(super::footprint::TRASH),
         )
     }
     fn describe(&self) -> Change {
@@ -2664,14 +2670,14 @@ impl super::Effect for Trash {
             .into_iter()
             .map(|f| f.path)
             .collect();
-        let at = trash_item(ctx, &src)
+        let put = trash_item(ctx, &src)
             .with_context(|| format!("“{}” could not be moved to the trash", display_name(&src)))?;
         // Each an item of the trash of its own, restored with the file:
         // found by when it was trashed where the trash keeps records, by
         // where it went on macOS.
         let mut landed = Vec::new();
         for companion in companions {
-            if let Ok(Some(at)) = trash_item(ctx, &companion)
+            if let Ok(TrashedAt { at: Some(at), .. }) = trash_item(ctx, &companion)
                 && cfg!(target_os = "macos")
             {
                 landed.push(Landed {
@@ -2680,36 +2686,71 @@ impl super::Effect for Trash {
                 });
             }
         }
-        Ok(Some(Box::new(Restore {
-            path: src,
-            item: at.map(PathArg),
+        let restore = Restore {
+            path: src.clone(),
+            item: put.at.map(PathArg),
             landed,
+        };
+        let Some(copied_as) = put.waits else {
+            return Ok(Some(Box::new(restore)));
+        };
+        // Its original's removal waits, and may not come: its undo tells
+        // then whether the trash holds a copy.
+        let made_as = restore
+            .item
+            .as_deref()
+            .and_then(item_of_info)
+            .and_then(|item| made_state(&item));
+        Ok(Some(Box::new(Untrash {
+            restore,
+            original: EntryRef::new(self.entry.id, src).with_only_name(self.entry.only_name),
+            copied_as: copied_as.0.map(|state| state.to_hex().to_string()),
+            made_as,
         })))
     }
 }
 
-/// Put `path` in the trash, and say where it went where it can be told:
-/// its record on Linux, where the plan puts it there itself, its trash
-/// found once (`put_trash`), and one going to a trash on another
-/// filesystem is moved there as any move across volumes is; where the
-/// system put it on macOS (`sys::trash_item`).
-fn trash_item(ctx: &StepContext, path: &Path) -> anyhow::Result<Option<PathBuf>> {
+/// Where [`trash_item`] put a file: its record on Linux, the item on
+/// macOS, where that can be told; and, put in a trash on another
+/// filesystem whose removal of the original waits (`Moved::waits`: a
+/// write-out onto a drive that can be unplugged), what the original was
+/// as it was copied there.
+struct TrashedAt {
+    at: Option<PathBuf>,
+    waits: Option<super::context::CopiedAs>,
+}
+
+/// Put `path` in the trash, and say where it went where it can be told
+/// ([`TrashedAt`]): its record on Linux, where the plan puts it there
+/// itself, its trash found once (`put_trash`), and one going to a trash
+/// on another filesystem is moved there as any move across volumes is,
+/// its original's removal waiting as a move's does; where the system put
+/// it on macOS (`sys::trash_item`).
+fn trash_item(ctx: &StepContext, path: &Path) -> anyhow::Result<TrashedAt> {
     #[cfg(target_os = "linux")]
     {
         match ctx.trashes().put(path)? {
-            super::put_trash::Put::Done { info } => Ok(Some(info)),
-            super::put_trash::Put::Across { item, info } => {
-                if let Err(error) = move_entry(ctx, path, &item, &[]) {
-                    return Err(failed_across(error, &item, &info));
-                }
-                Ok(Some(info))
-            }
+            super::put_trash::Put::Done { info } => Ok(TrashedAt {
+                at: Some(info),
+                waits: None,
+            }),
+            super::put_trash::Put::Across { item, info } => match move_entry(ctx, path, &item, &[])
+            {
+                Ok(moved) => Ok(TrashedAt {
+                    at: Some(info),
+                    waits: moved.waits,
+                }),
+                Err(error) => Err(failed_across(error, &item, &info)),
+            },
         }
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = ctx;
-        Ok(sys::trash_item(path)?)
+        Ok(TrashedAt {
+            at: sys::trash_item(path)?,
+            waits: None,
+        })
     }
 }
 
@@ -2756,12 +2797,8 @@ fn restore_listed(ctx: &StepContext, item: trash::TrashItem) -> anyhow::Result<(
             "“{}” is there again: rename or move it first",
             display_name(&to)
         );
-        move_entry(ctx, &file, &to, &[])?;
-        if let Err(error) = std::fs::remove_file(&info)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            return Err(error.into());
-        }
+        let moved = move_entry(ctx, &file, &to, &[])?;
+        record_goes(ctx, &moved, &file, &info)?;
         Ok(())
     }
     #[cfg(not(target_os = "linux"))]
@@ -2769,6 +2806,31 @@ fn restore_listed(ctx: &StepContext, item: trash::TrashItem) -> anyhow::Result<(
         let _ = ctx;
         Ok(sys::trash_restore(vec![item])?)
     }
+}
+
+/// The record `info` of the item of a trash at `item`, moved out
+/// (`moved`): removed once the item left the trash, at once, or where its
+/// removal waits (`Moved::waits`: a write-out onto a drive that can be
+/// unplugged) once that came, a failure then told at the plan's end.
+/// Should it not come (the item changed meanwhile, the write-out failed),
+/// the record stays with it: the trash lists what it holds.
+fn record_goes(ctx: &StepContext, moved: &Moved, item: &Path, info: &Path) -> std::io::Result<()> {
+    let (item, info) = (item.to_path_buf(), info.to_path_buf());
+    let gone = move || {
+        if std::fs::symlink_metadata(&item).is_ok() {
+            return Ok(());
+        }
+        match std::fs::remove_file(&info) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
+    };
+    if moved.waits.is_none() {
+        return gone();
+    }
+    // After the removal it waits for, asked before it.
+    ctx.after_write_out(move || Ok(gone()?));
+    Ok(())
 }
 
 /// How far apart, in seconds, a file and its companions are trashed.
@@ -3011,8 +3073,8 @@ impl Untrashed {
         if let Some(dir) = to.parent() {
             std::fs::create_dir_all(dir)?;
         }
-        move_entry(ctx, &item, to, &[])?;
-        let _ = std::fs::remove_file(info);
+        let moved = move_entry(ctx, &item, to, &[])?;
+        let _ = record_goes(ctx, &moved, &item, info);
         Ok(Untrashed {
             path: to.to_path_buf(),
             info: PathArg::from(info),
@@ -3300,16 +3362,7 @@ impl super::Effect for Restore {
         let when = item.time_deleted;
         restore_listed(ctx, item)
             .with_context(|| format!("“{}” could not be restored", display_name(&self.path)))?;
-        // The companions trashed with it, where their places are free.
-        let places = companion_places(ctx, &self.path);
-        let found: Vec<trash::TrashItem> =
-            take_trashed_with(ctx, &places, when, |n| !exists(&places[n]))
-                .into_iter()
-                .map(|(_, item)| item)
-                .collect();
-        for item in found {
-            let _ = restore_listed(ctx, item);
-        }
+        restore_trashed_with(ctx, &self.path, when);
         let r = EntryRef::from_path(&self.path).ok_or_else(|| {
             anyhow::anyhow!(
                 "“{}” went missing as it was restored",
@@ -3317,6 +3370,145 @@ impl super::Effect for Restore {
             )
         })?;
         Ok(Some(Box::new(Trash { entry: r })))
+    }
+}
+
+/// Whether a companion trashed with the file at `path`, put in the trash
+/// at `when`, is there to come back, its place free
+/// (`restore_trashed_with`).
+fn trashed_with_any(ctx: &StepContext, path: &Path, when: i64) -> bool {
+    let places = companion_places(ctx, path);
+    if places.is_empty() {
+        return false;
+    }
+    let near: Vec<&Path> = places.iter().map(PathBuf::as_path).collect();
+    ctx.with_trash_near(&near, |listing| {
+        places
+            .iter()
+            .any(|place| !exists(place) && listing.latest_from(place, Some(when)).is_some())
+    })
+    .unwrap_or(false)
+}
+
+/// Restore the companions trashed with the file at `path`, put in the
+/// trash at `when`, where their places are free.
+fn restore_trashed_with(ctx: &StepContext, path: &Path, when: i64) {
+    let places = companion_places(ctx, path);
+    let found: Vec<trash::TrashItem> =
+        take_trashed_with(ctx, &places, when, |n| !exists(&places[n]))
+            .into_iter()
+            .map(|(_, item)| item)
+            .collect();
+    for item in found {
+        let _ = restore_listed(ctx, item);
+    }
+}
+
+// ------------------------------------------------------------------ untrash
+
+/// Take back a trash onto another filesystem whose original's removal
+/// waited (a write-out onto a drive that can be unplugged): the undo of
+/// [`Trash`] then, which a restore alone would not be. That removal may
+/// never have come (the write-out failed, the original changed
+/// meanwhile, it could not be removed): the original stayed where it
+/// was, told as [`Unmove`] tells it, and the trash holds a copy of it,
+/// listed. That copy goes for good with its record only while the
+/// original is whole as it was copied and the copy as it was made; else
+/// both stay, the trash keeping what the original was. The companions
+/// trashed with the file come back where their places are free, as a
+/// restore brings them. Where the original went, the item is restored
+/// (`restore`).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct Untrash {
+    /// The restore: the undo where the original went.
+    pub restore: Restore,
+    /// The original, where it was.
+    pub original: EntryRef,
+    /// What the original was as it was copied (`state_of`, in
+    /// hexadecimal); `None` where it could not all be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copied_as: Option<String>,
+    /// The copy in the trash as it was made (`made_state`, in
+    /// hexadecimal); `None` where it could not all be read, and then it
+    /// is never removed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_as: Option<String>,
+}
+
+impl Untrash {
+    /// The trash's copy and its record, where the original stayed where
+    /// it was; `None` where it went, for the restore to take back.
+    fn copy(&self) -> Option<(PathBuf, PathBuf)> {
+        let info = self.restore.item.as_deref()?;
+        if !stayed(&self.original) {
+            return None;
+        }
+        Some((item_of_info(info)?, info.to_path_buf()))
+    }
+
+    /// Whether the copy at `item` goes for good: the original whole as it
+    /// was copied, and the copy as it was made.
+    fn takes(&self, item: &Path) -> bool {
+        let whole = self.copied_as.is_some() && made_state(&self.original.path) == self.copied_as;
+        whole && self.made_as.is_some() && made_state(item) == self.made_as
+    }
+}
+
+impl super::Kind for Untrash {
+    const KIND: &'static str = "untrash";
+}
+
+impl super::Effect for Untrash {
+    fn footprint(
+        &self,
+        volumes: &super::footprint::Volumes,
+    ) -> Option<super::footprint::Footprint> {
+        super::Effect::footprint(&self.restore, volumes)
+    }
+    fn describe(&self) -> Change {
+        super::Effect::describe(&self.restore)
+    }
+    fn check(&self, ctx: &StepContext) -> StepStatus {
+        let Some((item, info)) = self.copy() else {
+            return super::Effect::check(&self.restore, ctx);
+        };
+        let with = trashed_from(ctx, &info)
+            .is_some_and(|(_, when)| trashed_with_any(ctx, &self.original.path, when));
+        if with || exists(&item) && self.takes(&item) {
+            pending(true)
+        } else {
+            // Gone from the trash since, or kept there, and its companions
+            // back: nothing to take back.
+            StepStatus::AlreadyDone
+        }
+    }
+    fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        let Some((item, info)) = self.copy() else {
+            return super::Effect::apply(&self.restore, ctx);
+        };
+        // When it was put there, for its companions: read while the trash
+        // still says.
+        let when = trashed_from(ctx, &info).map(|(_, when)| when);
+        if exists(&item) && self.takes(&item) {
+            remove_recursive(&item).with_context(|| {
+                format!(
+                    "the copy of “{}” in the trash could not all be removed",
+                    display_name(&self.original.path)
+                )
+            })?;
+            ctx.trash_taken(&info);
+            if let Err(error) = std::fs::remove_file(&info)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(error.into());
+            }
+        }
+        if let Some(when) = when {
+            restore_trashed_with(ctx, &self.original.path, when);
+        }
+        Ok(Some(Box::new(Trash {
+            entry: self.original.clone(),
+        })))
     }
 }
 
@@ -3627,16 +3819,19 @@ impl super::Effect for RestorePart {
         } else {
             along(ctx, &src, &self.path)
         };
-        if let Err(e) = move_entry(ctx, &src, &self.path, &companions) {
-            undo_folders(&folders);
-            return Err(e.context(format!(
-                "“{}” could not be restored",
-                display_name(&self.path)
-            )));
-        }
+        let moved = match move_entry(ctx, &src, &self.path, &companions) {
+            Ok(moved) => moved,
+            Err(e) => {
+                undo_folders(&folders);
+                return Err(e.context(format!(
+                    "“{}” could not be restored",
+                    display_name(&self.path)
+                )));
+            }
+        };
         if item {
             ctx.trash_taken(&inside.info);
-            let _ = std::fs::remove_file(&inside.info);
+            let _ = record_goes(ctx, &moved, &src, &inside.info);
         }
         let mut returned = Vec::new();
         for (n, found) in with {
@@ -4435,6 +4630,7 @@ pub fn register_builtin(reg: &OpRegistry) {
     reg.register::<RemoveEmptyFile>("core");
     reg.register::<Uncopy>("core");
     reg.register::<Unmove>("core");
+    reg.register::<Untrash>("core");
     reg.register::<Link>("core");
     reg.register::<Unlink>("core");
     reg.register::<super::access::SetAccess>("core");
@@ -4634,6 +4830,124 @@ mod tests {
         file.set_modified(when).unwrap();
         drop(file);
         assert!(!same_tree(&src, &copy, true, &ctx).unwrap(), "read again");
+    }
+
+    /// An item of a trash on another filesystem, a copy of `name` in
+    /// `dir`, and its record, made as a trash there does.
+    #[cfg(target_os = "linux")]
+    fn trashed_copy(trash: &Path, dir: &Path, name: &str, text: &str) -> (PathBuf, PathBuf) {
+        let (item, info) = (
+            trash.join("files").join(name),
+            trash.join("info").join(format!("{name}.trashinfo")),
+        );
+        std::fs::create_dir_all(trash.join("files")).unwrap();
+        std::fs::create_dir_all(trash.join("info")).unwrap();
+        std::fs::write(&item, text).unwrap();
+        let path = dir.join(name);
+        std::fs::write(
+            &info,
+            format!(
+                "[Trash Info]\nPath={}\nDeletionDate=2026-10-28T12:00:00\n",
+                path.display()
+            ),
+        )
+        .unwrap();
+        (item, info)
+    }
+
+    /// A trash onto another filesystem whose original's removal waited,
+    /// and never came (the write-out failed): the original stayed, the
+    /// trash holds a copy, listed. A restore alone, what its undo was,
+    /// refuses to put the copy where the original is; its undo takes the
+    /// copy and its record back, and Redo trashes the original. One whose
+    /// original changed meanwhile keeps both, nothing to take back; one
+    /// whose original went is a restore.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_trash_whose_original_stayed_is_undone_by_taking_its_copy_back() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let (dir, trash) = (tmp.path().join("l’été"), tmp.path().join(".Trash-1000"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = "it’s a  file.txt";
+        let original = dir.join(name);
+        std::fs::write(&original, "words").unwrap();
+        let (item, info) = trashed_copy(&trash, &dir, name, "words");
+        let undo = Untrash {
+            restore: Restore {
+                path: original.clone(),
+                item: Some(PathArg(info.clone())),
+                landed: Vec::new(),
+            },
+            original: EntryRef::from_path(&original).unwrap(),
+            copied_as: made_state(&original),
+            made_as: made_state(&item),
+        };
+        let ctx = StepContext::detached();
+        assert!(
+            matches!(undo.restore.check(&ctx), StepStatus::Conflict { .. }),
+            "a restore alone is refused"
+        );
+        assert!(matches!(undo.check(&ctx), StepStatus::Pending { .. }));
+        let redo = undo.apply(&ctx).unwrap().expect("its redo");
+        assert!(!item.exists() && !info.exists(), "the copy and its record");
+        assert_eq!(std::fs::read_to_string(&original).unwrap(), "words");
+        assert!(matches!(undo.check(&ctx), StepStatus::AlreadyDone));
+        let trash_again = redo.as_any().and_then(|any| any.downcast_ref::<Trash>());
+        assert_eq!(trash_again.map(|t| &t.entry.path), Some(&original));
+
+        // Changed since it was copied: the trash keeps what it was.
+        let (item, info) = trashed_copy(&trash, &dir, name, "words");
+        std::fs::write(&original, "more words").unwrap();
+        assert!(matches!(undo.check(&ctx), StepStatus::AlreadyDone));
+        assert!(item.exists() && info.exists());
+        // Gone, as the removal it waited for came: the restore's.
+        std::fs::remove_file(&original).unwrap();
+        assert!(undo.copy().is_none());
+    }
+
+    /// An item moved out of a trash takes its record along once it left:
+    /// at once, or where its removal waits for a write-out, once that
+    /// came; should it not come, the record stays, and the trash lists
+    /// what it holds.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_record_goes_once_its_item_left_the_trash() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let trash = tmp.path().join(".Trash-1000");
+        let waits = || Moved {
+            waits: Some(super::super::context::CopiedAs(None)),
+            beside: Vec::new(),
+        };
+        // Its removal waits, and does not come.
+        let ctx = StepContext::detached();
+        let (item, info) = trashed_copy(&trash, tmp.path(), "a’s.txt", "a");
+        ctx.after_write_out(|| Ok(()));
+        record_goes(&ctx, &waits(), &item, &info).unwrap();
+        assert!(info.exists(), "not before the write-out");
+        ctx.write_out().unwrap();
+        assert!(item.exists() && info.exists(), "listed, as it stayed");
+        // It comes.
+        let ctx = StepContext::detached();
+        let (item, info) = trashed_copy(&trash, tmp.path(), "b’s.txt", "b");
+        let removed = item.clone();
+        ctx.after_write_out(move || Ok(std::fs::remove_file(&removed)?));
+        record_goes(&ctx, &waits(), &item, &info).unwrap();
+        assert!(info.exists(), "not before the write-out");
+        ctx.write_out().unwrap();
+        assert!(!item.exists() && !info.exists(), "gone with it");
+        // Moved out at once.
+        let (item, info) = trashed_copy(&trash, tmp.path(), "c’s.txt", "c");
+        std::fs::remove_file(&item).unwrap();
+        let moved = Moved {
+            waits: None,
+            beside: Vec::new(),
+        };
+        record_goes(&StepContext::detached(), &moved, &item, &info).unwrap();
+        assert!(!info.exists());
     }
 
     /// A move into the trash on another volume that failed leaves nothing

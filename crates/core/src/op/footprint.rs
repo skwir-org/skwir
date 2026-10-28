@@ -2,9 +2,11 @@
 //! (ADR-079). Each step says it ([`super::Operation::footprint`]): the
 //! trees it reads, the trees it changes (made, written or removed), the
 //! folders whose names it changes, and the stores several actions keep (a
-//! volume's trash, the notes'). Two actions conflict when one changes
-//! what the other touches; reads never meet. A step that cannot say
-//! touches everything: its action runs alone, as every action did.
+//! volume's trash, the notes'): what they hold, or only a record of its
+//! own there. Two actions conflict when one changes what the other
+//! touches; reads never meet, nor two records of their own. A step that
+//! cannot say touches everything: its action runs alone, as every action
+//! did.
 //!
 //! Paths are compared by their components, each folder made canonical
 //! on this machine's volumes (a link to a folder is the folder: one look
@@ -34,8 +36,10 @@ pub struct Footprint {
     writes: BTreeSet<PathBuf>,
     /// Folders whose names change.
     names: BTreeSet<PathBuf>,
-    /// Stores several actions keep.
+    /// Stores several actions keep, what they hold: read, taken, emptied.
     stores: BTreeSet<&'static str>,
+    /// Stores it keeps only a record of its own in ([`Footprint::record_in`]).
+    records: BTreeSet<&'static str>,
     /// What it touches cannot be told: everything.
     every: bool,
     /// It moves bytes or walks a tree.
@@ -73,9 +77,11 @@ impl Channel {
 }
 
 /// A volume's trash, its `files` and `info`, and every trash a restore may
-/// read: one store.
+/// read: one store. A file trashed adds an item of its own; a restore, an
+/// item deleted for good or moved, keeps it whole.
 pub const TRASH: &str = "trash";
-/// The notes' stores (tags, ratings, comments) and their index.
+/// The notes' stores (tags, ratings, comments): each file's record in the
+/// file or beside it, which an edit's paths claim.
 pub const NOTES: &str = "notes";
 
 impl Footprint {
@@ -151,10 +157,23 @@ impl Footprint {
         self
     }
 
-    /// A store several actions keep.
+    /// A store several actions keep: what it holds read, taken, emptied.
+    /// It meets every action that keeps that store.
     #[must_use]
     pub fn store(mut self, store: &'static str) -> Self {
         self.stores.insert(store);
+        self
+    }
+
+    /// Only a record of its own in a store several actions keep: one it
+    /// adds under a name it alone takes (a file put in the trash, its
+    /// record made new), or its file's, which its paths claim (a file's
+    /// notes, beside it or in it). Two such meet only where their paths
+    /// do; one that keeps the store whole ([`Footprint::store`]: a restore,
+    /// an item deleted for good) meets it.
+    #[must_use]
+    pub fn record_in(mut self, store: &'static str) -> Self {
+        self.records.insert(store);
         self
     }
 
@@ -267,6 +286,7 @@ impl Footprint {
         self.writes.extend(other.writes);
         self.names.extend(other.names);
         self.stores.extend(other.stores);
+        self.records.extend(other.records);
         self.every |= other.every;
         self.heavy |= other.heavy;
         self.channels.extend(other.channels);
@@ -287,10 +307,16 @@ impl Footprint {
         all.heavy_if(count > LIGHT_STEPS)
     }
 
-    /// Whether `self` and `other` may not run at once: one changes what
-    /// the other touches, or both keep one store.
+    /// Whether `self` and `other` may not run at once, nor be taken back
+    /// apart: one changes what the other touches, or one keeps whole a
+    /// store the other keeps (two records of their own there, nothing).
     pub fn conflicts(&self, other: &Footprint) -> bool {
-        if self.every || other.every || self.stores.intersection(&other.stores).next().is_some() {
+        let whole = |a: &Footprint, b: &Footprint| {
+            a.stores
+                .iter()
+                .any(|store| b.stores.contains(store) || b.records.contains(store))
+        };
+        if self.every || other.every || whole(self, other) || whole(other, self) {
             return true;
         }
         let changes = |a: &Footprint, b: &Footprint| {
@@ -490,10 +516,23 @@ mod tests {
         // A folder above the tree read, removed.
         let gone = Footprint::default().made(&p("/disk"));
         assert!(copy.conflicts(&gone));
-        // One store, kept by both.
-        let trash = Footprint::default().made(&p("/a")).store(TRASH);
+        // One store, kept whole by one: a restore meets a trashing, an
+        // item deleted for good another; two trashings, each an item of
+        // its own, and two notes edits in two folders, do not meet; one
+        // file's notes written twice do, by its path.
+        let trash = Footprint::default().made(&p("/a")).record_in(TRASH);
         let restore = Footprint::default().made(&p("/b")).store(TRASH);
-        assert!(trash.conflicts(&restore));
+        assert!(trash.conflicts(&restore) && restore.conflicts(&trash));
+        let purge = Footprint::default().made(&p("/t/files/c")).store(TRASH);
+        assert!(restore.conflicts(&purge));
+        let other = Footprint::default().made(&p("/d/e")).record_in(TRASH);
+        assert!(!trash.conflicts(&other) && !other.conflicts(&trash));
+        let tag = |path: &str| Footprint::default().made(&p(path)).record_in(NOTES);
+        assert!(!tag("/disk/it’s a.jpg").conflicts(&tag("/stick/b.jpg")));
+        assert!(tag("/disk/it’s a.jpg").conflicts(&tag("/disk/it’s a.jpg")));
+        let mut both = tag("/stick/b.jpg");
+        both.merge(Footprint::default().store(NOTES));
+        assert!(both.conflicts(&tag("/disk/it’s a.jpg")), "kept whole");
         // A name like another, not within it.
         let photos2 = Footprint::default().made(&p("/disk/photos2"));
         assert!(!copy.conflicts(&photos2));
