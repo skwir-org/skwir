@@ -42,6 +42,14 @@ ENDS = re.compile(r"\s*$| {0,3}(#{1,6}(\s|$)|\||<|[-*_=]+\s*$|\[[^\]\n]+\]:)|.*(
 FENCE = re.compile(r" {0,3}(`{3,}|~{3,})")
 # Where a section's release page ends: the details below it are the changelog's.
 DETAILS = re.compile(r"^### All changes[ \t]*$", re.M)
+# The user's documents: what they name of a version is the release's, and their
+# prose names none where it can (docs/RELEASING.md, step 1).
+DOCUMENTS = ("README.md", "docs/guide.md", "docs/HELP-WANTED.md")
+# A package's file name, as the README's install commands give it
+# (`skwir_0.2.0-1_amd64.deb`, `skwir-media-0.2.0-1.x86_64.rpm`), or a version
+# said in prose (`Skwir 0.2`, `Version 0.2`), outside code or in it alike.
+VERSIONED = re.compile(r"\bskwir(?:-[a-z]+)*[-_](?P<file>[0-9]+\.[0-9]+\.[0-9]+)(?=[-_.])"
+                       r"|\b(?:Skwir|[Vv]ersion) (?P<said>[0-9]+\.[0-9]+(?:\.[0-9]+)?)\b")
 
 
 def require(condition, message):
@@ -94,6 +102,13 @@ def metadata(tag):
     for _, path, _, target in relative_links(notes):
         require(path is not None and (ROOT / path).exists(),
                 f"CHANGELOG.md's {version} notes link to a file not in the source: {target}")
+    for path in DOCUMENTS:
+        if (ROOT / path).is_file():
+            for match in VERSIONED.finditer((ROOT / path).read_text()):
+                named = match["file"] or match["said"]
+                require(named == version if match["file"] else version.startswith(named + "."),
+                        f"{path} names {named}, not {version}: say no version there, or this one "
+                        "(docs/RELEASING.md, step 1)")
     metainfo = ET.parse(ROOT / "tools/package/linux/org.skwir.skwir.metainfo.xml")
     require(any(r.get("version") == version and r.get("date") == date
                 for r in metainfo.findall("./releases/release")),

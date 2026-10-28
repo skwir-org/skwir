@@ -2,8 +2,9 @@
 
 Status: accepted, 2026-09-18. Built on gpui 0.2.2, vendored with patches,
 until ADR-064 (2026-10-17) moved it to a commit of Zed's main branch
-(`vendor/zed`). Amended 2026-10-11 (accessibility waits for gpui) and
-2026-10-17 (gpui has AccessKit).
+(`vendor/zed`). Amended 2026-10-11 (accessibility waits for gpui),
+2026-10-17 (gpui has AccessKit) and 2026-10-18 (ADR-065 exposes the
+window and the files, closing the known gap in part).
 
 ## Context
 
@@ -82,8 +83,9 @@ Not verified by the spike:
 - **Known gap: accessibility.** gpui 0.2.2 has no AccessKit (no `accesskit`
   dependency), so the plan's "AccessKit from day one" cannot be met.
   Accessibility follows gpui's support: each gpui update checks for it
-  (`vendor/gpui/README.skwir.md`, "Updating gpui"), and Skwir wires it in
-  once gpui provides it.
+  (`vendor/gpui/README.skwir.md` then, `vendor/zed/README.skwir.md` since
+  ADR-064), and Skwir wires it in once gpui provides it. Closed in part
+  by ADR-065 (Amendments).
 - The spikes stay runnable as a benchmark: `just spike <toolkit> <gpu>`.
 
 ## Amendments

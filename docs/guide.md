@@ -1,8 +1,8 @@
 # Using Skwir
 
-This guide is for Skwir 0.2 on Linux. Every action is also a command in
-the palette (`Ctrl+Shift+P`), which shows its keys. `F1` lists the keys
-that work where the keyboard is.
+This guide is for Skwir on Linux. Every action is also a command in the
+palette (`Ctrl+Shift+P`), which shows its keys. `F1` lists the keys that
+work where the keyboard is, by topic.
 
 ## The window
 
@@ -245,6 +245,66 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   dialog, whose "Automatically unlock on this PC" is Windows' to keep. A
   drive mounted for you has an eject button, which writes out what is
   pending and unmounts it.
+
+## Servers, phones and cameras
+
+Skwir speaks no network protocol and keeps no password: a server's
+folder is one a tool you have installed mounts (sshfs, GVfs, KIO's
+kio-fuse, rclone, or your fstab's line), and Skwir shows it as a folder
+it knows is remote.
+
+- **Open an address** by typing it in the address field: `sftp://me@host/`,
+  `smb://nas/share`, `dav://` or `davs://`, `ftp://`, `nfs://`, `afp://`,
+  `s3://bucket/` (with your own AWS configuration; `s3://profile@bucket/`
+  for a profile), `rclone://remote/` for one of rclone's remotes. The
+  address completes the servers Skwir knows, and your ssh configuration's
+  hosts. The tools are tried in the order Settings › Network › Opening
+  addresses gives, among those installed: sshfs, kmtp (a phone KDE
+  holds), GVfs, KIO (before GVfs on KDE's desktop), rclone, fstab. While
+  it connects the pane says "Opening …", with Cancel.
+- **Passwords** are asked in the window, and so is ssh's question about a
+  server it has never seen. **Remember** keeps a password in your
+  desktop's keyring, and a password Nautilus remembered is used too;
+  Forget Password in the server's menu removes it. On KDE's desktop, KIO
+  asks with KDE's own dialogs and uses the passwords KDE keeps.
+- **The Network section** of the sidebar lists the servers: those
+  mounted, rclone's remotes, GVfs's and KDE's, and those you added.
+  **Add Server…** (the section's menu, or Settings › Network) adds any
+  kind: a server by its address, kept in Skwir's own list or, on KDE's
+  desktop, in KDE's network folders, which Dolphin shows too (Settings ›
+  Network says which); or one of rclone's remotes, a cloud storage among
+  them, in forms made from what rclone asks. A bookmark of a server
+  becomes one with **Keep as Server**. A server's menu has **Mount
+  Options…** (read only, rclone's cache, bandwidth), **Connect at Login**
+  (by your system's service manager, for a server that asks nothing at
+  login), **Set Up Key Login…** (an SFTP server: your key put there
+  once, over one login), Sign In Again…, Test, Edit and Remove.
+  Settings › Network lists every server with the same actions.
+- **Nearby**, at the end of the Network section, lists the servers your
+  network announces (a NAS, a Mac, a Windows PC), found by Avahi and wsdd
+  while you look at it, and only then. A server's menu adds it.
+- **Phones and cameras**: a phone plugged in for file transfer (MTP), a
+  camera or a phone in its photos mode, and an iPhone are listed among
+  the drives as soon as GVfs offers them; opening one mounts it, never
+  plugging it in. A phone another program holds (KDE's kiod6) says so,
+  and which. On KDE's desktop, a phone KDE holds opens through KDE
+  itself, by Skwir's phone helper (it needs FUSE: fusermount3).
+- **In a server's folder**, thumbnails show where the server is on your
+  local network, and for small files elsewhere once a copy from it
+  proved it fast; its menu's Thumbnails, or Folders and views ›
+  Thumbnails in remote folders, choose otherwise. A server that stops
+  answering says so above its files, with Go Back and Disconnect, and
+  holds nothing else up. `Delete` there deletes for good, and asks first:
+  nothing of a server is carried to this machine's Trash.
+- **Copies** to and from a server go in batches (through rsync over the
+  ssh connection, sftp or gio where those are faster, several files at
+  once), a large file comes down in several parts at once, and a copy
+  within one server is made on the server. An action a server stopped
+  is retried from where it stopped (Retry, in its message), and goes on
+  by itself once the server answers again.
+- **Eject**, on a server's row, lets go of it, even one that no longer
+  answers. Disconnecting a phone KDE holds lets go of Skwir's folder,
+  never of KDE's hold.
 
 ## Searching
 

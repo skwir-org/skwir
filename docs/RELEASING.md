@@ -12,7 +12,11 @@ workers, check performance or build packages.
    `tools/package/aur/PKGBUILD` and `tools/package/aur/skwir-bin/PKGBUILD`
    (`skwir-git` names its own), the AppStream release version and date
    in `tools/package/linux/org.skwir.skwir.metainfo.xml`, and the file
-   names in `README.md`'s install commands.
+   names in `README.md`'s install commands. The user's documents
+   (`README.md`, `docs/guide.md`, `docs/HELP-WANTED.md`) say no version
+   in their prose; `release-metadata` stops at a package's file name of
+   another version there, or at "Skwir 0.2" or "Version 0.2" naming
+   another.
 2. Date that version's `CHANGELOG.md` heading, for example
    `## 0.1.0 (2026-10-11)`. AppStream must have the same date. The section
    supplies the GitHub release notes, so it must be the first: an

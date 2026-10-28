@@ -1,9 +1,10 @@
 # Helping Skwir reach macOS and Windows
 
-Skwir 0.2 is released for Linux only. Its code for macOS and Windows
-compiles (`just check-cross`) and the Windows build's tests pass under
-Wine, but none of it has run on a real Mac or Windows machine: nobody
-working on Skwir has one. If you do, you can help.
+Skwir is released for Linux only. Its code for macOS and Windows
+compiles (`just check-cross`), each release offers builds to try on both,
+and the Windows build's tests pass under Wine, but none of it has run on
+a real Mac or Windows machine: nobody working on Skwir has one. If you
+do, you can help.
 
 Below are the steps each release needs, best done in order. Details are in
 [`docs/PORTING.md`](PORTING.md) ("PORTING"); ADR-035 explains the split.

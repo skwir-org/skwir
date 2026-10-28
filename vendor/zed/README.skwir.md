@@ -609,6 +609,54 @@ keysym typed, at the same level, and seems to miss this case.
 from xkeyboard-config: Ergo-L's and `ir` with `nbsp:zwnj2` give `space`
 with Shift, and keep what they type; AFNOR's AltGr+Space stays its own.
 
+### 0040: A list keeps its height hints across a width change
+
+A book read in continuous scrolling had a scrollbar that ended at the
+last page visited, while the bar counted all its pages. The reader gives
+every page's row a height estimate before the list lays it out
+(`with_uniform_item_height`, or a hint per item); Zed's list, on its
+first layout and whenever its width changes, made every row unmeasured
+with no estimate, so the list's height, and the scrollbar's, was only the
+rows laid out since. 0004's last hunk kept the estimate there; it went
+when 0004 was dropped with gpui 0.2.2 (2026-10-18), Zed having hints of
+its own, and every document read continuously had the scrollbar of the
+pages seen since.
+
+What each row measured, or was hinted at, now stays its estimate until it
+is measured again, as `remeasure_items` already does: at another width
+the measured heights are stale, but still the best guess. A structured
+preview's list takes the same hints and gains the same fix.
+`test_uniform_height_hints_survive_the_first_layout_and_a_width_change`
+lays out 100 hinted rows of 50 px in a 200 px list, then at another
+width, and finds 4800 px to scroll both times (all 5000 less the 200
+shown);
+`just gpui-check` runs it with upstream's list tests.
+
+### 0041: A key binding for a system
+
+Zed's main of 2026-10-27 parses keystrokes for a system known at run
+time, and its two ways to make a `KeyBinding` stopped fitting a keymap
+read from the user's settings. `KeyBinding::new` now takes a
+`&'static str`, refuses `secondary-` (`Keystroke::parse` knows no system)
+and panics on keys that do not parse: Skwir's bindings are strings read
+at run time, its text input's own say `secondary-` (Skwir panicked at
+start without this patch), and one the user mistyped must be warned
+about, never end the program. `KeyBinding::load` takes the `App` and maps
+the keys through the platform's keyboard mapper, which on Windows reads
+them by the layout: Skwir's keys keep their meaning whatever the layout
+(AGENTS.md, Conventions), and its keymap becomes gpui's bindings without
+an `App` (`gpui_bindings`, which its tests call without a window).
+
+`KeyBinding::new_for_os(keys, action, context, os)` makes a binding from
+any string, its `secondary-` resolved for the system given and its other
+modifiers as written, through `load_internal` with the dummy mapper, as
+`new` did before; it returns an error, not a panic, when a keystroke or
+the context does not parse. Skwir names its system once
+(`keymap::HOST_OS`, from the target) and goes through it for every
+keystroke parsed or written back and every binding (`keymap::binding`,
+which warns of one that does not parse). No test of its own: Skwir's
+keymap tests build every default binding through it.
+
 ## Adding or changing a patch
 
 Make the series, a git repository whose first commit is Zed's crates and whose

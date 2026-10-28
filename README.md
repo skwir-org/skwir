@@ -24,14 +24,19 @@
   </picture>
 </p>
 
-Skwir is written in Rust on gpui, Zed's GPU-accelerated toolkit. Version 0.2 is
-for Linux (Wayland or X11, with Vulkan). The macOS and Windows code compiles but
-has never run on either system: see [how to help](docs/HELP-WANTED.md).
+Skwir is written in Rust on gpui, Zed's GPU-accelerated toolkit. Its releases
+are for Linux (Wayland or X11, with Vulkan). Each also offers builds to try on
+Windows and macOS, made on Linux and never run on either system: see
+[how to help](docs/HELP-WANTED.md).
 
 ## Features
 
 - **Fast on any folder**: entries stream in as they are read, however many;
   list, grid, columns, tree and board views; two panes and tabs.
+- **Servers, phones and cameras**: type an address (`sftp://`, `smb://`,
+  `dav://`, `s3://`…) and Skwir mounts it with a tool you have (sshfs, GVfs,
+  KIO, rclone), asking for a password in the window; servers nearby, phones and
+  cameras are listed in the sidebar, and copies to and from them go in batches.
 - **Searches are places**: names, kinds, sizes, dates, tags, ratings and
   contents in one query, kept in the sidebar if you like.
 - **Tags, ratings and comments** kept on the files, where Dolphin, darktable,
@@ -58,8 +63,9 @@ has never run on either system: see [how to help](docs/HELP-WANTED.md).
 ## Installing
 
 Each [release](https://github.com/skwir-org/skwir/releases) has packages for
-x86-64 Linux. `skwir` holds the program and its PDF, DjVu, archive and
-3D-model helpers; the rest is optional:
+x86-64 Linux. `skwir` holds the program and its helpers for PDFs, DjVu,
+archives, 3D models, WebAssembly plugins and the phones KDE holds; the rest is
+optional:
 
 | Package           | Adds                                                  |
 | ----------------- | ----------------------------------------------------- |
@@ -70,7 +76,14 @@ x86-64 Linux. `skwir` holds the program and its PDF, DjVu, archive and
 | `skwir-mupdf`     | PDFs and books laid out in pages through MuPDF (AGPL) |
 
 Some previews use programs you may already have, such as LibreOffice or
-ffmpeg: [Previews](docs/previews.md) says which.
+ffmpeg: [Previews](docs/previews.md) says which. Remote folders use the tools
+you have for them (sshfs, GVfs, kio-fuse, rclone): the
+[guide](docs/guide.md#servers-phones-and-cameras) says which opens what.
+
+Each release also offers builds to try: for Windows, a zip and a per-user
+installer; for macOS 12 or later on Apple silicon, an app in a disk image or a
+zip. They are made on Linux and have never run on Windows or a Mac:
+[how to help](docs/HELP-WANTED.md) says what to try, and how to report it.
 
 ### Debian 13 and Ubuntu 24.04
 
@@ -225,8 +238,8 @@ any folder holding a file named `.private`.
 A plugin can be a folder with a `plugin.toml` and either a WebAssembly module or
 a program speaking JSON lines. It can provide fields, thumbnails, previews and
 commands, stays off until you turn it on in Settings › Plugins (which shows what
-it may do), and gets nothing it did not declare. The protocol is experimental in
-0.2: [writing a plugin](docs/plugins/README.md).
+it may do), and gets nothing it did not declare. The protocol is still
+experimental: [writing a plugin](docs/plugins/README.md).
 
 ## Documentation
 

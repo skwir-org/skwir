@@ -26,6 +26,8 @@
   measured and checked.
 - [PORTING.md](PORTING.md): what is still Linux-only;
   [HELP-WANTED.md](HELP-WANTED.md): helping with macOS and Windows.
+- [RELEASING.md](RELEASING.md): preparing a release, building and
+  checking its packages, the GitHub draft and the AUR.
 - Design records and measurements: [the preview frame](preview-frame.md),
   [PDF engines compared](pdf-comparison.md),
   [video playback](video-playback.md),

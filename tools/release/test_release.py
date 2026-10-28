@@ -451,6 +451,25 @@ sys.exit(subprocess.call([service, os.path.join(os.environ['AUR_TEST_REMOTES'], 
         self.cli("metadata", ok=False, tag="v1.2.4")
         self.cli("metadata", ok=False, tag="v1.2.3;echo unsafe")
 
+    def test_documents_name_the_release_or_no_version(self):
+        readme, guide = self.root / "README.md", self.root / "docs/guide.md"
+        readme.write_text("Releases are for Linux.\n\n```sh\nsudo apt install ./skwir_1.2.3-1_amd64.deb\n"
+                          "./skwir-1.2.3-x86_64.AppImage\n```\n\nSkwir 1.2 under the GPL version 3.\n")
+        guide.write_text("This guide is for Skwir on Linux, with Rust 1.96.\n")
+        self.cli("metadata")
+        for document, text, named in (
+            (readme, "sudo dnf install ./skwir-media-1.2.2-1.x86_64.rpm\n", "1.2.2"),
+            (readme, "tar -xzf skwir-1.2.2-linux-x86_64.tar.gz\n", "1.2.2"),
+            (guide, "This guide is for Skwir 1.1 on Linux.\n", "1.1"),
+            (guide, "Version 1.2.4 is for Linux.\n", "1.2.4"),
+        ):
+            original = document.read_text()
+            document.write_text(text)
+            self.assertIn(f"{document.relative_to(self.root)} names {named}, not 1.2.3",
+                          self.cli("metadata", ok=False))
+            document.write_text(original)
+        self.cli("metadata")
+
     def test_no_macos_sdk_stops_before_the_checks(self):
         (Path(self.env["XDG_DATA_HOME"]) / "skwir-build/macos-sdk/env.sh").unlink()
         self.assertIn("just macos-sdk", self.cli("build", ok=False))
