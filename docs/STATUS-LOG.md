@@ -6456,3 +6456,15 @@ those offered:
 - **Checked:** rustfmt; `cargo clippy --workspace --all-targets` (`-D
   warnings`, every crate and native worker, against the new system
   libraries). Tests not run here: they run after the crates' update.
+
+### The crates updated within their versions (2026-10-28)
+
+- **Updated:** `cargo update`: 151 lines of changes to the lock file
+  (tokio 1.54.1, rmcp 3.8.0, ferroni 2.8.0, merman 0.8.0 out of alpha,
+  serde_json, hyper, the ICU crates, cc, libc, …).
+- **Held:** libloading at 0.8.9: pdfium-render 0.8.35 asks for any
+  `0.x` and does not build with 0.9 (`DlOpen`'s field renamed).
+- **Checked:** `cargo clippy --workspace --all-targets` (`-D warnings`);
+  `cargo deny check` (advisories, bans, licences, sources ok; mupdf's
+  manifests still name the deprecated `AGPL-3.0`). The notices are made
+  again once the semver-breaking updates are in.
