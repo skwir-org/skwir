@@ -365,9 +365,11 @@ mod tests {
             paris.day_of(at(2026, 9, 25, late)),
             days_from_civil(2026, 9, 26)
         );
-        // Beyond what a calendar holds: its ends.
-        let before = UNIX_EPOCH - Duration::from_secs(400_000_000_000);
-        assert_eq!(paris.clock_of(before), (days_from_civil(-9999, 1, 1), 0));
+        // Beyond what a calendar holds: its ends. Windows' time holds no
+        // instant before 1601, so there none can be made to ask.
+        if let Some(before) = UNIX_EPOCH.checked_sub(Duration::from_secs(400_000_000_000)) {
+            assert_eq!(paris.clock_of(before), (days_from_civil(-9999, 1, 1), 0));
+        }
     }
 
     #[test]
