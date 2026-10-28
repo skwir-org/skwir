@@ -26,6 +26,7 @@ use skwir_core::fs::reach;
 use skwir_plugin_remote::address::Address;
 use skwir_plugin_remote::connector::{self, Connector};
 use skwir_plugin_remote::login::{self, AtLogin, Manager};
+use skwir_plugin_remote::options::MountOptions;
 use skwir_plugin_remote::rclone::Rclone;
 use skwir_plugin_remote::sshfs::Sshfs;
 
@@ -602,7 +603,13 @@ fn an_rclone_remote_mounts_at_login_as_its_unit_runs_it() {
     let address = Address::parse(&format!("rclone://{name}/Some/Folder")).unwrap();
     let top = address.top();
     let cancel = CancelToken::new();
-    let at = AtLogin::rclone(&rclone, &address, &cancel).unwrap();
+    // Read only, as chosen for its server: mounted so at login too.
+    let options = MountOptions {
+        read_only: true,
+        ..MountOptions::default()
+    };
+    let at = AtLogin::rclone(&rclone, &address, &options, &cancel).unwrap();
+    assert!(at.args.iter().any(|a| a == "--read-only"), "{:?}", at.args);
     // Where Skwir mounts it itself, its configuration named.
     assert_eq!(
         at.point,
@@ -633,6 +640,10 @@ fn an_rclone_remote_mounts_at_login_as_its_unit_runs_it() {
         "from the server"
     );
     assert!(
+        std::fs::write(at.point.join("written.txt"), "no").is_err(),
+        "mounted read only"
+    );
+    assert!(
         at.leftovers.iter().all(|socket| socket.exists()),
         "its remote control serves Skwir's copies"
     );
@@ -641,6 +652,19 @@ fn an_rclone_remote_mounts_at_login_as_its_unit_runs_it() {
     let manager = fake_manager(&base);
     manager.install(&at, &cancel).unwrap();
     let unit_name = login::unit_name(&at.id);
+    assert_eq!(
+        asked(&base),
+        [
+            "--user daemon-reload".to_owned(),
+            format!("--user enable --quiet {unit_name}"),
+        ]
+    );
+    // Its options changed: written again, nothing started, whether or not
+    // it is mounted.
+    let writable = AtLogin::rclone(&rclone, &address, &MountOptions::default(), &cancel).unwrap();
+    manager.renew(&writable, &cancel).unwrap();
+    let written = std::fs::read_to_string(manager.folder.join(&unit_name)).unwrap();
+    assert!(!written.contains("--read-only"), "{written}");
     assert_eq!(
         asked(&base),
         [
@@ -696,9 +720,14 @@ fn what_needs_an_answer_at_login_is_refused() {
     let base = fixture("refused");
     let cancel = CancelToken::new();
     let refusal = |rclone: &Rclone, address: &str| {
-        AtLogin::rclone(rclone, &Address::parse(address).unwrap(), &cancel)
-            .unwrap_err()
-            .to_string()
+        AtLogin::rclone(
+            rclone,
+            &Address::parse(address).unwrap(),
+            &MountOptions::default(),
+            &cancel,
+        )
+        .unwrap_err()
+        .to_string()
     };
     let encrypted = base.join("encrypted.conf");
     std::fs::write(
@@ -822,18 +851,18 @@ fn an_sftp_address_mounts_at_login_as_its_unit_runs_it() {
     let cancel = CancelToken::new();
     // Not known yet, and nobody to say it is the one: refused.
     let unknown = own_sshfs(&base, &base.join("key"), "yes");
-    let error = AtLogin::sshfs(&unknown, &address, &cancel)
+    let error = AtLogin::sshfs(&unknown, &address, &MountOptions::default(), &cancel)
         .unwrap_err()
         .to_string();
     assert!(error.contains("identity"), "{error}");
     // A key the server does not take: it would ask for a password.
     let sshfs = own_sshfs(&base, &base.join("key"), "accept-new");
     let keyless = own_sshfs(&base, &base.join("no-such-key"), "accept-new");
-    let error = AtLogin::sshfs(&keyless, &address, &cancel)
+    let error = AtLogin::sshfs(&keyless, &address, &MountOptions::default(), &cancel)
         .unwrap_err()
         .to_string();
     assert!(error.contains("password"), "{error}");
-    let at = AtLogin::sshfs(&sshfs, &address, &cancel).unwrap();
+    let at = AtLogin::sshfs(&sshfs, &address, &MountOptions::default(), &cancel).unwrap();
     assert_eq!(
         at.point,
         connector::mounts_folder()
@@ -1062,7 +1091,7 @@ fn connect_at_login_under_the_user_s_own_systemd() {
     let rclone = Rclone::with_config(config);
     let address = Address::rclone(&name, b"/").unwrap();
     let cancel = CancelToken::new();
-    let at = AtLogin::rclone(&rclone, &address, &cancel).unwrap();
+    let at = AtLogin::rclone(&rclone, &address, &MountOptions::default(), &cancel).unwrap();
     let manager = Manager {
         folder: units.clone(),
         program: systemctl.clone(),

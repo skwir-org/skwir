@@ -1621,10 +1621,13 @@ fn rclone_copies_within_its_mount_on_the_server() {
 }
 
 /// The Nearby place (ADR-084) lists what Avahi and wsdd find, each server
-/// once, leading to its address; let go of, the wsdd it started ends. Run
-/// by `tools/test/nearby.sh`, in namespaces of its own (`just
-/// remote-check`): an SMB and a WebDAV server announced by an Avahi of the
-/// test's own, a Windows PC by wsdd across a veth pair.
+/// once, leading to its address; let go of, the wsdd it started ends and
+/// its connection to Avahi is closed. Run by `tools/test/nearby.sh`, in
+/// namespaces of its own (`just remote-check`): an SMB and a WebDAV
+/// server announced by an Avahi of the test's own, with `BURST` FTP
+/// servers more than zbus queues signals for (64: what the browsers say
+/// first comes at once, read while a resolve waits), a Windows PC by wsdd
+/// across a veth pair.
 #[test]
 fn nearby_lists_what_avahi_and_wsdd_find() {
     if std::env::var_os("SKWIR_TEST_NEARBY").is_none() {
@@ -1647,7 +1650,11 @@ fn nearby_lists_what_avahi_and_wsdd_find() {
     let pane = app.workspace.read().active_id();
     app.navigate(pane, &nearby).unwrap();
     let names = ["Test Files (WebDAV)", "Test NAS (SMB)", "WINPC (SMB)"].map(str::to_owned);
-    until_shown(&app, pane, 60, &names, "the servers announced");
+    let burst: usize = std::env::var("BURST").map_or(0, |n| n.parse().unwrap());
+    let mut all: Vec<String> = (1..=burst).map(|n| format!("Burst {n:02} (FTP)")).collect();
+    all.extend(names.iter().cloned());
+    all.sort();
+    until_shown(&app, pane, 60, &all, "the servers announced");
     let leads: Vec<(String, String)> = {
         let ws = app.workspace.read();
         let shown = ws.pane(pane).unwrap();
@@ -1660,6 +1667,7 @@ fn nearby_lists_what_avahi_and_wsdd_find() {
                 let to = open.location_of(e.id).expect("leads somewhere");
                 (e.name.to_string_lossy().into_owned(), to.to_string())
             })
+            .filter(|(name, _)| !name.starts_with("Burst "))
             .collect();
         leads.sort();
         leads
@@ -1727,12 +1735,48 @@ fn nearby_lists_what_avahi_and_wsdd_find() {
         })
     };
     assert!(discovering(), "wsdd started to find PCs");
+    assert!(on_the_system_bus(), "Avahi is asked over the system bus");
     app.navigate(pane, &Location::from_path(&base)).unwrap();
     // As the window's view does at its next draw: what it left is let go.
     app.keep_locations(pane, &[]);
     until(&app, 20, "the wsdd it started ended", || !discovering());
+    // Its browsers freed, its connection closed: Avahi browses no more.
+    until(&app, 20, "its connection to Avahi was closed", || {
+        !on_the_system_bus()
+    });
     drop(app);
     std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// Whether this process has a connection on the system bus, as its bus
+/// says (`dbus-send`, on the `PATH` of `tools/test/nearby.sh`).
+fn on_the_system_bus() -> bool {
+    let ask = |args: &[&str]| {
+        let out = Command::new("dbus-send")
+            .args([
+                "--system",
+                "--print-reply",
+                "--dest=org.freedesktop.DBus",
+                "/org/freedesktop/DBus",
+            ])
+            .args(args)
+            .output()
+            .expect("dbus-send");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let listed = ask(&["org.freedesktop.DBus.ListNames"]);
+    let pid = std::process::id().to_string();
+    listed
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("string \"")?.strip_suffix('"'))
+        .filter(|name| name.starts_with(':'))
+        .any(|name| {
+            let of = ask(&[
+                "org.freedesktop.DBus.GetConnectionUnixProcessID",
+                &format!("string:{name}"),
+            ]);
+            of.split_whitespace().last() == Some(pid.as_str())
+        })
 }
 
 /// A file copied down from a server through its mount proves it fast

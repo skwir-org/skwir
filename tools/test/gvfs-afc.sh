@@ -12,7 +12,9 @@ set -euo pipefail
 
 if [ "${1:-}" != --inside ]; then
     tested=$(realpath "$1")
-    tools=$(nix build --no-link --print-out-paths nixpkgs#gvfs 'nixpkgs#glib^bin' nixpkgs#dbus \
+    # The flake's nixpkgs, as its lock pins it: never the registry's.
+    repo=$(realpath "$(dirname "$0")/../..")
+    tools=$(nix build --no-link --print-out-paths --inputs-from "git+file://$repo" nixpkgs#gvfs 'nixpkgs#glib^bin' nixpkgs#dbus \
         nixpkgs#coreutils nixpkgs#util-linux)
     out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(p[0-9]+)?(-bin)?$" <<< "$tools" | head -1; }
     path=""

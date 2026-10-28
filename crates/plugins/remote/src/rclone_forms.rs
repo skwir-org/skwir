@@ -24,6 +24,7 @@ use serde_json::{Map, Value};
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::form::{Answer, Choice, Field, Form, Kind, Values};
+use skwir_core::workspace::PaneId;
 
 use crate::rclone_config::{self, Backend, Opt, Session, Step};
 
@@ -91,7 +92,10 @@ pub struct Prefill {
 
 impl Prefill {
     /// Why it cannot fill `backend`'s form: an option it does not have,
-    /// or a secret, which only the user types in the window.
+    /// a secret, which only the user types in the window, or an advanced
+    /// option, which the user sets there too: some have rclone run a
+    /// program (SFTP's `ssh`, WebDAV's `bearer_token_command`), which a
+    /// long form shown unasked would not make plain.
     pub fn refusal(&self, backend: &Backend) -> Option<String> {
         for key in self.options.keys() {
             match backend.options.iter().find(|o| o.name == *key) {
@@ -99,6 +103,11 @@ impl Prefill {
                 Some(opt) if opt.secret() => {
                     return Some(format!(
                         "“{key}” is a secret: the user types it in the window"
+                    ));
+                }
+                Some(opt) if opt.advanced => {
+                    return Some(format!(
+                        "“{key}” is an advanced option: the user sets it in the window"
                     ));
                 }
                 Some(_) => {}
@@ -401,14 +410,21 @@ fn split_upstreams(upstreams: &str) -> Vec<String> {
 }
 
 /// The `upstreams` a union or a combine stands on, from the switches
-/// turned on, a name holding a space quoted.
-fn upstreams_of(values: &Values, kind: &str) -> Option<String> {
-    let chosen: Vec<String> = values
+/// turned on, a name holding a space quoted: in the order `was` (what it
+/// stood on) names them, those newly on after, as rclone's policies
+/// (`ff`, `epff`) read that order.
+fn upstreams_of(values: &Values, kind: &str, was: &str) -> Option<String> {
+    let mut on: Vec<&str> = values
         .0
         .iter()
         .filter(|(k, v)| k.starts_with(UPSTREAM) && *v == "true")
-        .map(|(k, _)| {
-            let name = &k[UPSTREAM.len()..];
+        .map(|(k, _)| &k[UPSTREAM.len()..])
+        .collect();
+    let order = upstream_names(was, kind).unwrap_or_default();
+    on.sort_by_key(|name| order.iter().position(|o| o == name).unwrap_or(usize::MAX));
+    let chosen: Vec<String> = on
+        .into_iter()
+        .map(|name| {
             let word = if kind == "combine" {
                 format!("{name}={name}:")
             } else {
@@ -445,7 +461,11 @@ fn parameters(
         let mut value = values.get(&opt.name).to_owned();
         if opt.name == "upstreams"
             && value.is_empty()
-            && let Some(chosen) = upstreams_of(values, &backend.name)
+            && let Some(chosen) = upstreams_of(
+                values,
+                &backend.name,
+                before.get("upstreams").map_or("", String::as_str),
+            )
         {
             value = chosen;
         }
@@ -515,11 +535,11 @@ impl Flow<'_> {
     }
 
     /// Add a remote, from `prefill`: its name once added, `None` when the
-    /// user gave up.
+    /// user gave up. A server added by its address opens in `pane`.
     ///
     /// # Errors
     /// When rclone did not answer.
-    pub fn add(&self, prefill: &Prefill) -> anyhow::Result<Option<Made>> {
+    pub fn add(&self, prefill: &Prefill, pane: PaneId) -> anyhow::Result<Option<Made>> {
         let backends = self.session.backends(self.cancel)?;
         let mut kind = prefill.kind.clone();
         let mut provider = prefill.provider.clone();
@@ -539,9 +559,16 @@ impl Flow<'_> {
                 }
             };
             // A server by its address, kept in Skwir's list or KDE's.
+            // What the caller gave it, if given for it: never what was typed
+            // in another kind's form before Back, whose keys it has not.
             if let Some(scheme) = crate::servers_form::scheme_of(chosen) {
                 let back = prefill.kind.is_none();
-                match crate::servers_form::add(self.app, scheme, &values, back, self.cancel)? {
+                let given = if prefill.kind.as_ref() == Some(chosen) {
+                    prefill.options.clone()
+                } else {
+                    BTreeMap::new()
+                };
+                match crate::servers_form::add(self.app, scheme, &given, back, pane, self.cancel)? {
                     crate::servers_form::Added::Done(name) => {
                         return Ok(Some(Made::Server(name)));
                     }
@@ -602,18 +629,23 @@ impl Flow<'_> {
     ) -> anyhow::Result<Added> {
         let remotes = self.others(None)?;
         let mut error: Option<String> = None;
+        // The secrets typed in a form refused, for the form asked again:
+        // shown kept, used where left empty. In memory, for the form's
+        // while.
+        let mut secrets: BTreeMap<String, String> = BTreeMap::new();
         loop {
             let mut start_values = values.clone();
             if let Some(name) = name.as_ref() {
                 start_values.insert(NAME.into(), name.clone());
             }
+            let typed: Vec<String> = secrets.keys().cloned().collect();
             let mut form = options_form(
                 backend,
                 provider,
                 &Start {
                     name: None,
                     values: &start_values,
-                    kept: &[],
+                    kept: &typed,
                 },
                 &remotes,
                 format!("Add {}", backend.title),
@@ -623,21 +655,29 @@ impl Flow<'_> {
             if let Some(field) = form.fields.iter_mut().find(|f| f.key == NAME) {
                 field.value = name.clone().unwrap_or_default();
             }
-            let answer = match self.fill(form.error(error.take())) {
+            let mut answer = match self.fill(form.error(error.take())) {
                 Some(Answer::Accepted(answer)) => answer,
                 Some(Answer::Back(answer)) => {
-                    keep_typed(values, name, &answer);
+                    keep_typed(backend, values, &mut secrets, name, &answer);
                     return Ok(Added::Back);
                 }
                 None => return Ok(Added::Cancelled),
             };
-            keep_typed(values, name, &answer);
+            keep_typed(backend, values, &mut secrets, name, &answer);
+            for (key, secret) in &secrets {
+                if answer.get(key).is_empty() {
+                    answer.set(key.clone(), secret.clone());
+                }
+            }
             let chosen = answer.get(NAME).trim().to_owned();
             if let Some(refusal) = rclone_config::name_refusal(&chosen) {
                 error = Some(refusal.to_owned());
                 continue;
             }
-            if remotes.contains(&chosen) {
+            // Asked again now: one made meanwhile (an agent's, rclone's in
+            // a terminal) would be replaced, rclone making a remote anew
+            // over one of its name.
+            if self.others(None)?.contains(&chosen) {
                 error = Some(format!("rclone has a remote named “{chosen}” already"));
                 continue;
             }
@@ -667,9 +707,10 @@ impl Flow<'_> {
                     return Ok(Added::Cancelled);
                 }
             }
-            let checked = self.checked(&chosen, backend, provider, true)?;
+            // Its questions answered, it is set up, whatever trying it
+            // says.
             note_unfinished(self.app, &chosen, false);
-            match checked {
+            match self.checked(&chosen, backend, provider, true)? {
                 Checked::Kept => return Ok(Added::Done(chosen)),
                 Checked::Dropped => return Ok(Added::Cancelled),
             }
@@ -719,8 +760,11 @@ impl Flow<'_> {
         result: &str,
     ) -> anyhow::Result<Option<Step>> {
         let (done, answered) = crossbeam_channel::bounded(1);
+        // Its own: given up on, the call is cut (`rc::call` shuts its
+        // stream down, which ends the request on rclone's side too).
+        let asking = self.cancel.child();
         {
-            let (session, cancel) = (Arc::clone(self.session), self.cancel.clone());
+            let (session, cancel) = (Arc::clone(self.session), asking.clone());
             let (name, state, result) = (name.to_owned(), state.to_owned(), result.to_owned());
             std::thread::Builder::new()
                 .name("skwir-rclone-answer".into())
@@ -757,18 +801,28 @@ impl Flow<'_> {
                     return step.map(Some).map_err(|e| anyhow::anyhow!("{}", said(&e)));
                 }
                 recv(gave_up) -> _ => {
-                    self.session.stop_sign_in(self.cancel);
-                    let _ = answered.recv_timeout(Duration::from_secs(5));
+                    self.stop_answer(&asking, &answered);
                     return Ok(None);
                 }
                 default(Duration::from_millis(300)) => {
                     if self.cancel.is_cancelled() {
                         self.app.withdraw_form(*id);
-                        self.session.stop_sign_in(self.cancel);
+                        self.stop_answer(&asking, &answered);
                         return Ok(None);
                     }
                 }
             }
+        }
+    }
+
+    /// Stop the sign-in an answer waits for: rclone told (`oauthstop`, a
+    /// moment given), then the call cut (`asking`), and waited for, so
+    /// nothing of it writes the remote after the caller removed it.
+    fn stop_answer<T>(&self, asking: &CancelToken, answered: &crossbeam_channel::Receiver<T>) {
+        self.session.stop_sign_in(self.cancel);
+        if answered.recv_timeout(Duration::from_secs(5)).is_err() {
+            asking.cancel();
+            let _ = answered.recv();
         }
     }
 
@@ -803,9 +857,15 @@ impl Flow<'_> {
                 .with_back();
             match self.fill(form) {
                 Some(Answer::Back(_)) => {
-                    if !self.change(name, backend, provider, Token::Keep)? {
-                        return Ok(Checked::Kept);
+                    if self.change(name, backend, provider, Token::Keep)? {
+                        continue;
                     }
+                    // Its change given up: a new one goes, as Cancel said.
+                    if new {
+                        self.session.delete(name, self.cancel)?;
+                        return Ok(Checked::Dropped);
+                    }
+                    return Ok(Checked::Kept);
                 }
                 None if new => {
                     self.session.delete(name, self.cancel)?;
@@ -980,15 +1040,34 @@ fn waiting_form(name: &str, page: Option<&str>) -> Form {
     form
 }
 
-/// What the user typed, kept for the form asked again (Back, a refusal):
-/// never a secret.
-fn keep_typed(values: &mut BTreeMap<String, String>, name: &mut Option<String>, answer: &Values) {
+/// What the user typed in `backend`'s form, kept for the form asked again
+/// (Back, a refusal): the secrets typed apart, in `secrets`; the remotes a
+/// union or a combine was switched to stand on as its list, where no list
+/// was typed, so its switches show as they were.
+fn keep_typed(
+    backend: &Backend,
+    values: &mut BTreeMap<String, String>,
+    secrets: &mut BTreeMap<String, String>,
+    name: &mut Option<String>,
+    answer: &Values,
+) {
     for (key, value) in &answer.0 {
         if key == NAME {
             *name = Some(value.clone());
-        } else if !key.starts_with(UPSTREAM) {
+        } else if key.starts_with(UPSTREAM) {
+        } else if backend.options.iter().any(|o| o.name == *key && o.secret()) {
+            if !value.is_empty() {
+                secrets.insert(key.clone(), value.clone());
+            }
+        } else {
             values.insert(key.clone(), value.clone());
         }
+    }
+    if matches!(backend.name.as_str(), "union" | "combine")
+        && values.get("upstreams").is_none_or(String::is_empty)
+        && let Some(chosen) = upstreams_of(answer, &backend.name, "")
+    {
+        values.insert("upstreams".into(), chosen);
     }
 }
 
@@ -1162,11 +1241,11 @@ mod tests {
         values.set(format!("{UPSTREAM}old disk"), "true");
         values.set(format!("{UPSTREAM}other"), "false");
         assert_eq!(
-            upstreams_of(&values, "union").as_deref(),
+            upstreams_of(&values, "union", "").as_deref(),
             Some("\"old disk:\" photos:")
         );
         assert_eq!(
-            upstreams_of(&values, "combine").as_deref(),
+            upstreams_of(&values, "combine", "").as_deref(),
             Some("\"old disk=old disk:\" photos=photos:")
         );
         assert_eq!(

@@ -4,6 +4,7 @@
 //! a `kiod6` whose kmtpd is not loaded (`Unloaded`), which says what was
 //! addressed to it, as a call to it would load it.
 
+// Each test file that includes this module uses a part of it.
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
@@ -30,6 +31,11 @@ pub struct Bus {
 }
 
 impl Bus {
+    /// The bus daemon's process: stopped, the bus answers nothing.
+    pub fn daemon_pid(&self) -> u32 {
+        self.daemon.id()
+    }
+
     /// `None` without `dbus-daemon`.
     pub fn start() -> Option<Bus> {
         // Short, as a real runtime folder is: a socket's path fits 108 bytes.

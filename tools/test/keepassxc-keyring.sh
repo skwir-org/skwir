@@ -15,7 +15,9 @@
 #       -p skwir-plugin-remote --run-ignored only -E 'test(secret) | test(password)'
 set -euo pipefail
 
-tools=$(nix build --no-link --print-out-paths nixpkgs#keepassxc nixpkgs#xorg.xorgserver \
+# The flake's nixpkgs, as its lock pins it: never the registry's.
+repo=$(realpath "$(dirname "$0")/../..")
+tools=$(nix build --no-link --print-out-paths --inputs-from "git+file://$repo" nixpkgs#keepassxc nixpkgs#xorg.xorgserver \
     nixpkgs#dbus)
 out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+$" <<< "$tools" | head -1; }
 keepassxc=$(out keepassxc)

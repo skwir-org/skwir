@@ -52,23 +52,40 @@ fn choice(value: &str, key: &Key) -> Choice {
     Choice::new(value, title).detail(key.fingerprint.clone())
 }
 
-/// The form asking which key, for `top`'s server.
-fn form(top: &Address, offered: &[(String, Key)], ssh_dir: &std::path::Path) -> Form {
+/// The form asking which key, for `top`'s server: a new one too where
+/// one can be made in `ssh_dir` (`new`: none is there of its name).
+fn form(top: &Address, offered: &[(String, Key)], ssh_dir: &std::path::Path, new: bool) -> Form {
     let mut choices: Vec<Choice> = offered.iter().map(|(v, k)| choice(v, k)).collect();
-    choices.push(Choice::new(NEW, "A new key").detail(format!("Made in {}", ssh_dir.display())));
+    if new {
+        choices
+            .push(Choice::new(NEW, "A new key").detail(format!("Made in {}", ssh_dir.display())));
+    }
     let first = offered.first().map_or(NEW, |(v, _)| v.as_str()).to_owned();
-    Form::new(format!("Set Up Key Login on “{}”", top.label()), "Set Up")
+    let form = Form::new(format!("Set Up Key Login on “{}”", top.label()), "Set Up")
         .intro("Your key's public half is added to the server's authorized keys: ssh then logs in with it, no password. Its private half never leaves this machine. The server's password is asked once.")
         .field(
             Field::new("key", "Key", Kind::Choice { choices, open: false })
                 .value(first)
                 .required(),
+        );
+    if !new {
+        return form;
+    }
+    form.field(
+        Field::new(
+            "passphrase",
+            "New Key's Passphrase",
+            Kind::Secret { kept: false },
         )
-        .field(
-            Field::new("passphrase", "New Key's Passphrase", Kind::Secret { kept: false })
-                .help("Encrypts a new key: asked when it is used, unless the agent holds it. Empty for none."),
-        )
-        .field(Field::new("again", "The Same Again", Kind::Secret { kept: false }))
+        .help(
+            "Encrypts a new key: asked when it is used, unless the agent holds it. Empty for none.",
+        ),
+    )
+    .field(Field::new(
+        "again",
+        "The Same Again",
+        Kind::Secret { kept: false },
+    ))
 }
 
 /// The comment a new key is made with: whose it is.
@@ -98,7 +115,13 @@ pub fn set_up(
         keys::agent_keys(with.agent.as_deref(), cancel),
         keys::default_keys(&ssh_dir, cancel),
     );
-    let blank = form(top, &offered, &ssh_dir);
+    let new = keys::makes_new_key(&ssh_dir);
+    anyhow::ensure!(
+        new || !offered.is_empty(),
+        "ssh offers no key, and a new one would be made over the one at {}",
+        ssh_dir.join("id_ed25519").display()
+    );
+    let blank = form(top, &offered, &ssh_dir, new);
     let mut asked = blank.clone();
     let values: Values = loop {
         let Some(Answer::Accepted(values)) = app.fill(asked, cancel) else {
@@ -170,11 +193,8 @@ mod tests {
         let offered = offered(agent, defaults);
         let values: Vec<&str> = offered.iter().map(|(v, _)| v.as_str()).collect();
         assert_eq!(values, ["agent:0", "file:1"]);
-        let form = form(
-            &Address::parse("sftp://me@nas/").unwrap(),
-            &offered,
-            std::path::Path::new("/k"),
-        );
+        let top = Address::parse("sftp://me@nas/").unwrap();
+        let form = form(&top, &offered, std::path::Path::new("/k"), true);
         let Kind::Choice { choices, open } = &form.fields[0].kind else {
             panic!("a choice of keys");
         };
@@ -183,5 +203,17 @@ mod tests {
         assert_eq!(choices[1].title, "ed25519, /k/id_ecdsa");
         assert_eq!(choices[2].value, NEW);
         assert_eq!(form.fields[0].value, "agent:0", "the agent's first");
+        // One there of its name already: no new key offered, nor asked
+        // a passphrase for.
+        let form = super::form(&top, &offered, std::path::Path::new("/k"), false);
+        let Kind::Choice { choices, .. } = &form.fields[0].kind else {
+            panic!("a choice of keys");
+        };
+        assert!(!choices.iter().any(|c| c.value == NEW));
+        assert_eq!(form.fields.len(), 1, "no passphrase");
+        let folder = tempfile::tempdir().unwrap();
+        assert!(keys::makes_new_key(folder.path()));
+        std::fs::write(folder.path().join("id_ed25519.pub"), "a key").unwrap();
+        assert!(!keys::makes_new_key(folder.path()));
     }
 }

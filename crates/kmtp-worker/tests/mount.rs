@@ -181,6 +181,68 @@ fn a_device_kmtpd_does_not_hold_is_not_mounted() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// Given up on before it mounted (kmtpd not answering: here its bus
+/// stopped), the helper's process group is stopped whole, as
+/// `process::run_leaving` stops it: what it started to serve the mount
+/// ends with it, mounting nothing later.
+#[test]
+fn given_up_on_before_it_mounted_it_leaves_nothing_running() {
+    use std::os::unix::process::CommandExt;
+    if !fuse() {
+        eprintln!("skipped: no FUSE here");
+        return;
+    }
+    let Some(bus) = Bus::start() else {
+        eprintln!("skipped: dbus-daemon is not installed");
+        return;
+    };
+    let _phone = Phone::serve(&bus.address, UDI, "Example Phone", &[]);
+    let base = fixture("given-up");
+    let point = base.join("point");
+    std::fs::create_dir_all(&point).unwrap();
+    let _unmounted = Unmounted(point.clone());
+    let signal = |args: &[&str]| {
+        let sent = Command::new("kill").args(args).status().unwrap();
+        assert!(sent.success(), "kill {args:?}");
+    };
+    let daemon = bus.daemon_pid().to_string();
+    signal(&["-STOP", &daemon]);
+    let mut helper = Command::new(WORKER)
+        .arg("mount")
+        .arg(UDI)
+        .arg(&point)
+        .arg(base.join("cache"))
+        .env("DBUS_SESSION_BUS_ADDRESS", &bus.address)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    // Its server started, waiting on the bus.
+    let children = format!("/proc/{0}/task/{0}/children", helper.id());
+    let mut serving = String::new();
+    until("it started its server", || {
+        serving = std::fs::read_to_string(&children)
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        !serving.is_empty()
+    });
+    signal(&["-KILL", "--", &format!("-{}", helper.id())]);
+    let _ = helper.wait();
+    // Gone, or ended and not yet collected by whoever took it in.
+    let ended = || {
+        std::fs::read_to_string(format!("/proc/{serving}/stat")).map_or(true, |stat| {
+            stat.rsplit_once(") ")
+                .is_some_and(|(_, rest)| rest.starts_with('Z'))
+        })
+    };
+    until("its server ended with it", ended);
+    signal(&["-CONT", &daemon]);
+    assert!(!mounted(&point));
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// Run as root in a user namespace (as `just mtp-check` runs it), the
 /// helper mounts with the type Skwir knows it by too (`fuse.skwir-kmtp`):
 /// fuser's own mount as root names it `fuse` alone. The test above, run

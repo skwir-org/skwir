@@ -44,6 +44,9 @@ pub fn location() -> Location {
 /// comes.
 const SETTLING: Duration = Duration::from_secs(3);
 
+/// How long a call to Avahi may wait for its answer.
+const CALLS_WITHIN: Duration = Duration::from_secs(15);
+
 /// How often wsdd is asked what it found.
 const WSDD_EVERY: Duration = Duration::from_secs(3);
 
@@ -307,7 +310,12 @@ fn listing(
                 let (id, entry) = entry_of(&found);
                 let known = instances.values().any(|(other, _)| *other == id);
                 leads.lock().insert(id, found.address.location());
-                instances.insert(key, (id, found));
+                // Seen again at another address: the row it had goes
+                // with it, unless another instance is that server.
+                let before = instances.insert(key, (id, found)).map(|(was, _)| was);
+                if let Some(was) = before.filter(|was| *was != id) {
+                    forget_unless_seen(&instances, was, sink, leads);
+                }
                 if !known {
                     sink.send(ListingEvent::Added(vec![entry]));
                 }
@@ -316,10 +324,7 @@ fn listing(
                 let Some((id, _)) = instances.remove(&key) else {
                     continue;
                 };
-                if !instances.values().any(|(other, _)| *other == id) {
-                    leads.lock().remove(&id);
-                    sink.send(ListingEvent::Removed(vec![id]));
-                }
+                forget_unless_seen(&instances, id, sink, leads);
             }
             Some(Seen::Settled) => settled += 1,
             None => settled = browsers,
@@ -338,12 +343,25 @@ fn listing(
     }
 }
 
+/// Take a server's row away unless another of the instances seen is it.
+fn forget_unless_seen(
+    instances: &HashMap<String, (EntryId, Found)>,
+    id: EntryId,
+    sink: &skwir_core::location::EventSink,
+    leads: &Mutex<HashMap<EntryId, Location>>,
+) {
+    if !instances.values().any(|(other, _)| *other == id) {
+        leads.lock().remove(&id);
+        sink.send(ListingEvent::Removed(vec![id]));
+    }
+}
+
 /// What Avahi finds of [`TYPES`] on the system bus, each resolved as it
 /// comes, until `cancel`: then its browsers are freed (nothing more is
 /// asked of the network) and the connection closed.
 #[cfg(target_os = "linux")]
 fn browse_avahi(seen: &dyn Fn(Seen), cancel: &CancelToken) -> anyhow::Result<()> {
-    use zbus::blocking::{Connection, MessageIterator, Proxy};
+    use zbus::blocking::{MessageIterator, Proxy};
     use zbus::zvariant::OwnedObjectPath;
     const AVAHI: &str = "org.freedesktop.Avahi";
     const BROWSER: &str = "org.freedesktop.Avahi.ServiceBrowser";
@@ -362,7 +380,12 @@ fn browse_avahi(seen: &dyn Fn(Seen), cancel: &CancelToken) -> anyhow::Result<()>
         Vec<Vec<u8>>,
         u32,
     );
-    let bus = Connection::system()?;
+    // A call Avahi does not answer fails in time (its own resolves give up
+    // after five seconds): neither this thread nor the one freeing the
+    // browsers waits on it for good.
+    let bus = zbus::blocking::connection::Builder::system()?
+        .method_timeout(CALLS_WITHIN)
+        .build()?;
     // Listened to before any browser starts: nothing it tells is missed.
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
@@ -370,6 +393,22 @@ fn browse_avahi(seen: &dyn Fn(Seen), cancel: &CancelToken) -> anyhow::Result<()>
         .interface(BROWSER)?
         .build();
     let told = MessageIterator::for_match_rule(rule, &bus, None)?;
+    // Drained on a thread of its own, into a queue of no bound: zbus's
+    // reader waits while a match's queue (64) is full, reading nothing
+    // else meanwhile, so the answers this thread waits for
+    // (`ResolveService`) and the closing one's (`Free`) would never be
+    // read behind the burst the browsers' first signals make. It ends once
+    // the connection is closed.
+    let (signals_tx, signals) = crossbeam_channel::unbounded();
+    std::thread::Builder::new()
+        .name("skwir-nearby-signals".into())
+        .spawn(move || {
+            for message in told {
+                if signals_tx.send(message).is_err() {
+                    break;
+                }
+            }
+        })?;
     let server = Proxy::new(&bus, AVAHI, "/", "org.freedesktop.Avahi.Server")?;
     let mut browsers: Vec<(OwnedObjectPath, Scheme, &'static str)> = Vec::new();
     for (kind, scheme, name) in TYPES {
@@ -397,12 +436,21 @@ fn browse_avahi(seen: &dyn Fn(Seen), cancel: &CancelToken) -> anyhow::Result<()>
                 let _ = Proxy::new(&closing, AVAHI, path.as_ref(), BROWSER)
                     .and_then(|browser| browser.call::<_, _, ()>("Free", &()));
             }
-            // What waits on it ends.
+            // What waits on it ends: a resolve under way, the signals'
+            // thread. Avahi frees what a client that left the bus had,
+            // what the calls above did not reach included.
             let _ = closing.close();
         })?;
     let mut settled = HashSet::new();
-    for message in told {
-        let Ok(message) = message else { break };
+    let ended = cancel.subscribe();
+    loop {
+        let message = crossbeam_channel::select! {
+            recv(signals) -> message => match message {
+                Ok(Ok(message)) => message,
+                Ok(Err(_)) | Err(_) => break,
+            },
+            recv(ended.receiver()) -> _ => break,
+        };
         if cancel.is_cancelled() {
             break;
         }
@@ -477,7 +525,10 @@ fn browse_avahi(_seen: &dyn Fn(Seen), _cancel: &CancelToken) -> anyhow::Result<(
 fn browse_wsdd(seen: &dyn Fn(Seen), cancel: &CancelToken) -> anyhow::Result<()> {
     use std::io::{BufRead, Write};
     let system = Path::new(WSDD_SYSTEM);
-    let (socket, _ours) = if system.exists() {
+    // A socket a daemon gone left answers nothing: wsdd is started here
+    // then, as where there is none.
+    let answers = system.exists() && std::os::unix::net::UnixStream::connect(system).is_ok();
+    let (socket, _ours) = if answers {
         (system.to_path_buf(), None)
     } else {
         let ours = OwnWsdd::start(cancel)?;
@@ -557,11 +608,15 @@ impl OwnWsdd {
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()?;
-        let own = OwnWsdd { child, socket };
-        // It makes its socket once started: a moment.
+        let mut own = OwnWsdd { child, socket };
+        // It makes its socket once started: a moment. One that ended
+        // makes none (a wsdd too old for `--discovery` and `--listen`).
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while !own.socket.exists() {
             anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+            if let Ok(Some(status)) = own.child.try_wait() {
+                anyhow::bail!("wsdd ended as it started ({status}): it may be too old to discover");
+            }
             anyhow::ensure!(std::time::Instant::now() < deadline, "wsdd did not start");
             std::thread::sleep(Duration::from_millis(50));
         }

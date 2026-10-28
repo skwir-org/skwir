@@ -850,13 +850,13 @@ impl Remotes {
                 let at_login = this.login_manager().map_or_else(
                     |_| std::collections::HashSet::new(),
                     |manager| {
-                        mounted
-                            .iter()
-                            .filter_map(|m| m.recognised.address.clone())
-                            .chain(servers.iter().map(|s| s.address.clone()))
-                            .filter_map(|a| configure::login_id(&a))
-                            .filter(|id| manager.installed(id))
-                            .collect()
+                        manager.installed_of(
+                            mounted
+                                .iter()
+                                .filter_map(|m| m.recognised.address.clone())
+                                .chain(servers.iter().map(|s| s.address.clone()))
+                                .filter_map(|a| configure::login_id(&a)),
+                        )
                     },
                 );
                 {
@@ -1561,7 +1561,7 @@ impl Plugin for RemotePlugin {
             "Disconnect",
             "Let go of a remote folder: what shows it goes home",
             move |args, app| {
-                remotes.disconnect(app, args.path.into_inner(), args.force)?;
+                remotes.disconnect(app, &args.path.into_inner(), args.force)?;
                 Ok(Outcome::Done)
             },
         );
@@ -1700,10 +1700,42 @@ impl Remotes {
     }
 
     /// Let go of the mount at `point`: what shows it goes home, then its
-    /// tool lets go of it, on a worker. Refused while an action of Skwir's
-    /// is under way there, unless `force`d; what else Skwir still reads
-    /// there it gave up on, and is cut (`mounter::when_busy`).
-    fn disconnect(&self, app: &App, point: PathBuf, force: bool) -> anyhow::Result<()> {
+    /// tool lets go of it, on a worker, saying how it went. Refused while
+    /// an action of Skwir's is under way there, unless `force`d; what else
+    /// Skwir still reads there it gave up on, and is cut
+    /// (`mounter::when_busy`).
+    fn disconnect(&self, app: &App, point: &Path, force: bool) -> anyhow::Result<()> {
+        let (label, letting_go) = self.begin_disconnect(app, point, force)?;
+        let weak = app.weak();
+        std::thread::Builder::new()
+            .name("skwir-disconnect".into())
+            .spawn(move || {
+                let result = letting_go();
+                if let (Err(error), Some(app)) = (result, weak.upgrade()) {
+                    app.notify(
+                        NotifyLevel::Error,
+                        format!("“{label}” was not disconnected: {error:#}"),
+                    );
+                }
+            })?;
+        Ok(())
+    }
+
+    /// [`Remotes::disconnect`], here: once it is let go of, or why not,
+    /// which the caller says. Blocks: on a worker.
+    fn disconnect_here(&self, app: &App, point: &Path, force: bool) -> anyhow::Result<()> {
+        let (_, letting_go) = self.begin_disconnect(app, point, force)?;
+        letting_go()
+    }
+
+    /// What [`Remotes::disconnect`] does before letting go: the mount's
+    /// name and the letting go, which says so once done.
+    fn begin_disconnect(
+        &self,
+        app: &App,
+        point: &Path,
+        force: bool,
+    ) -> anyhow::Result<(String, impl FnOnce() -> anyhow::Result<()> + Send + 'static)> {
         let mounted = self
             .mounted()
             .into_iter()
@@ -1715,63 +1747,61 @@ impl Remotes {
             .ok_or_else(|| anyhow::anyhow!("Skwir does not know the tool that mounted it"))?;
         let label = mounted.recognised.label.clone();
         if !force {
-            under_way(app, &point)
+            under_way(app, point)
                 .map_err(|e| anyhow::anyhow!("“{label}” was not disconnected: {e:#}"))?;
         }
         let home = skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/"));
-        app.release(&point, &Location::from_path(home))?;
+        app.release(point, &Location::from_path(home))?;
         let key = point.display().to_string();
         self.state.lock().busy.insert(key.clone(), "Disconnecting…");
         self.refresh(app);
         let this = self.clone();
         let lifetime = self.lifetime().unwrap_or_default();
         let weak = app.weak();
-        std::thread::Builder::new()
-            .name("skwir-disconnect".into())
-            .spawn(move || {
-                // What showed it lets go first: the folders left close on a
-                // worker a moment later, and what reads it in its lane ends;
-                // until then the system refuses the unmount as busy. Not a
-                // read waiting for a server that does not answer: that one
-                // waits for the server, not for time, and is cut.
-                let mut result = Ok(());
-                if let Some(app) = weak.upgrade() {
-                    let (lane, until) = (mounted.remote.lane(), Instant::now() + LET_GO);
-                    loop {
-                        let left = skwir_core::fs::wait_let_go(
-                            &mounted.remote.point,
-                            LOOK.min(until.saturating_duration_since(Instant::now())),
-                        );
-                        match app.scheduler.stalled(lane) {
-                            None if left => break,
-                            Some(ran) if ran >= skwir_core::fs::reach::NOT_ANSWERING => break,
-                            _ if Instant::now() >= until => break,
-                            _ => std::thread::sleep(Duration::from_millis(20)),
-                        }
-                    }
-                    // An action asked meanwhile.
-                    if !force {
-                        result = under_way(&app, &mounted.remote.point);
+        let said = label.clone();
+        let letting_go = move || {
+            // What showed it lets go first: the folders left close on a
+            // worker a moment later, and what reads it in its lane ends;
+            // until then the system refuses the unmount as busy. Not a
+            // read waiting for a server that does not answer: that one
+            // waits for the server, not for time, and is cut.
+            let mut result = Ok(());
+            if let Some(app) = weak.upgrade() {
+                let (lane, until) = (mounted.remote.lane(), Instant::now() + LET_GO);
+                loop {
+                    let left = skwir_core::fs::wait_let_go(
+                        &mounted.remote.point,
+                        LOOK.min(until.saturating_duration_since(Instant::now())),
+                    );
+                    match app.scheduler.stalled(lane) {
+                        None if left => break,
+                        Some(ran) if ran >= skwir_core::fs::reach::NOT_ANSWERING => break,
+                        _ if Instant::now() >= until => break,
+                        _ => std::thread::sleep(Duration::from_millis(20)),
                     }
                 }
-                let mut result = result.and_then(|()| {
-                    connector.disconnect(&mounted.remote, &mounted.recognised, &lifetime)
-                });
-                if result.is_err() && force && !mounted.remote.by_kernel() {
-                    result = mounter::force_unmount(&point);
+                // An action asked meanwhile.
+                if !force {
+                    result = under_way(&app, &mounted.remote.point);
                 }
-                this.state.lock().busy.remove(&key);
-                let Some(app) = weak.upgrade() else { return };
+            }
+            let mut result = result.and_then(|()| {
+                connector.disconnect(&mounted.remote, &mounted.recognised, &lifetime)
+            });
+            if result.is_err() && force && !mounted.remote.by_kernel() {
+                result =
+                    connector.force_disconnect(&mounted.remote, &mounted.recognised, &lifetime);
+            }
+            this.state.lock().busy.remove(&key);
+            if let Some(app) = weak.upgrade() {
                 this.refresh(&app);
-                match result {
-                    Ok(()) => app.notify(NotifyLevel::Info, format!("Disconnected from “{label}”")),
-                    Err(error) => app.notify(
-                        NotifyLevel::Error,
-                        format!("“{label}” was not disconnected: {error:#}"),
-                    ),
+                if result.is_ok() {
+                    app.notify(NotifyLevel::Info, format!("Disconnected from “{said}”"));
                 }
-            })?;
-        Ok(())
+            }
+            result
+        };
+        Ok((label, letting_go))
     }
 }
 

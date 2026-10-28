@@ -167,6 +167,22 @@ pub trait Connector: Send + Sync {
         recognised: &Recognised,
         cancel: &CancelToken,
     ) -> anyhow::Result<()>;
+    /// Let go of `remote` whatever holds it, once
+    /// [`Connector::disconnect`] failed and the caller forces it (an
+    /// agent's or a script's Eject): the mount cut
+    /// (`mounter::force_unmount`), and what its program still waits for
+    /// told to end (rclone, `rclone::quit`). Blocks: on a worker.
+    ///
+    /// # Errors
+    /// When the system refused.
+    fn force_disconnect(
+        &self,
+        remote: &Remote,
+        _recognised: &Recognised,
+        _cancel: &CancelToken,
+    ) -> anyhow::Result<()> {
+        crate::mounter::force_unmount(&remote.point)
+    }
     /// The program holding a device it opens through (`kiod6`, which holds
     /// the phones KDE's kmtpd keeps, ADR-097), as that program was started:
     /// a device that program holds is said to be openable by this tool.

@@ -10,7 +10,9 @@
 #       -p skwir-plugin-remote --run-ignored only -E 'test(locked_keyring)' -j 1
 set -euo pipefail
 
-tools=$(nix build --no-link --print-out-paths nixpkgs#gnome-keyring nixpkgs#gcr_3 \
+# The flake's nixpkgs, as its lock pins it: never the registry's.
+repo=$(realpath "$(dirname "$0")/../..")
+tools=$(nix build --no-link --print-out-paths --inputs-from "git+file://$repo" nixpkgs#gnome-keyring nixpkgs#gcr_3 \
     nixpkgs#xorg.xorgserver nixpkgs#xdotool nixpkgs#dbus)
 out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+$" <<< "$tools" | head -1; }
 keyring=$(out gnome-keyring)

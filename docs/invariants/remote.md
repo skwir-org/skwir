@@ -172,7 +172,10 @@ ADR-077 (which revises ADR-021).
   volume monitors on the session bus, asked and followed
   (`Connector::device_signals`, `devices`: one listener for every tool,
   on the program's one session connection, each tool listed again on a
-  thread of its own, a burst asked once more after), each device the same
+  thread of its own, a burst asked once more after; what a tool asks to
+  list them, on a connection of its own closed once answered, as zbus
+  gives up on a call only by its connection's timeout: `remote::bus`),
+  each device the same
   place mounted or not (`remote:<address>`). A device is mounted once
   opened, never because it was plugged in: mounted, it is held from
   every other program. When it does not open, the programs holding its
@@ -340,7 +343,11 @@ ADR-077 (which revises ADR-021).
   connection closed, the wsdd Skwir started stopped. Through Avahi's
   browsers on the system bus and wsdd (its daemon's `/run/wsdd.socket`,
   else `wsdd --no-host --discovery` on a socket of the runtime folder);
-  never a discovery protocol of Skwir's own. Each server is a place
+  never a discovery protocol of Skwir's own. Avahi's signals are read on
+  a thread of their own into a queue of no bound, each resolved on
+  another: zbus reads nothing while a match's queue (64) is full, so the
+  browsers' first burst held every answer behind it (a test announces
+  more than 64). Each server is a place
   (`EntryId::place`) leading to its address, one row however often it is
   seen, carrying the name it announced (`nearby::ANNOUNCED`). One
   selected, where no server holds its address, its context menu adds it
@@ -366,9 +373,11 @@ ADR-077 (which revises ADR-021).
 - A secret goes to rclone in a request's body, a password command's
   answer or its environment, never a command line. It reaches the plugin
   only from the window's form (`App::fill`): a command's arguments never
-  carry one (`rclone_forms::Prefill::refusal`), a form never shows one
+  carry one, nor an advanced option, some of which have rclone run a
+  program (`rclone_forms::Prefill::refusal`), a form never shows one
   kept (`Kind::Secret { kept }`), and one typed again is the only one
-  written.
+  written; one typed in a form refused is kept for that form asked again,
+  in memory, shown as kept.
 - Forms are made from what rclone describes (`config/providers`), never
   from a list of kinds in Skwir; what a form leaves at rclone's default
   is not written. rclone's own questions are asked as it puts them; the
@@ -428,7 +437,9 @@ ADR-077 (which revises ADR-021).
   compression) are the plugin's data by the server's address
   (`remote.options`, `options::MountOptions`), never a tool's
   configuration, given when it next connects (`Connector::connect_with`),
-  after Skwir's own arguments so they win. GVfs and KIO take none.
+  after Skwir's own arguments so they win, its entry at login too, which
+  is written again when they change (`login::Manager::renew`: nothing
+  started or stopped). GVfs and KIO take none.
 - One Add Server for every kind: a server added by its address (SFTP,
   SMB, WebDAV, FTP, NFS, AFP: `servers_form`) is kept under the name
   given (`servers`, ADR-086 amended), then opened; its password is asked
@@ -451,8 +462,10 @@ ADR-077 (which revises ADR-021).
   Network section knows, as `remote.server_records` answers from memory:
   each line says where it is kept, and does what its menu does
   (`actions`); Edit and Remove are left out where another program
-  changes it (`fixed`). Removing a server takes its mount options and its
-  entry at login along, where no other server kept shares its top, and
+  changes it (`fixed`). A remote of rclone's mounted is let go of before
+  it is removed, and kept while it stays mounted. Removing a server takes
+  its mount options and its entry at login along, where no other server
+  kept shares its top, and
   the password Skwir keeps for it in the keyring, where no other server
   needs it (the same server, as the same user: the servers kept by
   address read as they are then, never the state a refresh has yet to
@@ -469,8 +482,10 @@ ADR-077 (which revises ADR-021).
   Skwir never removes it unasked.
 - The configuration's password: the keyring's (`rclone:configuration`)
   where the user kept it, else asked of the window (`ConfigAsk`, through
-  rclone's `--password-command`); never asked for a listing nobody asked
-  for.
+  rclone's `--password-command`, Skwir's path one word in CSV's quotes,
+  as rclone splits it); never asked for a listing nobody asked for. It is
+  not encrypted while a remote of it connects at login, which nobody
+  would be there to open it for.
 - Tested with configurations of the tests' own: nextest gives every test
   `RCLONE_CONFIG`, `SSH_AUTH_SOCK` and AWS's files of the tests' own
   (`tools/test/isolate-xdg.sh`), and a test names its own configuration
@@ -575,8 +590,9 @@ ADR-077 (which revises ADR-021).
   F5 there finds what its program is told (`Known::forget`). Nothing is
   published once the plugin is disabled.
 - A mount Skwir makes is under `$XDG_RUNTIME_DIR/skwir/remote/` (on
-  macOS and Windows, the user's temporary folder: never the cache, which
-  a start sweeps), named by
+  macOS, which has no runtime folder, the user's temporary folder; on
+  Windows, Skwir's local application data: never the cache, which a start
+  sweeps), rclone's remote control's sockets beside it (`rc`), named by
   `connector::point_name` so its address reads back from it: nothing else
   is kept. It outlives Skwir, as GVfs's do.
 - A tool that daemonizes is run until it has mounted

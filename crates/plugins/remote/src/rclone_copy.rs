@@ -21,10 +21,11 @@ use skwir_core::CancelToken;
 use skwir_core::op::Cancelled;
 use skwir_core::op::transfer::{Aside, Control, NotServed, Told, Transfer};
 
-/// The folder of the sockets of the mounts Skwir made, in the runtime
-/// folder beside theirs.
+/// The folder of the sockets of the mounts Skwir made, beside the mounts'
+/// own (`connector::mounts_folder`): in the runtime folder, on macOS
+/// (which has none) the user's temporary one.
 pub(crate) fn sockets() -> Option<PathBuf> {
-    Some(skwir_core::xdg::runtime_dir()?.join("skwir").join("rc"))
+    Some(crate::connector::mounts_folder()?.parent()?.join("rc"))
 }
 
 /// The socket the remote control of the mount Skwir makes at `point`
@@ -295,6 +296,17 @@ impl Transfer for RcloneCopy {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The sockets are beside the mounts, wherever the system keeps those
+    /// (macOS has no runtime folder).
+    #[test]
+    fn the_sockets_are_beside_the_mounts() {
+        let mounts = crate::connector::mounts_folder();
+        assert_eq!(
+            sockets().as_deref().and_then(Path::parent),
+            mounts.as_deref().and_then(Path::parent)
+        );
+    }
 
     use std::io::{BufRead, BufReader, Read, Write};
     use std::os::unix::net::{UnixListener, UnixStream};

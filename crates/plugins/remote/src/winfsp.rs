@@ -72,6 +72,9 @@ pub fn mount_arguments(remote: &str, point: &Path, at: &At, log: &Path) -> Vec<O
 /// `point` is no folder's.
 pub fn at_login_arguments(remote: &str, point: &Path, rotates: bool) -> Option<Vec<OsString>> {
     let mut args = foreground(remote, point);
+    // The port is said at rclone's NOTICE level, which a mount's
+    // `--log-level ERROR` leaves out of its log: the later one wins.
+    args.extend(["--log-level", "NOTICE"].map(OsString::from));
     args.extend(["--rc", "--rc-addr", "127.0.0.1:0", "--rc-htpasswd"].map(OsString::from));
     args.push(at_login_file(point, "htpasswd")?.into());
     args.push("--log-file".into());
@@ -328,6 +331,13 @@ mod tests {
         }
         assert!(!args.iter().any(|a| a.starts_with("--log-file-max")));
         assert!(words(true).iter().any(|a| a == "--log-file-max-size"));
+        // Its log says the port: the last level given is NOTICE.
+        let levels: Vec<usize> = args
+            .iter()
+            .enumerate()
+            .filter_map(|(at, a)| (a == "--log-level").then_some(at + 1))
+            .collect();
+        assert_eq!(args[*levels.last().unwrap()], "NOTICE", "{args:?}");
     }
 
     #[test]
@@ -393,9 +403,12 @@ mod tests {
 
     /// rclone serving its remote control as a logon task's does: on a port
     /// it chose, behind the kept login's htpasswd line, said in its log.
-    /// Found and asked to quit as Eject asks it. Under Wine with rclone's
-    /// own Windows release (`just test-windows`), on Linux with the one
-    /// installed; skipped, saying why, with none.
+    /// Found and asked to quit as Eject asks it. Run with the task's whole
+    /// line, its log level included, but `mount`, what only a mount takes
+    /// (`rcd` serves the remote control alone, and refuses `--rc` as
+    /// given) and the console hidden. Under Wine with rclone's own Windows release (`just
+    /// test-windows`), on Linux with the one installed; skipped, saying
+    /// why, with none.
     #[test]
     fn a_logon_task_s_remote_control_is_found_by_its_log_and_quits_on_its_login() {
         let Some(rclone) = std::env::var_os("SKWIR_TEST_RCLONE")
@@ -410,14 +423,23 @@ mod tests {
         let login = Login::made().unwrap();
         keep_at_login(&point, &login).unwrap();
         let args = at_login_arguments("photos:", &point, false).unwrap();
-        let from = args.iter().position(|a| a == "--rc").unwrap();
+        assert_eq!(args[0], "mount");
+        let mut served: Vec<OsString> = Vec::new();
+        let mut words = args[3..].iter();
+        while let Some(word) = words.next() {
+            if word == "--vfs-cache-mode" || word == "--dir-cache-time" {
+                words.next();
+            } else if word != "--rc" && word != "--no-console" {
+                served.push(word.clone());
+            }
+        }
         let config = folder.path().join("rclone.conf");
         std::fs::write(&config, "").unwrap();
         let mut rcd = std::process::Command::new(rclone)
             .arg("rcd")
             .arg("--config")
             .arg(&config)
-            .args(args[from + 1..].iter().filter(|a| *a != "--no-console"))
+            .args(&served)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()

@@ -9,6 +9,7 @@
 use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::form::{Answer, Choice, Field, Form, Kind, Values};
+use skwir_core::workspace::PaneId;
 
 use crate::address::{Address, Scheme};
 use crate::servers::Kept;
@@ -38,7 +39,7 @@ const SCHEMES: [Scheme; 8] = [
 ///
 /// # Errors
 /// As [`add`].
-pub fn add_any(app: &App, cancel: &CancelToken) -> anyhow::Result<Option<String>> {
+pub fn add_any(app: &App, pane: PaneId, cancel: &CancelToken) -> anyhow::Result<Option<String>> {
     loop {
         let pick = Form::new("Add Server", "Next")
             .intro("A server by its address. With rclone installed, seventy kinds of storage more.")
@@ -61,6 +62,7 @@ pub fn add_any(app: &App, cancel: &CancelToken) -> anyhow::Result<Option<String>
             scheme,
             &std::collections::BTreeMap::new(),
             true,
+            pane,
             cancel,
         )? {
             Added::Done(name) => return Ok(Some(name)),
@@ -223,9 +225,10 @@ pub enum Added {
 }
 
 /// Ask the parts of a server of `scheme` until they make an address of no
-/// server kept yet, keep it (`servers::add`) and open it in the active
-/// pane: its password is asked then, by the connection. The form starts
-/// from `given` (a caller's, never a password: the form asks none).
+/// server kept yet, keep it (`servers::add`) and open it in `pane`, the
+/// one the command was asked in: its password is asked then, by the
+/// connection. The form starts from `given` (a caller's, never a
+/// password: the form asks none).
 ///
 /// # Errors
 /// When `given` names no part of the form, or the server could not be
@@ -235,6 +238,7 @@ pub fn add(
     scheme: Scheme,
     given: &std::collections::BTreeMap<String, String>,
     back: bool,
+    pane: PaneId,
     cancel: &CancelToken,
 ) -> anyhow::Result<Added> {
     let mut blank = form(scheme, crate::servers::keeper(app, scheme), back);
@@ -270,7 +274,6 @@ pub fn add(
         }
         let name = name_of(&values, &address);
         crate::servers::add(app, &name, &address)?;
-        let pane = app.pane_or_active(None);
         if let Err(error) = app.navigate(pane, &address.location()) {
             tracing::debug!("the server added was not opened: {error:#}");
         }

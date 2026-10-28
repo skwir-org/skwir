@@ -34,8 +34,9 @@ case "$state" in
         ;;
 esac
 
-# rclone as the remote checks have it (registry's nixpkgs, as remote-check).
-rclone=$(nix build --no-link --print-out-paths nixpkgs#rclone)
+# rclone as the remote checks have it: the flake's nixpkgs, as remote-check.
+repo=$(realpath "$(dirname "$0")/../..")
+rclone=$(nix build --no-link --print-out-paths --inputs-from "git+file://$repo" nixpkgs#rclone)
 export PATH="$rclone/bin:$PATH"
 
 # What a run that died before its own clean-up could leave: said, never

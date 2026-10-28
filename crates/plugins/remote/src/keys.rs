@@ -440,6 +440,14 @@ pub fn default_keys(ssh_dir: &Path, cancel: &CancelToken) -> Vec<Key> {
         .collect()
 }
 
+/// Whether [`new_key`] can make a key in `ssh_dir`: neither its file nor
+/// its public half is there (it never writes over one).
+pub(crate) fn makes_new_key(ssh_dir: &Path) -> bool {
+    [NEW_KEY.to_owned(), format!("{NEW_KEY}.pub")]
+        .iter()
+        .all(|name| std::fs::symlink_metadata(ssh_dir.join(name)).is_err())
+}
+
 /// A new ed25519 key in `ssh_dir` (made with only the user allowed in
 /// where missing), by the name ssh tries by default, never in place of one
 /// there. `passphrase` encrypts it, nothing where empty: ssh-keygen asks it

@@ -92,14 +92,18 @@ impl Spec {
             text.push('/');
             return Address::parse(&text).ok();
         }
-        Some(Address {
+        // Read back as its address, written: what a folder's name holds
+        // goes through the checks of an address typed (its host, its user,
+        // no `.` or `..` in its path), as a device's does.
+        let built = Address {
             scheme,
             user,
             domain: self.get("domain").map(ToOwned::to_owned),
             host: host.to_owned(),
             port,
             path: path.into_bytes(),
-        })
+        };
+        Address::parse(&built.to_string()).ok()
     }
 
     /// The device on this machine it is, if one: a phone (MTP, Apple's

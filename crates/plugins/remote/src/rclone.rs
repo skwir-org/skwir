@@ -244,6 +244,25 @@ impl Connector for Rclone {
         unmounted
     }
 
+    /// Cut, and its rclone told to quit as when let go of: cut while it
+    /// waits for a server, it would wait on, and ending later unmount a
+    /// mount made at its point meanwhile.
+    fn force_disconnect(
+        &self,
+        remote: &Remote,
+        recognised: &Recognised,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<()> {
+        let cut = mounter::force_unmount(&remote.point);
+        #[cfg(unix)]
+        if recognised.ours {
+            quit(&remote.point, cancel);
+        }
+        #[cfg(not(unix))]
+        let _ = (recognised, cancel);
+        cut
+    }
+
     /// Copies within one mount Skwir made, by rclone on the server
     /// (`rclone_copy`).
     fn transfers(&self) -> Vec<Arc<dyn skwir_core::op::transfer::Transfer>> {
@@ -364,7 +383,9 @@ impl Rclone {
         let program = self.askpass_program()?;
         let askpass = mounter::Askpass::serve_with(program.clone(), ask, &attempt)?;
         askpass.give(&mut command);
-        command.arg("--password-command").arg(program);
+        command
+            .arg("--password-command")
+            .arg(password_command(&program));
         mounter::mount(&mut command, &point, &attempt, PATIENCE).map_err(|error| {
             let error = anyhow::anyhow!("{}", words(&error.to_string()));
             mounter::ended(&attempt, cancel, error)
@@ -433,7 +454,9 @@ impl Rclone {
         let program = self.askpass_program()?;
         let askpass = mounter::Askpass::serve_with(program.clone(), ask, &attempt)?;
         askpass.give(&mut command);
-        command.arg("--password-command").arg(program);
+        command
+            .arg("--password-command")
+            .arg(password_command(&program));
         let (ended_tx, ended) = crossbeam_channel::bounded(1);
         skwir_platform::process::spawn_watched(&mut command, move |status| {
             let _ = ended_tx.send(status);
@@ -809,6 +832,22 @@ pub(crate) fn mount_arguments(remote: &str, point: &Path) -> Vec<std::ffi::OsStr
     args
 }
 
+/// `program` as rclone's `--password-command` reads it: a list of words
+/// split at spaces, CSV's way, so a path holding a space (a profile
+/// `C:\Users\Jean Dupont`) is one word in double quotes, a quote in it
+/// doubled.
+pub(crate) fn password_command(program: &Path) -> std::ffi::OsString {
+    let mut quoted = vec![b'"'];
+    for &byte in program.as_os_str().as_encoded_bytes() {
+        if byte == b'"' {
+            quoted.push(b'"');
+        }
+        quoted.push(byte);
+    }
+    quoted.push(b'"');
+    skwir_core::os_path::from_bytes(quoted)
+}
+
 /// What rclone says on failing, in the user's words where it can be told.
 pub(crate) fn words(said: &str) -> String {
     let said = said.trim();
@@ -839,6 +878,54 @@ pub(crate) fn words(said: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A password command whose path holds spaces and a quote is run
+    /// whole: rclone splits the flag at spaces, CSV's way. Against the
+    /// rclone installed, a script standing in for Skwir; skipped, saying
+    /// why, with none.
+    #[cfg(unix)]
+    #[test]
+    fn a_password_command_is_one_word_whatever_its_path() {
+        assert_eq!(
+            password_command(Path::new("/a b/say \"hi\"")),
+            std::ffi::OsString::from("\"/a b/say \"\"hi\"\"\"")
+        );
+        let Some(rclone) = skwir_core::os_path::find_program("rclone") else {
+            eprintln!("skipped: rclone is not installed");
+            return;
+        };
+        let folder = tempfile::tempdir().unwrap();
+        let config = folder.path().join("rclone.conf");
+        std::fs::write(&config, "[kept]\ntype = memory\n").unwrap();
+        let program = folder.path().join("Jean Dupont").join("say \"it\"");
+        std::fs::create_dir_all(program.parent().unwrap()).unwrap();
+        std::fs::write(&program, "#!/bin/sh\necho the-password\n").unwrap();
+        std::fs::set_permissions(
+            &program,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        let run = |args: &[&str]| {
+            let mut command = super::command(&rclone, Some(&config));
+            command
+                .args(args)
+                .arg("--password-command")
+                .arg(password_command(&program))
+                .env_remove("RCLONE_CONFIG_PASS");
+            command.output().unwrap()
+        };
+        let set = run(&["config", "encryption", "set"]);
+        assert!(set.status.success(), "{set:?}");
+        assert!(
+            std::fs::read_to_string(&config)
+                .unwrap()
+                .contains("RCLONE_ENCRYPT_V0"),
+            "encrypted"
+        );
+        let listed = run(&["listremotes"]);
+        assert!(listed.status.success(), "{listed:?}");
+        assert_eq!(String::from_utf8_lossy(&listed.stdout).trim(), "kept:");
+    }
 
     #[test]
     fn rclone_is_given_an_address_by_its_parts() {

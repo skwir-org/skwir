@@ -12,7 +12,9 @@ set -euo pipefail
 
 if [ "${1:-}" != --inside ]; then
     tested=$(realpath "$1")
-    tools=$(nix build --no-link --print-out-paths nixpkgs#avahi nixpkgs#dbus nixpkgs#iproute2 \
+    # The flake's nixpkgs, as its lock pins it: never the registry's.
+    repo=$(realpath "$(dirname "$0")/../..")
+    tools=$(nix build --no-link --print-out-paths --inputs-from "git+file://$repo" nixpkgs#avahi nixpkgs#dbus nixpkgs#iproute2 \
         nixpkgs#util-linux nixpkgs#wsdd nixpkgs#coreutils)
     out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(-bin)?$" <<< "$tools" | head -1; }
     path=""
@@ -93,6 +95,13 @@ for _ in $(seq 100); do
 done
 avahi-publish -s "Test NAS" _smb._tcp 445 > "$RUNTIME/publish-smb.log" 2>&1 &
 avahi-publish -s "Test Files" _webdav._tcp 8080 "path=/dav" > "$RUNTIME/publish-dav.log" 2>&1 &
+# More servers than zbus queues a match's signals for (64): the browsers'
+# first signals come at once, while the first resolve waits for its answer.
+# A port each: a server is one row by its address.
+export BURST=72
+for n in $(seq -w 1 "$BURST"); do
+    avahi-publish -s "Burst $n" _ftp._tcp "$((2100 + 10#$n))" > /dev/null 2>&1 &
+done
 
 # The PC: wsdd announcing it, by a UUID of its own (wsdd takes the
 # machine's otherwise, which the one discovering would take for its own).

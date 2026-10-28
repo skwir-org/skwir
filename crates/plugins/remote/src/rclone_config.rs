@@ -276,7 +276,9 @@ fn sweep_left(cancel: &CancelToken) {
         else {
             continue;
         };
-        if pid == std::process::id() || skwir_platform::process::runs(pid) == Some(true) {
+        // Only once the system says that Skwir ended: one it cannot tell of
+        // may still be serving.
+        if pid == std::process::id() || skwir_platform::process::runs(pid) != Some(false) {
             continue;
         }
         let socket = entry.path();
@@ -325,7 +327,9 @@ impl Session {
             // Its own token: dropped with the session, it ends that alone.
             let askpass = mounter::Askpass::serve_with(program.clone(), ask, &cancel.child())?;
             askpass.give(&mut command);
-            command.arg("--password-command").arg(program);
+            command
+                .arg("--password-command")
+                .arg(crate::rclone::password_command(&program));
             askpass
         };
         let mut child = command.spawn()?;
@@ -367,6 +371,17 @@ impl Session {
         let deadline = Instant::now() + STARTING;
         loop {
             if self.at.answers() {
+                // Its own: on Windows' loopback another program may take
+                // the port first (rclone then ends, unable to serve), and
+                // must be told nothing of the configuration. A socket of
+                // the runtime folder is the user's alone.
+                if matches!(self.at, crate::rc::At::Loopback { .. }) {
+                    let pid = self.call("core/pid", &json!({}), cancel)?;
+                    anyhow::ensure!(
+                        pid["pid"].as_u64() == Some(u64::from(self.child.id())),
+                        "another program answers where rclone was to serve its configuration"
+                    );
+                }
                 return Ok(());
             }
             // Ended: what it said is why.
@@ -639,7 +654,7 @@ pub fn encrypt(
     let mut command = crate::rclone::command(rclone, with.config());
     command
         .args(["config", "encryption", "set", "--password-command"])
-        .arg(program)
+        .arg(crate::rclone::password_command(&program))
         .env_remove("RCLONE_CONFIG_PASS");
     askpass.give(&mut command);
     let finished =

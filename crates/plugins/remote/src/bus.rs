@@ -1,7 +1,17 @@
 //! The session bus, as the desktop's own remotes are reached through it:
 //! whether GVfs's daemon or kio-fuse is there or would be started when
-//! asked, and kio-fuse's calls. Linux only. Each call connects again: a
-//! few are made, never per file. Blocks: on a worker.
+//! asked, kio-fuse's calls, the devices GVfs's monitors and KDE's kmtpd
+//! offer. Linux only. Blocks: on a worker.
+//!
+//! What follows the bus (the devices' signals) is on the program's one
+//! session connection (`skwir_platform::bus`). A question asked here is
+//! not: each asks on a connection of its own, closed once answered,
+//! because a program that stops answering (a GVfs monitor, `kiod6`, a
+//! kio-fuse waiting on KDE's dialog) is given up on after a while, and
+//! zbus gives up on a call only by its connection's timeout, which the
+//! shared one has none of (its users' calls would all wait as long). A
+//! few are made, when a device comes or goes or a server is connected,
+//! never per file.
 
 use std::ffi::OsString;
 use std::time::Duration;

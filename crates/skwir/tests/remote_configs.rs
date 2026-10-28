@@ -1368,6 +1368,89 @@ fn a_server_that_does_not_answer_is_disconnected_all_the_same() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// Eject forced (an agent's, a script's) while another program works in
+/// the mount and its rclone waits for a server that does not answer: the
+/// mount is cut, and its rclone told to quit, rather than wait for the
+/// server and, ending later, unmount a mount made there again meanwhile.
+#[test]
+fn a_forced_eject_has_its_rclone_quit() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("s3-forced");
+    let data = base.join("served");
+    // A bucket of its own: no other test mounts it.
+    std::fs::create_dir_all(data.join("bucket-forced").join("below")).unwrap();
+    std::fs::write(data.join("bucket-forced/below/held.txt"), b"held").unwrap();
+    let served = Served::start("s3", &data, &["--auth-key", "AKIDTEST,secret-of-the-test"]);
+    use_aws_files(&base, served.port);
+    let config = base.join("rclone.conf");
+    std::fs::write(&config, "").unwrap();
+    let app = app_with_rclone(&base, &config, Arc::default());
+    let point = mounted(&app, "s3://bucket-forced/");
+    let _left = Unmounted(point.clone());
+    // Another program works there, stopped however the test ends.
+    let _holder = Holder(
+        Command::new("sleep")
+            .arg("600")
+            .current_dir(&point)
+            .spawn()
+            .unwrap(),
+    );
+    // The server stops answering, and a folder rclone has not listed yet
+    // is shown: rclone waits for the server.
+    let stopped = Command::new("kill")
+        .arg("-STOP")
+        .arg(served.child.id().to_string())
+        .status()
+        .unwrap();
+    assert!(stopped.success());
+    let pane = app.workspace.read().active_id();
+    app.navigate(
+        pane,
+        &skwir_core::location::Location::from_path(point.join("below")),
+    )
+    .unwrap();
+    let lane = skwir_core::fs::reach::of(&point).unwrap().lane();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while app
+        .scheduler
+        .stalled(lane)
+        .is_none_or(|ran| ran < skwir_core::fs::reach::NOT_ANSWERING)
+    {
+        app.pump();
+        assert!(Instant::now() < deadline, "its folder never waited");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    said(&app);
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point, "force": true }),
+    ))
+    .unwrap();
+    let words = until_said(&app, 30, "isconnected");
+    assert!(words.starts_with("Disconnected from"), "{words}");
+    assert!(
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point),
+        "still mounted"
+    );
+    let socket = skwir_plugin_remote::rclone_copy::socket_for(&point).unwrap();
+    assert!(!socket.exists(), "its rclone still runs");
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// A program of a test's own, stopped when dropped.
+struct Holder(Child);
+
+impl Drop for Holder {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 /// The records Settings lists of the servers, by their id.
 fn server_records(app: &App) -> Vec<serde_json::Value> {
     let skwir_core::command::Outcome::Value(records) = app

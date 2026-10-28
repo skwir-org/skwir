@@ -41,6 +41,10 @@ struct AddArgs {
     /// `region`). Never a secret: the user types those in the window.
     #[serde(default)]
     options: BTreeMap<String, String>,
+    /// The pane a server added by its address opens in: the active one,
+    /// as the command is asked, where none is given.
+    #[serde(default)]
+    pane: Option<skwir_core::workspace::PaneId>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -429,6 +433,9 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
             "Add a server: a remote of rclone's (cloud storage, S3, WebDAV, SFTP and seventy more), in a form the user fills; what it starts from may be given, never a secret",
             move |args, app| {
                 window_for_forms(app)?;
+                // Resolved now: the form may end long after, another pane
+                // active by then.
+                let pane = app.pane_or_active(args.pane);
                 let prefill = crate::rclone_forms::Prefill {
                     kind: args.kind,
                     provider: args.provider,
@@ -437,10 +444,10 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 };
                 // Without rclone, the servers added by their address alone.
                 if skwir_core::os_path::find_program("rclone").is_none() {
-                    return servers_alone(&remotes_, app, prefill);
+                    return servers_alone(&remotes_, app, prefill, pane);
                 }
                 in_form(&remotes_, app, "added", move |flow, remotes, app| {
-                    let made = flow.add(&prefill)?;
+                    let made = flow.add(&prefill, pane)?;
                     if let Some(crate::rclone_forms::Made::Server(name)) = &made {
                         remotes.refresh(app);
                         remotes.records.changed();
@@ -543,10 +550,13 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     if !flow.confirm_remove(&args.id, !mounted.is_empty()) {
                         return Ok(());
                     }
-                    // Let go of first: what rclone mounted keeps working
-                    // from what it read of the configuration.
+                    // Let go of first, and kept while it stays mounted: what
+                    // rclone mounted keeps working from what it read of the
+                    // configuration.
                     for point in mounted {
-                        remotes.disconnect(app, point, false)?;
+                        remotes
+                            .disconnect_here(app, &point, false)
+                            .map_err(|error| anyhow::anyhow!("it stays mounted: {error:#}"))?;
                     }
                     flow.session.delete(&args.id, flow.cancel)?;
                     crate::rclone_forms::note_unfinished(app, &args.id, false);
@@ -702,7 +712,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 let lifetime = remotes_
                     .lifetime()
                     .ok_or_else(|| anyhow::anyhow!("remote folders are turned off"))?;
-                let weak = app.weak();
+                let (remotes, weak) = (remotes_.clone(), app.weak());
                 std::thread::Builder::new()
                     .name("skwir-remote-form".into())
                     .spawn(move || {
@@ -718,18 +728,30 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                             };
                             match crate::options::of_values(&values) {
                                 Ok(options) => {
-                                    match crate::options::keep(&app, &top, &options) {
-                                        Ok(()) => app.notify(
+                                    // Its entry at login mounts so too.
+                                    let kept = crate::options::keep(&app, &top, &options)
+                                        .map_err(|error| {
+                                            format!("The mount options were not saved: {error:#}")
+                                        })
+                                        .and_then(|()| {
+                                            renew_at_login(&remotes, &top, &options, &cancel)
+                                                .map_err(|error| {
+                                                    format!(
+                                                        "The mount options were saved, but \
+                                                         connecting at login mounts as before: \
+                                                         {error:#}"
+                                                    )
+                                                })
+                                        });
+                                    match kept {
+                                        Ok(_) => app.notify(
                                             NotifyLevel::Info,
                                             format!(
                                                 "“{}” is mounted so when it next connects",
                                                 top.label()
                                             ),
                                         ),
-                                        Err(error) => app.notify(
-                                            NotifyLevel::Error,
-                                            format!("The mount options were not saved: {error:#}"),
-                                        ),
+                                        Err(said) => app.notify(NotifyLevel::Error, said),
                                     }
                                     return;
                                 }
@@ -764,7 +786,7 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                 .spawn(move || {
                     let Some(app) = weak.upgrade() else { return };
                     let cancel = lifetime.child();
-                    let done = at_login(&remotes, &top, &id, args.on, &cancel);
+                    let done = at_login(&remotes, &app, &top, &id, args.on, &cancel);
                     remotes.refresh(&app);
                     let label = top.label();
                     match (done, args.on) {
@@ -1036,9 +1058,11 @@ fn keep_as_server(
 }
 
 /// Set the server at `top` to connect at login (`on`), or no longer: its
-/// entry `id` with the service manager.
+/// entry `id` with the service manager, mounting with the options chosen
+/// for the server.
 fn at_login(
     remotes: &Remotes,
+    app: &App,
     top: &Address,
     id: &str,
     on: bool,
@@ -1054,12 +1078,43 @@ fn at_login(
         let point = crate::login::point_of(connector, top)?;
         return manager.uninstall(id, &point, cancel);
     }
-    let at = if top.scheme == Scheme::Rclone {
-        crate::login::AtLogin::rclone(&remotes.rclone, top, cancel)?
-    } else {
-        crate::login::AtLogin::sshfs(&remotes.sshfs(), top, cancel)?
-    };
+    let at = login_entry(remotes, top, &crate::options::of(app, top), cancel)?;
     manager.install(&at, cancel)
+}
+
+/// What connects the server at `top` at login, mounting it with `options`.
+/// Logs in to an SFTP server once: on a worker.
+fn login_entry(
+    remotes: &Remotes,
+    top: &Address,
+    options: &crate::options::MountOptions,
+    cancel: &skwir_core::cancel::CancelToken,
+) -> anyhow::Result<crate::login::AtLogin> {
+    if top.scheme == Scheme::Rclone {
+        crate::login::AtLogin::rclone(&remotes.rclone, top, options, cancel)
+    } else {
+        crate::login::AtLogin::sshfs(&remotes.sshfs(), top, options, cancel)
+    }
+}
+
+/// Write again the entry connecting `top`'s server at login, where there
+/// is one: what it mounts with changed (`options`). A mount it carries
+/// stays as it was made.
+fn renew_at_login(
+    remotes: &Remotes,
+    top: &Address,
+    options: &crate::options::MountOptions,
+    cancel: &skwir_core::cancel::CancelToken,
+) -> anyhow::Result<bool> {
+    let Some(id) = login_id(top) else {
+        return Ok(false);
+    };
+    if !remotes.state.lock().at_login.contains(&id) {
+        return Ok(false);
+    }
+    let at = login_entry(remotes, top, options, cancel)?;
+    remotes.login_manager()?.renew(&at, cancel)?;
+    Ok(true)
 }
 
 /// Add Server where rclone is not installed: the servers added by their
@@ -1068,6 +1123,7 @@ fn servers_alone(
     remotes: &Remotes,
     app: &App,
     prefill: crate::rclone_forms::Prefill,
+    pane: skwir_core::workspace::PaneId,
 ) -> anyhow::Result<Outcome> {
     on_form_thread(remotes, app, "added", move |remotes, app, cancel| {
         // A kind given (Nearby's Add as Server), its form as given.
@@ -1077,14 +1133,15 @@ fn servers_alone(
             .and_then(crate::servers_form::scheme_of);
         let added = match given {
             Some(scheme) => {
-                match crate::servers_form::add(app, scheme, &prefill.options, false, cancel)? {
+                match crate::servers_form::add(app, scheme, &prefill.options, false, pane, cancel)?
+                {
                     crate::servers_form::Added::Done(name) => Some(name),
                     crate::servers_form::Added::Back | crate::servers_form::Added::Cancelled => {
                         None
                     }
                 }
             }
-            None => crate::servers_form::add_any(app, cancel)?,
+            None => crate::servers_form::add_any(app, pane, cancel)?,
         };
         if let Some(name) = added {
             remotes.refresh(app);
@@ -1168,7 +1225,7 @@ fn edit_kept(
         let options = crate::options::of(app, &old_top);
         crate::options::keep(app, &new_top, &options)?;
         crate::options::keep(app, &old_top, &crate::options::MountOptions::default())?;
-        if login_off(remotes, &old_top, cancel)? {
+        if login_off(remotes, app, &old_top, cancel)? {
             app.notify(
                 NotifyLevel::Info,
                 format!("“{name}” no longer connects at login: its address changed"),
@@ -1267,7 +1324,7 @@ fn forget_kept_for(
         return;
     }
     let forgot = crate::options::keep(app, &top, &crate::options::MountOptions::default())
-        .and_then(|()| login_off(remotes, &top, cancel).map(|_| ()));
+        .and_then(|()| login_off(remotes, app, &top, cancel).map(|_| ()));
     if let Err(error) = forgot {
         app.notify(
             NotifyLevel::Warning,
@@ -1280,6 +1337,7 @@ fn forget_kept_for(
 /// one: whether there was.
 fn login_off(
     remotes: &Remotes,
+    app: &App,
     top: &Address,
     cancel: &skwir_core::cancel::CancelToken,
 ) -> anyhow::Result<bool> {
@@ -1289,7 +1347,7 @@ fn login_off(
     if !remotes.state.lock().at_login.contains(&id) {
         return Ok(false);
     }
-    at_login(remotes, top, &id, false, cancel)?;
+    at_login(remotes, app, top, &id, false, cancel)?;
     Ok(true)
 }
 
@@ -1309,6 +1367,7 @@ fn encrypt_in_form(
         );
         return Ok(());
     }
+    connecting_at_login_alone(remotes)?;
     let form = Form::new("Encrypt rclone's Configuration", "Encrypt")
         .intro("rclone keeps its remotes' keys and passwords in its configuration file, only obscured: anyone who reads the file can use them. Encrypted, it opens with a password.")
         .field(Field::new("password", "Password", Kind::Secret { kept: false }).required())
@@ -1329,6 +1388,8 @@ fn encrypt_in_form(
         asked = form.clone().again(&values, "The two passwords differ");
     };
     let password = values.get("password");
+    // One turned on meanwhile.
+    connecting_at_login_alone(remotes)?;
     // Kept first: a configuration encrypted with a password lost is lost.
     if values.on("keep") {
         remotes.rclone.keyring().keep(
@@ -1339,6 +1400,35 @@ fn encrypt_in_form(
     }
     crate::rclone_config::encrypt(rclone, &remotes.rclone, password, cancel)?;
     app.notify(NotifyLevel::Info, "rclone's configuration is encrypted");
+    Ok(())
+}
+
+/// Refused while a remote of rclone's connects at login: its entry would
+/// fail at every login, nobody being there to give the password
+/// (`AtLogin::rclone` refuses an encrypted configuration).
+fn connecting_at_login_alone(remotes: &Remotes) -> anyhow::Result<()> {
+    // `login::id_of`: the connector, then the address.
+    let mut connecting: Vec<String> = remotes
+        .state
+        .lock()
+        .at_login
+        .iter()
+        .filter_map(|id| id.strip_prefix("rclone/"))
+        .filter_map(|address| Address::parse(address).ok())
+        .map(|address| format!("“{}”", address.label()))
+        .collect();
+    connecting.sort();
+    anyhow::ensure!(
+        connecting.is_empty(),
+        "{} {} at login, which an encrypted configuration cannot: nobody is there to \
+         give its password. Turn Connect at Login off first",
+        connecting.join(", "),
+        if connecting.len() == 1 {
+            "connects"
+        } else {
+            "connect"
+        }
+    );
     Ok(())
 }
 

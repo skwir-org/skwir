@@ -34,7 +34,9 @@ if [ "${1:-}" != --inside ]; then
         echo "skipped: no phone over MTP (plugged in, unlocked, in file transfer mode)"
         exit 0
     fi
-    tools=$(nix build --no-link --print-out-paths nixpkgs#gvfs 'nixpkgs#glib^bin' nixpkgs#dbus \
+    # The flake's nixpkgs, as its lock pins it: never the registry's.
+    repo=$(realpath "$(dirname "$0")/../..")
+    tools=$(nix build --no-link --print-out-paths --inputs-from "git+file://$repo" nixpkgs#gvfs 'nixpkgs#glib^bin' nixpkgs#dbus \
         nixpkgs#coreutils nixpkgs#util-linux nixpkgs#kdePackages.kio \
         nixpkgs#kdePackages.kio-extras)
     out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(p[0-9]+)?(-bin)?$" <<< "$tools" | head -1; }

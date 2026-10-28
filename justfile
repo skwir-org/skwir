@@ -120,20 +120,20 @@ djvu-check:
     python3 tools/djvu/check.py --engine djvu-rs --worker target/debug/skwir-djvu-worker
 
 # Remote folders (ADR-077) against servers of rclone's on this machine,
-# mounted for real: rclone, sshfs, and a GVfs and a KIO (kio-fuse, ADR-081)
-# of the test's own, each on a bus of its own, taken from nixpkgs (never the
-# session's); OpenSSH's own server and Samba run as the user, for copies
-# through rsync (ADR-078) and SMB. The tests skip what is missing when run
-# alone. Then GVfs's NFS and AFP, whose servers run as root, in namespaces
+# mounted for real: rclone, sshfs, and a GVfs and a KIO (kio-fuse, ADR-081) of
+# the test's own, each on a bus of its own, taken from the flake's nixpkgs
+# (never the session's); OpenSSH's own server and Samba run as the user, for
+# copies through rsync (ADR-078) and SMB. The tests skip what is missing when
+# run alone. Then GVfs's NFS and AFP, whose servers run as root, in namespaces
 # of their own (tools/test/gvfs-nfs-afp.sh); GVfs's AFC against a stand-in
-# iPhone (tools/test/gvfs-afc.sh); servers found nearby on a network of
-# the test's own (tools/test/nearby.sh, ADR-084); and passwords in keyrings
-# of the tests' own (ADR-082): GNOME Keyring, unlocked and locked behind its
-# prompt, and KeePassXC.
+# iPhone (tools/test/gvfs-afc.sh); servers found nearby on a network of the
+# test's own (tools/test/nearby.sh, ADR-084); and passwords in keyrings of the
+# tests' own (ADR-082): GNOME Keyring, unlocked and locked behind its prompt,
+# and KeePassXC.
 remote-check:
     #!/usr/bin/env bash
     set -euo pipefail
-    tools=$(nix build --no-link --print-out-paths nixpkgs#sshfs nixpkgs#gvfs nixpkgs#rclone 'nixpkgs#glib^bin' nixpkgs#openssh nixpkgs#rsync nixpkgs#kdePackages.kio-fuse nixpkgs#kdePackages.kio nixpkgs#kdePackages.kio-extras nixpkgs#kdePackages.kde-cli-tools nixpkgs#samba nixpkgs#uid_wrapper nixpkgs#nss_wrapper)
+    tools=$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#sshfs nixpkgs#gvfs nixpkgs#rclone 'nixpkgs#glib^bin' nixpkgs#openssh nixpkgs#rsync nixpkgs#kdePackages.kio-fuse nixpkgs#kdePackages.kio nixpkgs#kdePackages.kio-extras nixpkgs#kdePackages.kde-cli-tools nixpkgs#samba nixpkgs#uid_wrapper nixpkgs#nss_wrapper)
     out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(p[0-9]+)?(-bin)?$" <<< "$tools" | head -1; }
     export PATH="$(out sshfs-fuse)/bin:$(out rclone)/bin:$(out glib)/bin:$(out openssh)/bin:$(out rsync)/bin:$(out kde-cli-tools)/bin:$PATH"
     export SKWIR_TEST_GVFS="$(out gvfs)"
@@ -149,7 +149,7 @@ remote-check:
     # Servers found nearby, on a network of the test's own (ADR-084).
     tools/test/nearby.sh "$binary"
     # Servers' passwords in a keyring of the tests' own (ADR-082).
-    keyring=$(nix build --no-link --print-out-paths nixpkgs#gnome-keyring)
+    keyring=$(nix build --no-link --print-out-paths --inputs-from 'git+file://{{justfile_directory()}}' nixpkgs#gnome-keyring)
     PATH="$keyring/bin:$PATH" tools/test/private-keyring.sh cargo nextest run \
         -p skwir-platform -p skwir-plugin-remote --run-ignored only \
         -E 'test(secret) | test(password) | test(passphrase)'

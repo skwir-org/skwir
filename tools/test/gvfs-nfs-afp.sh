@@ -33,7 +33,9 @@ if [ "${1:-}" != --inside ]; then
         echo "skipped: no user namespace with subordinate ids (newuidmap, /etc/subuid)"
         exit 0
     fi
-    tools=$(nix build --no-link --print-out-paths 'nixpkgs#glib^bin' nixpkgs#dbus \
+    # The flake's nixpkgs, as its lock pins it: never the registry's.
+    repo=$(realpath "$(dirname "$0")/../..")
+    tools=$(nix build --no-link --print-out-paths --inputs-from "git+file://$repo" 'nixpkgs#glib^bin' nixpkgs#dbus \
         nixpkgs#unfs3 nixpkgs#rpcbind nixpkgs#netatalk nixpkgs#iproute2 nixpkgs#coreutils \
         nixpkgs#util-linux nixpkgs#gnused nixpkgs#gnugrep nixpkgs#findutils)
     # GVfs's AFP backend dies now and then against this server, which
@@ -43,7 +45,7 @@ if [ "${1:-}" != --inside ]; then
     # (gvfs-afp-request-lifetime.patch).
     fix=$(realpath "$(dirname "$0")/gvfs-afp-request-lifetime.patch")
     gvfs=$(nix build --impure --no-link --print-out-paths --expr "
-        let pkgs = (builtins.getFlake \"nixpkgs\").legacyPackages.\${builtins.currentSystem};
+        let pkgs = (builtins.getFlake \"git+file://$repo\").inputs.nixpkgs.legacyPackages.\${builtins.currentSystem};
         in pkgs.gvfs.overrideAttrs (o: { patches = (o.patches or [ ]) ++ [ (/. + \"$fix\") ]; })")
     out() { grep -E "/[a-z0-9]{32}-$1-[0-9.]+(p[0-9]+)?(-bin)?$" <<< "$tools" | head -1; }
     path=""

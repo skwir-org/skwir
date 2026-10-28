@@ -33,6 +33,7 @@ use skwir_core::cancel::CancelToken;
 
 use crate::address::{Address, Scheme};
 use crate::connector::{self, Connector as _};
+use crate::options::MountOptions;
 
 /// How long its manager may take to start a mount now: a cloud's first
 /// listing, as the connectors wait.
@@ -84,10 +85,11 @@ pub fn point_of(connector: &str, address: &Address) -> anyhow::Result<PathBuf> {
 
 impl AtLogin {
     /// A remote of rclone's configuration (`rclone://gdrive/`), mounted as
-    /// the rclone connector mounts it, in the foreground: rclone tells its
-    /// manager once mounted. The configuration is named (`--config`): the
-    /// one Skwir reads, whatever the manager's environment says. Reads the
-    /// configuration: on a worker.
+    /// the rclone connector mounts it, with the `options` chosen for it, in
+    /// the foreground: rclone tells its manager once mounted. The
+    /// configuration is named (`--config`): the one Skwir reads, whatever
+    /// the manager's environment says. Reads the configuration: on a
+    /// worker.
     ///
     /// # Errors
     /// For an address of another kind (Skwir gives a server's password,
@@ -96,28 +98,30 @@ impl AtLogin {
     pub fn rclone(
         with: &crate::rclone::Rclone,
         address: &Address,
+        options: &MountOptions,
         cancel: &CancelToken,
     ) -> anyhow::Result<AtLogin> {
         let (program, config, top) = rclone_checked(with, address, cancel)?;
         #[cfg(unix)]
         {
-            rclone_on_unix(with, program, config, &top)
+            rclone_on_unix(with, program, config, &top, options)
         }
         #[cfg(windows)]
         {
-            rclone_on_windows(with, program, config, &top, cancel)
+            rclone_on_windows(with, program, config, &top, options, cancel)
         }
         #[cfg(not(any(unix, windows)))]
         {
-            let _ = (program, config, top);
+            let _ = (program, config, top, options);
             Err(skwir_core::system::not_yet("Mounting rclone's remotes").into())
         }
     }
 
-    /// An SFTP address mounted by sshfs as the sshfs connector mounts it, in
-    /// the foreground, its ssh asking nothing (`BatchMode`): a key ssh's
-    /// agent holds, or one with no passphrase. Logs in to the server once
-    /// to know it asks nothing: on a worker.
+    /// An SFTP address mounted by sshfs as the sshfs connector mounts it,
+    /// with the `options` chosen for it, in the foreground, its ssh asking
+    /// nothing (`BatchMode`): a key ssh's agent holds, or one with no
+    /// passphrase. Logs in to the server once to know it asks nothing: on a
+    /// worker.
     ///
     /// # Errors
     /// Where the server wants a password or a passphrase, ssh does not know
@@ -125,6 +129,7 @@ impl AtLogin {
     pub fn sshfs(
         with: &crate::sshfs::Sshfs,
         address: &Address,
+        options: &MountOptions,
         cancel: &CancelToken,
     ) -> anyhow::Result<AtLogin> {
         let top = address.top();
@@ -142,6 +147,11 @@ impl AtLogin {
         let point = point_of(with.id(), &top)?;
         let control = crate::ssh_mount::control_path(&point);
         let mut args = crate::sshfs::arguments(&top, &point, control.as_deref());
+        // What the user chose for it, as the connector gives it.
+        if let Some(chosen) = crate::options::sshfs_options(options) {
+            args.push("-o".into());
+            args.push(chosen.into());
+        }
         for option in &with.ssh_options {
             args.push("-o".into());
             args.push(option.into());
@@ -239,11 +249,26 @@ fn rclone_on_unix(
     program: PathBuf,
     config: PathBuf,
     top: &Address,
+    options: &MountOptions,
 ) -> anyhow::Result<AtLogin> {
     let remote = crate::rclone::remote_of(top)?;
     let point = point_of(with.id(), top)?;
     let mut args: Vec<OsString> = vec!["--config".into(), config.into()];
-    args.extend(foreground(crate::rclone::mount_arguments(&remote, &point)));
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut mount = crate::rclone::mount_arguments(&remote, &point);
+    // macOS without macFUSE or FUSE-T: served over NFS on this machine, as
+    // the connector mounts it (`nfsmount`).
+    #[cfg(target_os = "macos")]
+    if !crate::sshfs::fuse_on_macos() {
+        mount[0] = "nfsmount".into();
+    }
+    args.extend(foreground(mount));
+    // What the user chose for it: after Skwir's own, so it wins.
+    args.extend(
+        crate::options::rclone_arguments(options)
+            .into_iter()
+            .map(OsString::from),
+    );
     // Its remote control, as the connector gives it (`rclone_copy`).
     let (mut folders, mut leftovers) = (Vec::new(), Vec::new());
     if let Some(socket) = crate::rclone_copy::socket_for(&point) {
@@ -276,6 +301,7 @@ fn rclone_on_windows(
     program: PathBuf,
     config: PathBuf,
     top: &Address,
+    options: &MountOptions,
     cancel: &CancelToken,
 ) -> anyhow::Result<AtLogin> {
     let remote = crate::rclone::remote_of(top)?;
@@ -288,6 +314,12 @@ fn rclone_on_windows(
     args.extend(
         crate::winfsp::at_login_arguments(&remote, &point, rotates)
             .ok_or_else(|| anyhow::anyhow!("there is no folder to mount in"))?,
+    );
+    // What the user chose for it: after Skwir's own, so it wins.
+    args.extend(
+        crate::options::rclone_arguments(options)
+            .into_iter()
+            .map(OsString::from),
     );
     AtLogin {
         id: id_of(with.id(), top),
@@ -599,6 +631,18 @@ fn fitted(name: &str, mark: &str, suffix: &str, most: usize) -> String {
     format!("{}{hash}{suffix}", &name[..cut])
 }
 
+/// The tasks `schtasks /Query /FO CSV /NH` lists, by the names
+/// [`task_name`] gives (`Skwir\remote-…`): each line's first field, its
+/// leading `\` left out.
+#[cfg(any(windows, test))]
+fn task_names(listed: &str) -> std::collections::HashSet<String> {
+    listed
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix('"')?.split_once('"'))
+        .map(|(name, _)| name.trim_start_matches('\\').to_owned())
+        .collect()
+}
+
 /// What its manager says it is: "Connect gdrive at login (Skwir)".
 fn description(at: &AtLogin) -> String {
     format!("Connect {} at login (Skwir)", at.title)
@@ -878,21 +922,36 @@ impl Manager {
     /// # Errors
     /// What its manager said: then nothing is left set up.
     pub fn install(&self, at: &AtLogin, cancel: &CancelToken) -> anyhow::Result<()> {
+        self.set_up(at, true, cancel)
+    }
+
+    /// Write `at`'s entry again, one installed: what it runs changed (the
+    /// server's mount options). Nothing is started or stopped: a mount it
+    /// carries stays as it was made, the next login's made anew.
+    ///
+    /// # Errors
+    /// What its manager said: then nothing is left set up.
+    pub fn renew(&self, at: &AtLogin, cancel: &CancelToken) -> anyhow::Result<()> {
+        self.set_up(at, false, cancel)
+    }
+
+    /// Set `at` up, and connect it now where `start`.
+    fn set_up(&self, at: &AtLogin, start: bool, cancel: &CancelToken) -> anyhow::Result<()> {
         #[cfg(target_os = "linux")]
         {
-            self.install_unit(at, cancel)
+            self.install_unit(at, start, cancel)
         }
         #[cfg(target_os = "macos")]
         {
-            self.install_agent(at, cancel)
+            self.install_agent(at, start, cancel)
         }
         #[cfg(windows)]
         {
-            self.install_task(at, cancel)
+            self.install_task(at, start, cancel)
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
         {
-            let _ = (at, cancel);
+            let _ = (at, start, cancel);
             Err(skwir_core::system::not_yet("Connecting at login").into())
         }
     }
@@ -972,6 +1031,37 @@ impl Manager {
         }
     }
 
+    /// Which of `ids` connect at login ([`Manager::installed`]), asked of
+    /// the manager once: on Windows, one `schtasks` listing every task,
+    /// not one for each (a refresh asks for every server known).
+    pub fn installed_of(
+        &self,
+        ids: impl IntoIterator<Item = String>,
+    ) -> std::collections::HashSet<String> {
+        #[cfg(windows)]
+        {
+            let mut command = Command::new(&self.program);
+            command.args(["/Query", "/FO", "CSV", "/NH"]);
+            let listed = skwir_platform::process::run_to_exit(
+                &mut command,
+                None,
+                &CancelToken::new(),
+                Duration::from_secs(10),
+            )
+            .ok()
+            .filter(|finished| finished.status.success())
+            .map(|finished| task_names(&String::from_utf8_lossy(&finished.stdout)))
+            .unwrap_or_default();
+            ids.into_iter()
+                .filter(|id| listed.contains(&task_name(id)))
+                .collect()
+        }
+        #[cfg(not(windows))]
+        {
+            ids.into_iter().filter(|id| self.installed(id)).collect()
+        }
+    }
+
     /// Run its program with `args`, its words when it fails.
     fn ask(&self, args: Vec<OsString>, cancel: &CancelToken) -> anyhow::Result<()> {
         let mut command = Command::new(&self.program);
@@ -1003,7 +1093,7 @@ impl Manager {
         self.ask(args, cancel)
     }
 
-    fn install_unit(&self, at: &AtLogin, cancel: &CancelToken) -> anyhow::Result<()> {
+    fn install_unit(&self, at: &AtLogin, start: bool, cancel: &CancelToken) -> anyhow::Result<()> {
         let name = unit_name(&at.id);
         std::fs::create_dir_all(&self.folder)?;
         let unit = systemd_unit(at);
@@ -1014,7 +1104,7 @@ impl Manager {
             .systemctl(&["daemon-reload"], cancel)
             .and_then(|()| self.systemctl(&["enable", "--quiet", name.as_str()], cancel));
         let started = set_up.and_then(|()| {
-            if mounted(&at.point) {
+            if !start || mounted(&at.point) {
                 return Ok(());
             }
             self.systemctl(&["start", name.as_str()], cancel)
@@ -1059,13 +1149,13 @@ impl Manager {
         Ok(format!("gui/{}", String::from_utf8_lossy(&uid).trim()))
     }
 
-    fn install_agent(&self, at: &AtLogin, cancel: &CancelToken) -> anyhow::Result<()> {
+    fn install_agent(&self, at: &AtLogin, start: bool, cancel: &CancelToken) -> anyhow::Result<()> {
         let label = agent_label(&at.id);
         let file = self.folder.join(format!("{label}.plist"));
         std::fs::create_dir_all(&self.folder)?;
         let agent = launch_agent(at);
         skwir_platform::file::rewrite(&file, "the login agent", |_| Some((agent, ())))?;
-        if mounted(&at.point) {
+        if !start || mounted(&at.point) {
             return Ok(());
         }
         let started = Manager::domain(cancel).and_then(|domain| {
@@ -1104,7 +1194,7 @@ impl Manager {
 
 #[cfg(windows)]
 impl Manager {
-    fn install_task(&self, at: &AtLogin, cancel: &CancelToken) -> anyhow::Result<()> {
+    fn install_task(&self, at: &AtLogin, start: bool, cancel: &CancelToken) -> anyhow::Result<()> {
         let name = task_name(&at.id);
         let user = match (std::env::var("USERDOMAIN"), std::env::var("USERNAME")) {
             (Ok(domain), Ok(user)) => format!("{domain}\\{user}"),
@@ -1146,7 +1236,7 @@ impl Manager {
             crate::winfsp::forget_at_login(&at.point);
         }
         created?;
-        if mounted(&at.point) {
+        if !start || mounted(&at.point) {
             return Ok(());
         }
         if let Err(error) = self.ask(
@@ -1500,6 +1590,20 @@ mod tests {
             words.push(word);
         }
         words
+    }
+
+    #[test]
+    fn the_logon_tasks_are_read_from_one_listing() {
+        let id = id_of("rclone", &Address::parse("rclone://gdrive/").unwrap());
+        let listed = format!(
+            "\"\\Microsoft\\Windows\\Defrag\\ScheduledDefrag\",\"N/A\",\"Ready\"\r\n\
+             \"\\{}\",\"N/A\",\"Running\"\r\n\
+             INFO: something else\r\n",
+            task_name(&id)
+        );
+        let names = task_names(&listed);
+        assert!(names.contains(&task_name(&id)), "{names:?}");
+        assert_eq!(names.len(), 2);
     }
 
     #[test]

@@ -110,6 +110,20 @@ pub fn trash_of(config: &Value) -> Option<String> {
     Some(trash.to_owned())
 }
 
+/// `below`, a path below a mount, as rclone names it on its remote: its
+/// names joined by `/`, whatever the system's separator (Windows' `\`
+/// would be part of a name to a cloud).
+fn remote_path(below: &Path) -> Option<String> {
+    let names: Option<Vec<&str>> = below
+        .components()
+        .map(|part| match part {
+            std::path::Component::Normal(name) => name.to_str(),
+            _ => None,
+        })
+        .collect();
+    Some(names?.join("/"))
+}
+
 /// A public link to `path`, a file of the mount Skwir made at `point`
 /// (`operations/publiclink`).
 ///
@@ -122,9 +136,7 @@ pub fn public_link(point: &Path, path: &Path, cancel: &CancelToken) -> anyhow::R
     let fs = listed["vfses"][0]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("no remote mounted"))?;
-    let below = path
-        .strip_prefix(point)?
-        .to_str()
+    let below = remote_path(path.strip_prefix(point)?)
         .ok_or_else(|| anyhow::anyhow!("rclone takes no such name"))?;
     let answer = call(
         &at,
@@ -143,6 +155,19 @@ pub fn public_link(point: &Path, path: &Path, cancel: &CancelToken) -> anyhow::R
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// A file below a folder is named on the remote with `/`, as rclone
+    /// names it, whatever the system's separator.
+    #[test]
+    fn a_file_is_named_on_its_remote_with_slashes() {
+        let below: std::path::PathBuf = ["a folder", "it's here.txt"].iter().collect();
+        assert_eq!(
+            remote_path(&below).as_deref(),
+            Some("a folder/it's here.txt")
+        );
+        assert_eq!(remote_path(Path::new("")).as_deref(), Some(""));
+        assert_eq!(remote_path(Path::new("../up")), None);
+    }
 
     #[test]
     fn a_cloud_s_trash_is_named_unless_its_options_delete_for_good() {

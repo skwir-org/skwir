@@ -65,14 +65,15 @@ fn probe() -> i32 {
     1
 }
 
-/// Start the copy of this program that serves the mount (`serve`), in a
-/// process group of its own, and wait until it says it mounted: exit 0,
-/// leaving it running, or 1 with what it said. The caller waits for this
-/// exit, then finds the mount in the table (`mounter::mount`).
+/// Start the copy of this program that serves the mount (`serve`), and
+/// wait until it says it mounted: exit 0, leaving it running, or 1 with
+/// what it said. The caller waits for this exit, then finds the mount in
+/// the table (`mounter::mount`). Until mounted, `serve` is in this
+/// helper's process group, which the caller stops whole when it gives up
+/// (`process::run_leaving`: cancelled, or kmtpd not answering); mounted,
+/// it leaves it, outliving what started it (ADR-077).
 fn mount(args: &[OsString]) -> i32 {
     use std::io::BufRead;
-    #[cfg(unix)]
-    use std::os::unix::process::CommandExt;
     let Ok(program) = std::env::current_exe() else {
         eprintln!("this helper cannot find itself");
         return 1;
@@ -84,9 +85,6 @@ fn mount(args: &[OsString]) -> i32 {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null());
-    // Not stopped with what started it: the mount outlives it (ADR-077).
-    #[cfg(unix)]
-    command.process_group(0);
     let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
@@ -137,6 +135,9 @@ fn serve(args: &[OsString]) -> i32 {
             return 1;
         }
     };
+    // Out of the helper's process group, and its session: no longer
+    // stopped with what started it.
+    let _ = rustix::process::setsid();
     println!("mounted");
     let _ = std::io::stdout().flush();
     match fs::serve(session, udi, std::path::PathBuf::from(point)) {
