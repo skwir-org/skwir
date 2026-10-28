@@ -182,7 +182,7 @@ proptest = "1"
 tempfile = "3"
 # DjVu in Rust (ADR-061). Pinned: young, and released weekly; an update is
 # read and tried with `just djvu-check` before it is taken.
-djvu-rs = { version = "=0.42.0", default-features = false, features = ["std"] }
+djvu-rs = { version = "=0.43.0", default-features = false, features = ["std"] }
 # Windows' own calls (ADR-035): the version most of the tree already links.
 windows-sys = "0.61"
 

@@ -6712,3 +6712,7 @@ stopped them once for about an hour.
   no type for it. Checked: clippy and nextest of the plugin (18; three
   new tests seen failing under the old extension choice),
   `extended_previews` (15), `just check-windows`.
+- **djvu-rs 0.43.0** (night-crates): a version bump (its zip 9 sits
+  behind features Skwir does not use). Checked: clippy and tests of the
+  djvu helper and plugin, `skwir`'s `djvu` tests, `just djvu-check`
+  (djvulibre and djvu-rs both pass, djvu-rs's ink at most 0.32 % off).
