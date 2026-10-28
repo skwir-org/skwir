@@ -276,6 +276,9 @@ server and network. Undo history is cleared when Skwir exits.
   its own shape. Mermaid's architecture diagrams are drawn, and a STEP or IGES
   model whose curved faces close on themselves without a seam (a cylinder, a
   dome, a torus) is drawn whole, most parts faster and with fewer triangles.
+  Spreadsheets and SQLite databases are recognised by their type, not their
+  name: a database named `.sqlite` or `.db3` shows when it holds SQLite, and a
+  file of such a name holding something else is no longer opened as one.
 - **Fixed from 0.2**: a document read in continuous scrolling had a scrollbar
   that ended at the last page visited; it measures every page. A long name in
   the grid wraps on up to three lines again. Going from one PDF to another in

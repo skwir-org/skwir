@@ -85,20 +85,17 @@ impl PreviewProvider for Provider {
         10
     }
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        let extension = inspection::extension(&req.entry.path);
-        if spreadsheet::EXTENSIONS.contains(&extension.as_str()) {
-            return !(self.pages
-                && skwir_platform::preview::shown_as_pages(&req.entry.path, req.mime.as_deref()));
+        match reader(&req.entry.path, req.mime.as_deref()) {
+            Some(Reader::Workbook(_)) => {
+                !(self.pages
+                    && skwir_platform::preview::shown_as_pages(
+                        &req.entry.path,
+                        req.mime.as_deref(),
+                    ))
+            }
+            Some(_) => true,
+            None => false,
         }
-        // By type (AGENTS.md, "Types"); JSON Lines has none in the
-        // database, so its name is all there is to go by.
-        TEXT_TABLES.holds(&req.entry.path, req.mime.as_deref())
-            || matches!(extension.as_str(), "jsonl" | "ndjson")
-            || sqlite::EXTENSIONS.contains(&extension.as_str())
-            || req
-                .mime
-                .as_deref()
-                .is_some_and(|mime| sqlite::MIMES.contains(&mime))
     }
     fn inspect(
         &self,
@@ -111,25 +108,47 @@ impl PreviewProvider for Provider {
             return Ok(None);
         }
         let path = req.entry.resolve()?;
-        let extension = inspection::extension(&path);
-        let database = req
-            .mime
-            .as_deref()
-            .is_some_and(|mime| sqlite::MIMES.contains(&mime));
         let bounds = limits::Bounds::of(view);
-        match extension.as_str() {
-            _ if database || sqlite::EXTENSIONS.contains(&extension.as_str()) => {
-                sqlite::table(&path, view.offset, bounds, cancel).map(Some)
+        match reader(&req.entry.path, req.mime.as_deref()) {
+            Some(Reader::Database) => sqlite::table(&path, view.offset, bounds, cancel).map(Some),
+            Some(Reader::Lines) => jsonl::table(&path, view.offset, bounds, cancel).map(Some),
+            Some(Reader::Workbook(mime)) => {
+                spreadsheet::table(&path, mime.as_str(), view.offset, bounds, cancel).map(Some)
             }
-            "jsonl" | "ndjson" => jsonl::table(&path, view.offset, bounds, cancel).map(Some),
-            _ if spreadsheet::EXTENSIONS.contains(&extension.as_str()) => {
-                spreadsheet::table(&path, view.offset, bounds, cancel).map(Some)
-            }
-            _ => {
-                let tabs = TAB_SEPARATED.holds(&req.entry.path, req.mime.as_deref());
+            Some(Reader::Text { tabs }) => {
                 table(&path, tabs, view.offset, bounds, cancel).map(Some)
             }
+            None => Ok(None),
         }
+    }
+}
+
+/// What reads a table, chosen by its file's type.
+#[derive(Debug, PartialEq)]
+enum Reader {
+    /// A SQLite database.
+    Database,
+    /// An Excel workbook, of its type.
+    Workbook(skwir_platform::mime::Mime),
+    /// Text: CSV, or TSV split by tabs.
+    Text { tabs: bool },
+    /// JSON Lines.
+    Lines,
+}
+
+/// The reader of a file asked about: by its type (`mime::of_request`, the
+/// one it is asked with, read from its bytes where its name gives none),
+/// never by its name (AGENTS.md, "Types"), but for JSON Lines, which has
+/// no type (`jsonl::named`).
+fn reader(path: &std::path::Path, mime: Option<&str>) -> Option<Reader> {
+    let typed = skwir_platform::mime::of_request(path, mime);
+    match typed {
+        Some(typed) if sqlite::TYPES.contains(typed.as_str()) => Some(Reader::Database),
+        Some(typed) if spreadsheet::TYPES.contains(typed.as_str()) => Some(Reader::Workbook(typed)),
+        Some(typed) if TEXT_TABLES.contains(typed.as_str()) => Some(Reader::Text {
+            tabs: TAB_SEPARATED.contains(typed.as_str()),
+        }),
+        _ => jsonl::named(path).then_some(Reader::Lines),
     }
 }
 
@@ -388,7 +407,7 @@ mod tests {
         let path = dir.path().join(name);
         std::fs::write(&path, bytes).unwrap();
         // As the database types these names.
-        let tabs = inspection::extension(&path) == "tsv";
+        let tabs = TAB_SEPARATED.holds(&path, None);
         table(
             &path,
             tabs,
@@ -397,6 +416,114 @@ mod tests {
             &CancelToken::new(),
         )
         .unwrap()
+    }
+
+    fn asked(path: &std::path::Path, mime: Option<&str>) -> PreviewRequest {
+        PreviewRequest {
+            entry: skwir_core::op::EntryRef::from_path(path).unwrap(),
+            mime: mime.map(str::to_owned),
+            page: 1,
+            seconds: None,
+            max_side: 0,
+            text_size: None,
+            fit: None,
+        }
+    }
+
+    fn shown(provider: &Provider, request: &PreviewRequest) -> Inspection {
+        provider
+            .inspect(request, &InspectRequest::default(), &CancelToken::new())
+            .unwrap()
+            .expect("a table")
+    }
+
+    /// Each reader is chosen by the type a file is asked about with, else
+    /// its name's type, never by its extension: Excel's binary workbooks
+    /// by theirs, a file asked about as CSV as CSV whatever it is called.
+    #[test]
+    fn readers_are_chosen_by_type() {
+        let workbook = |name: &str| match reader(std::path::Path::new(name), None) {
+            Some(Reader::Workbook(mime)) => mime.0.to_ascii_lowercase(),
+            other => panic!("{name}: {other:?}"),
+        };
+        assert_eq!(
+            workbook("l'été.xlsb"),
+            "application/vnd.ms-excel.sheet.binary.macroenabled.12"
+        );
+        assert_eq!(
+            workbook("l'été.XLSM"),
+            "application/vnd.ms-excel.sheet.macroenabled.12"
+        );
+        let path = std::path::Path::new("totals.xlsx");
+        assert_eq!(
+            reader(path, Some("text/csv")),
+            Some(Reader::Text { tabs: false })
+        );
+        assert_eq!(
+            reader(path, Some("application/x-sqlite3")),
+            Some(Reader::Database)
+        );
+        assert_eq!(
+            reader(std::path::Path::new("a.ndjson"), None),
+            Some(Reader::Lines)
+        );
+        assert_eq!(reader(std::path::Path::new("a.db3"), None), None);
+    }
+
+    /// A workbook is read as one by its type whatever its name says: one
+    /// without its extension, asked about as a workbook (as an attachment
+    /// declares it), is read cell by cell.
+    #[test]
+    fn a_workbook_is_read_by_its_type_not_its_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let made = spreadsheet::tests::workbook(
+            dir.path(),
+            &[("Data", r#"<row r="1"><c r="A1" t="s"><v>0</v></c></row>"#)],
+            &["l'été"],
+        );
+        let path = dir.path().join("it's budget");
+        std::fs::rename(&made, &path).unwrap();
+        let provider = Provider { pages: false };
+        let request = asked(&path, Some(spreadsheet::tests::XLSX));
+        assert!(provider.accepts(&request));
+        assert_eq!(shown(&provider, &request).rows[0].cells[0], "l'été");
+    }
+
+    /// A database is one by its type, read from its bytes where its name
+    /// gives none (`.db3`), never by a list of names: a file named as one
+    /// whose bytes are another format's is left to another preview, and
+    /// one asked about without its bytes typed is not taken.
+    #[test]
+    fn a_database_is_read_by_its_type_not_its_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("l'été.db3");
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE plage (nom TEXT); INSERT INTO plage VALUES ('sable');")
+            .unwrap();
+        drop(db);
+        // As the panel asks: its bytes typed before any provider is.
+        let typed = |path: &std::path::Path| skwir_platform::mime::by_content(path).map(|m| m.0);
+        let mime = typed(&path);
+        assert!(
+            mime.as_deref().is_some_and(|m| sqlite::TYPES.contains(m)),
+            "{mime:?}"
+        );
+        let provider = Provider { pages: false };
+        let request = asked(&path, mime.as_deref());
+        assert!(provider.accepts(&request));
+        assert_eq!(shown(&provider, &request).rows[0].cells, ["sable"]);
+        assert!(!provider.accepts(&asked(&path, None)), "no name says it");
+        let older = dir.path().join("an older store.sqlite");
+        std::fs::write(
+            &older,
+            b"** This file contains an SQLite 2.1 database **\0\0\0\0",
+        )
+        .unwrap();
+        let mime = typed(&older);
+        assert!(
+            !provider.accepts(&asked(&older, mime.as_deref())),
+            "{mime:?}"
+        );
     }
 
     /// A file the system types as tab-separated is split by tabs whatever

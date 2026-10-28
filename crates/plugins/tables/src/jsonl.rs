@@ -13,6 +13,13 @@ use std::io::{BufRead, BufReader, Read};
 /// The column for what is not an object.
 const VALUE: &str = "value";
 
+/// Whether `path` is named as JSON Lines: the one table chosen by its
+/// name, as the type database has no type for it (shared-mime-info 2.5.1)
+/// and its bytes are text like any other.
+pub fn named(path: &std::path::Path) -> bool {
+    matches!(inspection::extension(path).as_str(), "jsonl" | "ndjson")
+}
+
 /// One page of `TABLE_ROWS` lines from line `offset`, streamed from the
 /// file like a CSV table: lines before the page are counted, not parsed.
 /// Blank lines are no row. Its columns are `bounds`'.

@@ -6701,3 +6701,14 @@ stopped them once for about an hour.
   instead of 42 s, freeform_panel 4.4 s instead of 3.1 s, under a load
   of about 70); skwir-extend's module tests and `just plugins`; `cargo
   deny`; Windows and macOS clippy of the four helpers (compiled only).
+- **Tables by type** (night-scope): one `reader(path, mime)` decides
+  what the tables plugin accepts and reads: SQLite by
+  `application/vnd.sqlite3`, Excel workbooks by their three types (the
+  binary one choosing calamine's xlsb reader), CSV and TSV by theirs;
+  the extension lists are gone. shared-mime-info 2.5.1 names only
+  `*.sqlite3` as SQLite, but the panel types other names by their bytes
+  (its magic) before asking a provider, so `.sqlite`, `.db3` and `.db`
+  databases still show. JSON Lines keeps a name test: the database has
+  no type for it. Checked: clippy and nextest of the plugin (18; three
+  new tests seen failing under the old extension choice),
+  `extended_previews` (15), `just check-windows`.

@@ -15,10 +15,15 @@ use skwir_core::{
     inspection::{Inspection, Row},
 };
 use skwir_platform::inspection::{self, limits};
+use skwir_platform::mime::Types;
 use std::path::Path;
 
-pub const MIMES: [&str; 2] = ["application/vnd.sqlite3", "application/x-sqlite3"];
-pub const EXTENSIONS: [&str; 3] = ["sqlite", "sqlite3", "db3"];
+/// A database's type (`application/x-sqlite3` is another name for it).
+/// The type database names only `*.sqlite3` so, but knows SQLite's first
+/// bytes: a `.sqlite`, a `.db3` or a `.db` is a database when the bytes
+/// it is asked with say so (`mime::by_content`, read before a provider
+/// is asked), never by a list of names.
+pub static TYPES: Types = Types::new(&["application/vnd.sqlite3"]);
 
 /// A page position: the table in the high half, the row in the low.
 const TABLE: u64 = 1 << 32;

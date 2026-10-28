@@ -14,10 +14,21 @@ use skwir_core::{
     inspection::{Inspection, Row},
 };
 use skwir_platform::inspection::{self, limits};
+use skwir_platform::mime::Types;
 use std::io::{BufReader, Read};
 use std::path::Path;
 
-pub const EXTENSIONS: [&str; 3] = ["xlsx", "xlsm", "xlsb"];
+/// The workbooks whose cells are read here, by type (AGENTS.md,
+/// "Types"): Excel's, with macros or not, and its binary one.
+pub static TYPES: Types = Types::new(&[
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel.sheet.macroEnabled.12",
+    "application/vnd.ms-excel.sheet.binary.macroEnabled.12",
+]);
+
+/// Of them, the binary workbooks, which calamine reads with another
+/// reader.
+static BINARY: Types = Types::new(&["application/vnd.ms-excel.sheet.binary.macroEnabled.12"]);
 
 /// A page position: the sheet in the high half, the row in the low.
 const SHEET: u64 = 1 << 32;
@@ -30,9 +41,10 @@ enum Book {
 }
 
 impl Book {
-    fn open(path: &Path) -> anyhow::Result<Self> {
+    /// The workbook at `path`, read as its type `mime` says.
+    fn open(path: &Path, mime: &str) -> anyhow::Result<Self> {
         let file = BufReader::new(inspection::open(path)?);
-        Ok(if inspection::extension(path) == "xlsb" {
+        Ok(if BINARY.contains(mime) {
             Self::Xlsb(Xlsb::new(file)?)
         } else {
             Self::Xlsx(Xlsx::new(file)?)
@@ -245,16 +257,18 @@ fn text(value: &DataRef<'_>) -> String {
 /// One page of `TABLE_ROWS` rows of one sheet, at `offset` (`SHEET`
 /// times the sheet, plus the row). Next goes on down the sheet, then to
 /// the next sheet's top; Previous back up, then to the previous sheet's.
-/// Its columns are `bounds`'.
+/// Its columns are `bounds`'. `mime` is the workbook's type, one of
+/// `TYPES`: it says which reader reads it.
 pub fn table(
     path: &Path,
+    mime: &str,
     offset: u64,
     bounds: limits::Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
     let most = bounds.table_columns();
     bounded(path, limits::CONTAINER_EXPANSION, cancel)?;
-    let mut book = Book::open(path)?;
+    let mut book = Book::open(path, mime)?;
     let sheets = book.sheets();
     anyhow::ensure!(!sheets.is_empty(), "The spreadsheet has no sheet of cells");
     let sheet = usize::try_from(offset / SHEET)
@@ -379,14 +393,22 @@ pub fn table(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::fmt::Write as _;
     use std::io::Write as _;
 
+    /// An Excel workbook's type.
+    pub(crate) const XLSX: &str =
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
     /// A workbook written by hand, as the smallest Excel file: `sheets`
     /// are (name, `<sheetData>` rows), strings are shared.
-    fn workbook(dir: &Path, sheets: &[(&str, &str)], strings: &[&str]) -> std::path::PathBuf {
+    pub(crate) fn workbook(
+        dir: &Path,
+        sheets: &[(&str, &str)],
+        strings: &[&str],
+    ) -> std::path::PathBuf {
         let path = dir.join("a workbook’s name.xlsx");
         let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
         let mut part = |name: &str, text: &str| {
@@ -480,7 +502,7 @@ mod tests {
             &["name", "when", "café"],
         );
         let cancel = CancelToken::new();
-        let data = table(&path, 0, limits::Bounds::QUICK, &cancel).unwrap();
+        let data = table(&path, XLSX, 0, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(data.columns.len(), limits::TABLE_COLUMNS);
         assert_eq!(&data.columns[..4], ["A", "B", "C", "D"]);
         assert_eq!(&data.rows[0].cells[..2], ["name", "when"]);
@@ -501,7 +523,7 @@ mod tests {
         assert_eq!(fact(&data, "Columns").as_deref(), Some("16384"));
         assert_eq!(fact(&data, "Sheets").as_deref(), Some("2"));
         // Turned to again, the page is read alone, its sheet's size known.
-        let again = table(&path, 0, limits::Bounds::QUICK, &cancel).unwrap();
+        let again = table(&path, XLSX, 0, limits::Bounds::QUICK, &cancel).unwrap();
         let cells = |data: &Inspection| -> Vec<Vec<String>> {
             data.rows.iter().map(|row| row.cells.clone()).collect()
         };
@@ -522,10 +544,10 @@ mod tests {
         );
 
         // The last page of the sheet, then the next sheet from its top.
-        let last = table(&path, 999_900, limits::Bounds::QUICK, &cancel).unwrap();
+        let last = table(&path, XLSX, 999_900, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(last.rows.len(), 100);
         assert_eq!(last.next, Some(SHEET));
-        let other = table(&path, SHEET, limits::Bounds::QUICK, &cancel).unwrap();
+        let other = table(&path, XLSX, SHEET, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(other.title, "Other · rows 1–1");
         assert_eq!(other.rows[0].cells, ["TRUE"]);
         assert_eq!((other.previous, other.next), (Some(0), None));

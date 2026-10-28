@@ -23,6 +23,13 @@ is binding, like `AGENTS.md`.
 - `accepts` settles a shared name, on a worker: by the bytes' type when
   the MIME database knows both formats (a GIMP brush's `.gbr`), else by
   the file's start (`.nc`: NetCDF or a CNC program; a Gerber `.gbr`).
+- The table reader chooses its reader by the type a file is asked about
+  with (`mime::of_request`), never by a list of extensions: SQLite by
+  `application/vnd.sqlite3`, which the database names only `*.sqlite3`
+  but finds in the bytes the panel types first (a `.sqlite`, a `.db3`),
+  Excel's workbooks by theirs (the binary one's chooses calamine's other
+  reader), CSV and TSV by theirs. JSON Lines alone goes by its name: the
+  database has no type for it.
 - A thumbnail provider's `accepts` runs on the UI thread, on names only;
   its `thumbnail` returns `None` for a file not its own.
 - A changed preference re-registers only its provider

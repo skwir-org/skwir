@@ -198,8 +198,6 @@ leave (ADR-077).
 **From the review of 2026-10-28** (fixed the same day, "Review fixes
 (2026-10-28)" below; each with its fixer's proposed design in
 `docs/STATUS-LOG.md`):
-- The tables plugin picks the spreadsheet and SQLite readers by
-  extension.
 - A tag place's check uses the first count listed that covers it, not
   the deepest: right, but it reads more than a subfolder's own newer
   count would.
