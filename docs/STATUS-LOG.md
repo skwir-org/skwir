@@ -6442,3 +6442,17 @@ those offered:
   passed (pages, first page alone, rotation and crop, text geometry,
   links, outlines, search, limits, a corrupt PDF), and the helper's
   tests. Windows' and macOS's archives are not tried.
+
+### Rust 1.99.1 and the flake's inputs of 2026-10-27 (2026-10-28)
+
+- **Updated:** `rust-toolchain.toml` from 1.98.1 to 1.99.1; `flake.lock`:
+  nixpkgs from 2026-09-16 to 2026-10-23 (the native workers' Poppler,
+  MuPDF, DjVuLibre, GStreamer and libarchive, the test servers and tools:
+  rclone is 1.75.2 now), rust-overlay, home-manager and flake-utils.
+- **Lint:** 1.99's `assert_is_empty` is allowed in the root manifest,
+  with why: it flags about 200 `assert!(x.is_empty())` in tests, and the
+  rewrite it asks for (`assert_eq!(x, [] as [String; 0])`) reads worse.
+  No other new lint fired.
+- **Checked:** rustfmt; `cargo clippy --workspace --all-targets` (`-D
+  warnings`, every crate and native worker, against the new system
+  libraries). Tests not run here: they run after the crates' update.

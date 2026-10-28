@@ -205,6 +205,10 @@ too_many_lines = "allow"
 type_complexity = "allow"
 return_self_not_must_use = "allow"
 wildcard_imports = "allow"
+# Rust 1.99's: `assert!(x.is_empty())` says what is meant, and the rewrite
+# it asks for (`assert_eq!(x, [] as [String; 0])`) reads worse in the
+# ~200 tests that would take it.
+assert_is_empty = "allow"
 
 # Debug info stays in `.dwo` files beside the objects, out of the link:
 # it was 92 % of a test binary (646 of 702 MB for skwir-ui's), and eight

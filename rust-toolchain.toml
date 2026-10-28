@@ -3,5 +3,5 @@
 # release's lints arrive only with the commit that moves it and fixes
 # them. The oldest Rust that builds skwir is `rust-version` in Cargo.toml.
 [toolchain]
-channel = "1.98.1"
+channel = "1.99.1"
 components = ["clippy", "rustfmt"]
