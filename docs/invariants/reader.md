@@ -104,9 +104,13 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   fit/zoom changes are resolved in prepaint: they change every row's height,
   so rows reset to a new uniform estimate (old heights would mislead the
   scrollbar) and the anchor is restored in the same prepaint
-  (`continuous_element`). After Ctrl and the wheel the anchor is the page
-  under the pointer and the share of it there (`ZoomAnchor`), landed
-  under the pointer at the new rows' own heights (`landing`).
+  (`continuous_element`). The estimate is each row's height hint, which
+  gpui keeps through the list's first layout and a width change (patch
+  0040): dropped there, the column counted only the pages laid out, and
+  the scrollbar ended at the last page visited. After Ctrl and the wheel
+  the anchor is the page under the pointer and the share of it there
+  (`ZoomAnchor`), landed under the pointer at the new rows' own heights
+  (`landing`).
 - An arriving page invalidates only its own height
   (`ListState::remeasure_items`), without resetting the anchor or splicing:
   a spliced row forgets its height, and the scrollbar jumps while dragged.

@@ -69,6 +69,7 @@ at the vendored commit.
 | `0037-middle-ellipsis-over-clamped-lines` | A clamped text cut in the middle keeps its first lines, and its last ends as the text does | — |
 | `0038-press-cancels-a-waiting-tooltip` | A press cancels a tooltip still waiting to show | — |
 | `0039-shifted-space-is-space` | The space bar with Shift is Space to key bindings whatever the layout types there (Linux) | — |
+| `0040-list-keeps-height-hints-across-a-width-change` | A list keeps each item's height, measured or hinted, as its estimate when its width changes and on its first layout, so a scrollbar measures every item (0004's last hunk) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -80,7 +81,10 @@ Zed's main branch has its own answer to each of these patches:
 - **0003** (Blade atlas retirement): wgpu destroys a texture only once the GPU
   is done with it.
 - **0004** (list item height hints): `ListItem::Unmeasured`'s `size_hint`, and
-  a list remeasures an item whose height changed.
+  a list remeasures an item whose height changed. Not its last hunk: Zed's
+  list drops every hint when its width changes, and on its first layout, so
+  the reader's column counted only the pages laid out and its scrollbar
+  ended at the last page visited (2026-10-28): 0040.
 - **0005** (clamped truncation, middle ellipsis): `TruncateFrom::Middle` and
   `truncate_wrapped_line`, except a middle ellipsis over several lines, which
   Zed cuts to one: 0037.

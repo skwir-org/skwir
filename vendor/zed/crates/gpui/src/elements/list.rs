@@ -1540,14 +1540,17 @@ impl Element for List {
 
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
 
-        // If the width of the list has changed, invalidate all cached item heights
+        // If the width of the list has changed, invalidate all cached item heights.
+        // What each item measured, or was hinted at, stays its estimate until it is
+        // measured again: dropped, the list would count only the items laid out
+        // since (on its first layout too), and a scrollbar would measure that.
         if state
             .last_layout_bounds
             .is_none_or(|last_bounds| last_bounds.size.width != bounds.size.width)
         {
             let new_items = SumTree::from_iter(
                 state.items.iter().map(|item| ListItem::Unmeasured {
-                    size_hint: None,
+                    size_hint: item.size_hint(),
                     focus_handle: item.focus_handle(),
                 }),
                 (),
@@ -2096,6 +2099,43 @@ mod test {
             view.into_any_element()
         });
         assert_eq!(state.max_offset_for_scrollbar().y, px(300.));
+    }
+
+    #[gpui::test]
+    fn test_uniform_height_hints_survive_the_first_layout_and_a_width_change(
+        cx: &mut TestAppContext,
+    ) {
+        let cx = cx.add_empty_window();
+
+        // 100 items of 50px, hinted, measured only as they are shown.
+        let state = ListState::new(100, crate::ListAlignment::Top, px(0.))
+            .with_uniform_item_height(px(50.));
+
+        struct TestView(ListState);
+        impl Render for TestView {
+            fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+                list(self.0.clone(), |_, _, _| {
+                    div().h(px(50.)).w_full().into_any()
+                })
+                .w_full()
+                .h_full()
+            }
+        }
+
+        let view = cx.update(|_, cx| cx.new(|_| TestView(state.clone())));
+
+        // The first layout measures the few items shown; the others keep their
+        // hints, so the scrollbar measures all 5000px less the 200px shown.
+        cx.draw(point(px(0.), px(0.)), size(px(100.), px(200.)), |_, _| {
+            view.clone().into_any_element()
+        });
+        assert_eq!(state.max_offset_for_scrollbar().y, px(4800.));
+
+        // At another width the measured heights are stale, but still estimates.
+        cx.draw(point(px(0.), px(0.)), size(px(200.), px(200.)), |_, _| {
+            view.into_any_element()
+        });
+        assert_eq!(state.max_offset_for_scrollbar().y, px(4800.));
     }
 
     #[gpui::test]

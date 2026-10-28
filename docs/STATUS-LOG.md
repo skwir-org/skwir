@@ -6354,3 +6354,33 @@ those offered:
   turned three pages. Not checked: a trackpad, a high-resolution wheel
   (Wayland's value120 in parts of a notch), the session's Wayland.
   Not run: `just check-cross`, `just release-check`.
+
+### A continuous document's scrollbar measures every page (2026-10-28)
+
+- **Asked:** a book of 148 pages read continuously had a scrollbar that
+  ended at the last page visited, while the bar counted all 148.
+- **Fixed:** gpui patch 0040. The reader gives every page's row a height
+  estimate (`reset_with_uniform_height`) before the list's prepaint, and
+  Zed's list, on its first layout and whenever its width changes, made
+  every row unmeasured with no hint: the list's height, and the
+  scrollbar's, was only the rows laid out since. Skwir's 0004 kept the
+  hint there; that hunk went when 0004 was dropped with gpui 0.2.2
+  (2026-10-18), Zed having hints of its own. Since then every document
+  read continuously had the scrollbar of the pages seen. The list now
+  keeps what each row measured, or was hinted at, as its estimate until
+  it is measured again, as `remeasure_items` already does. A structured
+  preview's list (`inspector.rs`: tables, text in blocks) takes the same
+  hints, and the same fix.
+- **Checked:** `test_uniform_height_hints_survive_the_first_layout_and_a_width_change`
+  (100 hinted rows: the scrollbar's extent stays 4800 px after the first
+  layout and at another width; 0 px with the old line), run by
+  `python3 tools/gpui/check.py gpui` with upstream's list and the other
+  modules' tests (111 passed). The patch applied with `git apply` to the
+  file as vendored before gives the vendored file. On Xvfb at 1280 × 860,
+  a debug build, a synthetic PDF of 148 pages of the reported size,
+  continuous at Fit: before, the thumb covered three quarters of the
+  track; after, a small thumb, dragged to the bottom to page 148, and
+  still small, near the top at page 2, after the panel was made narrower
+  with the document shown; the reported book alike. Not checked in a
+  window: a structured preview's scrollbar. Not run: the whole
+  `just gpui-check`, `just release-check`.
