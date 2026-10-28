@@ -85,11 +85,19 @@ fn run() -> anyhow::Result<()> {
             )));
         }
     };
+    // pdfium-render 0.9 keeps the bindings it is handed to itself (its
+    // issue 279) and reads no page labels: they are asked through a second
+    // binding to the same library, made before it takes the first.
+    let labelling = if first_page {
+        None
+    } else {
+        self::bindings().ok()
+    };
     let pdfium = Pdfium::new(bindings);
     let document = pdfium
         .load_pdf_from_file(Path::new(&args[0]), None)
         .context("open PDF (encrypted files require an external reader)")?;
-    let info = document_info(&document, first_page);
+    let info = document_info(&document, first_page, labelling.as_deref());
     anyhow::ensure!(info.pages > 0, "document has no pages");
     worker::greet(&WorkerReply::Ready(info))?;
     let scratch = Path::new(&args[1]);
@@ -106,22 +114,33 @@ fn run() -> anyhow::Result<()> {
 }
 
 /// What the document is: its pages, and unless only its first page is
-/// drawn (`first_page`), its outline and its pages' labels.
-fn document_info(document: &PdfDocument<'_>, first_page: bool) -> DocumentInfo {
+/// drawn (`first_page`), its outline and its pages' labels, read through
+/// `labelling`.
+fn document_info(
+    document: &PdfDocument<'_>,
+    first_page: bool,
+    labelling: Option<&dyn PdfiumLibraryBindings>,
+) -> DocumentInfo {
+    let pages = u32::try_from(document.pages().len()).unwrap_or_default();
     if first_page {
         return DocumentInfo {
-            pages: u32::from(document.pages().len()),
+            pages,
             outlines: Vec::new(),
             reflowable: false,
             labels: Vec::new(),
         };
     }
     DocumentInfo {
-        pages: u32::from(document.pages().len()),
+        pages,
         outlines: outlines(document),
         reflowable: false,
-        labels: labels(document),
+        labels: labelling.map_or_else(Vec::new, |bindings| labels(document, bindings)),
     }
+}
+
+/// A page's number, from its index as `PDFium` counts it (a C `int`).
+fn page_number(index: PdfPageIndex) -> Option<u32> {
+    u32::try_from(index).ok()?.checked_add(1)
 }
 
 /// The outline in reading order, each entry at its depth, walked as the
@@ -154,7 +173,7 @@ fn outlines(document: &PdfDocument<'_>) -> Vec<Outline> {
             out.push(Outline {
                 title: bookmark.title().unwrap_or_default(),
                 depth,
-                page: page.map(|p| u32::from(p) + 1),
+                page: page.and_then(page_number),
             });
             if depth + 1 < DEPTH {
                 walk(bookmark.first_child(), depth + 1, out);
@@ -167,19 +186,26 @@ fn outlines(document: &PdfDocument<'_>) -> Vec<Outline> {
     out
 }
 
-/// Each page's label, read from the document without loading its pages.
-fn labels(document: &PdfDocument<'_>) -> Vec<String> {
-    let bindings = document.bindings();
+/// Each page's label, read from the document without loading its pages,
+/// through `bindings` to the library that opened it.
+fn labels(document: &PdfDocument<'_>, bindings: &dyn PdfiumLibraryBindings) -> Vec<String> {
     let handle = bindings.get_handle_from_document(document);
-    let count = i32::from(document.pages().len());
-    page_labels((0..count).map(|index| {
+    page_labels((0..document.pages().len()).map(|index| {
         // UTF-16LE with its terminating NUL, the length asked first.
-        let length = bindings.FPDF_GetPageLabel(handle, index, std::ptr::null_mut(), 0);
+        // SAFETY: the handle is of a document open in this library, and
+        // the index one of its pages; no buffer: the call only measures.
+        #[allow(unsafe_code)]
+        let length = unsafe { bindings.FPDF_GetPageLabel(handle, index, std::ptr::null_mut(), 0) };
         if length == 0 {
             return String::new();
         }
         let mut buffer = vec![0u8; length as usize];
-        bindings.FPDF_GetPageLabel(handle, index, buffer.as_mut_ptr().cast(), length);
+        // SAFETY: as above, with a buffer of the `length` bytes the call
+        // writes at most.
+        #[allow(unsafe_code)]
+        unsafe {
+            bindings.FPDF_GetPageLabel(handle, index, buffer.as_mut_ptr().cast(), length);
+        }
         let units: Vec<u16> = buffer
             .as_chunks::<2>()
             .0
@@ -211,8 +237,8 @@ fn render(
     side: u32,
     scratch: &Path,
 ) -> anyhow::Result<WorkerReply> {
-    let number = number.clamp(1, u32::from(document.pages().len()));
-    let page = document.pages().get(u16::try_from(number - 1)?)?;
+    let number = number.clamp(1, u32::try_from(document.pages().len())?);
+    let page = document.pages().get(PdfPageIndex::try_from(number - 1)?)?;
     let side = i32::try_from(side.clamp(64, MAX_SIDE))?;
     // BGRA, PDFium's own order and the window's: pdfium-render asks for
     // the reverse unless told.
@@ -266,7 +292,8 @@ fn render(
             let destination = link
                 .destination()
                 .and_then(|d| d.page_index().ok())
-                .map(|p| Destination::Page(u32::from(p) + 1))
+                .and_then(page_number)
+                .map(Destination::Page)
                 .or_else(|| {
                     let action = link.action()?;
                     if let Some(local) = action.as_local_destination_action() {
@@ -275,7 +302,8 @@ fn render(
                             .ok()?
                             .page_index()
                             .ok()
-                            .map(|p| Destination::Page(u32::from(p) + 1));
+                            .and_then(page_number)
+                            .map(Destination::Page);
                     }
                     action.as_uri_action()?.uri().ok().map(Destination::Uri)
                 })?;

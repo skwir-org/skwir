@@ -21,7 +21,11 @@ choice.
   is built by the normal recipes; the library is optional (`nix develop .#pdf`
   supplies the pinned runtime). The binding is pinned to 0.8.35 with the
   `pdfium_6721` ABI surface, exercised against PDFium 7749; any library or
-  binding upgrade reruns the native checks.
+  binding upgrade reruns the native checks. Amended 2026-10-28: pinned to
+  0.9.4, still with the `pdfium_6721` surface, checked against PDFium
+  7749, 8066 and 8125. A newer surface would refuse every library older
+  than itself: pdfium-render binds every function of the surface when it
+  loads.
 - **Choice.** `documents.backend` is `auto`, `pdfium` or `poppler`
   (ADR-014 adds `mupdf`). Auto prefers PDFium and falls back only when its
   worker or library is missing; an explicit PDFium choice reports what is

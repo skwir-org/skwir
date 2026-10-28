@@ -10,7 +10,10 @@ rust-version.workspace = true
 [dependencies]
 skwir-core.workspace = true
 anyhow.workspace = true
-pdfium-render = { version = "=0.8.35", default-features = false, features = ["pdfium_6721"] }
+# Bound to an older PDFium API than the packages carry (ADR-004): every
+# function of the surface named must be in the library, so a newer one
+# refuses any PDFium before it, and the helper needs nothing past 6721.
+pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_6721"] }
 
 [dev-dependencies]
 tempfile.workspace = true

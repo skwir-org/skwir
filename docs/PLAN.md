@@ -203,6 +203,9 @@ leave (ADR-077).
 - A tag place's check uses the first count listed that covers it, not
   the deepest: right, but it reads more than a subfolder's own newer
   count would.
+- The PDF helper reads page labels through a second binding to PDFium:
+  pdfium-render 0.9 keeps its raw bindings private (its issue 279); drop
+  the second binding once that is fixed.
 - A trash across filesystems whose original's removal waits is tested
   by unit tests only (`fs::volume` has no stand-in for a removable
   drive); a part restored whose item's removal never came still refuses

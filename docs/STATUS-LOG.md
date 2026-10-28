@@ -6680,3 +6680,24 @@ stopped them once for about an hour.
   run alone (load about 65), and a PDF thumbnail test of the PDF
   helper's upgrade, rerun with it. Windows' key setup is compiled only
   (`just check-windows`).
+- **The helpers' crate majors** (night-crates): the PDF helper takes
+  pdfium-render 0.9.4, still bound to the `pdfium_6721` surface (a
+  `pdfium_7881` binding refused the dev shell's PDFium 7749 and failed
+  the platform's PDF thumbnail test; libloading held at 0.8.9, as
+  gpui's crates need it), page labels through a second binding (0.9
+  keeps its raw bindings private); the Mermaid helper merman 0.9.2,
+  with `layout-cytoscape` so architecture diagrams draw (adds
+  `manatee`); the model helper ogeom 0.11.5; the module helper Wasmtime
+  50 and wit-component 0.261 (minimum Rust 1.97). Duplicates removed:
+  wasmparser, wasm-encoder, wasm-metadata, wit-component and wit-parser
+  (0.239 and 0.258.3 to 0.261); none added. `Cargo.lock` split by
+  package into one commit each, the four adding up to the working lock
+  byte for byte; two of the intermediate locks checked with `cargo
+  metadata --locked` in a worktree. Checked: each helper's clippy and
+  tests; `tools/pdf/check.py` and the PDF thumbnail test against PDFium
+  7749, 8066 and 8125; the markdown plugin's tests and 23 diagram types
+  drawn; step-conformance's 27 files with the old and new release
+  helpers (three files missing a face now closed, the corpus in 17 s
+  instead of 42 s, freeform_panel 4.4 s instead of 3.1 s, under a load
+  of about 70); skwir-extend's module tests and `just plugins`; `cargo
+  deny`; Windows and macOS clippy of the four helpers (compiled only).
