@@ -6754,3 +6754,11 @@ stopped them once for about an hour.
   check-windows`; `just test-windows -p skwir-platform` (183 of 184:
   `calendar`'s clock test made an instant Windows cannot hold, a test
   of 2026-10-26, fixed in the next commit).
+- **wit-bindgen 0.63** (night-crates) in plugin-api (WebAssembly only):
+  no code change in plugin-api or the plugins from outside. Its
+  wasm-tools crates are 0.262 where the module helper's are 0.261: no
+  build compiles both. 0.57.1 stays in the lock for wasip2 (getrandom
+  0.3 on WASI only), which nothing builds. Checked: `just plugins`;
+  clippy of plugin-api and the plugins from outside for wasm32; the
+  extend, plugin-api and module-helper tests (25), which build the
+  modules with 0.63 and run them through the helper.
