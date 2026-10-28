@@ -6775,3 +6775,16 @@ stopped them once for about an hour.
   empty list and says why). `just notices` made the packages' notices
   again for the day's updates (this morning's included) and
   `notices-check` passes.
+- **Two observations of the night, fixed**: a tag place's check relies on
+  the deepest count covering it (`TagIndex::covering`), the nearer and
+  newer, not the first listed (test
+  `a_check_relies_on_the_deepest_count_covering_it`, seen failing with
+  the old lookup). `core/tests/scheduler.rs`'s panicking-job test failed
+  twice under a load of about 65: a panicking job slowed past `STUCK`
+  had a stand-in worker run the later jobs before the panics were
+  counted (reproduced by slowing the panics 1.5 s, which failed with a
+  stand-in `skwir-worker-more`); the test now uses
+  `Scheduler::without_stand_ins`, which also makes it prove what it says
+  (the one worker survives), and bounds its wait at 60 s. Checked:
+  clippy on core and tags, the tags plugin's tests (71), the scheduler
+  test, slowed and not.

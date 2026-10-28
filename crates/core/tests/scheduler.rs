@@ -8,7 +8,10 @@ use skwir_core::scheduler::{Priority, Scheduler};
 
 #[test]
 fn a_panicking_job_leaves_the_pool_able_to_run_later_jobs() {
-    let scheduler = Scheduler::new(1);
+    // No stand-in: a panicking job slowed past `STUCK` (a loaded machine)
+    // would have one run the later jobs while it unwinds, proving nothing
+    // of the worker and counting the panics after the jobs it waits for.
+    let scheduler = Scheduler::without_stand_ins(1);
     for _ in 0..3 {
         scheduler.spawn(Priority::Visible, "test.panic", CancelToken::new(), || {
             panic!("malformed input in a third-party parser");
@@ -21,7 +24,8 @@ fn a_panicking_job_leaves_the_pool_able_to_run_later_jobs() {
             done.fetch_add(1, Ordering::SeqCst);
         });
     }
-    let deadline = Instant::now() + Duration::from_secs(5);
+    // A bound on a hang: the panics run one after another before them.
+    let deadline = Instant::now() + Duration::from_secs(60);
     while done.load(Ordering::SeqCst) < 4 {
         assert!(Instant::now() < deadline, "later jobs never ran");
         std::thread::sleep(Duration::from_millis(5));

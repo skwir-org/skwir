@@ -878,12 +878,16 @@ impl TagIndex {
         self.state().refused
     }
 
-    /// The coverage of `root`: a folder covered that holds it, if any.
+    /// The coverage of `root`: the deepest folder covered that holds it,
+    /// if any. A folder covered drops the coverage below it (`cover`), so
+    /// one still covered below another was counted after it: its count is
+    /// the nearer and the newer, and its folders the fewer to compare.
     pub fn covering(&self, root: &Path) -> Option<Covered> {
         self.state()
             .covered
             .iter()
-            .find(|c| root.starts_with(&c.root))
+            .filter(|c| root.starts_with(&c.root))
+            .max_by_key(|c| c.root.components().count())
             .cloned()
     }
 

@@ -198,9 +198,6 @@ leave (ADR-077).
 **From the review of 2026-10-28** (fixed the same day, "Review fixes
 (2026-10-28)" below; each with its fixer's proposed design in
 `docs/STATUS-LOG.md`):
-- A tag place's check uses the first count listed that covers it, not
-  the deepest: right, but it reads more than a subfolder's own newer
-  count would.
 - scraper 0.29 (selectors 0.41, cssparser 0.38, html5ever 0.40) waits
   for lol_html: it needs servo_arc 0.5, while lol_html 3.0.2 (merman's)
   keeps selectors 0.37 on servo_arc 0.4, so taking it adds a duplicate;
@@ -219,8 +216,11 @@ leave (ADR-077).
   by unit tests only (`fs::volume` has no stand-in for a removable
   drive); a part restored whose item's removal never came still refuses
   its undo ("in its place in the trash").
-- `core/tests/scheduler.rs`'s `a_panicking_job_leaves_the_pool_able_to_run_later_jobs`
-  failed twice under a load of about 65 (2026-10-28), then passed.
+- The packages were not built after the crate updates of 2026-10-28
+  (`just package-try`, `package-appimage`, `package-windows`,
+  `package-macos`): no system library's binding changed (pdfium-render,
+  loaded at run time, is the one native crate updated; libsqlite3-sys
+  stays 0.38), but a package build before tagging says so for sure.
 - Windows' key setup without a control master is compiled only there:
   its logic is tested on Linux (`Ssh::alone`, against rclone's SFTP
   server); Wine has neither AF_UNIX for the askpass nor an sshd.

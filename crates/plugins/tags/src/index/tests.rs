@@ -136,6 +136,28 @@ fn past_its_room_it_learns_no_new_file_but_keeps_those_known_current() {
     assert_eq!(index.tally(Path::new("/r/new")).1, 1);
 }
 
+/// A folder covered after the folder above it: its own count, the
+/// nearer and the newer, is the one a check of it relies on.
+#[test]
+fn a_check_relies_on_the_deepest_count_covering_it() {
+    let index = index(None, 64);
+    let above = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+    let below = above + Duration::from_secs(60);
+    index.cover(Path::new("/r"), above, &[1, 2, 3]);
+    index.cover(Path::new("/r/l'été"), below, &[3]);
+    let covered = index.covering(Path::new("/r/l'été/sous")).unwrap();
+    assert_eq!(
+        (covered.root.as_path(), covered.since()),
+        (Path::new("/r/l'été"), below)
+    );
+    let covered = index.covering(Path::new("/r/autre")).unwrap();
+    assert_eq!(covered.root.as_path(), Path::new("/r"));
+    // Covered again, the folder above drops the count below it.
+    index.cover(Path::new("/r"), below + Duration::from_secs(60), &[1, 2, 3]);
+    let covered = index.covering(Path::new("/r/l'été")).unwrap();
+    assert_eq!(covered.root.as_path(), Path::new("/r"));
+}
+
 #[test]
 fn it_is_kept_in_pieces_read_when_needed_and_moves_carry_tags_along() {
     let tmp = home_tempdir();
