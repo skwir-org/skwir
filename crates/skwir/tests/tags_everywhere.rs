@@ -26,6 +26,21 @@ fn home_tempdir() -> tempfile::TempDir {
         .unwrap()
 }
 
+/// A folder where extended attributes work, made this test's home folder:
+/// the sidebar suggests the home folder's tags as its tag places count
+/// them, outside hidden folders, and the others are in `~/.cache`.
+fn home_of_its_own() -> tempfile::TempDir {
+    let tmp = home_tempdir();
+    // SAFETY: nextest runs each test in a process of its own, and this
+    // runs before the test starts an app, so no other thread reads the
+    // environment concurrently.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("HOME", tmp.path());
+    }
+    tmp
+}
+
 fn tags(t: &[&str]) -> Vec<String> {
     t.iter().map(|&s| s.to_owned()).collect()
 }
@@ -62,7 +77,7 @@ fn sidebar(app: &App) -> Vec<String> {
 #[cfg(unix)]
 #[test]
 fn a_tag_is_renamed_on_every_file_after_review_and_the_sidebar_follows() {
-    let tmp = home_tempdir();
+    let tmp = home_of_its_own();
     let root = tmp.path().join("it's home");
     std::fs::create_dir_all(root.join("sub/deeper")).unwrap();
     std::fs::create_dir_all(root.join(".hidden")).unwrap();
@@ -199,7 +214,7 @@ fn pins(app: &App) -> Vec<(String, bool)> {
 #[cfg(unix)]
 #[test]
 fn pinned_tags_replace_the_suggestions_in_the_order_put() {
-    let tmp = home_tempdir();
+    let tmp = home_of_its_own();
     let root = tmp.path().join("it's home");
     std::fs::create_dir_all(&root).unwrap();
     let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();

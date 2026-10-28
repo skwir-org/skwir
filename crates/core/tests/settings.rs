@@ -3,7 +3,7 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use skwir_core::{
     App,
@@ -56,6 +56,14 @@ impl Plugin for Preferences {
     }
 }
 
+/// How long a test waits for a save, or for a worker to take a job: a
+/// bound on a hang, not a measure. A save syncs its file and its folder
+/// (`Settings::write_whole`), which a disk busy with other writers holds:
+/// on a btrfs `/tmp`, beside a build and the rest of the suite, every test
+/// saving a file stalled 3.2 s at once, one save 4.5 s, and 18 s each with
+/// the disk 99% full, where a 5 s wait failed.
+const WAIT: Duration = Duration::from_secs(60);
+
 fn fixture(path: Option<std::path::PathBuf>) -> (tempfile::TempDir, Arc<App>, Arc<Preferences>) {
     let tmp = tempfile::tempdir().unwrap();
     let mut config = AppConfig::ephemeral(tmp.path());
@@ -82,10 +90,17 @@ fn apply(app: &App, changes: &serde_json::Value) -> SaveState {
     else {
         panic!("expected request id")
     };
-    rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    let (finished, state) = app.settings.save_status();
-    assert_eq!(Some(finished), id.as_u64());
-    state
+    // Until its save says how it went: a wake is for anything published.
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let (finished, state) = app.settings.save_status();
+        assert_eq!(Some(finished), id.as_u64());
+        if state != SaveState::Saving {
+            return state;
+        }
+        rx.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .expect("the save ends and wakes the window");
+    }
 }
 
 #[test]
@@ -314,10 +329,10 @@ fn queued_save_is_exclusive_and_revalidates_after_plugin_disable() {
         app.lifetime().child(),
         move || {
             started_tx.send(()).unwrap();
-            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            release_rx.recv_timeout(WAIT).unwrap();
         },
     );
-    started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    started_rx.recv_timeout(WAIT).unwrap();
     let (wake_tx, wake_rx) = std::sync::mpsc::channel();
     app.set_waker(Some(Arc::new(move || {
         let _ = wake_tx.send(());
@@ -333,7 +348,7 @@ fn queued_save_is_exclusive_and_revalidates_after_plugin_disable() {
     );
     assert!(app.plugins.set_enabled("sample", false, &app));
     release_tx.send(()).unwrap();
-    wake_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    wake_rx.recv_timeout(WAIT).unwrap();
     assert!(matches!(app.settings.save_status().1, SaveState::Failed(_)));
     assert_eq!(plugin.0.load(Ordering::SeqCst), 0);
     assert!(

@@ -551,6 +551,8 @@ impl Operation for SetNotes {
         let mut held = false;
         // The stores that wrote: what the others say is what was read.
         let mut written: Vec<&'static str> = Vec::new();
+        // Why the stores that refused did: what is said if none held.
+        let mut refused: Vec<String> = Vec::new();
         for (store, create) in &first {
             match store.write(&probe, &target, *create) {
                 Ok(Wrote::Written) => {
@@ -559,6 +561,7 @@ impl Operation for SetNotes {
                 }
                 Ok(Wrote::Unchanged) => held = true,
                 Ok(Wrote::NotHere) => {}
+                Ok(Wrote::Refused(why)) => refused.push(why),
                 Err(e) => return Err(failed(e, "write the notes of")),
             }
         }
@@ -571,15 +574,19 @@ impl Operation for SetNotes {
                 }
                 Ok(Wrote::Unchanged) => held = true,
                 Ok(Wrote::NotHere) => {}
+                Ok(Wrote::Refused(why)) => refused.push(why),
                 Err(e) => return Err(failed(e, "write the notes of")),
             }
         }
         if !held {
             let _ = raw::restore(&path, &before);
-            anyhow::bail!(
-                "{}: its volume keeps no notes, and no store is set to keep them beside it",
-                path.display()
-            );
+            if refused.is_empty() {
+                anyhow::bail!(
+                    "{}: its volume keeps no notes, and no store is set to keep them beside it",
+                    path.display()
+                );
+            }
+            anyhow::bail!("{}: {}", path.display(), refused.join("; "));
         }
         let after = raw::snapshot(&path, &keys)?;
         // What each store says now, as skwir left it: the next read tells
@@ -875,6 +882,45 @@ mod tests {
         }
     }
 
+    /// A store beside files that writes none of them, saying why: a `._`
+    /// file there it does not rewrite.
+    struct Declines(&'static str);
+
+    impl NotesStore for Declines {
+        fn id(&self) -> &'static str {
+            "declines"
+        }
+        fn title(&self) -> &'static str {
+            "Declines"
+        }
+        fn kept(&self) -> Kept {
+            Kept::Beside
+        }
+        fn holds(&self) -> Holds {
+            Holds {
+                tags: true,
+                ..Holds::default()
+            }
+        }
+        fn default_write(&self) -> Write {
+            Write::Fallback
+        }
+        fn read(
+            &self,
+            _: &Path,
+            files: &[Probe<'_>],
+            _: Option<&crate::metadata::Listed<'_>>,
+        ) -> Vec<Option<Notes>> {
+            files.iter().map(|_| None).collect()
+        }
+        fn keys(&self, _: &Probe<'_>, _: bool) -> Vec<RawKey> {
+            Vec::new()
+        }
+        fn write(&self, _: &Probe<'_>, _: &Notes, _: bool) -> std::io::Result<Wrote> {
+            Ok(Wrote::Refused(self.0.to_owned()))
+        }
+    }
+
     /// Notes as JSON in `<name>.notes` beside the file.
     struct Beside(&'static str, Write);
 
@@ -1058,6 +1104,35 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("keeps no notes"), "{err}");
         assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
+    }
+
+    /// A store that will not write the file says why, where no other
+    /// keeps its notes; where one does, the edit is done.
+    #[test]
+    fn a_store_that_refuses_a_file_says_why_when_no_store_keeps_its_notes() {
+        let tmp = home_tempdir();
+        let file = tmp.path().join("it's a.txt");
+        std::fs::write(&file, b"x").unwrap();
+        let why = "“._it's a.txt” beside it is laid out otherwise than a Mac writes one";
+        let entry = EntryRef::from_path(&file).unwrap();
+        let err = stores(vec![Arc::new(Refused), Arc::new(Declines(why))])
+            .edit(entry.clone())
+            .tags(vec!["x".into()])
+            .apply(&StepContext::detached())
+            .unwrap_err()
+            .to_string();
+        assert_eq!(err, format!("{}: {why}", file.display()));
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
+        let stores = stores(vec![
+            Arc::new(Declines(why)),
+            Arc::new(Beside("a", Write::Create)),
+        ]);
+        stores
+            .edit(entry)
+            .tags(vec!["x".into()])
+            .apply(&StepContext::detached())
+            .unwrap();
+        assert_eq!(stores.read_path(&file, &stores.policy()).tag_names(), ["x"]);
     }
 
     #[test]

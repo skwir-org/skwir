@@ -316,24 +316,37 @@ enum Beside {
     None,
     /// One it rewrites, as read.
     Rewritten(AppleDouble),
-    /// One it leaves alone, the other stores kept: laid out otherwise
+    /// One it leaves alone, the other stores kept, and why, as an edit
+    /// that no store keeps says it (`Wrote::Refused`): laid out otherwise
     /// (`AppleSingle`, version 1, other entries, a stray file of that name),
     /// unreadable, or larger than an undo keeps of it
     /// (`fs::file::SIDE_FILE_LIMIT`, `notes::raw::snapshot`).
-    Left,
+    Left(String),
 }
 
 fn beside(path: &Path) -> Beside {
     let Some(aside) = sidecar(path) else {
-        return Beside::Left;
+        return Beside::Left("it has no name a file beside it is named after".to_owned());
     };
+    let name = aside.file_name().unwrap_or_default().display();
+    let unreadable =
+        |error: io::Error| Beside::Left(format!("“{name}” beside it cannot be read: {error}"));
     match std::fs::symlink_metadata(&aside) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Beside::None,
-        Ok(meta) if meta.len() <= skwir_core::fs::file::SIDE_FILE_LIMIT => match read(path) {
-            Some(ad) if ad.writable => Beside::Rewritten(ad),
-            _ => Beside::Left,
+        Err(error) => unreadable(error),
+        Ok(meta) if meta.len() > skwir_core::fs::file::SIDE_FILE_LIMIT => {
+            Beside::Left(format!("“{name}” beside it is larger than skwir rewrites"))
+        }
+        Ok(_) => match skwir_platform::file::read_regular(&aside, READ_AT_MOST) {
+            Err(error) => unreadable(error),
+            Ok(bytes) => match AppleDouble::parse(&bytes) {
+                Some(ad) if ad.writable => Beside::Rewritten(ad),
+                _ => Beside::Left(format!(
+                    "“{name}” beside it is laid out otherwise than a Mac writes one, and skwir \
+                     rewrites no other"
+                )),
+            },
         },
-        _ => Beside::Left,
     }
 }
 
@@ -571,7 +584,7 @@ impl NotesStore for AppleDoubleStore {
             Beside::Rewritten(_) => {}
             Beside::None if create => {}
             // Never written: nothing of it is kept for an undo.
-            Beside::None | Beside::Left => return Vec::new(),
+            Beside::None | Beside::Left(_) => return Vec::new(),
         }
         vec![RawKey::Beside {
             path: aside.file_name().map(PathBuf::from).unwrap_or_default(),
@@ -582,7 +595,8 @@ impl NotesStore for AppleDoubleStore {
         let mut ad = match beside(file.path) {
             Beside::Rewritten(ad) => ad,
             Beside::None if create && has_notes => AppleDouble::empty(),
-            Beside::None | Beside::Left => return Ok(Wrote::NotHere),
+            Beside::None => return Ok(Wrote::NotHere),
+            Beside::Left(why) => return Ok(Wrote::Refused(why)),
         };
         let before = ad.clone();
         let theirs = ad
@@ -811,6 +825,7 @@ pub(crate) mod tests {
     /// for an undo.
     #[test]
     fn a_sidecar_laid_out_otherwise_is_never_replaced() {
+        use skwir_core::op::Operation as _;
         let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
         std::fs::create_dir_all(&base).unwrap();
         let tmp = tempfile::Builder::new()
@@ -834,12 +849,34 @@ pub(crate) mod tests {
         version_1[5] = 0x01;
         let mut three = as_a_mac_writes(&[("a", b"1")]);
         three[25] = 3;
+        let why = "“._it's song.mp3” beside it is laid out otherwise than a Mac writes one, \
+                   and skwir rewrites no other";
         for bytes in [version_1, three, b"a stray file".to_vec()] {
             std::fs::write(sidecar(&file).unwrap(), &bytes).unwrap();
             assert!(store.keys(&probe, true).is_empty());
-            assert_eq!(store.write(&probe, &notes, true).unwrap(), Wrote::NotHere);
+            assert_eq!(
+                store.write(&probe, &notes, true).unwrap(),
+                Wrote::Refused(why.to_owned())
+            );
             assert_eq!(std::fs::read(sidecar(&file).unwrap()).unwrap(), bytes);
         }
+        // An edit no other store keeps says why (ADR-027's volume without
+        // attributes, where the folder's `._` files are the store).
+        EVERYWHERE.store(true, std::sync::atomic::Ordering::Relaxed);
+        let stores = Arc::new(skwir_core::notes::NoteStores::default());
+        stores.register("tags", Arc::new(AppleDoubleStore::default()));
+        let err = stores
+            .edit(skwir_core::op::EntryRef::from_path(&file).unwrap())
+            .tags(vec!["Été".into()])
+            .apply(&skwir_core::op::StepContext::detached())
+            .unwrap_err()
+            .to_string();
+        EVERYWHERE.store(false, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(err, format!("{}: {why}", file.display()));
+        assert_eq!(
+            std::fs::read(sidecar(&file).unwrap()).unwrap(),
+            b"a stray file"
+        );
     }
 
     #[test]

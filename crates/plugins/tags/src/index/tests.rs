@@ -317,3 +317,94 @@ fn a_category_counts_each_file_within_it_once() {
     assert!(!counts.iter().any(|(t, _)| t == "Places/France/Paris"));
     assert!(counts.contains(&("Places".to_owned(), 2)));
 }
+
+/// The sidebar's tags, the home folder's top tags, are those its tag
+/// places list (`tally`): none from files in a hidden folder or hidden
+/// themselves alone, nor from a network mount below it, though a pane
+/// shown there taught the index their tags.
+#[test]
+fn the_home_folders_top_tags_are_those_its_tag_places_list() {
+    let index = index(None, 64);
+    let home = PathBuf::from("/h/it's me");
+    index.state().home = Some(home.clone());
+    index.learn(vec![
+        (home.join("Été/a.txt"), tags(&["Work", "Places/Paris"])),
+        (home.join(".local/share/b"), tags(&["only hidden", "work"])),
+        (home.join("c/.d"), tags(&["dotted"])),
+        (home.join("e.txt"), tags(&["work"])),
+        (home.join("nas ü/f"), tags(&["far", "work"])),
+        (home.join("nas ü/.g/h"), tags(&["far hidden"])),
+        (PathBuf::from("/elsewhere/i"), tags(&["elsewhere"])),
+    ]);
+    let by_use = |mut tags: Vec<(String, usize)>| {
+        tags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        tags
+    };
+    let owned = |v: &[(&str, usize)]| {
+        v.iter()
+            .map(|(t, n)| ((*t).to_owned(), *n))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        index.top(9, &home),
+        owned(&[("work", 3), ("Places", 1), ("Places/Paris", 1), ("far", 1)])
+    );
+    assert_eq!(by_use(index.tally(&home).0), index.top(9, &home));
+    // The share mounted there: what it holds is left out.
+    let mounts = [home.join("nas ü")];
+    let counts = {
+        let mut state = index.state();
+        let counts = index.counts_at_home(&mut state, &mounts);
+        TagIndex::spelled(&state, counts)
+    };
+    assert_eq!(
+        by_use(counts),
+        owned(&[("Work", 2), ("Places", 1), ("Places/Paris", 1)])
+    );
+    // Forgotten, a file leaves the counts; one hidden leaves nothing.
+    index.learn(vec![
+        (home.join("e.txt"), Vec::new()),
+        (home.join(".local/share/b"), Vec::new()),
+        (home.join("nas ü/.g/h"), Vec::new()),
+    ]);
+    assert_eq!(by_use(index.tally(&home).0), index.top(9, &home));
+    assert_eq!(index.top(1, &home), owned(&[("Work", 2)]));
+}
+
+/// An index an earlier skwir kept, whose home folder's counts held its
+/// hidden files too, counts them again from its pieces.
+#[test]
+fn home_counts_of_hidden_files_kept_before_are_counted_again() {
+    let tmp = home_tempdir();
+    let slot = || Some(skwir_core::cache::Cache::new(tmp.path()).namespace("tags"));
+    let home = std::env::home_dir().unwrap();
+    // Names only: nothing is read there.
+    let (shown, hidden) = (
+        home.join("skwir-test it's shown ü/a"),
+        home.join(".skwir-test hidden/b"),
+    );
+    let first = index(slot(), 64);
+    first.learn(vec![
+        (shown.clone(), tags(&["work"])),
+        (hidden.clone(), tags(&["work", "only hidden"])),
+    ]);
+    first.write();
+    let slot = slot().unwrap();
+    let mut meta: serde_json::Value = serde_json::from_slice(&slot.get(META).unwrap()).unwrap();
+    let ids: Vec<String> = serde_json::from_value(meta["tags"].clone()).unwrap();
+    let id = |t: &str| ids.iter().position(|i| i == t).unwrap();
+    let meta = meta.as_object_mut().unwrap();
+    meta.remove("home_visible").unwrap();
+    meta.insert(
+        "home_counts".into(),
+        serde_json::json!([[id("work"), 2], [id("only hidden"), 1]]),
+    );
+    slot.put(META, &serde_json::to_vec(&meta).unwrap()).unwrap();
+    let again = index(Some(slot), 64);
+    assert_eq!(
+        again.top(9, &home),
+        [("work".to_owned(), 1)],
+        "{}",
+        again.state().home_counts.len()
+    );
+}

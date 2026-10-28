@@ -48,7 +48,9 @@ registered in `App::notes` by its plugin); all share one model,
   refuses if another application changed them since.
 - A `._` file is rewritten whole as macOS lays it out, keeping every
   other attribute and its mode; one laid out otherwise, unreadable or
-  larger than an undo keeps (`SIDE_FILE_LIMIT`) is never written. A
+  larger than an undo keeps (`SIDE_FILE_LIMIT`) is never written, and
+  its store says which (`Wrote::Refused`): an edit no store keeps says
+  that, not that the volume keeps no notes. A
   store that finds its file beside one it cannot write (an XMP sidecar
   in UTF-16) leaves it alone and keeps nothing of it for the undo: the
   other stores are written.
@@ -119,6 +121,17 @@ registered in `App::notes` by its plugin); all share one model,
   network, FUSE). A folder checked once per run is checked again only on
   F5; between, the index follows what panes list and Skwir applies.
   `tags.counted` reports the state.
+- A check compares with the folders seen by the count that covers it: a
+  folder above's, whose count never walked a hidden folder below it, so
+  a folder in one is read whole.
+- **Hidden** is one thing for the walk, the counts and what tag places
+  list: a name's dot, or Windows' mark (`fs::is_hidden`), which only the
+  walk can tell. A count forgets what a pane taught the index of a file
+  or a folder so marked, and of everything in that folder.
+- **The sidebar's suggestions** are the home folder's tags as its tag
+  places count them (`TagIndex::top`): none from hidden folders or the
+  network mounts below it. Its counts are kept between pieces, and the
+  mounts' pieces alone are read to take theirs out.
 
 ## Companions (ADR-028)
 

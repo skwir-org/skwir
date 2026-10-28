@@ -9,14 +9,14 @@
 //! deletable cache in 256 pieces by folder, each read the first time a
 //! folder of it is needed and written alone when it changed, and let go
 //! of after a few minutes unused; the folders it holds and the tags of the
-//! files under the home folder stay known in between, for the sidebar and
-//! for knowing which pieces a question needs. A category counts the files
-//! with any tag within it once each (`Places` those tagged
-//! `Places/France/Paris`), as a search for it finds them: each tag knows
-//! its category, which is a tag of the index too. How much room it may take
-//! is the user's (`tags.index_mb`): past it, it learns no new file (those
-//! known stay current) and covers no folder, and skwir says the tags
-//! leave some out.
+//! files under the home folder (outside hidden folders, as its tag places
+//! count them) stay known in between, for the sidebar and for knowing
+//! which pieces a question needs. A category counts the files with any
+//! tag within it once each (`Places` those tagged `Places/France/Paris`),
+//! as a search for it finds them: each tag knows its category, which is a
+//! tag of the index too. How much room it may take is the user's
+//! (`tags.index_mb`): past it, it learns no new file (those known stay
+//! current) and covers no folder, and skwir says the tags leave some out.
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -114,6 +114,16 @@ fn hidden(name: &OsStr) -> bool {
 fn hidden_under(path: &Path, root: &Path) -> bool {
     path.strip_prefix(root)
         .is_ok_and(|rest| rest.components().any(|c| hidden(c.as_os_str())))
+}
+
+/// The network mounts below `root`, as the table in memory has them: what
+/// a walk of it never enters (ADR-077), nor its counts count.
+fn mounts_below(root: &Path) -> Vec<PathBuf> {
+    reach::all()
+        .iter()
+        .filter(|r| r.point != root && r.point.starts_with(root))
+        .map(|r| r.point.clone())
+        .collect()
 }
 
 /// A tagged file: its tags, by number, and its name in its folder, in one
@@ -264,11 +274,14 @@ struct Meta {
     covered: Vec<Covered>,
     /// The room each piece takes.
     bytes: Vec<u64>,
-    /// The home folder `home_counts` are of.
+    /// The home folder `home_visible` is of.
     home: Option<PathBuf>,
-    /// Files under the home folder, by tag (hidden ones too: the sidebar
-    /// suggests what is used most).
-    home_counts: Vec<(u32, u64)>,
+    /// Files under the home folder outside hidden folders, by tag, as its
+    /// tag places count them. `None` from an index that counted the hidden
+    /// ones too (`home_counts`, no longer read): made again from every
+    /// piece.
+    #[serde(default)]
+    home_visible: Option<Vec<(u32, u64)>>,
     /// A file was not learned for want of room.
     refused: bool,
 }
@@ -292,6 +305,8 @@ struct State {
     folders: BTreeMap<PathBuf, usize>,
     folders_dirty: bool,
     home: Option<PathBuf>,
+    /// Files under `home` outside hidden folders, by tag: what its folders
+    /// there count, kept known between pieces (`Meta::home_visible`).
     home_counts: HashMap<u32, u64>,
     refused: bool,
     meta_dirty: bool,
@@ -340,7 +355,7 @@ impl State {
 
     fn home_count(&mut self, path: &Path, tags: &[u32], add: bool) {
         let Some(home) = &self.home else { return };
-        if !path.starts_with(home) {
+        if !path.starts_with(home) || hidden_under(path, home) {
             return;
         }
         for tag in &with_categories(tags, &self.parents) {
@@ -562,29 +577,29 @@ impl TagIndex {
             .and_then(|s| s.get(FOLDERS))
             .map(|b| decode_folders(&b))
             .unwrap_or_default();
-        if meta.home == home {
-            state.home_counts = meta.home_counts.into_iter().collect();
-            state.home = home;
-        } else {
-            // Another home: made again from every piece.
-            state.home = home;
-            self.load_all(state);
-            state.home_counts.clear();
-            let home = state.home.clone();
-            let mut counts: HashMap<u32, u64> = HashMap::new();
-            if let Some(home) = home {
-                for (path, folder) in state.pieces.iter().flat_map(|p| p.folders.iter()) {
-                    if path.starts_with(&home) {
-                        for file in &folder.files {
-                            for tag in with_categories(&file.tags(), &state.parents) {
-                                *counts.entry(tag).or_default() += 1;
+        match meta.home_visible {
+            Some(counts) if meta.home == home => {
+                state.home_counts = counts.into_iter().collect();
+                state.home = home;
+            }
+            _ => {
+                // Another home, or counts of hidden files too: made again
+                // from every piece, as its folders count their files.
+                state.home = home;
+                self.load_all(state);
+                let mut counts: HashMap<u32, u64> = HashMap::new();
+                if let Some(home) = &state.home {
+                    for (path, folder) in state.pieces.iter().flat_map(|p| p.folders.iter()) {
+                        if path.starts_with(home) && !hidden_under(path, home) {
+                            for (tag, n) in &folder.counts {
+                                *counts.entry(*tag).or_default() += u64::from(*n);
                             }
                         }
                     }
                 }
+                state.home_counts = counts;
+                state.meta_dirty = true;
             }
-            state.home_counts = counts;
-            state.meta_dirty = true;
         }
     }
 
@@ -627,11 +642,7 @@ impl TagIndex {
     /// taught the index its files. What the index answers of `root` is
     /// what a count of it covers, and nothing there is read to tell.
     fn load_reached(&self, state: &mut State, root: &Path) -> Vec<(PathBuf, usize)> {
-        let unreached: Vec<PathBuf> = reach::all()
-            .iter()
-            .filter(|r| r.point != root && r.point.starts_with(root))
-            .map(|r| r.point.clone())
-            .collect();
+        let unreached = mounts_below(root);
         let mut under = state.under(root);
         under.retain(|(path, _)| !unreached.iter().any(|point| path.starts_with(point)));
         self.load_pieces(state, &under);
@@ -1137,13 +1148,15 @@ impl TagIndex {
     }
 
     /// The `at_most` tags on the most files under `root`, each with how
-    /// many, the most used first (then by name). Under the home folder,
-    /// from what it keeps known without reading a piece.
+    /// many, the most used first (then by name): what [`tally`](Self::tally)
+    /// counts, so each opens a tag place of `root` that lists them. Under
+    /// the home folder, from what it keeps known, less what the network
+    /// mounts below it hold: their pieces alone are read.
     pub fn top(&self, at_most: usize, root: &Path) -> Vec<(String, usize)> {
         let mut top = {
-            let state = self.state();
+            let mut state = self.state();
             if state.home.as_deref() == Some(root) {
-                let counts = state.home_counts.clone();
+                let counts = self.counts_at_home(&mut state, &mounts_below(root));
                 Self::spelled(&state, counts)
             } else {
                 drop(state);
@@ -1153,6 +1166,36 @@ impl TagIndex {
         top.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         top.truncate(at_most);
         top
+    }
+
+    /// The tags of the files under the home folder outside hidden folders,
+    /// by number, less those in `mounts`, the network mounts below it.
+    fn counts_at_home(&self, state: &mut State, mounts: &[PathBuf]) -> HashMap<u32, u64> {
+        let mut counts = state.home_counts.clone();
+        let Some(home) = state.home.clone() else {
+            return counts;
+        };
+        let mut away: BTreeMap<PathBuf, usize> = BTreeMap::new();
+        for point in mounts {
+            away.extend(state.under(point));
+        }
+        let away: Vec<(PathBuf, usize)> = away.into_iter().collect();
+        self.load_pieces(state, &away);
+        for (path, at) in &away {
+            let Some(folder) = state.pieces[*at].folders.get(path) else {
+                continue;
+            };
+            if hidden_under(path, &home) {
+                continue;
+            }
+            for (tag, n) in &folder.counts {
+                if let Some(count) = counts.get_mut(tag) {
+                    *count = count.saturating_sub(u64::from(*n));
+                }
+            }
+        }
+        counts.retain(|_, n| *n > 0);
+        counts
     }
 
     /// Write what changed now, rather than soon (measurements).
@@ -1190,7 +1233,7 @@ impl TagIndex {
                     covered: state.covered.clone(),
                     bytes: state.bytes.clone(),
                     home: state.home.clone(),
-                    home_counts: state.home_counts.iter().map(|(t, n)| (*t, *n)).collect(),
+                    home_visible: Some(state.home_counts.iter().map(|(t, n)| (*t, *n)).collect()),
                     refused: state.refused,
                 })
             });

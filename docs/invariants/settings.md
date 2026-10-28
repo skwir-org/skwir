@@ -196,6 +196,11 @@ The key is the owner's; the page is the subject's (ADR-072).
   its control connection: lifecycle callbacks can stop that connection.
 - A failed save restores the live value and shows the reason on the row.
   Invalid text never leaves its field.
+- A save syncs the file and its folder (`Settings::write_whole`), which a
+  disk busy with other writers can hold for seconds. A test of the
+  window's protocol waits for its save's `SaveState` to leave `Saving`,
+  woken by the waker, under a deadline for a hang, not a measure
+  (`core/tests/settings.rs`).
 - The view reconciles against `Settings::revision` and
   `PluginHost::revision` when the core wakes the UI; it never reads the
   schema per frame.

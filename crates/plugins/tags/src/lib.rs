@@ -1938,6 +1938,8 @@ mod tests {
     /// A check pressed in the Tags submenu sets what it then shows, never
     /// what the pane last knew of the files: pressed twice before the
     /// listing has read the first change, the second undoes the first.
+    // Extended attributes: Unix's.
+    #[cfg(unix)]
     #[test]
     fn a_check_pressed_sets_what_it_shows() {
         let tmp = home_tempdir();

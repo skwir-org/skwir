@@ -80,7 +80,13 @@ pub fn run(
     covered: Option<SystemTime>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<(SystemTime, Vec<u64>, Counted)>> {
-    let dirs = covered.map(|_| index.dirs(root)).unwrap_or_default();
+    // The folders the count it relies on saw: a folder above's, when that
+    // one covers it, which never walked a folder hidden below it. What
+    // `root`'s own count saw is not what the index holds since.
+    let dirs = covered
+        .and_then(|_| index.covering(root))
+        .map(|c| index.dirs(&c.root))
+        .unwrap_or_default();
     run_with(
         app,
         index,
@@ -265,6 +271,7 @@ impl Walk<'_> {
         let mut present: HashSet<OsString> = HashSet::new();
         let mut candidates: Vec<(OsString, std::fs::Metadata)> = Vec::new();
         let mut owners: HashSet<OsString> = HashSet::new();
+        let mut learned = Vec::new();
         for entry in entries.flatten() {
             let name = entry.file_name();
             // A network mount below the folder counted is neither read nor
@@ -295,8 +302,19 @@ impl Walk<'_> {
                 } else if !hidden(&name) {
                     // Hidden by Windows' mark alone, which the index does
                     // not see (it lists all but dot files): what it knows
-                    // of the entry is forgotten, as of one gone.
+                    // of the entry is forgotten, as of one gone, and of a
+                    // folder what it knows inside, which no walk enters.
                     present.remove(&name);
+                    if meta.is_dir() {
+                        let inside = entry.path();
+                        let gone: Vec<Vec<PathBuf>> = self
+                            .known
+                            .lock()
+                            .extract_if(|folder, _| folder.starts_with(&inside))
+                            .map(|(_, files)| files)
+                            .collect();
+                        learned.extend(gone.into_iter().flatten().map(|p| (p, Vec::new())));
+                    }
                 }
                 continue;
             }
@@ -324,7 +342,6 @@ impl Walk<'_> {
                 whole || owners.contains(name) || changed_since(&dir.join(name), meta, covered)
             })
             .collect();
-        let mut learned = Vec::new();
         // The tagged files known here that are gone.
         if let Some(here) = self.known.lock().remove(dir) {
             for path in here {
@@ -463,6 +480,107 @@ mod tests {
             tally(&index),
             owned(&[("deep", 1), ("new", 1), ("work", 1)])
         );
+    }
+
+    /// A folder in a hidden one of a folder covered is checked against
+    /// what that folder's count saw, which never walked it: read whole,
+    /// so what was tagged there since its own count is found.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_hidden_below_a_covered_one_is_checked_whole() {
+        let tmp = home_tempdir();
+        let above = tmp.path().join("it's above");
+        let root = above.join(".hidden ü/inner");
+        std::fs::create_dir_all(&root).unwrap();
+        let tag = |p: &std::path::Path, v: &str| {
+            skwir_core::fs::xattr::set(p, "user.xdg.tags", v.as_bytes()).unwrap();
+        };
+        for name in ["a", "b"] {
+            std::fs::write(root.join(name), b"x").unwrap();
+        }
+        tag(&root.join("a"), "work");
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins
+            .add(Arc::new(crate::TagsPlugin::default()), &app);
+        let cache = skwir_core::cache::Cache::new(tmp.path().join("cache"));
+        let index =
+            crate::index::TagIndex::new(Some(cache.namespace("tags")), &app, CancelToken::new());
+        let cancel = CancelToken::new();
+        let (since, dirs, _) = run(&app, &index, &root, None, &cancel).unwrap().unwrap();
+        index.cover(&root, since, &dirs);
+        // Tagged by another application, then the folder above counted
+        // (later still: its count covers what changed before).
+        tag(&root.join("b"), "trip");
+        let (_, dirs, _) = run(&app, &index, &above, None, &cancel).unwrap().unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        index.cover(&above, later, &dirs);
+        // Checked as its tag location checks it.
+        let covered = index.covering(&root).map(|c| c.since());
+        assert_eq!(covered, Some(later));
+        run(&app, &index, &root, covered, &cancel).unwrap().unwrap();
+        assert_eq!(
+            index.tally(&root).0,
+            [("trip".to_owned(), 1), ("work".to_owned(), 1)]
+        );
+    }
+
+    /// What Windows marks hidden is left out as a dot leaves it out: a
+    /// file or a folder so marked that a pane taught the index (one showing
+    /// hidden files) is forgotten by a count, and what is in the folder.
+    #[cfg(windows)]
+    #[test]
+    fn what_windows_marks_hidden_is_forgotten_by_a_count() {
+        use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+        /// `FILE_ATTRIBUTE_HIDDEN`.
+        const HIDDEN: u32 = 2;
+        let tmp = home_tempdir();
+        let root = tmp.path().join("it's root");
+        let marked = root.join("marked ü");
+        std::fs::create_dir_all(marked.join("deeper")).unwrap();
+        let taught = [
+            marked.join("a.txt"),
+            marked.join("deeper").join("b.txt"),
+            root.join("desktop.ini"),
+            root.join("shown.txt"),
+        ];
+        for path in &taught[..2] {
+            std::fs::write(path, b"x").unwrap();
+        }
+        std::fs::write(&taught[3], b"x").unwrap();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .attributes(HIDDEN)
+            .open(&taught[2])
+            .unwrap();
+        // A folder is marked by the system's own command: std makes none so.
+        let status = std::process::Command::new("attrib")
+            .arg("+h")
+            .arg(&marked)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert_ne!(
+            std::fs::metadata(&marked).unwrap().file_attributes() & HIDDEN,
+            0
+        );
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        app.plugins
+            .add(Arc::new(crate::TagsPlugin::default()), &app);
+        let index = crate::index::TagIndex::new(None, &app, CancelToken::new());
+        index.learn(
+            taught
+                .iter()
+                .map(|p| (p.clone(), vec!["work".to_owned()]))
+                .collect(),
+        );
+        assert_eq!(index.files_under(&root, None).len(), 4);
+        run(&app, &index, &root, None, &CancelToken::new())
+            .unwrap()
+            .unwrap();
+        // The file shown is read again: it has no tag on the disk.
+        assert!(index.files_under(&root, None).is_empty());
+        assert!(index.by_folder(&root).is_empty(), "all forgotten");
     }
 
     /// A remote's tree is read by one walker, the job's own thread: it

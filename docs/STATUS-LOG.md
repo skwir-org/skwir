@@ -6635,3 +6635,21 @@ stopped them once for about an hour.
   subfolders"), a tag and Recent; none on All Tags or the trash;
   Ctrl+F's scope token on each; the `@` list without the trash, the
   shelf or All Tags.
+- **Tags and notes** (night-tags): the sidebar's suggested tags are the
+  home folder's tag-place counts (`TagIndex::top` counts as `tally`
+  does): hidden files and folders and network mounts below home
+  (`fs::reach`) are left out, and counts kept before are rebuilt once
+  (`home_visible`). A count forgets what it knew inside a folder
+  Windows marks hidden, and a tag place's check uses the folders of
+  the count covering it. A store that refuses a file says why
+  (`Wrote::Refused`): a `._` file laid out otherwise than a Mac writes
+  one is named as the reason. The settings tests' timeouts were their
+  saves' syncs stalling on a loaded btrfs (3.2 to 4.5 s measured with
+  two writers; no wake lost): they wait for their save's outcome, up to
+  60 s. `tags_everywhere.rs`'s sidebar tests take a HOME of their own
+  (their fixtures under `~/.cache` are hidden now). Checked: each fix's
+  test seen failing with it reverted; `what_windows_marks_hidden_is_forgotten_by_a_count`
+  under Wine (`attrib +h`); clippy on tags and core; nextest of tags
+  (70), core's notes and settings (45), `tags_location` and
+  `tags_everywhere` (21); `just check-windows`. On Xvfb: a tag used
+  only in a hidden folder is not suggested, one in a plain folder is.

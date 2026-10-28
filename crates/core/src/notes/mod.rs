@@ -214,7 +214,7 @@ impl Write {
 }
 
 /// What a store did with an edit.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Wrote {
     /// It changed what it keeps for the file.
     Written,
@@ -223,6 +223,10 @@ pub enum Wrote {
     /// It keeps nothing for this file and was not asked to start (or the
     /// volume refuses it).
     NotHere,
+    /// It writes nothing for this file, for a reason of its own (a `._`
+    /// file there that it does not rewrite): said, in a phrase following
+    /// the file's path, when no store keeps the notes.
+    Refused(String),
 }
 
 /// A file of a batch, as a store is handed it: its path and name, and the

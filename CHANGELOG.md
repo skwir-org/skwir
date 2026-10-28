@@ -188,7 +188,10 @@ server and network. Undo history is cleared when Skwir exits.
   the columns view and the preview's header show tags, a screen reader hears
   them, pointing at a tag in the sidebar rings its files, and each pinned tag
   is a command to bind to a key. The sidebar, menus and the trail draw a tag
-  as the same chip, and Properties' folded Notes heading too.
+  as the same chip, and Properties' folded Notes heading too. The sidebar no
+  longer suggests a tag found only in hidden folders or on a server mounted
+  under your home, and a tag refused beside a Mac's `._` file Skwir won't
+  rewrite says so.
 - **Tabs** are pills, the tab shown a card, the × on it and on the one under
   the pointer. A split tab is named by both its panes, the one without the keys
   dimmer, and its icon draws its layout. General › Tabs lists them in the

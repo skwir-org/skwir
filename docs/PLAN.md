@@ -199,10 +199,10 @@ leave (ADR-077).
 (2026-10-28)" below; each with its fixer's proposed design in
 `docs/STATUS-LOG.md`):
 - The tables plugin picks the spreadsheet and SQLite readers by
-  extension; the sidebar's top tags count hidden files and folders under
-  network mounts below home; files inside a folder hidden by Windows'
-  mark stay known to the tags index; a `._` file Skwir will not rewrite
-  is refused with "its volume keeps no notes" (a `Wrote::Refused` reason).
+  extension.
+- A tag place's check uses the first count listed that covers it, not
+  the deepest: right, but it reads more than a subfolder's own newer
+  count would.
 - Listeners that ended with the session bus (the desktop's style, the
   media controls) do not subscribe again when it comes back.
 - A trash across filesystems whose original's removal waits is tested
@@ -213,8 +213,6 @@ leave (ADR-077).
   failed twice under a load of about 65 (2026-10-28), then passed.
 - Windows' key setup never falls back to SFTP; a Skwir that crashes
   leaves its own wsdd discovering.
-- `core/tests/settings.rs`'s two waits on the waker timed out under a
-  load of ~45, three times, then passed: watch for a flake.
 
 **From F1 by topic** (ADR-100, 2026-10-27):
 - F1 is not walked by `just a11y-check`: what a screen reader hears of it
