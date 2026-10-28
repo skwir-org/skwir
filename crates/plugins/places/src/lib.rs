@@ -1481,9 +1481,23 @@ impl Plugin for PlacesPlugin {
                     passphrases::remembered(app).contains(&args.volume),
                     "Skwir keeps no passphrase for this volume"
                 );
+                // The keyring may wait on its own window: asked from the
+                // window's thread, on a worker, which says the outcome;
+                // anywhere else (a script's call, an agent's) where it is,
+                // its failure the caller's, who then knows it is kept.
+                if !skwir_core::scheduler::on_window_thread() {
+                    let forgotten = keyring.forget(&args.volume);
+                    if forgotten.is_ok() {
+                        passphrases::note(app, &args.volume, false);
+                    }
+                    places.populate(app);
+                    forgotten.map_err(|error| {
+                        anyhow::anyhow!("The passphrase was not forgotten: {error:#}")
+                    })?;
+                    return Ok(Outcome::Done);
+                }
                 let keyring = Arc::clone(&keyring);
                 let this = places.clone();
-                // The keyring may wait on its own window: on a worker.
                 places.spawn(app, "places-forget", move |app| {
                     match keyring.forget(&args.volume) {
                         Ok(()) => {
@@ -2084,6 +2098,31 @@ mod tests {
         );
         offer_forget(&mut places, &[]);
         assert_eq!(forgets(&places), [0, 0, 0]);
+    }
+
+    /// Asked from anywhere but the window (a script, an agent), Forget
+    /// Passphrase is done once it answers: nothing is left to a worker
+    /// that may never run.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_passphrase_forgotten_from_a_script_is_gone_when_it_answers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let keyring = Arc::new(Memory::default());
+        app.plugins
+            .add(Arc::new(PlacesPlugin::with_keyring(keyring.clone())), &app);
+        let uuid = "1111-luks";
+        keyring.keep(uuid, "Backup", "example words").unwrap();
+        passphrases::note(&app, uuid, true);
+        let answer = app
+            .dispatch(&Invocation::with_args(
+                "places.forget_passphrase",
+                &serde_json::json!({ "volume": uuid }),
+            ))
+            .unwrap();
+        assert!(matches!(answer, Outcome::Done));
+        assert!(keyring.own(uuid).is_none(), "gone from the keyring");
+        assert!(!passphrases::remembered(&app).contains(&uuid.to_owned()));
     }
 
     fn next_notice(app: &App) -> skwir_core::app::Notification {

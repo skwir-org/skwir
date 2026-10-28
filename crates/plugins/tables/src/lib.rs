@@ -67,6 +67,10 @@ mod starts;
 /// Tables written as text, by type.
 static TEXT_TABLES: skwir_platform::mime::Types =
     skwir_platform::mime::Types::new(&["text/csv", "text/tab-separated-values"]);
+/// Of them, those whose cells are split by tabs: by type too, never by
+/// name (a `.tab` file the system types so is one).
+static TAB_SEPARATED: skwir_platform::mime::Types =
+    skwir_platform::mime::Types::new(&["text/tab-separated-values"]);
 
 struct Provider {
     /// Spreadsheets are `LibreOffice`'s to draw as pages, when it is there.
@@ -121,7 +125,10 @@ impl PreviewProvider for Provider {
             _ if spreadsheet::EXTENSIONS.contains(&extension.as_str()) => {
                 spreadsheet::table(&path, view.offset, bounds, cancel).map(Some)
             }
-            _ => table(&path, view.offset, bounds, cancel).map(Some),
+            _ => {
+                let tabs = TAB_SEPARATED.holds(&req.entry.path, req.mime.as_deref());
+                table(&path, tabs, view.offset, bounds, cancel).map(Some)
+            }
         }
     }
 }
@@ -169,9 +176,11 @@ impl<R: Read> Read for RecordBound<R> {
 /// One page of `TABLE_ROWS` records from record `offset`, streamed from the
 /// file: a table is as long as its file, and only the page is kept. Rows
 /// before the page are parsed and dropped, so numbering stays exact. Its
-/// columns are `asked`'s.
+/// columns are `asked`'s. `tsv`: its cells are split by tabs, else by
+/// commas.
 fn table(
     path: &std::path::Path,
+    tsv: bool,
     offset: u64,
     asked: limits::Bounds,
     cancel: &CancelToken,
@@ -200,7 +209,6 @@ fn table(
     };
     // Tab-separated values have no quoting: a cell that starts with `"`
     // is that text, not the start of a field running to the file's end.
-    let tsv = inspection::extension(path) == "tsv";
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(if tsv { b'\t' } else { b',' })
         .quoting(!tsv)
@@ -379,7 +387,33 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(name);
         std::fs::write(&path, bytes).unwrap();
-        table(&path, offset, limits::Bounds::QUICK, &CancelToken::new()).unwrap()
+        // As the database types these names.
+        let tabs = inspection::extension(&path) == "tsv";
+        table(
+            &path,
+            tabs,
+            offset,
+            limits::Bounds::QUICK,
+            &CancelToken::new(),
+        )
+        .unwrap()
+    }
+
+    /// A file the system types as tab-separated is split by tabs whatever
+    /// its name.
+    #[test]
+    fn tabs_split_cells_by_type_not_name() {
+        assert!(TAB_SEPARATED.holds(
+            std::path::Path::new("data.tab"),
+            Some("text/tab-separated-values")
+        ));
+        assert!(!TAB_SEPARATED.holds(std::path::Path::new("data.tab"), Some("text/csv")));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("it's data.tab");
+        std::fs::write(&path, b"name\tnote\na,b\tc\n").unwrap();
+        let t = table(&path, true, 0, limits::Bounds::QUICK, &CancelToken::new()).unwrap();
+        assert_eq!(t.columns, ["name", "note"]);
+        assert_eq!(t.rows[0].cells, ["a,b", "c"]);
     }
 
     #[test]
@@ -427,7 +461,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("wide.csv");
         std::fs::write(&path, format!("{wide}\n{wide}\n")).unwrap();
-        let all = table(&path, 0, limits::Bounds::WHOLE, &CancelToken::new()).unwrap();
+        let all = table(&path, false, 0, limits::Bounds::WHOLE, &CancelToken::new()).unwrap();
         assert_eq!(all.columns.len(), limits::TABLE_COLUMNS + 6);
         assert!(all.notice.is_empty() && !all.whole_available);
     }
@@ -446,12 +480,12 @@ mod tests {
         let path = dir.path().join("long.csv");
         std::fs::write(&path, &text).unwrap();
         let cancel = CancelToken::new();
-        let fresh = |offset| table(&path, offset, limits::Bounds::QUICK, &cancel).unwrap();
+        let fresh = |offset| table(&path, false, offset, limits::Bounds::QUICK, &cancel).unwrap();
         let first_last = fresh(2500);
         assert_eq!(first_last.rows[0].cells[0], "2501");
         // Read in turn, each page's start is learned.
         for offset in (0..=2000).step_by(500) {
-            table(&path, offset, limits::Bounds::QUICK, &cancel).unwrap();
+            table(&path, false, offset, limits::Bounds::QUICK, &cancel).unwrap();
         }
         assert_eq!(starts::nearest(&path, 2500).0, 2500);
         let again = fresh(2500);
@@ -512,7 +546,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("unclosed.csv");
         std::fs::write(&path, &text).unwrap();
-        assert!(table(&path, 0, limits::Bounds::QUICK, &CancelToken::new()).is_err());
+        assert!(table(&path, false, 0, limits::Bounds::QUICK, &CancelToken::new()).is_err());
         let data = read("quoted.tsv", b"name\tnote\n\"it\ta\n", 0);
         assert_eq!(data.rows[0].cells, ["\"it", "a"]);
     }

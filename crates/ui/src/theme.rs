@@ -23,7 +23,8 @@
 //!   `stage` behind a picture, a page or a film on the whole screen,
 //!   `find_*` for what a find found in text,
 //!   `drop_target` under a drag, `on_accent` for text and glyphs on an
-//!   `accent` fill, `handle` for an edge being dragged, `band` and
+//!   `accent` fill, `on_tags` for a glyph on a tag's color (a swatch's
+//!   check), `handle` for an edge being dragged, `band` and
 //!   `band_edge` for the rubber band, `term` behind what the query
 //!   understood in the address field (a term's value, the scope's token),
 //!   `block_hover` and `block_selected`
@@ -148,6 +149,10 @@ pub struct Theme {
     /// `skwir_core::metadata::TAG_COLORS` (red, orange, yellow, green, teal,
     /// blue, purple, pink): a tag's dot is one, its chip `tag_fill` of it.
     pub tags: [Hsla; 8],
+    /// A glyph drawn on each of `tags` (the check in a swatch chosen):
+    /// white, or the darkest of the look where that reads better, guarded
+    /// as a mark is (`Theme::on_tag`).
+    pub on_tags: [Hsla; 8],
     /// A rating's stars.
     pub rating: Hsla,
     /// Where a picture will be once it is loaded.
@@ -527,6 +532,16 @@ impl Theme {
             darkest
         };
         let (on_accent, accent) = color::readable_on(on, accent, text_ratio);
+        // A glyph on a tag's color, which no desktop changes, is chosen the
+        // same way, and read as a mark.
+        let on_tags = kept.tags.map(|tag| {
+            let on = if color::ratio(gpui::white(), tag) >= color::ratio(darkest, tag) {
+                gpui::white()
+            } else {
+                darkest
+            };
+            guarded("on_tag", on, &[tag], mark_ratio)
+        });
 
         let (from, to, hue) = (Oklab::of(bg), Oklab::of(base.text), Oklab::of(accent));
         let step = |step: Step| step.of(from, to, hue);
@@ -591,6 +606,7 @@ impl Theme {
             on_accent,
             block_text: kept.block_text,
             tags: kept.tags,
+            on_tags,
             rating: kept.rating,
             placeholder: border.opacity(0.6),
             picture_backdrop: kept.picture_backdrop,
@@ -678,6 +694,11 @@ impl Theme {
     /// The tag color of palette index `index` (`metadata::TAG_COLORS`).
     pub fn tag(&self, index: usize) -> Hsla {
         self.tags[index % self.tags.len()]
+    }
+
+    /// A glyph drawn on the tag color of palette index `index`.
+    pub fn on_tag(&self, index: usize) -> Hsla {
+        self.on_tags[index % self.on_tags.len()]
     }
 
     /// The fill of a chip of a tag wearing color `index` (see `tags`),
@@ -855,6 +876,9 @@ mod tests {
         ];
         if contrast == Contrast::More {
             groups.push(on("border", t.border, &[t.bg, t.surface], 3., false));
+        }
+        for (fg, tag) in t.on_tags.iter().zip(t.tags) {
+            groups.push(on("on_tag", *fg, &[tag], mark, false));
         }
         groups
     }

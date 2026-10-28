@@ -234,13 +234,15 @@ impl Player {
             request(&self.0, PlayerRequest::Rate(rate));
         }
     }
+    // Rates are seeks: a stream that cannot seek plays at 1× alone, and
+    // says so, so the desktop offers no speed it would not take.
     #[zbus(property)]
     fn minimum_rate(&self) -> f64 {
-        *skwir_core::media::RATES.start()
+        rates(now(&self.0).as_deref()).0
     }
     #[zbus(property)]
     fn maximum_rate(&self) -> f64 {
-        *skwir_core::media::RATES.end()
+        rates(now(&self.0).as_deref()).1
     }
     #[zbus(property)]
     fn metadata(&self) -> HashMap<String, OwnedValue> {
@@ -281,6 +283,19 @@ impl Player {
     #[zbus(property)]
     fn can_control(&self) -> bool {
         true
+    }
+}
+
+/// The slowest and fastest rates `now` plays at: those of
+/// `media::RATES` while it can seek, else 1× (or nothing playing).
+fn rates(now: Option<&NowPlaying>) -> (f64, f64) {
+    if now.is_some_and(|now| now.can_seek) {
+        (
+            *skwir_core::media::RATES.start(),
+            *skwir_core::media::RATES.end(),
+        )
+    } else {
+        (1., 1.)
     }
 }
 
@@ -361,6 +376,8 @@ fn serve(
             let _ = iface.metadata_changed(emitter).await;
             let _ = iface.volume_changed(emitter).await;
             let _ = iface.rate_changed(emitter).await;
+            let _ = iface.minimum_rate_changed(emitter).await;
+            let _ = iface.maximum_rate_changed(emitter).await;
             let _ = iface.can_go_next_changed(emitter).await;
             let _ = iface.can_go_previous_changed(emitter).await;
             let _ = iface.can_play_changed(emitter).await;
@@ -399,6 +416,24 @@ mod tests {
             cover: None,
             pinned: true,
         }
+    }
+
+    #[test]
+    fn a_stream_that_cannot_seek_offers_one_rate() {
+        let seekable = track();
+        assert_eq!(
+            rates(Some(&seekable)),
+            (
+                *skwir_core::media::RATES.start(),
+                *skwir_core::media::RATES.end()
+            )
+        );
+        let live = NowPlaying {
+            can_seek: false,
+            ..track()
+        };
+        assert_eq!(rates(Some(&live)), (1., 1.));
+        assert_eq!(rates(None), (1., 1.));
     }
 
     // MPRIS is the free desktops' (step I, ADR-035).

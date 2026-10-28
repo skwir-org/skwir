@@ -582,8 +582,12 @@ impl Shell {
 
     /// The color of the ring around entry `e` while a place of the sidebar
     /// is pointed at whose tags it has, or a tag within them; `None`
-    /// otherwise.
+    /// otherwise, and while the sidebar is not drawn (the window too
+    /// narrow for it).
     pub fn ring_of(&self, e: &skwir_core::Entry) -> Option<usize> {
+        if self.sidebar_drawn <= 0. {
+            return None;
+        }
         let (_, tags) = self.ringed.as_ref()?;
         let have = tags_of(e);
         let ring = tags.iter().find(|tag| {

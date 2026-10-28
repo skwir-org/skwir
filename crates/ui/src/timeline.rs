@@ -25,7 +25,7 @@ use skwir_core::cancel::CancelToken;
 use skwir_core::command::{Invocation, Outcome};
 use skwir_core::location::Location;
 use skwir_core::workspace::PaneId;
-use skwir_platform::calendar::{Calendar, civil_from_days};
+use skwir_platform::calendar::{Calendar, Period, civil_from_days};
 
 use crate::elements::bars::{self, BarColors, bar_chart};
 use crate::elements::popover::PopoverAnchor;
@@ -35,6 +35,8 @@ use crate::theme::Theme;
 use crate::toolbar::{self, Button};
 
 pub const BUCKETS: [&str; 4] = ["day", "week", "month", "year"];
+/// Each bucket's period on the user's calendar.
+const PERIODS: [Period; 4] = [Period::Day, Period::Week, Period::Month, Period::Year];
 const PLURALS: [&str; 4] = ["days", "weeks", "months", "years"];
 const DAY: usize = 0;
 /// The times the bars can count, as the plugin and the query language
@@ -68,7 +70,7 @@ const MONTH_NAMES: [&str; 12] = [
     "December",
 ];
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Bar {
     pub start: u64,
     pub end: u64,
@@ -81,7 +83,7 @@ pub struct Bar {
     pub selected_bytes: u64,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct Histogram {
     /// The bucket the bars use.
     #[serde(default)]
@@ -126,6 +128,36 @@ impl Histogram {
     fn bar_of(&self, t: u64) -> Option<usize> {
         let last = self.bars.len().checked_sub(1)?;
         Some(self.bars.partition_point(|b| b.end <= t).min(last))
+    }
+
+    /// The instants the bars chosen span, `[start, end)`: from the bar a
+    /// range began at (`from`, its first instant) to the keys' bar, the
+    /// one drawn. A range longer than a window of bars began outside it:
+    /// that end is its own period, the bars' width on `cal`, never the
+    /// window's end bar, so what lies past the window stays chosen.
+    fn span(&self, from: Option<u64>, cursor: u64, cal: &Calendar) -> Option<(u64, u64)> {
+        let (first, last) = (self.bars.first()?, self.bars.last()?);
+        let at = &self.bars[self.bar_of(cursor)?];
+        let (mut start, mut end) = (at.start, at.end);
+        if let Some(from) = from {
+            let began = &self.bars[self.bar_of(from)?];
+            (start, end) = (start.min(began.start), end.max(began.end));
+            let seconds = |day: i64| {
+                cal.day_start(day)
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs())
+            };
+            if let Some(period) = self.shown().map(|i| PERIODS[i]) {
+                let day = cal.day_of(epoch(from));
+                if from < first.start {
+                    start = start.min(seconds(period.floor(day, cal)));
+                }
+                if from >= last.end {
+                    end = end.max(seconds(period.next(day, cal)));
+                }
+            }
+        }
+        Some((start, end))
     }
 }
 
@@ -214,6 +246,10 @@ pub struct TimelineState {
     /// The count a worker is doing: the plugin's answer, and what it was
     /// asked of.
     asked: crate::latest::Latest<(Asked, Result<Option<serde_json::Value>, String>)>,
+    /// The wake a count in the background was last asked after
+    /// (`crate::wakes`): it ends with a wake of its own, so a draw the
+    /// pointer asked never asks it again.
+    status_after: Option<u64>,
 }
 
 /// How often the bars are counted again while dates come in.
@@ -566,13 +602,12 @@ impl Shell {
 
     /// `ui.timeline_list`: show the files of the bars chosen.
     pub fn timeline_list(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((first, last)) = self.timeline_chosen() else {
+        let Some((start, end)) = self.timeline.histogram.as_ref().and_then(|h| {
+            let visit = self.timeline_visit()?;
+            h.span(visit.from, visit.cursor?, &Calendar::system())
+        }) else {
             return;
         };
-        let Some(h) = &self.timeline.histogram else {
-            return;
-        };
-        let (start, end) = (h.bars[first].start, h.bars[last].end);
         let args = serde_json::json!({
             "start": start,
             "end": end,
@@ -728,17 +763,23 @@ impl Shell {
             );
             self.timeline.computed_for = Some(key);
         }
-        if self.timeline.scanning
-            && let Some(v) = self.query_value(
+        // A count in the background tells it has ended by waking the
+        // window: asked once a wake came since it was last asked, never at
+        // each draw (the pointer over the bars). Read before asking, so a
+        // count ending meanwhile is asked again.
+        let wakes = crate::wakes();
+        if self.timeline.scanning && self.timeline.status_after != Some(wakes) {
+            self.timeline.status_after = Some(wakes);
+            if let Some(v) = self.query_value(
                 "timeline.status",
                 serde_json::json!({ "pane": self.pane }),
                 cx,
-            )
-            && let Ok(s) = serde_json::from_value::<SubtreeStatus>(v)
-        {
-            self.timeline.scanning = s.scanning;
-            if let Some(h) = s.histogram {
-                self.set_histogram(Some(h));
+            ) && let Ok(s) = serde_json::from_value::<SubtreeStatus>(v)
+            {
+                self.timeline.scanning = s.scanning;
+                if let Some(h) = s.histogram {
+                    self.set_histogram(Some(h));
+                }
             }
         }
     }
@@ -784,6 +825,10 @@ impl Shell {
     }
 
     fn set_histogram(&mut self, h: Option<Histogram>) {
+        // The same bars keep their chart, and so what it laid out.
+        if h == self.timeline.histogram {
+            return;
+        }
         self.timeline.chart = h.as_ref().map(|h| chart_of(h, self.timeline.measure));
         if h.as_ref()
             .is_none_or(|h| self.timeline.hover.is_some_and(|i| i >= h.bars.len()))
@@ -1251,6 +1296,38 @@ mod tests {
         assert_eq!(h.bar_of(5), Some(0));
         assert_eq!(h.bar_of(99), Some(2));
         assert_eq!(Histogram::default().bar_of(5), None);
+    }
+
+    #[test]
+    fn a_range_longer_than_the_window_keeps_what_lies_past_it() {
+        const D: u64 = 86_400;
+        // Days 10 to 12 shown of a span too long for every day.
+        let h = Histogram {
+            bucket: Some("day".into()),
+            fits: Some("month".into()),
+            bars: (10..13).map(|d| bar(d * D, (d + 1) * D)).collect(),
+            ..Histogram::default()
+        };
+        let cal = Calendar::utc();
+        // The keys' bar alone, and a range inside the window.
+        assert_eq!(h.span(None, 11 * D, &cal), Some((11 * D, 12 * D)));
+        assert_eq!(h.span(Some(12 * D), 10 * D, &cal), Some((10 * D, 13 * D)));
+        // Begun before the window, or after it: from that day itself.
+        assert_eq!(h.span(Some(4 * D), 12 * D, &cal), Some((4 * D, 13 * D)));
+        assert_eq!(h.span(Some(20 * D), 10 * D, &cal), Some((10 * D, 21 * D)));
+        // Begun at a day of a finer width, now in a week outside: its week.
+        let weeks = Histogram {
+            bucket: Some("week".into()),
+            fits: Some("year".into()),
+            bars: vec![bar(28 * D, 35 * D)],
+            ..Histogram::default()
+        };
+        // Day 10 (1970-01-11) is a Sunday: its week began on Monday, day 4.
+        assert_eq!(
+            weeks.span(Some(10 * D), 30 * D, &cal),
+            Some((4 * D, 35 * D))
+        );
+        assert_eq!(Histogram::default().span(None, 0, &cal), None);
     }
 
     #[test]

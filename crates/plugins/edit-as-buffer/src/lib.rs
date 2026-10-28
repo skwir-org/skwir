@@ -562,8 +562,11 @@ fn start_session(
             .open
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("pane has no open location"))?;
-        p.listing
-            .sorted(p.sort)
+        // What the pane shows of its folder, in its order (views.md):
+        // never a name the filter, hidden files or a hidden companion
+        // keep out of sight, whose line deleted would trash it unseen.
+        // A folder opened in place is another folder's, not this buffer's.
+        p.order()
             .iter()
             .filter_map(|&id| {
                 let e = p.listing.get(id)?;
@@ -972,16 +975,22 @@ mod tests {
 
     /// A fake terminal that runs its `-e` arguments, and an editor that
     /// renames `one.txt` in the buffer once `gate` exists.
-    // Shell scripts stand in for the programs (ADR-035).
     #[cfg(unix)]
     fn fake_tools(tmp: &Path, gate: &Path) -> PathBuf {
+        fake_tools_editing(tmp, gate, "s/one.txt/two.txt/")
+    }
+
+    /// The same, the editor running `sed` script `edit` on the buffer.
+    // Shell scripts stand in for the programs (ADR-035).
+    #[cfg(unix)]
+    fn fake_tools_editing(tmp: &Path, gate: &Path, edit: &str) -> PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let bin = tmp.join("bin");
         std::fs::create_dir(&bin).unwrap();
         std::fs::write(
             bin.join("fake ed"),
             format!(
-                "#!/bin/sh\n[ \"$1\" = --flag ] || exit 3\nwhile [ ! -e '{}' ]; do sleep 0.01; done\nsed -i 's/one.txt/two.txt/' \"$2\"\n",
+                "#!/bin/sh\n[ \"$1\" = --flag ] || exit 3\nwhile [ ! -e '{}' ]; do sleep 0.01; done\nsed -i '{edit}' \"$2\"\n",
                 gate.display()
             ),
         )
@@ -1039,6 +1048,43 @@ mod tests {
         };
         assert_eq!(kinds(&plan), ["rename"]);
         assert!(dir.join("one.txt").exists(), "proposing never applies");
+    }
+
+    /// The buffer holds what the pane shows: a name the filter leaves out
+    /// is no line, so emptying the buffer never trashes it unseen.
+    #[cfg(unix)]
+    #[test]
+    fn the_buffer_holds_only_what_the_pane_shows() {
+        let tmp = scratch();
+        let gate = tmp.path().join("gate");
+        std::fs::write(&gate, b"").unwrap();
+        fake_tools_editing(tmp.path(), &gate, "/^ *[0-9]/d");
+        let dir = tmp.path().join("work");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("one.txt"), b"1").unwrap();
+        std::fs::write(dir.join("it's other.md"), b"2").unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(
+            tmp.path().join("app"),
+        ))
+        .unwrap();
+        app.plugins
+            .add(Arc::new(EditAsBufferPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &skwir_core::Location::from_path(&dir))
+            .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        app.dispatch(&Invocation::new("filter").with("text", "one"))
+            .unwrap();
+        app.dispatch(&Invocation::new("edit_as_buffer")).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let plan = loop {
+            if let Some(p) = app.take_proposals().pop() {
+                break p;
+            }
+            assert!(std::time::Instant::now() < deadline, "no plan proposed");
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(kinds(&plan), ["trash"], "one.txt alone");
     }
 
     #[cfg(unix)]

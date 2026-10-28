@@ -506,7 +506,7 @@ pub fn narrow(app: &App, a: &NarrowArgs) -> anyhow::Result<Outcome> {
 }
 
 /// `tags.open`: a tag's place, every file of the home folder that has it
-/// (or a tag within it), as its pinned pill opens it.
+/// and a place for each tag within it, as its pinned pill opens it.
 pub fn open(app: &App, a: &OpenArgs) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(a.pane);
     let tag = clean_tag(&a.tag);
@@ -731,27 +731,33 @@ const FILES_MENU_READ: usize = 1000;
 /// `tags.files_menu`: in the context menu of selected files, the checks
 /// of its Tags submenu (ADR-099): the tags they have, as their listing
 /// read them, then the pinned ones; among them those pinned first, then by
-/// name, at most `FILES_MENU_TAGS`. A tag every file read has is checked,
-/// one some have partly (a dash). Pressing one gives it to them all, or
-/// takes it from them all when they all have it (`tags.toggle`), the menu
-/// left open for the next. What a tag itself offers (its files here, its
-/// place, its color) is its chip's menu and the sidebar's. Answers from
-/// memory.
+/// name, at most `FILES_MENU_TAGS`. A tag every file selected is known to
+/// have is checked, one some are known to have partly (a dash): a file
+/// whose notes its listing has not read yet, or past the first
+/// `FILES_MENU_READ`, is not known to. A place selected (a tag's within
+/// the one shown) is no file. Pressing a check sets what it then shows
+/// (`tags.toggle` with `on`, told by the menu, which stays open for the
+/// next): a dash or off gives the tag to them all, on takes it from them
+/// all. What a tag itself offers (its files here, its place, its color)
+/// is its chip's menu and the sidebar's. Answers from memory.
 pub fn files_menu(app: &App, vocabulary: &Vocabulary, a: PaneOnly) -> Outcome {
     let pane = app.pane_or_active(a.pane);
-    // Each tag, with how many of the files read have it.
+    // Each tag, with how many of the files known have it, and how many
+    // files are selected.
     let mut tags: Vec<(String, usize)> = Vec::new();
-    let mut read = 0;
+    let mut files = 0;
     {
         let ws = app.workspace.read();
         if let Some(p) = ws.pane(pane) {
-            for e in p
-                .selection
-                .iter()
-                .take(FILES_MENU_READ)
-                .filter_map(|id| p.entry(id))
-            {
-                read += 1;
+            let mut places = 0;
+            for id in p.selection.iter().take(FILES_MENU_READ) {
+                if id.is_place() {
+                    places += 1;
+                    continue;
+                }
+                let Some(e) = p.entry(id).filter(|e| e.metadata.is_hydrated()) else {
+                    continue;
+                };
                 for tag in crate::tags_of(&e.metadata).unwrap_or_default() {
                     match tags.iter_mut().find(|(t, _)| same_tag(t, &tag)) {
                         Some((_, count)) => *count += 1,
@@ -759,9 +765,10 @@ pub fn files_menu(app: &App, vocabulary: &Vocabulary, a: PaneOnly) -> Outcome {
                     }
                 }
             }
+            files = p.selection.len() - places;
         }
     }
-    if read == 0 {
+    if files == 0 {
         return Outcome::Value(serde_json::json!({ "items": [] }));
     }
     let pins = crate::sidebar::pinned(app);
@@ -797,6 +804,7 @@ pub fn files_menu(app: &App, vocabulary: &Vocabulary, a: PaneOnly) -> Outcome {
             } else {
                 leaf
             };
+            let on = *count == files;
             let item = MenuItem::new(
                 "context",
                 name,
@@ -804,14 +812,14 @@ pub fn files_menu(app: &App, vocabulary: &Vocabulary, a: PaneOnly) -> Outcome {
                 order,
                 Invocation::with_args(
                     "tags.toggle",
-                    &serde_json::json!({ "tag": tag, "pane": pane }),
+                    &serde_json::json!({ "tag": tag, "pane": pane, "on": !on }),
                 ),
             )
             .submenu(crate::TAGS_SUBMENU)
             .colored(&colors.of_tag(vocabulary, tag));
             match *count {
                 0 => item.checked(false),
-                all if all == read => item.checked(true),
+                _ if on => item.checked(true),
                 _ => item.partly(),
             }
         })

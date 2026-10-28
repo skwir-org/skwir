@@ -38,7 +38,7 @@ pub struct Bar {
 }
 
 /// The colors a chart draws with (`theme.rs`).
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct BarColors {
     pub bar: Hsla,
     /// The part of a bar that is marked.
@@ -237,10 +237,13 @@ struct Laid {
 }
 
 /// What a chart laid out, kept between frames by what it was laid out from
-/// (its bars, as shared, its bounds, the font and the scale): a frame drawn
-/// as the pointer moves shapes nothing again.
+/// (its bars, as shared, its colors, which its labels are shaped in, its
+/// bounds, the font and the scale): a frame drawn as the pointer moves
+/// shapes nothing again. The bars themselves are kept, not their address:
+/// one freed, another can be made at it.
 struct Kept {
-    from: (usize, Bounds<Pixels>, SharedString, u32),
+    bars: Rc<Vec<Bar>>,
+    from: (BarColors, Bounds<Pixels>, SharedString, u32),
     laid: Rc<Laid>,
     /// Wheel turned by less than a bar, kept for the next turn.
     wheel: Rc<Cell<f32>>,
@@ -411,7 +414,7 @@ impl Element for BarChart {
         _: &mut App,
     ) -> Prepaint {
         let from = (
-            Rc::as_ptr(&self.bars) as usize,
+            self.colors,
             bounds,
             window.text_style().font().family,
             window.scale_factor().to_bits(),
@@ -422,11 +425,13 @@ impl Element for BarChart {
                 let (wheel, pressed) = kept.as_ref().map_or_else(Default::default, |kept| {
                     (Rc::clone(&kept.wheel), Rc::clone(&kept.pressed))
                 });
-                let laid = match kept.filter(|kept| kept.from == from) {
-                    Some(kept) => kept.laid,
-                    None => Rc::new(lay_out(&bars, colors, bounds, window)),
-                };
+                let laid =
+                    match kept.filter(|kept| Rc::ptr_eq(&kept.bars, &bars) && kept.from == from) {
+                        Some(kept) => kept.laid,
+                        None => Rc::new(lay_out(&bars, colors, bounds, window)),
+                    };
                 let kept = Kept {
+                    bars: Rc::clone(&bars),
                     from,
                     laid: Rc::clone(&laid),
                     wheel: Rc::clone(&wheel),
@@ -589,7 +594,7 @@ impl Element for BarChart {
         if let Some(on_pan) = self.on_pan.clone() {
             let wheel = Rc::clone(&prepaint.wheel);
             window.on_mouse_event(move |ev: &ScrollEvent, phase, window, cx| {
-                if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
+                if phase != DispatchPhase::Bubble || !hitbox.should_handle_scroll(window) {
                     return;
                 }
                 let delta = ev.delta.pixel_delta(px(AXIS));

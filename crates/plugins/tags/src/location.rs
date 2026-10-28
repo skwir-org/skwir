@@ -397,17 +397,44 @@ pub struct Export {
 /// The name of the folder a tag is exported as: its leaf, one name in
 /// its folder, whatever it holds. A path's separator in it is `_`, and a
 /// leaf of dots alone (`.`, `..`), which would name the folder it is in or
-/// the one above, starts with `_`.
+/// the one above, starts with `_`. On Windows, what it refuses besides is
+/// made what it takes (`windows_folder_name`).
 fn folder_named(leaf: &str) -> String {
     let name: String = leaf
         .chars()
         .map(|c| if std::path::is_separator(c) { '_' } else { c })
         .collect();
     if name.chars().all(|c| c == '.') {
-        format!("_{name}")
-    } else {
-        name
+        return format!("_{name}");
     }
+    #[cfg(windows)]
+    let name = windows_folder_name(&name);
+    name
+}
+
+/// A name Windows takes, from one it may refuse: the characters it
+/// reserves and control characters are `_`, a dot or a space at the end
+/// is followed by `_`, and a name it refuses still (a device's, `CON` or
+/// `lpt1.log`, as `op::valid_file_name` says) starts with `_`.
+#[cfg(windows)]
+fn windows_folder_name(name: &str) -> String {
+    let mut name: String = name
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    if name.ends_with(['.', ' ']) {
+        name.push('_');
+    }
+    if skwir_core::op::valid_file_name(std::ffi::OsStr::new(&name)).is_err() {
+        name.insert(0, '_');
+    }
+    name
 }
 
 /// The export of `address`'s tag (narrowed as it is) into `dest`, from
@@ -1412,6 +1439,25 @@ mod tests {
             out.copies
         );
         assert_eq!(folder_named("a/b"), "a_b");
+    }
+
+    /// On Windows a tag names a folder it takes: a time, a question, a
+    /// device's name, a name ending in a dot.
+    #[cfg(windows)]
+    #[test]
+    fn a_tag_names_a_folder_windows_takes() {
+        for (leaf, named) in [
+            ("10:30", "10_30"),
+            ("a?b", "a_b"),
+            ("CON", "_CON"),
+            ("lpt1.log", "_lpt1.log"),
+            ("ends.", "ends._"),
+            ("ends ", "ends _"),
+            ("été", "été"),
+        ] {
+            assert_eq!(folder_named(leaf), named, "{leaf}");
+            assert!(skwir_core::op::valid_file_name(std::ffi::OsStr::new(named)).is_ok());
+        }
     }
 
     /// Empty, the top of a folder's tags says no file there has one, a

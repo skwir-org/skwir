@@ -110,12 +110,13 @@ impl ThumbnailProvider for Cover {
         }))
     }
 }
-/// A part of the book's XML, parsed once it is known not to nest deeper
-/// than the parser's recursion can go (`inspection::xml_depth`).
+
 /// An EPUB, by type (AGENTS.md, "Types").
 static EPUB: skwir_platform::mime::Types =
     skwir_platform::mime::Types::new(&["application/epub+zip"]);
 
+/// A part of the book's XML, parsed once it is known not to nest deeper
+/// than the parser's recursion can go (`inspection::xml_depth`).
 fn parse_xml(text: &str) -> anyhow::Result<roxmltree::Document<'_>> {
     inspection::xml_depth(text.as_bytes())?;
     Ok(roxmltree::Document::parse(text)?)

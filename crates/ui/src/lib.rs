@@ -114,6 +114,16 @@ use skwir_core::{App, Location};
 
 use crate::shell::Shell;
 
+/// How many times the core has woken the window: what a wake brought is
+/// told apart from a draw the user asked (the timeline's count in the
+/// background, `timeline.rs`).
+static WAKES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The wakes so far, counted before each is sent.
+pub(crate) fn wakes() -> u64 {
+    WAKES.load(std::sync::atomic::Ordering::Acquire)
+}
+
 /// Dev-only PNG/JPEG decoder used to exercise the views before the platform
 /// providers exist. Enabled with `--features skwir-ui/dev-thumbs`.
 #[cfg(feature = "dev-thumbs")]
@@ -164,6 +174,7 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
     skwir_core::scheduler::mark_window_thread(&app.scheduler);
     let (wake_tx, wake_rx) = flume::bounded::<()>(1);
     app.set_waker(Some(Arc::new(move || {
+        WAKES.fetch_add(1, std::sync::atomic::Ordering::Release);
         let _ = wake_tx.try_send(());
     })));
 

@@ -153,6 +153,11 @@ struct ExclusiveArgs {
 struct ToggleArgs {
     /// The tag to give or take.
     tag: String,
+    /// Give it (`true`) or take it (`false`), whatever the entries have:
+    /// what a check pressed in a menu then shows (`tags.files_menu`).
+    /// Omitted, it is taken when every entry has it, else given.
+    #[serde(default)]
+    on: Option<bool>,
     /// The entries to act on, by absolute path; the pane's selection when
     /// omitted.
     #[serde(default)]
@@ -1090,16 +1095,33 @@ impl Plugin for TagsPlugin {
             move |a, app| edit_plan(app, &v, a),
         )
         .plans();
-        let v = Arc::clone(&vocabulary);
+        let (v, jobs) = (Arc::clone(&vocabulary), lifetime.clone());
         app.commands.register::<ToggleArgs, _>(
             ID, Topic::Notes,
             "tags.toggle",
             "Toggle a tag",
-            "Give the entries given, or the selection, a tag, or take it from every entry when all of them have it: a command to bind to a key (plan)",
+            "Give the entries given, or the selection, a tag, or take it from every entry when all of them have it: a command to bind to a key; with `on`, give it (true) or take it (false) whatever they have (plan)",
             move |a, app| {
                 let Some(tag) = parse_tags(&a.tag).pop() else {
                     anyhow::bail!("which tag?");
                 };
+                if let Some(on) = a.on {
+                    let (add, remove) = if on {
+                        (vec![tag], Vec::new())
+                    } else {
+                        (Vec::new(), vec![tag])
+                    };
+                    return edit_plan(
+                        app,
+                        &v,
+                        EditArgs {
+                            add,
+                            remove,
+                            entries: a.entries,
+                            pane: a.pane,
+                        },
+                    );
+                }
                 let refs = app.targets(a.pane, a.entries)?;
                 let lane = one_lane(&refs);
                 // What the pane knows of each first: a key's toggle reads
@@ -1147,7 +1169,9 @@ impl Plugin for TagsPlugin {
                     lane,
                     Priority::Visible,
                     "tags.toggle",
-                    app.lifetime().child(),
+                    // Cancelled with the plugin: disabled meanwhile, it
+                    // applies nothing.
+                    jobs.child(),
                     move || {
                         let Some(app) = weak.upgrade() else { return };
                         match toggle(&app) {
@@ -1270,7 +1294,7 @@ impl Plugin for TagsPlugin {
             ID, Topic::Notes,
             "tags.open",
             "Open a tag",
-            "Show the files of the home folder that have a tag (or a tag within it), as its pinned pill does, in the pane given or the active one",
+            "Show the files of the home folder that have a tag, and a place for each tag within it, as its pinned pill does, in the pane given or the active one",
             |a, app| browse::open(app, &a),
         )
         .shows();
@@ -1512,7 +1536,7 @@ impl Plugin for TagsPlugin {
             ID,
             MenuSource {
                 menu: "context".into(),
-                when: Some("selection".into()),
+                when: Some("selection !place".into()),
                 command: Invocation::new("tags.files_menu"),
                 replaces: Vec::new(),
             },
@@ -1785,6 +1809,8 @@ mod tests {
                 && &*item.command.name == "tags.toggle"
                 && item.order / 100 == 5
         }));
+        // Pressed, each sets what it then shows: a dash or off gives.
+        assert!(items.iter().all(|item| item.command.args["on"] == true));
         // The editor is the submenu's first, the context menu's own.
         let editor = app
             .registry
@@ -1887,19 +1913,56 @@ mod tests {
             &serde_json::json!({ "names": ["a.txt"] }),
         ))
         .unwrap();
-        let said: Vec<(String, Option<Check>)> = files_menu()
-            .into_iter()
-            .map(|item| (item.title, item.checked))
+        let items = files_menu();
+        let said: Vec<(&str, Option<Check>)> = items
+            .iter()
+            .map(|item| (item.title.as_str(), item.checked))
             .collect();
         assert_eq!(
             said,
             [
-                ("alpha".to_owned(), Some(Check::On)),
-                ("zeta".to_owned(), Some(Check::On)),
-                ("pinned".to_owned(), Some(Check::Off)),
-                ("beta".to_owned(), Some(Check::Off)),
+                ("alpha", Some(Check::On)),
+                ("zeta", Some(Check::On)),
+                ("pinned", Some(Check::Off)),
+                ("beta", Some(Check::Off)),
             ]
         );
+        // On, pressed it takes.
+        assert!(
+            items
+                .iter()
+                .all(|item| item.command.args["on"] == !item.is_on())
+        );
+    }
+
+    /// A check pressed in the Tags submenu sets what it then shows, never
+    /// what the pane last knew of the files: pressed twice before the
+    /// listing has read the first change, the second undoes the first.
+    #[test]
+    fn a_check_pressed_sets_what_it_shows() {
+        let tmp = home_tempdir();
+        let dir = tmp.path().join("d");
+        std::fs::create_dir(&dir).unwrap();
+        let (a, b) = (dir.join("a.txt"), dir.join("it's b.txt"));
+        std::fs::write(&a, b"x").unwrap();
+        std::fs::write(&b, b"x").unwrap();
+        write_tags(&a, &["Keep".into(), "todo".into()]).unwrap();
+        let (app, pane) = app_in(tmp.path(), &dir, &["a.txt", "it's b.txt"]);
+        let press = |on: bool| {
+            let p = plan(
+                &app,
+                "tags.toggle",
+                &serde_json::json!({ "tag": "todo", "pane": pane, "on": on }),
+            );
+            let r = app.executor.execute_blocking(&p, app.lifetime());
+            assert!(r.error.is_none());
+        };
+        press(true);
+        assert_eq!(read_tags(&a), ["Keep", "todo"]);
+        assert_eq!(read_tags(&b), ["todo"]);
+        press(false);
+        assert_eq!(read_tags(&a), ["Keep"]);
+        assert!(read_tags(&b).is_empty());
     }
 
     // Extended attributes: Unix's.

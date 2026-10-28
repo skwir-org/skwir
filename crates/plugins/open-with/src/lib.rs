@@ -389,14 +389,18 @@ fn refresh(cache: &Cached, app: &App) {
     );
 }
 
+/// The most selected files the Open menu types, on the window's thread
+/// under the workspace's lock: a menu is no walk of a huge selection.
+const MENU_TYPES: usize = 1000;
+
 /// `open_with.menu`: the context menu's Open for the selection, from the
 /// catalog in memory. Files whose names say their types, sharing one
 /// default application: "Open With" it, the application `open` starts
 /// (which types a file by its bytes where the name is ambiguous, `.ogg`);
 /// the picker stays Open With….
 /// Anything else (a folder, a type the name does not say, types with no
-/// common default, the catalog not read yet) answers no items, and the
-/// menu keeps its plain Open.
+/// common default, the catalog not read yet, more than `MENU_TYPES`
+/// selected) answers no items, and the menu keeps its plain Open.
 fn menu(pane: Option<PaneId>, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     let nothing = || Ok(Outcome::Value(serde_json::json!({ "items": [] })));
     let pane = app.pane_or_active(pane);
@@ -410,6 +414,9 @@ fn menu(pane: Option<PaneId>, cache: &Cached, app: &App) -> anyhow::Result<Outco
         let Some(p) = ws.pane(pane) else {
             return nothing();
         };
+        if p.selection.len() > MENU_TYPES {
+            return nothing();
+        }
         let mut names = Vec::with_capacity(p.selection.len());
         for id in p.selection.iter() {
             match p.entry(id) {

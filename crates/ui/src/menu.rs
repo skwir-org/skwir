@@ -646,8 +646,9 @@ fn chosen_in(items: &[MenuItem], submenu: &str) -> Option<String> {
     chosen.map(|item| item.title.clone())
 }
 
-/// The order from which an item ends the menu, after the submenus
-/// (`skwir_core::registry::MenuItem`'s convention).
+/// The order from which an item ends the menu, after every group, a
+/// submenu's row standing at its first item's order among them
+/// (`skwir_core::registry::MenuItem`'s convention, ADR-099).
 const LAST: i32 = 900;
 
 /// The command of the menu's Properties item.
@@ -1258,16 +1259,20 @@ impl Shell {
                     (Some(_), true) => self.choose(*index, window, cx),
                     // A check among a submenu's, a set ticked through (the
                     // tags in Tags): ticked or unticked, the menu kept open
-                    // for the next. Its command toggles, so a second press
-                    // undoes the first.
+                    // for the next. A command that takes the state it sets
+                    // (`on`) is told the one the check now shows (a dash
+                    // turns on): what is done is what is shown, whatever
+                    // the files then hold, and a second press undoes the
+                    // first.
                     (Some(check), false) if item.submenu.is_some() => {
-                        item.checked = Some(if check == Check::On {
-                            Check::Off
-                        } else {
-                            Check::On
-                        });
+                        let on = check != Check::On;
+                        item.checked = Some(if on { Check::On } else { Check::Off });
+                        let mut args = command.args;
+                        if let Some(set) = args.get_mut("on").filter(|set| set.is_boolean()) {
+                            *set = on.into();
+                        }
                         cx.notify();
-                        self.run(&command.name, command.args, window, cx);
+                        self.run(&command.name, args, window, cx);
                     }
                     _ => {
                         self.close_context_menu(window, cx);
@@ -1936,11 +1941,7 @@ fn choice_element(
                             gpui::svg()
                                 .path("toolbar/check.svg")
                                 .size(px(11.))
-                                .text_color(if color.is_some() {
-                                    gpui::white()
-                                } else {
-                                    theme.text
-                                }),
+                                .text_color(color.map_or(theme.text, |index| theme.on_tag(index))),
                         )
                     })
             }))

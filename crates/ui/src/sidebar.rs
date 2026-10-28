@@ -613,6 +613,15 @@ pub fn render(
             .map(|a| a.place.group.clone())
             .collect::<Vec<_>>(),
     );
+    // A ring lasts while the place that rings is drawn: one folded away,
+    // put away, unpinned or renamed is never left by the pointer.
+    if shell.ringed.as_ref().is_some_and(|(at, _)| {
+        !places.iter().any(|a| {
+            a.shown && !sections.folded.contains(&a.place.group) && a.place.location == *at
+        })
+    }) {
+        shell.ringed = None;
+    }
     // The tabs, first, while the sidebar lists them (`ui.tabs_at`).
     let tabs: Vec<TabId> = if shell.sidebar_lists_tabs() {
         shell.sync_tab_labels();
@@ -1535,6 +1544,10 @@ impl Shell {
     pub fn toggle_sidebar(&mut self, window: &gpui::Window, cx: &mut Context<Self>) {
         let shown = self.sidebar_shown(window);
         self.sidebar_hidden = shown;
+        // Hidden under the pointer, its place is never left.
+        if shown {
+            self.ringed = None;
+        }
         if !shown && !self.sidebar_shown(window) {
             self.set_status("The window is too narrow for the sidebar", false, cx);
         }

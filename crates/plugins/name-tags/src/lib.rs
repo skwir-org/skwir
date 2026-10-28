@@ -320,7 +320,14 @@ fn planned(
         app.lifetime().child(),
         move || {
             let Some(app) = weak.upgrade() else { return };
-            match make(&app, refs, known, convention) {
+            let answer = make(&app, refs, known, convention);
+            // The plugin, holding no state of its own, has no token for
+            // its work: disabled while the files were read (a remote's,
+            // slowly), it applies nothing.
+            if !app.plugins.is_enabled(ID) {
+                return;
+            }
+            match answer {
                 Ok(plan) => app.apply_whole(plan),
                 Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
             }

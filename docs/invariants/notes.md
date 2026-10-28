@@ -58,6 +58,13 @@ registered in `App::notes` by its plugin); all share one model,
   each file.
 - Commands take `entries`, so Properties and the tag editor act on what they
   showed, not on the selection at the time.
+- A check pressed in the context menu's Tags submenu sets what it then
+  shows (`tags.toggle` with `on`, told by the menu), never what the files
+  are read to hold when it runs: pressed twice before the listing reads
+  the first change, the second undoes the first. A tag is checked only
+  when every file selected is known to have it (its listing has read its
+  notes, among the first `FILES_MENU_READ`), else a dash, which gives it;
+  a place selected is no file.
 - Stores that disagree are merged against what Skwir last wrote (a
   snapshot in the cache): another application's later edit wins; an
   emptied store is not an edit. Properties shows where notes are and which

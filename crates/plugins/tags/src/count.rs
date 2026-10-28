@@ -288,10 +288,15 @@ impl Walk<'_> {
                                     .is_ok_and(|m| changed_since(&e.path(), &m, covered))
                             })
                         });
-                } else if let Some(owner) = app.companions.owner(&name)
-                    && changed_since(&entry.path(), &meta, covered)
-                {
-                    owners.insert(owner);
+                } else if let Some(owner) = app.companions.owner(&name) {
+                    if changed_since(&entry.path(), &meta, covered) {
+                        owners.insert(owner);
+                    }
+                } else if !hidden(&name) {
+                    // Hidden by Windows' mark alone, which the index does
+                    // not see (it lists all but dot files): what it knows
+                    // of the entry is forgotten, as of one gone.
+                    present.remove(&name);
                 }
                 continue;
             }
