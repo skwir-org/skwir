@@ -10,9 +10,9 @@ rust-version.workspace = true
 [dependencies]
 skwir-core.workspace = true
 anyhow.workspace = true
-gstreamer = "0.24"
-gstreamer-app = "0.24"
-gstreamer-video = "0.24"
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+gstreamer-video = "0.25"
 
 [dev-dependencies]
 tempfile.workspace = true
