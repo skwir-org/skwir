@@ -8,8 +8,10 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-# The Rust Mermaid Zed also uses; SVG only, made for resvg.
-merman = { version = "0.8.0", default-features = false, features = ["svg", "all-diagrams"] }
+# The Rust Mermaid Zed also uses; SVG only, made for resvg. Every kind of
+# diagram is asked for (merman draws only those its features name), and
+# the force-directed layout an architecture diagram needs.
+merman = { version = "0.9.2", default-features = false, features = ["svg", "all-diagrams", "layout-cytoscape"] }
 
 [lints]
 workspace = true
