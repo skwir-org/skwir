@@ -28,6 +28,19 @@ pkgbase = skwir-bin
 	optdepends = perl-image-exiftool: writing and removing pictures locations
 	optdepends = plocate: instant name searches over whole disks
 	optdepends = udisks2: unmounting volumes from the sidebar
+	optdepends = sshfs: opening sftp:// addresses through your ssh
+	optdepends = rclone: opening rclone remotes, s3:// and servers that ask a password
+	optdepends = gvfs: opening smb://, dav://, ftp:// and other addresses through GVfs
+	optdepends = gvfs-smb: Windows shares through GVfs
+	optdepends = gvfs-mtp: phones over MTP
+	optdepends = gvfs-gphoto2: cameras
+	optdepends = gvfs-afc: iPhones
+	optdepends = gvfs-nfs: NFS shares through GVfs
+	optdepends = kio-fuse: smb://, dav:// and ftp:// through KIO on KDE Plasma
+	optdepends = rsync: copies to and from sftp servers in batches
+	optdepends = fuse3: rclone mounts, and phones KDE holds
+	optdepends = avahi: servers nearby, a NAS or a Mac
+	optdepends = wsdd: Windows PCs nearby
 	provides = skwir=0.2.0
 	provides = skwir-mermaid=0.2.0
 	provides = skwir-mupdf=0.2.0

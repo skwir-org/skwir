@@ -128,7 +128,11 @@ folders, previews of documents, pictures, music, films, archives and \
 maps, tags kept on the files themselves, and every change undoable."""
 depends = "$auto, libvulkan1, libfontconfig1"
 recommends = "skwir-media, mesa-vulkan-drivers, bubblewrap, udisks2"
-suggests = "skwir-poppler, skwir-djvulibre, skwir-mermaid, skwir-mupdf, poppler-utils, libreoffice-writer, libreoffice-calc, libreoffice-impress, pandoc, imagemagick, ffmpeg, libimage-exiftool-perl, plocate"
+# Beside the other readers and what previews use: the tools remote
+# folders mount through (ADR-077), the FUSE rclone and the phone helper
+# need, rsync for copies over sftp, and what finds servers nearby
+# (ADR-084).
+suggests = "skwir-poppler, skwir-djvulibre, skwir-mermaid, skwir-mupdf, poppler-utils, libreoffice-writer, libreoffice-calc, libreoffice-impress, pandoc, imagemagick, ffmpeg, libimage-exiftool-perl, plocate, sshfs, rclone, gvfs-fuse, gvfs-backends, kio-fuse, rsync, fuse3, avahi-daemon, wsdd"
 assets = [
     ["target/release/skwir", "usr/bin/", "755"],
     ["target/release/skwir-pdf-worker", "usr/lib/skwir/", "755"],
@@ -263,6 +267,21 @@ ImageMagick = "*"
 ffmpeg-free = "*"
 perl-Image-ExifTool = "*"
 plocate = "*"
+# Remote folders, as Debian's suggests say.
+fuse-sshfs = "*"
+rclone = "*"
+gvfs-fuse = "*"
+gvfs-smb = "*"
+gvfs-mtp = "*"
+gvfs-gphoto2 = "*"
+gvfs-afc = "*"
+gvfs-nfs = "*"
+gvfs-afp = "*"
+kio-fuse = "*"
+rsync = "*"
+fuse3 = "*"
+avahi = "*"
+wsdd = "*"
 
 [package.metadata.generate-rpm.variants.media]
 name = "skwir-media"

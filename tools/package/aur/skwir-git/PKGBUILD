@@ -91,6 +91,19 @@ package_skwir-git() {
     'perl-image-exiftool: writing and removing pictures locations'
     'plocate: instant name searches over whole disks'
     'udisks2: unmounting volumes from the sidebar'
+    'sshfs: opening sftp:// addresses through your ssh'
+    'rclone: opening rclone remotes, s3:// and servers that ask a password'
+    'gvfs: opening smb://, dav://, ftp:// and other addresses through GVfs'
+    'gvfs-smb: Windows shares through GVfs'
+    'gvfs-mtp: phones over MTP'
+    'gvfs-gphoto2: cameras'
+    'gvfs-afc: iPhones'
+    'gvfs-nfs: NFS shares through GVfs'
+    'kio-fuse: smb://, dav:// and ftp:// through KIO on KDE Plasma'
+    'rsync: copies to and from sftp servers in batches'
+    'fuse3: rclone mounts, and phones KDE holds'
+    'avahi: servers nearby, a NAS or a Mac'
+    'wsdd: Windows PCs nearby'
   )
   # skwir's own, PDFium's, and the Poppler and DjVuLibre readers': a
   # program linking Poppler (GPL v2 or v3) or DjVuLibre (GPL v2 or later)
