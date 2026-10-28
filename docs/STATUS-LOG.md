@@ -6740,3 +6740,10 @@ stopped them once for about an hour.
   tree's 0.8.42; the plugin parses text already decoded). Removes
   foldhash 0.1 and hashbrown 0.15. Checked: clippy and the plugin's
   tests (9, YAML folds included).
+- **toml 1** (night-crates), the workspace's dependency: no code change
+  (1.0's one break, the time type's seconds made optional, is a field
+  Skwir never reads); toml 0.9 and its toml_datetime leave the lock.
+  Checked: `cargo clippy --workspace --all-targets -D warnings`; the
+  tests of every crate that calls toml (1376) and `skwir`'s settings,
+  cli, notes stores, tags, djvu, previews, thumbnails, any-file and
+  plugins-toggle tests (47).

@@ -7430,7 +7430,7 @@ dependencies = [
  "skwir-plugin-xmp",
  "skwir-ui",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
  "tracing-subscriber",
  "windows-sys 0.61.2",
@@ -7477,7 +7477,7 @@ dependencies = [
  "skwir-plugin-usage",
  "skwir-plugin-xmp",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
 ]
 
 [[package]]
@@ -7504,7 +7504,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
  "trash",
  "windows-sys 0.61.2",
@@ -7545,7 +7545,7 @@ dependencies = [
  "skwir-plugin-api",
  "skwir-plugin-hex",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
 ]
 
@@ -7724,7 +7724,7 @@ version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "wit-bindgen",
 ]
 
@@ -7798,7 +7798,7 @@ dependencies = [
  "skwir-core",
  "tempfile",
  "tokio",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
 ]
 
@@ -7821,7 +7821,7 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "zip 9.1.3",
 ]
 
@@ -7957,7 +7957,7 @@ dependencies = [
  "tiny-skia",
  "tokio",
  "tokio-rustls",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
 ]
 
@@ -7982,7 +7982,7 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
 ]
 
 [[package]]
@@ -8027,7 +8027,7 @@ dependencies = [
  "serde_json",
  "skwir-core",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
 ]
 
 [[package]]
@@ -8070,7 +8070,7 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
 ]
 
@@ -8106,7 +8106,7 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
 ]
 
@@ -8127,7 +8127,7 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
  "zbus",
 ]
@@ -8172,7 +8172,7 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
 ]
 
 [[package]]
@@ -8222,7 +8222,7 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
 ]
 
@@ -8235,7 +8235,7 @@ dependencies = [
  "serde_json",
  "skwir-core",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
 ]
 
@@ -8250,7 +8250,7 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
 ]
 
@@ -8336,7 +8336,7 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
 ]
 
@@ -8371,7 +8371,7 @@ dependencies = [
  "smallvec",
  "syntect",
  "tempfile",
- "toml 0.9.12+spec-1.1.0",
+ "toml 1.1.8+spec-1.1.0",
  "tracing",
  "two-face",
  "unicode-segmentation",
@@ -8981,21 +8981,6 @@ dependencies = [
 
 [[package]]
 name = "toml"
-version = "0.9.12+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf92845e79fc2e2def6a5d828f0801e29a2f8acc037becc5ab08595c7d5e9863"
-dependencies = [
- "indexmap",
- "serde_core",
- "serde_spanned 1.1.2",
- "toml_datetime 0.7.5+spec-1.1.0",
- "toml_parser",
- "toml_writer",
- "winnow 0.7.15",
-]
-
-[[package]]
-name = "toml"
 version = "1.1.8+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20489e00e4d8741d6be680764cc12e270655e375a20d1011e844a9c3379e678d"
@@ -9016,15 +9001,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22cddaf88f4fbc13c51aebbf5f8eceb5c7c5a9da2ac40a13519eb5b0a0e8f11c"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "toml_datetime"
-version = "0.7.5+spec-1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
-dependencies = [
- "serde_core",
 ]
 
 [[package]]

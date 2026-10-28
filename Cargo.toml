@@ -138,7 +138,7 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
-toml = "0.9"
+toml = "1"
 rustix = { version = "1", features = ["fs"] }
 rayon = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
