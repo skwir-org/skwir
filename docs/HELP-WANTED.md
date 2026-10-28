@@ -15,7 +15,7 @@ Below are the steps each release needs, best done in order. Details are in
 ## Before you start
 
 **Build.** Install Rust with [rustup](https://rustup.rs); in the repository
-it uses the version `rust-toolchain.toml` pins (Skwir builds with 1.96 or
+it uses the version `rust-toolchain.toml` pins (Skwir builds with 1.97 or
 later). On a Mac, install Xcode's command line tools
 (`xcode-select --install`); on Windows, the MSVC build tools. Then:
 

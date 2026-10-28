@@ -183,7 +183,7 @@ NixOS, the AppImage runs through `appimage-run`.
 
 ### From source
 
-With Rust 1.96 or later and the libraries `flake.nix` lists (the Nix flake has
+With Rust 1.97 or later and the libraries `flake.nix` lists (the Nix flake has
 everything):
 
 ```sh

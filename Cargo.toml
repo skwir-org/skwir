@@ -54,7 +54,7 @@ exclude = ["spikes", "vendor/zed"]
 version = "0.2.0"
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.96"
+rust-version = "1.97"
 repository = "https://github.com/skwir-org/skwir"
 homepage = "https://skwir.org"
 # None of them is published to crates.io; a crate meant for others (the

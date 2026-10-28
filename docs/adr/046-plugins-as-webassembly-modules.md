@@ -78,5 +78,6 @@ Wasmtime 38 was the newest building with the minimum Rust then (1.88).
 out-of-bounds write in component string transcoding, a guest heap
 access miscompiled into a sandbox escape on aarch64, and loads outside
 the sandbox on x86-64. Now 49.0.2, raising the minimum Rust to 1.96.
+(Amended 2026-10-28: Wasmtime 50.0.0, the minimum Rust 1.97.)
 Instantiating now takes fuel, so each new store gets its own budget
 before instantiation, then the call's.

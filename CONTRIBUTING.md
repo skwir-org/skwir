@@ -23,7 +23,7 @@ did not declare, a way around a plan's review) goes to
 ## Building and checking
 
 The dev environment is the Nix flake (`nix develop`, or `direnv allow`).
-Without Nix: Rust 1.96 or later and the libraries `flake.nix` lists. The
+Without Nix: Rust 1.97 or later and the libraries `flake.nix` lists. The
 checks run the Rust that `rust-toolchain.toml` pins, which rustup
 installs by itself; moving the pin is a change of its own, with the
 fixes the new clippy asks for.

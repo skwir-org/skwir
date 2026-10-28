@@ -256,8 +256,6 @@ fn instantiate(
     Ok(instance.get_typed_func(&mut *store, call)?)
 }
 
-/// Whether `bytes` are a component rather than a core module: the
-/// binary's layer, after its magic and version.
 /// The engine every module runs in: fuel counted, components.
 fn engine() -> anyhow::Result<Engine> {
     let mut config = Config::new();
@@ -364,6 +362,8 @@ fn save(
     Ok(())
 }
 
+/// Whether `bytes` are a component rather than a core module: the
+/// binary's layer, after its magic and version.
 fn is_component(bytes: &[u8]) -> bool {
     bytes.len() >= 8 && bytes[..4] == *b"\0asm" && bytes[6..8] == [1, 0]
 }

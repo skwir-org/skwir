@@ -1195,8 +1195,8 @@ rename-and-move task over MCP that ends in a reviewable plan.
   network unless declared; not on Windows). Checked by
   `crates/extend/tests/programs.rs`; the first thumbnailer from outside
   is `crates/plugins-outside/netpbm`.
-- **Level 1** (ADR-046): Wasmtime (49.0.2 since 2026-10-08, minimum
-  Rust 1.96; release step 8 says why), no WASI, Skwir's two imports,
+- **Level 1** (ADR-046): Wasmtime (50.0.0 since 2026-10-28, minimum
+  Rust 1.97; release step 8 says why), no WASI, Skwir's two imports,
   bounded work and memory, in `skwir-module-worker`, so Wasmtime never
   enters Skwir's process. Measured 2026-10-07 with Wasmtime 38: linked
   in, it cost 1.6 MiB of idle memory (94.8 against 93.2 MiB own share);
