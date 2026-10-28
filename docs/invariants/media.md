@@ -326,7 +326,9 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - The `mpris` plugin mirrors `App::player` onto the session bus and knows
   nothing else: properties come from the record, calls become
   `PlayerRequest`s, the per-process bus name is held only while something is
-  announced. Without a session bus it logs once and does without. Test it on
-  a private bus (`dbus-run-session`), never the user's.
+  announced. Without a session bus it logs once and does without. The
+  session's bus started again, its objects and name are served again on the
+  next connection (`bus::keep`), with nothing else said. Test it on a
+  private bus (a `dbus-daemon` of the test's), never the user's.
 - `player.request` and `player.now` are the same surface for scripts and
   agents.

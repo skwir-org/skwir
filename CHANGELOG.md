@@ -99,10 +99,12 @@ server and network. Undo history is cleared when Skwir exits.
   tests or removes it, and has Mount Options… (read only, rclone's cache,
   bandwidth), Connect at Login (by your system's service manager, for a server
   that asks nothing at login) and, for SFTP, Set Up Key Login…, which puts a
-  key of yours on the server over one login.
+  key of yours on the server over one login (on Windows too, where a server
+  that offers only SFTP is reached that way).
 - **Nearby**, at the end of the Network section, lists the servers your network
   announces (a NAS, a Mac, a Windows PC), found by Avahi and wsdd while you look
-  at it, and only then; a server's menu adds it.
+  at it, and only then; a server's menu adds it. A Skwir that crashed leaves no
+  wsdd of its own searching the network.
 - **Phones and cameras**: a phone plugged in for file transfer, a camera and an
   iPhone are listed among the drives as soon as GVfs offers them, and mounted
   once opened, never because they were plugged in. One another program holds
@@ -289,6 +291,8 @@ server and network. Undo history is cleared when Skwir exits.
   withheld, whatever its client says, scripts reaching the window by a way of
   their own; no server is reached for an agent unasked.
 - **Player**: the rates are said over MPRIS, and a rate set there is taken.
+  The media keys, the desktop's style and plugged-in phones keep being
+  followed after the session's bus restarts.
 - **About** and `skwir --version` say the commit a build between releases was
   made from (`0.2.0+8ef7a93f6d38`); a release says its version alone.
 - **Safer**: a copy skips a file as already there only once it proved both the

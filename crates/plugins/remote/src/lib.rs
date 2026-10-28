@@ -379,7 +379,9 @@ impl Remotes {
     /// listed at once, then again when one of its signals is said. One
     /// listener per bus, on a thread of its own: the session's on the
     /// program's one connection (`skwir_platform::bus`), a test's on its
-    /// own; until `lifetime` ends.
+    /// own; each listened to again on the next connection once the bus is
+    /// started again (`bus::keep`), every tool listed again then; until
+    /// `lifetime` ends.
     fn follow_devices(&self, app: &App, lifetime: &CancelToken) {
         let tools: Vec<Arc<dyn Connector>> = self
             .connectors
@@ -416,7 +418,8 @@ impl Remotes {
 
     /// [`Remotes::follow_devices`] for the tools on the bus `env` names,
     /// on this thread: their signals listened to, then each tool listed,
-    /// then each listed again when one of its own is said.
+    /// then each listed again when one of its own is said; all again on
+    /// the next connection, the bus started again.
     #[cfg(target_os = "linux")]
     fn listen_for_devices(
         &self,
@@ -425,16 +428,11 @@ impl Remotes {
         tools: &[Arc<dyn Connector>],
         lifetime: &CancelToken,
     ) {
-        let bus = if env.is_empty() {
-            skwir_platform::bus::session().map_err(anyhow::Error::from)
-        } else {
-            bus::connect(env, Duration::from_secs(10))
-        };
-        let bus = match bus {
-            Ok(bus) => bus,
-            Err(error) => {
-                tracing::debug!("the devices the tools offer are not followed: {error:#}");
-                return;
+        let connect = || {
+            if env.is_empty() {
+                skwir_platform::bus::session().map_err(anyhow::Error::from)
+            } else {
+                bus::connect(env, Duration::from_secs(10))
             }
         };
         let mut routes: Vec<(zbus::MatchRule<'static>, usize)> = Vec::new();
@@ -446,27 +444,29 @@ impl Remotes {
                 }
             }
         }
-        let rules = routes.iter().map(|(rule, _)| rule.clone()).collect();
+        let rules: Vec<_> = routes.iter().map(|(rule, _)| rule.clone()).collect();
         let list = |at: usize| {
             if let Some(app) = app.upgrade() {
                 self.relist(&app, &tools[at]);
             }
         };
-        skwir_platform::bus::listen(
-            &bus,
-            rules,
-            lifetime,
-            || (0..tools.len()).for_each(list),
-            |message| {
-                let mut said: Vec<usize> = routes
-                    .iter()
-                    .filter(|(rule, _)| rule.matches(message).unwrap_or(false))
-                    .map(|(_, at)| *at)
-                    .collect();
-                said.dedup();
-                said.into_iter().for_each(list);
-            },
-        );
+        skwir_platform::bus::keep(connect, lifetime, |bus| {
+            skwir_platform::bus::listen(
+                bus,
+                rules.clone(),
+                lifetime,
+                || (0..tools.len()).for_each(list),
+                |message| {
+                    let mut said: Vec<usize> = routes
+                        .iter()
+                        .filter(|(rule, _)| rule.matches(message).unwrap_or(false))
+                        .map(|(_, at)| *at)
+                        .collect();
+                    said.dedup();
+                    said.into_iter().for_each(list);
+                },
+            );
+        });
     }
 
     /// Ask `tool` again what devices it offers, on a thread of its own (it

@@ -580,7 +580,8 @@ fn browse_wsdd(_seen: &dyn Fn(Seen), _cancel: &CancelToken) -> anyhow::Result<()
 
 /// wsdd started here in discovery mode (`--no-host`: it announces
 /// nothing), answering on a socket in the runtime folder; stopped once
-/// dropped.
+/// dropped, by the browser's thread that started it, and killed by the
+/// system should Skwir end first (`process::ends_with_starter`).
 #[cfg(target_os = "linux")]
 struct OwnWsdd {
     child: std::process::Child,
@@ -596,18 +597,23 @@ impl OwnWsdd {
             .ok_or_else(|| anyhow::anyhow!("no runtime folder"))?
             .join("skwir");
         std::fs::create_dir_all(&folder)?;
+        sweep_left(&folder);
         let socket = folder.join(format!(
             "wsdd-{}-{}.sock",
             std::process::id(),
             stable_hash(format!("{:?}", std::time::Instant::now()).as_bytes()) % 100_000
         ));
-        let child = std::process::Command::new(program)
+        let mut command = std::process::Command::new(program);
+        command
             .args(["--no-host", "--discovery", "--listen"])
             .arg(&socket)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()?;
+            .stderr(std::process::Stdio::null());
+        // Started and stopped by this thread, the browser's, which waits on
+        // it meanwhile: it ends with the thread, and with Skwir.
+        skwir_platform::process::ends_with_starter(&mut command);
+        let child = command.spawn()?;
         let mut own = OwnWsdd { child, socket };
         // It makes its socket once started: a moment. One that ended
         // makes none (a wsdd too old for `--discovery` and `--listen`).
@@ -621,6 +627,39 @@ impl OwnWsdd {
             std::thread::sleep(Duration::from_millis(50));
         }
         Ok(own)
+    }
+}
+
+/// What a Skwir that ended without stopping its wsdd left in `folder` (one
+/// killed as it started it, or one before wsdd ended with Skwir): each
+/// socket named by a Skwir that no longer runs removed, and the wsdd told
+/// to listen there killed.
+#[cfg(target_os = "linux")]
+fn sweep_left(folder: &Path) {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name
+            .to_str()
+            .and_then(|n| n.strip_prefix("wsdd-"))
+            .and_then(|n| n.split('-').next())
+            .and_then(|pid| pid.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        // Only once the system says that Skwir ended.
+        if pid == std::process::id() || skwir_platform::process::runs(pid) != Some(false) {
+            continue;
+        }
+        let socket = entry.path();
+        // Killed, as one Skwir started is: a wsdd told to end takes
+        // seconds to say goodbye, for nothing.
+        for wsdd in skwir_platform::process::naming(socket.as_os_str()) {
+            skwir_platform::process::kill(wsdd);
+        }
+        let _ = std::fs::remove_file(&socket);
     }
 }
 

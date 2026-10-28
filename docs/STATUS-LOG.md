@@ -6653,3 +6653,30 @@ stopped them once for about an hour.
   (70), core's notes and settings (45), `tags_location` and
   `tags_everywhere` (21); `just check-windows`. On Xvfb: a tag used
   only in a hidden folder is not suggested, one in a plain folder is.
+- **The session bus, key login, wsdd** (night-bus): `bus::keep` hands a
+  listener or server each new connection once the session's bus is
+  started again (tried at once, then from 1 s doubling to 60 s, on its
+  own thread, never waking the window; `session` reconnects when the
+  kept one is closed): the desktop style follower (which now reads the
+  portal on a thread of its own, not the listening one), the media
+  controls (their objects and name served again) and the remote
+  plugin's device listener. Windows' key setup makes no control
+  master: a login is read from ssh's exit status (an exec refused
+  counts, "Permission denied" never), and the lone sftp sessions after
+  it get the first password (`BatchMode=no` ahead of sftp's `-b`), so
+  it is asked once. Skwir's own wsdd gets a parent-death SIGKILL
+  (`process::ends_with_starter`, refusing to run if Skwir is already
+  gone), and Nearby sweeps a dead Skwir's leftover wsdd and socket
+  before starting its own (wsdd takes 6.5 s to end on SIGTERM, so the
+  sweep kills). Checked: four tests against a private dbus-daemon
+  stopped and started again, the key setup on Linux through
+  `Ssh::alone` against rclone's SFTP server (wrong password, asked once
+  for three sessions, key login after, no master left), the
+  parent-death test and `a_wsdd_skwir_started_ends_with_skwir_killed`
+  (in `tools/test/nearby.sh`): each seen failing without its fix.
+  nextest of platform, mpris, remote, `remote_keys` and
+  `remote_folders`: 455 run, 450 passed; the failures were the key test
+  before its BatchMode fix, three `remote_folders` tests that passed
+  run alone (load about 65), and a PDF thumbnail test of the PDF
+  helper's upgrade, rerun with it. Windows' key setup is compiled only
+  (`just check-windows`).

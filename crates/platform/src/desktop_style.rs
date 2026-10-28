@@ -149,9 +149,10 @@ pub fn read() -> DesktopStyle {
 
 /// What the desktop says, then what it says each time it changes:
 /// `changed` is called from a thread of its own, at once and on each
-/// change, until the bus goes or a change arrives after `stop` was
-/// cancelled. The thread waits on the bus between changes, never on a
-/// timer.
+/// change, until `stop`. The session's bus ended (started again), what it
+/// says is read again once it is back, and followed there. The thread
+/// waits on the bus between changes, on a timer only to connect again
+/// while the bus is gone.
 pub fn follow(changed: impl FnMut(DesktopStyle) + Send + 'static, stop: CancelToken) {
     imp::follow(changed, stop);
 }
@@ -257,13 +258,7 @@ mod imp {
     pub(super) fn follow(changed: impl FnMut(DesktopStyle) + Send + 'static, stop: CancelToken) {
         let thread = std::thread::Builder::new()
             .name("skwir-desktop-style".into())
-            .spawn(move || {
-                let bus = crate::bus::session();
-                if let Err(error) = &bus {
-                    tracing::debug!("the desktop's style is not followed: {error}");
-                }
-                follow_on(bus.ok(), Arc::new(TheDesktop), changed, &stop);
-            });
+            .spawn(move || follow_on(crate::bus::session, Arc::new(TheDesktop), changed, &stop));
         if let Err(error) = thread {
             tracing::debug!("the desktop's style is not followed: {error}");
         }
@@ -353,13 +348,16 @@ mod imp {
         }
     }
 
-    /// What was said last, and whom to tell of a change: read again from
-    /// the bus's thread and the file's alike.
+    /// What was said last, and whom to tell of a change: read again at
+    /// the bus's word and the file's alike, on a thread of its own.
     struct Following {
-        bus: Option<Connection>,
+        /// The bus the portal is asked on: the last connection made.
+        bus: Mutex<Option<Connection>>,
         own: Arc<dyn Own>,
         said: Mutex<Option<DesktopStyle>>,
         changed: Mutex<Box<dyn FnMut(DesktopStyle) + Send>>,
+        /// Whether a reading runs, and whether it reads once more after.
+        reading: Mutex<Option<bool>>,
     }
 
     impl Following {
@@ -367,7 +365,12 @@ mod imp {
         /// reading freed (a theme's sheets) is given back before the
         /// thread waits again, which may be for hours.
         fn read_again(&self) {
-            let now = read_from(self.bus.as_ref(), &*self.own);
+            let bus = self
+                .bus
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone();
+            let now = read_from(bus.as_ref(), &*self.own);
             let mut said = self.said.lock().unwrap_or_else(PoisonError::into_inner);
             if said.as_ref() != Some(&now) {
                 *said = Some(now.clone());
@@ -376,34 +379,85 @@ mod imp {
             drop(said);
             skwir_core::scheduler::release_now();
         }
+
+        /// [`Following::read_again`] on a thread of its own, as a listener
+        /// on the shared bus takes each message at once and the portal may
+        /// answer slowly: one reading at a time, a change said meanwhile
+        /// read once more after.
+        fn read_soon(self: &Arc<Self>) {
+            {
+                let mut reading = self.reading.lock().unwrap_or_else(PoisonError::into_inner);
+                if let Some(again) = reading.as_mut() {
+                    *again = true;
+                    return;
+                }
+                *reading = Some(false);
+            }
+            let this = Arc::clone(self);
+            let started = std::thread::Builder::new()
+                .name("skwir-desktop-read".into())
+                .spawn(move || {
+                    loop {
+                        this.read_again();
+                        let mut reading =
+                            this.reading.lock().unwrap_or_else(PoisonError::into_inner);
+                        if *reading != Some(true) {
+                            *reading = None;
+                            break;
+                        }
+                        *reading = Some(false);
+                    }
+                });
+            if let Err(error) = started {
+                tracing::debug!("the desktop's style is not read again: {error}");
+                *self.reading.lock().unwrap_or_else(PoisonError::into_inner) = None;
+            }
+        }
     }
 
     /// Read, tell `changed`, then again at each change of what is read:
-    /// a setting the portal on `bus` says changed, the file `own` follows
-    /// replaced. Ends once the bus goes and nothing is followed, or with
-    /// `stop`. Never wakes on a timer.
-    pub(super) fn follow_on(
-        bus: Option<Connection>,
+    /// a setting the portal says changed on the bus `connect` makes, the
+    /// file `own` follows replaced. The bus ended, it is made again once
+    /// back (`bus::keep`), and what changed meanwhile told. Ends with
+    /// `stop`, or at once with neither a bus nor a file followed. Never
+    /// wakes on a timer but to connect again while the bus is gone.
+    pub(super) fn follow_on<E: std::fmt::Display>(
+        connect: impl FnMut() -> Result<Connection, E>,
         own: Arc<dyn Own>,
         changed: impl FnMut(DesktopStyle) + Send + 'static,
         stop: &CancelToken,
     ) {
         let following = Arc::new(Following {
-            bus,
+            bus: Mutex::new(None),
             own,
             said: Mutex::new(None),
             changed: Mutex::new(Box::new(changed)),
+            reading: Mutex::new(None),
         });
-        following.read_again();
         let file = following
             .own
             .followed()
             .and_then(|file| follow_file(&following, &file, stop));
-        if let Some(bus) = &following.bus {
-            listen(bus, &following, stop);
+        let mut read = false;
+        crate::bus::keep(connect, stop, |bus| {
+            *following.bus.lock().unwrap_or_else(PoisonError::into_inner) = Some(bus.clone());
+            // Read once listened to: at first, then, the bus back, what
+            // changed while it was gone. Not listened to, read all the same.
+            let mut listened = false;
+            listen(bus, &following, stop, || {
+                listened = true;
+                following.read_soon();
+            });
+            if !listened {
+                following.read_soon();
+            }
+            read = true;
+        });
+        if !read {
+            following.read_soon();
         }
         if file.is_some() {
-            // The bus gone or never there, the file is followed still.
+            // No bus, the file is followed still.
             let _ = stop.subscribe().receiver().recv();
         }
     }
@@ -427,7 +481,7 @@ mod imp {
                 let Some(following) = weak.upgrade().filter(|_| !stop.is_cancelled()) else {
                     return false;
                 };
-                following.read_again();
+                following.read_soon();
                 true
             },
         )?;
@@ -439,31 +493,30 @@ mod imp {
     }
 
     /// Read again at each change the portal on `bus` says of what is read,
-    /// until the bus goes or a change comes after `stop`.
-    fn listen(bus: &Connection, following: &Following, stop: &CancelToken) {
+    /// until the bus goes or `stop`: `ready` once listened to.
+    fn listen(
+        bus: &Connection,
+        following: &Arc<Following>,
+        stop: &CancelToken,
+        ready: impl FnOnce(),
+    ) {
         let rule = zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
             .interface(SETTINGS)
             .and_then(|rule| rule.member("SettingChanged"))
             .map(zbus::match_rule::Builder::build);
-        let messages =
-            rule.and_then(|rule| zbus::blocking::MessageIterator::for_match_rule(rule, bus, None));
-        let messages = match messages {
-            Ok(messages) => messages,
+        let rule = match rule {
+            Ok(rule) => rule,
             Err(error) => {
                 tracing::debug!("the desktop's style is read, not followed: {error}");
                 return;
             }
         };
-        for message in messages {
-            if stop.is_cancelled() {
-                break;
-            }
-            let Ok(message) = message else { continue };
+        crate::bus::listen(bus, vec![rule], stop, ready, |message| {
             let Ok((namespace, key, _)) =
                 message.body().deserialize::<(String, String, OwnedValue)>()
             else {
-                continue;
+                return;
             };
             let read = match key.as_str() {
                 "accent-color" | "contrast" => namespace == APPEARANCE,
@@ -473,9 +526,9 @@ mod imp {
                 _ => false,
             };
             if read {
-                following.read_again();
+                following.read_soon();
             }
-        }
+        });
     }
 
     /// A setting the portal on `bus` answers: `ReadOne`, or `Read` for a
@@ -709,6 +762,15 @@ mod tests {
             (client, server.join().unwrap())
         }
 
+        /// The connections `follow_on` is given, one each time it asks,
+        /// then none: the bus not back.
+        fn handed(
+            mut buses: Vec<Connection>,
+        ) -> impl FnMut() -> Result<Connection, &'static str> + Send + 'static {
+            buses.reverse();
+            move || buses.pop().ok_or("no bus")
+        }
+
         fn set(values: &Values, namespace: &str, key: &str, value: &Value<'_>) {
             values.lock().unwrap().insert(
                 (namespace.to_owned(), key.to_owned()),
@@ -893,14 +955,17 @@ mod tests {
             let (bus, server) = portal(&values);
             let (sent, got) = mpsc::channel();
             let stop = CancelToken::new();
-            let following = std::thread::spawn(move || {
-                imp::follow_on(
-                    Some(bus),
-                    Fixed::fonts(nothing_named),
-                    move |style| sent.send(style).unwrap(),
-                    &stop,
-                );
-            });
+            let following = {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    imp::follow_on(
+                        handed(vec![bus]),
+                        Fixed::fonts(nothing_named),
+                        move |style| sent.send(style).unwrap(),
+                        &stop,
+                    );
+                })
+            };
             let next = || got.recv_timeout(Duration::from_secs(10)).unwrap();
             assert_eq!(next().accent, Some([0.2, 0.4, 0.6]));
 
@@ -942,8 +1007,55 @@ mod tests {
             );
             assert_eq!(next().monospace_font.as_deref(), Some("Hack"));
 
-            // The portal gone, the thread ends.
+            // The portal gone, asked for again until stopped: the thread
+            // ends.
             drop(server);
+            stop.cancel();
+            following.join().unwrap();
+        }
+
+        #[test]
+        fn the_bus_back_what_changed_while_it_was_gone_is_told_and_followed() {
+            let values = Values::default();
+            set(
+                &values,
+                APPEARANCE,
+                "accent-color",
+                &Value::from((0.2_f64, 0.4, 0.6)),
+            );
+            let ((bus, server), (back, server_back)) = (portal(&values), portal(&values));
+            let (sent, got) = mpsc::channel();
+            let stop = CancelToken::new();
+            let following = {
+                let stop = stop.clone();
+                std::thread::spawn(move || {
+                    imp::follow_on(
+                        handed(vec![bus, back]),
+                        Fixed::fonts(nothing_named),
+                        move |style| sent.send(style).unwrap(),
+                        &stop,
+                    );
+                })
+            };
+            let next = || got.recv_timeout(Duration::from_secs(10)).unwrap();
+            assert_eq!(next().accent, Some([0.2, 0.4, 0.6]));
+
+            // The bus ends, and the accent changes while it is gone, said
+            // to no one: once back, read again and told.
+            set(
+                &values,
+                APPEARANCE,
+                "accent-color",
+                &Value::from((0.9_f64, 0.5, 0.1)),
+            );
+            drop(server);
+            assert_eq!(next().accent, Some([0.9, 0.5, 0.1]));
+
+            // And followed there.
+            set(&values, APPEARANCE, "contrast", &Value::from(1_u32));
+            say(&server_back, APPEARANCE, "contrast", Value::from(1_u32));
+            assert!(next().more_contrast);
+            stop.cancel();
             following.join().unwrap();
         }
 
@@ -972,7 +1084,12 @@ mod tests {
             let following = {
                 let stop = stop.clone();
                 std::thread::spawn(move || {
-                    imp::follow_on(None, desktop, move |style| sent.send(style).unwrap(), &stop);
+                    imp::follow_on(
+                        handed(Vec::new()),
+                        desktop,
+                        move |style| sent.send(style).unwrap(),
+                        &stop,
+                    );
                 })
             };
             let next = || got.recv_timeout(Duration::from_secs(10)).unwrap();

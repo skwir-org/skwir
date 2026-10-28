@@ -1748,6 +1748,169 @@ fn nearby_lists_what_avahi_and_wsdd_find() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// The wsdd processes discovering for the Skwir `pid`: those told to
+/// listen on a socket it names (`wsdd-<pid>-…`), a zombie left out.
+fn wsdd_of(pid: u32) -> Vec<u32> {
+    let mark = format!("wsdd-{pid}-");
+    std::fs::read_dir("/proc")
+        .unwrap()
+        .flatten()
+        .filter_map(|process| {
+            let found = process.file_name().to_str()?.parse::<u32>().ok()?;
+            let line = std::fs::read(process.path().join("cmdline")).ok()?;
+            line.split(|b| *b == 0)
+                .any(|arg| {
+                    Path::new(&*String::from_utf8_lossy(arg))
+                        .file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with(&mark))
+                })
+                .then_some(found)
+        })
+        .collect()
+}
+
+/// The sockets of the runtime folder Skwir's wsdd listen on for the
+/// Skwir `pid` (`wsdd-<pid>-…`).
+fn wsdd_sockets_of(pid: u32) -> Vec<PathBuf> {
+    let folder = skwir_core::xdg::runtime_dir().unwrap().join("skwir");
+    let mark = format!("wsdd-{pid}-");
+    std::fs::read_dir(&folder)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.file_name()
+                        .is_some_and(|n| n.to_string_lossy().starts_with(&mark))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether the process `pid` runs: there, and no zombie.
+fn alive(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        stat.rsplit_once(") ")
+            .is_some_and(|(_, rest)| !rest.starts_with('Z'))
+    })
+}
+
+/// A Skwir killed while the Nearby place is shown (a crash: nothing stops
+/// what it started) leaves no wsdd discovering: the system ends it with
+/// Skwir. What one left before (its socket, a wsdd still listening there,
+/// as a Skwir without that would) is swept once Nearby is shown again.
+/// Run by `tools/test/nearby.sh`, the Skwir killed this test run again.
+#[test]
+fn a_wsdd_skwir_started_ends_with_skwir_killed() {
+    const OWNER: &str = "SKWIR_TEST_WSDD_OWNER";
+    if std::env::var_os("SKWIR_TEST_NEARBY").is_none() {
+        eprintln!("skipped: run by tools/test/nearby.sh");
+        return;
+    }
+    let nearby = skwir_plugin_remote::nearby::location();
+    let show = |app: &App| {
+        app.plugins
+            .add(Arc::new(RemotePlugin::with(Remotes::with(Vec::new()))), app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &nearby).unwrap();
+        // Started, and listening: its socket made.
+        until(app, 20, "its wsdd discovering", || {
+            let me = std::process::id();
+            !wsdd_of(me).is_empty() && !wsdd_sockets_of(me).is_empty()
+        });
+        pane
+    };
+    if std::env::var_os(OWNER).is_some() {
+        // The Skwir killed: Nearby shown, then waiting to be killed.
+        let base = fixture("wsdd-killed");
+        let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+        show(&app);
+        println!("discovering");
+        let _ = std::io::Read::read(&mut std::io::stdin(), &mut [0]);
+        return;
+    }
+    let mut owner = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "a_wsdd_skwir_started_ends_with_skwir_killed",
+            "--nocapture",
+        ])
+        .env(OWNER, "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut said = std::io::BufReader::new(owner.stdout.take().unwrap());
+    let mut line = String::new();
+    while !line.contains("discovering") {
+        line.clear();
+        let read = std::io::BufRead::read_line(&mut said, &mut line).unwrap();
+        assert!(read > 0, "the Skwir to kill ended first");
+    }
+    let killed = owner.id();
+    let left = wsdd_of(killed);
+    assert_eq!(left.len(), 1, "its wsdd: {left:?}");
+    owner.kill().unwrap();
+    owner.wait().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while left.iter().any(|&pid| alive(pid)) {
+        assert!(Instant::now() < deadline, "its wsdd outlived it: {left:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // Its socket stays, and a wsdd still listening beside it, as one a
+    // Skwir before left: both swept once Nearby is shown here.
+    assert_eq!(
+        wsdd_sockets_of(killed).len(),
+        1,
+        "a killed wsdd removes nothing"
+    );
+    let before_socket = skwir_core::xdg::runtime_dir()
+        .unwrap()
+        .join(format!("skwir/wsdd-{killed}-0.sock"));
+    let mut before = Command::new("wsdd")
+        .args(["--no-host", "--discovery", "--listen"])
+        .arg(&before_socket)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !before_socket.exists() {
+        assert!(Instant::now() < deadline, "the wsdd left never listened");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let base = fixture("wsdd-sweeps");
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let pane = show(&app);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while before.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline, "the wsdd left was not stopped");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        wsdd_sockets_of(killed),
+        Vec::<PathBuf>::new(),
+        "their sockets swept"
+    );
+    app.navigate(pane, &Location::from_path(&base)).unwrap();
+    app.keep_locations(pane, &[]);
+    until(&app, 20, "its own wsdd ended", || {
+        wsdd_of(std::process::id()).is_empty()
+    });
+    drop(app);
+    std::fs::remove_dir_all(&base).unwrap();
+    let _ = std::fs::remove_dir_all(
+        dirs::home_dir()
+            .unwrap()
+            .join(".cache/skwir-tests/remote")
+            .join(format!("wsdd-killed-{killed}")),
+    );
+}
+
 /// Whether this process has a connection on the system bus, as its bus
 /// says (`dbus-send`, on the `PATH` of `tools/test/nearby.sh`).
 fn on_the_system_bus() -> bool {

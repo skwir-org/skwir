@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # The Nearby place (ADR-084) against servers announced on a network of the
-# test's own, for `remote_folders`'s nearby_lists_what_avahi_and_wsdd_find:
+# test's own, for `remote_folders`'s nearby_lists_what_avahi_and_wsdd_find
+# and a_wsdd_skwir_started_ends_with_skwir_killed, one after the other (each
+# checks the wsdd it started ended):
 #   tools/test/nearby.sh <remote_folders test binary>
 # In user, network, mount and pid namespaces: a veth pair whose other end
 # is a namespace standing for a Windows PC (wsdd announcing it), a system
@@ -115,7 +117,8 @@ status=0
 HOME="$RUNTIME/home" XDG_RUNTIME_DIR="$RUNTIME/rt" XDG_CONFIG_HOME="$RUNTIME/xdg/config" \
     XDG_CACHE_HOME="$RUNTIME/xdg/cache" XDG_DATA_HOME="$RUNTIME/xdg/data" \
     XDG_STATE_HOME="$RUNTIME/xdg/state" SKWIR_TEST_NEARBY=1 \
-    "$TEST_BINARY" --exact nearby_lists_what_avahi_and_wsdd_find --nocapture || status=$?
+    "$TEST_BINARY" --exact nearby_lists_what_avahi_and_wsdd_find \
+    a_wsdd_skwir_started_ends_with_skwir_killed --test-threads=1 --nocapture || status=$?
 if [ "$status" != 0 ]; then
     tail -5 "$RUNTIME/avahi.log" "$RUNTIME/wsdd-pc.log" >&2 || true
 fi

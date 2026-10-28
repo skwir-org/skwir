@@ -323,8 +323,12 @@ working in an area, also read that area's rules (see
   producer runs.
 - **The session bus is one connection** for the whole program
   (`skwir_platform::bus::session`, Linux): the desktop's style, the media
-  controls, the devices the remote plugin follows. Nothing closes it. A
-  listener there takes each message at once (`bus::follow`,
+  controls, the devices the remote plugin follows. Nothing closes it;
+  when the session's bus is started again, `session` makes a new one,
+  and what follows or serves there for the program's life goes through
+  `bus::keep`, which hands it each new connection, tried again on its
+  own thread without waking the window. A listener there takes each
+  message at once (`bus::follow`,
   `bus::listen`, which end with their token) and hands what may wait (a
   question to a program that answers slowly) to a thread of its own:
   zbus queues and drops nothing, so a listener that stops reading holds

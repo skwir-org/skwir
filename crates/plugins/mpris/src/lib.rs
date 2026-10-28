@@ -8,10 +8,11 @@
 //!
 //! A file manager is not always a music player: the bus name is held only
 //! while something plays, so the desktop shows no idle "skwir" player.
-//! Everything runs on the plugin's own thread, on the program's one
+//! Everything runs on the plugin's own threads, on the program's one
 //! session connection (`skwir_platform::bus`), what it serves there taken
-//! back when it ends; without a session bus (a headless run) it logs once
-//! and ends.
+//! back when it ends, and served again on the next connection when the
+//! session's bus is started again; without a session bus (a headless run)
+//! it logs once and ends.
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
@@ -27,7 +28,7 @@ const NO_TRACK: &str = "/org/mpris/MediaPlayer2/TrackList/NoTrack";
 
 #[derive(Default)]
 pub struct MprisPlugin {
-    running: Mutex<Option<(CancelToken, std::thread::JoinHandle<()>)>>,
+    running: Mutex<Option<(CancelToken, Vec<std::thread::JoinHandle<()>>)>>,
 }
 
 impl Plugin for MprisPlugin {
@@ -45,22 +46,39 @@ impl Plugin for MprisPlugin {
     }
     fn register(&self, app: &App) {
         let stop = app.lifetime().child();
-        let (weak, changes, token) = (app.weak(), app.player.subscribe(self.id()), stop.clone());
-        let thread = std::thread::Builder::new()
-            .name("skwir-mpris".into())
+        let served = Arc::new(Mutex::new(None::<Served>));
+        let mut threads = Vec::new();
+        // Served on each connection, the session's bus started again.
+        let (weak, on, token) = (app.weak(), Arc::clone(&served), stop.clone());
+        let keeping = std::thread::Builder::new()
+            .name("skwir-mpris-bus".into())
             .spawn(move || {
-                if let Err(error) = serve(&weak, &changes, &token) {
-                    tracing::debug!("media controls are unavailable: {error:#}");
-                }
+                keep(&token, |connection| {
+                    // Held while served and told, so a change waits to be
+                    // told on the new connection; what the bus that ended
+                    // had is let go of quietly, its calls failing at once.
+                    let mut held = on.lock();
+                    let before = std::mem::replace(&mut *held, Served::on(connection, &weak));
+                    drop(held);
+                    drop(before);
+                });
+                on.lock().take();
             });
-        if let Ok(thread) = thread {
-            *self.running.lock() = Some((stop, thread));
-        }
+        threads.extend(keeping.ok());
+        // What plays told on whichever connection serves.
+        let (weak, changes, token) = (app.weak(), app.player.subscribe(self.id()), stop.clone());
+        let following = std::thread::Builder::new()
+            .name("skwir-mpris".into())
+            .spawn(move || follow(&weak, &changes, &served, &token));
+        threads.extend(following.ok());
+        *self.running.lock() = Some((stop, threads));
     }
     fn on_disable(&self, _: &App) {
-        if let Some((stop, thread)) = self.running.lock().take() {
+        if let Some((stop, threads)) = self.running.lock().take() {
             stop.cancel();
-            let _ = thread.join();
+            for thread in threads {
+                let _ = thread.join();
+            }
         }
     }
 }
@@ -299,10 +317,30 @@ fn rates(now: Option<&NowPlaying>) -> (f64, f64) {
     }
 }
 
+/// Call `connected` with the session's connection, then with the next
+/// each time the bus is started again (`bus::keep`), until `stop`.
+#[cfg(target_os = "linux")]
+fn keep(stop: &CancelToken, connected: impl FnMut(&zbus::blocking::Connection)) {
+    skwir_platform::bus::keep(skwir_platform::bus::session, stop, connected);
+}
+
+/// The free desktops' bus off Linux: one connection, kept until `stop`.
+#[cfg(not(target_os = "linux"))]
+fn keep(stop: &CancelToken, mut connected: impl FnMut(&zbus::blocking::Connection)) {
+    match zbus::blocking::Connection::session() {
+        Ok(connection) => {
+            connected(&connection);
+            let _ = stop.subscribe().receiver().recv();
+        }
+        Err(error) => tracing::debug!("media controls are unavailable: {error}"),
+    }
+}
+
 /// What is served on the session's connection, which the program shares
 /// (`bus::session`): taken back when the plugin ends, the name too.
 struct Served {
     connection: zbus::blocking::Connection,
+    player: zbus::blocking::object_server::InterfaceRef<Player>,
     name: String,
     named: bool,
 }
@@ -318,57 +356,56 @@ impl Drop for Served {
     }
 }
 
-/// Hold the bus name while something plays, and tell the bus what changed.
-fn serve(
-    app: &Weak<App>,
-    changes: &std::sync::mpsc::Receiver<()>,
-    stop: &CancelToken,
-) -> anyhow::Result<()> {
-    #[cfg(target_os = "linux")]
-    let connection = skwir_platform::bus::session()?;
-    #[cfg(not(target_os = "linux"))]
-    let connection = zbus::blocking::Connection::session()?;
-    // One name per process: two windows of two instances are two players.
-    let mut served = Served {
-        connection,
-        name: format!(
-            "org.mpris.MediaPlayer2.skwir.instance{}",
-            std::process::id()
-        ),
-        named: false,
-    };
-    let objects = served.connection.object_server();
-    objects.at(PATH, Root(app.clone()))?;
-    objects.at(PATH, Player(app.clone()))?;
-    let player = objects.interface::<_, Player>(PATH)?;
-    let mut last: Option<Arc<NowPlaying>> = None;
-    // What plays as it starts (turned on again while a song plays), then
-    // asleep until something changes: the channel ends when the plugin is
-    // turned off (its listener is dropped before `on_disable` waits for
-    // this thread) or the app goes. A timer woke it four times a second,
-    // forever.
-    let mut starting = true;
-    while std::mem::take(&mut starting) || (changes.recv().is_ok() && !stop.is_cancelled()) {
-        let Some(app) = app.upgrade() else { break };
-        let current = app.player.get();
-        drop(app);
-        match (current.is_some(), served.named) {
+impl Served {
+    /// The objects served on `connection`, named if something plays.
+    fn on(connection: &zbus::blocking::Connection, app: &Weak<App>) -> Option<Served> {
+        let serve = || -> zbus::Result<Served> {
+            let objects = connection.object_server();
+            objects.at(PATH, Root(app.clone()))?;
+            objects.at(PATH, Player(app.clone()))?;
+            Ok(Served {
+                connection: connection.clone(),
+                player: objects.interface::<_, Player>(PATH)?,
+                // One name per process: two windows of two instances are
+                // two players.
+                name: format!(
+                    "org.mpris.MediaPlayer2.skwir.instance{}",
+                    std::process::id()
+                ),
+                named: false,
+            })
+        };
+        match serve() {
+            Ok(mut served) => {
+                let current = app.upgrade().and_then(|app| app.player.get());
+                served.tell(current.as_deref(), false);
+                Some(served)
+            }
+            Err(error) => {
+                // Neither left half served.
+                let objects = connection.object_server();
+                let _ = objects.remove::<Player, _>(PATH);
+                let _ = objects.remove::<Root, _>(PATH);
+                tracing::debug!("media controls are unavailable: {error}");
+                None
+            }
+        }
+    }
+
+    /// Hold the bus name while `current` plays, and tell the bus what
+    /// changed: a seek too when it `jumped`.
+    fn tell(&mut self, current: Option<&NowPlaying>, jumped: bool) {
+        match (current.is_some(), self.named) {
             (true, false) => {
-                served.named = served.connection.request_name(served.name.as_str()).is_ok();
+                self.named = self.connection.request_name(self.name.as_str()).is_ok();
             }
             (false, true) => {
-                let _ = served.connection.release_name(served.name.as_str());
-                served.named = false;
+                let _ = self.connection.release_name(self.name.as_str());
+                self.named = false;
             }
             _ => {}
         }
-        let jumped = match (&last, &current) {
-            (Some(old), Some(new)) => {
-                old.path == new.path && (new.position - old.position_now()).abs() > 1.5
-            }
-            _ => false,
-        };
-        let emitter = player.signal_emitter();
+        let (player, emitter) = (&self.player, self.player.signal_emitter());
         zbus::block_on(async {
             let iface = player.get();
             // Cheap to say too much: listeners ask for what they show.
@@ -383,13 +420,39 @@ fn serve(
             let _ = iface.can_play_changed(emitter).await;
             let _ = iface.can_pause_changed(emitter).await;
             let _ = iface.can_seek_changed(emitter).await;
-            if jumped && let Some(new) = &current {
+            if jumped && let Some(new) = current {
                 let _ = Player::seeked(emitter, micros(new.position)).await;
             }
         });
+    }
+}
+
+/// Tell what `served` serves of each change of what plays, asleep between:
+/// the channel ends when the plugin is turned off (its listener is dropped
+/// before `on_disable` waits for this thread) or the app goes. A timer
+/// woke it four times a second, forever.
+fn follow(
+    app: &Weak<App>,
+    changes: &std::sync::mpsc::Receiver<()>,
+    served: &Mutex<Option<Served>>,
+    stop: &CancelToken,
+) {
+    let mut last: Option<Arc<NowPlaying>> = None;
+    while changes.recv().is_ok() && !stop.is_cancelled() {
+        let Some(app) = app.upgrade() else { break };
+        let current = app.player.get();
+        drop(app);
+        let jumped = match (&last, &current) {
+            (Some(old), Some(new)) => {
+                old.path == new.path && (new.position - old.position_now()).abs() > 1.5
+            }
+            _ => false,
+        };
+        if let Some(served) = served.lock().as_mut() {
+            served.tell(current.as_deref(), jumped);
+        }
         last = current;
     }
-    Ok(())
 }
 
 #[cfg(test)]

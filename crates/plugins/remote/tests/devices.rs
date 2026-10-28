@@ -1,14 +1,15 @@
 //! The devices GVfs offers (ADR-096), against a stand-in of its MTP volume
 //! monitor on a bus of the test's own: a phone plugged in is listed among
 //! the sidebar's devices by the name its volume has, at its address, gone
-//! once unplugged, followed again once the plugin is enabled again; one
-//! another program holds is said to be held, and by whom. Linux only, as
-//! GVfs is. Skipped, saying why, without `dbus-daemon` or `gio`.
+//! once unplugged, followed again once the plugin is enabled again, and
+//! once the bus is started again; one another program holds is said to be
+//! held, and by whom. Linux only, as GVfs is. Skipped, saying why, without
+//! `dbus-daemon` or `gio`.
 #![cfg(target_os = "linux")]
 
 use std::collections::HashMap;
 use std::io::BufRead;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -88,11 +89,21 @@ impl Ask for NoOne {
 struct Bus {
     daemon: Child,
     address: String,
-    _runtime: tempfile::TempDir,
+    runtime: tempfile::TempDir,
 }
 
 impl Bus {
     fn start() -> Option<Bus> {
+        Bus::listening(|runtime| format!("unix:dir={}", runtime.display()))
+    }
+
+    /// One at a socket path of its own, started again at the same address
+    /// by [`Bus::restart`].
+    fn at_a_path() -> Option<Bus> {
+        Bus::listening(|runtime| format!("unix:path={}", runtime.join("bus").display()))
+    }
+
+    fn listening(listen: impl Fn(&Path) -> String) -> Option<Bus> {
         // Short, as a real runtime folder is: a socket's path fits 108 bytes.
         let runtime = tempfile::Builder::new().prefix("d").tempdir().unwrap();
         let config = runtime.path().join("bus.conf");
@@ -103,7 +114,7 @@ impl Bus {
  "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
 <busconfig>
   <type>session</type>
-  <listen>unix:dir={}</listen>
+  <listen>{}</listen>
   <policy context="default">
     <allow send_destination="*" eavesdrop="true"/>
     <allow eavesdrop="true"/>
@@ -111,12 +122,26 @@ impl Bus {
   </policy>
 </busconfig>
 "#,
-                runtime.path().display()
+                listen(runtime.path())
             ),
         )
         .unwrap();
+        let (daemon, address) = Bus::daemon(runtime.path())?;
+        Some(Bus {
+            daemon,
+            address,
+            runtime,
+        })
+    }
+
+    /// The daemon of the configuration in `runtime`, and its address
+    /// without its guid, which a daemon started again has another of.
+    fn daemon(runtime: &Path) -> Option<(Child, String)> {
         let mut daemon = Command::new("dbus-daemon")
-            .arg(format!("--config-file={}", config.display()))
+            .arg(format!(
+                "--config-file={}",
+                runtime.join("bus.conf").display()
+            ))
             .args(["--nofork", "--print-address=1"])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -126,11 +151,17 @@ impl Bus {
         std::io::BufReader::new(daemon.stdout.take().unwrap())
             .read_line(&mut address)
             .unwrap();
-        Some(Bus {
-            daemon,
-            address: address.trim().to_owned(),
-            _runtime: runtime,
-        })
+        let address = address.trim().split(",guid=").next().unwrap_or_default();
+        Some((daemon, address.to_owned()))
+    }
+
+    /// Stopped, every connection to it ended, then started again.
+    fn restart(&mut self) {
+        let _ = self.daemon.kill();
+        let _ = self.daemon.wait();
+        let (daemon, address) = Bus::daemon(self.runtime.path()).unwrap();
+        assert_eq!(address, self.address, "started again at its address");
+        self.daemon = daemon;
     }
 }
 
@@ -240,6 +271,18 @@ impl StandIn {
     }
 }
 
+/// The stand-in on the bus at `address`, listing `volumes`.
+fn monitor(address: &str, volumes: &Arc<Mutex<Vec<Volume>>>) -> zbus::blocking::Connection {
+    zbus::blocking::connection::Builder::address(address)
+        .unwrap()
+        .name(MONITOR)
+        .unwrap()
+        .serve_at(PATH, StandIn(Arc::clone(volumes)))
+        .unwrap()
+        .build()
+        .unwrap()
+}
+
 /// Plug `volume` in (`VolumeAdded`) or unplug it (`VolumeRemoved`), as the
 /// monitor tells its listeners.
 fn plug(bus: &zbus::blocking::Connection, volumes: &Mutex<Vec<Volume>>, volume: &Volume, on: bool) {
@@ -317,14 +360,7 @@ fn a_device_gvfs_offers_is_listed_until_unplugged_and_said_held() {
         mounts: true,
     };
     let volumes = Arc::new(Mutex::new(vec![phone.clone()]));
-    let monitor = zbus::blocking::connection::Builder::address(private.address.as_str())
-        .unwrap()
-        .name(MONITOR)
-        .unwrap()
-        .serve_at(PATH, StandIn(Arc::clone(&volumes)))
-        .unwrap()
-        .build()
-        .unwrap();
+    let monitor = monitor(&private.address, &volumes);
 
     let runtime = tempfile::Builder::new().prefix("g").tempdir().unwrap();
     let gvfs: Arc<dyn Connector> = Arc::new(Gvfs {
@@ -452,4 +488,61 @@ fn a_device_gvfs_offers_is_listed_until_unplugged_and_said_held() {
     });
     assert!(!found(&listed, "Not a device"));
     assert!(found(&listed, "Example Camera"));
+}
+
+#[test]
+fn devices_are_followed_again_once_the_bus_is_back() {
+    if skwir_core::os_path::find_program("gio").is_none() {
+        eprintln!("skipped: gio (GLib) is not installed");
+        return;
+    }
+    let Some(mut private) = Bus::at_a_path() else {
+        eprintln!("skipped: dbus-daemon is not installed");
+        return;
+    };
+    let base = tempfile::tempdir().unwrap();
+    let phone = Volume {
+        name: "Example Phone",
+        uri: "mtp://Example_Phone_0123/",
+        node: base.path().join("usb-009-012"),
+        mounts: true,
+    };
+    let camera = Volume {
+        name: "Exémple Caméra d'été",
+        uri: "gphoto2://%5Busb%3A001%2C004%5D/",
+        node: base.path().join("usb-001-004"),
+        mounts: true,
+    };
+    let volumes = Arc::new(Mutex::new(vec![phone.clone()]));
+    let first = monitor(&private.address, &volumes);
+    let runtime = tempfile::Builder::new().prefix("g").tempdir().unwrap();
+    let gvfs: Arc<dyn Connector> = Arc::new(Gvfs {
+        env: vec![(
+            "DBUS_SESSION_BUS_ADDRESS".into(),
+            private.address.clone().into(),
+        )],
+        runtime: Some(runtime.path().to_path_buf()),
+        ..Gvfs::default()
+    });
+    let app = App::new(AppConfig::ephemeral(base.path().join("app"))).unwrap();
+    app.plugins.add(
+        Arc::new(RemotePlugin::with(Remotes::with(vec![gvfs]))),
+        &app,
+    );
+    until(&app, "the phone plugged in", |d| found(d, "Example Phone"));
+
+    // The bus started again, its monitor too, a camera plugged in while
+    // it was gone: what is offered there listed.
+    drop(first);
+    private.restart();
+    volumes.lock().push(camera.clone());
+    let again = monitor(&private.address, &volumes);
+    until(&app, "the camera listed on the bus back", |d| {
+        found(d, camera.name) && found(d, "Example Phone")
+    });
+
+    // And followed there: unplugged, told, gone.
+    plug(&again, &volumes, &phone, false);
+    until(&app, "the phone unplugged", |d| !found(d, "Example Phone"));
+    assert!(app.plugins.set_enabled("remote", false, &app));
 }

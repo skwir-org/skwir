@@ -171,8 +171,10 @@ ADR-077 (which revises ADR-021).
 - **What GVfs offers is listed before it is mounted** (ADR-096): its
   volume monitors on the session bus, asked and followed
   (`Connector::device_signals`, `devices`: one listener for every tool,
-  on the program's one session connection, each tool listed again on a
-  thread of its own, a burst asked once more after; what a tool asks to
+  on the program's one session connection, listening again on the next
+  once the session's bus is started again (`bus::keep`), every tool
+  listed again then; each tool listed again on a thread of its own, a
+  burst asked once more after; what a tool asks to
   list them, on a connection of its own closed once answered, as zbus
   gives up on a call only by its connection's timeout: `remote::bus`),
   each device the same
@@ -343,7 +345,15 @@ ADR-077 (which revises ADR-021).
   connection closed, the wsdd Skwir started stopped. Through Avahi's
   browsers on the system bus and wsdd (its daemon's `/run/wsdd.socket`,
   else `wsdd --no-host --discovery` on a socket of the runtime folder);
-  never a discovery protocol of Skwir's own. Avahi's signals are read on
+  never a discovery protocol of Skwir's own. The wsdd Skwir starts ends
+  with Skwir, whatever ends it: the system kills it once the browser's
+  thread that started it ends (`process::ends_with_starter`, Linux's
+  parent-death signal, which comes when that thread ends, not the
+  process: that thread waits on it and stops it before ending). What a
+  Skwir gone left (the socket of a wsdd killed so, a wsdd still listening
+  as one before that left it, killed: told to end, wsdd takes seconds to
+  say goodbye) is swept as the next starts one (`nearby::sweep_left`,
+  only once the system says its Skwir ended). Avahi's signals are read on
   a thread of their own into a queue of no bound, each resolved on
   another: zbus reads nothing while a match's queue (64) is full, so the
   browsers' first burst held every answer behind it (a test announces
@@ -405,7 +415,13 @@ ADR-077 (which revises ADR-021).
   in the user's `~/.ssh` (never over one there), its passphrase given to
   ssh-keygen through the askpass, never its command line. Only public
   halves leave the machine, over one login (a control master), through
-  the server's shell or, where it runs none, sftp. Tested against an
+  the server's shell or, where it runs none, sftp. Windows' ssh makes no
+  master: there each ssh and sftp logs in alone, the server's password
+  the first login was let in with given to the sftp sessions after
+  (`Typed`, never asked again), and whether ssh logged in is read from
+  how it ended (`ran`: its command's status, 255 its own failure, an
+  exec request refused counting as in). Tested on Linux too, each login
+  alone (`Ssh::alone`), against rclone's server. Tested against an
   OpenSSH server run as the user (its home and commands the test's, by a
   `ForceCommand`) and rclone's SFTP server (a password, no shell), with
   an ssh agent and keys of the test's own: never the user's agent,

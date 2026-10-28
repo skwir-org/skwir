@@ -1,12 +1,14 @@
 //! The media controls on the program's one session connection
 //! (`skwir_platform::bus`): turned off, what they served there is taken
 //! back (the name, the objects) and the connection stays the program's;
-//! turned on again, served anew. Run again on a session bus of its own.
-//! Skipped, saying why, without `dbus-daemon`.
+//! turned on again, served anew; the session's bus started again, served
+//! again on the next. Each run again on a session bus of its own. Skipped,
+//! saying why, without `dbus-daemon`.
 #![cfg(target_os = "linux")]
 
 use std::io::BufRead;
-use std::process::{Command, Stdio};
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -17,6 +19,61 @@ use skwir_plugin_mpris::MprisPlugin;
 
 const MARK: &str = "SKWIR_TEST_MPRIS_OWN_BUS";
 const PATH: &str = "/org/mpris/MediaPlayer2";
+
+/// A bus daemon of the test's own in `runtime`, listening at `listen`
+/// (`unix:dir=` for any socket, `unix:path=` for one started again at the
+/// same address): it and the address it prints. `None` without
+/// `dbus-daemon`.
+fn daemon(runtime: &Path, listen: &str) -> Option<(Child, String)> {
+    let config = runtime.join("bus.conf");
+    std::fs::write(
+        &config,
+        format!(
+            r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>{listen}</listen>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"#
+        ),
+    )
+    .unwrap();
+    let mut daemon = Command::new("dbus-daemon")
+        .arg(format!("--config-file={}", config.display()))
+        .args(["--nofork", "--print-address=1"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut address = String::new();
+    std::io::BufReader::new(daemon.stdout.take().unwrap())
+        .read_line(&mut address)
+        .unwrap();
+    Some((daemon, address.trim().to_owned()))
+}
+
+/// Run the test `name` again in a process of its own, with `env`: the
+/// session's bus is read from the environment, once.
+fn again(name: &str, env: &[(&str, &str)]) {
+    let ran = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", name])
+        .envs(env.iter().copied())
+        .env(MARK, "1")
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&ran.stdout);
+    assert!(
+        ran.status.success() && said.contains("1 passed"),
+        "{said}\n{}",
+        String::from_utf8_lossy(&ran.stderr)
+    );
+}
 
 fn until(what: &str, done: impl Fn() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -50,57 +107,17 @@ fn track() -> NowPlaying {
 fn turned_off_and_on_again_on_the_program_s_connection() {
     if std::env::var_os(MARK).is_none() {
         let runtime = tempfile::Builder::new().prefix("m").tempdir().unwrap();
-        let config = runtime.path().join("bus.conf");
-        std::fs::write(
-            &config,
-            format!(
-                r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
- "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
-<busconfig>
-  <type>session</type>
-  <listen>unix:dir={}</listen>
-  <policy context="default">
-    <allow send_destination="*" eavesdrop="true"/>
-    <allow eavesdrop="true"/>
-    <allow own="*"/>
-  </policy>
-</busconfig>
-"#,
-                runtime.path().display()
-            ),
-        )
-        .unwrap();
-        let Ok(mut daemon) = Command::new("dbus-daemon")
-            .arg(format!("--config-file={}", config.display()))
-            .args(["--nofork", "--print-address=1"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-        else {
+        let listen = format!("unix:dir={}", runtime.path().display());
+        let Some((mut daemon, address)) = daemon(runtime.path(), &listen) else {
             eprintln!("skipped: dbus-daemon is not installed");
             return;
         };
-        let mut address = String::new();
-        std::io::BufReader::new(daemon.stdout.take().unwrap())
-            .read_line(&mut address)
-            .unwrap();
-        let ran = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "turned_off_and_on_again_on_the_program_s_connection",
-            ])
-            .env("DBUS_SESSION_BUS_ADDRESS", address.trim())
-            .env(MARK, "1")
-            .output()
-            .unwrap();
+        again(
+            "turned_off_and_on_again_on_the_program_s_connection",
+            &[("DBUS_SESSION_BUS_ADDRESS", &address)],
+        );
         let _ = daemon.kill();
         let _ = daemon.wait();
-        let said = String::from_utf8_lossy(&ran.stdout);
-        assert!(
-            ran.status.success() && said.contains("1 passed"),
-            "{said}\n{}",
-            String::from_utf8_lossy(&ran.stderr)
-        );
         return;
     }
 
@@ -151,4 +168,81 @@ fn turned_off_and_on_again_on_the_program_s_connection() {
     assert_eq!(status().as_deref(), Some("Playing"));
     app.player.publish(None);
     until("let go of once nothing plays", || !named());
+}
+
+#[test]
+fn served_again_once_the_session_s_bus_is_back() {
+    // The session's bus is named without its daemon's guid, as systemd
+    // names it: the next daemon has another.
+    let Some(runtime) = std::env::var_os(MARK).and(std::env::var_os("SKWIR_TEST_MPRIS_RUNTIME"))
+    else {
+        if Command::new("dbus-daemon")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipped: dbus-daemon is not installed");
+            return;
+        }
+        let runtime = tempfile::Builder::new().prefix("m").tempdir().unwrap();
+        let address = format!("unix:path={}", runtime.path().join("bus").display());
+        again(
+            "served_again_once_the_session_s_bus_is_back",
+            &[
+                ("DBUS_SESSION_BUS_ADDRESS", &address),
+                ("SKWIR_TEST_MPRIS_RUNTIME", runtime.path().to_str().unwrap()),
+            ],
+        );
+        return;
+    };
+    let runtime = Path::new(&runtime);
+    let address = std::env::var("DBUS_SESSION_BUS_ADDRESS").unwrap();
+    let (mut first, _) = daemon(runtime, &address).unwrap();
+
+    let base = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(base.path().join("app"))).unwrap();
+    app.plugins.add(Arc::new(MprisPlugin::default()), &app);
+    let name = format!(
+        "org.mpris.MediaPlayer2.skwir.instance{}",
+        std::process::id()
+    );
+    // Asked from a connection of the desktop's, made again with the bus.
+    let named = |desktop: &zbus::blocking::Connection| {
+        let owned = || -> anyhow::Result<bool> {
+            let dbus = zbus::blocking::fdo::DBusProxy::new(desktop)?;
+            Ok(dbus.name_has_owner(zbus::names::BusName::try_from(name.as_str())?)?)
+        };
+        owned().unwrap_or(false)
+    };
+    let status = |desktop: &zbus::blocking::Connection| -> Option<String> {
+        zbus::blocking::Proxy::new(
+            desktop,
+            name.as_str(),
+            PATH,
+            "org.mpris.MediaPlayer2.Player",
+        )
+        .ok()?
+        .get_property("PlaybackStatus")
+        .ok()
+    };
+    app.player.publish(Some(track()));
+    let desktop = zbus::blocking::Connection::session().unwrap();
+    until("named while playing", || named(&desktop));
+    assert_eq!(status(&desktop).as_deref(), Some("Playing"));
+
+    // The session's bus started again while it plays: named and served
+    // there, with nothing else said.
+    let _ = first.kill();
+    let _ = first.wait();
+    let (mut second, _) = daemon(runtime, &address).unwrap();
+    let desktop = zbus::blocking::Connection::session().unwrap();
+    until("named again", || named(&desktop));
+    assert_eq!(status(&desktop).as_deref(), Some("Playing"));
+
+    // Followed there: nothing plays, the name let go of.
+    app.player.publish(None);
+    until("let go of once nothing plays", || !named(&desktop));
+    assert!(app.plugins.set_enabled("mpris", false, &app));
+    let _ = second.kill();
+    let _ = second.wait();
 }

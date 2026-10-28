@@ -1038,6 +1038,66 @@ pub fn runs(pid: u32) -> Option<bool> {
     }
 }
 
+/// Have `command`'s program killed by the system once the thread that
+/// starts it ends, so too when Skwir ends without stopping it (a crash, a
+/// kill): Linux's parent-death signal, set before it runs and kept across
+/// its `exec`. Should Skwir have ended already, it does not run at all.
+/// The signal comes when that *thread* ends, not the process: start it
+/// from a thread that outlives it (one that stops it before ending).
+#[cfg(target_os = "linux")]
+pub fn ends_with_starter(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    let starter = rustix::process::getpid();
+    // SAFETY: what runs between fork and exec makes two system calls and
+    // allocates nothing (an `io::Error` of a code or a kind is no
+    // allocation), as `pre_exec` asks.
+    #[allow(unsafe_code)]
+    unsafe {
+        command.pre_exec(move || {
+            rustix::process::set_parent_process_death_signal(Some(rustix::process::Signal::KILL))?;
+            // Ended before the signal was set: it would never come.
+            if rustix::process::getppid() != Some(starter) {
+                return Err(io::ErrorKind::Other.into());
+            }
+            Ok(())
+        });
+    }
+}
+
+/// The processes of this user one of whose arguments is `arg`, by pid
+/// (`/proc`): what a Skwir that ended left running, found by the socket
+/// it was told to listen on.
+#[cfg(target_os = "linux")]
+pub fn naming(arg: &std::ffi::OsStr) -> Vec<u32> {
+    use std::os::unix::fs::MetadataExt;
+    let (me, user) = (std::process::id(), rustix::process::geteuid().as_raw());
+    let Ok(processes) = std::fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    processes
+        .flatten()
+        .filter_map(|process| {
+            let pid = process.file_name().to_str()?.parse::<u32>().ok()?;
+            let ours = process.metadata().is_ok_and(|m| m.uid() == user);
+            let line = std::fs::read(process.path().join("cmdline")).ok()?;
+            (pid != me && ours && line.split(|b| *b == 0).any(|a| a == arg.as_encoded_bytes()))
+                .then_some(pid)
+        })
+        .collect()
+}
+
+/// Kill the process `pid` (`SIGKILL`: what was left running is owed no
+/// goodbye); whether it was signalled.
+#[cfg(target_os = "linux")]
+pub fn kill(pid: u32) -> bool {
+    i32::try_from(pid)
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+        .is_some_and(|pid| {
+            rustix::process::kill_process(pid, rustix::process::Signal::KILL).is_ok()
+        })
+}
+
 /// Start `command` and let it run on its own: in a process group of its own
 /// (a Ctrl+C in the terminal skwir was started from does not reach it), its
 /// exit collected by the reaper. Standard streams are the caller's to set.
@@ -1245,6 +1305,79 @@ mod tests {
         );
         assert!(ran.is_err());
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// What `a_program_that_ends_with_its_starter_goes_when_skwir_is_killed`
+    /// kills: a `sleep` started to end with it, its pid said, then waiting
+    /// to be killed.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "run by a_program_that_ends_with_its_starter_goes_when_skwir_is_killed"]
+    fn starts_until_killed() {
+        if std::env::var_os("SKWIR_TEST_STARTER").is_none() {
+            return;
+        }
+        let mut command = Command::new("sleep");
+        command
+            .arg("1000")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null());
+        ends_with_starter(&mut command);
+        let mut child = command.spawn().unwrap();
+        println!("started {}", child.id());
+        let _ = io::stdin().read(&mut [0]);
+        // Let go of, not killed: stopped all the same.
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    /// A program started to end with its starter is killed by the system
+    /// once the Skwir that started it is (a crash, a kill), though nothing
+    /// stopped it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_program_that_ends_with_its_starter_goes_when_skwir_is_killed() {
+        use std::io::BufRead;
+        let mut starter = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "process::tests::starts_until_killed",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("SKWIR_TEST_STARTER", "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut said = io::BufReader::new(starter.stdout.take().unwrap());
+        let mut line = String::new();
+        let pid = loop {
+            line.clear();
+            assert!(said.read_line(&mut line).unwrap() > 0, "it started nothing");
+            if let Some(pid) = line.trim().strip_prefix("started ") {
+                break pid.parse::<u32>().unwrap();
+            }
+        };
+        // There, and no zombie.
+        let alive = |pid: u32| {
+            std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+                stat.rsplit_once(") ")
+                    .is_some_and(|(_, rest)| !rest.starts_with('Z'))
+            })
+        };
+        assert!(alive(pid), "started");
+        starter.kill().unwrap();
+        starter.wait().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while alive(pid) {
+            if Instant::now() > deadline {
+                kill(pid);
+                panic!("it outlived the Skwir that started it");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// A program working in a folder is one of those using it; this

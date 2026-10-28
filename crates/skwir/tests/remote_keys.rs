@@ -585,6 +585,7 @@ fn ssh_with(identity: &Path, agent: Option<&Path>, known: &Path) -> Ssh {
             "GlobalKnownHostsFile=/dev/null".to_owned(),
         ],
         config: Some(PathBuf::from("/dev/null")),
+        ..Ssh::default()
     }
 }
 
@@ -979,6 +980,92 @@ fn key_login_is_set_up_by_the_server_s_password_on_a_server_of_sftp_alone() {
         std::fs::read_to_string(&authorized).unwrap(),
         format!("{}\n", b.line)
     );
+    no_master_left();
+    drop(rclone);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// As on Windows, whose ssh makes no master: each ssh and sftp logs in
+/// alone. On a server of SFTP alone (rclone's runs no command) the keys go
+/// up through sftp all the same, the server's password asked once and
+/// given to the sessions after; how ssh ended says whether it logged in.
+#[test]
+fn key_login_is_set_up_on_a_server_of_sftp_alone_where_no_login_is_shared() {
+    if installed(&["ssh", "sftp", "ssh-keygen", "rclone"]).is_none() {
+        return;
+    }
+    let base = fixture("alone");
+    let cancel = CancelToken::new();
+    keygen(&base.join("b"), "ed25519", "key b");
+    let b = public(&base.join("b"));
+    let none = base.join("no-keys");
+    std::fs::write(&none, "").unwrap();
+    let root = base.join("served");
+    std::fs::create_dir_all(&root).unwrap();
+    let mut rclone = Rclone::start(&base, &root, &none);
+    let address = Address::parse(&format!("sftp://tester@127.0.0.1:{}/", rclone.port)).unwrap();
+    let by_b = Ssh {
+        alone: true,
+        ..ssh_with(&base.join("b"), None, &base.join("known_hosts"))
+    };
+    let answers = Arc::new(Answers {
+        password: PASSWORD.to_owned(),
+        ..Answers::default()
+    });
+    let ask = ask_of(&answers);
+
+    // Not by key, the host alone asked.
+    assert!(!keys::logs_in(&address, &by_b, Some(&ask), &cancel));
+    let asked = answers.asked();
+    assert!(
+        matches!(asked.as_slice(), [one] if one.starts_with("confirm:")),
+        "the host alone: {asked:?}"
+    );
+
+    // A wrong password: nothing put up, and said so.
+    let wrong = Arc::new(Answers {
+        password: "not the password".to_owned(),
+        ..Answers::default()
+    });
+    let error = keys::install(
+        &address,
+        std::slice::from_ref(&b),
+        &by_b,
+        &ask_of(&wrong),
+        &cancel,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("refused the login"), "{error}");
+    assert!(!root.join(".ssh").exists());
+
+    // Its password asked once, for ssh's login, and given to the two sftp
+    // sessions after: the key put up, its folder made.
+    answers.forget();
+    assert_eq!(
+        keys::install(&address, std::slice::from_ref(&b), &by_b, &ask, &cancel).unwrap(),
+        1
+    );
+    let asked = answers.asked();
+    assert!(
+        matches!(asked.as_slice(), [one] if one.starts_with("password:") && one.contains("tester@127.0.0.1")),
+        "{asked:?}"
+    );
+    let authorized = root.join(".ssh/authorized_keys");
+    assert_eq!(
+        std::fs::read_to_string(&authorized).unwrap(),
+        format!("{}\n", b.line)
+    );
+
+    // Started again with those keys: in by key, though no command runs
+    // there; nothing asked, nothing added again.
+    rclone.again(&authorized);
+    assert!(keys::logs_in(&address, &by_b, None, &cancel));
+    answers.forget();
+    assert_eq!(
+        keys::install(&address, std::slice::from_ref(&b), &by_b, &ask, &cancel).unwrap(),
+        0
+    );
+    assert_eq!(answers.asked(), Vec::<String>::new());
     no_master_left();
     drop(rclone);
     std::fs::remove_dir_all(&base).unwrap();

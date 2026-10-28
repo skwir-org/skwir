@@ -14,7 +14,10 @@
 //! server adds those it lacks (`ADD`). A server that runs no command (an
 //! account held to SFTP, rclone's server, Windows' `cmd`) takes them
 //! through sftp over the same connection: its authorized keys read, those
-//! missing added, the file put back by a rename. Not ssh-copy-id: it makes
+//! missing added, the file put back by a rename. Windows' ssh makes no
+//! master: there each sftp logs in alone, given the server's password the
+//! first login was let in with (`Typed`), and whether a login worked is
+//! read from how ssh ended (`ran`). Not ssh-copy-id: it makes
 //! a scratch folder in `$HOME/.ssh` whatever it is asked; it adds again
 //! what is there unless it first logs in with each key, which for keys
 //! given in a file needs their private halves beside them; it takes the
@@ -177,6 +180,10 @@ pub struct Ssh {
     pub options: Vec<String>,
     /// A configuration file in place of the user's (`-F`): a test's.
     pub config: Option<PathBuf>,
+    /// Each ssh and sftp logs in alone, none sharing a first one's login
+    /// (its master): as on Windows, whose ssh makes none; a test's
+    /// elsewhere.
+    pub alone: bool,
 }
 
 impl Ssh {
@@ -187,7 +194,14 @@ impl Ssh {
             askpass: sshfs.askpass.clone(),
             options: sshfs.ssh_options.clone(),
             config: sshfs.ssh_config.clone(),
+            alone: false,
         }
+    }
+
+    /// Whether the ssh and sftp run after a first login share it, through
+    /// its master: never on Windows, whose ssh makes none.
+    fn shares_login(&self) -> bool {
+        cfg!(unix) && !self.alone
     }
 
     fn askpass(&self) -> anyhow::Result<PathBuf> {
@@ -336,6 +350,80 @@ impl<'a> Master<'a> {
     /// Whether it logged in, and serves.
     fn running(&self) -> bool {
         self.control("check")
+    }
+}
+
+/// How the sftp sessions after the first login log in: through its
+/// master, or each alone, asking through the askpass (Windows').
+enum Login<'a> {
+    Through(&'a Master<'a>),
+    Alone(&'a mounter::Askpass),
+}
+
+/// Whether ssh logged in, read from how it ended where no master says so:
+/// it exits with its command's status, 255 being its own failure (no
+/// connection, the login refused); or the server let it in and refused
+/// to run any command (an exec request refused).
+fn ran(finished: &process::Finished) -> bool {
+    if finished.stderr.contains("Permission denied (") {
+        return false;
+    }
+    finished.status.code().is_some_and(|code| code != 255)
+        || finished.stderr.contains("request failed on channel")
+}
+
+/// The window's answers, the server's password the first login was let
+/// in with kept: where each session after logs in alone (no master shares
+/// that login: Windows'), it is given to them, never asked again. Kept
+/// only once that login worked, so a wrong one typed is asked again.
+struct Typed {
+    ask: Arc<dyn Ask>,
+    /// The last typed, and whether the first login was let in with it.
+    password: parking_lot::Mutex<(Option<String>, bool)>,
+}
+
+impl Typed {
+    fn new(ask: &Arc<dyn Ask>) -> Typed {
+        Typed {
+            ask: Arc::clone(ask),
+            password: parking_lot::Mutex::new((None, false)),
+        }
+    }
+
+    /// The first login was let in: what was typed is given from now on.
+    fn worked(&self) {
+        self.password.lock().1 = true;
+    }
+}
+
+impl Ask for Typed {
+    fn secret(&self, title: &str, accept: &str, cancel: &CancelToken) -> Option<String> {
+        self.ask.secret(title, accept, cancel)
+    }
+
+    fn confirm(&self, title: &str, detail: &str, cancel: &CancelToken) -> bool {
+        self.ask.confirm(title, detail, cancel)
+    }
+
+    fn password(
+        &self,
+        title: &str,
+        accept: &str,
+        cancel: &CancelToken,
+    ) -> Option<connector::Password> {
+        if let (Some(text), true) = &*self.password.lock() {
+            return Some(connector::Password {
+                text: text.clone(),
+                remember: false,
+            });
+        }
+        let answer = self.ask.password(title, accept, cancel)?;
+        self.password.lock().0 = Some(answer.text.clone());
+        Some(answer)
+    }
+
+    fn kept_password(&self) -> Option<String> {
+        self.ask.kept_password()
     }
 }
 
@@ -577,9 +665,20 @@ pub fn install(
     let server = Server::of(address)?;
     let program = process::required("ssh")?;
     let attempt = mounter::attempt(cancel);
-    let askpass = mounter::Askpass::serve_with(ssh.askpass()?, ask, &attempt)?;
-    let master = Master::new(&program, ssh, &server)?;
-    let mut command = ssh.command(&program, &[master.options(), quiet_session()].concat());
+    let typed = Arc::new(Typed::new(ask));
+    let askpass = mounter::Askpass::serve_with(
+        ssh.askpass()?,
+        &(Arc::clone(&typed) as Arc<dyn Ask>),
+        &attempt,
+    )?;
+    let master = if ssh.shares_login() {
+        Some(Master::new(&program, ssh, &server)?)
+    } else {
+        None
+    };
+    let mut ours = master.as_ref().map(Master::options).unwrap_or_default();
+    ours.extend(quiet_session());
+    let mut command = ssh.command(&program, &ours);
     server.for_ssh(&mut command);
     command.arg(format!("exec sh -c '{ADD}'"));
     askpass.give(&mut command);
@@ -603,27 +702,53 @@ pub fn install(
                 .unwrap_or("it did not say why")
         );
     }
-    if !master.running() {
+    let logged_in = match &master {
+        Some(master) => master.running(),
+        None => ran(&finished),
+    };
+    if !logged_in {
         let error = anyhow::anyhow!("{}", crate::sshfs::words(&finished.stderr));
         return Err(mounter::ended(&attempt, cancel, error));
     }
+    typed.worked();
     // Logged in to a server that runs no shell: through sftp.
-    by_sftp(&master, keys, &attempt).map_err(|error| mounter::ended(&attempt, cancel, error))
+    let login = match &master {
+        Some(master) => Login::Through(master),
+        None => Login::Alone(&askpass),
+    };
+    by_sftp(ssh, &server, &login, keys, &attempt)
+        .map_err(|error| mounter::ended(&attempt, cancel, error))
 }
 
-/// [`install`] through sftp over `master`'s login: the authorized keys
-/// read, those of `keys` missing added, the file put beside them and
+/// [`install`] through sftp, logged in as `login` says: the authorized
+/// keys read, those of `keys` missing added, the file put beside them and
 /// renamed over them, so a connection lost on the way leaves them whole.
-fn by_sftp(master: &Master<'_>, keys: &[Key], cancel: &CancelToken) -> anyhow::Result<usize> {
+fn by_sftp(
+    ssh: &Ssh,
+    server: &Server,
+    login: &Login<'_>,
+    keys: &[Key],
+    cancel: &CancelToken,
+) -> anyhow::Result<usize> {
     let program = process::required("sftp")?;
     let folder = private_folder()?;
     let name = unique("keys");
     let (read, written) = (format!("{name}.server"), format!("{name}.new"));
     let _gone = Gone(vec![folder.join(&read), folder.join(&written)]);
     let session = |batch: String| -> anyhow::Result<process::Finished> {
-        let mut command = master.ssh.command(&program, &master.through());
+        let mut command = match login {
+            Login::Through(master) => ssh.command(&program, &master.through()),
+            Login::Alone(askpass) => {
+                // sftp's `-b` sets `BatchMode`, which asks nothing: given
+                // before it, ours holds (ssh keeps an option's first value).
+                let ours = [vec!["BatchMode=no".to_owned()], quiet_session()].concat();
+                let mut command = ssh.command(&program, &ours);
+                askpass.give(&mut command);
+                command
+            }
+        };
         command.current_dir(&folder).args(["-b", "-"]);
-        master.server.for_sftp(&mut command);
+        server.for_sftp(&mut command);
         process::run_to_exit(&mut command, Some(batch.as_bytes()), cancel, PATIENCE)
     };
     let got = session(format!("get .ssh/authorized_keys {read}\n"))?;
@@ -734,13 +859,16 @@ pub fn logs_in(
     ours.extend(quiet_session());
     // Logged in is the master serving, whatever the server made of `true`:
     // rclone's runs no command, an account held to SFTP runs its own.
-    // Windows' ssh makes no master: there, `true` ran.
-    #[cfg(unix)]
-    let Ok(master) = Master::new(&program, ssh, &server) else {
-        return false;
+    // Windows' ssh makes no master: there, how ssh ended says it (`ran`).
+    let master = if ssh.shares_login() {
+        let Ok(master) = Master::new(&program, ssh, &server) else {
+            return false;
+        };
+        ours.extend(master.options());
+        Some(master)
+    } else {
+        None
     };
-    #[cfg(unix)]
-    ours.extend(master.options());
     let mut command = ssh.command(&program, &ours);
     server.for_ssh(&mut command);
     command.arg("true");
@@ -751,14 +879,9 @@ pub fn logs_in(
     let Ok(finished) = process::run_to_exit(&mut command, None, &attempt, patience) else {
         return false;
     };
-    #[cfg(unix)]
-    {
-        let _ = finished;
-        master.running()
-    }
-    #[cfg(not(unix))]
-    {
-        finished.status.success()
+    match &master {
+        Some(master) => master.running(),
+        None => ran(&finished),
     }
 }
 
