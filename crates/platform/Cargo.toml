@@ -25,13 +25,13 @@ parking_lot.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
 jiff.workspace = true
-scraper = "0.24"
+scraper = "0.27"
 # The versions scraper itself builds on: publisher stylesheets are parsed and
 # matched against its tree, and XHTML read as XML is built into that tree.
-cssparser = "0.35"
-selectors = "0.31"
-markup5ever = "0.35"
-ego-tree = "0.10"
+cssparser = "0.37"
+selectors = "0.38"
+markup5ever = "0.39"
+ego-tree = "0.11"
 roxmltree.workspace = true
 # SVG pictures in documents, and fixed-layout pages drawn as SVG with the
 # book's fonts; the version and features gpui already links.

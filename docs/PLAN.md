@@ -201,6 +201,10 @@ leave (ADR-077).
 - A tag place's check uses the first count listed that covers it, not
   the deepest: right, but it reads more than a subfolder's own newer
   count would.
+- scraper 0.29 (selectors 0.41, cssparser 0.38, html5ever 0.40) waits
+  for lol_html: it needs servo_arc 0.5, while lol_html 3.0.2 (merman's)
+  keeps selectors 0.37 on servo_arc 0.4, so taking it adds a duplicate;
+  scraper 0.27's set is in (2026-10-28).
 - The PDF helper reads page labels through a second binding to PDFium:
   pdfium-render 0.9 keeps its raw bindings private (its issue 279); drop
   the second binding once that is fixed.

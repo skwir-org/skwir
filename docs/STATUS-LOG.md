@@ -6716,3 +6716,22 @@ stopped them once for about an hour.
   behind features Skwir does not use). Checked: clippy and tests of the
   djvu helper and plugin, `skwir`'s `djvu` tests, `just djvu-check`
   (djvulibre and djvu-rs both pass, djvu-rs's ink at most 0.32 % off).
+- **Window check of the Trash refusal and the tables** (night-scope, Xvfb,
+  the debug build at 69af41f8, scratch HOME and XDG folders, the
+  machine's other trashes hidden by an empty tmpfs over `/run/media` in
+  a namespace of its own): Ctrl+V of a copied file in the Trash says
+  "Copied files cannot be put in the trash: cut them instead" and
+  leaves the file; a cut one pasted there is trashed. Split, the other
+  pane on the Trash: Shift+F5 says "Files cannot be copied to the
+  trash: move them there instead" and leaves the file; Shift+F6 trashes
+  it. A SQLite 3 file named `l'été.db3` previews as its tables (typed
+  "SQLite3 database" from its bytes; the list's Type column, typed by
+  name, says "DB3 file"), and an `.xlsx` as its sheet.
+- **The HTML crates** (night-crates): scraper 0.27, selectors 0.38,
+  cssparser 0.37, markup5ever and html5ever 0.39, ego-tree 0.11 in the
+  platform, no code change. scraper 0.29's set would add a servo_arc
+  duplicate beside lol_html's selectors (PLAN); 0.27's adds none and
+  removes the phf 0.11 family among others. Checked: clippy of the
+  platform, its tests (287), `extended_previews` and `any_file` (17,
+  email included), the documents, email, EPUB and Markdown plugins
+  (68). `just previews-check` covers the archive and audio helpers only.
