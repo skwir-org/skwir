@@ -67,7 +67,7 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Globali
 # The shell's thumbnails (ADR-041): its COM interfaces, through the
 # version of `windows` gpui already links.
 # The shell's icons, from the system image list (system_icons).
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_UI_Controls", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 # macOS's own calls (ADR-035): the calendar's first weekday, the
 # Keychain, the types the system knows (ADR-037). The versions already in

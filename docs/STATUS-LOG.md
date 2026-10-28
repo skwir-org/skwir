@@ -6747,3 +6747,10 @@ stopped them once for about an hour.
   tests of every crate that calls toml (1376) and `skwir`'s settings,
   cli, notes stores, tags, djvu, previews, thumbnails, any-file and
   plugins-toggle tests (47).
+- **windows 0.62** (night-crates) in the platform, the version gpui
+  links: no code change; for Windows the build loses its second copies
+  of windows, windows-core and seven more (0.61 stays in the lock for
+  gpui's screen capture, which nothing builds). Checked: `just
+  check-windows`; `just test-windows -p skwir-platform` (183 of 184:
+  `calendar`'s clock test made an instant Windows cannot hold, a test
+  of 2026-10-26, fixed in the next commit).
