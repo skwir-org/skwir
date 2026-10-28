@@ -6762,3 +6762,11 @@ stopped them once for about an hour.
   clippy of plugin-api and the plugins from outside for wasm32; the
   extend, plugin-api and module-helper tests (25), which build the
   modules with 0.63 and run them through the helper.
+- **calamine 0.37** (night-crates) in the tables plugin: no code change;
+  it takes quick-xml 0.42 and zip 9, so zip 8 and typed-path's second
+  copy leave the lock. Checked: clippy on Linux and for Windows; the
+  tables and map-tiles tests (46), the tables tests under Wine (18),
+  `extended_previews` (15). **rusqlite 0.41 left out**: it supports
+  SQLite 3.45.3 or newer, and the AppImage's Ubuntu 22.04 root has
+  3.37.2 (PLAN); tried, its tests passed on Linux and under Wine, and
+  reverted.

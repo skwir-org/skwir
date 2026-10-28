@@ -205,6 +205,13 @@ leave (ADR-077).
   for lol_html: it needs servo_arc 0.5, while lol_html 3.0.2 (merman's)
   keeps selectors 0.37 on servo_arc 0.4, so taking it adds a duplicate;
   scraper 0.27's set is in (2026-10-28).
+- rusqlite 0.41 (libsqlite3-sys 0.39) supports SQLite 3.45.3 or newer,
+  and on Linux Skwir links the system's: the AppImage builds in an
+  Ubuntu 22.04 root (3.37.2) and Ubuntu 24.04 has 3.45.1, so 0.40 stays
+  (3.34.1 or newer). It waits for those roots to move, or for a decision
+  to bundle SQLite on Linux. 0.41 also fixed a use-after-free when a
+  progress handler is replaced while it runs; Skwir replaces one only
+  between queries, under the connection's lock (map-tiles).
 - The PDF helper reads page labels through a second binding to PDFium:
   pdfium-render 0.9 keeps its raw bindings private (its issue 279); drop
   the second binding once that is fixed.

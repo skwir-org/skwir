@@ -15,7 +15,7 @@ serde_json.workspace = true
 csv = "1"
 # Excel workbooks, read cell by cell, their zip walked first
 # (`skwir_platform::package`) to bound what calamine reads whole.
-calamine = { version = "0.36", default-features = false }
+calamine = { version = "0.37", default-features = false }
 # SQLite databases, read by the system's libsqlite3 (ADR-022), not a
 # bundled copy; built in on Windows alone, which has none to link.
 rusqlite = { version = "0.40", default-features = false, features = ["hooks", "bundled-windows"] }
