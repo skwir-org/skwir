@@ -270,7 +270,10 @@ server and network. Undo history is cleared when Skwir exits.
   that ended at the last page visited; it measures every page. A long name in
   the grid wraps on up to three lines again. Going from one PDF to another in
   an archive no longer redraws the first a page at a time while the next one
-  opens, nor does turning to a PDF's hex view.
+  opens, nor does turning to a PDF's hex view. Files copied (not cut) and
+  pasted in the Trash are refused, rather than the files themselves being
+  trashed; the same goes for Shift+F5 to a pane showing the Trash. A drag onto
+  the Trash still trashes, whatever keys are held.
 - **Scripts and agents**: a file selected, a folder opened or a sort changed by
   `skwir cmd` or an agent shows in the window at once, not at the next move of
   the mouse. An agent's changes are always reviewed and its private folders

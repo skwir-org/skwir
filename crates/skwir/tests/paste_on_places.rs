@@ -2,7 +2,7 @@
 //! files go to its drop command with only the arguments it takes (the
 //! shelf's and the trash's take the files alone; a tag's is told whether
 //! they move and from where), and a cut pasted on a tag is done by that
-//! paste's plan alone.
+//! paste's plan alone. The trash takes no copy.
 
 #[cfg(unix)]
 use std::path::Path;
@@ -145,6 +145,28 @@ fn files_cut_are_pasted_in_the_trash() {
     let r = s.app.executor.execute_blocking(&plan, s.app.lifetime());
     assert!(r.error.is_none(), "{:?}", r.error);
     assert!(!s.root.join("notes one.txt").exists(), "in the trash");
+}
+
+/// Ctrl+V in the Trash of files copied, not cut: refused, since the
+/// trash keeps files and not copies of them. The file stays where it
+/// is, and copied: pasted in a folder, it is copied there.
+#[cfg(target_os = "linux")]
+#[test]
+fn files_copied_are_not_pasted_in_the_trash() {
+    let s = setup();
+    take(&s, "notes one.txt", "clipboard_copy");
+    go(&s, &Location::parse("trash:"));
+    let refused = s
+        .app
+        .dispatch(&Invocation::new("clipboard_paste"))
+        .expect_err("the trash takes no copy");
+    assert!(refused.to_string().contains("cut them"), "{refused}");
+    assert!(s.root.join("notes one.txt").exists(), "left where it is");
+    go(&s, &Location::from_path(&s.root));
+    let Outcome::Plan(plan) = s.app.dispatch(&Invocation::new("clipboard_paste")).unwrap() else {
+        panic!("a plan that copies it")
+    };
+    assert!(plan.title.starts_with("copy to "), "{}", plan.title);
 }
 
 /// A cut pasted on a tag, its plan dismissed: another plan's notes on the

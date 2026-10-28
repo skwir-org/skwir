@@ -113,8 +113,10 @@ and `notes.agree` are core `notes.*` commands.
   listed by the core's folder listing (`Trail::one_folder`).
 - The trash plugin reads; the core acts ([operations.md](operations.md)).
 - A location of trashed files says `Verbs::restore` (`restores`):
-  Restore instead of Move to Trash; drop or paste trashes; Cut takes files
-  out where pasted; Delete deletes for good.
+  Restore instead of Move to Trash; a drop (Ctrl or not) or a paste of
+  files cut trashes, and files copied are refused (Ctrl+V, Shift+F5): the
+  trash keeps files, not copies; Cut takes files out where pasted; Delete
+  deletes for good.
 
 ## Remote folders
 

@@ -630,7 +630,10 @@ pub struct Verbs {
     pub export: Option<crate::command::Invocation>,
     /// Its files are the trash's, put back where they came from by this
     /// (run with `pane`): a menu item for them. Move to Trash does not
-    /// apply to them, and Delete deletes them for good, after asking.
+    /// apply to them, and Delete deletes them for good, after asking. It
+    /// keeps files, not copies of them: files copied are refused here
+    /// (pasted after Copy, the split's Copy), as GNOME's Files refuses
+    /// them, and a drag puts them in the trash whatever keys are held.
     pub restore: Option<crate::command::Invocation>,
     /// Buttons of its own in its pane's row, after the view's: the shelf's
     /// Move and Copy to the other pane, the trash's Empty Trash.

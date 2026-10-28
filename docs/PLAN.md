@@ -205,8 +205,6 @@ leave (ADR-077).
 - ops-basic knows its paste's plan by the changes it describes, not its
   id: an `Executor::observe_plans(owner, Fn(PlanId, &[Change]))` hook
   would let it remember the plan.
-- A copied (not cut) file pasted in the Trash is trashed: to decide
-  whether Ctrl+V of a copy there is refused.
 - The tables plugin picks the spreadsheet and SQLite readers by
   extension; the sidebar's top tags count hidden files and folders under
   network mounts below home; files inside a folder hidden by Windows'

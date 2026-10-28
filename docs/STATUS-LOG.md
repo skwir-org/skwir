@@ -6575,3 +6575,16 @@ those offered:
   check-macos`, `just remote-check`,
   `just a11y-check`, `just smoke`, `just bench-check`, `just
   release-check`, any window check of the fixes.
+- **A copy pasted in the Trash** (the user's decision, after the
+  review): Ctrl+V of files copied, not cut, in the Trash or a folder of
+  it is refused ("cut them instead"), and they stay copied, where it
+  trashed the files themselves since 0.2. GNOME's Files refuses any
+  paste there; Dolphin puts a copy in the trash; Thunar and Nemo offer
+  Paste and trash a cut. Shift+F5 to a pane showing the Trash is refused
+  too, while a drag trashes whatever keys are held, as every file
+  manager's Trash takes one. The location's `Verbs::restore` says it
+  (ops-basic's paste, the shell's `drop_on_place`). Checked: clippy with
+  Rust 1.99.1 on core, ui, ops-basic, trash and the binary;
+  `paste_on_places.rs` (its new test seen failing without the refusal),
+  ops-basic's, the trash plugin's and the shell's drop tests. Shift+F5
+  is compiled only: not tried in a window.

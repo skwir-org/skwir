@@ -302,7 +302,8 @@ fn paste(clipboard: &Mutex<Clipboard>, a: PasteArgs, app: &App) -> anyhow::Resul
 /// what its provider says a drop means there (`Verbs::drop`), with the
 /// clipboard's files, whether they were cut, and where from. A cut is
 /// done once pasted: once the plan it answers applies, when it answers
-/// one.
+/// one. The trash keeps files, not copies of them (`Verbs::restore`):
+/// what was copied is refused there, and stays copied.
 fn paste_on_place(
     clipboard: &Mutex<Clipboard>,
     pane: PaneId,
@@ -312,11 +313,16 @@ fn paste_on_place(
     let shown = app
         .pane_location(pane)
         .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
-    let Some(drop) = app.verbs(&shown).drop else {
+    let verbs = app.verbs(&shown);
+    let Some(drop) = verbs.drop else {
         anyhow::bail!("nothing can be pasted here");
     };
     let own = given.is_none();
     let (entries, cut, places, from) = taken(clipboard, given)?;
+    anyhow::ensure!(
+        cut || verbs.restore.is_none(),
+        "Copied files cannot be put in the trash: cut them instead"
+    );
     let mut invocation = drop;
     if !invocation.args.is_object() {
         invocation.args = serde_json::json!({});

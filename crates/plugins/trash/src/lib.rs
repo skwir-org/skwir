@@ -600,7 +600,8 @@ impl LocationProvider for TrashProvider {
     }
 
     /// Files dropped or pasted here are put in the trash, in one of its
-    /// folders as on the trash itself; its own are restored
+    /// folders as on the trash itself (files copied are refused, as
+    /// `Verbs::restore` says); its own are restored
     /// (`Verbs::restore`), and deleted for good by Delete, or all at once
     /// by the trash's button.
     fn verbs(&self, location: &Location) -> Verbs {

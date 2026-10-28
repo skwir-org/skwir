@@ -801,7 +801,10 @@ impl Shell {
     /// folder: what its provider says a drop means there (`Verbs::drop`),
     /// told whether the files move (not with Ctrl: a tag's then takes
     /// them out of the one they were dragged from). Returns whether
-    /// `place` takes drops.
+    /// `place` takes drops. The trash keeps files, not copies of them
+    /// (`Verbs::restore`): a copy asked for (Shift+F5) is refused there,
+    /// while a drag puts them in the trash whatever keys are held, as
+    /// every file manager's Trash takes one.
     pub fn drop_on_place(
         &mut self,
         from: PaneId,
@@ -810,9 +813,18 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        let Some(drop) = self.app.verbs(place).drop else {
+        let verbs = self.app.verbs(place);
+        let Some(drop) = verbs.drop else {
             return false;
         };
+        if verbs.restore.is_some() && how.is_some_and(|how| how != DropOp::Move) {
+            self.set_status(
+                "Files cannot be copied to the trash: move them there instead",
+                true,
+                cx,
+            );
+            return true;
+        }
         // Where the files come from, when it is not the place the pane
         // shows: a folder or a place opened in it (a board's column), which
         // a move takes them out of.
