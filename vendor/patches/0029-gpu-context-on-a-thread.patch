@@ -1,10 +1,10 @@
 0029 gpu-context-on-a-thread: Vulkan starts on a thread of its own while the platform sets up
 
 diff --git a/crates/gpui_linux/src/linux/platform.rs b/crates/gpui_linux/src/linux/platform.rs
-index 079fbd2..40f8066 100644
+index 5933f5e..a1b448c 100644
 --- a/crates/gpui_linux/src/linux/platform.rs
 +++ b/crates/gpui_linux/src/linux/platform.rs
-@@ -334,6 +334,12 @@ impl LinuxPlatform {
+@@ -349,6 +349,12 @@ impl LinuxPlatform {
              #[cfg(feature = "wayland")]
              wayland_socket: crate::linux::take_wayland_socket_from_environment(),
          };
@@ -17,7 +17,7 @@ index 079fbd2..40f8066 100644
          let event_loop = EventLoop::try_new().expect("failed to create Linux event loop");
          let (common, main_receiver, power_receiver) = LinuxCommon::new(event_loop.get_signal());
          let common = Rc::new(RefCell::new(common));
-@@ -386,11 +392,16 @@ impl LinuxPlatform {
+@@ -401,11 +407,16 @@ impl LinuxPlatform {
                      .unwrap_or_else(|error| panic!("{error:#}"));
                  self.replace_connection(connection);
              }

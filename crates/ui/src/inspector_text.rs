@@ -457,7 +457,7 @@ pub fn part(
         gpui::InteractiveText::new(element.clone(), text).on_click(ranges, move |i, window, cx| {
             let link = &followed[i];
             let held = window.modifiers();
-            if link.found && !held.secondary() {
+            if link.found && !crate::keymap::secondary(&held) {
                 return;
             }
             // A note opens under its reference: where the reference is
@@ -503,7 +503,7 @@ pub fn part(
                         .find(|link| link.shown.contains(&index))
                         .map(|link| link.block.clone())
                 });
-            let held = event.modifiers.secondary();
+            let held = crate::keymap::secondary(&event.modifiers);
             let _ = weak.update(cx, |s, cx| s.hover_link(&element, under, held, cx));
         }
     });

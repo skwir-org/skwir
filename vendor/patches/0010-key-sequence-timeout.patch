@@ -1,10 +1,10 @@
 0010 key-sequence-timeout: configurable (or no) key sequence timeout
 
 diff --git a/crates/gpui/src/app.rs b/crates/gpui/src/app.rs
-index 722a44b..6af8965 100644
+index 7eca7f2..be2c315 100644
 --- a/crates/gpui/src/app.rs
 +++ b/crates/gpui/src/app.rs
-@@ -914,6 +914,9 @@ pub struct App {
+@@ -945,6 +945,9 @@ pub struct App {
      pub(crate) accessibility_force_disabled: bool,
      pending_updates: usize,
      quit_mode: QuitMode,
@@ -14,7 +14,7 @@ index 722a44b..6af8965 100644
      quitting: bool,
  
      // We need to ensure the leak detector drops last, after all tasks, callbacks and things have been dropped.
-@@ -1013,6 +1016,7 @@ impl App {
+@@ -1046,6 +1049,7 @@ impl App {
                  #[cfg(any(feature = "inspector", debug_assertions))]
                  inspector_element_registry: InspectorElementRegistry::default(),
                  quit_mode: QuitMode::default(),
@@ -22,7 +22,7 @@ index 722a44b..6af8965 100644
                  quitting: false,
                  cursor_hide_mode: CursorHideMode::default(),
                  reduce_motion: false,
-@@ -2297,6 +2301,13 @@ impl App {
+@@ -2336,6 +2340,13 @@ impl App {
          result.context("window not found")
      }
  
@@ -37,10 +37,10 @@ index 722a44b..6af8965 100644
      /// so it can be held across `await` points.
      pub fn to_async(&self) -> AsyncApp {
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index 9d86115..817782d 100644
+index 0d83066..cc2a9a7 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -6166,20 +6166,22 @@ impl Window {
+@@ -6198,20 +6198,22 @@ impl Window {
              let needs_timeout = previous_timeout.is_some()
                  || match_result.pending_has_binding
                  || text_input_requires_timeout;

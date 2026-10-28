@@ -1,10 +1,10 @@
 0030 active-descendant-for: an element reports itself focused while a focus handle beside it holds the focus
 
 diff --git a/crates/gpui/src/elements/div.rs b/crates/gpui/src/elements/div.rs
-index 691a9a0..6afd58d 100644
+index ab9079b..b859334 100644
 --- a/crates/gpui/src/elements/div.rs
 +++ b/crates/gpui/src/elements/div.rs
-@@ -1393,6 +1393,23 @@ pub trait StatefulInteractiveElement: InteractiveElement {
+@@ -1440,6 +1440,23 @@ pub trait StatefulInteractiveElement: InteractiveElement {
          self
      }
  
@@ -28,7 +28,7 @@ index 691a9a0..6afd58d 100644
      /// Contribute synthetic accessibility nodes — nodes that don't correspond
      /// to any element — as children of this element's a11y node. For example,
      /// text runs describing an editor's text content.
-@@ -2228,6 +2245,7 @@ pub struct Interactivity {
+@@ -2279,6 +2296,7 @@ pub struct Interactivity {
          Vec<(accesskit::Action, crate::window::a11y::A11yActionListener)>,
      pub(crate) a11y_synthetic_children: Option<Box<dyn FnOnce(&mut crate::A11ySubtreeBuilder)>>,
      pub(crate) report_active_descendant_focus: bool,
@@ -36,7 +36,7 @@ index 691a9a0..6afd58d 100644
      pub(crate) override_role: Option<accesskit::Role>,
      pub(crate) aria: AriaProperties,
  
-@@ -2385,6 +2403,16 @@ impl Interactivity {
+@@ -2436,6 +2454,16 @@ impl Interactivity {
                      .set_active_descendant(global_id.accesskit_node_id());
              }
          }

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use gpui::{
     App, Bounds, CursorStyle, Element, ElementId, FocusHandle, Font, FontStyle, FontWeight,
     GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollWheelEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollEvent,
     ShapedLine, SharedString, StrikethroughStyle, Style, TextRun, UTF16Selection, UnderlineStyle,
     Window, point, px, relative, size,
 };
@@ -431,7 +431,7 @@ impl Element for TerminalGrid {
             .contains(&window.mouse_position())
             .then(|| geometry.link_under(&self.screen, window.mouse_position()))
             .flatten();
-        let armed = under.filter(|_| window.modifiers().secondary());
+        let armed = under.filter(|_| crate::keymap::secondary(&window.modifiers()));
         self.state.on_link.set(under.is_some());
         self.state.armed.set(armed);
         let link = armed.and_then(|index| self.screen.links.get(index));
@@ -593,7 +593,7 @@ impl TerminalGrid {
                 // A link pressed with Ctrl is followed when released on it,
                 // and selects nothing.
                 MouseButton::Left
-                    if event.modifiers.secondary()
+                    if crate::keymap::secondary(&event.modifiers)
                         && let Some(link) = geometry
                             .link_under(&screen, event.position)
                             .and_then(|index| screen.links.get(index)) =>
@@ -656,7 +656,7 @@ impl TerminalGrid {
                 .is_hovered(window)
                 .then(|| geometry.link_under(&screen, event.position))
                 .flatten();
-            let armed = under.filter(|_| event.modifiers.secondary());
+            let armed = under.filter(|_| crate::keymap::secondary(&event.modifiers));
             if under.is_some() != state.on_link.get() || armed != state.armed.get() {
                 state.on_link.set(under.is_some());
                 state.armed.set(armed);
@@ -680,7 +680,7 @@ impl TerminalGrid {
                 .link_under(&screen, event.position)
                 .and_then(|index| screen.links.get(index))
                 .is_some_and(|link| link.target == pressed);
-            if released && event.modifiers.secondary() {
+            if released && crate::keymap::secondary(&event.modifiers) {
                 follow(&pressed, event.modifiers.shift, window, cx);
                 cx.stop_propagation();
             }
@@ -690,7 +690,7 @@ impl TerminalGrid {
             Rc::clone(&self.state),
             hitbox.clone(),
         );
-        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+        window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
             if !phase.bubble() || !hit.should_handle_scroll(window) {
                 return;
             }

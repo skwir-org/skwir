@@ -6384,3 +6384,49 @@ those offered:
   with the document shown; the reported book alike. Not checked in a
   window: a structured preview's scrollbar. Not run: the whole
   `just gpui-check`, `just release-check`.
+
+### gpui from Zed's main of 2026-10-27 (2026-10-28)
+
+- **Updated:** `vendor/zed` from Zed 56934ec0 (2026-10-17) to 37faef81
+  (2026-10-27): 48 of Zed's commits in the vendored crates, among them
+  Taffy 0.15, `ScrollWheelEvent` renamed `ScrollEvent` (and
+  `on_scroll_wheel` `on_scroll`), keystrokes parsed for a system known at
+  run time (`Keystroke::parse` takes static strings and refuses
+  `secondary-`, `KeyBinding::new` likewise), `Modifiers::secondary` asking
+  the app, the Metal renderer on objc2 instead of the `metal` crate, the
+  font cache keeping fallbacks, and macOS 12 required. The series was
+  built on the old commit and rebased onto the new one, so git merged
+  with every blob (`git apply --3way` on the new tree lacked them).
+- **Ported:** 0006 (the hash-keyed layout cache it touched is gone
+  upstream; Windows' new segmented layout carries each run's position),
+  0019 (`font_id` on the cache's direct, fallback and missing answers),
+  0024 (the clipboard observers in Zed's `SingleSubscriberSet`), 0031
+  (gpui re-exports `accesskit` itself now), 0033 (the Metal mesh pass
+  rewritten on objc2-metal, its buffers `Send` by a wrapper whose
+  safety says why; the features `MTLArgument`, `MTLDepthStencil`,
+  `MTLVertexDescriptor`), 0035 (the shaders compiled at start on objc2;
+  `OsString` imported whatever `runtime_shaders`).
+- **New patch 0041** (`key-binding-for-a-system`):
+  `KeyBinding::new_for_os` binds any string, its `secondary-` the given
+  system's, with no keyboard mapper, as `KeyBinding::new` did. Upstream's
+  `KeyBinding::load` would take the platform's mapper, which on Windows
+  maps keys through the layout: not what Skwir's keymap has meant.
+- **Skwir:** `keymap::HOST_OS` (the target's system) with `parse_keystroke`,
+  `unparse`, `secondary` and `binding`, the one place every keystroke
+  and binding goes through; without it `KeyBinding::new("secondary-a", …)`
+  in the text input panics at start.
+- **One oo7:** Zed's gpui pins its oo7 fork (a prompt whose signal stream
+  ends is an error, not a panic); the root manifest patches crates.io's
+  oo7 to it, so the platform's keyring takes the same fix and one oo7 is
+  built. `deny.toml` allows the source.
+- **macOS 12:** the package's deployment target, `LSMinimumSystemVersion`
+  and its check say 12.0 (ADR-075 amended), as gpui now requires.
+- **Checked:** rustfmt; clippy (`-D warnings`) of skwir-ui, skwir and
+  skwir-platform; their tests (816 passed); `just gpui-check` (120, 51,
+  6 and 6 passed); `just check-windows`; clippy of skwir and skwir-ui for
+  `aarch64-apple-darwin` against the SDK (which `check-macos` leaves out:
+  the Metal port compiles, never run). On Xvfb at 1280 × 860, a debug
+  build on lavapipe: the first frame, the wheel scrolling the list,
+  Ctrl+L to the address field, typing filtering, Ctrl+A selecting what was
+  typed; idle 10 ticks of CPU in 10 s. Not run: `just gpui-check-windows`,
+  `just release-check`.

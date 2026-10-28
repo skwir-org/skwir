@@ -24,7 +24,7 @@ use gpui::{
     App, BorderStyle, Bounds, ContentMask, CursorStyle, DispatchPhase, Element, ElementId,
     FillOptions, FillRule, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId,
     IntoElement, LayoutId, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    PathBuilder, PathStyle, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Style,
+    PathBuilder, PathStyle, Pixels, ScrollDelta, ScrollEvent, ShapedLine, SharedString, Style,
     TextRun, Window, point, px, quad, relative, size,
 };
 use skwir_core::EntryId;
@@ -2359,7 +2359,7 @@ impl Element for Map {
             }
         });
         let handles = self.handles.clone();
-        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+        window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || !hitbox.should_handle_scroll(window) {
                 return;
             }

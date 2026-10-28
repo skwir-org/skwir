@@ -1007,7 +1007,7 @@ mod tests {
         assert_eq!(held(none), None);
         // What the menu says each row's keys are is what they do.
         for how in DropOp::ALL {
-            let keys = gpui::Keystroke::parse(&format!("{}-a", how.keys())).unwrap();
+            let keys = crate::keymap::parse_keystroke(&format!("{}-a", how.keys())).unwrap();
             assert_eq!(held(keys.modifiers), Some(how), "{how:?}");
         }
     }

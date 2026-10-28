@@ -207,7 +207,7 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
             cx.set_cursor_hide_mode(gpui::CursorHideMode::OnTyping);
             // Debug aid: `RUST_LOG=skwir_ui=trace` shows every keystroke GPUI saw.
             cx.observe_keystrokes(|ev, _, _| {
-                tracing::trace!(keystroke = %ev.keystroke.unparse(), "keystroke");
+                tracing::trace!(keystroke = %keymap::unparse(&ev.keystroke), "keystroke");
             })
             .detach();
             // Every way out (Quit, the window's close button) closes the

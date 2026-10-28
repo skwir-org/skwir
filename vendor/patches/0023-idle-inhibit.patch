@@ -1,10 +1,10 @@
 0023 idle-inhibit: Window::set_idle_inhibited keeps the screen awake (Wayland, X11, Windows)
 
 diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
-index ec4309d..5039992 100644
+index 746897e..b539632 100644
 --- a/crates/gpui/src/platform.rs
 +++ b/crates/gpui/src/platform.rs
-@@ -1342,6 +1342,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+@@ -1391,6 +1391,9 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
          Decorations::Server
      }
      fn set_app_id(&mut self, _app_id: &str) {}
@@ -15,10 +15,10 @@ index ec4309d..5039992 100644
          Ok(())
      }
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index a4d4623..e7777a6 100644
+index 1a5f5a5..bee39f3 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -3074,6 +3074,16 @@ impl Window {
+@@ -3102,6 +3102,16 @@ impl Window {
          self.platform_window.set_app_id(app_id);
      }
  
@@ -48,7 +48,7 @@ index a91818a..9b1fed0 100644
      "dri3",
  ], optional = true }
 diff --git a/crates/gpui_linux/src/linux/wayland/client.rs b/crates/gpui_linux/src/linux/wayland/client.rs
-index 98b41fb..7af73ec 100644
+index 73bd496..5267bc5 100644
 --- a/crates/gpui_linux/src/linux/wayland/client.rs
 +++ b/crates/gpui_linux/src/linux/wayland/client.rs
 @@ -41,6 +41,9 @@ use wayland_client::{
@@ -234,7 +234,7 @@ index 37e4a2f..e0e1d7e 100644
      "Win32_System_SystemInformation",
      "Win32_System_SystemServices",
 diff --git a/crates/gpui_windows/src/window.rs b/crates/gpui_windows/src/window.rs
-index c467101..7b80af9 100644
+index d6d1d26..8d1e570 100644
 --- a/crates/gpui_windows/src/window.rs
 +++ b/crates/gpui_windows/src/window.rs
 @@ -21,7 +21,8 @@ use windows::{

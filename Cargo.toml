@@ -261,8 +261,11 @@ two-face = { path = "vendor/two-face" }
 # reported no longer panics (khronos-egl), a waker keeps its identity
 # (async-task), the event loop bounds its idle work (calloop), a child is
 # adopted by its pid on macOS (async-process). Not notify's: only Skwir's own
-# watcher uses it.
+# watcher uses it. And Zed's oo7, which gpui's Linux credentials pin (a prompt
+# whose signal stream ends is an error, not a panic): the platform's keyring
+# takes it too, so one oo7 is built.
 async-process = { git = "https://github.com/zed-industries/async-process.git", rev = "0b6d6713570af61806e1e5cb40e0f757cb93fd9d" }
 async-task = { git = "https://github.com/zed-industries/async-task.git", rev = "015845a19fc31752c02367567d3b8900a406f9da" }
 calloop = { git = "https://github.com/zed-industries/calloop", rev = "3759371fee14c40066d64777e2a36b6ffcc22590" }
 khronos-egl = { git = "https://github.com/zed-industries/khronos-egl", rev = "42214b36347b108fd9630ca6254b96dde59e04fe" }
+oo7 = { git = "https://github.com/zed-industries/oo7", rev = "731c1215edb6905876c6137ab300428c7b8d7c13" }

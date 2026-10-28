@@ -22,7 +22,7 @@ index 46d5567..87f1e0c 100644
      println!("cargo:rerun-if-changed=build.rs");
      #[cfg(target_os = "windows")]
 diff --git a/crates/gpui_windows/src/directx_renderer.rs b/crates/gpui_windows/src/directx_renderer.rs
-index 6a46512..512adb7 100644
+index 74fd607..2e3492b 100644
 --- a/crates/gpui_windows/src/directx_renderer.rs
 +++ b/crates/gpui_windows/src/directx_renderer.rs
 @@ -1739,14 +1739,15 @@ const BUFFER_COUNT: usize = 3;

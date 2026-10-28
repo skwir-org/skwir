@@ -1,10 +1,10 @@
 0037 middle-ellipsis-over-clamped-lines: a text cut in the middle keeps its first lines, and its last ends as the text does
 
 diff --git a/crates/gpui/src/text_system/line_wrapper.rs b/crates/gpui/src/text_system/line_wrapper.rs
-index 8116227..b97e2a6 100644
+index 8ce336e..07fd2de 100644
 --- a/crates/gpui/src/text_system/line_wrapper.rs
 +++ b/crates/gpui/src/text_system/line_wrapper.rs
-@@ -362,7 +362,8 @@ impl LineWrapper {
+@@ -384,7 +384,8 @@ impl LineWrapper {
      /// truncation point simultaneously. When text overflows on the last
      /// allowed line, it truncates there and appends the affix.
      ///
@@ -14,7 +14,7 @@ index 8116227..b97e2a6 100644
      pub fn truncate_wrapped_line<'a>(
          &mut self,
          text: SharedString,
-@@ -382,7 +383,13 @@ impl LineWrapper {
+@@ -404,7 +405,13 @@ impl LineWrapper {
              );
          }
          if truncate_from == TruncateFrom::Middle {
@@ -29,7 +29,7 @@ index 8116227..b97e2a6 100644
          }
  
          let affix_width: Pixels = truncation_affix
-@@ -501,6 +508,112 @@ impl LineWrapper {
+@@ -523,6 +530,112 @@ impl LineWrapper {
          (text, Cow::Borrowed(runs))
      }
  
@@ -142,7 +142,7 @@ index 8116227..b97e2a6 100644
      /// Any character in this list should be treated as a word character,
      /// meaning it can be part of a word that should not be wrapped.
      pub(crate) fn is_word_char(c: char) -> bool {
-@@ -1628,6 +1741,79 @@ mod tests {
+@@ -1655,6 +1768,79 @@ mod tests {
          );
      }
  

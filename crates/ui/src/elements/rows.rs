@@ -18,7 +18,7 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, App, AvailableSpace, Bounds, ContentMask, DispatchPhase, Element, ElementId,
     GlobalElementId, Hitbox, HitboxBehavior, InspectorElementId, IntoElement, LayoutId, Pixels,
-    ScrollWheelEvent, Size, Style, Window, point, px, relative, size,
+    ScrollEvent, Size, Style, Window, point, px, relative, size,
 };
 
 /// Where a view of rows is, shared by the element, the scrollbar and the
@@ -524,11 +524,11 @@ impl Element for Rows {
         let scroll = Rc::clone(&self.scroll);
         let hitbox = prepaint.hitbox.id;
         let wrap = self.wrap;
-        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, _| {
+        window.on_mouse_event(move |event: &ScrollEvent, phase, window, _| {
             // Ctrl and the wheel size the text: someone else's.
             if phase != DispatchPhase::Bubble
                 || !hitbox.should_handle_scroll(window)
-                || event.modifiers.secondary()
+                || crate::keymap::secondary(&event.modifiers)
             {
                 return;
             }

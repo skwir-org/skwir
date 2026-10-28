@@ -4,7 +4,7 @@
 //! capture phase: GPUI's scrolling reads no modifier, so what is under it
 //! would scroll too. A map has none: its wheel zooms around the pointer,
 //! with Ctrl or without.
-use gpui::{Context, ScrollWheelEvent, prelude::*};
+use gpui::{Context, ScrollEvent, prelude::*};
 use skwir_core::workspace::PaneId;
 
 use crate::shell::Shell;
@@ -30,9 +30,9 @@ pub fn overlay(zoomed: Zoomed, cx: &mut Context<Shell>) -> impl IntoElement {
     gpui::canvas(
         |bounds, window, _| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
         move |_, hitbox, window, _| {
-            window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+            window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
                 if !phase.capture()
-                    || !event.modifiers.secondary()
+                    || !crate::keymap::secondary(&event.modifiers)
                     || !hitbox.should_handle_scroll(window)
                 {
                     return;

@@ -10,161 +10,207 @@
 //! the first frame that does not draw them; the target goes with the last
 //! mesh drawn.
 
-use std::{cell::OnceCell, ffi::c_void, sync::Arc};
+use std::{cell::OnceCell, ptr::NonNull, sync::Arc};
 
+use anyhow::{Context as _, Result};
 use gpui::{DevicePixels, Mesh, MeshMaker, MeshPreparation, MeshStore, PaintMesh, Size};
-use metal::{MTLPixelFormat, MTLResourceOptions, NSUInteger};
+use objc2::{rc::Retained, runtime::ProtocolObject};
+use objc2_foundation::NSString;
+use objc2_metal::{
+    MTLBlendFactor, MTLBlendOperation, MTLBuffer, MTLClearColor, MTLCommandBuffer,
+    MTLCommandEncoder, MTLCompareFunction, MTLCompileOptions, MTLCullMode,
+    MTLDepthStencilDescriptor, MTLDepthStencilState, MTLDevice, MTLIndexType, MTLLibrary,
+    MTLLoadAction, MTLPixelFormat, MTLPrimitiveType, MTLRenderCommandEncoder,
+    MTLRenderPassDescriptor, MTLRenderPipelineDescriptor, MTLRenderPipelineState,
+    MTLResourceOptions, MTLStorageMode, MTLStoreAction, MTLTexture, MTLTextureDescriptor,
+    MTLTextureType, MTLTextureUsage, MTLVertexDescriptor, MTLVertexFormat, MTLVertexStepFunction,
+    MTLViewport,
+};
 
 const SOURCE: &str = include_str!("shaders_mesh.metal");
 /// Samples a pixel, as paths are drawn: every Metal GPU has four.
-const SAMPLE_COUNT: NSUInteger = 4;
+const SAMPLE_COUNT: usize = 4;
 const COLOR_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm;
 const DEPTH_FORMAT: MTLPixelFormat = MTLPixelFormat::Depth32Float;
 /// The largest side of a texture every Metal GPU allows.
 const LARGEST_TARGET: u32 = 8192;
 /// Where the vertex function finds the positions, normals and colors: after
 /// its parameters, in buffer 0.
-const POSITIONS: NSUInteger = 1;
-const NORMALS: NSUInteger = 2;
-const COLORS: NSUInteger = 3;
+const POSITIONS: usize = 1;
+const NORMALS: usize = 2;
+const COLORS: usize = 3;
+
+type Device = Retained<ProtocolObject<dyn MTLDevice>>;
+type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
+
+/// A buffer the mesh store makes on its thread and hands to the renderer's.
+pub(crate) struct Buffer(Retained<ProtocolObject<dyn MTLBuffer>>);
+
+// SAFETY: Metal's buffers may be used from any thread. The store's thread
+// fills each one before handing it over and never touches it again; only the
+// renderer's thread binds it afterwards.
+unsafe impl Send for Buffer {}
 
 /// A mesh's buffers on the device.
 pub(crate) struct Buffers {
-    positions: metal::Buffer,
-    indices: metal::Buffer,
+    positions: Buffer,
+    indices: Buffer,
     /// Its positions' colors, when it has some.
-    colors: Option<metal::Buffer>,
-    count: NSUInteger,
+    colors: Option<Buffer>,
+    count: usize,
 }
 
 /// How the device holds a mesh (`gpui::MeshMaker`).
 #[derive(Clone)]
 pub(crate) struct Maker {
-    device: metal::Device,
+    device: Device,
     options: MTLResourceOptions,
 }
 
 impl MeshMaker for Maker {
     type Buffers = Buffers;
-    type Normals = metal::Buffer;
+    type Normals = Buffer;
 
     fn holds(&self, mesh: &Mesh) -> bool {
-        let largest = self.device.max_buffer_length();
+        let largest = self.device.maxBufferLength();
         [
             size_of_val(mesh.positions()),
             size_of_val(mesh.indices()),
             mesh.colors().map_or(0, size_of_val),
         ]
         .into_iter()
-        .all(|bytes| bytes as NSUInteger <= largest)
+        .all(|bytes| bytes <= largest)
     }
 
     fn buffers(&self, mesh: &Mesh) -> Option<Buffers> {
         Some(Buffers {
-            positions: self.buffer(mesh.positions()),
-            indices: self.buffer(mesh.indices()),
-            colors: mesh.colors().map(|colors| self.buffer(colors)),
-            count: mesh.indices().len() as NSUInteger,
+            positions: self.buffer(mesh.positions())?,
+            indices: self.buffer(mesh.indices())?,
+            colors: match mesh.colors() {
+                Some(colors) => Some(self.buffer(colors)?),
+                None => None,
+            },
+            count: mesh.indices().len(),
         })
     }
 
-    fn normals(&self, normals: &[[f32; 3]]) -> Option<metal::Buffer> {
-        Some(self.buffer(normals))
+    fn normals(&self, normals: &[[f32; 3]]) -> Option<Buffer> {
+        self.buffer(normals)
     }
 }
 
 impl Maker {
-    /// A buffer holding a copy of `data`.
-    fn buffer<T: Copy>(&self, data: &[T]) -> metal::Buffer {
-        self.device.new_buffer_with_data(
-            data.as_ptr().cast::<c_void>(),
-            size_of_val(data) as NSUInteger,
-            self.options,
-        )
+    /// A buffer holding a copy of `data`; `None` when the device could not
+    /// make it.
+    fn buffer<T: Copy>(&self, data: &[T]) -> Option<Buffer> {
+        // An empty buffer is refused: one byte stands for none.
+        let length = size_of_val(data).max(1);
+        let bytes = [0u8; 1];
+        let pointer = if data.is_empty() {
+            NonNull::from(&bytes).cast()
+        } else {
+            NonNull::from(data).cast()
+        };
+        // SAFETY: Metal copies `length` bytes from the live slice (or the
+        // one byte standing for an empty one) before returning.
+        unsafe {
+            self.device
+                .newBufferWithBytes_length_options(pointer, length, self.options)
+        }
+        .map(Buffer)
     }
 }
 
 struct Pipelines {
-    draw: metal::RenderPipelineState,
-    composite: metal::RenderPipelineState,
-    depth: metal::DepthStencilState,
+    draw: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    composite: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
+    depth: Retained<ProtocolObject<dyn MTLDepthStencilState>>,
 }
 
 impl Pipelines {
-    fn new(device: &metal::DeviceRef) -> Result<Self, String> {
-        let library = device.new_library_with_source(SOURCE, &metal::CompileOptions::new())?;
-        let function = |name| library.get_function(name, None);
+    fn new(device: &ProtocolObject<dyn MTLDevice>) -> Result<Self> {
+        let library = device
+            .newLibraryWithSource_options_error(
+                &NSString::from_str(SOURCE),
+                Some(&MTLCompileOptions::new()),
+            )
+            .context("compiling the mesh shaders")?;
+        let function = |name: &str| {
+            library
+                .newFunctionWithName(&NSString::from_str(name))
+                .with_context(|| format!("locating function {name}"))
+        };
         let (vertex, fragment) = (function("vs_mesh")?, function("fs_mesh")?);
         let (composite_vertex, composite_fragment) = (
             function("vs_mesh_composite")?,
             function("fs_mesh_composite")?,
         );
 
-        let descriptor = metal::RenderPipelineDescriptor::new();
-        descriptor.set_label("meshes");
-        descriptor.set_vertex_function(Some(vertex.as_ref()));
-        descriptor.set_fragment_function(Some(fragment.as_ref()));
+        let descriptor = MTLRenderPipelineDescriptor::new();
+        descriptor.setLabel(Some(&NSString::from_str("meshes")));
+        descriptor.setVertexFunction(Some(vertex.as_ref()));
+        descriptor.setFragmentFunction(Some(fragment.as_ref()));
         // Positions, normals, colors: a buffer each.
-        let vertices = metal::VertexDescriptor::new();
+        let vertices = MTLVertexDescriptor::new();
         for (location, (buffer, format, stride)) in [
-            (POSITIONS, metal::MTLVertexFormat::Float3, 12),
-            (NORMALS, metal::MTLVertexFormat::Float3, 12),
-            (COLORS, metal::MTLVertexFormat::UChar4Normalized, 4),
+            (POSITIONS, MTLVertexFormat::Float3, 12),
+            (NORMALS, MTLVertexFormat::Float3, 12),
+            (COLORS, MTLVertexFormat::UChar4Normalized, 4),
         ]
         .into_iter()
         .enumerate()
         {
-            let attribute = vertices
-                .attributes()
-                .object_at(location as NSUInteger)
-                .ok_or("no vertex attribute")?;
-            attribute.set_format(format);
-            attribute.set_offset(0);
-            attribute.set_buffer_index(buffer);
-            let layout = vertices
-                .layouts()
-                .object_at(buffer)
-                .ok_or("no vertex layout")?;
-            layout.set_stride(stride);
-            layout.set_step_function(metal::MTLVertexStepFunction::PerVertex);
-            layout.set_step_rate(1);
+            // SAFETY: The attribute and layout indices are below Metal's
+            // 31, and the offset and stride describe the buffers bound.
+            unsafe {
+                let attribute = vertices.attributes().objectAtIndexedSubscript(location);
+                attribute.setFormat(format);
+                attribute.setOffset(0);
+                attribute.setBufferIndex(buffer);
+                let layout = vertices.layouts().objectAtIndexedSubscript(buffer);
+                layout.setStride(stride);
+                layout.setStepFunction(MTLVertexStepFunction::PerVertex);
+                layout.setStepRate(1);
+            }
         }
-        descriptor.set_vertex_descriptor(Some(vertices));
-        descriptor.set_raster_sample_count(SAMPLE_COUNT);
-        descriptor.set_depth_attachment_pixel_format(DEPTH_FORMAT);
-        let color = descriptor
-            .color_attachments()
-            .object_at(0)
-            .ok_or("no color attachment")?;
-        color.set_pixel_format(COLOR_FORMAT);
+        descriptor.setVertexDescriptor(Some(&vertices));
+        descriptor.setRasterSampleCount(SAMPLE_COUNT);
+        descriptor.setDepthAttachmentPixelFormat(DEPTH_FORMAT);
+        // SAFETY: Index zero is within the pipeline's color attachment array.
+        let color = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
+        color.setPixelFormat(COLOR_FORMAT);
         // What is drawn is written as it is: the target holds nothing else.
-        color.set_blending_enabled(false);
-        let draw = device.new_render_pipeline_state(&descriptor)?;
+        color.setBlendingEnabled(false);
+        let draw = device
+            .newRenderPipelineStateWithDescriptor_error(&descriptor)
+            .context("creating the mesh pipeline")?;
 
-        let descriptor = metal::RenderPipelineDescriptor::new();
-        descriptor.set_label("mesh_composite");
-        descriptor.set_vertex_function(Some(composite_vertex.as_ref()));
-        descriptor.set_fragment_function(Some(composite_fragment.as_ref()));
-        let color = descriptor
-            .color_attachments()
-            .object_at(0)
-            .ok_or("no color attachment")?;
-        color.set_pixel_format(COLOR_FORMAT);
+        let descriptor = MTLRenderPipelineDescriptor::new();
+        descriptor.setLabel(Some(&NSString::from_str("mesh_composite")));
+        descriptor.setVertexFunction(Some(composite_vertex.as_ref()));
+        descriptor.setFragmentFunction(Some(composite_fragment.as_ref()));
+        // SAFETY: Index zero is within the pipeline's color attachment array.
+        let color = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
+        color.setPixelFormat(COLOR_FORMAT);
         // What was drawn is premultiplied by its coverage: resolved edges
         // over nothing.
-        color.set_blending_enabled(true);
-        color.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
-        color.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
-        color.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
-        color.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
-        color.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-        color.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-        let composite = device.new_render_pipeline_state(&descriptor)?;
+        color.setBlendingEnabled(true);
+        color.setRgbBlendOperation(MTLBlendOperation::Add);
+        color.setAlphaBlendOperation(MTLBlendOperation::Add);
+        color.setSourceRGBBlendFactor(MTLBlendFactor::One);
+        color.setSourceAlphaBlendFactor(MTLBlendFactor::One);
+        color.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
+        color.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
+        let composite = device
+            .newRenderPipelineStateWithDescriptor_error(&descriptor)
+            .context("creating the mesh composite pipeline")?;
 
-        let descriptor = metal::DepthStencilDescriptor::new();
-        descriptor.set_depth_compare_function(metal::MTLCompareFunction::Less);
-        descriptor.set_depth_write_enabled(true);
-        let depth = device.new_depth_stencil_state(&descriptor);
+        let descriptor = MTLDepthStencilDescriptor::new();
+        descriptor.setDepthCompareFunction(MTLCompareFunction::Less);
+        descriptor.setDepthWriteEnabled(true);
+        let depth = device
+            .newDepthStencilStateWithDescriptor(&descriptor)
+            .context("creating the mesh depth state")?;
         Ok(Pipelines {
             draw,
             composite,
@@ -178,50 +224,54 @@ impl Pipelines {
 struct Target {
     width: u32,
     height: u32,
-    multisampled: metal::Texture,
-    depth: metal::Texture,
-    resolved: metal::Texture,
+    multisampled: Texture,
+    depth: Texture,
+    resolved: Texture,
 }
 
 impl Target {
     /// Kept in tile memory only, where the GPU can (Apple's): drawn and
-    /// resolved in one pass.
-    fn new(device: &metal::DeviceRef, width: u32, height: u32, memoryless: bool) -> Self {
-        let texture = |format, samples, usage, memoryless| {
-            let descriptor = metal::TextureDescriptor::new();
-            descriptor.set_width(width.max(1) as NSUInteger);
-            descriptor.set_height(height.max(1) as NSUInteger);
-            descriptor.set_pixel_format(format);
-            if samples > 1 {
-                descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
-                descriptor.set_sample_count(samples);
+    /// resolved in one pass. `None` when the device could not make it.
+    fn new(
+        device: &ProtocolObject<dyn MTLDevice>,
+        width: u32,
+        height: u32,
+        memoryless: bool,
+    ) -> Option<Self> {
+        let texture = |format, samples: usize, usage, memoryless| {
+            let descriptor = MTLTextureDescriptor::new();
+            // SAFETY: The dimensions are positive, within LARGEST_TARGET,
+            // and the sample count one Metal GPUs all support.
+            unsafe {
+                descriptor.setWidth(width.max(1) as usize);
+                descriptor.setHeight(height.max(1) as usize);
+                if samples > 1 {
+                    descriptor.setTextureType(MTLTextureType::Type2DMultisample);
+                    descriptor.setSampleCount(samples);
+                }
             }
-            descriptor.set_storage_mode(if memoryless {
-                metal::MTLStorageMode::Memoryless
+            descriptor.setPixelFormat(format);
+            descriptor.setStorageMode(if memoryless {
+                MTLStorageMode::Memoryless
             } else {
-                metal::MTLStorageMode::Private
+                MTLStorageMode::Private
             });
-            descriptor.set_usage(usage);
-            device.new_texture(&descriptor)
+            descriptor.setUsage(usage);
+            device.newTextureWithDescriptor(&descriptor)
         };
-        let target = metal::MTLTextureUsage::RenderTarget;
-        Target {
+        let target = MTLTextureUsage::RenderTarget;
+        Some(Target {
             width,
             height,
-            multisampled: texture(COLOR_FORMAT, SAMPLE_COUNT, target, memoryless),
-            depth: texture(DEPTH_FORMAT, SAMPLE_COUNT, target, memoryless),
-            resolved: texture(
-                COLOR_FORMAT,
-                1,
-                target | metal::MTLTextureUsage::ShaderRead,
-                false,
-            ),
-        }
+            multisampled: texture(COLOR_FORMAT, SAMPLE_COUNT, target, memoryless)?,
+            depth: texture(DEPTH_FORMAT, SAMPLE_COUNT, target, memoryless)?,
+            resolved: texture(COLOR_FORMAT, 1, target | MTLTextureUsage::ShaderRead, false)?,
+        })
     }
 }
 
 pub(crate) struct MeshPass {
-    device: metal::Device,
+    device: Device,
     memoryless: bool,
     /// Made when the first mesh is asked for; `None` if they cannot be.
     pipelines: OnceCell<Option<Pipelines>>,
@@ -232,11 +282,7 @@ pub(crate) struct MeshPass {
 impl MeshPass {
     /// `options` are the buffers', and `apple_gpu` whether the device can
     /// keep a texture in tile memory only.
-    pub(crate) fn new(
-        device: &metal::Device,
-        options: MTLResourceOptions,
-        apple_gpu: bool,
-    ) -> Self {
+    pub(crate) fn new(device: &Device, options: MTLResourceOptions, apple_gpu: bool) -> Self {
         Self {
             device: device.clone(),
             memoryless: apple_gpu,
@@ -253,7 +299,7 @@ impl MeshPass {
         self.pipelines
             .get_or_init(|| {
                 Pipelines::new(&self.device)
-                    .inspect_err(|error| log::error!("meshes will not be drawn: {error}"))
+                    .inspect_err(|error| log::error!("meshes will not be drawn: {error:#}"))
                     .ok()
             })
             .as_ref()
@@ -273,7 +319,7 @@ impl MeshPass {
     /// meanwhile; `None` when nothing of it is drawn.
     pub(crate) fn draw(
         &mut self,
-        command_buffer: &metal::CommandBufferRef,
+        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
         paint: &PaintMesh,
         frame: Size<DevicePixels>,
     ) -> Option<Drawn> {
@@ -286,7 +332,7 @@ impl MeshPass {
             .is_none_or(|target| (target.width, target.height) != (width, height))
         {
             self.target = None;
-            self.target = Some(Target::new(&self.device, width, height, self.memoryless));
+            self.target = Target::new(&self.device, width, height, self.memoryless);
         }
         let (Some(Some(pipelines)), Some(target)) = (self.pipelines.get(), self.target.as_ref())
         else {
@@ -297,23 +343,29 @@ impl MeshPass {
         let colored = buffers.colors.is_some();
         let params = framed.params(&paint.view, smooth, colored);
 
-        let descriptor = metal::RenderPassDescriptor::new();
-        let color = descriptor.color_attachments().object_at(0)?;
-        color.set_texture(Some(&target.multisampled));
-        color.set_resolve_texture(Some(&target.resolved));
-        color.set_load_action(metal::MTLLoadAction::Clear);
-        color.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 0.));
+        let descriptor = MTLRenderPassDescriptor::new();
+        // SAFETY: Index zero is within the render pass's color attachment array.
+        let color = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
+        color.setTexture(Some(&target.multisampled));
+        color.setResolveTexture(Some(&target.resolved));
+        color.setLoadAction(MTLLoadAction::Clear);
+        color.setClearColor(MTLClearColor {
+            red: 0.,
+            green: 0.,
+            blue: 0.,
+            alpha: 0.,
+        });
         // Only what is resolved is read.
-        color.set_store_action(metal::MTLStoreAction::MultisampleResolve);
-        let depth = descriptor.depth_attachment()?;
-        depth.set_texture(Some(&target.depth));
-        depth.set_load_action(metal::MTLLoadAction::Clear);
-        depth.set_clear_depth(1.);
-        depth.set_store_action(metal::MTLStoreAction::DontCare);
+        color.setStoreAction(MTLStoreAction::MultisampleResolve);
+        let depth = descriptor.depthAttachment();
+        depth.setTexture(Some(&target.depth));
+        depth.setLoadAction(MTLLoadAction::Clear);
+        depth.setClearDepth(1.);
+        depth.setStoreAction(MTLStoreAction::DontCare);
 
-        let encoder = command_buffer.new_render_command_encoder(descriptor);
+        let encoder = command_buffer.renderCommandEncoderWithDescriptor(&descriptor)?;
         let [shown_width, shown_height] = framed.shown;
-        encoder.set_viewport(metal::MTLViewport {
+        encoder.setViewport(MTLViewport {
             originX: 0.,
             originY: 0.,
             width: f64::from(shown_width),
@@ -321,28 +373,35 @@ impl MeshPass {
             znear: 0.,
             zfar: 1.,
         });
-        encoder.set_render_pipeline_state(&pipelines.draw);
-        encoder.set_depth_stencil_state(&pipelines.depth);
+        encoder.setRenderPipelineState(&pipelines.draw);
+        encoder.setDepthStencilState(Some(&pipelines.depth));
         // Either side may face the camera, as a mesh's winding is not
         // always kept.
-        encoder.set_cull_mode(metal::MTLCullMode::None);
-        let bytes = size_of_val(&params) as NSUInteger;
-        encoder.set_vertex_bytes(0, bytes, params.as_ptr().cast());
-        encoder.set_fragment_bytes(0, bytes, params.as_ptr().cast());
+        encoder.setCullMode(MTLCullMode::None);
+        let bytes = size_of_val(&params);
         // Without normals or colors the shader reads none: the positions
         // stand in, as long as either would be.
-        encoder.set_vertex_buffer(POSITIONS, Some(&buffers.positions), 0);
-        encoder.set_vertex_buffer(NORMALS, Some(normals.unwrap_or(&buffers.positions)), 0);
+        let normals = normals.unwrap_or(&buffers.positions);
         let colors = buffers.colors.as_ref().unwrap_or(&buffers.positions);
-        encoder.set_vertex_buffer(COLORS, Some(colors), 0);
-        encoder.draw_indexed_primitives(
-            metal::MTLPrimitiveType::Triangle,
-            buffers.count,
-            metal::MTLIndexType::UInt32,
-            &buffers.indices,
-            0,
-        );
-        encoder.end_encoding();
+        // SAFETY: The parameters are copied from a live value into the slot
+        // the shaders read them from; the buffers bound hold what the vertex
+        // descriptor says, and the indices `count` u32s, each within the
+        // positions (`gpui::Mesh` checks them).
+        unsafe {
+            encoder.setVertexBytes_length_atIndex(NonNull::from(&params).cast(), bytes, 0);
+            encoder.setFragmentBytes_length_atIndex(NonNull::from(&params).cast(), bytes, 0);
+            encoder.setVertexBuffer_offset_atIndex(Some(&buffers.positions.0), 0, POSITIONS);
+            encoder.setVertexBuffer_offset_atIndex(Some(&normals.0), 0, NORMALS);
+            encoder.setVertexBuffer_offset_atIndex(Some(&colors.0), 0, COLORS);
+            encoder.drawIndexedPrimitives_indexCount_indexType_indexBuffer_indexBufferOffset(
+                MTLPrimitiveType::Triangle,
+                buffers.count,
+                MTLIndexType::UInt32,
+                &buffers.indices.0,
+                0,
+            );
+        }
+        encoder.endEncoding();
         Some(Drawn {
             composite: framed.composite(),
         })
@@ -350,18 +409,27 @@ impl MeshPass {
 
     /// Composite a mesh drawn into the target, pixel for pixel, with
     /// `encoder`.
-    pub(crate) fn composite(&self, encoder: &metal::RenderCommandEncoderRef, drawn: &Drawn) {
+    pub(crate) fn composite(
+        &self,
+        encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
+        drawn: &Drawn,
+    ) {
         let (Some(Some(pipelines)), Some(target)) = (self.pipelines.get(), self.target.as_ref())
         else {
             return;
         };
-        let bytes = size_of_val(&drawn.composite) as NSUInteger;
-        let composite = drawn.composite.as_ptr().cast();
-        encoder.set_render_pipeline_state(&pipelines.composite);
-        encoder.set_vertex_bytes(0, bytes, composite);
-        encoder.set_fragment_bytes(0, bytes, composite);
-        encoder.set_fragment_texture(0, Some(&target.resolved));
-        encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
+        let bytes = size_of_val(&drawn.composite);
+        let composite = NonNull::from(&drawn.composite).cast();
+        encoder.setRenderPipelineState(&pipelines.composite);
+        // SAFETY: The composite's parameters are copied from a live value
+        // into the slot its shaders read; the texture is the target's,
+        // resolved by the pass before this one.
+        unsafe {
+            encoder.setVertexBytes_length_atIndex(composite, bytes, 0);
+            encoder.setFragmentBytes_length_atIndex(composite, bytes, 0);
+            encoder.setFragmentTexture_atIndex(Some(&target.resolved), 0);
+            encoder.drawPrimitives_vertexStart_vertexCount(MTLPrimitiveType::TriangleStrip, 0, 4);
+        }
     }
 
     /// After a frame: let go of the meshes it did not draw, and of the

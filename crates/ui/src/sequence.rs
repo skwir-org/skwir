@@ -43,7 +43,7 @@ fn rest(hint: &KeyHint, typed: &[Keystroke]) -> Option<String> {
         return None;
     }
     for (stroke, typed) in strokes.iter().zip(typed) {
-        let bound = Keystroke::parse(stroke).ok()?;
+        let bound = crate::keymap::parse_keystroke(stroke).ok()?;
         if !matches(typed, &bound) {
             return None;
         }
@@ -93,7 +93,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         }
         row
     };
-    let typed: Vec<String> = sequence.typed.iter().map(Keystroke::unparse).collect();
+    let typed: Vec<String> = sequence.typed.iter().map(crate::keymap::unparse).collect();
     let mut list = div().flex().flex_wrap().gap_x_6().gap_y_1();
     for (i, (keys, title)) in sequence.next.iter().enumerate() {
         list = list.child(

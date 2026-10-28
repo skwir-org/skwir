@@ -219,7 +219,7 @@ impl Element for Marquee {
             if pressed.item_at(x, y, count).is_some() {
                 return;
             }
-            let keep = event.modifiers.secondary() || event.modifiers.shift;
+            let keep = crate::keymap::secondary(&event.modifiers) || event.modifiers.shift;
             shell
                 .update(cx, |shell, cx| {
                     shell.marquee_begin(pane, (x, y), event.position, keep, window, cx);

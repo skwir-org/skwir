@@ -379,7 +379,7 @@ Left:
   Windows' archivers write them. Under Wine its tests and the archives
   plugin's pass (their trash steps skipped), and the package's check makes
   and lists each format skwir makes. macOS's is linked, never run: which
-  of its system libraries' symbols macOS 11 lacks, if any, is unknown
+  of its system libraries' symbols macOS 12 lacks, if any, is unknown
   **(5b)**.
 - Audio and video (ADR-076): the media helper Linux has, with GStreamer's
   own build of 1.28.8 carried, cut down to what it plays with

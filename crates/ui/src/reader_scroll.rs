@@ -2,8 +2,8 @@
 use std::{cell::RefCell, collections::BTreeMap, rc::Rc, sync::Arc};
 
 use gpui::{
-    AnyElement, Context, ListAlignment, ListOffset, ListState, RenderImage, ScrollHandle,
-    ScrollWheelEvent, Window, div, point, prelude::*, px,
+    AnyElement, Context, ListAlignment, ListOffset, ListState, RenderImage, ScrollEvent,
+    ScrollHandle, Window, div, point, prelude::*, px,
 };
 use skwir_core::{CancelToken, document::PageContent, scheduler::Priority};
 
@@ -432,7 +432,7 @@ impl Shell {
 
     pub fn reader_wheel(
         &mut self,
-        event: &ScrollWheelEvent,
+        event: &ScrollEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -446,7 +446,7 @@ impl Shell {
         let vertical = delta.y.abs() > delta.x.abs();
         if !at_edge
             || !vertical
-            || event.modifiers.secondary()
+            || crate::keymap::secondary(&event.modifiers)
             || event.modifiers.alt
             || event.modifiers.platform
             || event.modifiers.shift

@@ -969,7 +969,7 @@ impl SettingsView {
         let Some(editor) = self.keys.editor.as_mut() else {
             return;
         };
-        editor.strokes.push(keystroke.unparse());
+        editor.strokes.push(crate::keymap::unparse(keystroke));
         editor.recording = false;
         editor.intercept = None;
         editor.error = None;

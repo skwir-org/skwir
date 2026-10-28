@@ -204,7 +204,7 @@ impl Shell {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let held = event.modifiers.secondary();
+        let held = crate::keymap::secondary(&event.modifiers);
         if held == self.links.held {
             return;
         }

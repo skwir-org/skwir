@@ -1,26 +1,26 @@
 0024 clipboard-files + 0021 x11-clipboard-sends-in-pieces: files on the Linux clipboard (Wayland, X11), INCR sending
 
 diff --git a/crates/gpui/src/app.rs b/crates/gpui/src/app.rs
-index 6af8965..3945c76 100644
+index be2c315..a8ddbb9 100644
 --- a/crates/gpui/src/app.rs
 +++ b/crates/gpui/src/app.rs
-@@ -849,6 +849,7 @@ pub struct App {
-     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
-     pub(crate) keystroke_interceptors: SubscriberSet<(), KeystrokeObserver>,
-     pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
-+    pub(crate) clipboard_files_observers: SubscriberSet<(), Handler>,
+@@ -879,6 +879,7 @@ pub struct App {
+     pub(crate) keystroke_observers: SingleSubscriberSet<KeystrokeObserver>,
+     pub(crate) keystroke_interceptors: SingleSubscriberSet<KeystrokeObserver>,
+     pub(crate) keyboard_layout_observers: SingleSubscriberSet<Handler>,
++    pub(crate) clipboard_files_observers: SingleSubscriberSet<Handler>,
      missing_glyph_callback: Rc<MissingGlyphCallbackSlot>,
-     pub(crate) thermal_state_observers: SubscriberSet<(), Handler>,
-     pub(crate) display_observers: SubscriberSet<(), DisplayHandler>,
-@@ -994,6 +995,7 @@ impl App {
-                 keystroke_observers: SubscriberSet::new(),
-                 keystroke_interceptors: SubscriberSet::new(),
-                 keyboard_layout_observers: SubscriberSet::new(),
-+                clipboard_files_observers: SubscriberSet::new(),
+     pub(crate) thermal_state_observers: SingleSubscriberSet<Handler>,
+     pub(crate) display_observers: SingleSubscriberSet<DisplayHandler>,
+@@ -1027,6 +1028,7 @@ impl App {
+                 keystroke_observers: SingleSubscriberSet::new(),
+                 keystroke_interceptors: SingleSubscriberSet::new(),
+                 keyboard_layout_observers: SingleSubscriberSet::new(),
++                clipboard_files_observers: SingleSubscriberSet::new(),
                  missing_glyph_callback: Rc::default(),
-                 thermal_state_observers: SubscriberSet::new(),
-                 display_observers: SubscriberSet::new(),
-@@ -1052,6 +1054,27 @@ impl App {
+                 thermal_state_observers: SingleSubscriberSet::new(),
+                 display_observers: SingleSubscriberSet::new(),
+@@ -1086,6 +1088,27 @@ impl App {
              }
          }));
  
@@ -37,7 +37,7 @@ index 6af8965..3945c76 100644
 +                            app.borrow_mut().update(|cx| {
 +                                cx.clipboard_files_observers
 +                                    .clone()
-+                                    .retain(&(), |callback| callback(cx));
++                                    .retain(|callback| callback(cx));
 +                            });
 +                        }
 +                    })
@@ -48,7 +48,7 @@ index 6af8965..3945c76 100644
          platform.on_thermal_state_change(Box::new({
              let app = Rc::downgrade(&app);
              move || {
-@@ -1826,6 +1849,43 @@ impl App {
+@@ -1842,6 +1865,38 @@ impl App {
          self.platform.write_to_clipboard(item)
      }
  
@@ -78,25 +78,20 @@ index 6af8965..3945c76 100644
 +    where
 +        F: 'static + FnMut(&mut App),
 +    {
-+        let (subscription, activate) = self.clipboard_files_observers.insert(
-+            (),
-+            Box::new(move |cx| {
-+                callback(cx);
-+                true
-+            }),
-+        );
-+        activate();
-+        subscription
++        self.clipboard_files_observers.insert(Box::new(move |cx| {
++            callback(cx);
++            true
++        }))
 +    }
 +
      /// Reads data from the primary selection buffer.
      /// Only available on Linux.
      #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
-index 5039992..9706818 100644
+index b539632..1aca8c8 100644
 --- a/crates/gpui/src/platform.rs
 +++ b/crates/gpui/src/platform.rs
-@@ -584,6 +584,28 @@ pub trait Platform: 'static {
+@@ -598,6 +598,28 @@ pub trait Platform: 'static {
          Task::ready(Ok(self.read_from_clipboard()))
      }
  
@@ -125,7 +120,7 @@ index 5039992..9706818 100644
      #[cfg(any(target_os = "linux", target_os = "freebsd"))]
      fn read_from_primary(&self) -> Option<ClipboardItem>;
      #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-@@ -3044,6 +3066,19 @@ pub enum CursorStyle {
+@@ -3093,6 +3115,19 @@ pub enum CursorStyle {
      ContextualMenu,
  }
  
@@ -146,10 +141,10 @@ index 5039992..9706818 100644
  #[derive(Clone, Debug, Eq, PartialEq)]
  pub struct ClipboardItem {
 diff --git a/crates/gpui_linux/src/linux.rs b/crates/gpui_linux/src/linux.rs
-index e4da54b..f68bc4c 100644
+index c5afc4a..0f9f63b 100644
 --- a/crates/gpui_linux/src/linux.rs
 +++ b/crates/gpui_linux/src/linux.rs
-@@ -14,6 +14,9 @@ mod x11;
+@@ -16,6 +16,9 @@ mod x11;
  #[cfg(any(feature = "wayland", feature = "x11"))]
  mod xdg_desktop_portal;
  
@@ -454,19 +449,19 @@ index d7849d0..00d1557 100644
          dispatch!(self, connection => connection.read_from_primary(), headless => None)
      }
 diff --git a/crates/gpui_linux/src/linux/platform.rs b/crates/gpui_linux/src/linux/platform.rs
-index 1fd4139..079fbd2 100644
+index b24300b..5933f5e 100644
 --- a/crates/gpui_linux/src/linux/platform.rs
 +++ b/crates/gpui_linux/src/linux/platform.rs
-@@ -72,6 +72,8 @@ pub(crate) struct PlatformHandlers {
-     pub(crate) system_sleep: Option<Box<dyn FnMut()>>,
+@@ -73,6 +73,8 @@ pub(crate) struct PlatformHandlers {
      pub(crate) system_wake: Option<Box<dyn FnMut()>>,
+     pub(crate) power_mode_change: Option<Box<dyn FnMut()>>,
      pub(crate) displays_changed: Option<Box<dyn FnMut()>>,
 +    /// The files this application put on the clipboard are no longer there.
 +    pub(crate) clipboard_files_gone: Option<Box<dyn FnMut()>>,
  }
  
- /// A logind `PrepareForSleep` signal, forwarded from the D-Bus listener to
-@@ -239,6 +241,24 @@ impl LinuxCommon {
+ /// A system power change, forwarded from D-Bus to the client's event loop.
+@@ -254,6 +256,24 @@ impl LinuxCommon {
              }
          }
      }
@@ -491,7 +486,7 @@ index 1fd4139..079fbd2 100644
  }
  
  #[cfg(all(target_os = "linux", any(feature = "wayland", feature = "x11")))]
-@@ -572,6 +592,10 @@ impl Platform for LinuxPlatform {
+@@ -598,6 +618,10 @@ impl Platform for LinuxPlatform {
          self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
      }
  
@@ -502,7 +497,7 @@ index 1fd4139..079fbd2 100644
      fn on_thermal_state_change(&self, _callback: Box<dyn FnMut()>) {}
  
      fn thermal_state(&self) -> ThermalState {
-@@ -1119,6 +1143,20 @@ impl Platform for LinuxPlatform {
+@@ -1173,6 +1197,20 @@ impl Platform for LinuxPlatform {
          self.connection.borrow().read_from_clipboard()
      }
  
@@ -524,7 +519,7 @@ index 1fd4139..079fbd2 100644
  }
  
 diff --git a/crates/gpui_linux/src/linux/wayland/client.rs b/crates/gpui_linux/src/linux/wayland/client.rs
-index 7af73ec..33d5528 100644
+index 5267bc5..99b695f 100644
 --- a/crates/gpui_linux/src/linux/wayland/client.rs
 +++ b/crates/gpui_linux/src/linux/wayland/client.rs
 @@ -1590,7 +1590,9 @@ impl WaylandConnection {
@@ -600,7 +595,7 @@ index 7af73ec..33d5528 100644
      pub(crate) fn read_from_primary(&self) -> Option<gpui::ClipboardItem> {
          self.0.borrow_mut().clipboard.read_primary()
      }
-@@ -2997,15 +3054,18 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
+@@ -2999,15 +3056,18 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                  }
              }
              wl_data_device::Event::Selection { id: data_offer } => {
@@ -824,7 +819,7 @@ index 86dc7da..a62fb75 100644
          }
      }
 diff --git a/crates/gpui_linux/src/linux/x11/client.rs b/crates/gpui_linux/src/linux/x11/client.rs
-index 601eb93..66bb8fe 100644
+index e21f019..f242f02 100644
 --- a/crates/gpui_linux/src/linux/x11/client.rs
 +++ b/crates/gpui_linux/src/linux/x11/client.rs
 @@ -238,6 +238,8 @@ pub struct X11ClientState {
@@ -874,7 +869,7 @@ index 601eb93..66bb8fe 100644
          // Runnables' requests can read events into xcb's queue, where they don't wake the loop.
          let common = self.0.borrow().common.clone();
          common.borrow_mut().after_runnable = Some(Rc::new(move || {
-@@ -1625,6 +1651,21 @@ impl X11Client {
+@@ -1627,6 +1653,21 @@ impl X11Client {
              }
          }
      }
@@ -896,7 +891,7 @@ index 601eb93..66bb8fe 100644
  }
  
  impl X11Client {
-@@ -1848,6 +1889,49 @@ impl X11Client {
+@@ -1850,6 +1891,49 @@ impl X11Client {
              .context("X11: Failed to write to clipboard (clipboard)")
              .log_with_level(log::Level::Debug);
          state.clipboard_item.replace(item);

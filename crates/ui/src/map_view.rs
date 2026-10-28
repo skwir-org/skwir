@@ -560,7 +560,7 @@ impl PaneView for MapView {
                         let (ids, mode) = match pick {
                             Pick::Entry(id) => (
                                 vec![id],
-                                if modifiers.secondary() {
+                                if crate::keymap::secondary(&modifiers) {
                                     "toggle"
                                 } else {
                                     "replace"
@@ -568,7 +568,7 @@ impl PaneView for MapView {
                             ),
                             Pick::Cluster(ids, _) => (
                                 ids.to_vec(),
-                                if modifiers.secondary() {
+                                if crate::keymap::secondary(&modifiers) {
                                     "add"
                                 } else {
                                     "replace"
@@ -576,13 +576,13 @@ impl PaneView for MapView {
                             ),
                             Pick::Band(ids) => (
                                 ids,
-                                if modifiers.secondary() {
+                                if crate::keymap::secondary(&modifiers) {
                                     "add"
                                 } else {
                                     "replace"
                                 },
                             ),
-                            Pick::Nothing if modifiers.secondary() => return,
+                            Pick::Nothing if crate::keymap::secondary(&modifiers) => return,
                             Pick::Nothing => (Vec::new(), "replace"),
                         };
                         shell.select_ids(ids, mode, window, cx);

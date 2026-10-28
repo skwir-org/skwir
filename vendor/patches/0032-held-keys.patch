@@ -1,7 +1,7 @@
 0032 held-keys: an action sees the key event it came from, held or not; X11 tells a held key from a press
 
 diff --git a/crates/gpui/src/key_dispatch.rs b/crates/gpui/src/key_dispatch.rs
-index bc0cf6f..cfb4259 100644
+index e4bce61..0a99121 100644
 --- a/crates/gpui/src/key_dispatch.rs
 +++ b/crates/gpui/src/key_dispatch.rs
 @@ -2213,4 +2213,66 @@ mod tests {
@@ -72,26 +72,26 @@ index bc0cf6f..cfb4259 100644
 +    }
  }
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index e7777a6..63bc242 100644
+index bee39f3..b00fbaf 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -1270,6 +1270,7 @@ pub struct Window {
+@@ -1263,6 +1263,7 @@ pub struct Window {
      mouse_hit_test: HitTest,
      modifiers: Modifiers,
      capslock: Capslock,
 +    key_down_event: Option<KeyDownEvent>,
      scale_factor: f32,
-     pub(crate) bounds_observers: SubscriberSet<(), AnyObserver>,
+     pub(crate) bounds_observers: SingleSubscriberSet<AnyObserver>,
      appearance: WindowAppearance,
-@@ -2176,6 +2177,7 @@ impl Window {
+@@ -2225,6 +2226,7 @@ impl Window {
              mouse_hit_test: HitTest::default(),
              modifiers,
              capslock,
 +            key_down_event: None,
              scale_factor,
-             bounds_observers: SubscriberSet::new(),
+             bounds_observers: SingleSubscriberSet::new(),
              appearance,
-@@ -3447,6 +3449,15 @@ impl Window {
+@@ -3475,6 +3477,15 @@ impl Window {
          self.capslock
      }
  
@@ -107,7 +107,7 @@ index e7777a6..63bc242 100644
      /// Produces a new frame and assigns it to `rendered_frame`. To actually show
      /// the contents of the new [`Scene`], use [`Self::present`].
      #[profiling::function]
-@@ -5779,7 +5790,14 @@ impl Window {
+@@ -5811,7 +5822,14 @@ impl Window {
          if let Some(any_mouse_event) = event.mouse_event() {
              self.dispatch_mouse_event(any_mouse_event, cx);
          } else if let Some(any_key_event) = event.keyboard_event() {
@@ -123,7 +123,7 @@ index e7777a6..63bc242 100644
              self.dispatch_touch_event(touch_event, cx);
          }
 diff --git a/crates/gpui_linux/src/linux/x11/client.rs b/crates/gpui_linux/src/linux/x11/client.rs
-index 66bb8fe..5335c1f 100644
+index f242f02..a886156 100644
 --- a/crates/gpui_linux/src/linux/x11/client.rs
 +++ b/crates/gpui_linux/src/linux/x11/client.rs
 @@ -212,6 +212,9 @@ pub struct X11ClientState {

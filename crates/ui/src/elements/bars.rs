@@ -17,8 +17,8 @@ use std::rc::Rc;
 use gpui::{
     App, Bounds, ContentMask, CursorStyle, DispatchPhase, Element, ElementId, GlobalElementId,
     Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MouseButton,
-    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollWheelEvent,
-    ShapedLine, SharedString, Style, TextRun, Window, point, px, relative, size,
+    MouseDownEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, ScrollEvent, ShapedLine,
+    SharedString, Style, TextRun, Window, point, px, relative, size,
 };
 
 /// One bar.
@@ -588,7 +588,7 @@ impl Element for BarChart {
         });
         if let Some(on_pan) = self.on_pan.clone() {
             let wheel = Rc::clone(&prepaint.wheel);
-            window.on_mouse_event(move |ev: &ScrollWheelEvent, phase, window, cx| {
+            window.on_mouse_event(move |ev: &ScrollEvent, phase, window, cx| {
                 if phase != DispatchPhase::Bubble || !hitbox.is_hovered(window) {
                     return;
                 }

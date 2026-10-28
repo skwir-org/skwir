@@ -27,7 +27,7 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
 ## Decision
 
 1. **Built on Linux** for Apple silicon (`aarch64-apple-darwin`) against
-   SDK 26.5, for macOS 11 and later: compiled by clang and linked by LLVM's
+   SDK 26.5, for macOS 12 and later (11 until 2026-10-28): compiled by clang and linked by LLVM's
    `ld64.lld` through xmac's wrappers (`XMAC_CLANG`, `XMAC_LLD` in the
    `.#macos` shell), into `target/macos`. Not Intel Macs: a universal build
    is a step of its own.
@@ -55,7 +55,7 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
    the bundle alone, programs executable; the disk image, opened by the
    tools that made it, the same bundle file for file, modes kept, beside
    its link; Info.plist names what is there;
-   the icon holds every side; each program is arm64, for macOS 11, linked
+   the icon holds every side; each program is arm64, for macOS 12, linked
    to the system's libraries alone; the seal holds (Info.plist and every
    resource as signed, each program signed).
 6. **No folder of the building machine in what is shipped**, here and in
@@ -102,3 +102,7 @@ macOS, `tools/package/macos.sh` for a Mac, written on Linux and never run.
   `Contents/Frameworks/GStreamer` (`tools/package/gstreamer.py`); the
   check looks over each of its files (Apple silicon's, loading the
   system's or GStreamer's own, signed). Never run.
+- 2026-10-28: for macOS 12 and later, not 11: Zed's gpui requires it
+  since its commit f14592c4 ("Require macOS 12 and SDK 26"), which drops
+  the APIs macOS 12 deprecated. The deployment target, Info.plist's
+  `LSMinimumSystemVersion` and the package's check say 12.0.

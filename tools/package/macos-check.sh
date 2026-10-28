@@ -4,7 +4,7 @@
 # skwir.app alone, its programs executable, and the disk image the same
 # bundle, file for file, beside a link to Applications; Info.plist names
 # what is there;
-# the icon holds every side; each program is arm64, for macOS 11 or later,
+# the icon holds every side; each program is arm64, for macOS 12 or later,
 # linked to the system's libraries alone; the bundle's seal verifies
 # (rcodesign); no program names a folder of the machine that built it.
 # Whether it opens is for people on a Mac (docs/HELP-WANTED.md).
@@ -65,7 +65,7 @@ for wanted in ["Frameworks/libpdfium.dylib", "Resources/skwir.icns", "Resources/
     assert (app / wanted).is_file(), f"missing: {wanted}"
 info = plistlib.loads((app / "Info.plist").read_bytes())
 assert info["CFBundleExecutable"] == "skwir" and info["CFBundleIdentifier"] == "org.skwir.skwir", info
-assert info["CFBundleShortVersionString"] == version and info["LSMinimumSystemVersion"] == "11.0", info
+assert info["CFBundleShortVersionString"] == version and info["LSMinimumSystemVersion"] == "12.0", info
 icns = (app / "Resources" / f'{info["CFBundleIconFile"]}.icns').read_bytes()
 assert icns[:4] == b"icns" and struct.unpack(">I", icns[4:8])[0] == len(icns), "not an .icns"
 kinds, at = set(), 8
@@ -104,7 +104,7 @@ for program in $programs; do
     binary="$app/MacOS/$program"
     file -b "$binary" | grep -q '^Mach-O 64-bit arm64 executable' || { echo "$program: not an arm64 program" >&2; exit 1; }
     minos="$(llvm-otool -l "$binary" | sed -n '/LC_BUILD_VERSION/,/ntools/s/^ *minos //p')"
-    [ "$minos" = 11.0 ] || { echo "$program: for macOS $minos" >&2; exit 1; }
+    [ "$minos" = 12.0 ] || { echo "$program: for macOS $minos" >&2; exit 1; }
     # The system's libraries, or GStreamer's in the bundle (by @rpath).
     foreign=""
     for library in $(llvm-otool -L "$binary" | tail -n +2 | awk '{print $1}'); do
@@ -119,7 +119,7 @@ for program in $programs; do
         echo "$program names a folder of the machine that built it" >&2
         exit 1
     fi
-    echo "ok: $program: arm64, macOS 11 or later, the system's libraries (and the bundle's GStreamer) alone, no build folder"
+    echo "ok: $program: arm64, macOS 12 or later, the system's libraries (and the bundle's GStreamer) alone, no build folder"
 done
 # GStreamer in the bundle (tools/package/gstreamer.py, ADR-076), a
 # framework whose main binary is libgstreamer: each library, plugin and

@@ -1,10 +1,10 @@
 0031 aria-states: live regions, modal dialogs, lists of many selected, disabled and read-only elements
 
 diff --git a/crates/gpui/src/elements/div.rs b/crates/gpui/src/elements/div.rs
-index 6afd58d..002bf46 100644
+index b859334..5e39770 100644
 --- a/crates/gpui/src/elements/div.rs
 +++ b/crates/gpui/src/elements/div.rs
-@@ -1532,6 +1532,41 @@ pub trait StatefulInteractiveElement: InteractiveElement {
+@@ -1579,6 +1579,41 @@ pub trait StatefulInteractiveElement: InteractiveElement {
          self
      }
  
@@ -46,7 +46,7 @@ index 6afd58d..002bf46 100644
      /// Register a handler for an accessibility action on this element.
      /// The handler is called when a screen reader requests the given action.
      ///
-@@ -2176,6 +2211,11 @@ pub(crate) struct AriaProperties {
+@@ -2226,6 +2261,11 @@ pub(crate) struct AriaProperties {
      pub(crate) column_index: Option<usize>,
      pub(crate) row_count: Option<usize>,
      pub(crate) column_count: Option<usize>,
@@ -58,7 +58,7 @@ index 6afd58d..002bf46 100644
  }
  
  /// The interactivity struct. Powers all of the general-purpose
-@@ -3653,6 +3693,21 @@ impl Interactivity {
+@@ -3712,6 +3752,21 @@ impl Interactivity {
          if let Some(count) = self.aria.column_count {
              node.set_column_count(count);
          }
@@ -80,7 +80,7 @@ index 6afd58d..002bf46 100644
          if !self.click_listeners.is_empty() {
              node.add_action(accesskit::Action::Click);
          }
-@@ -5443,6 +5498,27 @@ mod tests {
+@@ -5502,6 +5557,27 @@ mod tests {
          assert_eq!(node.numeric_value_step(), Some(1.0));
      }
  
@@ -109,15 +109,15 @@ index 6afd58d..002bf46 100644
      /// Enter/Space -> synthesized click press/release pairing.
      struct KeyboardActivationTest {
 diff --git a/crates/gpui/src/gpui.rs b/crates/gpui/src/gpui.rs
-index 2328e95..6758bc4 100644
+index dbb8386..fb75a8b 100644
 --- a/crates/gpui/src/gpui.rs
 +++ b/crates/gpui/src/gpui.rs
-@@ -98,7 +98,7 @@ mod seal {
+@@ -111,7 +111,7 @@ pub mod private {
+ #[cfg(any(target_os = "windows", target_os = "linux", target_family = "wasm"))]
+ pub use queue::{PriorityQueueReceiver, PriorityQueueSender};
  
- pub use accesskit;
- pub use accesskit::Action as AccessibleAction;
--pub use accesskit::{Orientation, Role, Toggled};
-+pub use accesskit::{Live, Orientation, Role, Toggled};
+-pub use accesskit::{Action as AccessibleAction, Orientation, Role, Toggled};
++pub use accesskit::{Action as AccessibleAction, Live, Orientation, Role, Toggled};
  pub use action::*;
  pub use anyhow::Result;
  pub use app::*;

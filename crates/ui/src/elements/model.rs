@@ -17,7 +17,7 @@ use gpui::{
     App, Bounds, CursorStyle, DispatchPhase, Element, ElementId, GlobalElementId, Hitbox,
     HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, MeshLight, MeshPainted,
     MeshView, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    ScrollDelta, ScrollWheelEvent, Size, Style, Window, point, px, relative,
+    ScrollDelta, ScrollEvent, Size, Style, Window, point, px, relative,
 };
 
 /// Where the still is drawn from: degrees right of the front, and above.
@@ -479,7 +479,7 @@ impl Element for ModelView {
             }
         });
         let (hit, wheel, opened) = (hitbox.clone(), handles.clone(), Arc::clone(model));
-        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+        window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
             if phase != DispatchPhase::Bubble || !hit.should_handle_scroll(window) {
                 return;
             }

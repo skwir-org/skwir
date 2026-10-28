@@ -1,20 +1,20 @@
 0033 meshes: a triangle mesh drawn in 3D (Window::paint_mesh), by wgpu, Direct3D 11 and Metal
 
 diff --git a/crates/gpui/src/gpui.rs b/crates/gpui/src/gpui.rs
-index 6758bc47..cdea79ac 100644
+index fb75a8b..a8ef2b4 100644
 --- a/crates/gpui/src/gpui.rs
 +++ b/crates/gpui/src/gpui.rs
-@@ -33,6 +33,7 @@ mod inspector;
+@@ -43,6 +43,7 @@ mod inspector;
  mod interactive;
  mod key_dispatch;
  mod keymap;
 +mod mesh;
  mod path_builder;
  mod platform;
- pub mod prelude;
-@@ -193,6 +194,7 @@ pub use inspector::*;
+ mod platform_scheduler;
+@@ -133,6 +134,7 @@ pub use input::*;
+ pub use inspector::*;
  pub use interactive::*;
- use key_dispatch::*;
  pub use keymap::*;
 +pub use mesh::*;
  pub use path_builder::*;
@@ -22,7 +22,7 @@ index 6758bc47..cdea79ac 100644
  pub use profiler::*;
 diff --git a/crates/gpui/src/mesh.rs b/crates/gpui/src/mesh.rs
 new file mode 100644
-index 00000000..cff68594
+index 0000000..cff6859
 --- /dev/null
 +++ b/crates/gpui/src/mesh.rs
 @@ -0,0 +1,1061 @@
@@ -1088,11 +1088,11 @@ index 00000000..cff68594
 +    }
 +}
 diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
-index 97068181..9fb42ed3 100644
+index 1aca8c8..0d56a83 100644
 --- a/crates/gpui/src/platform.rs
 +++ b/crates/gpui/src/platform.rs
-@@ -39,10 +39,10 @@ use crate::{
-     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds,
+@@ -40,10 +40,10 @@ use crate::{
+     Action, AnyWindowHandle, App, AsyncWindowContext, BackgroundExecutor, Bounds, Corners,
      DEFAULT_WINDOW_SIZE, DevicePixels, DispatchEventResult, Edges, ExternalDragPayload, Font,
      FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs, Hsla, ImageSource, Keymap,
 -    LineLayout, MissingGlyphSink, Pixels, PlatformGestures, PlatformInput, Point, Priority,
@@ -1106,7 +1106,7 @@ index 97068181..9fb42ed3 100644
  };
  #[cfg(any(target_os = "linux", target_os = "freebsd"))]
  use anyhow::bail;
-@@ -1375,6 +1375,15 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+@@ -1424,6 +1424,15 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
      }
      fn set_client_inset(&self, _inset: Pixels) {}
      fn gpu_specs(&self) -> Option<GpuSpecs>;
@@ -1123,7 +1123,7 @@ index 97068181..9fb42ed3 100644
      fn update_ime_position(&self, _bounds: Bounds<Pixels>);
  
 diff --git a/crates/gpui/src/scene.rs b/crates/gpui/src/scene.rs
-index be378132..d65dffaf 100644
+index a4116aa..9be4e92 100644
 --- a/crates/gpui/src/scene.rs
 +++ b/crates/gpui/src/scene.rs
 @@ -5,14 +5,15 @@ use schemars::JsonSchema;
@@ -1173,7 +1173,7 @@ index be378132..d65dffaf 100644
              .push(PaintOperation::Primitive(primitive));
 @@ -160,6 +167,7 @@ impl Scene {
          self.polychrome_sprites
-             .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
+             .sort_by_key(|sprite| (sprite.order, sprite.tile.texture_id.index));
          self.surfaces.sort_by_key(|surface| surface.order);
 +        self.meshes.sort_by_key(|mesh| mesh.order);
      }
@@ -1306,10 +1306,10 @@ index be378132..d65dffaf 100644
  #[expect(missing_docs)]
  pub struct PathId(pub usize);
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index 63bc2428..1d43952a 100644
+index b00fbaf..d563d85 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -11,18 +11,19 @@ use crate::{
+@@ -13,18 +13,19 @@ use crate::{
      DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
      EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
      Hsla, InputHandler, InputPreference, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent,
@@ -1319,12 +1319,12 @@ index 63bc2428..1d43952a 100644
 -    PolychromeSprite, Priority, PromptButton, PromptLevel, Quad, Render, RenderGlyphParams,
 -    RenderImage, RenderImageParams, RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR,
 -    SUBPIXEL_VARIANTS_X, SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size,
--    StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
--    SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
--    TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
--    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
--    WindowBounds, WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams,
--    WindowTextSystem, WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
+-    StrikethroughStyle, Style, SubpixelSprite, Subscription, SystemWindowTab,
+-    SystemWindowTabController, TabStopMap, Task, TextInputConfiguration, TextInputStateChange,
+-    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
+-    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
+-    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTextSystem,
+-    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 +    Keystroke, KeystrokeEvent, LayoutId, LineLayoutIndex, Mesh, MeshPainted, MeshPreparation,
 +    MeshView, Modifiers, ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent,
 +    MouseMoveEvent, MouseUpEvent, PaintMesh, Path, Pixels, PlatformAtlas, PlatformDisplay,
@@ -1332,16 +1332,16 @@ index 63bc2428..1d43952a 100644
 +    PromptButton, PromptLevel, Quad, Render, RenderGlyphParams, RenderImage, RenderImageParams,
 +    RenderSvgParams, Replay, ResizeEdge, SMOOTH_SVG_SCALE_FACTOR, SUBPIXEL_VARIANTS_X,
 +    SUBPIXEL_VARIANTS_Y, ScaledPixels, Scene, Shadow, SharedString, Size, StrikethroughStyle,
-+    Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab, SystemWindowTabController,
-+    TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration, TextInputStateChange,
-+    TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState, TransformationMatrix,
-+    Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-+    WindowControls, WindowDecorations, WindowInsets, WindowOptions, WindowParams, WindowTextSystem,
-+    WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
++    Style, SubpixelSprite, Subscription, SystemWindowTab, SystemWindowTabController, TabStopMap,
++    Task, TextInputConfiguration, TextInputStateChange, TextRenderingMode, TextStyle,
++    TextStyleRefinement, ThermalState, TransformationMatrix, Underline, UnderlineStyle,
++    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations,
++    WindowInsets, WindowOptions, WindowParams, WindowTextSystem, WindowVisibility, point,
++    prelude::*, px, rems, size, transparent_black,
  };
  
  use crate::gestures::{GestureTuning, RecognizedTouchGesture, TouchGestureRecognizer};
-@@ -5189,6 +5190,60 @@ impl Window {
+@@ -5217,6 +5218,60 @@ impl Window {
          Ok(())
      }
  
@@ -1402,8 +1402,34 @@ index 63bc2428..1d43952a 100644
      /// Paint a surface into the scene for the next frame at the current z-index.
      ///
      /// This method should only be called as part of the paint phase of element drawing.
+diff --git a/crates/gpui_apple/Cargo.toml b/crates/gpui_apple/Cargo.toml
+index 488d1dc..be99150 100644
+--- a/crates/gpui_apple/Cargo.toml
++++ b/crates/gpui_apple/Cargo.toml
+@@ -51,11 +51,13 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
+     "block2",
+     "dispatch2",
+     "MTLAllocation",
++    "MTLArgument",
+     "MTLBlitCommandEncoder",
+     "MTLBuffer",
+     "MTLCommandBuffer",
+     "MTLCommandEncoder",
+     "MTLCommandQueue",
++    "MTLDepthStencil",
+     "MTLDevice",
+     "MTLDrawable",
+     "MTLLibrary",
+@@ -66,6 +68,7 @@ objc2-metal = { version = "0.3.2", default-features = false, features = [
+     "MTLResource",
+     "MTLTexture",
+     "MTLTypes",
++    "MTLVertexDescriptor",
+ ] }
+ objc2-foundation = { workspace = true, features = ["NSThread", "NSNotification", "NSOperation", "NSProcessInfo", "block2"] }
+ objc2-quartz-core = { workspace = true, features = ["objc2-core-foundation", "objc2-core-graphics", "objc2-metal"] }
 diff --git a/crates/gpui_apple/src/gpui_apple.rs b/crates/gpui_apple/src/gpui_apple.rs
-index 6f39e63b..92d84e45 100644
+index 1e3d0e5..2677caa 100644
 --- a/crates/gpui_apple/src/gpui_apple.rs
 +++ b/crates/gpui_apple/src/gpui_apple.rs
 @@ -8,6 +8,7 @@
@@ -1412,14 +1438,14 @@ index 6f39e63b..92d84e45 100644
  mod metal_atlas;
 +mod metal_meshes;
  pub mod metal_renderer;
- pub mod thermal;
+ pub mod process_info;
  
 diff --git a/crates/gpui_apple/src/metal_meshes.rs b/crates/gpui_apple/src/metal_meshes.rs
 new file mode 100644
-index 00000000..fe90ee30
+index 0000000..fe719cf
 --- /dev/null
 +++ b/crates/gpui_apple/src/metal_meshes.rs
-@@ -0,0 +1,380 @@
+@@ -0,0 +1,448 @@
 +//! Meshes drawn in 3D (`gpui::PaintMesh`) by Metal, as gpui_wgpu draws
 +//! them: each in a pass of its own into an offscreen target the size of what
 +//! is shown of it (`gpui::MeshFrame`), multisampled as paths are and with a
@@ -1432,161 +1458,207 @@ index 00000000..fe90ee30
 +//! the first frame that does not draw them; the target goes with the last
 +//! mesh drawn.
 +
-+use std::{cell::OnceCell, ffi::c_void, sync::Arc};
++use std::{cell::OnceCell, ptr::NonNull, sync::Arc};
 +
++use anyhow::{Context as _, Result};
 +use gpui::{DevicePixels, Mesh, MeshMaker, MeshPreparation, MeshStore, PaintMesh, Size};
-+use metal::{MTLPixelFormat, MTLResourceOptions, NSUInteger};
++use objc2::{rc::Retained, runtime::ProtocolObject};
++use objc2_foundation::NSString;
++use objc2_metal::{
++    MTLBlendFactor, MTLBlendOperation, MTLBuffer, MTLClearColor, MTLCommandBuffer,
++    MTLCommandEncoder, MTLCompareFunction, MTLCompileOptions, MTLCullMode,
++    MTLDepthStencilDescriptor, MTLDepthStencilState, MTLDevice, MTLIndexType, MTLLibrary,
++    MTLLoadAction, MTLPixelFormat, MTLPrimitiveType, MTLRenderCommandEncoder,
++    MTLRenderPassDescriptor, MTLRenderPipelineDescriptor, MTLRenderPipelineState,
++    MTLResourceOptions, MTLStorageMode, MTLStoreAction, MTLTexture, MTLTextureDescriptor,
++    MTLTextureType, MTLTextureUsage, MTLVertexDescriptor, MTLVertexFormat, MTLVertexStepFunction,
++    MTLViewport,
++};
 +
 +const SOURCE: &str = include_str!("shaders_mesh.metal");
 +/// Samples a pixel, as paths are drawn: every Metal GPU has four.
-+const SAMPLE_COUNT: NSUInteger = 4;
++const SAMPLE_COUNT: usize = 4;
 +const COLOR_FORMAT: MTLPixelFormat = MTLPixelFormat::BGRA8Unorm;
 +const DEPTH_FORMAT: MTLPixelFormat = MTLPixelFormat::Depth32Float;
 +/// The largest side of a texture every Metal GPU allows.
 +const LARGEST_TARGET: u32 = 8192;
 +/// Where the vertex function finds the positions, normals and colors: after
 +/// its parameters, in buffer 0.
-+const POSITIONS: NSUInteger = 1;
-+const NORMALS: NSUInteger = 2;
-+const COLORS: NSUInteger = 3;
++const POSITIONS: usize = 1;
++const NORMALS: usize = 2;
++const COLORS: usize = 3;
++
++type Device = Retained<ProtocolObject<dyn MTLDevice>>;
++type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
++
++/// A buffer the mesh store makes on its thread and hands to the renderer's.
++pub(crate) struct Buffer(Retained<ProtocolObject<dyn MTLBuffer>>);
++
++// SAFETY: Metal's buffers may be used from any thread. The store's thread
++// fills each one before handing it over and never touches it again; only the
++// renderer's thread binds it afterwards.
++unsafe impl Send for Buffer {}
 +
 +/// A mesh's buffers on the device.
 +pub(crate) struct Buffers {
-+    positions: metal::Buffer,
-+    indices: metal::Buffer,
++    positions: Buffer,
++    indices: Buffer,
 +    /// Its positions' colors, when it has some.
-+    colors: Option<metal::Buffer>,
-+    count: NSUInteger,
++    colors: Option<Buffer>,
++    count: usize,
 +}
 +
 +/// How the device holds a mesh (`gpui::MeshMaker`).
 +#[derive(Clone)]
 +pub(crate) struct Maker {
-+    device: metal::Device,
++    device: Device,
 +    options: MTLResourceOptions,
 +}
 +
 +impl MeshMaker for Maker {
 +    type Buffers = Buffers;
-+    type Normals = metal::Buffer;
++    type Normals = Buffer;
 +
 +    fn holds(&self, mesh: &Mesh) -> bool {
-+        let largest = self.device.max_buffer_length();
++        let largest = self.device.maxBufferLength();
 +        [
 +            size_of_val(mesh.positions()),
 +            size_of_val(mesh.indices()),
 +            mesh.colors().map_or(0, size_of_val),
 +        ]
 +        .into_iter()
-+        .all(|bytes| bytes as NSUInteger <= largest)
++        .all(|bytes| bytes <= largest)
 +    }
 +
 +    fn buffers(&self, mesh: &Mesh) -> Option<Buffers> {
 +        Some(Buffers {
-+            positions: self.buffer(mesh.positions()),
-+            indices: self.buffer(mesh.indices()),
-+            colors: mesh.colors().map(|colors| self.buffer(colors)),
-+            count: mesh.indices().len() as NSUInteger,
++            positions: self.buffer(mesh.positions())?,
++            indices: self.buffer(mesh.indices())?,
++            colors: match mesh.colors() {
++                Some(colors) => Some(self.buffer(colors)?),
++                None => None,
++            },
++            count: mesh.indices().len(),
 +        })
 +    }
 +
-+    fn normals(&self, normals: &[[f32; 3]]) -> Option<metal::Buffer> {
-+        Some(self.buffer(normals))
++    fn normals(&self, normals: &[[f32; 3]]) -> Option<Buffer> {
++        self.buffer(normals)
 +    }
 +}
 +
 +impl Maker {
-+    /// A buffer holding a copy of `data`.
-+    fn buffer<T: Copy>(&self, data: &[T]) -> metal::Buffer {
-+        self.device.new_buffer_with_data(
-+            data.as_ptr().cast::<c_void>(),
-+            size_of_val(data) as NSUInteger,
-+            self.options,
-+        )
++    /// A buffer holding a copy of `data`; `None` when the device could not
++    /// make it.
++    fn buffer<T: Copy>(&self, data: &[T]) -> Option<Buffer> {
++        // An empty buffer is refused: one byte stands for none.
++        let length = size_of_val(data).max(1);
++        let bytes = [0u8; 1];
++        let pointer = if data.is_empty() {
++            NonNull::from(&bytes).cast()
++        } else {
++            NonNull::from(data).cast()
++        };
++        // SAFETY: Metal copies `length` bytes from the live slice (or the
++        // one byte standing for an empty one) before returning.
++        unsafe {
++            self.device
++                .newBufferWithBytes_length_options(pointer, length, self.options)
++        }
++        .map(Buffer)
 +    }
 +}
 +
 +struct Pipelines {
-+    draw: metal::RenderPipelineState,
-+    composite: metal::RenderPipelineState,
-+    depth: metal::DepthStencilState,
++    draw: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
++    composite: Retained<ProtocolObject<dyn MTLRenderPipelineState>>,
++    depth: Retained<ProtocolObject<dyn MTLDepthStencilState>>,
 +}
 +
 +impl Pipelines {
-+    fn new(device: &metal::DeviceRef) -> Result<Self, String> {
-+        let library = device.new_library_with_source(SOURCE, &metal::CompileOptions::new())?;
-+        let function = |name| library.get_function(name, None);
++    fn new(device: &ProtocolObject<dyn MTLDevice>) -> Result<Self> {
++        let library = device
++            .newLibraryWithSource_options_error(
++                &NSString::from_str(SOURCE),
++                Some(&MTLCompileOptions::new()),
++            )
++            .context("compiling the mesh shaders")?;
++        let function = |name: &str| {
++            library
++                .newFunctionWithName(&NSString::from_str(name))
++                .with_context(|| format!("locating function {name}"))
++        };
 +        let (vertex, fragment) = (function("vs_mesh")?, function("fs_mesh")?);
 +        let (composite_vertex, composite_fragment) = (
 +            function("vs_mesh_composite")?,
 +            function("fs_mesh_composite")?,
 +        );
 +
-+        let descriptor = metal::RenderPipelineDescriptor::new();
-+        descriptor.set_label("meshes");
-+        descriptor.set_vertex_function(Some(vertex.as_ref()));
-+        descriptor.set_fragment_function(Some(fragment.as_ref()));
++        let descriptor = MTLRenderPipelineDescriptor::new();
++        descriptor.setLabel(Some(&NSString::from_str("meshes")));
++        descriptor.setVertexFunction(Some(vertex.as_ref()));
++        descriptor.setFragmentFunction(Some(fragment.as_ref()));
 +        // Positions, normals, colors: a buffer each.
-+        let vertices = metal::VertexDescriptor::new();
++        let vertices = MTLVertexDescriptor::new();
 +        for (location, (buffer, format, stride)) in [
-+            (POSITIONS, metal::MTLVertexFormat::Float3, 12),
-+            (NORMALS, metal::MTLVertexFormat::Float3, 12),
-+            (COLORS, metal::MTLVertexFormat::UChar4Normalized, 4),
++            (POSITIONS, MTLVertexFormat::Float3, 12),
++            (NORMALS, MTLVertexFormat::Float3, 12),
++            (COLORS, MTLVertexFormat::UChar4Normalized, 4),
 +        ]
 +        .into_iter()
 +        .enumerate()
 +        {
-+            let attribute = vertices
-+                .attributes()
-+                .object_at(location as NSUInteger)
-+                .ok_or("no vertex attribute")?;
-+            attribute.set_format(format);
-+            attribute.set_offset(0);
-+            attribute.set_buffer_index(buffer);
-+            let layout = vertices
-+                .layouts()
-+                .object_at(buffer)
-+                .ok_or("no vertex layout")?;
-+            layout.set_stride(stride);
-+            layout.set_step_function(metal::MTLVertexStepFunction::PerVertex);
-+            layout.set_step_rate(1);
++            // SAFETY: The attribute and layout indices are below Metal's
++            // 31, and the offset and stride describe the buffers bound.
++            unsafe {
++                let attribute = vertices.attributes().objectAtIndexedSubscript(location);
++                attribute.setFormat(format);
++                attribute.setOffset(0);
++                attribute.setBufferIndex(buffer);
++                let layout = vertices.layouts().objectAtIndexedSubscript(buffer);
++                layout.setStride(stride);
++                layout.setStepFunction(MTLVertexStepFunction::PerVertex);
++                layout.setStepRate(1);
++            }
 +        }
-+        descriptor.set_vertex_descriptor(Some(vertices));
-+        descriptor.set_raster_sample_count(SAMPLE_COUNT);
-+        descriptor.set_depth_attachment_pixel_format(DEPTH_FORMAT);
-+        let color = descriptor
-+            .color_attachments()
-+            .object_at(0)
-+            .ok_or("no color attachment")?;
-+        color.set_pixel_format(COLOR_FORMAT);
++        descriptor.setVertexDescriptor(Some(&vertices));
++        descriptor.setRasterSampleCount(SAMPLE_COUNT);
++        descriptor.setDepthAttachmentPixelFormat(DEPTH_FORMAT);
++        // SAFETY: Index zero is within the pipeline's color attachment array.
++        let color = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
++        color.setPixelFormat(COLOR_FORMAT);
 +        // What is drawn is written as it is: the target holds nothing else.
-+        color.set_blending_enabled(false);
-+        let draw = device.new_render_pipeline_state(&descriptor)?;
++        color.setBlendingEnabled(false);
++        let draw = device
++            .newRenderPipelineStateWithDescriptor_error(&descriptor)
++            .context("creating the mesh pipeline")?;
 +
-+        let descriptor = metal::RenderPipelineDescriptor::new();
-+        descriptor.set_label("mesh_composite");
-+        descriptor.set_vertex_function(Some(composite_vertex.as_ref()));
-+        descriptor.set_fragment_function(Some(composite_fragment.as_ref()));
-+        let color = descriptor
-+            .color_attachments()
-+            .object_at(0)
-+            .ok_or("no color attachment")?;
-+        color.set_pixel_format(COLOR_FORMAT);
++        let descriptor = MTLRenderPipelineDescriptor::new();
++        descriptor.setLabel(Some(&NSString::from_str("mesh_composite")));
++        descriptor.setVertexFunction(Some(composite_vertex.as_ref()));
++        descriptor.setFragmentFunction(Some(composite_fragment.as_ref()));
++        // SAFETY: Index zero is within the pipeline's color attachment array.
++        let color = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
++        color.setPixelFormat(COLOR_FORMAT);
 +        // What was drawn is premultiplied by its coverage: resolved edges
 +        // over nothing.
-+        color.set_blending_enabled(true);
-+        color.set_rgb_blend_operation(metal::MTLBlendOperation::Add);
-+        color.set_alpha_blend_operation(metal::MTLBlendOperation::Add);
-+        color.set_source_rgb_blend_factor(metal::MTLBlendFactor::One);
-+        color.set_source_alpha_blend_factor(metal::MTLBlendFactor::One);
-+        color.set_destination_rgb_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-+        color.set_destination_alpha_blend_factor(metal::MTLBlendFactor::OneMinusSourceAlpha);
-+        let composite = device.new_render_pipeline_state(&descriptor)?;
++        color.setBlendingEnabled(true);
++        color.setRgbBlendOperation(MTLBlendOperation::Add);
++        color.setAlphaBlendOperation(MTLBlendOperation::Add);
++        color.setSourceRGBBlendFactor(MTLBlendFactor::One);
++        color.setSourceAlphaBlendFactor(MTLBlendFactor::One);
++        color.setDestinationRGBBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
++        color.setDestinationAlphaBlendFactor(MTLBlendFactor::OneMinusSourceAlpha);
++        let composite = device
++            .newRenderPipelineStateWithDescriptor_error(&descriptor)
++            .context("creating the mesh composite pipeline")?;
 +
-+        let descriptor = metal::DepthStencilDescriptor::new();
-+        descriptor.set_depth_compare_function(metal::MTLCompareFunction::Less);
-+        descriptor.set_depth_write_enabled(true);
-+        let depth = device.new_depth_stencil_state(&descriptor);
++        let descriptor = MTLDepthStencilDescriptor::new();
++        descriptor.setDepthCompareFunction(MTLCompareFunction::Less);
++        descriptor.setDepthWriteEnabled(true);
++        let depth = device
++            .newDepthStencilStateWithDescriptor(&descriptor)
++            .context("creating the mesh depth state")?;
 +        Ok(Pipelines {
 +            draw,
 +            composite,
@@ -1600,50 +1672,54 @@ index 00000000..fe90ee30
 +struct Target {
 +    width: u32,
 +    height: u32,
-+    multisampled: metal::Texture,
-+    depth: metal::Texture,
-+    resolved: metal::Texture,
++    multisampled: Texture,
++    depth: Texture,
++    resolved: Texture,
 +}
 +
 +impl Target {
 +    /// Kept in tile memory only, where the GPU can (Apple's): drawn and
-+    /// resolved in one pass.
-+    fn new(device: &metal::DeviceRef, width: u32, height: u32, memoryless: bool) -> Self {
-+        let texture = |format, samples, usage, memoryless| {
-+            let descriptor = metal::TextureDescriptor::new();
-+            descriptor.set_width(width.max(1) as NSUInteger);
-+            descriptor.set_height(height.max(1) as NSUInteger);
-+            descriptor.set_pixel_format(format);
-+            if samples > 1 {
-+                descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
-+                descriptor.set_sample_count(samples);
++    /// resolved in one pass. `None` when the device could not make it.
++    fn new(
++        device: &ProtocolObject<dyn MTLDevice>,
++        width: u32,
++        height: u32,
++        memoryless: bool,
++    ) -> Option<Self> {
++        let texture = |format, samples: usize, usage, memoryless| {
++            let descriptor = MTLTextureDescriptor::new();
++            // SAFETY: The dimensions are positive, within LARGEST_TARGET,
++            // and the sample count one Metal GPUs all support.
++            unsafe {
++                descriptor.setWidth(width.max(1) as usize);
++                descriptor.setHeight(height.max(1) as usize);
++                if samples > 1 {
++                    descriptor.setTextureType(MTLTextureType::Type2DMultisample);
++                    descriptor.setSampleCount(samples);
++                }
 +            }
-+            descriptor.set_storage_mode(if memoryless {
-+                metal::MTLStorageMode::Memoryless
++            descriptor.setPixelFormat(format);
++            descriptor.setStorageMode(if memoryless {
++                MTLStorageMode::Memoryless
 +            } else {
-+                metal::MTLStorageMode::Private
++                MTLStorageMode::Private
 +            });
-+            descriptor.set_usage(usage);
-+            device.new_texture(&descriptor)
++            descriptor.setUsage(usage);
++            device.newTextureWithDescriptor(&descriptor)
 +        };
-+        let target = metal::MTLTextureUsage::RenderTarget;
-+        Target {
++        let target = MTLTextureUsage::RenderTarget;
++        Some(Target {
 +            width,
 +            height,
-+            multisampled: texture(COLOR_FORMAT, SAMPLE_COUNT, target, memoryless),
-+            depth: texture(DEPTH_FORMAT, SAMPLE_COUNT, target, memoryless),
-+            resolved: texture(
-+                COLOR_FORMAT,
-+                1,
-+                target | metal::MTLTextureUsage::ShaderRead,
-+                false,
-+            ),
-+        }
++            multisampled: texture(COLOR_FORMAT, SAMPLE_COUNT, target, memoryless)?,
++            depth: texture(DEPTH_FORMAT, SAMPLE_COUNT, target, memoryless)?,
++            resolved: texture(COLOR_FORMAT, 1, target | MTLTextureUsage::ShaderRead, false)?,
++        })
 +    }
 +}
 +
 +pub(crate) struct MeshPass {
-+    device: metal::Device,
++    device: Device,
 +    memoryless: bool,
 +    /// Made when the first mesh is asked for; `None` if they cannot be.
 +    pipelines: OnceCell<Option<Pipelines>>,
@@ -1654,11 +1730,7 @@ index 00000000..fe90ee30
 +impl MeshPass {
 +    /// `options` are the buffers', and `apple_gpu` whether the device can
 +    /// keep a texture in tile memory only.
-+    pub(crate) fn new(
-+        device: &metal::Device,
-+        options: MTLResourceOptions,
-+        apple_gpu: bool,
-+    ) -> Self {
++    pub(crate) fn new(device: &Device, options: MTLResourceOptions, apple_gpu: bool) -> Self {
 +        Self {
 +            device: device.clone(),
 +            memoryless: apple_gpu,
@@ -1675,7 +1747,7 @@ index 00000000..fe90ee30
 +        self.pipelines
 +            .get_or_init(|| {
 +                Pipelines::new(&self.device)
-+                    .inspect_err(|error| log::error!("meshes will not be drawn: {error}"))
++                    .inspect_err(|error| log::error!("meshes will not be drawn: {error:#}"))
 +                    .ok()
 +            })
 +            .as_ref()
@@ -1695,7 +1767,7 @@ index 00000000..fe90ee30
 +    /// meanwhile; `None` when nothing of it is drawn.
 +    pub(crate) fn draw(
 +        &mut self,
-+        command_buffer: &metal::CommandBufferRef,
++        command_buffer: &ProtocolObject<dyn MTLCommandBuffer>,
 +        paint: &PaintMesh,
 +        frame: Size<DevicePixels>,
 +    ) -> Option<Drawn> {
@@ -1708,7 +1780,7 @@ index 00000000..fe90ee30
 +            .is_none_or(|target| (target.width, target.height) != (width, height))
 +        {
 +            self.target = None;
-+            self.target = Some(Target::new(&self.device, width, height, self.memoryless));
++            self.target = Target::new(&self.device, width, height, self.memoryless);
 +        }
 +        let (Some(Some(pipelines)), Some(target)) = (self.pipelines.get(), self.target.as_ref())
 +        else {
@@ -1719,23 +1791,29 @@ index 00000000..fe90ee30
 +        let colored = buffers.colors.is_some();
 +        let params = framed.params(&paint.view, smooth, colored);
 +
-+        let descriptor = metal::RenderPassDescriptor::new();
-+        let color = descriptor.color_attachments().object_at(0)?;
-+        color.set_texture(Some(&target.multisampled));
-+        color.set_resolve_texture(Some(&target.resolved));
-+        color.set_load_action(metal::MTLLoadAction::Clear);
-+        color.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 0.));
++        let descriptor = MTLRenderPassDescriptor::new();
++        // SAFETY: Index zero is within the render pass's color attachment array.
++        let color = unsafe { descriptor.colorAttachments().objectAtIndexedSubscript(0) };
++        color.setTexture(Some(&target.multisampled));
++        color.setResolveTexture(Some(&target.resolved));
++        color.setLoadAction(MTLLoadAction::Clear);
++        color.setClearColor(MTLClearColor {
++            red: 0.,
++            green: 0.,
++            blue: 0.,
++            alpha: 0.,
++        });
 +        // Only what is resolved is read.
-+        color.set_store_action(metal::MTLStoreAction::MultisampleResolve);
-+        let depth = descriptor.depth_attachment()?;
-+        depth.set_texture(Some(&target.depth));
-+        depth.set_load_action(metal::MTLLoadAction::Clear);
-+        depth.set_clear_depth(1.);
-+        depth.set_store_action(metal::MTLStoreAction::DontCare);
++        color.setStoreAction(MTLStoreAction::MultisampleResolve);
++        let depth = descriptor.depthAttachment();
++        depth.setTexture(Some(&target.depth));
++        depth.setLoadAction(MTLLoadAction::Clear);
++        depth.setClearDepth(1.);
++        depth.setStoreAction(MTLStoreAction::DontCare);
 +
-+        let encoder = command_buffer.new_render_command_encoder(descriptor);
++        let encoder = command_buffer.renderCommandEncoderWithDescriptor(&descriptor)?;
 +        let [shown_width, shown_height] = framed.shown;
-+        encoder.set_viewport(metal::MTLViewport {
++        encoder.setViewport(MTLViewport {
 +            originX: 0.,
 +            originY: 0.,
 +            width: f64::from(shown_width),
@@ -1743,28 +1821,35 @@ index 00000000..fe90ee30
 +            znear: 0.,
 +            zfar: 1.,
 +        });
-+        encoder.set_render_pipeline_state(&pipelines.draw);
-+        encoder.set_depth_stencil_state(&pipelines.depth);
++        encoder.setRenderPipelineState(&pipelines.draw);
++        encoder.setDepthStencilState(Some(&pipelines.depth));
 +        // Either side may face the camera, as a mesh's winding is not
 +        // always kept.
-+        encoder.set_cull_mode(metal::MTLCullMode::None);
-+        let bytes = size_of_val(&params) as NSUInteger;
-+        encoder.set_vertex_bytes(0, bytes, params.as_ptr().cast());
-+        encoder.set_fragment_bytes(0, bytes, params.as_ptr().cast());
++        encoder.setCullMode(MTLCullMode::None);
++        let bytes = size_of_val(&params);
 +        // Without normals or colors the shader reads none: the positions
 +        // stand in, as long as either would be.
-+        encoder.set_vertex_buffer(POSITIONS, Some(&buffers.positions), 0);
-+        encoder.set_vertex_buffer(NORMALS, Some(normals.unwrap_or(&buffers.positions)), 0);
++        let normals = normals.unwrap_or(&buffers.positions);
 +        let colors = buffers.colors.as_ref().unwrap_or(&buffers.positions);
-+        encoder.set_vertex_buffer(COLORS, Some(colors), 0);
-+        encoder.draw_indexed_primitives(
-+            metal::MTLPrimitiveType::Triangle,
-+            buffers.count,
-+            metal::MTLIndexType::UInt32,
-+            &buffers.indices,
-+            0,
-+        );
-+        encoder.end_encoding();
++        // SAFETY: The parameters are copied from a live value into the slot
++        // the shaders read them from; the buffers bound hold what the vertex
++        // descriptor says, and the indices `count` u32s, each within the
++        // positions (`gpui::Mesh` checks them).
++        unsafe {
++            encoder.setVertexBytes_length_atIndex(NonNull::from(&params).cast(), bytes, 0);
++            encoder.setFragmentBytes_length_atIndex(NonNull::from(&params).cast(), bytes, 0);
++            encoder.setVertexBuffer_offset_atIndex(Some(&buffers.positions.0), 0, POSITIONS);
++            encoder.setVertexBuffer_offset_atIndex(Some(&normals.0), 0, NORMALS);
++            encoder.setVertexBuffer_offset_atIndex(Some(&colors.0), 0, COLORS);
++            encoder.drawIndexedPrimitives_indexCount_indexType_indexBuffer_indexBufferOffset(
++                MTLPrimitiveType::Triangle,
++                buffers.count,
++                MTLIndexType::UInt32,
++                &buffers.indices.0,
++                0,
++            );
++        }
++        encoder.endEncoding();
 +        Some(Drawn {
 +            composite: framed.composite(),
 +        })
@@ -1772,18 +1857,27 @@ index 00000000..fe90ee30
 +
 +    /// Composite a mesh drawn into the target, pixel for pixel, with
 +    /// `encoder`.
-+    pub(crate) fn composite(&self, encoder: &metal::RenderCommandEncoderRef, drawn: &Drawn) {
++    pub(crate) fn composite(
++        &self,
++        encoder: &ProtocolObject<dyn MTLRenderCommandEncoder>,
++        drawn: &Drawn,
++    ) {
 +        let (Some(Some(pipelines)), Some(target)) = (self.pipelines.get(), self.target.as_ref())
 +        else {
 +            return;
 +        };
-+        let bytes = size_of_val(&drawn.composite) as NSUInteger;
-+        let composite = drawn.composite.as_ptr().cast();
-+        encoder.set_render_pipeline_state(&pipelines.composite);
-+        encoder.set_vertex_bytes(0, bytes, composite);
-+        encoder.set_fragment_bytes(0, bytes, composite);
-+        encoder.set_fragment_texture(0, Some(&target.resolved));
-+        encoder.draw_primitives(metal::MTLPrimitiveType::TriangleStrip, 0, 4);
++        let bytes = size_of_val(&drawn.composite);
++        let composite = NonNull::from(&drawn.composite).cast();
++        encoder.setRenderPipelineState(&pipelines.composite);
++        // SAFETY: The composite's parameters are copied from a live value
++        // into the slot its shaders read; the texture is the target's,
++        // resolved by the pass before this one.
++        unsafe {
++            encoder.setVertexBytes_length_atIndex(composite, bytes, 0);
++            encoder.setFragmentBytes_length_atIndex(composite, bytes, 0);
++            encoder.setFragmentTexture_atIndex(Some(&target.resolved), 0);
++            encoder.drawPrimitives_vertexStart_vertexCount(MTLPrimitiveType::TriangleStrip, 0, 4);
++        }
 +    }
 +
 +    /// After a frame: let go of the meshes it did not draw, and of the
@@ -1801,15 +1895,14 @@ index 00000000..fe90ee30
 +    composite: gpui::MeshComposite,
 +}
 diff --git a/crates/gpui_apple/src/metal_renderer.rs b/crates/gpui_apple/src/metal_renderer.rs
-index 862e62a5..ecd08bd5 100644
+index e08652c..1e6c0dd 100644
 --- a/crates/gpui_apple/src/metal_renderer.rs
 +++ b/crates/gpui_apple/src/metal_renderer.rs
-@@ -1,10 +1,11 @@
+@@ -1,9 +1,10 @@
  use crate::metal_atlas::MetalAtlas;
 +use crate::metal_meshes::MeshPass;
  use anyhow::{Context as _, Result};
  use block2::RcBlock;
- use core_graphics::geometry::CGSize;
  use gpui::{
 -    AtlasTextureId, Background, Bounds, ContentMask, DevicePixels, PaintSurface, Path, Point,
 -    PrimitiveBatch, ScaledPixels, Scene, Size, point, size,
@@ -1818,16 +1911,16 @@ index 862e62a5..ecd08bd5 100644
  };
  #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
  use image::RgbaImage;
-@@ -134,6 +135,8 @@ pub struct MetalRenderer {
-     path_intermediate_texture: Option<metal::Texture>,
-     path_intermediate_msaa_texture: Option<metal::Texture>,
+@@ -142,6 +143,8 @@ pub struct MetalRenderer {
+     path_intermediate_texture: Option<Retained<ProtocolObject<dyn MTLTexture>>>,
+     path_intermediate_msaa_texture: Option<Retained<ProtocolObject<dyn MTLTexture>>>,
      path_sample_count: u32,
 +    /// Meshes drawn in 3D (`metal_meshes`).
 +    meshes: MeshPass,
      /// Offscreen render target reused across `render_scene` calls when
      /// rendering headlessly without reading pixels back.
      #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
-@@ -311,16 +314,17 @@ impl MetalRenderer {
+@@ -305,20 +308,21 @@ impl MetalRenderer {
              to_float2_bits(point(1., 0.)),
              to_float2_bits(point(1., 1.)),
          ];
@@ -1836,31 +1929,35 @@ index 862e62a5..ecd08bd5 100644
 +        } else {
 +            MTLResourceOptions::StorageModeManaged
 +        };
-         let unit_vertices = device.new_buffer_with_data(
-             unit_vertices.as_ptr() as *const c_void,
-             mem::size_of_val(&unit_vertices) as u64,
--            if is_unified_memory {
--                MTLResourceOptions::StorageModeShared
--                    | MTLResourceOptions::CPUCacheModeWriteCombined
--            } else {
--                MTLResourceOptions::StorageModeManaged
--            },
-+            buffer_options,
-         );
+         // SAFETY: Metal copies the live array using its exact byte length.
+         let unit_vertices = unsafe {
+             device.newBufferWithBytes_length_options(
+                 ptr::NonNull::from(&unit_vertices).cast(),
+                 mem::size_of_val(&unit_vertices),
+-                if is_unified_memory {
+-                    MTLResourceOptions::StorageModeShared
+-                        | MTLResourceOptions::CPUCacheModeWriteCombined
+-                } else {
+-                    MTLResourceOptions::StorageModeManaged
+-                },
++                buffer_options,
+             )
+         }
+         .context("allocating unit vertex buffer")?;
 +        let meshes = MeshPass::new(&device, buffer_options, is_apple_gpu);
  
          let paths_rasterization_pipeline_state = build_path_rasterization_pipeline_state(
              &device,
-@@ -434,6 +438,7 @@ impl MetalRenderer {
+@@ -429,6 +433,7 @@ impl MetalRenderer {
              path_intermediate_texture: None,
              path_intermediate_msaa_texture: None,
              path_sample_count: PATH_SAMPLE_COUNT,
 +            meshes,
              #[cfg(any(test, feature = "bench-support", feature = "test-support"))]
              headless_render_target: None,
-         }
-@@ -506,6 +511,11 @@ impl MetalRenderer {
-         }
+         })
+@@ -518,6 +523,11 @@ impl MetalRenderer {
+         Ok(())
      }
  
 +    /// Make `mesh` ready to draw (`gpui::PlatformWindow::prepare_mesh`).
@@ -1871,43 +1968,43 @@ index 862e62a5..ecd08bd5 100644
      pub fn update_transparency(&mut self, transparent: bool) {
          self.opaque = !transparent;
          if let Some(layer) = &self.layer {
-@@ -821,8 +831,33 @@ impl MetalRenderer {
-                     command_encoder,
-                 ),
+@@ -867,8 +877,33 @@ impl MetalRenderer {
+                     }
+                 }
                  PrimitiveBatch::SubpixelSprites { .. } => unreachable!(),
 +                // Each mesh drawn offscreen, then composited where it is.
 +                PrimitiveBatch::Meshes(range) => {
-+                    command_encoder.end_encoding();
++                    command_encoder.endEncoding();
 +                    for paint in &scene.meshes[range] {
-+                        let Some(drawn) = self.meshes.draw(command_buffer, paint, viewport_size)
++                        let Some(drawn) = self.meshes.draw(&command_buffer, paint, viewport_size)
 +                        else {
 +                            continue;
 +                        };
 +                        let composite = new_command_encoder_for_texture(
-+                            command_buffer,
++                            &command_buffer,
 +                            texture,
 +                            viewport_size,
 +                            None,
-+                        );
-+                        self.meshes.composite(composite, &drawn);
-+                        composite.end_encoding();
++                        )?;
++                        self.meshes.composite(&composite, &drawn);
++                        composite.endEncoding();
 +                    }
 +                    command_encoder = new_command_encoder_for_texture(
-+                        command_buffer,
++                        &command_buffer,
 +                        texture,
 +                        viewport_size,
 +                        None,
-+                    );
++                    )?;
 +                }
              }
          }
 +        self.meshes.end_frame();
  
-         command_encoder.end_encoding();
+         command_encoder.endEncoding();
  
 diff --git a/crates/gpui_apple/src/shaders_mesh.metal b/crates/gpui_apple/src/shaders_mesh.metal
 new file mode 100644
-index 00000000..04e62910
+index 0000000..04e6291
 --- /dev/null
 +++ b/crates/gpui_apple/src/shaders_mesh.metal
 @@ -0,0 +1,200 @@
@@ -2112,7 +2209,7 @@ index 00000000..04e62910
 +    return fs_mesh_compositeOutput { _e10 };
 +}
 diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
-index f509432f..81451982 100644
+index f509432..8145198 100644
 --- a/crates/gpui_linux/src/linux/wayland/window.rs
 +++ b/crates/gpui_linux/src/linux/wayland/window.rs
 @@ -2250,6 +2250,23 @@ impl PlatformWindow for WaylandWindow {
@@ -2140,7 +2237,7 @@ index f509432f..81451982 100644
          let state = self.borrow();
          let surface = if state.surface_state.toplevel().is_some() {
 diff --git a/crates/gpui_linux/src/linux/x11/window.rs b/crates/gpui_linux/src/linux/x11/window.rs
-index c2d2f148..7e52aaaa 100644
+index c2d2f14..7e52aaa 100644
 --- a/crates/gpui_linux/src/linux/x11/window.rs
 +++ b/crates/gpui_linux/src/linux/x11/window.rs
 @@ -2008,6 +2008,23 @@ impl PlatformWindow for X11Window {
@@ -2168,10 +2265,10 @@ index c2d2f148..7e52aaaa 100644
          // Volume 0% means don't increase or decrease from system volume
          let _ = self.0.xcb.bell(0);
 diff --git a/crates/gpui_macos/src/window.rs b/crates/gpui_macos/src/window.rs
-index dbbf295b..8c42c046 100644
+index 01807c7..2c1c897 100644
 --- a/crates/gpui_macos/src/window.rs
 +++ b/crates/gpui_macos/src/window.rs
-@@ -2136,6 +2136,18 @@ impl PlatformWindow for MacWindow {
+@@ -2103,6 +2103,18 @@ impl PlatformWindow for MacWindow {
          None
      }
  
@@ -2191,20 +2288,20 @@ index dbbf295b..8c42c046 100644
          let executor = self.0.lock().foreground_executor.clone();
          executor
 diff --git a/crates/gpui_wgpu/Cargo.toml b/crates/gpui_wgpu/Cargo.toml
-index 3ce9dcec..e70ea50a 100644
+index 600d008..debea6b 100644
 --- a/crates/gpui_wgpu/Cargo.toml
 +++ b/crates/gpui_wgpu/Cargo.toml
 @@ -56,7 +56,7 @@ criterion.workspace = true
  gpui = { workspace = true, features = ["bench-support"] }
  image.workspace = true
  # Validate shaders with the same Naga revision that wgpu uses at runtime.
--naga = { git = "https://github.com/gfx-rs/wgpu", rev = "3b3506ea31154edc04de64debda0e780cba2639c", features = ["wgsl-in"] }
-+naga = { git = "https://github.com/gfx-rs/wgpu", rev = "3b3506ea31154edc04de64debda0e780cba2639c", features = ["wgsl-in", "hlsl-out", "msl-out"] }
+-naga = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", features = ["wgsl-in"] }
++naga = { git = "https://github.com/gfx-rs/wgpu", rev = "cddb2f5d80dc0009b2ef6767635140cacf90a007", features = ["wgsl-in", "hlsl-out", "msl-out"] }
  
  [[bench]]
  name = "layout_line"
 diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
-index 29a79afc..98037639 100644
+index 29a79af..9803763 100644
 --- a/crates/gpui_wgpu/src/gpui_wgpu.rs
 +++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
 @@ -1,6 +1,7 @@
@@ -2217,7 +2314,7 @@ index 29a79afc..98037639 100644
  pub use cosmic_text_system::*;
 diff --git a/crates/gpui_wgpu/src/shaders_mesh.wgsl b/crates/gpui_wgpu/src/shaders_mesh.wgsl
 new file mode 100644
-index 00000000..d366ab60
+index 0000000..d366ab6
 --- /dev/null
 +++ b/crates/gpui_wgpu/src/shaders_mesh.wgsl
 @@ -0,0 +1,135 @@
@@ -2358,7 +2455,7 @@ index 00000000..d366ab60
 +}
 diff --git a/crates/gpui_wgpu/src/wgpu_meshes.rs b/crates/gpui_wgpu/src/wgpu_meshes.rs
 new file mode 100644
-index 00000000..12d14b37
+index 0000000..12d14b3
 --- /dev/null
 +++ b/crates/gpui_wgpu/src/wgpu_meshes.rs
 @@ -0,0 +1,680 @@
@@ -3043,7 +3140,7 @@ index 00000000..12d14b37
 +    }
 +}
 diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
-index dc716237..fe044a5e 100644
+index dc71623..fe044a5 100644
 --- a/crates/gpui_wgpu/src/wgpu_renderer.rs
 +++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
 @@ -1,3 +1,4 @@
@@ -3541,7 +3638,7 @@ index dc716237..fe044a5e 100644
          assert!(!WEBGL_SHADERS.contains("var<storage"));
 diff --git a/crates/gpui_windows/src/directx_meshes.rs b/crates/gpui_windows/src/directx_meshes.rs
 new file mode 100644
-index 00000000..6d1a4ec7
+index 0000000..6d1a4ec
 --- /dev/null
 +++ b/crates/gpui_windows/src/directx_meshes.rs
 @@ -0,0 +1,951 @@
@@ -4497,7 +4594,7 @@ index 00000000..6d1a4ec7
 +    }
 +}
 diff --git a/crates/gpui_windows/src/directx_renderer.rs b/crates/gpui_windows/src/directx_renderer.rs
-index 98a13f30..6a46512f 100644
+index da71966..74fd607 100644
 --- a/crates/gpui_windows/src/directx_renderer.rs
 +++ b/crates/gpui_windows/src/directx_renderer.rs
 @@ -43,6 +43,8 @@ pub(crate) struct DirectXRenderer {
@@ -4592,7 +4689,7 @@ index 98a13f30..6a46512f 100644
          if surfaces.is_empty() {
              return Ok(());
 diff --git a/crates/gpui_windows/src/gpui_windows.rs b/crates/gpui_windows/src/gpui_windows.rs
-index e7a45a03..f1f5d3fd 100644
+index e7a45a0..f1f5d3f 100644
 --- a/crates/gpui_windows/src/gpui_windows.rs
 +++ b/crates/gpui_windows/src/gpui_windows.rs
 @@ -7,6 +7,7 @@ mod direct_manipulation;
@@ -4613,7 +4710,7 @@ index e7a45a03..f1f5d3fd 100644
  pub(crate) use display::*;
 diff --git a/crates/gpui_windows/src/shaders_mesh.hlsl b/crates/gpui_windows/src/shaders_mesh.hlsl
 new file mode 100644
-index 00000000..c1d6fb52
+index 0000000..c1d6fb5
 --- /dev/null
 +++ b/crates/gpui_windows/src/shaders_mesh.hlsl
 @@ -0,0 +1,175 @@
@@ -4793,7 +4890,7 @@ index 00000000..c1d6fb52
 +    return _e10;
 +}
 diff --git a/crates/gpui_windows/src/window.rs b/crates/gpui_windows/src/window.rs
-index 7b80af97..40b884e0 100644
+index 8d1e570..d726e13 100644
 --- a/crates/gpui_windows/src/window.rs
 +++ b/crates/gpui_windows/src/window.rs
 @@ -1087,6 +1087,14 @@ impl PlatformWindow for WindowsWindow {

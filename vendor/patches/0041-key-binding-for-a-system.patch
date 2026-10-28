@@ -1,0 +1,53 @@
+0041 key-binding-for-a-system: KeyBinding::new_for_os builds a binding from any string, secondary- resolved for the system given, without a keyboard mapper, as KeyBinding::new did
+
+diff --git a/crates/gpui/src/keymap/binding.rs b/crates/gpui/src/keymap/binding.rs
+index 1ca888b..ea27b27 100644
+--- a/crates/gpui/src/keymap/binding.rs
++++ b/crates/gpui/src/keymap/binding.rs
+@@ -2,7 +2,7 @@ use std::rc::Rc;
+ 
+ use crate::{
+     Action, AsKeystroke, DummyKeyboardMapper, InvalidKeystrokeError, KeyBindingContextPredicate,
+-    KeybindingKeystroke, Keystroke, PlatformKeyboardMapper, SharedString,
++    KeybindingKeystroke, Keystroke, OperatingSystem, PlatformKeyboardMapper, SharedString,
+ };
+ use smallvec::SmallVec;
+ 
+@@ -47,6 +47,37 @@ impl KeyBinding {
+         .unwrap()
+     }
+ 
++    /// Constructs a keybinding from any string, `secondary-` resolved for
++    /// `os`, the modifiers otherwise as written: what [`Self::new`] makes
++    /// of a static string, without a keyboard mapper, as a caller's own
++    /// keymap names its keys. An error when a keystroke, or the context,
++    /// does not parse.
++    pub fn new_for_os<A: Action>(
++        keystrokes: &str,
++        action: A,
++        context: Option<&str>,
++        os: OperatingSystem,
++    ) -> std::result::Result<Self, InvalidKeystrokeError> {
++        let context_predicate = context
++            .map(|context| {
++                KeyBindingContextPredicate::parse(context)
++                    .map(Rc::new)
++                    .map_err(|_| InvalidKeystrokeError {
++                        keystroke: keystrokes.to_owned(),
++                    })
++            })
++            .transpose()?;
++        Self::load_internal(
++            keystrokes,
++            Box::new(action),
++            context_predicate,
++            false,
++            None,
++            &DummyKeyboardMapper,
++            |source| Keystroke::parse_with_os(source, os),
++        )
++    }
++
+     /// Load a keybinding from the given raw data.
+     pub fn load(
+         keystrokes: &str,

@@ -17,6 +17,47 @@ pub struct RunCommand {
 
 /// Key context of the window root: bindings with no `when` live here, so
 /// deeper contexts (the text input) win on collisions.
+/// The system whose key conventions the window follows, as gpui names
+/// it: `secondary-` is Cmd on macOS and Ctrl elsewhere. Skwir is built
+/// for the system it runs on, so the target answers.
+pub const HOST_OS: gpui::OperatingSystem = if cfg!(target_os = "macos") {
+    gpui::OperatingSystem::Mac
+} else if cfg!(target_os = "windows") {
+    gpui::OperatingSystem::Windows
+} else if cfg!(target_os = "freebsd") {
+    gpui::OperatingSystem::FreeBsd
+} else {
+    gpui::OperatingSystem::Linux
+};
+
+/// A keystroke as Skwir's keymap writes it, `secondary-` this system's.
+pub fn parse_keystroke(source: &str) -> Result<Keystroke, gpui::InvalidKeystrokeError> {
+    Keystroke::parse_with_os(source, HOST_OS)
+}
+
+/// A keystroke written as the keymap reads it back.
+pub fn unparse(stroke: &Keystroke) -> String {
+    stroke.unparse(HOST_OS)
+}
+
+/// Whether `held` holds this system's secondary modifier: Cmd on macOS,
+/// Ctrl elsewhere.
+pub fn secondary(held: &gpui::Modifiers) -> bool {
+    if HOST_OS == gpui::OperatingSystem::Mac {
+        held.platform
+    } else {
+        held.control
+    }
+}
+
+/// A binding of `keys`, as the keymap writes them, to `action` in
+/// `context`; `None` when the keys do not parse.
+pub fn binding<A: Action>(keys: &str, action: A, context: Option<&str>) -> Option<KeyBinding> {
+    KeyBinding::new_for_os(keys, action, context, HOST_OS)
+        .inspect_err(|error| tracing::warn!(keys, %error, "a binding that does not parse"))
+        .ok()
+}
+
 pub const ROOT: &str = "Shell";
 pub const PANE: &str = "Pane";
 pub const ADDRESS: &str = "AddressBar";
@@ -1562,7 +1603,7 @@ pub fn key_caps(keys: &str) -> Vec<Vec<String>> {
 /// when these agree, whatever spelling each used.
 pub(crate) fn normal_keys(keys: &str) -> String {
     keys.split_whitespace()
-        .map(|stroke| Keystroke::parse(stroke).map_or_else(|_| stroke.to_owned(), |k| k.unparse()))
+        .map(|stroke| parse_keystroke(stroke).map_or_else(|_| stroke.to_owned(), |k| unparse(&k)))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -1672,7 +1713,7 @@ fn named_key(word: &str) -> bool {
 fn key_parts(binding: &str) -> Vec<String> {
     binding
         .split_whitespace()
-        .flat_map(|stroke| match Keystroke::parse(stroke) {
+        .flat_map(|stroke| match parse_keystroke(stroke) {
             Ok(stroke) => {
                 let held = stroke.modifiers;
                 [
@@ -1752,7 +1793,7 @@ mod finds_tests {
 }
 
 fn valid_keys(keys: &str) -> bool {
-    !keys.is_empty() && keys.split_whitespace().all(|k| Keystroke::parse(k).is_ok())
+    !keys.is_empty() && keys.split_whitespace().all(|k| parse_keystroke(k).is_ok())
 }
 
 /// Where a binding comes from, lowest precedence first (ADR-024): a later
@@ -2073,7 +2114,7 @@ pub(crate) fn types_a_character(keys: &str) -> bool {
     let Some(first) = keys.split_whitespace().next() else {
         return false;
     };
-    let Ok(stroke) = Keystroke::parse(first) else {
+    let Ok(stroke) = parse_keystroke(first) else {
         return false;
     };
     let m = stroke.modifiers;
@@ -2107,7 +2148,7 @@ pub(crate) fn takes_a_character(keys: &str, context: &str, binds: bool) -> bool 
     let Some(first) = keys.split_whitespace().next() else {
         return false;
     };
-    let Ok(stroke) = Keystroke::parse(first) else {
+    let Ok(stroke) = parse_keystroke(first) else {
         return false;
     };
     let m = stroke.modifiers;
@@ -2172,23 +2213,23 @@ fn gpui_bindings(bound: &[Bound]) -> Vec<KeyBinding> {
                     .as_ref()
                     .is_some_and(|(name, _)| !TERMINAL_PASSTHROUGH.contains(&name.as_str()))
         })
-        .map(|binding| KeyBinding::new(&binding.keys, gpui::NoAction, Some(TERMINAL)))
+        .filter_map(|binding| self::binding(&binding.keys, gpui::NoAction, Some(TERMINAL)))
         .collect();
     for binding in bound {
-        out.push(match binding.command.clone() {
-            Some((name, args)) => KeyBinding::new(
+        out.extend(match binding.command.clone() {
+            Some((name, args)) => self::binding(
                 &binding.keys,
                 RunCommand { name, args },
                 Some(&binding.context),
             ),
             // Freed keys: nothing below this binding runs where it applies.
-            None => KeyBinding::new(&binding.keys, gpui::NoAction, Some(&binding.context)),
+            None => self::binding(&binding.keys, gpui::NoAction, Some(&binding.context)),
         });
     }
     // After the bindings they shadow, so a sequence they start is no
     // longer awaited in a field either.
     for keys in typed_in_fields(bound) {
-        out.push(KeyBinding::new(
+        out.extend(self::binding(
             &keys,
             gpui::NoAction,
             Some(crate::input::KEY_CONTEXT),
@@ -2472,7 +2513,7 @@ mod tests {
                 .iter()
                 .map(|place| gpui::KeyContext::parse(place).unwrap())
                 .collect();
-            let stroke = gpui::Keystroke::parse(keys).unwrap();
+            let stroke = super::parse_keystroke(keys).unwrap();
             let (found, _) = keymap.bindings_for_input(&[stroke], &stack);
             found.first().map(|binding| {
                 let run = binding
@@ -2532,7 +2573,7 @@ mod tests {
                 .iter()
                 .map(|place| gpui::KeyContext::parse(place).unwrap())
                 .collect();
-            let stroke = gpui::Keystroke::parse(keys).unwrap();
+            let stroke = super::parse_keystroke(keys).unwrap();
             let (found, _) = keymap.bindings_for_input(&[stroke], &stack);
             found.first().map(|binding| {
                 let run = binding

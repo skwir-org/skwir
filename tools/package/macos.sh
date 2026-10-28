@@ -36,7 +36,7 @@ if [ ! -f "$xmac/env.sh" ]; then
 fi
 # shellcheck disable=SC2016 # env.sh's own words, `$_xmac_root` in them
 SDKROOT="$xmac/$(sed -n 's/^export SDKROOT="\$_xmac_root\/\(.*\)"$/\1/p' "$xmac/env.sh")"
-export SDKROOT MACOSX_DEPLOYMENT_TARGET=11.0
+export SDKROOT MACOSX_DEPLOYMENT_TARGET=12.0
 export CARGO_TARGET_DIR="$root/target/macos" CARGO_INCREMENTAL=0
 # What a program says of where it was built (a panic's location, C's
 # __FILE__) names no folder of this machine: the crates' sources are under
@@ -119,7 +119,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>$version</string>
     <key>CFBundleVersion</key><string>$version</string>
-    <key>LSMinimumSystemVersion</key><string>11.0</string>
+    <key>LSMinimumSystemVersion</key><string>12.0</string>
     <key>NSHighResolutionCapable</key><true/>
 </dict>
 </plist>

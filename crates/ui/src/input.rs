@@ -49,6 +49,12 @@ actions!(
 /// Key context every text input renders with.
 pub const KEY_CONTEXT: &str = "TextInput";
 
+/// A binding of Skwir's own keys whose `secondary-` is this system's
+/// (`KeyBinding::new` takes none).
+fn for_os<A: gpui::Action>(keys: &'static str, action: A, context: Option<&str>) -> KeyBinding {
+    crate::keymap::binding(keys, action, context).expect("Skwir's own keys parse")
+}
+
 /// Bindings for the input's own actions, scoped to [`KEY_CONTEXT`].
 pub fn key_bindings() -> Vec<KeyBinding> {
     let c = Some(KEY_CONTEXT);
@@ -63,19 +69,19 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-right", WordRight, c),
         KeyBinding::new("ctrl-shift-left", SelectWordLeft, c),
         KeyBinding::new("ctrl-shift-right", SelectWordRight, c),
-        KeyBinding::new("secondary-a", SelectAll, c),
+        for_os("secondary-a", SelectAll, c),
         KeyBinding::new("home", Home, c),
         KeyBinding::new("end", End, c),
         KeyBinding::new("shift-home", SelectHome, c),
         KeyBinding::new("shift-end", SelectEnd, c),
-        KeyBinding::new("secondary-v", Paste, c),
-        KeyBinding::new("secondary-c", Copy, c),
-        KeyBinding::new("secondary-x", Cut, c),
+        for_os("secondary-v", Paste, c),
+        for_os("secondary-c", Copy, c),
+        for_os("secondary-x", Cut, c),
         KeyBinding::new("ctrl-backspace", DeleteWordLeft, c),
         KeyBinding::new("ctrl-delete", DeleteWordRight, c),
         // The field's own undo, before the window's (the file operations').
-        KeyBinding::new("secondary-z", Undo, c),
-        KeyBinding::new("secondary-shift-z", Redo, c),
+        for_os("secondary-z", Undo, c),
+        for_os("secondary-shift-z", Redo, c),
         KeyBinding::new("ctrl-y", Redo, c),
         KeyBinding::new("enter", Submit, c),
         KeyBinding::new("escape", Cancel, c),

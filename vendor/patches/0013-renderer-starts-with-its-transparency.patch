@@ -1,10 +1,10 @@
 0013 renderer-starts-with-its-transparency: WindowParams carry the background and decorations
 
 diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
-index 9bfee7f..ec4309d 100644
+index 0df9d10..746897e 100644
 --- a/crates/gpui/src/platform.rs
 +++ b/crates/gpui/src/platform.rs
-@@ -2685,6 +2685,14 @@ pub struct WindowParams {
+@@ -2734,6 +2734,14 @@ pub struct WindowParams {
  
      pub window_min_size: Option<Size<Pixels>>,
  
@@ -20,10 +20,10 @@ index 9bfee7f..ec4309d 100644
      pub tabbing_identifier: Option<String>,
  
 diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
-index 817782d..a4d4623 100644
+index cc2a9a7..1a5f5a5 100644
 --- a/crates/gpui/src/window.rs
 +++ b/crates/gpui/src/window.rs
-@@ -1630,6 +1630,8 @@ impl Window {
+@@ -1664,6 +1664,8 @@ impl Window {
                  show,
                  display_id,
                  window_min_size,

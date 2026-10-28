@@ -1,10 +1,10 @@
 0039 shifted-space-is-space: the space bar with Shift is Space to key bindings, whatever the layout types there (a no-break space, a narrow one, a zero-width non-joiner)
 
 diff --git a/crates/gpui_linux/src/linux/platform.rs b/crates/gpui_linux/src/linux/platform.rs
-index 40f80661..6e221581 100644
+index a1b448c..f519ed9 100644
 --- a/crates/gpui_linux/src/linux/platform.rs
 +++ b/crates/gpui_linux/src/linux/platform.rs
-@@ -1452,6 +1452,17 @@ fn guess_ascii(keycode: Keycode, shift: bool) -> Option<char> {
+@@ -1506,6 +1506,17 @@ fn guess_ascii(keycode: Keycode, shift: bool) -> Option<char> {
      Some(c)
  }
  
@@ -22,7 +22,7 @@ index 40f80661..6e221581 100644
  #[cfg(any(feature = "wayland", feature = "x11"))]
  pub(super) fn keystroke_from_xkb(
      state: &State,
-@@ -1460,7 +1471,14 @@ pub(super) fn keystroke_from_xkb(
+@@ -1514,7 +1525,14 @@ pub(super) fn keystroke_from_xkb(
  ) -> gpui::Keystroke {
      let key_utf32 = state.key_get_utf32(keycode);
      let key_utf8 = state.key_get_utf8(keycode);
@@ -38,7 +38,7 @@ index 40f80661..6e221581 100644
  
      let key = match key_sym {
          Keysym::Return => "enter".to_owned(),
-@@ -1769,6 +1787,57 @@ mod tests {
+@@ -1860,6 +1878,57 @@ mod tests {
          );
      }
  

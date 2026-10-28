@@ -1,10 +1,10 @@
 0017 wrap-after-an-overflowing-space: wrapper and layout agree after an overflowing space
 
 diff --git a/crates/gpui/src/text_system/line_wrapper.rs b/crates/gpui/src/text_system/line_wrapper.rs
-index ca821bb..8116227 100644
+index 500ed44..8ce336e 100644
 --- a/crates/gpui/src/text_system/line_wrapper.rs
 +++ b/crates/gpui/src/text_system/line_wrapper.rs
-@@ -168,6 +168,11 @@ impl LineWrapper {
+@@ -190,6 +190,11 @@ impl LineWrapper {
                      if wrap_at_candidate {
                          last_wrap_ix = last_candidate_ix;
                          width -= last_candidate_width;
@@ -16,7 +16,7 @@ index ca821bb..8116227 100644
                      } else {
                          last_wrap_ix = ix;
                          width = item_width;
-@@ -784,6 +789,18 @@ mod tests {
+@@ -811,6 +816,18 @@ mod tests {
                  Boundary::new(18, 0)
              ],
          );

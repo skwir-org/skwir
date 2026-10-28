@@ -1,10 +1,10 @@
 0035 apple-shaders-at-start: built for macOS on another system, the shader bindings are made and the shaders compiled as the renderer starts
 
 diff --git a/crates/gpui_apple/Cargo.toml b/crates/gpui_apple/Cargo.toml
-index 23142d5..f78f168 100644
+index be99150..9d65b1a 100644
 --- a/crates/gpui_apple/Cargo.toml
 +++ b/crates/gpui_apple/Cargo.toml
-@@ -57,7 +57,9 @@ pathfinder_geometry = { workspace = true, optional = true }
+@@ -78,7 +78,9 @@ pathfinder_geometry = { workspace = true, optional = true }
  smallvec.workspace = true
  thiserror.workspace = true
  
@@ -16,10 +16,10 @@ index 23142d5..f78f168 100644
  
  [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dev-dependencies]
 diff --git a/crates/gpui_apple/build.rs b/crates/gpui_apple/build.rs
-index 5309594..6091146 100644
+index a29d01b..ebde8f2 100644
 --- a/crates/gpui_apple/build.rs
 +++ b/crates/gpui_apple/build.rs
-@@ -1,11 +1,18 @@
+@@ -1,16 +1,22 @@
  #![allow(clippy::disallowed_methods, reason = "build scripts are exempt")]
  
  fn main() {
@@ -39,9 +39,15 @@ index 5309594..6091146 100644
  
 -#[cfg(any(target_os = "macos", target_os = "ios"))]
  mod apple_build {
+-    #[cfg(not(feature = "runtime_shaders"))]
+-    use std::ffi::OsString;
      use std::{
          env,
-@@ -17,10 +24,18 @@ mod apple_build {
++        ffi::OsString,
+         path::{Path, PathBuf},
+     };
+ 
+@@ -19,10 +25,18 @@ mod apple_build {
      pub fn run() {
          let header_path = generate_shader_bindings();
  
@@ -64,7 +70,7 @@ index 5309594..6091146 100644
      }
  
      fn generate_shader_bindings() -> PathBuf {
-@@ -105,7 +120,6 @@ mod apple_build {
+@@ -107,7 +121,6 @@ mod apple_build {
  
      /// To enable runtime compilation, we need to "stitch" the shaders file with the generated header
      /// so that it is self-contained.
@@ -72,7 +78,7 @@ index 5309594..6091146 100644
      fn emit_stitched_shaders(header_path: &Path) {
          fn stitch_header(header: &Path, shader_path: &Path) -> std::io::Result<PathBuf> {
              let header_contents = std::fs::read_to_string(header)?;
-@@ -122,7 +136,6 @@ mod apple_build {
+@@ -124,7 +137,6 @@ mod apple_build {
          println!("cargo:rerun-if-changed={shader_source_path}");
      }
  
@@ -81,10 +87,10 @@ index 5309594..6091146 100644
          use std::process::{self, Command};
  
 diff --git a/crates/gpui_apple/src/metal_renderer.rs b/crates/gpui_apple/src/metal_renderer.rs
-index ecd08bd..891deae 100644
+index 1e6c0dd..9778578 100644
 --- a/crates/gpui_apple/src/metal_renderer.rs
 +++ b/crates/gpui_apple/src/metal_renderer.rs
-@@ -30,9 +30,10 @@ use std::{cell::Cell, ffi::c_void, mem, mem::MaybeUninit, ops::Range, ptr, slice
+@@ -37,9 +37,10 @@ use std::{cell::Cell, mem, mem::MaybeUninit, ops::Range, ptr, slice, sync::Arc};
  // Exported to metal
  pub(crate) type PointF = gpui::Point<f32>;
  
@@ -97,17 +103,20 @@ index ecd08bd..891deae 100644
  const SHADERS_SOURCE_FILE: &str = include_str!(concat!(env!("OUT_DIR"), "/stitched_shaders.metal"));
  // Use 4x MSAA, all devices support it.
  // https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
-@@ -279,11 +280,11 @@ impl MetalRenderer {
+@@ -268,14 +269,14 @@ impl MetalRenderer {
          opaque: bool,
          instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>,
-     ) -> Self {
+     ) -> Result<Self> {
 -        #[cfg(feature = "runtime_shaders")]
 +        #[cfg(any(feature = "runtime_shaders", gpui_shaders_at_start))]
          let library = device
-             .new_library_with_source(&SHADERS_SOURCE_FILE, &metal::CompileOptions::new())
-             .expect("error building metal library");
+             .newLibraryWithSource_options_error(
+                 &NSString::from_str(SHADERS_SOURCE_FILE),
+                 Some(&objc2_metal::MTLCompileOptions::new()),
+             )
+             .context("building Metal library")?;
 -        #[cfg(not(feature = "runtime_shaders"))]
 +        #[cfg(not(any(feature = "runtime_shaders", gpui_shaders_at_start)))]
          let library = device
-             .new_library_with_data(SHADERS_METALLIB)
-             .expect("error building metal library");
+             .newLibraryWithData_error(&dispatch2::DispatchData::from_static_bytes(
+                 SHADERS_METALLIB,

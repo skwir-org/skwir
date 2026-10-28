@@ -2045,7 +2045,7 @@ impl Shell {
     /// does not leave it. A trackpad has to mean it (`WheelTurn`).
     pub fn inspect_wheel(
         &mut self,
-        event: &gpui::ScrollWheelEvent,
+        event: &gpui::ScrollEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -2059,7 +2059,7 @@ impl Shell {
         };
         let (previous, next) = (display.data.previous, display.data.next);
         let delta = f32::from(event.delta.pixel_delta(window.line_height()).y);
-        if delta == 0. || event.modifiers.secondary() {
+        if delta == 0. || crate::keymap::secondary(&event.modifiers) {
             return;
         }
         let pending = self.preview.phase != PreviewPhase::Idle;
@@ -3381,7 +3381,7 @@ pub fn content(
         // After the list has scrolled: what is left of the gesture at an edge
         // turns the section, so a book reads on from chapter to chapter.
         .when(!view.parked, |d| {
-            d.on_scroll_wheel(cx.listener(|this, event, window, cx| {
+            d.on_scroll(cx.listener(|this, event, window, cx| {
                 this.inspect_wheel(event, window, cx);
             }))
         })

@@ -843,7 +843,7 @@ mod tests {
     use super::*;
 
     fn stroke(text: &str) -> gpui::Keystroke {
-        gpui::Keystroke::parse(text).unwrap()
+        crate::keymap::parse_keystroke(text).unwrap()
     }
 
     #[test]

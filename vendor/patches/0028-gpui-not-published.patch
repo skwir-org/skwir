@@ -1,7 +1,7 @@
 0028 gpui-not-published: gpui is a path dependency of Skwir's, published by Zed only
 
 diff --git a/crates/gpui/Cargo.toml b/crates/gpui/Cargo.toml
-index 28a3658..3ffb8af 100644
+index 2ba9123..1b41d22 100644
 --- a/crates/gpui/Cargo.toml
 +++ b/crates/gpui/Cargo.toml
 @@ -5,7 +5,7 @@ edition.workspace = true

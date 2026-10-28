@@ -1,7 +1,7 @@
 0006 text-run-positions: superscript, subscript and small-capital runs (RunPosition)
 
 diff --git a/crates/gpui/examples/input.rs b/crates/gpui/examples/input.rs
-index 106d06d..0739fbc 100644
+index 5bff4ce..fae627a 100644
 --- a/crates/gpui/examples/input.rs
 +++ b/crates/gpui/examples/input.rs
 @@ -531,6 +531,7 @@ impl Element for TextElement {
@@ -33,10 +33,10 @@ index 2064d7c..4b14f24 100644
                      window
                          .text_system()
 diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
-index 42841ac..9bfee7f 100644
+index a99c4ba..0df9d10 100644
 --- a/crates/gpui/src/platform.rs
 +++ b/crates/gpui/src/platform.rs
-@@ -1637,6 +1637,7 @@ impl PlatformTextSystem for NoopTextSystem {
+@@ -1686,6 +1686,7 @@ impl PlatformTextSystem for NoopTextSystem {
          if !glyphs.is_empty() {
              runs.push(ShapedRun {
                  font_id: FontId(0),
@@ -45,7 +45,7 @@ index 42841ac..9bfee7f 100644
              });
          } else {
 diff --git a/crates/gpui/src/style.rs b/crates/gpui/src/style.rs
-index 9150fdd..2ec7301 100644
+index 323c79e..ea09f70 100644
 --- a/crates/gpui/src/style.rs
 +++ b/crates/gpui/src/style.rs
 @@ -480,6 +480,10 @@ pub struct TextStyle {
@@ -184,7 +184,7 @@ index 9150fdd..2ec7301 100644
              underline: Some(UnderlineStyle {
                  thickness: px(4.),
 diff --git a/crates/gpui/src/text_system.rs b/crates/gpui/src/text_system.rs
-index cf6bb10..e76b90f 100644
+index 1eea420..dd0d91e 100644
 --- a/crates/gpui/src/text_system.rs
 +++ b/crates/gpui/src/text_system.rs
 @@ -13,8 +13,8 @@ use schemars::JsonSchema;
@@ -196,9 +196,9 @@ index cf6bb10..e76b90f 100644
 +    Bounds, DevicePixels, Hsla, Pixels, PlatformTextSystem, Point, Result, RunPosition,
 +    SharedString, Size, StrikethroughStyle, TextRenderingMode, UnderlineStyle, px,
  };
- use anyhow::{Context as _, anyhow};
+ use anyhow::Context as _;
  use collections::{FxHashMap, FxHashSet};
-@@ -453,6 +453,7 @@ impl TextSystem {
+@@ -423,6 +423,7 @@ impl TextSystem {
                  &[FontRun {
                      len: buffer.len(),
                      font_id,
@@ -206,7 +206,7 @@ index cf6bb10..e76b90f 100644
                  }],
              )
              .width
-@@ -797,6 +798,7 @@ impl WindowTextSystem {
+@@ -763,6 +764,7 @@ impl WindowTextSystem {
                  let font_id = self.resolve_font(&run.font);
                  if let Some(font_run) = font_runs.last_mut()
                      && font_id == font_run.font_id
@@ -214,7 +214,7 @@ index cf6bb10..e76b90f 100644
                      && !decoration_changed
                  {
                      font_run.len += run_len_within_line;
-@@ -804,6 +806,7 @@ impl WindowTextSystem {
+@@ -770,6 +772,7 @@ impl WindowTextSystem {
                      font_runs.push(FontRun {
                          len: run_len_within_line,
                          font_id,
@@ -222,7 +222,7 @@ index cf6bb10..e76b90f 100644
                      });
                  }
  
-@@ -911,6 +914,7 @@ impl WindowTextSystem {
+@@ -877,6 +880,7 @@ impl WindowTextSystem {
              let font_id = self.resolve_font(&run.font);
              if let Some(font_run) = font_runs.last_mut()
                  && font_id == font_run.font_id
@@ -230,7 +230,7 @@ index cf6bb10..e76b90f 100644
                  && !decoration_changed
              {
                  font_run.len += run.len;
-@@ -918,6 +922,7 @@ impl WindowTextSystem {
+@@ -884,6 +888,7 @@ impl WindowTextSystem {
                  font_runs.push(FontRun {
                      len: run.len,
                      font_id,
@@ -238,7 +238,7 @@ index cf6bb10..e76b90f 100644
                  });
              }
          }
-@@ -945,6 +950,7 @@ impl WindowTextSystem {
+@@ -911,6 +916,7 @@ impl WindowTextSystem {
                  &[FontRun {
                      len: buffer.len(),
                      font_id,
@@ -246,39 +246,7 @@ index cf6bb10..e76b90f 100644
                  }],
                  None,
              )
-@@ -993,6 +999,7 @@ impl WindowTextSystem {
-             let font_id = self.resolve_font(&run.font);
-             if let Some(font_run) = font_runs.last_mut()
-                 && font_id == font_run.font_id
-+                && font_run.position == run.position
-                 && !decoration_changed
-             {
-                 font_run.len += run.len;
-@@ -1000,6 +1007,7 @@ impl WindowTextSystem {
-                 font_runs.push(FontRun {
-                     len: run.len,
-                     font_id,
-+                    position: run.position,
-                 });
-             }
-         }
-@@ -1055,6 +1063,7 @@ impl WindowTextSystem {
-             let font_id = self.resolve_font(&run.font);
-             if let Some(font_run) = font_runs.last_mut()
-                 && font_id == font_run.font_id
-+                && font_run.position == run.position
-                 && !decoration_changed
-             {
-                 font_run.len += run.len;
-@@ -1062,6 +1071,7 @@ impl WindowTextSystem {
-                 font_runs.push(FontRun {
-                     len: run.len,
-                     font_id,
-+                    position: run.position,
-                 });
-             }
-         }
-@@ -1238,6 +1248,8 @@ pub struct TextRun {
+@@ -1080,6 +1086,8 @@ pub struct TextRun {
      pub underline: Option<UnderlineStyle>,
      /// The strikethrough style (if any)
      pub strikethrough: Option<StrikethroughStyle>,
@@ -288,7 +256,7 @@ index cf6bb10..e76b90f 100644
  
  #[cfg(all(target_os = "macos", test))]
 diff --git a/crates/gpui/src/text_system/line.rs b/crates/gpui/src/text_system/line.rs
-index f521005..3bfadc6 100644
+index 5691782..23fc17e 100644
 --- a/crates/gpui/src/text_system/line.rs
 +++ b/crates/gpui/src/text_system/line.rs
 @@ -315,6 +315,7 @@ impl<'a> ShapedLineCursor<'a> {
@@ -386,7 +354,7 @@ index f521005..3bfadc6 100644
                  ],
                  len: 10,
 diff --git a/crates/gpui/src/text_system/line_layout.rs b/crates/gpui/src/text_system/line_layout.rs
-index f0bf121..9ec6aaa 100644
+index 1fcbec7..1a5fa5d 100644
 --- a/crates/gpui/src/text_system/line_layout.rs
 +++ b/crates/gpui/src/text_system/line_layout.rs
 @@ -1,4 +1,6 @@
@@ -395,8 +363,8 @@ index f0bf121..9ec6aaa 100644
 +    FontId, GlyphId, Pixels, PlatformTextSystem, Point, RunPosition, SharedString, Size, point, px,
 +};
  use collections::FxHashMap;
- use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
  use smallvec::SmallVec;
+ use std::{
 @@ -38,6 +40,21 @@ pub struct ShapedRun {
      pub font_id: FontId,
      /// The glyphs that make up this run
@@ -435,7 +403,7 @@ index f0bf121..9ec6aaa 100644
                      glyphs: right_glyphs,
                  });
              }
-@@ -697,9 +716,7 @@ impl LineLayoutCache {
+@@ -672,9 +691,7 @@ impl LineLayoutCache {
              layout
          } else {
              let text = SharedString::from(text);
@@ -446,18 +414,7 @@ index f0bf121..9ec6aaa 100644
  
              if let Some(force_width) = force_width {
                  apply_force_width_to_layout(&mut layout, force_width);
-@@ -848,9 +865,7 @@ impl LineLayoutCache {
-         }
- 
-         let text = materialize_text();
--        let mut layout = self
--            .platform_text_system
--            .layout_line(&text, font_size, runs);
-+        let mut layout = shape(&*self.platform_text_system, &text, font_size, runs);
- 
-         if let Some(force_width) = force_width {
-             apply_force_width_to_layout(&mut layout, force_width);
-@@ -921,12 +936,65 @@ fn apply_force_width_to_layout(layout: &mut LineLayout, force_width: Pixels) {
+@@ -742,12 +759,65 @@ fn apply_force_width_to_layout(layout: &mut LineLayout, force_width: Pixels) {
      }
  }
  
@@ -523,7 +480,7 @@ index f0bf121..9ec6aaa 100644
  }
  
  trait AsCacheKeyRef {
-@@ -1091,6 +1159,7 @@ mod tests {
+@@ -844,6 +914,7 @@ mod tests {
              descent: px(4.),
              runs: vec![ShapedRun {
                  font_id: FontId(0),
@@ -531,7 +488,7 @@ index f0bf121..9ec6aaa 100644
                  glyphs,
              }],
              len: 0,
-@@ -1188,3 +1257,63 @@ mod tests {
+@@ -941,3 +1012,63 @@ mod tests {
          assert_eq!(positions, vec![0.5, 0.5]);
      }
  }
@@ -844,7 +801,7 @@ index 6d66a7a..111a799 100644
  
      let mut group = c.benchmark_group("layout_line");
 diff --git a/crates/gpui_wgpu/src/cosmic_text_system.rs b/crates/gpui_wgpu/src/cosmic_text_system.rs
-index b7c38bb..8bcd1f1 100644
+index 7750675..26d9f30 100644
 --- a/crates/gpui_wgpu/src/cosmic_text_system.rs
 +++ b/crates/gpui_wgpu/src/cosmic_text_system.rs
 @@ -829,6 +829,7 @@ impl CosmicTextSystemState {
@@ -863,7 +820,7 @@ index b7c38bb..8bcd1f1 100644
              });
          }
      }
-@@ -1295,6 +1297,7 @@ mod tests {
+@@ -1365,6 +1367,7 @@ mod tests {
          let runs = [FontRun {
              len: text.len(),
              font_id,
@@ -871,7 +828,7 @@ index b7c38bb..8bcd1f1 100644
          }];
          Ok(text_system.layout_line(text, gpui::px(14.0), &runs))
      }
-@@ -1367,6 +1370,7 @@ mod tests {
+@@ -1437,6 +1440,7 @@ mod tests {
          let runs = [FontRun {
              len: text.len(),
              font_id,
@@ -879,7 +836,7 @@ index b7c38bb..8bcd1f1 100644
          }];
  
          let missing_glyphs = text_system
-@@ -1496,10 +1500,12 @@ mod tests {
+@@ -1566,10 +1570,12 @@ mod tests {
              FontRun {
                  len: "ab\u{001c}\u{05d0}".len(),
                  font_id,
@@ -892,7 +849,7 @@ index b7c38bb..8bcd1f1 100644
              },
          ];
          let layout = text_system.layout_line(text, gpui::px(14.0), &runs);
-@@ -1597,10 +1603,12 @@ mod tests {
+@@ -1667,10 +1673,12 @@ mod tests {
              FontRun {
                  len: 3,
                  font_id: fid(1),
@@ -905,7 +862,7 @@ index b7c38bb..8bcd1f1 100644
              },
          ];
  
-@@ -1610,11 +1618,13 @@ mod tests {
+@@ -1680,11 +1688,13 @@ mod tests {
              &[
                  FontRun {
                      len: 1,
@@ -921,7 +878,7 @@ index b7c38bb..8bcd1f1 100644
                  },
              ]
          );
-@@ -1622,7 +1632,8 @@ mod tests {
+@@ -1692,7 +1702,8 @@ mod tests {
              clip_font_runs(&runs, 3..7).as_slice(),
              &[FontRun {
                  len: 4,
@@ -932,10 +889,18 @@ index b7c38bb..8bcd1f1 100644
          );
          assert!(clip_font_runs(&runs, 5..5).is_empty());
 diff --git a/crates/gpui_windows/src/direct_write.rs b/crates/gpui_windows/src/direct_write.rs
-index 304dc38..3e1191c 100644
+index 018b7e7..d942237 100644
 --- a/crates/gpui_windows/src/direct_write.rs
 +++ b/crates/gpui_windows/src/direct_write.rs
-@@ -1619,7 +1619,11 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
+@@ -556,6 +556,7 @@ impl DirectWriteState {
+                     segment_runs.push(FontRun {
+                         len,
+                         font_id: run.font_id,
++                        position: run.position,
+                     });
+                 }
+                 remaining_bytes -= len;
+@@ -1687,7 +1688,11 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
              }
              glyph_idx += cluster_glyph_count;
          }

@@ -70,6 +70,7 @@ at the vendored commit.
 | `0038-press-cancels-a-waiting-tooltip` | A press cancels a tooltip still waiting to show | — |
 | `0039-shifted-space-is-space` | The space bar with Shift is Space to key bindings whatever the layout types there (Linux) | — |
 | `0040-list-keeps-height-hints-across-a-width-change` | A list keeps each item's height, measured or hinted, as its estimate when its width changes and on its first layout, so a scrollbar measures every item (0004's last hunk) | — |
+| `0041-key-binding-for-a-system` | `KeyBinding::new_for_os` binds any string, its `secondary-` the given system's, without a keyboard mapper (`KeyBinding::new` takes a static string, and `load` maps keys by the layout) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 

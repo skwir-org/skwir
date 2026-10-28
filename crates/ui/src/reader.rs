@@ -587,7 +587,7 @@ pub fn page_element(
                 .w_full()
                 .overflow_hidden()
                 .track_scroll(single)
-                .on_scroll_wheel(cx.listener(|shell, event, window, cx| {
+                .on_scroll(cx.listener(|shell, event, window, cx| {
                     shell.reader_wheel(event, window, cx);
                 }))
                 .when_some(shell.preview.reader.focus.as_ref(), |d, focus| {
