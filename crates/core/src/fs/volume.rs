@@ -259,14 +259,9 @@ pub fn mountinfo(text: &(impl AsRef<[u8]> + ?Sized)) -> Vec<Mounted> {
 /// (a remote's included: each GVfs mount a folder of its bridge): what a
 /// removal of `path` would reach into, a drive's files or a server's.
 /// Compared by the paths' text, never by reading them: from any thread.
+/// The shallowest first: `path` itself when it is one.
 pub fn mounted_within(path: &Path) -> Vec<PathBuf> {
-    let mut points: Vec<PathBuf> = Here::now()
-        .mounts
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(point, _)| point)
-        .filter(|point| point.starts_with(path))
-        .collect();
+    let mut points = points_within(path);
     if let Some(remote) = crate::fs::reach::of(path)
         && remote.point == path
         && !points.contains(&remote.point)
@@ -274,6 +269,138 @@ pub fn mounted_within(path: &Path) -> Vec<PathBuf> {
         points.push(remote.point.clone());
     }
     points
+}
+
+/// The mount points at `path` or below it, in the order of their paths,
+/// as the system's table has them now: a mount made a moment ago is
+/// there. Linux's table is read once and kept, and read again when the
+/// kernel says it changed (a `poll` of `/proc/self/mountinfo`, which
+/// wakes on any mount or unmount): a call costs that `poll`, not a read
+/// and parse of the table, which a check of every file a plan trashes
+/// or deletes would pay. Where the kernel will not say, it is read at
+/// every call. macOS's (`getfsstat`) is read at every call; Windows has
+/// none here. Compared by the paths' text, never by reading them: from
+/// any thread.
+pub fn points_within(path: &Path) -> Vec<PathBuf> {
+    #[cfg(target_os = "linux")]
+    {
+        watched::points_within(path)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let mut points: Vec<PathBuf> = Here::now()
+            .mounts
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(point, _)| point)
+            .filter(|point| point.starts_with(path))
+            .collect();
+        points.sort();
+        points.dedup();
+        points
+    }
+}
+
+/// Linux's mount table, kept as long as the kernel says it did not change
+/// ([`points_within`]).
+#[cfg(target_os = "linux")]
+mod watched {
+    use std::collections::BTreeSet;
+    use std::fs::File;
+    use std::io::{Read, Seek, SeekFrom};
+    use std::ops::Bound;
+    use std::path::{Path, PathBuf};
+
+    use parking_lot::Mutex;
+
+    /// How many times the table was read, for a test to count.
+    #[cfg(test)]
+    pub(super) static READS: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
+
+    /// The table read, and the file it was read from, held open: its
+    /// `poll` says when the table changed since.
+    struct Watched {
+        file: File,
+        points: BTreeSet<PathBuf>,
+    }
+
+    static WATCHED: Mutex<Option<Watched>> = Mutex::new(None);
+
+    impl Watched {
+        /// The table, read now from a file opened for it.
+        fn open() -> Option<Watched> {
+            let mut file = File::open("/proc/self/mountinfo").ok()?;
+            let points = read(&mut file)?;
+            Some(Watched { file, points })
+        }
+
+        /// Whether the table changed since it was read, as the kernel says:
+        /// `None` where it will not.
+        fn changed(&self) -> Option<bool> {
+            use rustix::event::{PollFd, PollFlags, Timespec};
+            let mut fds = [PollFd::new(&self.file, PollFlags::PRI)];
+            let now = Timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
+            rustix::event::poll(&mut fds, Some(&now)).ok()?;
+            Some(fds[0].revents().intersects(PollFlags::PRI | PollFlags::ERR))
+        }
+
+        fn within(&self, path: &Path) -> Vec<PathBuf> {
+            // What is below `path` follows it in the paths' order, by their
+            // components.
+            self.points
+                .range::<Path, _>((Bound::Included(path), Bound::Unbounded))
+                .take_while(|point| point.starts_with(path))
+                .cloned()
+                .collect()
+        }
+    }
+
+    /// The mount points of the table `file` holds, read from its start.
+    fn read(file: &mut File) -> Option<BTreeSet<PathBuf>> {
+        #[cfg(test)]
+        READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        file.seek(SeekFrom::Start(0)).ok()?;
+        let mut text = Vec::new();
+        file.read_to_end(&mut text).ok()?;
+        Some(
+            super::mountinfo(&text)
+                .into_iter()
+                .map(|mount| mount.point)
+                .filter(|point| !point.as_os_str().is_empty())
+                .collect(),
+        )
+    }
+
+    pub(super) fn points_within(path: &Path) -> Vec<PathBuf> {
+        let mut held = WATCHED.lock();
+        let kept = match held.as_mut() {
+            Some(watched) => match watched.changed() {
+                Some(false) => true,
+                Some(true) => match read(&mut watched.file) {
+                    Some(points) => {
+                        watched.points = points;
+                        true
+                    }
+                    None => false,
+                },
+                None => false,
+            },
+            None => false,
+        };
+        if !kept {
+            // Read afresh: kept only where the kernel will say what
+            // changes, else read again at the next call.
+            let opened = Watched::open();
+            let points = opened.as_ref().map(|watched| watched.within(path));
+            *held = opened.filter(|watched| watched.changed().is_some());
+            return points.unwrap_or_default();
+        }
+        held.as_ref().map(|w| w.within(path)).unwrap_or_default()
+    }
 }
 
 /// What looking a path up reaches: this machine, and the server the user
@@ -590,6 +717,27 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     use super::*;
+
+    /// The mount points within a folder come from the table read once:
+    /// a thousand asks read it once more at most each time the system
+    /// mounts or unmounts something meanwhile (tests mounting remotes run
+    /// beside this one). What is below `/proc` is found, `/proc` first.
+    #[test]
+    fn the_mount_table_is_read_again_only_when_it_changed() {
+        use std::sync::atomic::Ordering;
+        let before = watched::READS.load(Ordering::Relaxed);
+        for _ in 0..1000 {
+            let points = points_within(Path::new("/proc"));
+            assert_eq!(
+                points.first().map(PathBuf::as_path),
+                Some(Path::new("/proc"))
+            );
+        }
+        let reads = watched::READS.load(Ordering::Relaxed) - before;
+        assert!(reads < 20, "{reads} reads");
+        assert!(points_within(Path::new("/")).len() > 1);
+        assert!(points_within(Path::new("/proc/no such folder")).is_empty());
+    }
 
     /// A sysfs of synthetic devices under the tests' cache folder.
     struct Sys(tempfile::TempDir);
