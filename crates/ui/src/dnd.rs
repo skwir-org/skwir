@@ -351,8 +351,7 @@ impl Shell {
     /// Whether `paths` are exactly this pane's current selection: a drag that
     /// left through the compositor and came back to us.
     fn is_own_drag(&self, paths: &[PathBuf]) -> bool {
-        let own = self.drag_paths(self.pane);
-        !own.is_empty() && own.len() == paths.len() && own.iter().all(|p| paths.contains(p))
+        same_paths(&self.drag_paths(self.pane), paths)
     }
 
     /// Paths dropped onto `dest`, from another application or from our own
@@ -704,6 +703,17 @@ impl Shell {
     }
 }
 
+/// Whether `dropped` are exactly `own`, a selection's paths (each once), in
+/// any order. A drag of a hundred thousand files comes back as many paths:
+/// each looked up in a set, never searched for in the others.
+fn same_paths(own: &[PathBuf], dropped: &[PathBuf]) -> bool {
+    if own.is_empty() || own.len() != dropped.len() {
+        return false;
+    }
+    let dropped: std::collections::HashSet<&Path> = dropped.iter().map(PathBuf::as_path).collect();
+    own.iter().all(|p| dropped.contains(p.as_path()))
+}
+
 /// Make a row or cell of `pane` draggable. Every row is, selected or not:
 /// GPUI only starts a drag from an element that had a drag listener when it
 /// was pressed, and the press is what selects the row. What the drag
@@ -1004,6 +1014,26 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_drag_back_is_its_own_selection_in_any_order() {
+        let paths = |names: &[&str]| -> Vec<PathBuf> {
+            names.iter().map(|n| Path::new("/data").join(n)).collect()
+        };
+        let own = paths(&["a b.txt", "it's", "notes"]);
+        assert!(same_paths(&own, &paths(&["notes", "a b.txt", "it's"])));
+        assert!(!same_paths(&own, &paths(&["notes", "a b.txt"])));
+        assert!(!same_paths(&own, &paths(&["notes", "a b.txt", "other"])));
+        assert!(!same_paths(&paths(&["a", "b"]), &paths(&["a", "a"])));
+        assert!(!same_paths(&[], &[]));
+        // A hundred thousand, as many as a big folder selected whole: one
+        // pass, where searching each in the others took minutes.
+        let many: Vec<PathBuf> = (0..100_000)
+            .map(|i| PathBuf::from(format!("/data/file {i}.png")))
+            .collect();
+        let back: Vec<PathBuf> = many.iter().rev().cloned().collect();
+        assert!(same_paths(&many, &back));
+    }
 
     #[test]
     fn keys_decide_a_drop_and_the_filesystem_decides_without_them() {
