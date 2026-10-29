@@ -831,6 +831,7 @@ impl Remotes {
     /// tools know: a device said, or a mount GVfs made or let go of, which
     /// changes no tool's configuration (and `rclone listremotes` is a
     /// program started).
+    #[cfg(target_os = "linux")]
     fn refresh_mounts(&self, app: &App) {
         self.read_again(app, false);
     }

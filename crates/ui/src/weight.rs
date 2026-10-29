@@ -535,6 +535,8 @@ mod tests {
         std::fs::write(dir.join(".hidden"), [0u8; 5]).unwrap();
         std::fs::create_dir(dir.join("folder")).unwrap();
         std::fs::write(dir.join("folder").join("inside"), [0u8; 1000]).unwrap();
+        // Extended with links and hard links where the system makes them.
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut names: Vec<(EntryId, OsString, EntryKind)> = vec![
             (id(1), "it's a report.txt".into(), EntryKind::File),
             (id(2), "notes.md".into(), EntryKind::File),

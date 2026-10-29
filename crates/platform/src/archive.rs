@@ -1371,6 +1371,7 @@ mod tests {
             .unwrap()
     }
 
+    #[cfg(target_os = "linux")]
     fn page() -> Member {
         Member {
             index: 0,
