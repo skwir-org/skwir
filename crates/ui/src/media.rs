@@ -586,6 +586,21 @@ impl Shell {
     /// The one way a control reaches the panel's session: whatever asked
     /// (a button, a key, `ui.media_control` from a script), a value out of
     /// range is refused here.
+    /// The window shown or not (`Window::is_visible`, told by the shell as
+    /// it changes): a film's frames are sent only while it is, by the
+    /// panel's player and the pinned one, which decode on meanwhile. A
+    /// player opened while it is not starts without (`show_media`).
+    pub(crate) fn media_shown(&mut self, shown: bool) {
+        if self.preview.window_shown == shown {
+            return;
+        }
+        self.preview.window_shown = shown;
+        let pinned = self.player.pinned.as_ref().map(|pinned| &pinned.session);
+        for session in self.preview.media.session.iter().chain(pinned) {
+            let _ = session.control(Control::Frames(shown));
+        }
+    }
+
     pub fn media_send(&mut self, command: Control, cx: &mut Context<Self>) {
         if !command.valid() {
             return;

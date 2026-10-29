@@ -28,6 +28,8 @@ fn reply(message: &Reply) -> anyhow::Result<()> {
     Ok(())
 }
 
+// Independent switches of one player, not a state machine in disguise.
+#[allow(clippy::struct_excessive_bools)]
 struct Player {
     pipeline: gst::Element,
     sink: AppSink,
@@ -49,6 +51,9 @@ struct Player {
     /// Fences sent and not yet reached: while there is one, what the loop
     /// takes from the bus was posted before the latest READY (see `fence`).
     fences: usize,
+    /// Whether frames are sent (`Control::Frames`): not while the window
+    /// is not shown. The sink drops what is not pulled.
+    frames: bool,
 }
 impl Drop for Player {
     fn drop(&mut self) {
@@ -190,6 +195,7 @@ impl Player {
             seeking: false,
             events: Arc::clone(events),
             fences: 0,
+            frames: true,
         };
         player.pipeline.set_state(gst::State::Paused)?;
         Ok(player)
@@ -271,6 +277,15 @@ impl Player {
                     "unknown subtitle track"
                 );
                 self.switch_tracks(self.state.audio, index)?;
+            }
+            Control::Frames(on) => {
+                let again = on && !self.frames;
+                self.frames = on;
+                // Shown again paused, the frame of now is drawn again where
+                // it is: what the window last drew may be from before.
+                if again && !self.state.playing() && self.state.seekable && self.restore.is_none() {
+                    self.seek(self.state.position, self.state.rate)?;
+                }
             }
         }
         Ok(())
@@ -574,12 +589,11 @@ fn run() -> anyhow::Result<()> {
         }
         // A video preroll can arrive before the audio branch finishes seeking.
         // Publish it only once the whole pipeline has completed the seek.
-        if ready
-            && !occupied
-            && player.selection.is_none()
-            && player.restore.is_none()
-            && !player.seeking
-        {
+        if sends_frame(
+            player.frames,
+            ready && !occupied,
+            player.selection.is_none() && player.restore.is_none() && !player.seeking,
+        ) {
             let sample = if player.state.playing() {
                 player.sink.try_pull_sample(gst::ClockTime::ZERO)
             } else {
@@ -646,6 +660,14 @@ fn run() -> anyhow::Result<()> {
             last_status = Instant::now();
         }
     }
+}
+
+/// Whether the loop sends a frame now: while frames are asked for
+/// (`Control::Frames`), the slot free once ready, and the pipeline settled
+/// (no track selection, restore or seek on its way). Not sent, a frame
+/// stays in the sink, which drops it for the next.
+fn sends_frame(frames: bool, free: bool, settled: bool) -> bool {
+    frames && free && settled
 }
 
 /// Applies one bus message. Errors end the session; everything else updates
@@ -962,5 +984,20 @@ fn main() {
     }
     if let Err(error) = run() {
         let _ = reply(&Reply::Error(format!("{error:#}")));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sends_frame;
+
+    /// No frame while the window is not shown; shown, one while the slot
+    /// is free and the pipeline settled.
+    #[test]
+    fn frames_are_sent_only_while_asked_for() {
+        assert!(sends_frame(true, true, true));
+        assert!(!sends_frame(false, true, true), "the window not shown");
+        assert!(!sends_frame(true, false, true), "the slot taken");
+        assert!(!sends_frame(true, true, false), "a seek on its way");
     }
 }

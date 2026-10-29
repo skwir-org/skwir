@@ -453,6 +453,35 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+    /// Frames asked off (the window not shown) and on again reach the
+    /// worker as controls of their own, the session kept.
+    #[test]
+    fn frames_off_and_on_reach_the_worker() {
+        let (_root, source, worker) = fixture(
+            "printf '%s\\n' '\"Ready\"'\nwhile IFS= read -r line; do printf '%s\\n' \"$line\" >> \"$1.requests\"; done\n",
+        );
+        let session = WorkerSession::open_with_worker(
+            worker,
+            source.clone(),
+            &CancelToken::new(),
+            Arc::new(|| {}),
+        )
+        .unwrap()
+        .unwrap();
+        session.control(Control::Frames(false)).unwrap();
+        session.control(Control::Frames(true)).unwrap();
+        let requests = format!("{}.requests", source.display());
+        let mut said = String::new();
+        until(|| {
+            said = std::fs::read_to_string(&requests).unwrap_or_default();
+            said.lines().count() == 2
+        });
+        let lines: Vec<&str> = said.lines().collect();
+        assert!(lines[0].contains(r#""command":{"Frames":false}"#), "{said}");
+        assert!(lines[1].contains(r#""command":{"Frames":true}"#), "{said}");
+        assert!(session.take_update().error.is_none());
+    }
+
     fn fixture(script: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("Synthetic clip's sample.mp4");

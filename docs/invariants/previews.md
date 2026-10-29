@@ -1024,7 +1024,9 @@ is still to come are in `docs/preview-frame.md`.
   at a time, at the text's own offsets (`text_rows::matches`). A find
   goes from the match it is on, past it, unless the query is new
   (`State::find_from`): from match to match, several in a block or a row
-  included.
+  included. Find keeps a case-folded copy only of text beyond ASCII;
+  ASCII text is matched where it is, case ignored, so a document mostly
+  ASCII is not held twice.
 - **Contents** is one drawer (`outline.rs`) for a document's outline, a
   file's headings and a book's chapters, offered where there are some.
   - **What it lists**: a book's own contents, never the headings of the
@@ -1205,7 +1207,10 @@ is still to come are in `docs/preview-frame.md`.
 - A map (`map_preview.rs`, `elements/map.rs`, ADR-020) is an inspection
   (`InspectionKind::Map`), so Properties, the switch to the source and the
   way out of a container are the frame's. Its places are projected once
-  on the worker (`Display::map`), never while painting.
+  on the worker (`Display::map`), never while painting. Its lines are
+  looked at a part of 128 points at a time: a part whose box lies beyond
+  an edge of the view is skipped whole, and what is drawn is what a walk
+  point by point draws.
 - The pointer drags it; the wheel (no Ctrl: nothing scrolls) and a
   double click zoom around the pointer. Once clicked (or reached with
   F6), the arrows move it and the zoom keys zoom it (`MapPreview`).

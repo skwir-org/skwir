@@ -94,6 +94,12 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
 - Pages drawn without a reader (`pdftoppm`, where no worker is installed)
   are turned by asking for each one: their reader reads a page at a time,
   whatever the choice.
+- Read a page at a time, the page shown is kept with the pages the
+  reader keeps (64 MiB), and the next and previous pages are read ahead.
+  A turn to a kept page shows it without rendering it; a turn to a page
+  being read ahead waits for it; anything else read ahead gives way to
+  the page asked. What the panel shows of a kept page stays in the atlas
+  until the cache lets it go (`DocumentScroll::holds`).
 - A document whose file changes reopens at the same page, zoom and mode
   (`reader_reopen`).
 - The column is an item per page, built on the window's thread: every

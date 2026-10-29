@@ -132,6 +132,13 @@ binding, like `AGENTS.md`. Measurements and checks: `docs/video-playback.md`.
 - Call `drop_image` in update or render code, never in prepaint or paint:
   the scene being drawn may already use the texture, whose sprites then
   draw nothing, or another image that took its slot.
+- While the window is not shown (`Window::is_visible`: Wayland's
+  suspended state, X11's fully obscured or unmapped window, Windows' and
+  macOS' occlusion) a player sends no frames (`Control::Frames(false)`,
+  from `Shell::media_shown`); it decodes on, its sound and position with
+  it. Shown again, frames come at once; paused, the film is sought where
+  it is, so its frame of now is drawn. A player opened meanwhile starts
+  without frames.
 
 ## Track changes and subtitles
 

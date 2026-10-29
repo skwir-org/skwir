@@ -792,6 +792,11 @@ impl Shell {
             match opened.session {
                 Ok(Some(session)) => {
                     let _ = session.control(Control::Volume(pinned.state.volume));
+                    // Opened while the window is not shown: no frames until
+                    // it is (`Shell::media_shown`).
+                    if !self.preview.window_shown {
+                        let _ = session.control(Control::Frames(false));
+                    }
                     let _ = session.control(Control::Play(true));
                     let old = std::mem::replace(&mut pinned.lifetime, opened.lifetime);
                     old.cancel();

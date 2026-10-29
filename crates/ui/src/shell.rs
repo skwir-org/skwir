@@ -561,6 +561,14 @@ impl Shell {
                 this.app.refresh_remote();
             }
         }));
+        // A film's frames are sent only while the window is shown: on
+        // another workspace or minimized, nothing would draw them
+        // (`Shell::media_shown`).
+        subs.push(
+            cx.observe_window_visibility(window, |this, visibility, _, _| {
+                this.media_shown(visibility.is_visible());
+            }),
+        );
         // Anything else copied, here or in another application: Skwir's
         // own clipboard forgets the files it put on the system's.
         let shell = cx.entity().downgrade();

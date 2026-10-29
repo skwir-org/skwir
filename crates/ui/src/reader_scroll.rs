@@ -181,6 +181,18 @@ impl DocumentScroll {
         }
         self.generation = self.generation.wrapping_add(1);
     }
+    /// Page `page`, kept rendered at `side` or larger: shown at once.
+    fn kept(&self, page: u32, side: u32) -> Option<&CachedPage> {
+        self.pages.get(&page).filter(|kept| kept.side >= side)
+    }
+    /// Whether `image` is a page kept here: what shows it lets go of it
+    /// without dropping it from the atlas, which the cache does as the page
+    /// goes.
+    pub(crate) fn holds(&self, image: &Arc<RenderImage>) -> bool {
+        self.pages
+            .values()
+            .any(|page| Arc::ptr_eq(&page.image, image))
+    }
     /// A render failure stays visible until the user visits that page
     /// explicitly or refreshes; then the page is requested again.
     fn forget_errors(&mut self, only: Option<u32>) -> bool {
@@ -700,7 +712,7 @@ impl Shell {
         // it is shown larger than it was rendered.
         let initial = initial.filter(|_| self.preview.reader.shown_side >= side);
         let scroll = &mut self.preview.reader.scroll;
-        if !scroll.continuous || scroll.pending.is_some() {
+        if scroll.pending.is_some() {
             return;
         }
         let Some(number) = scroll.wanted.iter().copied().find(|p| {
@@ -762,17 +774,44 @@ impl Shell {
     pub fn sync_document_scroll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         while let Ok(reply) = self.preview.reader.scroll.rx.try_recv() {
             let scroll = &mut self.preview.reader.scroll;
-            if reply.generation != scroll.generation || !scroll.continuous {
+            if reply.generation != scroll.generation {
                 continue;
             }
             scroll.pending = None;
+            // Read a page at a time, the page turned to while it was read
+            // ahead is shown as it comes (`turn_from_kept`).
+            let (shown, showing) = match &self.preview.content {
+                Some(PreviewContent::Image {
+                    image,
+                    document: Some(page),
+                    ..
+                }) => (Some(page.page), Some(Arc::clone(image))),
+                _ => (None, None),
+            };
+            let turned_to = !scroll.continuous
+                && reply.number == self.preview.page
+                && shown.is_some_and(|shown| shown != reply.number);
             match reply.result {
                 Ok(page) => {
                     let size = (page.content.width, page.content.height);
                     let assumed = Rc::make_mut(&mut scroll.sizes).insert(reply.number, size);
                     scroll.widest = scroll.widest.max(size.0);
-                    if let Some(old) = Rc::make_mut(&mut scroll.pages).insert(reply.number, page) {
+                    // The page it replaces stays in the atlas while the
+                    // panel shows it (a page at a time).
+                    if let Some(old) = Rc::make_mut(&mut scroll.pages).insert(reply.number, page)
+                        && !showing
+                            .as_ref()
+                            .is_some_and(|shown| Arc::ptr_eq(shown, &old.image))
+                    {
                         cx.drop_image(old.image, Some(window));
+                    }
+                    if turned_to && let Some(kept) = scroll.pages.get(&reply.number).cloned() {
+                        self.show_kept(reply.number, kept, window, cx);
+                        continue;
+                    }
+                    if !scroll.continuous {
+                        self.request_document_page();
+                        continue;
                     }
                     // The placeholder stood at the size we assumed for this
                     // page. If the real page is that size, its row does not
@@ -789,11 +828,150 @@ impl Shell {
                 }
                 Err(error) => {
                     Rc::make_mut(&mut scroll.errors).insert(reply.number, error);
+                    if turned_to {
+                        // The page turned to is asked as any page is, and
+                        // its failure said as any page's.
+                        self.preview.phase = crate::preview::PreviewPhase::Queued;
+                        cx.notify();
+                        continue;
+                    }
+                    if !scroll.continuous {
+                        self.request_document_page();
+                        continue;
+                    }
                 }
             }
             self.request_document_page();
             cx.notify();
         }
+    }
+
+    /// Read a page at a time, the page the panel shows of its document
+    /// (`preview.content`) is kept with the others the reader read, at the
+    /// side it was rendered at, and the pages after and before it are read
+    /// ahead: a turn to either shows it at once (`turn_from_kept`).
+    pub(crate) fn keep_shown_page(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let reader = &self.preview.reader;
+        if reader.scroll.continuous || reader.session.is_none() {
+            return;
+        }
+        let Some(PreviewContent::Image {
+            image,
+            document: Some(page),
+            ..
+        }) = &self.preview.content
+        else {
+            return;
+        };
+        let side = reader.shown_side;
+        if page.page == self.preview.page && reader.scroll.kept(page.page, side).is_none() {
+            let pixels = image.size(0);
+            let kept = CachedPage {
+                image: Arc::clone(image),
+                content: Arc::clone(page),
+                bytes: (pixels.width.0.max(0) as usize) * (pixels.height.0.max(0) as usize) * 4,
+                side,
+            };
+            let scroll = &mut self.preview.reader.scroll;
+            if let Some(old) = Rc::make_mut(&mut scroll.pages).insert(kept.content.page, kept) {
+                cx.drop_image(old.image, Some(window));
+            }
+        }
+        self.read_pages_ahead(window, cx);
+    }
+
+    /// Read a page at a time: have the page shown and the ones after and
+    /// before it, those far from it let go of past the cache's budget.
+    fn read_pages_ahead(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = &self.preview.reader.session else {
+            return;
+        };
+        let count = crate::reader::page_count(session.as_ref());
+        let page = self.preview.page;
+        let scroll = &mut self.preview.reader.scroll;
+        scroll.wanted = single_wanted(page, count);
+        for gone in scroll.evict_offscreen(page) {
+            cx.drop_image(gone.image, Some(window));
+        }
+        self.request_document_page();
+    }
+
+    /// Read a page at a time, the page turned to (`preview.page`): shown at
+    /// once when it is kept, or as it comes when it is being read ahead.
+    /// Whether it was: no render is asked for it then. Anything else read
+    /// ahead gives way to the render asked for it.
+    pub(crate) fn turn_from_kept(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let reader = &self.preview.reader;
+        if reader.scroll.continuous
+            || reader.session.is_none()
+            || !matches!(
+                &self.preview.content,
+                Some(PreviewContent::Image {
+                    document: Some(_),
+                    ..
+                })
+            )
+        {
+            return false;
+        }
+        let page = self.preview.page;
+        if let Some(kept) = reader.scroll.kept(page, self.preview.page_side).cloned() {
+            self.show_kept(page, kept, window, cx);
+            return true;
+        }
+        if reader
+            .scroll
+            .pending
+            .as_ref()
+            .is_some_and(|(pending, _)| *pending == page)
+        {
+            self.preview.phase = crate::preview::PreviewPhase::Loading;
+            return true;
+        }
+        self.preview.reader.scroll.cancel();
+        false
+    }
+
+    /// Show page `page` as it was kept, as if it had just been rendered.
+    fn show_kept(
+        &mut self,
+        page: u32,
+        kept: CachedPage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(session) = &self.preview.reader.session else {
+            return;
+        };
+        let pages = crate::reader::page_count(session.as_ref());
+        tracing::trace!(page, side = kept.side, "page shown as kept");
+        self.cancel_pending_preview();
+        let size = kept.image.size(0);
+        self.preview.reader.shown_side = kept.side;
+        self.replace_preview_content(
+            Some(PreviewContent::Image {
+                image: kept.image,
+                width: u32::try_from(size.width.0).unwrap_or(0),
+                height: u32::try_from(size.height.0).unwrap_or(0),
+                detail: Some(skwir_core::preview::PreviewInfo::Document { page, pages }),
+                document: Some(kept.content),
+                facts: Vec::new(),
+                pixels: crate::preview::Pixels::Own,
+                ink: None,
+            }),
+            window,
+            cx,
+        );
+        self.preview.phase = crate::preview::PreviewPhase::Idle;
+        let reader = &mut self.preview.reader;
+        reader.selection = None;
+        reader.selection_page = None;
+        reader.down = None;
+        if std::mem::take(&mut reader.scroll.bottom_on_load) {
+            reader.scroll.single.scroll_to_bottom();
+        }
+        self.read_pages_ahead(window, cx);
+        cx.notify();
     }
 }
 
@@ -1004,6 +1182,16 @@ fn page_at_center(
         .next()
 }
 
+/// The pages to have read a page at a time, `page` shown of `count`: it,
+/// then the one after and the one before, read ahead.
+fn single_wanted(page: u32, count: u32) -> Vec<u32> {
+    [Some(page), page.checked_add(1), page.checked_sub(1)]
+        .into_iter()
+        .flatten()
+        .filter(|page| (1..=count).contains(page))
+        .collect()
+}
+
 // Measurement can include an overdraw row only on the first frame. Keep
 // neighbours explicitly so a later measurement cannot cancel their prefetch.
 fn wanted_pages(mut visible: Vec<u32>, current: u32, count: u32) -> Vec<u32> {
@@ -1071,6 +1259,42 @@ mod tests {
         assert!([1, 7, 8].iter().all(|p| !state.pages.contains_key(p)));
         assert_eq!(state.sizes.len(), 8);
         assert!(state.evict_offscreen(4).is_empty());
+    }
+
+    /// Read a page at a time, the page shown is had first, then the ones
+    /// after and before it; a page kept at the side asked or larger is
+    /// shown at once, a smaller one rendered again.
+    #[test]
+    fn a_page_at_a_time_reads_ahead_and_turns_to_what_it_kept() {
+        assert_eq!(single_wanted(5, 9), [5, 6, 4]);
+        assert_eq!(single_wanted(1, 9), [1, 2], "none before the first");
+        assert_eq!(single_wanted(9, 9), [9, 8], "none after the last");
+        assert_eq!(single_wanted(1, 1), [1]);
+        let mut state = DocumentScroll::new(false);
+        let image = crate::thumbs::owned_render_image(1, 1, vec![0; 4]).unwrap();
+        let page = |number, side| CachedPage {
+            image: Arc::clone(&image),
+            content: Arc::new(PageContent {
+                page: number,
+                width: 600.,
+                height: 800.,
+                chars: Vec::new(),
+                links: Vec::new(),
+            }),
+            bytes: 4,
+            side,
+        };
+        Rc::make_mut(&mut state.pages).insert(6, page(6, 1536));
+        Rc::make_mut(&mut state.pages).insert(4, page(4, 512));
+        assert!(
+            state.kept(6, 1024).is_some(),
+            "rendered larger: shown as it is"
+        );
+        assert!(state.kept(4, 1024).is_none(), "rendered smaller: again");
+        assert!(state.kept(7, 512).is_none());
+        assert!(state.holds(&image));
+        let other = crate::thumbs::owned_render_image(1, 1, vec![0; 4]).unwrap();
+        assert!(!state.holds(&other), "an image the cache does not hold");
     }
 
     #[test]

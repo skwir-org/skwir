@@ -560,6 +560,9 @@ pub struct PreviewState {
     /// shown at (`Shell::document_shown`), kept from one document to the
     /// next, so a page opens at the size the panel shows it.
     pub(crate) page_side: u32,
+    /// Whether the window is shown (`Shell::media_shown`): a film's player
+    /// opened while it is not sends no frames until it is.
+    pub(crate) window_shown: bool,
     /// The box a film's or a track's picture is asked to fit: the content's
     /// area, width by height in device pixels, each in `SHARPEN_STEP`s
     /// (`watch_area`), kept from one file to the next. Larger later, the
@@ -860,6 +863,7 @@ impl Default for PreviewState {
             placeholder: None,
             picture_side: 0,
             page_side: FIRST_PAGE_SIDE,
+            window_shown: true,
             media_box: (2 * SHARPEN_STEP, 2 * SHARPEN_STEP),
             text_size: None,
             tx,
@@ -2020,6 +2024,11 @@ impl Shell {
         if self.preview.phase != PreviewPhase::Queued {
             return;
         }
+        // A page turned to that the reader kept, or reads ahead, is not
+        // rendered again (`turn_from_kept`).
+        if self.turn_from_kept(window, cx) {
+            return;
+        }
         if !self.take_ahead(&key, &version, window, cx) {
             self.preview_request(&key, &version, &entry);
         }
@@ -2360,6 +2369,9 @@ impl Shell {
             && matches!(result.content, PreviewContent::Image { detail: None, .. });
         if self.preview.media.session.is_none() || poster || thumbnail {
             self.replace_preview_content(Some(result.content), window, cx);
+            // Read a page at a time, the page is kept and the next read
+            // ahead (`keep_shown_page`).
+            self.keep_shown_page(window, cx);
         }
         // The film's picture is still to come (`Shell::film_waited`).
         self.preview.phase = if result.complete && !film {
@@ -2407,6 +2419,10 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Opened while the window is not shown: no frames until it is.
+        if !self.preview.window_shown {
+            let _ = session.control(skwir_core::media::Control::Frames(false));
+        }
         self.preview.media.session = Some(session);
         self.preview.media.settle();
         let focus = cx.focus_handle();
@@ -3344,7 +3360,11 @@ impl Shell {
             cx.drop_image(image, Some(window));
         }
         match self.preview.content.take() {
-            Some(PreviewContent::Image { image, .. }) => {
+            // A document's page the reader keeps stays in the atlas: the
+            // cache drops it as the page goes (`DocumentScroll::holds`).
+            Some(PreviewContent::Image { image, .. })
+                if !self.preview.reader.scroll.holds(&image) =>
+            {
                 cx.drop_image(image, Some(window));
             }
             Some(PreviewContent::Inspection(display)) => {

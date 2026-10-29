@@ -142,6 +142,11 @@ pub enum Control {
     Rate(f64),
     Audio(i32),
     Subtitle(i32),
+    /// Whether the player sends the frames it decodes: none while the
+    /// window is not shown, where nothing would draw them (a film playing
+    /// on another workspace). It decodes on, the sound and the position
+    /// with it; shown again, the frame of now comes.
+    Frames(bool),
 }
 /// How fast a track may play, 1 as recorded: what the player offers and
 /// what MPRIS says it can.
@@ -155,7 +160,7 @@ impl Control {
             Self::Rate(v) => v.is_finite() && RATES.contains(v),
             Self::Audio(v) => *v >= 0,
             Self::Subtitle(v) => *v >= -1,
-            Self::Play(_) | Self::Mute(_) => true,
+            Self::Play(_) | Self::Mute(_) | Self::Frames(_) => true,
         }
     }
 }
