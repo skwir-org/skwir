@@ -724,11 +724,12 @@ impl Shell {
         }
         let ws = self.app.workspace.read();
         let pane = ws.pane(self.pane)?;
-        let sorted = &self.ui().list.sorted;
+        let list = &self.ui().list;
+        let sorted = &list.sorted;
         let len = sorted.len();
         let start = from
             .or(pane.selection.cursor)
-            .and_then(|c| sorted.iter().position(|id| *id == c));
+            .and_then(|c| list.index_of(c));
         // The pattern folded once, and a name compared without a copy of
         // its own: lowercasing both for each entry at each keystroke.
         let filter = skwir_core::workspace::NameFilter::new(pattern);
