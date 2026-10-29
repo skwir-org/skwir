@@ -8,7 +8,12 @@ use crate::{
 };
 use gpui::{AnyElement, Context, ListAlignment, ListState, Window, div, prelude::*, px};
 use skwir_core::inspection::{InspectRequest, Inspection, InspectionKind, Picture};
-use std::{cell::RefCell, collections::BTreeSet, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::{BTreeSet, HashMap, HashSet},
+    rc::Rc,
+    sync::Arc,
+};
 pub struct Display {
     pub data: Arc<Inspection>,
     /// The inspection's own picture, then one per block, with their ink.
@@ -54,6 +59,14 @@ pub struct Display {
     /// file's own, as the worker settled it, before a plugin from outside
     /// converted it; `None` for what has no type.
     pub(crate) typed: Option<String>,
+    /// What the contents list, worked out here on the worker: a frame only
+    /// finds the part shown (`Contents::current`). `None` without contents.
+    pub(crate) contents: Option<Arc<Contents>>,
+    /// Where the printed pages of the section start (`page_starts`), worked
+    /// out here with the contents, from the same anchors.
+    page_starts: Vec<(usize, usize)>,
+    /// The pictures its blocks name for later (`inspector_pictures`).
+    pub(crate) later: Arc<crate::inspector_pictures::Later>,
 }
 impl Display {
     pub fn new(mut data: Inspection, code: &crate::code_preview::CodeTheme) -> Self {
@@ -153,6 +166,13 @@ impl Display {
             }))
             .map(|i| i.and_then(|i| crate::backdrop::Picture::of(&i)))
             .collect();
+        // The anchors are looked up once, for every fragment of the contents
+        // and every printed page's mark, never block by block for each.
+        let anchors = Anchors::of(&data);
+        let contents = Contents::of(&data, &anchors).map(Arc::new);
+        let page_starts = page_starts(&data, &anchors);
+        drop(anchors);
+        let later = Arc::new(crate::inspector_pictures::Later::of(&data.blocks));
         let fold = skwir_platform::text_rows::fold;
         let folded = data
             .blocks
@@ -199,6 +219,9 @@ impl Display {
             text,
             bytes: None,
             typed: None,
+            contents,
+            page_starts,
+            later,
         }
     }
     /// The matches of `query` (`folded` too) in block or row `i`: where
@@ -316,7 +339,7 @@ pub(crate) fn counts_printed(shell: &Shell, data: &Inspection) -> bool {
 /// reading order: at the block holding the mark its link names, or at the
 /// top for a link to the section itself. A mark reading mode did not keep
 /// leaves its page out.
-fn page_starts(data: &Inspection) -> Vec<(usize, usize)> {
+fn page_starts(data: &Inspection, anchors: &Anchors) -> Vec<(usize, usize)> {
     let mut starts: Vec<(usize, usize)> = data
         .printed_pages
         .iter()
@@ -324,10 +347,7 @@ fn page_starts(data: &Inspection) -> Vec<(usize, usize)> {
         .filter(|(_, page)| page.section == data.position)
         .filter_map(|(index, page)| {
             let block = match page.target.split_once('#') {
-                Some((_, mark)) => data
-                    .blocks
-                    .iter()
-                    .position(|block| block.anchors.iter().any(|name| name == mark))?,
+                Some((_, mark)) => anchors.get(mark)?,
                 None => 0,
             };
             Some((block, index))
@@ -588,14 +608,15 @@ struct Offered {
 }
 
 impl Offered {
-    fn add(&mut self, data: &Inspection) {
+    fn add(&mut self, display: &Display) {
+        let data = &display.data;
         if self.kind != Some(data.kind) {
             *self = Offered {
                 kind: Some(data.kind),
                 ..Offered::default()
             };
         }
-        self.contents |= has_contents(data);
+        self.contents |= display.contents.is_some();
         self.folds |= folds(data);
         self.sized |= !data.blocks.is_empty();
         self.whole |= data.whole_available;
@@ -808,8 +829,8 @@ impl State {
             self.request.source = origin.1.source;
         }
         self.section_input = None;
-        self.offered.add(data);
-        self.page_starts = page_starts(data);
+        self.offered.add(display);
+        self.page_starts.clone_from(&display.page_starts);
         (self.at_edge, self.turn) = (0, crate::reader_scroll::WheelTurn::default());
         self.pages.borrow_mut().reset();
         if std::mem::take(&mut self.land_at_end) {
@@ -2555,7 +2576,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
     // where one has nothing for it (`Offered`).
     let offered = state.offered;
     if offered.contents {
-        let contents = has_contents(data);
+        let contents = view.display.contents.is_some();
         bar.push(Item::button(
             Slot::Lead,
             1,
@@ -2888,28 +2909,22 @@ fn folds(data: &Inspection) -> bool {
 }
 
 /// What is shown in the shared contents, while they are open and there
-/// are some: a book's own contents, with the headings of the section shown
-/// that they do not name under its rows; else the headings of what is
-/// shown.
+/// are some (`Contents`): the entries worked out with the inspection, the
+/// part shown found from the block at the top of the view.
 pub fn outline_drawer(
     shell: &Shell,
     view: View<'_>,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
-    let data = &view.display.data;
-    if !view.state.outline || !has_contents(data) {
+    let contents = view.display.contents.as_ref()?;
+    if !view.state.outline {
         return None;
     }
-    let top = view.state.top_block(data);
-    let (entries, current) = if data.kind == InspectionKind::Book && !data.rows.is_empty() {
-        book_entries(data, top)
-    } else {
-        heading_entries(data, top)
-    };
+    let top = view.state.top_block(&view.display.data);
     Some(crate::outline::contents(
-        entries,
-        current,
+        Arc::clone(&contents.entries),
+        contents.current(top),
         &view.state.contents,
         ("ui.preview_contents", serde_json::json!({})),
         shell,
@@ -2930,75 +2945,199 @@ fn heading_entry(data: &Inspection, index: usize, depth: usize) -> crate::outlin
     }
 }
 
-/// The headings of what is shown, and the one of the part at `top`.
-fn heading_entries(data: &Inspection, top: usize) -> (Vec<crate::outline::Entry>, Option<usize>) {
-    let headings: Vec<usize> = data
-        .blocks
-        .iter()
-        .enumerate()
-        .filter(|(_, block)| block.heading > 0)
-        .map(|(index, _)| index)
-        .collect();
-    let depths = heading_depths(headings.iter().map(|&index| data.blocks[index].heading));
-    let entries = headings
-        .iter()
-        .zip(depths)
-        .map(|(&index, depth)| heading_entry(data, index, depth))
-        .collect();
-    (entries, current_heading(&headings, top))
+/// The first block holding each anchor of what is shown: where a fragment
+/// of a book's contents or a printed page's mark points, each looked up
+/// here rather than by a walk through the blocks.
+pub(crate) struct Anchors(HashMap<Box<str>, usize>);
+
+impl Anchors {
+    fn of(data: &Inspection) -> Anchors {
+        let mut first: HashMap<Box<str>, usize> = HashMap::new();
+        for (index, block) in data.blocks.iter().enumerate() {
+            for name in &block.anchors {
+                if !first.contains_key(name.as_str()) {
+                    first.insert(name.as_str().into(), index);
+                }
+            }
+        }
+        Anchors(first)
+    }
+
+    fn get(&self, name: &str) -> Option<usize> {
+        self.0.get(name).copied()
+    }
 }
 
-/// A book's contents, and the entry of the part at `top`. The headings of
-/// the section shown that its rows do not name are listed under the row
-/// they fall under (`chapter_at`), a step in and indented among themselves,
-/// and the part shown is the last of that row's at or above `top`, else the
-/// row. A row without a target (a part's heading) is only a label.
-fn book_entries(data: &Inspection, top: usize) -> (Vec<crate::outline::Entry>, Option<usize>) {
-    let starts = section_starts(data);
-    let named = named_headings(data, &starts);
-    let shown = chapter_at(data, &starts, top);
-    // A section the contents do not name falls under one row, found once.
-    let place = |block| {
-        if starts.is_empty() {
-            shown
-        } else {
-            chapter_at(data, &starts, block)
+/// What the contents list, worked out once for what is shown (on the
+/// worker, `Display::new`), so a frame only finds the part shown, by binary
+/// search however long the book or its chapter: a book's own contents,
+/// with the headings of the section shown that they do not name under the
+/// row they fall under (`book`); else the headings of what is shown.
+pub(crate) struct Contents {
+    pub(crate) entries: Arc<[crate::outline::Entry]>,
+    /// One per row of a book's contents, one without an entry for the
+    /// headings of what has no contents of its own.
+    parts: Vec<Part>,
+    /// Where a part is shown from: (block, part) by block, each the last,
+    /// in the contents' order, of the rows opening the section at or above
+    /// that block.
+    opened: Vec<(usize, usize)>,
+    /// The part shown above every row opening the section, or throughout
+    /// when none opens it.
+    first: Option<usize>,
+}
+
+/// A row of a book's contents: its entry, and the headings listed under it,
+/// (block, entry) by block.
+struct Part {
+    entry: Option<usize>,
+    headings: Vec<(usize, usize)>,
+}
+
+impl Contents {
+    /// The contents of `data`; `None` when it has none.
+    fn of(data: &Inspection, anchors: &Anchors) -> Option<Contents> {
+        if !has_contents(data) {
+            return None;
         }
-    };
-    let mut under: Vec<Vec<usize>> = vec![Vec::new(); data.rows.len()];
-    for (index, block) in data.blocks.iter().enumerate() {
-        if block.heading > 0
-            && !named.contains(&index)
-            && let Some(row) = place(index)
-        {
-            under[row].push(index);
-        }
+        Some(
+            if data.kind == InspectionKind::Book && !data.rows.is_empty() {
+                Contents::book(data, anchors)
+            } else {
+                Contents::headings(data)
+            },
+        )
     }
-    let mut entries = Vec::with_capacity(data.rows.len());
-    let mut current = None;
-    for (row, (chapter, headings)) in data.rows.iter().zip(&under).enumerate() {
-        if shown == Some(row) {
-            current = Some(entries.len());
-        }
-        entries.push(crate::outline::Entry {
-            depth: chapter.depth,
-            title: chapter.cells.join(" ").into(),
-            command: chapter.target.as_ref().map(|target| {
-                (
-                    "ui.inspect",
-                    serde_json::json!({"action":"target","target":target}),
-                )
-            }),
-        });
+
+    /// The headings of what is shown.
+    fn headings(data: &Inspection) -> Contents {
+        let headings: Vec<usize> = data
+            .blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| block.heading > 0)
+            .map(|(index, _)| index)
+            .collect();
         let depths = heading_depths(headings.iter().map(|&index| data.blocks[index].heading));
-        for (&index, depth) in headings.iter().zip(depths) {
-            if shown == Some(row) && index <= top {
-                current = Some(entries.len());
-            }
-            entries.push(heading_entry(data, index, chapter.depth + 1 + depth));
+        let entries = headings
+            .iter()
+            .zip(depths)
+            .map(|(&index, depth)| heading_entry(data, index, depth))
+            .collect();
+        Contents {
+            entries,
+            parts: vec![Part {
+                entry: None,
+                headings: headings
+                    .into_iter()
+                    .enumerate()
+                    .map(|(entry, block)| (block, entry))
+                    .collect(),
+            }],
+            opened: Vec::new(),
+            first: Some(0),
         }
     }
-    (entries, current)
+
+    /// A book's contents. The headings of the section shown that its rows
+    /// do not name are listed under the row they fall under (`shown`), a
+    /// step in and indented among themselves. A row without a target (a
+    /// part's heading) is only a label.
+    fn book(data: &Inspection, anchors: &Anchors) -> Contents {
+        let starts = section_starts(data, anchors);
+        let named = named_headings(data, &starts);
+        // The rows opening the section by the block they start at, each
+        // with the last of them in the contents' order starting at or
+        // above it: the row a block falls under. One whose fragment the
+        // section does not hold is not placed.
+        let mut opened: Vec<(usize, usize)> = starts
+            .iter()
+            .filter_map(|&(row, start)| Some((start?, row)))
+            .collect();
+        opened.sort_unstable();
+        let mut last = 0;
+        for (_, row) in &mut opened {
+            last = last.max(*row);
+            *row = last;
+        }
+        // Above them all, the first that opens it; for a section the
+        // contents do not name (a cover, a chapter split in files), the
+        // last of the rows before it.
+        let first = match starts.first() {
+            Some(&(row, _)) => Some(row),
+            None => data
+                .rows
+                .iter()
+                .filter_map(|row| row.section.filter(|&section| section < data.position))
+                .max()
+                .and_then(|before| {
+                    data.rows
+                        .iter()
+                        .rposition(|row| row.section == Some(before))
+                }),
+        };
+        let shown = |block: usize| {
+            let above = opened.partition_point(|&(at, _)| at <= block);
+            above.checked_sub(1).map(|i| opened[i].1).or(first)
+        };
+        let mut under: Vec<Vec<usize>> = vec![Vec::new(); data.rows.len()];
+        for (index, block) in data.blocks.iter().enumerate() {
+            if block.heading > 0
+                && !named.contains(&index)
+                && let Some(row) = shown(index)
+            {
+                under[row].push(index);
+            }
+        }
+        let mut entries = Vec::with_capacity(data.rows.len());
+        let mut parts = Vec::with_capacity(data.rows.len());
+        for (chapter, headings) in data.rows.iter().zip(&under) {
+            let entry = entries.len();
+            entries.push(crate::outline::Entry {
+                depth: chapter.depth,
+                title: chapter.cells.join(" ").into(),
+                command: chapter.target.as_ref().map(|target| {
+                    (
+                        "ui.inspect",
+                        serde_json::json!({"action":"target","target":target}),
+                    )
+                }),
+            });
+            let depths = heading_depths(headings.iter().map(|&index| data.blocks[index].heading));
+            let mut listed = Vec::with_capacity(headings.len());
+            for (&index, depth) in headings.iter().zip(depths) {
+                listed.push((index, entries.len()));
+                entries.push(heading_entry(data, index, chapter.depth + 1 + depth));
+            }
+            parts.push(Part {
+                entry: Some(entry),
+                headings: listed,
+            });
+        }
+        Contents {
+            entries: entries.into(),
+            parts,
+            opened,
+            first,
+        }
+    }
+
+    /// The entry of the part at `top`, the block at the top of the view:
+    /// of the row it falls under, the last of its headings at or above
+    /// `top`, else the row; for headings alone, the last at or above it.
+    pub(crate) fn current(&self, top: usize) -> Option<usize> {
+        let above = self.opened.partition_point(|&(block, _)| block <= top);
+        let row = above
+            .checked_sub(1)
+            .map(|i| self.opened[i].1)
+            .or(self.first)?;
+        let part = self.parts.get(row)?;
+        let under = part.headings.partition_point(|&(block, _)| block <= top);
+        under
+            .checked_sub(1)
+            .map(|i| part.headings[i].1)
+            .or(part.entry)
+    }
 }
 
 /// Each heading's depth in the contents, from its level (1 to 6): how many
@@ -3019,16 +3158,10 @@ fn heading_depths(levels: impl IntoIterator<Item = u8>) -> Vec<usize> {
         .collect()
 }
 
-/// The heading of the part shown: the last at or above `top`, the block at
-/// the top of the view.
-fn current_heading(headings: &[usize], top: usize) -> Option<usize> {
-    headings.iter().rposition(|&block| block <= top)
-}
-
 /// The rows of a book's contents that open the section shown, each with
 /// the block it starts at: where its fragment points, else the section's
 /// start (`None`: a fragment the section does not hold).
-fn section_starts(data: &Inspection) -> Vec<(usize, Option<usize>)> {
+fn section_starts(data: &Inspection, anchors: &Anchors) -> Vec<(usize, Option<usize>)> {
     data.rows
         .iter()
         .enumerate()
@@ -3040,38 +3173,11 @@ fn section_starts(data: &Inspection) -> Vec<(usize, Option<usize>)> {
                 .and_then(|target| target.split_once('#'))
             {
                 None => Some(0),
-                Some((_, fragment)) => data
-                    .blocks
-                    .iter()
-                    .position(|block| block.anchors.iter().any(|name| name == fragment)),
+                Some((_, fragment)) => anchors.get(fragment),
             };
             (index, start)
         })
         .collect()
-}
-
-/// The row of a book's contents that `block` of the section shown falls
-/// under: of the rows that open the section (`starts`), the last starting
-/// at or above it (one whose fragment the section does not hold is not
-/// placed), else the first; for a section the contents do not name (a
-/// cover, a chapter split in files), the last of the rows before it.
-fn chapter_at(data: &Inspection, starts: &[(usize, Option<usize>)], block: usize) -> Option<usize> {
-    if let Some(&(first, _)) = starts.first() {
-        return Some(
-            starts
-                .iter()
-                .rfind(|(_, start)| start.is_some_and(|start| start <= block))
-                .map_or(first, |&(row, _)| row),
-        );
-    }
-    let before = data
-        .rows
-        .iter()
-        .filter_map(|row| row.section.filter(|&section| section < data.position))
-        .max()?;
-    data.rows
-        .iter()
-        .rposition(|row| row.section == Some(before))
 }
 
 /// The headings of the section shown that the rows opening it name, not to
@@ -3079,7 +3185,7 @@ fn chapter_at(data: &Inspection, starts: &[(usize, Option<usize>)], block: usize
 /// it starts to where the next one starts that stands where it points or
 /// whose words hold the row's, or are held by them ("II. The Storm" for
 /// "The Storm", "Chapter 2" for "Chapter 2: The Storm").
-fn named_headings(data: &Inspection, starts: &[(usize, Option<usize>)]) -> Vec<usize> {
+fn named_headings(data: &Inspection, starts: &[(usize, Option<usize>)]) -> HashSet<usize> {
     fn words(text: &str) -> Vec<String> {
         text.split(|c: char| !c.is_alphanumeric())
             .filter(|word| !word.is_empty())
@@ -3089,13 +3195,17 @@ fn named_headings(data: &Inspection, starts: &[(usize, Option<usize>)]) -> Vec<u
     fn holds(outer: &[String], inner: &[String]) -> bool {
         !inner.is_empty() && outer.windows(inner.len()).any(|run| run == inner)
     }
-    let mut named = Vec::new();
+    // Where the rows start, in order: a row's part ends where the next
+    // starting after it does.
+    let mut begins: Vec<usize> = starts.iter().filter_map(|&(_, start)| start).collect();
+    begins.sort_unstable();
+    begins.dedup();
+    let mut named = HashSet::new();
     for &(row, start) in starts {
         let Some(start) = start else { continue };
-        let end = starts
-            .iter()
-            .filter_map(|&(_, other)| other.filter(|&other| other > start))
-            .min()
+        let end = begins
+            .get(begins.partition_point(|&begin| begin <= start))
+            .copied()
             .unwrap_or(data.blocks.len());
         let title = words(&data.rows[row].cells.join(" "));
         let heading = (start..end).find(|&index| {
@@ -3165,11 +3275,7 @@ pub fn content(
     let seen = Rc::clone(&drawn);
     // A container's view kept above a member decodes nothing more: what it
     // showed is what it keeps.
-    let later = !view.parked
-        && data
-            .blocks
-            .iter()
-            .any(|block| matches!(block.picture, Some(Picture::Later { .. })));
+    let later = !view.parked && !display.later.is_empty();
     // Read a screen at a time, the pager over the list cuts its pages
     // (`inspector_pages`), told where each text drew its lines; the list
     // ends with a spacer, room under a section's last page.
@@ -4063,7 +4169,13 @@ mod tests {
             rows: rows.clone(),
             ..Inspection::default()
         };
-        let at = |data: &Inspection, top| chapter_at(data, &section_starts(data), top);
+        // The row of the part shown at `top`: the entry `current` gives,
+        // the deepest of its headings aside (this book has none).
+        let at = |data: &Inspection, top| {
+            let contents = Contents::of(data, &Anchors::of(data))?;
+            let entry = contents.current(top)?;
+            (0..data.rows.len()).find(|&row| contents.parts[row].entry == Some(entry))
+        };
         let one = book(
             2,
             vec![Block::default(), Block::default(), anchored("later")],
@@ -4100,11 +4212,29 @@ mod tests {
         };
         assert_eq!(at(&none, 0), None);
 
-        let headings = [1, 4, 9];
-        assert_eq!(current_heading(&headings, 0), None, "before the first");
-        assert_eq!(current_heading(&headings, 4), Some(1));
-        assert_eq!(current_heading(&headings, 8), Some(1));
-        assert_eq!(current_heading(&headings, 20), Some(2));
+        let heading = || Block {
+            heading: 1,
+            text: "Heading".into(),
+            ..Block::default()
+        };
+        let document = Inspection {
+            kind: InspectionKind::Markdown,
+            blocks: (0..10)
+                .map(|n| {
+                    if [1, 4, 9].contains(&n) {
+                        heading()
+                    } else {
+                        Block::default()
+                    }
+                })
+                .collect(),
+            ..Inspection::default()
+        };
+        let headings = Contents::of(&document, &Anchors::of(&document)).unwrap();
+        assert_eq!(headings.current(0), None, "before the first");
+        assert_eq!(headings.current(4), Some(1));
+        assert_eq!(headings.current(8), Some(1));
+        assert_eq!(headings.current(20), Some(2));
     }
 
     /// A book lists its contents once: the headings of the chapter shown
@@ -4154,12 +4284,13 @@ mod tests {
             ..Inspection::default()
         };
         let listed = |top| {
-            let (entries, current) = book_entries(&book, top);
-            let entries: Vec<(String, usize)> = entries
-                .into_iter()
+            let contents = Contents::of(&book, &Anchors::of(&book)).unwrap();
+            let entries: Vec<(String, usize)> = contents
+                .entries
+                .iter()
                 .map(|entry| (entry.title.to_string(), entry.depth))
                 .collect();
-            (entries, current)
+            (entries, contents.current(top))
         };
         let (entries, current) = listed(0);
         let expected = [
@@ -4184,9 +4315,10 @@ mod tests {
         assert_eq!(listed(7).1, Some(6));
 
         let titles = |data: &Inspection| {
-            book_entries(data, 0)
-                .0
-                .into_iter()
+            Contents::of(data, &Anchors::of(data))
+                .unwrap()
+                .entries
+                .iter()
                 .skip(4)
                 .map(|entry| (entry.title.to_string(), entry.depth))
                 .collect::<Vec<_>>()
@@ -4223,6 +4355,269 @@ mod tests {
             [("Chapter 2".to_owned(), 1), ("Afterword".to_owned(), 2)],
             "a section the contents do not name, under the row before it"
         );
+    }
+
+    /// The contents as they were worked out at every frame, kept as the
+    /// rule `Contents` must give: the entries, and the part shown at `top`.
+    mod old {
+        use super::super::{heading_depths, heading_entry};
+        use skwir_core::inspection::{Inspection, InspectionKind};
+
+        pub fn contents(
+            data: &Inspection,
+            top: usize,
+        ) -> (Vec<crate::outline::Entry>, Option<usize>) {
+            if data.kind == InspectionKind::Book && !data.rows.is_empty() {
+                book_entries(data, top)
+            } else {
+                heading_entries(data, top)
+            }
+        }
+
+        fn heading_entries(
+            data: &Inspection,
+            top: usize,
+        ) -> (Vec<crate::outline::Entry>, Option<usize>) {
+            let headings: Vec<usize> = data
+                .blocks
+                .iter()
+                .enumerate()
+                .filter(|(_, block)| block.heading > 0)
+                .map(|(index, _)| index)
+                .collect();
+            let depths = heading_depths(headings.iter().map(|&index| data.blocks[index].heading));
+            let entries = headings
+                .iter()
+                .zip(depths)
+                .map(|(&index, depth)| heading_entry(data, index, depth))
+                .collect();
+            (entries, headings.iter().rposition(|&block| block <= top))
+        }
+
+        fn book_entries(
+            data: &Inspection,
+            top: usize,
+        ) -> (Vec<crate::outline::Entry>, Option<usize>) {
+            let starts = section_starts(data);
+            let named = named_headings(data, &starts);
+            let shown = chapter_at(data, &starts, top);
+            let place = |block| {
+                if starts.is_empty() {
+                    shown
+                } else {
+                    chapter_at(data, &starts, block)
+                }
+            };
+            let mut under: Vec<Vec<usize>> = vec![Vec::new(); data.rows.len()];
+            for (index, block) in data.blocks.iter().enumerate() {
+                if block.heading > 0
+                    && !named.contains(&index)
+                    && let Some(row) = place(index)
+                {
+                    under[row].push(index);
+                }
+            }
+            let mut entries = Vec::with_capacity(data.rows.len());
+            let mut current = None;
+            for (row, (chapter, headings)) in data.rows.iter().zip(&under).enumerate() {
+                if shown == Some(row) {
+                    current = Some(entries.len());
+                }
+                entries.push(crate::outline::Entry {
+                    depth: chapter.depth,
+                    title: chapter.cells.join(" ").into(),
+                    command: chapter.target.as_ref().map(|target| {
+                        (
+                            "ui.inspect",
+                            serde_json::json!({"action":"target","target":target}),
+                        )
+                    }),
+                });
+                let depths =
+                    heading_depths(headings.iter().map(|&index| data.blocks[index].heading));
+                for (&index, depth) in headings.iter().zip(depths) {
+                    if shown == Some(row) && index <= top {
+                        current = Some(entries.len());
+                    }
+                    entries.push(heading_entry(data, index, chapter.depth + 1 + depth));
+                }
+            }
+            (entries, current)
+        }
+
+        fn section_starts(data: &Inspection) -> Vec<(usize, Option<usize>)> {
+            data.rows
+                .iter()
+                .enumerate()
+                .filter(|(_, row)| row.section == Some(data.position))
+                .map(|(index, row)| {
+                    let start = match row
+                        .target
+                        .as_deref()
+                        .and_then(|target| target.split_once('#'))
+                    {
+                        None => Some(0),
+                        Some((_, fragment)) => data
+                            .blocks
+                            .iter()
+                            .position(|block| block.anchors.iter().any(|name| name == fragment)),
+                    };
+                    (index, start)
+                })
+                .collect()
+        }
+
+        fn chapter_at(
+            data: &Inspection,
+            starts: &[(usize, Option<usize>)],
+            block: usize,
+        ) -> Option<usize> {
+            if let Some(&(first, _)) = starts.first() {
+                return Some(
+                    starts
+                        .iter()
+                        .rfind(|(_, start)| start.is_some_and(|start| start <= block))
+                        .map_or(first, |&(row, _)| row),
+                );
+            }
+            let before = data
+                .rows
+                .iter()
+                .filter_map(|row| row.section.filter(|&section| section < data.position))
+                .max()?;
+            data.rows
+                .iter()
+                .rposition(|row| row.section == Some(before))
+        }
+
+        fn named_headings(data: &Inspection, starts: &[(usize, Option<usize>)]) -> Vec<usize> {
+            fn words(text: &str) -> Vec<String> {
+                text.split(|c: char| !c.is_alphanumeric())
+                    .filter(|word| !word.is_empty())
+                    .map(str::to_lowercase)
+                    .collect()
+            }
+            fn holds(outer: &[String], inner: &[String]) -> bool {
+                !inner.is_empty() && outer.windows(inner.len()).any(|run| run == inner)
+            }
+            let mut named = Vec::new();
+            for &(row, start) in starts {
+                let Some(start) = start else { continue };
+                let end = starts
+                    .iter()
+                    .filter_map(|&(_, other)| other.filter(|&other| other > start))
+                    .min()
+                    .unwrap_or(data.blocks.len());
+                let title = words(&data.rows[row].cells.join(" "));
+                let heading = (start..end).find(|&index| {
+                    let block = &data.blocks[index];
+                    block.heading > 0
+                        && !named.contains(&index)
+                        && (index == start || {
+                            let heading = words(&block.text);
+                            holds(&heading, &title) || holds(&title, &heading)
+                        })
+                });
+                named.extend(heading);
+            }
+            named
+        }
+    }
+
+    /// Worked out once, the contents are those that were worked out at
+    /// every frame, and the part shown at each block the same: for books
+    /// whose rows point into the chapter in their own order or out of it,
+    /// at fragments it holds or not, at headings that name them or not,
+    /// for a chapter the contents do not name, and for headings alone.
+    #[test]
+    fn contents_worked_out_once_are_those_worked_out_at_every_frame() {
+        use super::*;
+        use skwir_core::inspection::Row;
+        let block = |n: usize| Block {
+            heading: if n.is_multiple_of(3) {
+                (n % 5) as u8 + 1
+            } else {
+                0
+            },
+            text: match n % 4 {
+                0 => format!("Chapter {}", n / 4),
+                1 => "The storm".into(),
+                _ => format!("Part {n} of the storm"),
+            },
+            anchors: if n.is_multiple_of(2) {
+                vec![format!("a{}", n % 17)]
+            } else {
+                Vec::new()
+            },
+            ..Block::default()
+        };
+        let row = |n: usize| Row {
+            cells: vec![match n % 3 {
+                0 => format!("Chapter {}", n % 9),
+                1 => "Storm".into(),
+                _ => format!("Row {n}"),
+            }],
+            target: (n % 7 != 6).then(|| match n % 4 {
+                0 => "this.xhtml".to_owned(),
+                3 => format!("this.xhtml#gone{n}"),
+                _ => format!("this.xhtml#a{}", (n * 5) % 17),
+            }),
+            depth: n % 3,
+            section: match n % 6 {
+                0..=2 => Some(4),
+                3 => Some(2),
+                4 => Some(7),
+                _ => None,
+            },
+            ..Row::default()
+        };
+        let blocks: Vec<Block> = (0..120).map(block).collect();
+        let rows: Vec<Row> = (0..40).map(row).collect();
+        let book = |position| Inspection {
+            kind: InspectionKind::Book,
+            position,
+            blocks: blocks.clone(),
+            rows: rows.clone(),
+            ..Inspection::default()
+        };
+        let cases = [
+            book(4),
+            book(5),
+            book(3),
+            book(1),
+            Inspection {
+                rows: Vec::new(),
+                ..book(4)
+            },
+            Inspection {
+                kind: InspectionKind::Markdown,
+                rows: Vec::new(),
+                ..book(4)
+            },
+        ];
+        for (case, data) in cases.iter().enumerate() {
+            let contents = Contents::of(data, &Anchors::of(data)).unwrap();
+            let mut parts = std::collections::BTreeSet::new();
+            for top in 0..data.blocks.len() + 2 {
+                let (entries, current) = old::contents(data, top);
+                assert_eq!(*contents.entries, *entries, "case {case}");
+                assert_eq!(contents.current(top), current, "case {case}, top {top}");
+                parts.insert(current);
+            }
+            // What is compared is no trivial book: several parts are shown
+            // as the view moves, and the chapter shown lists headings of
+            // its own under its rows, in an order of their own.
+            if case == 0 {
+                assert!(parts.len() > 5, "{parts:?}");
+                assert!(contents.entries.len() > data.rows.len() + 5);
+                assert!(
+                    contents
+                        .opened
+                        .windows(2)
+                        .any(|pair| pair[0].1 == pair[1].1)
+                );
+            }
+        }
     }
 
     #[test]
@@ -4324,7 +4719,7 @@ mod tests {
         };
         // Page 7 is the chapter's own start; 8 its mark; 9's mark was not
         // kept, and pages of other chapters are not here.
-        assert_eq!(page_starts(&data), [(0, 1), (2, 2)]);
+        assert_eq!(page_starts(&data, &Anchors::of(&data)), [(0, 1), (2, 2)]);
     }
 
     #[test]

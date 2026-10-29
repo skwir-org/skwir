@@ -377,6 +377,17 @@ impl Shell {
         let first = self.preview.reader.session.is_none();
         let reopened = std::mem::take(&mut self.preview.reader.reopened);
         let count = crate::reader::page_count(session.as_ref()) as usize;
+        // The outline is built once for the session, not at each page it
+        // draws (a page at a time hands the same session again).
+        let same = self.preview.reader.session.as_ref().is_some_and(|had| {
+            std::ptr::eq(
+                Arc::as_ptr(had).cast::<()>(),
+                Arc::as_ptr(&session).cast::<()>(),
+            )
+        });
+        if !same {
+            self.preview.reader.outline = crate::reader::Outline::of(&session.info().outlines);
+        }
         self.preview.reader.session = Some(session);
         self.preview
             .reader
@@ -423,6 +434,7 @@ impl Shell {
         reader.selection_page = None;
         reader.down = None;
         reader.session = None;
+        reader.outline = None;
         reader.tried = false;
         reader.reopened = true;
         std::mem::take(&mut reader.lifetime).cancel();

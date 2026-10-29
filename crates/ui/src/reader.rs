@@ -53,6 +53,9 @@ pub struct ReaderState {
     pub focus: Option<FocusHandle>,
     pub selection: Option<(usize, usize)>,
     pub outlines: bool,
+    /// The document's outline as the contents draw it, built once for its
+    /// session (`Shell::reader_opened`); `None` without one.
+    pub(crate) outline: Option<Outline>,
     /// The contents' list, following the page shown.
     pub(crate) contents: crate::outline::Follow,
     find: Option<Field>,
@@ -83,6 +86,7 @@ impl ReaderState {
             focus: None,
             selection: None,
             outlines: false,
+            outline: None,
             contents: crate::outline::Follow::default(),
             find: None,
             page_input: None,
@@ -1020,6 +1024,37 @@ fn find_panel(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<A
     ))
 }
 
+/// A document's outline as the contents draw it: its entries, and the
+/// pages they lead to, to tell the part shown at once. Built once for a
+/// session, never at a frame: an outline holds up to thousands of entries.
+pub(crate) struct Outline {
+    entries: Arc<[crate::outline::Entry]>,
+    pages: crate::outline::Pages,
+}
+
+impl Outline {
+    /// The contents of `outlines`; `None` for a document without any.
+    pub(crate) fn of(outlines: &[skwir_core::document::Outline]) -> Option<Outline> {
+        if outlines.is_empty() {
+            return None;
+        }
+        let entries = outlines
+            .iter()
+            .map(|entry| crate::outline::Entry {
+                depth: entry.depth as usize,
+                title: entry.title.clone().into(),
+                command: entry
+                    .page
+                    .map(|page| ("ui.reader_page", serde_json::json!({"page":page}))),
+            })
+            .collect();
+        Some(Outline {
+            entries,
+            pages: crate::outline::Pages::of(outlines.iter().map(|entry| entry.page)),
+        })
+    }
+}
+
 /// The document's outline, while it is open and the document has one: the
 /// part shown is the last entry at or before the page shown.
 pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
@@ -1027,26 +1062,10 @@ pub fn outline_drawer(shell: &Shell, theme: &Theme, cx: &mut Context<Shell>) -> 
     if !reader.outlines {
         return None;
     }
-    let session = reader.session.as_ref()?;
-    let outlines = &session.info().outlines;
-    if outlines.is_empty() {
-        return None;
-    }
-    let current =
-        crate::outline::at_page(outlines.iter().map(|entry| entry.page), shell.preview.page);
-    let entries = outlines
-        .iter()
-        .map(|entry| crate::outline::Entry {
-            depth: entry.depth as usize,
-            title: entry.title.clone().into(),
-            command: entry
-                .page
-                .map(|page| ("ui.reader_page", serde_json::json!({"page":page}))),
-        })
-        .collect();
+    let outline = reader.outline.as_ref()?;
     Some(crate::outline::contents(
-        entries,
-        current,
+        Arc::clone(&outline.entries),
+        outline.pages.at(shell.preview.page),
         &reader.contents,
         ("ui.preview_contents", serde_json::json!({})),
         shell,

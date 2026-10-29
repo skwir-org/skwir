@@ -5,6 +5,7 @@
 //! to make room, open until closed. The part shown is highlighted either
 //! way, and kept in view as the reader moves.
 use std::cell::Cell;
+use std::sync::Arc;
 
 use gpui::{
     AnyElement, Context, ScrollStrategy, SharedString, UniformListScrollHandle, div, prelude::*,
@@ -20,6 +21,7 @@ use crate::toolbar::Button;
 const WIDTH: f32 = 220.;
 const PINNED_SHARE: f32 = 0.45;
 
+#[derive(Debug, PartialEq)]
 pub struct Entry {
     pub depth: usize,
     pub title: SharedString,
@@ -41,8 +43,10 @@ pub struct Follow {
 /// `close`, the command that toggles them. Only the rows in view are built
 /// (`uniform_list`): a document's outline of thousands of entries built
 /// every row, its tooltip and its listeners, at every frame it was open.
+/// The entries are built once, by what shows them (`inspector::Contents`,
+/// `reader::Outline`), and shared with every frame's list.
 pub fn contents(
-    entries: Vec<Entry>,
+    entries: Arc<[Entry]>,
     current: Option<usize>,
     follow: &Follow,
     close: (&'static str, serde_json::Value),
@@ -73,7 +77,7 @@ pub fn contents(
             }
             follow.revealed.set(current);
         }
-        let (entries, closing) = (std::rc::Rc::new(entries), close.clone());
+        let closing = close.clone();
         div()
             .id("outline-list")
             .tab_group()
@@ -264,34 +268,75 @@ fn row(
     .into_any_element()
 }
 
-/// The entry of the part shown in a document read by pages: the last of
-/// those leading to `page` or before it, the deepest where several lead to
-/// the same page (`pages`, each entry's in order).
-pub fn at_page(pages: impl IntoIterator<Item = Option<u32>>, page: u32) -> Option<usize> {
-    let mut best: Option<(usize, u32)> = None;
-    for (index, at) in pages.into_iter().enumerate() {
-        if let Some(at) = at.filter(|&at| at <= page)
-            && best.is_none_or(|(_, shown)| at >= shown)
-        {
-            best = Some((index, at));
-        }
+/// Where the entries of a document read by pages lead, to tell the part
+/// shown at once: (page, entry), by page then entry, those leading nowhere
+/// left out. Built with the entries, once.
+#[derive(Debug, Default)]
+pub struct Pages(Vec<(u32, usize)>);
+
+impl Pages {
+    /// The pages `pages` lead to, each entry's in order.
+    pub fn of(pages: impl IntoIterator<Item = Option<u32>>) -> Pages {
+        let mut marks: Vec<(u32, usize)> = pages
+            .into_iter()
+            .enumerate()
+            .filter_map(|(entry, page)| Some((page?, entry)))
+            .collect();
+        marks.sort_unstable();
+        Pages(marks)
     }
-    best.map(|(index, _)| index)
+
+    /// The entry of the part shown at `page`: the last of those leading to
+    /// it or before it, the deepest where several lead to the same page.
+    pub fn at(&self, page: u32) -> Option<usize> {
+        let before = self.0.partition_point(|&(at, _)| at <= page);
+        before.checked_sub(1).map(|last| self.0[last].1)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The rule `Pages` keeps, as it was worked out at every frame: the
+    /// entry leading to the highest page at or before `page`, the last of
+    /// those leading there.
+    fn at_page(pages: &[Option<u32>], page: u32) -> Option<usize> {
+        let mut best: Option<(usize, u32)> = None;
+        for (index, at) in pages.iter().copied().enumerate() {
+            if let Some(at) = at.filter(|&at| at <= page)
+                && best.is_none_or(|(_, shown)| at >= shown)
+            {
+                best = Some((index, at));
+            }
+        }
+        best.map(|(index, _)| index)
+    }
+
     #[test]
     fn the_part_shown_is_the_last_entry_at_or_before_the_page() {
-        let pages = [Some(1), Some(3), Some(3), None, Some(7), Some(5)];
-        assert_eq!(at_page(pages, 1), Some(0));
-        assert_eq!(at_page(pages, 2), Some(0));
-        assert_eq!(at_page(pages, 3), Some(2), "the deepest of a page's");
-        assert_eq!(at_page(pages, 6), Some(5), "by page, not by order");
-        assert_eq!(at_page(pages, 9), Some(4));
-        assert_eq!(at_page([Some(4)], 2), None, "before the first");
-        assert_eq!(at_page([None, None], 2), None);
+        let pages = Pages::of([Some(1), Some(3), Some(3), None, Some(7), Some(5)]);
+        assert_eq!(pages.at(1), Some(0));
+        assert_eq!(pages.at(2), Some(0));
+        assert_eq!(pages.at(3), Some(2), "the deepest of a page's");
+        assert_eq!(pages.at(6), Some(5), "by page, not by order");
+        assert_eq!(pages.at(9), Some(4));
+        assert_eq!(Pages::of([Some(4)]).at(2), None, "before the first");
+        assert_eq!(Pages::of([None, None]).at(2), None);
+    }
+
+    /// Found by binary search, the part shown is the one the whole list
+    /// was walked for at every frame, on any page of any outline.
+    #[test]
+    fn the_part_shown_by_pages_is_the_one_walked_for() {
+        // An outline of 64 entries in an order of its own, some leading
+        // nowhere, several to one page.
+        let outline: Vec<Option<u32>> = (0..64u32)
+            .map(|n| (n % 7 != 3).then_some((n * 37) % 23 + 1))
+            .collect();
+        let pages = Pages::of(outline.iter().copied());
+        for page in 0..30 {
+            assert_eq!(pages.at(page), at_page(&outline, page), "page {page}");
+        }
     }
 }

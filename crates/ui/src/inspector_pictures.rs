@@ -16,7 +16,10 @@
 //! forgets what was asked before.
 use crate::{latest::Latest, preview::PreviewContent, shell::Shell};
 use gpui::{Context, RenderImage, Window};
-use skwir_core::{inspection::Picture, scheduler::Priority};
+use skwir_core::{
+    inspection::{Block, Picture},
+    scheduler::Priority,
+};
 use std::{
     collections::{HashMap, HashSet},
     rc::Rc,
@@ -37,6 +40,65 @@ struct Reply {
     result: Result<Decoded, String>,
 }
 
+/// The pictures a page names for later, found once with the page
+/// (`inspector::Display::new`), never by a walk through its blocks as the
+/// view moves.
+#[derive(Default)]
+pub(crate) struct Later {
+    /// Each block naming one, and its key, in block order.
+    blocks: Vec<(usize, Arc<str>)>,
+    /// The blocks naming each key, in order: how far a picture is from the
+    /// view is how far the nearest of them is.
+    at: HashMap<Arc<str>, Vec<usize>>,
+}
+
+impl Later {
+    pub(crate) fn of(blocks: &[Block]) -> Later {
+        Later::named(
+            blocks
+                .iter()
+                .enumerate()
+                .filter_map(|(index, block)| match &block.picture {
+                    Some(Picture::Later { key, .. }) => Some((index, key.as_str())),
+                    _ => None,
+                }),
+        )
+    }
+
+    /// From (block, key) in block order.
+    fn named<'a>(named: impl IntoIterator<Item = (usize, &'a str)>) -> Later {
+        let mut later = Later::default();
+        for (index, key) in named {
+            let key: Arc<str> = match later.at.get_key_value(key) {
+                Some((shared, _)) => Arc::clone(shared),
+                None => key.into(),
+            };
+            later.at.entry(Arc::clone(&key)).or_default().push(index);
+            later.blocks.push((index, key));
+        }
+        later
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.blocks.is_empty()
+    }
+
+    /// How far, in blocks, the nearest block naming `key` is from `middle`;
+    /// the farthest of all for a key no block names.
+    fn distance(&self, key: &str, middle: usize) -> usize {
+        let Some(blocks) = self.at.get(key) else {
+            return usize::MAX;
+        };
+        let after = blocks.partition_point(|&block| block < middle);
+        let near = |i: usize| blocks.get(i).map(|&block| block.abs_diff(middle));
+        near(after)
+            .into_iter()
+            .chain(after.checked_sub(1).and_then(near))
+            .min()
+            .unwrap_or(usize::MAX)
+    }
+}
+
 #[derive(Default)]
 pub struct Pictures {
     /// Shared with each frame's rows, which only read it.
@@ -48,8 +110,10 @@ pub struct Pictures {
     seen: Vec<usize>,
     /// What the view shows and its neighbours, nearest first.
     wanted: Vec<String>,
-    /// How far each picture is from the view, in blocks, for eviction.
-    distance: HashMap<String, usize>,
+    /// The pictures of the page, and the middle of the blocks drawn last:
+    /// how far each picture is from the view, for eviction.
+    later: Arc<Later>,
+    middle: usize,
     /// The picture on its way, one at a time.
     asking: Option<String>,
     asked: Latest<Reply>,
@@ -66,7 +130,8 @@ impl Pictures {
         self.failed = Rc::default();
         self.seen.clear();
         self.wanted.clear();
-        self.distance.clear();
+        self.later = Arc::default();
+        self.middle = 0;
         std::mem::take(&mut self.loaded)
             .values()
             .map(|decoded| decoded.picture.image.clone())
@@ -82,9 +147,8 @@ impl Pictures {
             .cloned()
             .collect();
         // Farthest first; a picture no block names any more is farthest.
-        candidates.sort_by_key(|key| {
-            std::cmp::Reverse(self.distance.get(key).copied().unwrap_or(usize::MAX))
-        });
+        candidates
+            .sort_by_cached_key(|key| std::cmp::Reverse(self.later.distance(key, self.middle)));
         let mut evicted = Vec::new();
         for key in candidates {
             if bytes <= CACHE_BYTES {
@@ -101,28 +165,26 @@ impl Pictures {
 
 /// The pictures to have: those of the blocks drawn (`seen`, block indices),
 /// nearest the middle of them first, then the one before and the one after.
-/// `pictures` lists every block with a picture for later, in block order.
-fn wanted(seen: &[usize], pictures: &[(usize, &str)]) -> Vec<String> {
+fn wanted(seen: &[usize], later: &Later) -> Vec<String> {
     let (Some(&first), Some(&last)) = (seen.iter().min(), seen.iter().max()) else {
         return Vec::new();
     };
     let middle = usize::midpoint(first, last);
-    let mut shown: Vec<(usize, &str)> = pictures
+    let pictures = &later.blocks;
+    // Those between the first and the last drawn, found by their blocks.
+    let from = pictures.partition_point(|(index, _)| *index < first);
+    let to = pictures.partition_point(|(index, _)| *index <= last);
+    let mut shown: Vec<&(usize, Arc<str>)> = pictures[from..to]
         .iter()
         .filter(|(index, _)| seen.contains(index))
-        .copied()
         .collect();
     shown.sort_by_key(|(index, _)| index.abs_diff(middle));
-    let before = pictures.iter().rev().find(|(index, _)| *index < first);
-    let after = pictures.iter().find(|(index, _)| *index > last);
+    let before = from.checked_sub(1).and_then(|i| pictures.get(i));
+    let after = pictures.get(to);
     let mut keys: Vec<String> = Vec::new();
-    for (_, key) in shown
-        .into_iter()
-        .chain(after.copied())
-        .chain(before.copied())
-    {
-        if !keys.iter().any(|k| k == key) {
-            keys.push(key.to_owned());
+    for (_, key) in shown.into_iter().chain(after).chain(before) {
+        if !keys.iter().any(|k| **k == **key) {
+            keys.push(key.to_string());
         }
     }
     keys
@@ -145,33 +207,17 @@ impl Shell {
         let Some(PreviewContent::Inspection(display)) = &self.preview.content else {
             return;
         };
-        let later: Vec<(usize, &str)> = display
-            .data
-            .blocks
-            .iter()
-            .enumerate()
-            .filter_map(|(index, block)| match &block.picture {
-                Some(Picture::Later { key, .. }) => Some((index, key.as_str())),
-                _ => None,
-            })
-            .collect();
+        let later = Arc::clone(&display.later);
         let wanted = wanted(&seen, &later);
         let middle = seen
             .iter()
             .min()
             .zip(seen.iter().max())
             .map_or(0, |(first, last)| usize::midpoint(*first, *last));
-        let mut distance = HashMap::new();
-        for (index, key) in &later {
-            let far = index.abs_diff(middle);
-            distance
-                .entry((*key).to_owned())
-                .and_modify(|d: &mut usize| *d = (*d).min(far))
-                .or_insert(far);
-        }
         let pictures = &mut self.preview.inspection.pictures;
         pictures.seen = seen;
-        pictures.distance = distance;
+        pictures.later = later;
+        pictures.middle = middle;
         if pictures.wanted == wanted {
             return;
         }
@@ -267,11 +313,30 @@ mod tests {
 
     #[test]
     fn what_is_drawn_comes_first_then_its_neighbours() {
-        let pictures = [(2, "a"), (5, "b"), (9, "c"), (12, "d"), (20, "e")];
+        let pictures = Later::named([(2, "a"), (5, "b"), (9, "c"), (12, "d"), (20, "e")]);
         assert_eq!(wanted(&[8, 9, 10, 11, 12], &pictures), ["c", "d", "e", "b"]);
         assert_eq!(wanted(&[0, 1], &pictures), ["a"], "only the one after");
+        assert_eq!(wanted(&[21, 22], &pictures), ["e"], "only the one before");
         assert!(wanted(&[], &pictures).is_empty());
         // One picture named by two blocks is asked for once.
-        assert_eq!(wanted(&[3, 4, 5], &[(4, "x"), (5, "x")]), ["x"]);
+        assert_eq!(
+            wanted(&[3, 4, 5], &Later::named([(4, "x"), (5, "x")])),
+            ["x"]
+        );
+    }
+
+    /// A picture is as far from the view as the nearest block naming it;
+    /// one no block names is the farthest, the first to go.
+    #[test]
+    fn a_picture_is_as_far_as_its_nearest_block() {
+        let later = Later::named([(2, "a"), (10, "b"), (40, "a"), (41, "c")]);
+        assert_eq!(later.distance("a", 38), 2, "the block after");
+        assert_eq!(later.distance("a", 5), 3, "the block before");
+        assert_eq!(later.distance("a", 0), 2);
+        assert_eq!(later.distance("a", 90), 50);
+        assert_eq!(later.distance("b", 10), 0);
+        assert_eq!(later.distance("gone", 10), usize::MAX);
+        assert!(Later::named([]).is_empty());
+        assert!(!later.is_empty());
     }
 }
