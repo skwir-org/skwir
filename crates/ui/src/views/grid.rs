@@ -13,12 +13,13 @@
 //! from the top of the row, so its highlight hugs its own picture and name
 //! (as Dolphin's does). That takes knowing how many lines each name wraps to
 //! before anything is drawn: `GridView::measure` counts them with the text
-//! system's line wrapper, once per change of the listing, the order or the
-//! zoom, never per frame. The label is then clamped to that count, so a
-//! wrapper that disagrees with the shaper by a word costs an ellipsis, not a
-//! name drawn over the next row. A name cut keeps its first lines whole and
-//! its end on the last (vendored patch 0037: Zed's gpui cuts a clamped text
-//! in the middle to a single line).
+//! system's line wrapper, once per change of the order drawn (arrivals
+//! count once placed in it), the zoom or the font, never per frame. The
+//! label is then clamped to that count, so a wrapper that disagrees with
+//! the shaper by a word costs an ellipsis, not a name drawn over the next
+//! row. A name cut keeps its first lines whole and its end on the last
+//! (vendored patch 0037: Zed's gpui cuts a clamped text in the middle to a
+//! single line).
 //!
 //! Under the name, a line for each caption the user chose (`CAPTIONS`, off
 //! until chosen): its tags, or one of the list's details. Every tile has
@@ -167,14 +168,32 @@ pub struct GridView {
     /// wraps only the names it has not seen.
     wrapped: HashMap<EntryId, (u64, u8)>,
     wrapped_at: Option<(u32, gpui::SharedString)>,
-    /// What `lines` was counted for: the names, their order and the zoom.
-    /// Not the listing's version, which hydration advances with every batch.
-    lines_for: Option<(u64, std::sync::Arc<[EntryId]>, u32)>,
+    /// What `lines` was counted for: the order drawn and the zoom. Not the
+    /// listing's versions: hydration advances one with every batch, and
+    /// arrivals the names' with every batch while a folder streams in,
+    /// though they are drawn only once placed in the order (`stale`).
+    lines_for: Option<(std::sync::Arc<[EntryId]>, u32)>,
     /// Advances with `lines` and `captions`, so the grid sums its rows
     /// again.
     revision: u64,
     /// How many captions the tiles were counted with.
     captions: usize,
+}
+
+/// Whether the lines counted for `last` (an order and a zoom) are not
+/// those of `order` at `zoom`. The order is the listing's sort as placed
+/// (`Listing::sorted`): a name changed in place sorts again, a new order;
+/// arrivals change nothing drawn until placed, which they are by quarters
+/// while a folder streams in. So a frame that brings only arrivals or
+/// metadata counts nothing.
+fn stale(
+    last: Option<&(std::sync::Arc<[EntryId]>, u32)>,
+    order: &std::sync::Arc<[EntryId]>,
+    zoom: u32,
+) -> bool {
+    !last.is_some_and(|(counted, at)| {
+        *at == zoom && (std::sync::Arc::ptr_eq(counted, order) || **counted == **order)
+    })
 }
 
 /// Border and padding around a tile's content, on each side.
@@ -217,20 +236,17 @@ impl GridView {
     /// Count the lines every name wraps to, when what they depend on changed.
     fn measure(&mut self, shell: &Shell, window: &Window, cx: &gpui::App) {
         let list = &shell.ui().list;
-        let ws = shell.app.workspace.read();
-        let listing = ws.pane(shell.pane).map(|pane| &pane.listing);
-        let names = listing.map_or(0, skwir_core::Listing::names_version);
         // Names wrap in the interface font, which may change while shown
         // (ADR-073).
         let font = cx.global::<crate::theme::Theme>().font.clone();
         let at = (shell.zoom, font.clone());
-        if let Some((counted, order, zoom)) = &self.lines_for
-            && (*counted, *zoom) == (names, shell.zoom)
-            && self.wrapped_at.as_ref() == Some(&at)
-            && (std::sync::Arc::ptr_eq(order, &list.sorted) || **order == *list.sorted)
+        if self.wrapped_at.as_ref() == Some(&at)
+            && !stale(self.lines_for.as_ref(), &list.sorted, shell.zoom)
         {
             return;
         }
+        let ws = shell.app.workspace.read();
+        let listing = ws.pane(shell.pane).map(|pane| &pane.listing);
         let started = std::time::Instant::now();
         if self.wrapped_at.as_ref() != Some(&at) {
             self.wrapped.clear();
@@ -286,7 +302,7 @@ impl GridView {
             let ids: HashSet<EntryId> = list.sorted.iter().copied().collect();
             self.wrapped.retain(|id, _| ids.contains(id));
         }
-        self.lines_for = Some((names, list.sorted.clone(), shell.zoom));
+        self.lines_for = Some((list.sorted.clone(), shell.zoom));
         self.revision += 1;
         tracing::debug!(
             names = self.lines.len(),
@@ -804,7 +820,32 @@ impl PaneView for GridView {
 
 #[cfg(test)]
 mod tests {
-    use super::{CAPTIONS, COLUMNS, Caption, Detail, fitted};
+    use std::sync::Arc;
+
+    use skwir_core::{EntryId, FileId};
+
+    use super::{CAPTIONS, COLUMNS, Caption, Detail, fitted, stale};
+
+    /// Names are counted again for another order or zoom, never for a
+    /// frame that brought only arrivals not yet placed, or metadata.
+    #[test]
+    fn names_are_counted_for_the_order_drawn_and_its_zoom() {
+        let id = |ino| EntryId {
+            file: FileId::new(1, ino),
+            at: ino,
+        };
+        let order: Arc<[EntryId]> = Arc::from([id(1), id(2), id(3)]);
+        assert!(stale(None, &order, 96), "nothing counted yet");
+        let counted = (Arc::clone(&order), 96);
+        assert!(!stale(Some(&counted), &order, 96), "the same order");
+        let again: Arc<[EntryId]> = Arc::from([id(1), id(2), id(3)]);
+        assert!(!stale(Some(&counted), &again, 96), "sorted alike again");
+        let placed: Arc<[EntryId]> = Arc::from([id(1), id(4), id(2), id(3)]);
+        assert!(stale(Some(&counted), &placed, 96), "arrivals placed");
+        let resorted: Arc<[EntryId]> = Arc::from([id(3), id(2), id(1)]);
+        assert!(stale(Some(&counted), &resorted, 96), "another order");
+        assert!(stale(Some(&counted), &order, 128), "another zoom");
+    }
 
     /// The captions are the tags, then the list's columns as they stand,
     /// each called and kept as its column is: a column added to the list
