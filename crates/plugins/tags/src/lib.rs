@@ -457,14 +457,20 @@ fn sidebar_location(tag: &str) -> String {
 }
 
 /// The tags to offer: those pinned first, in their order, then the rest
-/// known, the most recently used first.
+/// known, the most recently used first. The vocabulary names each tag
+/// once already: only the pinned are looked up, folded as `same_tag`
+/// compares them, where each tag offered was compared with all those
+/// before it at every key typed.
 fn known(pinned: Vec<String>, known: Vec<String>) -> Vec<String> {
+    let folded = |tag: &str| -> String { tag.chars().flat_map(char::to_lowercase).collect() };
+    let pinned_here: std::collections::HashSet<String> =
+        pinned.iter().map(|tag| folded(tag)).collect();
     let mut out = pinned;
-    for tag in known {
-        if !out.iter().any(|t| same_tag(t, &tag)) {
-            out.push(tag);
-        }
-    }
+    out.extend(
+        known
+            .into_iter()
+            .filter(|tag| !pinned_here.contains(&folded(tag))),
+    );
     out
 }
 
@@ -2788,6 +2794,23 @@ mod tests {
             )[..3],
             ["home", "x", known[0]]
         );
+    }
+
+    /// The pinned tags first, in their order, then each known tag once, in
+    /// the vocabulary's order, none a pinned one under another case.
+    #[test]
+    fn the_tags_offered_are_the_pinned_then_the_known_each_once() {
+        let pinned: Vec<String> = vec!["Été".into(), "work".into(), "Places/Alps".into()];
+        let mut vocabulary: Vec<String> = (0..2_000).map(|i| format!("tag {i}")).collect();
+        for (at, variant) in [(10, "ÉTÉ"), (500, "Work"), (1_999, "places/alps")] {
+            vocabulary.insert(at, variant.into());
+        }
+        let offered = super::known(pinned.clone(), vocabulary);
+        let expected: Vec<String> = pinned
+            .into_iter()
+            .chain((0..2_000).map(|i| format!("tag {i}")))
+            .collect();
+        assert_eq!(offered, expected);
     }
 
     // Extended attributes: Unix's.
