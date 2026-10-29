@@ -7193,3 +7193,109 @@ line), the top of the page turned from again under them, and the next
 notch opened the chapter before on its last page. The unit test of a
 section's start now expects the whole page. Runs: `skwir-ui`'s tests
 (410 of 410), clippy (`-D warnings`), rustfmt.
+
+### Performance review and fixes (2026-10-29, ADR-104, ADR-105)
+
+The user asked for a review of complexity and resource use across the
+code, then for every fix before 0.3.0. Six reviewers each read an area
+(core; operations and platform; the window and views; previews and their
+helpers; search, tags and the shelf; remote folders and the other
+plugins): 59 findings, ten quadratic, none exponential. Each reviewer
+then designed its fixes and, as a fixer owning its files, made them in
+one tree, four at a time; the integrator reviewed each diff and
+committed it alone. Decisions the user took: a file only written to is
+told once a second (core#12a); an archive shown keeps its helper, tied
+to what shows it (ADR-105); a copy across a network trusts length and
+time (ADR-104); a Map view's points may come up to half a second later
+while a folder streams; a tag place's year changed outside Skwir shows
+after F5; `select` gains mode `change` with `removed`.
+
+**The quadratics fixed:** a deleted file's folder listed once per file
+after every plan (ops#1); `Pane::entry_at` walking the listing once per
+selected entry (core#1); a drag back compared path by path (ui#1); a tag
+renamed everywhere deduplicated by scan (tags#1); the shelf's membership
+(shelf#1); the tags index shifting a sorted `Vec` per file (tags#2);
+`gone_after` after a FUSE renumbering (core#6); an archive member read
+from the archive's start, on a new helper, per page (preview#2,
+comics#1, ADR-105); a CSV's page starts no longer learned past 2 million
+rows (tables#1); a book's contents rebuilt per frame (preview#1).
+
+**Linear work moved off hot paths:** the mount table watched instead of
+read three times per trashed item (ops#2); versions that metadata does
+not move (`shown_version`, `updated_since`, `tree_members_version`) for
+the selection after a pump, narrowing and the opened folders (core#2,
+#3, #5); typed in-process dispatch (`App::dispatch_args`) for hydration
+and the rubber band, which sends changes (core#4, ui#4, ui#6); the grid
+counting names per order drawn (ui#2); the footer's weight from what is
+known (ui#3); a search's recheck limited to what a plan touched, and
+companions read once (query#1, #2, and a race between walkers found);
+remote refreshes split into mounts and servers, rclone's servers kept
+(remote#1 to #3); code previews coloured where shown (preview#3);
+Merge's trees read once per settling (ops#4).
+
+**Measured** (release `skwir-bench list --only …`, flat100k; the machine
+loaded by the other fixers' builds, load average noted):
+
+| Case | Before | After |
+| --- | --- | --- |
+| `entry_at_selection_us` | 100,345,849 µs (load 12) | 43,300 µs median of 3 (load 6–7); 50,800 after the versions (load 8) |
+| `delete_tail_us` | 15,206,638 µs (load 12) | 1,575,422 after ops#1 (load 15); 206,597 and 203,259 after ops#2 (load 4.7) |
+| `tags_forget_us` | 4,623,425 µs (load 12) | 760 and 1,130 µs (load 5), 5,100 to 6,700 (load 17); the old code alternated with it gave 1.84 s and 2.48 s at load 5 |
+| `listing_sort_hydrate_us` | budget 1,500,000 | 443,000 median (load 6–7), 497,000 (load 8) |
+| `listing_sort_update_us` | budget 4,000 | 1,230 median (load 6–7), 1,270 (load 8) |
+| `tags_index_learn_us` | 1.11 / 1.43 / 1.20 s (old, load 5) | 0.94 / 1.21 / 0.85 s |
+
+The release check's bench met every budget but `stream_complete_us`
+(117 ms, budget 100 ms), measured right after its test run at a load of
+8.7. Built side by side and alternated eight rounds each, a3d100ec and
+the fixed tree completed the stream alike (median of the minimums 45.9
+and 45.0 ms; 0.294 and 0.293 s of CPU per five), and that stream never
+builds a `Listing`: it was load. Budgets for the three new cases, about
+three times the medians at a load of 4.4 to 5.7: `entry_at_selection_us`
+120,000 (38.6 to 42.0 ms), `delete_tail_us` 650,000 (209 to 218 ms),
+`tags_forget_us` 2,200 (0.69 to 0.72 ms). `just bench-check` then met
+every budget (`stream_complete_us` 43.9 ms, `entry_at_selection_us`
+47.1, `delete_tail_us` 215.7, `tags_forget_us` 0.82).
+
+**Checked:** each fix by its fixer: rustfmt on its files, clippy
+(`-D warnings`, all targets) on the crates touched, and the tests
+covering it, new ones counting work (listings, mount-table reads,
+predicate calls, index builds, helper launches, bytes read) rather than
+timing it where a counter could. The cross check of core and platform
+(`cargo-zigbuild clippy` for `x86_64-pc-windows-gnu` and
+`aarch64-apple-darwin`) was clean after the watcher's change. In a
+window on Xvfb: a 3,500-line formatted JSON coloured at the top on
+opening and at line 2,245 within about 0.2 s of a scrollbar jump, idle
+CPU flat; a CBZ read a page at a time, each turn back and forth shown
+from the cache with the next page read ahead, the archive helper reading
+six members with one header each; a film's worker sent 30 frames a
+second shown, none hidden, one when shown again paused.
+
+The final check, a debug build of 67875090 on Xvfb (lavapipe):
+flat100k listed and scrolled end to end; images10k streamed into the
+grid with three counts of its names (0, 8,192, 10,000, of which 1,808
+wrapped anew); a plain band 6 → 9 → 6, and a Ctrl+band over a 10,000
+selection 9,997 → 10,000 → 9,997, kept on release; a 3,000-file folder's
+weight shown, a filter's at once with no stat of its files (strace) and
+the folder's again on clearing; a sort by size of flat100k hydrated by
+one request of 99,785 ids in about 1.2 s; Shift+Delete of 1,000 of 2,000
+files ended 125 ms after Enter, with no tail; a file appended every
+100 ms grew in the list once a second and showed its final size at once
+when closed. Idle CPU 1 to 2 % after each, what that display costs with
+nothing open (X11 polled at the display's rate).
+
+`just release-check`, fourth run at e1caf746 (the first three found a
+module out of order, a clippy lint in a new test and three Linux-only
+items in the Windows build, each fixed): rustfmt, clippy, the Windows
+and macOS cross checks, deny, notices, 2,495 tests (30 skipped), the
+smoke window, the accessibility check and the Poppler, MuPDF and DjVu
+checks passed; its bench stopped on load (above); `release-tools-check`
+passed alone (28 and 6 tests).
+
+**Not checked:** macOS and Windows run nothing of this (compiled only):
+the watcher's written window, files' own icons let go of, the archive
+helper's delete sharing; a real phone or camera for the GVfs signal
+rules (`just mtp-check`); the document engines' opens on Windows. Seen
+in the final check and not looked into: an Undo in the footer after the
+permanent delete; such a delete journals no inverse (`Delete::undoable`
+is false), so it was likely an earlier action's.

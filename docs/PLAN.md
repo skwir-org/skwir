@@ -213,6 +213,36 @@ Screens are not counted, so nothing is laid out ahead. Checked in a
 window on Xvfb (`docs/STATUS-LOG.md`, 2026-10-29); what is left under
 "What is left".
 
+## Performance review and fixes (2026-10-29)
+
+Six reviewers read the whole code (about 430,000 lines) for what grows
+faster than its input and what costs CPU, memory, disk, syscalls,
+network or wakeups: 59 findings, ten quadratic at sizes Skwir meets (a
+folder of 100,000 entries and a selection of all of it, a tag on 100,000
+files, a solid comic, a CSV of millions of rows), none exponential. Six
+fixers, each owning its files, fixed 53 of them (one in part) and left
+six judged not worth it, in one tree; the integrator committed them fix by
+fix (`a3d100ec..`; detail in `docs/STATUS-LOG.md`, 2026-10-29). Three
+bench cases measure what was quadratic. Two decisions closed doors:
+ADR-104 (a copy across a network is found whole by length and time) and
+ADR-105 (an archive shown keeps its helper, amending ADR-101). AGENTS.md
+gained a Scale rule.
+
+| Area | Fixed | Dropped |
+| --- | --- | --- |
+| Core: listings, selection, commands, watcher | 12 | |
+| Operations and platform | 6, and ADR-104 | 2 |
+| Window and views | 8 | 1 |
+| Previews and their helpers | 10 (one reduced), and ADR-105 | |
+| Search, tags and the shelf | 11, and a race found | 2 |
+| Remote folders, maps, tables | 6 | 1 |
+
+| Bench case (flat100k, release) | Before | After |
+| --- | --- | --- |
+| `entry_at_selection_us`: a whole selection's entries found | 100.3 s | 43 ms |
+| `delete_tail_us`: 10,000 of 20,000 files deleted for good | 15.2 s | 0.20 s |
+| `tags_forget_us`: a folder of 100,000 tagged files moved away | 4.6 s | 1 to 6 ms |
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -225,6 +255,26 @@ closes an item removes its line; work that leaves one adds it here.
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
+
+**From the performance review (2026-10-29, ADR-104, ADR-105)**:
+- Dropped as not worth it: a folder copy walks its source three times
+  (warm caches; ops#6), the tags index's folder list rewritten every 2 s
+  while a count learns (tags#8), the tag editor's scan (ui#8), the XMP
+  packet's search, the remote places republished only when changed
+  (remote#3, part), a cached thumbnail's PNG opened twice (platform#1:
+  with the next change there), an EPUB's contents looked up by scan
+  (epub#1).
+- Many single-file moves out of one large folder in one plan still cost
+  the folder's size each in the tags index (tags#2 left them).
+- The Map view's scan walks the listing again after a change; it could
+  visit only what `Listing::updated_since` names.
+- Compiled only for macOS and Windows: the watcher's written window
+  (Windows reports any change, attributes too, as a write, so they wait
+  up to a second there; macOS and Windows report no close, so a written
+  file is told within the second), files' own icons let go of (ui#5),
+  the archive helper's delete sharing on Windows. Whether the document
+  engines' opens let another program replace a file on Windows is not
+  checked (ADR-105).
 
 **From text read a screen at a time (2026-10-29, ADR-103)**:
 - Not tried: a trackpad (a swipe turns one screen, then waits for a
