@@ -49,6 +49,9 @@ struct Known {
     folders: HashMap<PathBuf, PathBuf>,
     /// The trash of each mount point, its `files` and `info` made.
     trashes: HashMap<PathBuf, PathBuf>,
+    /// The number a name is tried from next in a trash: past the last
+    /// this plan took there.
+    numbered: HashMap<(PathBuf, OsString), usize>,
 }
 
 impl Trashes {
@@ -118,7 +121,7 @@ impl Trashes {
             known.trashes.insert(top, trash.clone());
             trash
         };
-        put_in(&path, &trash)
+        put_numbered(&mut known.numbered, &path, &trash)
     }
 }
 
@@ -137,6 +140,7 @@ impl Known {
             home: None,
             folders: HashMap::new(),
             trashes: HashMap::new(),
+            numbered: HashMap::new(),
         };
         known.home = super::records::home_trash()
             .and_then(|home| resolved_or_above(&home).ok())
@@ -203,14 +207,39 @@ fn volume_trash(top: &Path) -> io::Result<PathBuf> {
     Ok(own)
 }
 
+/// Put the file at `path` (resolved) in the trash `trash` ([`put_in`]),
+/// its name tried from the number after the last this plan took for that
+/// name there (`numbered`): a thousand files of one name put in the trash
+/// try a thousand names, not half a million.
+fn put_numbered(
+    numbered: &mut HashMap<(PathBuf, OsString), usize>,
+    path: &Path,
+    trash: &Path,
+) -> io::Result<Put> {
+    let Some(name) = path.file_name() else {
+        return Err(io::ErrorKind::InvalidInput.into());
+    };
+    let key = (trash.to_path_buf(), name.to_owned());
+    let from = numbered.get(&key).copied().unwrap_or(1);
+    let (put, n) = put_in(path, trash, from)?;
+    numbered.insert(key, n + 1);
+    Ok(put)
+}
+
+/// How many names [`put_in`] tried, for a test to count.
+#[cfg(test)]
+static TRIED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Put the file at `path` (resolved) in the trash `trash`: its record
-/// first, under the first name free there, then the file renamed onto it.
-fn put_in(path: &Path, trash: &Path) -> io::Result<Put> {
+/// first, under the first name free there from the number `from` (1 for
+/// the name itself, then `a.2`…), then the file renamed onto it. The
+/// number it took.
+fn put_in(path: &Path, trash: &Path, from: usize) -> io::Result<(Put, usize)> {
     let Some(name) = path.file_name() else {
         return Err(io::ErrorKind::InvalidInput.into());
     };
     let record = record(path);
-    for n in 1usize.. {
+    for n in from.max(1).. {
         let mut named = name.to_owned();
         if n > 1 {
             named.push(format!(".{n}"));
@@ -218,6 +247,8 @@ fn put_in(path: &Path, trash: &Path) -> io::Result<Put> {
         let mut info_name = named.clone();
         info_name.push(".trashinfo");
         let info = trash.join("info").join(&info_name);
+        #[cfg(test)]
+        TRIED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut file = match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -238,9 +269,9 @@ fn put_in(path: &Path, trash: &Path) -> io::Result<Put> {
         }
         let item = trash.join("files").join(&named);
         match renamed(path, &item) {
-            Ok(()) => return Ok(Put::Done { info }),
+            Ok(()) => return Ok((Put::Done { info }, n)),
             Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
-                return Ok(Put::Across { item, info });
+                return Ok((Put::Across { item, info }, n));
             }
             Err(error) => {
                 let _ = std::fs::remove_file(&info);
@@ -337,7 +368,10 @@ mod tests {
             let path = tmp.path().join(folder).join("it's a.txt");
             std::fs::create_dir(path.parent().unwrap()).unwrap();
             std::fs::write(&path, body).unwrap();
-            assert!(matches!(put_in(&path, &trash).unwrap(), Put::Done { .. }));
+            assert!(matches!(
+                put_in(&path, &trash, 1).unwrap(),
+                (Put::Done { .. }, _)
+            ));
             assert!(!path.exists());
         }
         let read = |name: &str| std::fs::read_to_string(trash.join(name)).unwrap();
@@ -346,6 +380,38 @@ mod tests {
         let record = read("info/it's a.txt.2.trashinfo");
         let (from, _) = crate::op::records::parse_trash_info(&record, None).unwrap();
         assert_eq!(from, tmp.path().join("two/it's a.txt"));
+    }
+
+    /// Files of one name put in one trash by a plan each try the names
+    /// from the last one taken: 200 of them try 200 names, every one
+    /// under its own number with its own record.
+    #[test]
+    fn many_files_of_one_name_each_try_one_name() {
+        use std::sync::atomic::Ordering;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let trash = tmp.path().join("Trash");
+        std::fs::create_dir_all(trash.join("files")).unwrap();
+        std::fs::create_dir_all(trash.join("info")).unwrap();
+        let mut numbered = HashMap::new();
+        let before = TRIED.load(Ordering::Relaxed);
+        for n in 1..=200 {
+            let path = tmp
+                .path()
+                .join(format!("folder {n}"))
+                .join("it's the same.txt");
+            std::fs::create_dir(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, n.to_string()).unwrap();
+            put_numbered(&mut numbered, &path, &trash).unwrap();
+        }
+        assert_eq!(TRIED.load(Ordering::Relaxed) - before, 200);
+        let read = |name: &str| std::fs::read_to_string(trash.join(name)).unwrap();
+        assert_eq!(read("files/it's the same.txt"), "1");
+        assert_eq!(read("files/it's the same.txt.200"), "200");
+        let record = read("info/it's the same.txt.37.trashinfo");
+        let (from, _) = crate::op::records::parse_trash_info(&record, None).unwrap();
+        assert_eq!(from, tmp.path().join("folder 37/it's the same.txt"));
     }
 
     #[test]
