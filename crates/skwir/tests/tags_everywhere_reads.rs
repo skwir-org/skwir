@@ -93,7 +93,7 @@ fn a_tag_renamed_everywhere_reads_each_file_once_with_its_search() {
     let root = tmp.path().join("it's tagged");
     std::fs::create_dir_all(root.join("sub")).unwrap();
     let name = |i: usize| {
-        if i % 3 == 0 {
+        if i.is_multiple_of(3) {
             format!("sub/l'été {i}.txt")
         } else {
             format!("file {i}.txt")
