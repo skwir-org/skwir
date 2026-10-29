@@ -751,8 +751,14 @@ struct Counted {
     color: Option<String>,
 }
 
+/// A tag as `same_tag` compares it: its case folded.
+fn folded(tag: &str) -> String {
+    tag.chars().flat_map(char::to_lowercase).collect()
+}
+
 /// The rows the editor opens with: the entries' tags, then the ones the
-/// user has used.
+/// user has used, each once, whatever its case: told by a set, not by
+/// comparing each with every row before it (thousands of tags known).
 fn rows_of(selected: Selected) -> Vec<TagRow> {
     let items = selected.items;
     let mut rows: Vec<TagRow> = selected
@@ -772,8 +778,10 @@ fn rows_of(selected: Selected) -> Vec<TagRow> {
             count: t.count,
         })
         .collect();
+    let mut listed: std::collections::HashSet<String> =
+        rows.iter().map(|r| folded(&r.name)).collect();
     for name in selected.known {
-        if !rows.iter().any(|r| same_tag(&r.name, &name)) {
+        if listed.insert(folded(&name)) {
             rows.push(TagRow {
                 name,
                 count: 0,
@@ -1523,6 +1531,60 @@ mod tests {
                 ("draft", Mark::Some),
                 ("home", Mark::None)
             ]
+        );
+    }
+
+    /// Thousands of tags known, the entries' among them in other cases:
+    /// the rows are those comparing each with every row before gave, the
+    /// entries' first, each tag once.
+    #[test]
+    fn many_known_tags_are_each_one_row() {
+        let selected = || Selected {
+            items: 3,
+            tags: vec![
+                Counted {
+                    name: "Places/France".into(),
+                    count: 3,
+                    color: None,
+                },
+                Counted {
+                    name: "Été".into(),
+                    count: 1,
+                    color: Some("red".into()),
+                },
+            ],
+            known: (0..2000)
+                .map(|n| format!("Tag {n}"))
+                .chain([
+                    "places/france".into(),
+                    "ÉTÉ".into(),
+                    "tag 7".into(),
+                    "New".into(),
+                ])
+                .collect(),
+        };
+        let rows = rows_of(selected());
+        // As comparing each known tag with every row before it made them:
+        // the entries' tags, then each known tag not one of them in
+        // another case, nor one known already.
+        let known = |name: String| TagRow {
+            name,
+            count: 0,
+            mark: Mark::None,
+            given: None,
+        };
+        let mut expected: Vec<TagRow> = rows[..2].to_vec();
+        expected.extend((0..2000).map(|n| known(format!("Tag {n}"))));
+        expected.push(known("New".into()));
+        assert_eq!(rows, expected);
+        assert_eq!(
+            (
+                rows[0].name.as_str(),
+                rows[0].mark,
+                rows[1].name.as_str(),
+                rows[1].mark
+            ),
+            ("Places/France", Mark::All, "Été", Mark::Some)
         );
     }
 
