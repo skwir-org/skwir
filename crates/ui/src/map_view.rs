@@ -44,6 +44,18 @@ const FOCUS_ZOOM: f64 = 15.;
 /// most while the next location's scan has placed nothing yet: a folder
 /// of notes after another does not blink.
 const HOLD: std::time::Duration = std::time::Duration::from_millis(250);
+/// While a folder is still listed, its scan is asked again at most this
+/// often: every batch of names moved what it was asked for, and each ask
+/// had the plugin look at the whole folder again.
+const RESCAN_GAP: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Whether the scan, last asked at `last`, is asked again at `now` for a
+/// newer state of the location: at once when `at_once` (another location
+/// or listing, its listing just complete, or complete already, where a
+/// change is the watcher's), else once `RESCAN_GAP` has passed since.
+fn due(last: Option<std::time::Instant>, now: std::time::Instant, at_once: bool) -> bool {
+    at_once || last.is_none_or(|last| now.saturating_duration_since(last) >= RESCAN_GAP)
+}
 
 #[derive(Default)]
 pub struct MapView {
@@ -55,6 +67,10 @@ pub struct MapView {
     /// the plugin keeps what it showed until something moved), and whether
     /// the listing was complete (only then is the scan).
     requested: Option<(String, u64, u64, u64, bool)>,
+    /// When the scan was last asked, and until when a redraw is on its way
+    /// to ask it again for what came meanwhile (`RESCAN_GAP`).
+    scanned_at: Option<std::time::Instant>,
+    rescan_at: Option<std::time::Instant>,
     /// The plugin's descriptor revision, and the one read last.
     source: Option<Arc<AtomicU64>>,
     seen: Option<u64>,
@@ -103,7 +119,7 @@ impl MapView {
                             p.listing.names_version(),
                             p.sort.show_hidden,
                             p.filter_version(),
-                            p.tree_version(),
+                            p.tree_members_version(),
                         )),
                         p.narrowed().is_some(),
                     )
@@ -392,15 +408,37 @@ impl PaneView for MapView {
             .detach();
         }
         if self.requested.as_ref() != Some(&source) {
-            self.requested = Some(source);
-            if let Err(error) = shell
-                .app
-                .dispatch(&skwir_core::command::Invocation::with_args(
-                    "geo.scan",
-                    &serde_json::json!({ "pane": pane }),
-                ))
-            {
-                shell.set_status(format!("{error:#}"), true, cx);
+            let now = std::time::Instant::now();
+            // Names streaming in wait out the gap; anything else is asked
+            // at once.
+            let at_once = source.4
+                || self.requested.as_ref().is_none_or(|requested| {
+                    (&requested.0, requested.1, requested.4) != (&source.0, source.1, source.4)
+                });
+            if due(self.scanned_at, now, at_once) {
+                self.requested = Some(source);
+                self.scanned_at = Some(now);
+                self.rescan_at = None;
+                if let Err(error) = shell
+                    .app
+                    .dispatch(&skwir_core::command::Invocation::with_args(
+                        "geo.scan",
+                        &serde_json::json!({ "pane": pane }),
+                    ))
+                {
+                    shell.set_status(format!("{error:#}"), true, cx);
+                }
+            } else if self.rescan_at.is_none_or(|at| at <= now) {
+                // One redraw when the gap ends, which asks for the location
+                // as it is then: no frame is asked for meanwhile.
+                let at = self.scanned_at.map_or(now, |last| last + RESCAN_GAP);
+                self.rescan_at = Some(at);
+                let wait = at.saturating_duration_since(now);
+                cx.spawn(async move |shell, cx| {
+                    cx.background_executor().timer(wait).await;
+                    let _ = shell.update(cx, |_, cx| cx.notify());
+                })
+                .detach();
             }
         }
         self.receive(shell);
@@ -726,5 +764,24 @@ impl Shell {
                     &serde_json::json!({ "pane": pane }),
                 ));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RESCAN_GAP, due};
+
+    /// While a folder is listed its scan is asked at most every
+    /// `RESCAN_GAP`; what changes the location or ends the listing is
+    /// asked at once.
+    #[test]
+    fn a_scan_is_asked_again_once_the_gap_ends() {
+        let then = std::time::Instant::now();
+        let within = then + RESCAN_GAP / 2;
+        assert!(due(None, then, false), "never asked");
+        assert!(!due(Some(then), within, false), "names streaming in");
+        assert!(due(Some(then), within, true), "complete, or another place");
+        assert!(due(Some(then), then + RESCAN_GAP, false), "the gap ended");
+        assert!(!due(Some(within), then, false), "a clock read before");
     }
 }
