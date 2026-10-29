@@ -12,6 +12,7 @@ pub mod clash;
 mod context;
 mod entry_ref;
 mod executor;
+mod listed;
 mod order;
 mod pace;
 #[cfg(target_os = "linux")]

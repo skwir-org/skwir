@@ -1,9 +1,11 @@
 //! Referencing an entry from a plan: by stable identity, with a path hint.
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
+use super::listed::Listed;
 use crate::entry::FileId;
 use crate::fs::stat::{id_of, named};
 use crate::os_path::PathArg;
@@ -119,13 +121,30 @@ impl EntryRef {
     /// ([`EntryRef::only_name`], and one name holding it there), and
     /// failing that the entry is reported gone, or replaced.
     pub fn resolve(&self) -> Result<PathBuf, ResolveError> {
+        self.resolve_by(|| self.renamed())
+    }
+
+    /// [`EntryRef::resolve`], the hint's folder listed by `listed` where
+    /// the file is looked for under another name: a plan's steps share
+    /// one listing a folder (`StepContext::listed`), where each would
+    /// list it again.
+    pub(super) fn resolve_with(
+        &self,
+        listed: &dyn Fn(&Path) -> Option<Rc<Listed>>,
+    ) -> Result<PathBuf, ResolveError> {
+        self.resolve_by(|| self.renamed_in(listed))
+    }
+
+    /// Where the entry is, `renamed` saying where the file went from the
+    /// hint's name, when it can tell.
+    fn resolve_by(&self, renamed: impl Fn() -> Option<PathBuf>) -> Result<PathBuf, ResolveError> {
         match id_of(&self.path) {
             Some(id) if id == self.id => return Ok(self.path.clone()),
             Some(found) if numbers_made_up(self.id, found, &self.path) => {
                 return Ok(self.path.clone());
             }
             Some(found) => {
-                if let Some(p) = self.renamed() {
+                if let Some(p) = renamed() {
                     return Ok(p);
                 }
                 return Err(ResolveError::Replaced {
@@ -136,22 +155,43 @@ impl EntryRef {
             }
             None => {}
         }
-        self.renamed()
-            .ok_or_else(|| ResolveError::Gone(self.path.clone()))
+        renamed().ok_or_else(|| ResolveError::Gone(self.path.clone()))
     }
 
-    /// The file's new name in the hint's folder, when that can be told:
-    /// it had no other name when referenced, and exactly one name there
-    /// holds it now. Two would be a link made since, either of which may
-    /// be the one renamed. Never where numbers are made up: sshfs numbers
-    /// files in the order they are looked up, again once the kernel let
-    /// go of one and from the start when mounted again, so the number may
-    /// be another file's (ADR-077).
+    /// Whether the file may be followed to another name in the hint's
+    /// folder: it had no other name when referenced (two names of it now
+    /// would be a link made since, either of which may be the one
+    /// renamed), and its number tells it from another file. Never where
+    /// numbers are made up: sshfs numbers files in the order they are
+    /// looked up, again once the kernel let go of one and from the start
+    /// when mounted again, so the number may be another file's (ADR-077).
+    fn may_follow(&self) -> bool {
+        self.only_name && self.id.lasts() && !made_up(&self.path)
+    }
+
+    /// The file's new name in the hint's folder, when that can be told
+    /// ([`EntryRef::may_follow`]): exactly one name there holds it now.
     fn renamed(&self) -> Option<PathBuf> {
-        if !self.only_name || !self.id.lasts() || made_up(&self.path) {
+        if !self.may_follow() {
             return None;
         }
         let mut names = self.names_in_parent()?;
+        let first = names.next()?;
+        names.next().is_none().then_some(first)
+    }
+
+    /// [`EntryRef::renamed`], from the hint's folder as `listed` lists it.
+    fn renamed_in(&self, listed: &dyn Fn(&Path) -> Option<Rc<Listed>>) -> Option<PathBuf> {
+        if !self.may_follow() {
+            return None;
+        }
+        let parent = self.path.parent()?;
+        let listed = listed(parent)?;
+        let mut names = listed
+            .names_of(self.id.ino)
+            .iter()
+            .map(|name| parent.join(name))
+            .filter(|p| id_of(p) == Some(self.id));
         let first = names.next()?;
         names.next().is_none().then_some(first)
     }

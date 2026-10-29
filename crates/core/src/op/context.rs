@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender};
 use parking_lot::Mutex;
@@ -233,6 +233,9 @@ pub struct StepContext {
     /// The files of `copies` in the order they were copied: a step's own
     /// are those after its mark ([`Self::copied_mark`]).
     copied_order: RefCell<Vec<crate::FileId>>,
+    /// Folders listed for the steps (`Self::listed`), each with its times
+    /// then, the last asked at the end: at most [`LISTINGS_KEPT`].
+    listings: RefCell<Vec<KeptListing>>,
     /// The files of several names whose bytes this plan counted already:
     /// copied once, they are counted once.
     sized: RefCell<HashSet<crate::FileId>>,
@@ -305,6 +308,27 @@ impl Compared {
     pub(super) fn note(&self, key: (PathBuf, PathBuf, bool), state: blake3::Hash, same: bool) {
         self.0.lock().insert(key, (state, same));
     }
+}
+
+/// How many folders' listings a plan keeps for its steps
+/// (`StepContext::listed`): those of the folders its steps work in, one
+/// after another.
+const LISTINGS_KEPT: usize = 8;
+
+/// The modification and change times of the folder `dir`, what tells a
+/// listing of it kept (`StepContext::listed`) from one gone stale; `None`
+/// when it cannot be stat-ed.
+fn folder_times(dir: &Path) -> Option<(Option<SystemTime>, Option<SystemTime>)> {
+    let meta = std::fs::metadata(dir).ok()?;
+    Some((meta.modified().ok(), crate::fs::stat::changed(dir, &meta)))
+}
+
+/// A folder listed for a plan's steps, and its times then
+/// (`StepContext::listed`).
+struct KeptListing {
+    dir: PathBuf,
+    times: (Option<SystemTime>, Option<SystemTime>),
+    listed: Rc<super::listed::Listed>,
 }
 
 /// How many copies [`StepContext::placed`] looked at, for a test to count.
@@ -555,6 +579,7 @@ impl StepContext {
             checked: RefCell::default(),
             copies: RefCell::default(),
             copied_order: RefCell::default(),
+            listings: RefCell::default(),
             sized: RefCell::default(),
             secret_asker: None,
             transfers: None,
@@ -1161,9 +1186,46 @@ impl StepContext {
         self.removed.borrow_mut().insert(path.to_path_buf());
     }
 
+    /// A step renamed `from` to `to` in the folder `dir`: what the plan
+    /// keeps of its names ([`Self::listed`]) follows, as of the folder's
+    /// times now, so the plan's next rename there reads no listing again.
+    /// Forgotten where it cannot follow.
+    pub(super) fn renamed_in(&self, dir: &Path, from: &std::ffi::OsStr, to: &std::ffi::OsStr) {
+        let mut kept = self.listings.borrow_mut();
+        let Some(at) = kept.iter().position(|k| k.dir == dir) else {
+            return;
+        };
+        let times = folder_times(dir);
+        let found = &mut kept[at];
+        let followed = match (times, Rc::get_mut(&mut found.listed)) {
+            (Some(times), Some(listed)) => {
+                let followed = listed.renamed(from, to);
+                found.times = times;
+                followed
+            }
+            _ => false,
+        };
+        if !followed {
+            kept.remove(at);
+        }
+    }
+
+    /// What the plan keeps of the names of `dir` ([`Self::listed`]) is
+    /// not to be trusted: read again when next asked.
+    pub(super) fn forget_listed(&self, dir: &Path) {
+        self.listings.borrow_mut().retain(|k| k.dir != dir);
+    }
+
     /// Whether a removal ahead removed `path` (its step's check asks).
     pub(super) fn was_removed_ahead(&self, path: &Path) -> bool {
         self.removed.borrow().contains(path)
+    }
+
+    /// Whether a removal ahead removed something its step has not taken
+    /// ([`Self::take_removed_ahead`]): after the plan's steps, what the
+    /// plan stopped before.
+    pub(super) fn any_removed_ahead(&self) -> bool {
+        !self.removed.borrow().is_empty()
     }
 
     /// Whether a removal ahead removed `path`, taken by its step.
@@ -1492,7 +1554,44 @@ impl StepContext {
         if let Some(found) = self.resolved.borrow().get(&(entry.id, entry.path.clone())) {
             return Ok(found.clone());
         }
-        entry.resolve()
+        entry.resolve_with(&|dir| self.listed(dir))
+    }
+
+    /// The names of the folder `dir`, listed once for this plan's steps
+    /// while it stays as it was then (its modification and change times):
+    /// a step looking for where a file gone from its name went, or how a
+    /// name is spelled, reads the listing an earlier step read, where
+    /// each would list the folder again. A change the folder's times do
+    /// not show (two in one tick of a coarse clock, a FAT volume's) leaves
+    /// a name unfound, never another file found: what is found is stat-ed.
+    /// `None` when it cannot be listed. Blocking.
+    pub(super) fn listed(&self, dir: &Path) -> Option<Rc<super::listed::Listed>> {
+        let times = folder_times(dir)?;
+        // A folder that says no time is never taken to be as it was.
+        let stamped = times.0.is_some() || times.1.is_some();
+        let mut kept = self.listings.borrow_mut();
+        if let Some(at) = kept.iter().position(|k| k.dir == dir) {
+            let found = kept.remove(at);
+            if stamped && found.times == times {
+                let listed = Rc::clone(&found.listed);
+                kept.push(found);
+                return Some(listed);
+            }
+        }
+        drop(kept);
+        let listed = Rc::new(super::listed::Listed::read(dir)?);
+        if stamped {
+            let mut kept = self.listings.borrow_mut();
+            if kept.len() >= LISTINGS_KEPT {
+                kept.remove(0);
+            }
+            kept.push(KeptListing {
+                dir: dir.to_path_buf(),
+                times,
+                listed: Rc::clone(&listed),
+            });
+        }
+        Some(listed)
     }
 
     /// `entry` was found at `path`, a moment ago.
@@ -1653,5 +1752,49 @@ mod tests {
         let told = ctx.write_out().unwrap_err();
         assert!(told.to_string().contains("changed after it was copied"));
         ctx.write_out().unwrap();
+    }
+
+    /// Entries gone from a folder are looked for in one listing of it
+    /// while it stays as it was; a rename in place since changes its
+    /// times, and the file renamed is found under its new name.
+    #[cfg(unix)]
+    #[test]
+    fn gone_entries_are_looked_for_in_one_listing_a_folder() {
+        use std::sync::atomic::Ordering;
+
+        use super::super::listed::READ;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let name = |i: usize| tmp.path().join(format!("it's {i}.txt"));
+        let refs: Vec<super::super::EntryRef> = (0..100)
+            .map(|i| {
+                std::fs::write(name(i), b"").unwrap();
+                super::super::EntryRef::from_path(name(i)).unwrap()
+            })
+            .collect();
+        std::fs::write(tmp.path().join("kept.txt"), b"").unwrap();
+        for i in 0..99 {
+            std::fs::remove_file(name(i)).unwrap();
+        }
+        let ctx = StepContext::detached();
+        let before = READ.load(Ordering::Relaxed);
+        for entry in &refs[..99] {
+            assert!(matches!(
+                ctx.resolve(entry),
+                Err(super::super::ResolveError::Gone(_))
+            ));
+        }
+        assert_eq!(READ.load(Ordering::Relaxed) - before, 1, "one listing");
+        let renamed = tmp.path().join("it's renamed.txt");
+        std::fs::rename(name(99), &renamed).unwrap();
+        // A coarse clock may give the rename the listing's tick: the
+        // folder's time moved on, as a later tick gives it.
+        std::fs::File::open(tmp.path())
+            .unwrap()
+            .set_modified(SystemTime::now() + Duration::from_secs(1))
+            .unwrap();
+        assert_eq!(ctx.resolve(&refs[99]).unwrap(), renamed);
+        assert_eq!(READ.load(Ordering::Relaxed) - before, 2, "listed again");
     }
 }

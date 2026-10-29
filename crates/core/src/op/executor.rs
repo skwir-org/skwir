@@ -2435,7 +2435,14 @@ impl Executor {
         }
         // Cut short, the removals a removal ahead made for steps that never
         // ran are done all the same: said, and taken back by Undo as theirs.
-        for step in &plan.steps {
+        // None unclaimed (every plan but one cut short in a remote's
+        // folder), no step is looked at again.
+        let unclaimed = if ctx.any_removed_ahead() {
+            plan.steps.as_slice()
+        } else {
+            &[]
+        };
+        for step in unclaimed {
             if !super::transfer::removed_unclaimed(step.as_ref(), &ctx) {
                 continue;
             }
@@ -3666,5 +3673,41 @@ mod tests {
         }
         assert!(executor.wind_down(std::time::Duration::from_secs(10)));
         assert_eq!(applied.load(Ordering::SeqCst), 0, "held before its step");
+    }
+
+    /// Files deleted for good from a folder that keeps others are not
+    /// looked for again once the plan has run: none was removed ahead,
+    /// so no folder is listed for a step done. Applied again, the plan
+    /// finds them gone in one listing of their folder.
+    #[cfg(unix)]
+    #[test]
+    fn a_plan_s_deletions_are_not_looked_for_again() {
+        use super::super::listed::READ;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let name = |i: usize| tmp.path().join(format!("it's {i}.txt"));
+        for i in 0..400 {
+            std::fs::write(name(i), b"").unwrap();
+        }
+        let steps: Vec<Box<dyn Operation>> = (0..400)
+            .step_by(2)
+            .map(|i| -> Box<dyn Operation> {
+                Box::new(super::super::Delete {
+                    entry: super::super::EntryRef::from_path(name(i)).unwrap(),
+                })
+            })
+            .collect();
+        let plan = Plan::with_steps("Delete", steps);
+        let executor = Executor::new(Scheduler::new(2));
+        let before = READ.load(Ordering::Relaxed);
+        let done = executor.execute_blocking(&plan, &CancelToken::new());
+        assert_eq!((done.applied, done.error), (200, None));
+        assert_eq!(READ.load(Ordering::Relaxed) - before, 0, "nothing listed");
+        assert!(!name(0).exists() && name(1).exists());
+        let before = READ.load(Ordering::Relaxed);
+        let again = executor.execute_blocking(&plan, &CancelToken::new());
+        assert_eq!((again.applied, again.skipped), (0, 200), "already done");
+        assert_eq!(READ.load(Ordering::Relaxed) - before, 1, "one listing");
     }
 }

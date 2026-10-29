@@ -213,13 +213,6 @@ pub(super) fn transfer_target(src: &Path, target: &Path) -> std::io::Result<Tran
     Ok(TransferTarget::Separate)
 }
 
-/// Whether `dir` lists an entry spelled exactly `name`. On a
-/// case-insensitive filesystem `a.txt` and `A.txt` stat the same file, and
-/// only the listing says which spelling is on disk.
-fn name_listed(dir: &Path, name: &OsStr) -> bool {
-    std::fs::read_dir(dir).is_ok_and(|rd| rd.flatten().any(|e| e.file_name() == name))
-}
-
 /// A free name in `dir` to park an entry under while it changes names.
 fn parking_name(dir: &Path, purpose: &str) -> PathBuf {
     let pid = std::process::id();
@@ -363,7 +356,7 @@ impl Rename {
             .join(&self.new_name)
     }
 
-    fn classify(&self, src: &Path, target: &Path) -> RenameTarget {
+    fn classify(&self, src: &Path, target: &Path, ctx: &StepContext) -> RenameTarget {
         if !exists(target) {
             return RenameTarget::Free;
         }
@@ -372,12 +365,14 @@ impl Rename {
         }
         // The target stats as the entry: either the same file under another
         // spelling (case-insensitive) or a second hard link. The listing
-        // tells them apart: a hard link lists both names.
+        // tells them apart: a hard link lists both names. On a
+        // case-insensitive filesystem `a.txt` and `A.txt` stat the same
+        // file, and only the listing says which spelling is on disk: read
+        // once for the plan's renames in the folder (`StepContext::listed`).
         let dir = target.parent().unwrap_or(Path::new("/"));
-        match (
-            name_listed(dir, &file_name(src)),
-            name_listed(dir, &self.new_name),
-        ) {
+        let listed = ctx.listed(dir);
+        let listed = |name: &OsStr| listed.as_ref().is_some_and(|l| l.holds(name));
+        match (listed(&file_name(src)), listed(&self.new_name)) {
             (true, false) => RenameTarget::Respelled,
             (false, true) => RenameTarget::Spelled,
             _ => RenameTarget::Taken,
@@ -414,14 +409,14 @@ impl super::Effect for Rename {
             return trashed;
         }
         let target = self.target();
-        match self.entry.resolve() {
+        match ctx.resolve(&self.entry) {
             Ok(src) if src == target => StepStatus::AlreadyDone,
             // An earlier step of the plan puts something there (two files
             // given one name).
             Ok(_) if ctx.made(&target) => {
                 conflict(format!("“{}” is already there", display_name(&target)))
             }
-            Ok(src) => match self.classify(&src, &target) {
+            Ok(src) => match self.classify(&src, &target, ctx) {
                 RenameTarget::Free | RenameTarget::Respelled => {
                     along_conflict(ctx, &along(ctx, &src, &target)).unwrap_or(pending(true))
                 }
@@ -436,10 +431,11 @@ impl super::Effect for Rename {
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
         valid_file_name(&self.new_name)?;
-        let src = self.entry.resolve()?;
+        let src = ctx.resolve(&self.entry)?;
         let target = self.target();
         let along = along(ctx, &src, &target);
-        match self.classify(&src, &target) {
+        let dir = target.parent().unwrap_or(Path::new("/"));
+        match self.classify(&src, &target, ctx) {
             // rename(2) between two spellings of one file is a no-op on a
             // case-insensitive filesystem: go through a parked name.
             RenameTarget::Respelled => {
@@ -460,6 +456,7 @@ impl super::Effect for Rename {
                             display_name(&parked)
                         )
                     })?;
+                    ctx.forget_listed(dir);
                     return Err(anyhow::Error::new(e).context(respelled()));
                 }
             }
@@ -468,7 +465,15 @@ impl super::Effect for Rename {
         }
         if let Err(e) = rename_along(&along) {
             let _ = rename_noreplace(&target, &src);
+            ctx.forget_listed(dir);
             return Err(e);
+        }
+        // What the plan keeps of the folder's names follows the rename; a
+        // companion renamed too, it is read again when next asked.
+        if along.is_empty() {
+            ctx.renamed_in(dir, &file_name(&src), &self.new_name);
+        } else {
+            ctx.forget_listed(dir);
         }
         Ok(Some(Box::new(Rename {
             entry: EntryRef::new(self.entry.id, target).with_only_name(self.entry.only_name),
@@ -2639,7 +2644,7 @@ impl super::Effect for Trash {
             path: self.entry.path.clone(),
         }
     }
-    fn check(&self, _ctx: &StepContext) -> StepStatus {
+    fn check(&self, ctx: &StepContext) -> StepStatus {
         if in_trash(&self.entry.path).is_some() {
             return conflict(format!(
                 "“{}” is in the trash already",
@@ -2652,14 +2657,14 @@ impl super::Effect for Trash {
                 display_name(&self.entry.path)
             ));
         }
-        match self.entry.resolve() {
+        match ctx.resolve(&self.entry) {
             Ok(path) => mounted_there(&path).map_or_else(|| pending(true), conflict),
             Err(ResolveError::Gone(_)) => StepStatus::AlreadyDone,
             Err(e) => conflict(e.to_string()),
         }
     }
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        let src = self.entry.resolve()?;
+        let src = ctx.resolve(&self.entry)?;
         if let Some(why) = mounted_there(&src) {
             anyhow::bail!("{why}");
         }
@@ -5110,6 +5115,54 @@ mod tests {
         let ino = |path: PathBuf| std::fs::metadata(path).unwrap().ino();
         assert_ne!(ino(dest.join("it's 7.jpg")), ino(src.join("it's 7.jpg")));
         assert_eq!(std::fs::read(dest.join("it's 7.jpg")).unwrap(), b"7");
+    }
+
+    /// A rename onto a name the file already has (another spelling of it,
+    /// or a link to it) reads the folder's listing once for the plan:
+    /// the plan's own renames there are followed in what it keeps, and a
+    /// change from elsewhere has it read again.
+    #[cfg(unix)]
+    #[test]
+    fn renames_onto_a_name_of_their_file_read_the_folder_once() {
+        use std::sync::atomic::Ordering;
+
+        use super::super::listed::READ;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let dir = tmp.path();
+        for name in ["it's a.txt", "b.txt"] {
+            std::fs::write(dir.join(name), name).unwrap();
+        }
+        std::fs::hard_link(dir.join("it's a.txt"), dir.join("it's a link.txt")).unwrap();
+        let rename = |name: &str, to: &str| Rename {
+            entry: EntryRef::from_path(dir.join(name)).unwrap(),
+            new_name: to.into(),
+        };
+        let onto_link = rename("it's a.txt", "it's a link.txt");
+        let taken = |status: StepStatus| matches!(status, StepStatus::Conflict { .. });
+        let ctx = StepContext::detached();
+        let before = READ.load(Ordering::Relaxed);
+        for _ in 0..10 {
+            assert!(taken(onto_link.check(&ctx)), "a link is another name");
+        }
+        assert_eq!(READ.load(Ordering::Relaxed) - before, 1, "one listing");
+        super::super::Effect::apply(&rename("b.txt", "b2.txt"), &ctx).unwrap();
+        assert!(taken(onto_link.check(&ctx)));
+        assert_eq!(
+            READ.load(Ordering::Relaxed) - before,
+            1,
+            "the plan's own rename followed"
+        );
+        // From elsewhere: a link made, the folder's time moved on as a
+        // later tick of a coarse clock gives it.
+        std::fs::hard_link(dir.join("b2.txt"), dir.join("b2 link.txt")).unwrap();
+        std::fs::File::open(dir)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(taken(rename("b2.txt", "b2 link.txt").check(&ctx)));
+        assert_eq!(READ.load(Ordering::Relaxed) - before, 2, "read again");
     }
 
     /// A copy of a file is finished when it has its length and time:

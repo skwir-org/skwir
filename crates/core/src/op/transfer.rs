@@ -533,7 +533,11 @@ fn resolve_all(entries: &[&super::EntryRef], ctx: &StepContext) {
 /// Whether a removal ahead removed what `step` removes and its step has
 /// not said so: the plan stopped before it.
 pub(super) fn removed_unclaimed(step: &dyn Operation, ctx: &StepContext) -> bool {
+    // A removal ahead takes only what its hint places on a remote
+    // (`remove_ahead`), already resolved: a step elsewhere is not
+    // looked for again, which for one done would list its folder.
     removal(step)
+        .filter(|entry| crate::fs::reach::of(&entry.path).is_some())
         .and_then(|entry| ctx.resolve(entry).ok())
         .is_some_and(|path| ctx.was_removed_ahead(&path))
 }
