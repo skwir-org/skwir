@@ -28,7 +28,12 @@
 //! names of the folder typed that go on with it (`complete.rs`, ADR-070),
 //! a place's text those its provider completes it with
 //! (`LocationProvider::complete`). Rows are put in their sections' order;
-//! an answer arriving later never moves the row the arrows chose.
+//! an answer arriving later never moves the row the arrows chose. A key
+//! takes no rows away: each source's stay until its answer to the new
+//! text, so the card never closes or shrinks for a frame between keys;
+//! one answering the text before draws after it only what it still adds,
+//! and Enter and Tab, pressed before every source answered, ask them all
+//! first.
 //!
 //! Words typed over a folder, this folder only, filter it at once (the
 //! core's `filter`, which the query plugin reads: words find names, terms
@@ -168,8 +173,22 @@ pub struct Omni {
     taken: Option<(String, PathBuf)>,
     /// What the sources were asked last, and what stops their jobs.
     asked: Option<(Ask, CancelToken)>,
+    /// The sources asked last that have not answered yet.
+    waiting: Vec<String>,
     /// Each source's last answer, and the text and scope it answered.
     answers: Vec<(String, (String, Option<Location>), Answer)>,
+}
+
+impl Omni {
+    /// Whether every source has answered `text` in the scope as it is: the
+    /// rows are the text's own.
+    fn answered(&self, text: &str) -> bool {
+        self.waiting.is_empty()
+            && self
+                .answers
+                .iter()
+                .all(|(_, (asked, scope), _)| asked == text && *scope == self.scope)
+    }
 }
 
 /// What a pane showed when its field took the keyboard.
@@ -294,6 +313,17 @@ impl Row {
         };
         (self.section(), title)
     }
+}
+
+/// What a row answering an earlier text adds after `text`: the rest of its
+/// completion where that goes on from `text`, nothing where `text` left it.
+fn rest_after(row: &Suggestion, text: &str) -> Option<String> {
+    row.rest.as_ref()?;
+    row.completion
+        .as_deref()?
+        .strip_prefix(text)
+        .filter(|rest| !rest.is_empty())
+        .map(str::to_owned)
 }
 
 /// The scheme `text` starts with (`scheme:rest`), whether or not a
@@ -811,7 +841,11 @@ impl Shell {
     /// or why it cannot run): from an answer to them, else asked now.
     fn run_row(&mut self, raw: &str, cx: &mut Context<Self>) -> Option<Suggestion> {
         if !self.has_fresh_run(raw) {
-            self.fresh_rows_now(raw, cx);
+            let mut ask = self.ask_now(cx);
+            raw.clone_into(&mut ask.text);
+            ask.caret = raw.len();
+            ask.typed = self.typed_of(raw, true);
+            self.answer_here(&ask);
         }
         let omni = self.ui().omni.as_ref()?;
         omni.answers
@@ -1059,10 +1093,12 @@ impl Shell {
             .into_iter()
             .filter(|s| s.0.answers(&ask))
             .collect();
-        // A source no longer answering what is typed leaves nothing behind.
+        // A source no longer answering what is typed leaves nothing behind;
+        // the others' rows stay until their answers come.
         let answering: Vec<String> = sources.iter().map(|s| s.0.id().to_owned()).collect();
         if let Some(omni) = self.ui_mut().omni.as_mut() {
             omni.answers.retain(|(id, ..)| answering.contains(id));
+            omni.waiting = answering;
         }
         for source in sources {
             let id = source.0.id().to_owned();
@@ -1088,6 +1124,7 @@ impl Shell {
                     }) {
                         return;
                     }
+                    omni.waiting.retain(|source| *source != id);
                     omni.answers.retain(|(source, ..)| *source != id);
                     omni.answers.push((id, answered, answer));
                     shell.with_pane(pane, |shell| shell.refresh_rows(cx));
@@ -1264,20 +1301,25 @@ impl Shell {
         omni.shared = shared;
         omni.one_shown = one_shown;
         self.show_rest(cx);
-        self.draw_spans(&text, spans, cx);
+        if let Some(spans) = spans {
+            self.draw_spans(&text, spans, cx);
+        }
         cx.notify();
     }
 
-    /// The spans a source read in `text`, from an answer to this text.
-    fn fresh_spans(&self, text: &str) -> Vec<Span> {
-        self.ui()
-            .omni
-            .as_ref()
-            .into_iter()
-            .flat_map(|o| o.answers.iter())
+    /// The spans a source read in `text`, from an answer to this text; none
+    /// once every source answered it without any. `None` while one has
+    /// still to answer: the field keeps the spans the edit left standing.
+    fn fresh_spans(&self, text: &str) -> Option<Vec<Span>> {
+        let omni = self.ui().omni.as_ref()?;
+        match omni
+            .answers
+            .iter()
             .find(|(_, (asked, _), answer)| asked == text && !answer.spans.is_empty())
-            .map(|(.., answer)| answer.spans.clone())
-            .unwrap_or_default()
+        {
+            Some((.., answer)) => Some(answer.spans.clone()),
+            None => omni.answered(text).then(Vec::new),
+        }
     }
 
     /// Draw `text` with `spans`.
@@ -1403,8 +1445,10 @@ impl Shell {
     /// the names typed share is filled in, else the highlighted completion
     /// is taken, else the first is highlighted. A completion taken writes
     /// the text it makes, as an edit Ctrl+Z takes back: a folder ends with
-    /// its separator, and its names are listed in turn.
+    /// its separator, and its names are listed in turn. Pressed before
+    /// every source answered the text, it asks them first.
     pub fn omnibox_complete(&mut self, cx: &mut Context<Self>) {
+        self.settle_rows(cx);
         let text = self.omni_text(cx);
         let Some(omni) = self.ui().omni.as_ref() else {
             return;
@@ -1530,8 +1574,22 @@ impl Shell {
     /// show, and the files take the keyboard (ADR-098): the folder
     /// filtered, or the search below it, run now when it waited for Enter.
     /// Text not edited does what it says: the location shown goes there
-    /// again.
+    /// again. Pressed before every source answered the text, it asks them
+    /// first: what Enter runs is the text's.
     pub fn omnibox_submit(
+        &mut self,
+        everywhere: bool,
+        open: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.settle_rows(cx);
+        self.submit_shown(everywhere, open, window, cx);
+    }
+
+    /// What Enter does with the rows as they are shown: a row clicked runs
+    /// as it reads.
+    fn submit_shown(
         &mut self,
         everywhere: bool,
         open: bool,
@@ -1564,16 +1622,7 @@ impl Shell {
             cx.notify();
             return;
         }
-        let rows = if typed == Typed::Words && !self.has_fresh_run(&raw) {
-            // Typed faster than the sources answered: ask them here.
-            self.fresh_rows_now(&raw, cx)
-        } else {
-            self.ui()
-                .omni
-                .as_ref()
-                .map(|o| o.rows.clone())
-                .unwrap_or_default()
-        };
+        let rows = self.suggestions().to_vec();
         let chosen = if everywhere {
             // The search Enter runs, hidden while it shows as typed.
             self.run_row(&raw, cx)
@@ -1768,38 +1817,38 @@ impl Shell {
         })
     }
 
-    /// The rows for `text`, every source asked here and now: Enter pressed
-    /// before their jobs answered. Sources answer from memory.
-    fn fresh_rows_now(&mut self, text: &str, cx: &mut Context<Self>) -> Vec<Row> {
-        let mut ask = self.ask_now(cx);
-        text.clone_into(&mut ask.text);
-        ask.caret = text.len();
-        ask.typed = self.typed_of(text, true);
+    /// Every source asked `ask` here and now, its answer kept as its job's
+    /// would have been: a key pressed before their jobs answered. Sources
+    /// answer from memory.
+    fn answer_here(&mut self, ask: &Ask) {
         let cancel = CancelToken::new();
-        let answer = skwir_core::suggest::gather(&self.app, &ask, &cancel);
-        let asked = (text.to_owned(), ask.scope.clone());
-        // Kept by source, as their jobs would have: an answer of theirs
-        // arriving after takes its place.
-        let mut by_source: Vec<(String, (String, Option<Location>), Answer)> = Vec::new();
-        for row in answer.rows {
-            match by_source.iter_mut().find(|(id, ..)| *id == row.source) {
-                Some((.., a)) => a.rows.push(row),
-                None => by_source.push((
-                    row.source.clone(),
-                    asked.clone(),
-                    Answer {
-                        rows: vec![row],
-                        spans: Vec::new(),
-                    },
-                )),
-            }
-        }
+        let answers = skwir_core::suggest::each(&self.app, ask, &cancel);
+        let asked = (ask.text.clone(), ask.scope.clone());
         if let Some(omni) = self.ui_mut().omni.as_mut() {
-            omni.answers
-                .retain(|(id, ..)| !by_source.iter().any(|(s, ..)| s == id));
-            omni.answers.extend(by_source);
+            omni.answers = answers
+                .into_iter()
+                .map(|(id, answer)| (id, asked.clone(), answer))
+                .collect();
+            omni.waiting.clear();
         }
-        self.omni_rows(text).0
+    }
+
+    /// Make the rows the text's own before a key takes one (Enter, Tab):
+    /// while a source has yet to answer the text, they are all asked here
+    /// what their jobs were (`answer_here`). The row the arrows chose stays
+    /// chosen.
+    fn settle_rows(&mut self, cx: &mut Context<Self>) {
+        let ask = self.ask_now(cx);
+        if self
+            .ui()
+            .omni
+            .as_ref()
+            .is_none_or(|omni| omni.answered(&ask.text))
+        {
+            return;
+        }
+        self.answer_here(&ask);
+        self.refresh_rows(cx);
     }
 
     /// Shift+Enter on a path: a folder is gone to, a file opened as Enter
@@ -1970,9 +2019,11 @@ impl Shell {
                 && !r.error
                 && (omni.depth == Depth::Here || r.live.is_some())
         };
-        // The sources' rows answering this text: a section about the text
-        // itself only from an answer to it, the others while the next
-        // answer comes, so the list does not jump at each key.
+        // Each source's rows, until its answer to this text comes: a key
+        // never takes rows away before the next answer, so the card neither
+        // closes nor jumps between keys. A row answering an earlier text
+        // draws after this one only what it still adds; Enter and Tab ask
+        // the sources first (`settle_rows`).
         let sources: Vec<Row> = {
             let fresh = |asked: &(String, Option<Location>)| asked.0 == text && asked.1 == scope;
             let answers = omni.answers.iter().map(|(id, asked, answer)| {
@@ -1980,13 +2031,13 @@ impl Shell {
                 let rows = answer
                     .rows
                     .iter()
-                    .filter(|r| {
-                        keep || !matches!(
-                            r.section,
-                            Section::Run | Section::Complete | Section::Reading | Section::SearchIn
-                        )
-                    })
                     .cloned()
+                    .map(|mut row| {
+                        if !keep {
+                            row.rest = rest_after(&row, text);
+                        }
+                        row
+                    })
                     .collect();
                 (
                     id.clone(),
@@ -2819,7 +2870,7 @@ pub fn dropdown(
                     omni.highlighted = Some(i);
                     omni.chosen = true;
                 }
-                this.omnibox_submit(false, false, window, cx);
+                this.submit_shown(false, false, window, cx);
             },
         );
         let icon = |color| match &d.tag {
@@ -3031,7 +3082,7 @@ pub fn dropdown(
 
 #[cfg(test)]
 mod tests {
-    use super::{scheme_of, scheme_start};
+    use super::{Answer, Location, Omni, Section, Suggestion, rest_after, scheme_of, scheme_start};
 
     #[test]
     fn schemes_are_told_from_words() {
@@ -3048,5 +3099,36 @@ mod tests {
     #[test]
     fn file_uris_are_read_as_the_paths_they_name() {
         assert_eq!(super::uri_path("file:///").as_deref(), Some("/"));
+    }
+
+    #[test]
+    fn a_row_answering_the_text_before_adds_only_what_still_follows_it() {
+        // `dunes kind:im` answered with `image`; then `a`, then `x` typed.
+        let mut row = Suggestion::new(Section::Complete, "Image");
+        row.completion = Some("dunes kind:image".to_owned());
+        row.rest = Some("age".to_owned());
+        assert_eq!(rest_after(&row, "dunes kind:ima").as_deref(), Some("ge"));
+        assert_eq!(rest_after(&row, "dunes kind:imx"), None);
+        assert_eq!(rest_after(&row, "dunes kind:image"), None);
+        // Typed otherwise than it completes (`IM`): nothing was drawn.
+        row.rest = None;
+        assert_eq!(rest_after(&row, "dunes kind:ima"), None);
+    }
+
+    #[test]
+    fn the_rows_are_the_texts_once_every_source_answered_it_in_its_scope() {
+        let mut omni = Omni::default();
+        omni.answers = vec![(
+            "query".to_owned(),
+            ("dunes".to_owned(), None),
+            Answer::default(),
+        )];
+        omni.waiting = vec!["jump".to_owned()];
+        assert!(!omni.answered("dunes"), "a source still to answer");
+        omni.waiting.clear();
+        assert!(omni.answered("dunes"));
+        assert!(!omni.answered("dunes k"), "an answer to the text before");
+        omni.scope = Some(Location::from_path(std::path::Path::new("/srv")));
+        assert!(!omni.answered("dunes"), "an answer in another scope");
     }
 }

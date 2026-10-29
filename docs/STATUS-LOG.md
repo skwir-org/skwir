@@ -7070,3 +7070,35 @@ own apart from `reading.continuous`, screens from where the reader is
 - **Not tried**: a trackpad, a high-resolution wheel, the session's
   Wayland; macOS not compiled. What a screen reader hears still includes
   the lines under the cover.
+
+### The address field's card holds still between keys (2026-10-29)
+
+Typed in, the address field's card closed, or shrank, for a frame or
+more at some keys and came back: each key took away the rows about the
+text (what Enter does, completions, the reading, other scopes) and the
+text's colours until the sources answered the new text, on workers, 0.5
+to 30 ms later in the debug build; a frame drawn in between showed the
+field without them. Traced in a window on Xvfb (a temporary trace per
+drawn card, `budget kind:ima` typed 250 ms a key): the card was drawn
+closed at 2 of 15 keys, about 45 ms each, the text uncoloured with it,
+and with one row of four at another.
+
+Now a key takes nothing away: each source's rows stay until its answer
+to the new text replaces them, and the text keeps the spans wholly
+before the edit (`TextInput`, `kept_before`) until a source has read it.
+A row answering the text before draws after it only what its completion
+still adds (`rest_after`); Enter and Tab pressed before every source
+answered ask them all there and then (`settle_rows`, `suggest::each`),
+as Enter already did for words, so what a key takes is the text's; a row
+clicked runs as it reads. The same typing then drew the card at every
+frame, its rows changing only as answers came; Tab pressed 1 ms after
+`kind:ima` took the fresh `kind:image`, Enter 1 ms after `beta 1` ran
+its search below the folder. Unit tests: the rest still added, when the
+rows are the text's, the spans an edit keeps. Runs: `skwir-core` and
+`skwir-ui`'s tests (949 of 949), the binary's `search_scope` and
+`plugins_toggle`; clippy (`-D warnings`) on both crates; rustfmt.
+
+Not changed: Enter on a path typed faster than its folder is read (the
+shell's own completion, read on a worker) still goes to the path as
+typed, before any name of that folder is known. Not tried on the
+session's Wayland.

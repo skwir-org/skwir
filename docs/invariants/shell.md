@@ -292,13 +292,17 @@ of bars, split or not.
   command of a plugin.
 - **Rows come from sources** (`skwir_core::suggest`): each asked again at
   every change of the text, in a job of its own in its lane, the jobs
-  before cancelled; an answer is kept by source until the next. Rows
-  about the text itself (what Enter does, completions, the reading,
-  other scopes) are taken only from an answer to that text; the others
-  stay while the next answer comes, so the list does not jump. Rows go
-  by `Section`, then rank; a row the arrows chose stays chosen when
-  answers arrive. The shell names no plugin: it runs the rows'
-  invocations and the core's commands (`filter`, `navigate`, `open`).
+  before cancelled; an answer is kept by source until the next. A key
+  takes no row away: each source's rows stay until its answer to the new
+  text comes, so the card never closes, shrinks or jumps for a frame
+  between keys (it did whenever a frame was drawn before the answers).
+  A row answering an earlier text (what Enter does, completions, the
+  reading, other scopes) draws after the text only what its completion
+  still adds to it (`rest_after`); Enter and Tab take rows only once
+  they are the text's (`settle_rows`, below). Rows go by `Section`, then
+  rank; a row the arrows chose stays chosen when answers arrive. The
+  shell names no plugin: it runs the rows' invocations and the core's
+  commands (`filter`, `navigate`, `open`).
   - The query plugin answers what Enter does with words (the search in
     the scope, or why it cannot run: Enter then waits), what the term at
     the caret goes on with, the words read as terms ("Did you mean",
@@ -344,9 +348,11 @@ of bars, split or not.
   descendant, so typing still reads back the field's text and caret.
   Shift+Delete (`ui.omnibox_forget`) forgets a recent search highlighted.
 - **The text is drawn with the spans** the query plugin reads
-  (`TextInput::set_styles`, cleared when the text changes): keys in the
-  accent, values on `term`, operators muted, what cannot be read with
-  a wavy line in `error`. The UI knows no query syntax.
+  (`TextInput::set_styles`): keys in the accent, values on `term`,
+  operators muted, what cannot be read with a wavy line in `error`. An
+  edit keeps the spans wholly before it, which still cover the same
+  characters, until a source has read the new text; replacing the text
+  clears them. The UI knows no query syntax.
 - **Completion (ADR-070, `complete.rs`).** A path lists the names of the
   folder typed that go on with the name typed: folders, then files, at
   most eight, matched as `complete.rs` says (case ignored unless a
@@ -378,9 +384,10 @@ of bars, split or not.
   `file://` URI typed or pasted is read as the path it names here
   (`uri::path_of`, `Shell::omni_text`), the field keeping what was typed. A relative path with no folder shown (a search, a
   tag, the trash) goes nowhere, and says why.
-- Enter pressed before the sources answered the text asks them there and
-  then (`suggest::gather`; they answer from memory), so what Enter runs
-  is always the text's.
+- Enter or Tab pressed before every source answered the text asks them
+  all there and then (`settle_rows`, `suggest::each`; they answer from
+  memory), so what the key takes is always the text's. A row clicked
+  runs as it reads.
 - **Words typed over a folder, looking in it alone, filter it at once**,
   as the core's `filter` reads them through the query plugin
   (`narrow::read_filter`): the longest start that parses; words, `name:`

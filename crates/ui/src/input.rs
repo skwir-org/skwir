@@ -266,8 +266,10 @@ impl TextInput {
     }
 
     /// Draw these parts of the text otherwise, by byte range into it, until
-    /// the text changes or other styles are set; ranges that do not fit the
-    /// text are left out.
+    /// other styles are set or the text is replaced; ranges that do not fit
+    /// the text are left out. An edit keeps those wholly before it, which
+    /// still cover the same characters, until its owner reads the text
+    /// again: a key never takes them all away for a frame.
     pub fn set_styles(&mut self, styles: Vec<(Range<usize>, Paint)>, cx: &mut Context<Self>) {
         if styles != self.styles {
             self.styles = styles;
@@ -836,7 +838,7 @@ impl EntityInputHandler for TextInput {
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
-        self.styles.clear();
+        kept_before(&mut self.styles, range.start);
         self.selected_range = range.start + new_text.len()..range.start + new_text.len();
         self.marked_range.take();
         cx.emit(InputEvent::Changed);
@@ -864,7 +866,7 @@ impl EntityInputHandler for TextInput {
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
-        self.styles.clear();
+        kept_before(&mut self.styles, range.start);
         self.marked_range = if new_text.is_empty() {
             None
         } else {
@@ -1349,6 +1351,11 @@ fn snapped(text: &str, offset: usize) -> usize {
     offset
 }
 
+/// What an edit at `at` leaves of the styles: those wholly before it.
+fn kept_before(styles: &mut Vec<(Range<usize>, Paint)>, at: usize) {
+    styles.retain(|(range, _)| range.end <= at);
+}
+
 /// `run` cut where `styles` draw parts of `text` otherwise. The styles are
 /// taken in order of their start; one that overlaps the one before, or
 /// does not fall on character boundaries, is left out.
@@ -1436,6 +1443,23 @@ mod tests {
         assert_eq!(runs[1].color, gpui::red());
         assert!(runs[2].underline.is_some_and(|u| u.wavy));
         assert!(runs[3].underline.is_none());
+    }
+
+    #[test]
+    fn an_edit_keeps_the_styles_wholly_before_it() {
+        let key = super::Paint {
+            color: Some(gpui::red()),
+            ..super::Paint::default()
+        };
+        // `dunes kind:im`: the key, then the value being typed.
+        let mut styles = vec![(6..11, key), (11..13, key)];
+        // `a` typed at the end: both still cover what they did.
+        super::kept_before(&mut styles, 13);
+        assert_eq!(styles.len(), 2);
+        // A character deleted inside the value: its style waits for the
+        // next reading.
+        super::kept_before(&mut styles, 12);
+        assert_eq!(styles, [(6..11, key)]);
     }
 
     #[test]

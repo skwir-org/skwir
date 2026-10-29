@@ -389,8 +389,15 @@ pub fn searched(app: &App) -> bool {
 /// thread and merged: what `ui.suggest` answers an agent or a script. A
 /// source that panics is left out.
 pub fn gather(app: &App, ask: &Ask, cancel: &CancelToken) -> Answer {
+    merge(each(app, ask, cancel))
+}
+
+/// Every source's answer to `ask`, asked one after another on the caller's
+/// thread, by source: one that has nothing to offer answers so too. A
+/// source that panics is left out.
+pub fn each(app: &App, ask: &Ask, cancel: &CancelToken) -> Vec<(String, Answer)> {
     let sources = app.registry.suggesters.all();
-    let answers = sources
+    sources
         .into_iter()
         .filter(|s| s.0.answers(ask))
         .filter_map(|s| {
@@ -400,8 +407,8 @@ pub fn gather(app: &App, ask: &Ask, cancel: &CancelToken) -> Answer {
             }))
             .ok()
             .map(|answer| (id, answer))
-        });
-    merge(answers)
+        })
+        .collect()
 }
 
 #[cfg(test)]
