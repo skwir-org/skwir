@@ -4,6 +4,7 @@
 //! only hint: ADR-026), and the edit is a plan of one step per file,
 //! proposed for review, then undoable as one.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -23,6 +24,18 @@ use skwir_core::notes::parse_tags;
 pub struct Rename {
     pub from: Vec<String>,
     pub to: Option<String>,
+}
+
+/// Add to `files` those of `found` not in it yet (by path, as `seen`
+/// keeps them), in the order found: a file with several of the tags is
+/// edited once. A rename of a tag on a hundred thousand files compared
+/// each with every one before it.
+fn gather(files: &mut Vec<EntryRef>, seen: &mut HashSet<PathBuf>, found: Vec<EntryRef>) {
+    for r in found {
+        if seen.insert(r.path.clone()) {
+            files.push(r);
+        }
+    }
 }
 
 /// The files under `root` (the home folder when `None`) tagged `tag`,
@@ -262,15 +275,10 @@ fn start_all(
         move || {
             let Some(app) = weak.upgrade() else { return };
             let mut files: Vec<EntryRef> = Vec::new();
+            let mut seen = HashSet::new();
             for tag in &tags {
                 match tagged(&app, tag, root.as_ref(), &cancel) {
-                    Ok(found) => {
-                        for r in found {
-                            if !files.iter().any(|f| f.path == r.path) {
-                                files.push(r);
-                            }
-                        }
-                    }
+                    Ok(found) => gather(&mut files, &mut seen, found),
                     Err(_) if cancel.is_cancelled() => return,
                     Err(error) => {
                         app.notify(
@@ -411,6 +419,36 @@ mod tests {
             "inside itself"
         );
         assert_eq!(new_name(&tags(&["a"]), " x / b ").unwrap(), "x/b");
+    }
+
+    /// The files of several tags, each once in the order found, at a size
+    /// where comparing each with every one before it would not end.
+    #[test]
+    fn the_files_of_several_tags_are_gathered_once_each() {
+        const N: u64 = 100_000;
+        let refs = |from: u64| -> Vec<EntryRef> {
+            (from..from + N)
+                .map(|i| {
+                    EntryRef::new(
+                        skwir_core::FileId::new(1, i),
+                        PathBuf::from(format!("/synthetic/tagged/file {i}.txt")),
+                    )
+                })
+                .collect()
+        };
+        let (mut files, mut seen) = (Vec::new(), HashSet::new());
+        gather(&mut files, &mut seen, refs(0));
+        // A second tag on the same files, and on as many others.
+        gather(&mut files, &mut seen, refs(0));
+        gather(&mut files, &mut seen, refs(N));
+        assert_eq!(files.len(), 2 * N as usize);
+        assert!(
+            files
+                .iter()
+                .zip(refs(0).into_iter().chain(refs(N)))
+                .all(|(a, b)| a.path == b.path),
+            "in the order found"
+        );
     }
 
     #[test]
