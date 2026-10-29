@@ -825,12 +825,17 @@ impl Plugin for TagsPlugin {
                     }
                     // What moved in from where no count covered is read
                     // (counted, a folder) as what is copied: the index
-                    // carries along only the files it knew.
+                    // carries along only the files it knew. The paths
+                    // queued are asked of a set, made once one moved in: a
+                    // move of ten thousand files compared each with all.
+                    let mut queued: Option<std::collections::HashSet<std::path::PathBuf>> = None;
                     for (from, to) in &moves {
                         if let Some(to) = to
                             && index.covering(from).is_none()
                             && index.covering(to).is_some()
-                            && !paths.contains(to)
+                            && queued
+                                .get_or_insert_with(|| paths.iter().cloned().collect())
+                                .insert(to.clone())
                         {
                             paths.push(to.clone());
                         }
