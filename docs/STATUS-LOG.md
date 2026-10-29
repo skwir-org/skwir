@@ -6799,3 +6799,130 @@ stopped them once for about an hour.
   files), no drive, server, path or name of this machine (the script
   hides the drives and network). `just release-check` was then run on
   this commit; its result is in the night's report to the user.
+
+### A preview reads its file once; rclone keeps what it reads (2026-10-29, ADR-101, ADR-102)
+
+A Dropbox remote mounted by rclone previewed tiny text files and small
+documents slowly. Measured on 2026-10-28 with the release build of
+1fdfe0c9 in a window on Xvfb, a folder of synthetic files served by
+`rclone serve webdav` on this machine and mounted as Skwir mounts
+(`--vfs-cache-mode minimal`), GETs counted at the server per file
+selected with the preview shown: `note.txt` (55 B) 13, `small.docx` 6,
+`photo.jpg` 3 to 5, `data.csv` and `small.json` 3, `readme.md` and
+`small.pdf` 1; the listing one PROPFIND. The same opens on a local copy
+(`strace -f -e trace=open`): 13, 4, 5. Where they came from
+(`strace -k` on `open`, which `open_regular`'s reopen through
+`/proc/self/fd` uses, so `-P` and `openat` miss them): geo's `accepts`
+sniffing every `.txt` four times (once per stage: `converted`,
+`inspect`, `media`, `render`), `compute`'s head, the text view's form,
+first rows, count and chunk read separately, `is_zip` three times for a
+`.docx`, a picture opened for its size, to decode and for EXIF.
+rclone's `full` cache answered the 13 opens with one GET, then none.
+
+- **ADR-101, built.** `preview::Held` (core) holds what a preview read:
+  its first 64 KiB on the first ask (one open), all of it up to 16 MiB
+  (128 MiB under Full preview) once asked, its last 64 KiB, a remote's
+  1 MiB blocks; never a memory map or a kept descriptor; a later open
+  that finds another length or time is refused. `PreviewRequest::held`
+  shares it with the request's clones (`HeldSlot`), which also keeps
+  each provider's `accepts` answer by entry, type and registry
+  revision. The platform's readers take any `FileSource` (a path for
+  thumbnails and fields, what is held for a preview); `inspection::plain`
+  and `source` take the `Held`, and the text view reads it through
+  `TextFile::held`. Programs that read by path get
+  `path_for_program`: a remote's file held whole is copied once into the
+  preview's folder, removed with it on a thread of its own (again for a
+  few seconds on Windows, where a program may hold it). The file shown
+  before is kept 60 s (`held_before`), let go of when the preview shows
+  nothing. A remote's text not held whole is counted as far as it is
+  shown (`text_rows::count_until`), its rows estimated beyond. The
+  shell's job, the platform's document and media providers and the
+  outside plugins' host (`Call::holding`) were moved by the integrator;
+  the 17 plugins by three fixers, each owning its crates, each provider
+  tested from bytes at a path that leads nowhere
+  (`PreviewRequest::holding`) or, for one that hands a program a path,
+  as a remote's copy (`Held::of_bytes_on_remote`). Properties' Opens
+  with typed a `.json` from its bytes again (a name several types
+  claim): a source that says so (`PropertySource::typed`) is given the
+  type the preview settled, once it is.
+- **ADR-102, built on Linux and macOS (compiled), not Windows.** The
+  File Cache's Automatic (`options::automatic`, resolved when connecting
+  and for the entry at login, never stored) is `full`, but `minimal` on
+  the local network, for a remote that encrypts or wraps others, and on
+  Windows; a cache chosen is kept, `minimal` included. rclone's cache is
+  bounded (an hour, 1 GB, 2 GB left free). A mount that sends later
+  (`RcloneCopy::sends_later`, asked once a mount through `options/get`)
+  is written out as a removable drive: `copy_entry` marks the copy
+  through, `StepContext::write_out` has it send what waits
+  (`uploads::send_now`: `vfs/queue`, `vfs/queue-set-expiry`) before the
+  plan ends and before a move removes its originals, the progress
+  saying how many files the server still takes. Disconnect sends first.
+  Measured the same day with rclone 1.75.2: on `minimal`, a file written
+  whole is on the server when `close` returns, one appended goes up
+  5 s after; on `full`, 5 s after, and a mount stopped 1 s after `close`
+  left it in the cache until the next mount sent it; a queued file told
+  to go now was on the server within the second.
+- **Measured after**, the debug build in the same window and folder:
+  one GET for every file of the list (`small.json` too, once Opens with
+  took the settled type), and none going back to the file shown before
+  (a text and a PDF in turn: the PDF's reader reads its local copy);
+  Properties opened on the JSON file fetched nothing.
+- **Checked**:
+  - Tests: core's `Held` (tiers, another version refused, the reader's
+    seeks, a remote's blocks and copy), `text_rows`' count stopped and
+    gone on, the flip between two files (`held_before`, `held_for`, seen
+    failing with the old order), Opens with's settled type, the queue's
+    reading, Automatic's rule; each fixer's held tests (each seen
+    failing with the path read again); `remote_folders`:
+    `a_copy_onto_a_mount_that_sends_later_ends_once_the_server_has_it`
+    (seen failing when the mount is not sent) and
+    `a_preview_of_a_file_on_a_mount_fetches_it_once` (seen failing,
+    2 GETs, when nothing read is reused).
+  - The fixers' crates: nextest 248 (geo, map-tiles, models, circuits),
+    62 and 2 ignored Pandoc tests passed alone (documents, epub, comics,
+    djvu, email, fonts), 103 (tables, structured-data, markdown,
+    playlists, hex, archives, thumbnails); clippy, Windows' clippy,
+    rustfmt.
+- **Not checked**: a server refusing uploads three times (rclone retries
+  an upload itself before counting a try), Windows' and macOS' runs
+  (compiled only), a Dropbox account itself (the user's: their mount
+  measures it).
+
+### A text field's drag selects past its ends (2026-10-29)
+
+A drag in a text field (`input.rs`, every field: a rename, the address,
+a form's) was heard only over the field (a hovered div's `on_mouse_move`),
+so the selection stopped at its edge, and nothing scrolled a line longer
+than the field. While a drag selects, the field follows the pointer
+anywhere in the window (`Window::on_mouse_event` in paint), along the
+line alone; held past an end it selects on and scrolls (`autoscroll_x`,
+a step of 2 to 40 px every 30 ms, faster the further out), until the
+pointer comes back, the button is let go or the text ends. A move said
+without its button (Wayland's on coming back into the window) does not
+end it: the release does. Checked in a window on Xvfb (debug build): a
+rename of a synthetic name longer than the field selected from near its
+start to its end (`.txt` included) held past the right edge, from near
+its end to its start held just past the left, and along the line when
+the drag strayed below; the selections read back through the clipboard.
+
+### The checks of the night (2026-10-29)
+
+On the night's last code (both entries above), under a load of 9 to 49
+from other sessions, in memory-capped scopes: `just lint-all` passed
+(rustfmt, clippy on every crate, Windows' and macOS' cross clippy); the
+whole workspace (`cargo nextest run --workspace --no-fail-fast`) passed,
+2403 tests, 30 skipped; ADR-101's commit alone was checked in a worktree
+of its own (clippy, all targets, `-D warnings`). `just remote-check`:
+173 of 174, twice; the one failing was
+`gvfs_opens_an_smb_share_its_password_kept`, whose 300 MiB read through
+GVfs's bridge outlasted `Gvfs::disconnect`'s five seconds of busy
+refusals (seen under load on 2026-10-23 too; 5 of 5 alone, about a
+second each). Found and fixed on the way, each seen failing first: an
+outside plugin's conversion was kept as the new version's while made
+from the old bytes a request still held (conversions are now keyed by
+the version read, `made_key`); a forced Disconnect waited for good on
+`vfs/stats` of a mount whose server was stopped (remote control calls
+about uploads give up after 5 s, the count comes from `vfs/queue`, and a
+server that stopped answering is not waited for). Not run: `smoke`,
+`a11y-check`, the PDF checks, `bench-check` (release-check was not run:
+it is the release's).

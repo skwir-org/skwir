@@ -182,6 +182,25 @@ agent's call opens is checked once resolved, not as written; Windows'
 logon task's rclone says its port; the package checks accept the phone
 helper's honest "no FUSE here"; the changelog covers 0.3.
 
+## Previews read once; rclone keeps what it reads (2026-10-29)
+
+A Dropbox remote mounted by rclone previewed a tiny text file slowly: a
+preview opened its file at every step (13 opens for a 55-byte text, 4 for
+a `.docx`, 5 for a JPEG), each a download on a mount that keeps nothing
+it reads. ADR-101: a preview reads its file once into what the request
+holds (`preview::Held`), every provider and step reads that, each
+provider's `accepts` is asked once, the file shown before is kept a
+minute, a remote's large text is counted as far as it is shown. ADR-102:
+rclone mounts keep what they read (`full`, by an Automatic rule that
+keeps `minimal` on the local network and for wrapping remotes), and a
+copy onto a mount that sends later waits for the server, as onto a
+removable drive. Measured in a window over rclone's `minimal`: one GET
+per preview of each kind, none flipping back to the file shown before
+(a JSON file took two at first: Properties' Opens with typed it from its
+bytes again, a name several types claim; it is now given the type the
+preview settled, `PropertySource::typed`). Detail in `docs/STATUS-LOG.md`
+(2026-10-29); what is left under "What is left".
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -194,6 +213,27 @@ closes an item removes its line; work that leaves one adds it here.
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
+
+**From previews read once and rclone's cache (2026-10-29, ADR-101,
+ADR-102)**:
+- A remote's place saying what other programs left waiting to be sent
+  (ADR-102, point 6): asked after a plan, on focus and while something
+  waits. A copy's progress and a Disconnect say it already.
+- An upload refused three times fails a copy's write-out; not tested
+  against a server that refuses (rclone retries each upload itself
+  before counting a try): only the queue's reading is.
+- Windows: a copy onto a mount that sends later is not waited for yet
+  (its mounts' remote control is on loopback; `uploads` speaks a
+  socket), so Automatic keeps `minimal` there, and a `full` chosen by
+  the user ends a copy before its server has it, as before.
+- Windows and macOS: `Held` and the cache bounds are compiled there, not
+  run (Wine's rclone mounts are not tried); macOS's copy wait is
+  compiled only.
+- `gvfs_opens_an_smb_share_its_password_kept` fails in a loaded
+  `remote-check` (twice on 2026-10-29, once on 2026-10-23): its 300 MiB
+  read through GVfs outlasts `Gvfs::disconnect`'s five seconds of busy
+  refusals. A read whose end the test waits for, or a smaller file,
+  would keep what it proves without the race.
 
 **From the review of 2026-10-28** (fixed the same day, "Review fixes
 (2026-10-28)" below; each with its fixer's proposed design in
