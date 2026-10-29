@@ -217,6 +217,13 @@ pub struct TextInput {
     /// keeps the cursor in view (`scrolled`, in prepaint).
     scroll_x: Pixels,
     is_selecting: bool,
+    /// Where the pointer is while a drag selects, followed wherever it goes
+    /// in the window (`TextElement::paint`).
+    dragged_at: Option<Point<Pixels>>,
+    /// Held past either end of the field, the selection goes on there and
+    /// the line scrolls, a step at a time (`autoscroll_step`), until the
+    /// pointer comes back, the button is let go or the text ends.
+    autoscroll: Option<gpui::Task<()>>,
     /// Kept only for text that is not masked: a passphrase leaves no trail.
     history: History,
     /// What the text may go on with, drawn muted after it while the cursor
@@ -249,6 +256,8 @@ impl TextInput {
             last_bounds: None,
             scroll_x: px(0.),
             is_selecting: false,
+            dragged_at: None,
+            autoscroll: None,
             history: History::default(),
             hint: None,
             styles: Vec::new(),
@@ -600,13 +609,69 @@ impl TextInput {
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
-        self.is_selecting = false;
+        self.stop_selecting();
     }
 
-    fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.is_selecting {
-            self.select_to(self.index_for_mouse_position(ev.position), cx);
+    fn stop_selecting(&mut self) {
+        self.is_selecting = false;
+        self.dragged_at = None;
+        self.autoscroll = None;
+    }
+
+    /// The pointer moved to `position` while a drag selects, inside the
+    /// field or out of it: the selection goes to where along the line it
+    /// is, beyond what is shown when it is past an end, and goes on there
+    /// while it is held (`autoscroll_step`).
+    fn drag_to(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        if !self.is_selecting {
+            return;
         }
+        self.dragged_at = Some(position);
+        self.select_to(self.index_for_mouse_position(position), cx);
+        let outside = self
+            .last_bounds
+            .is_some_and(|bounds| position.x < bounds.left() || position.x > bounds.right());
+        if outside && self.autoscroll.is_none() {
+            self.autoscroll = Some(cx.spawn(async move |input, cx| {
+                loop {
+                    cx.background_executor().timer(AUTOSCROLL_EVERY).await;
+                    let goes_on = input.update(cx, Self::autoscroll_step).unwrap_or(false);
+                    if !goes_on {
+                        break;
+                    }
+                }
+            }));
+        }
+    }
+
+    /// One step of a drag held past an end of the field: the selection
+    /// goes on a little past what is shown, and the line scrolls to show
+    /// where it ends (`scrolled`, in prepaint). Whether to go on.
+    fn autoscroll_step(&mut self, cx: &mut Context<Self>) -> bool {
+        let reached = match (
+            self.is_selecting,
+            self.dragged_at,
+            self.last_bounds,
+            self.last_layout.as_ref(),
+        ) {
+            (true, Some(at), Some(bounds), Some(line)) => {
+                autoscroll_x(at.x, bounds.left(), bounds.right(), self.scroll_x)
+                    .map(|x| self.text_offset(line.closest_index_for_x(x)))
+            }
+            _ => None,
+        };
+        let Some(offset) = reached else {
+            self.autoscroll = None;
+            return false;
+        };
+        let before = self.selected_range.clone();
+        self.select_to(offset, cx);
+        // At an end of the text: nothing more to show.
+        if self.selected_range == before {
+            self.autoscroll = None;
+            return false;
+        }
+        true
     }
 
     // ------------------------------------------------------------ offsets
@@ -624,6 +689,10 @@ impl TextInput {
         }
     }
 
+    /// The offset nearest `position` along the line: one line, so only
+    /// where along it counts, and a drag that strays above or below the
+    /// field goes on selecting along it. Past an end of what is shown, the
+    /// offset there in the text, which the line scrolls to.
     fn index_for_mouse_position(&self, position: Point<Pixels>) -> usize {
         if self.content.is_empty() {
             return 0;
@@ -632,12 +701,6 @@ impl TextInput {
         else {
             return 0;
         };
-        if position.y < bounds.top() {
-            return 0;
-        }
-        if position.y > bounds.bottom() {
-            return self.content.len();
-        }
         self.text_offset(line.closest_index_for_x(position.x - bounds.left() + self.scroll_x))
     }
 
@@ -866,6 +929,25 @@ struct PrepaintState {
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
     scroll_x: Pixels,
+}
+
+/// How often a drag held past an end of a field selects on.
+const AUTOSCROLL_EVERY: std::time::Duration = std::time::Duration::from_millis(30);
+
+/// Where along the line a drag held at `pointer`, past an end of a field
+/// from `left` to `right` scrolled by `scroll`, selects to at its next
+/// step: as far past what is shown as the pointer is past the field,
+/// between 2 and 40 px a step, so the further it is held the faster the
+/// line goes. `None` while the pointer is over the field.
+fn autoscroll_x(pointer: Pixels, left: Pixels, right: Pixels, scroll: Pixels) -> Option<Pixels> {
+    let step = |beyond: Pixels| beyond.clamp(px(2.), px(40.));
+    if pointer > right {
+        Some(scroll + (right - left) + step(pointer - right))
+    } else if pointer < left {
+        Some((scroll - step(left - pointer)).max(px(0.)))
+    } else {
+        None
+    }
 }
 
 /// How far to scroll a line `width` wide in a field `field` wide, from
@@ -1100,11 +1182,30 @@ impl Element for TextElement {
                 window.paint_quad(cursor);
             }
         });
-        self.input.update(cx, |input, _| {
+        let selecting = self.input.update(cx, |input, _| {
             input.last_layout = Some(line);
             input.last_bounds = Some(bounds);
             input.scroll_x = scroll_x;
+            input.is_selecting
         });
+        // A drag that selects is followed wherever it goes in the window,
+        // not only over the field: past an end, the text beyond is
+        // selected and scrolled to (`TextInput::drag_to`).
+        if selecting {
+            let input = self.input.clone();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
+                if phase != gpui::DispatchPhase::Bubble {
+                    return;
+                }
+                // A move said without its button (Wayland's on coming back
+                // into the window) is not the drag's end: the button's
+                // release is (`on_mouse_up_out`), which the window hears
+                // wherever the pointer is, holding it while pressed.
+                if event.pressed_button == Some(MouseButton::Left) {
+                    input.update(cx, |input, cx| input.drag_to(event.position, cx));
+                }
+            });
+        }
     }
 }
 
@@ -1229,7 +1330,6 @@ impl Render for TextInput {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_mouse_move(cx.listener(Self::on_mouse_move))
             .child(TextElement { input: cx.entity() })
     }
 }
@@ -1296,7 +1396,9 @@ fn styled_runs(run: &TextRun, text: &str, styles: &[(Range<usize>, Paint)]) -> V
 
 #[cfg(test)]
 mod tests {
-    use super::{History, scrolled, snapped, typed_at, unit_at, units, utf16_to_utf8};
+    use super::{
+        History, autoscroll_x, scrolled, snapped, typed_at, unit_at, units, utf16_to_utf8,
+    };
 
     #[test]
     fn styles_cut_the_run_where_they_fall_and_leave_out_what_does_not_fit() {
@@ -1419,6 +1521,25 @@ mod tests {
         assert_eq!(scrolled(px(202.), px(300.), px(100.), px(50.)), px(50.));
         // A line that got shorter (a deletion) is not left scrolled past its end.
         assert_eq!(scrolled(px(202.), px(150.), px(100.), px(150.)), px(52.));
+    }
+
+    #[test]
+    fn a_drag_held_past_an_end_selects_on_faster_the_further_it_is() {
+        // A field from 100 to 300 px, its line scrolled by 50.
+        let at = |pointer: f32| autoscroll_x(px(pointer), px(100.), px(300.), px(50.));
+        assert_eq!(at(200.), None, "over the field: nothing goes on");
+        // Past the right end: past what is shown (50 + 200), by as far as
+        // the pointer is, within 2 and 40 px.
+        assert_eq!(at(301.), Some(px(252.)));
+        assert_eq!(at(310.), Some(px(260.)));
+        assert_eq!(at(900.), Some(px(290.)));
+        // Past the left: back from what is shown, never before the start.
+        assert_eq!(at(90.), Some(px(40.)));
+        assert_eq!(at(0.), Some(px(10.)));
+        assert_eq!(
+            autoscroll_x(px(0.), px(100.), px(300.), px(5.)),
+            Some(px(0.))
+        );
     }
 
     #[test]

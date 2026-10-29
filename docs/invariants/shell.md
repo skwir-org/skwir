@@ -737,6 +737,16 @@ one needing a choice dispatches `ui.choose` with its choices or a command
 listing them on a worker (`choose.rs`; `option` adds a flag such as
 "Always use for…"). Never a prompt or picker of its own.
 
+- **One text field** (`input.rs`), for every field: a rename, the
+  address, a form's, a find. A line longer than the field scrolls to
+  keep the caret in view (`scrolled`, in prepaint). A drag selects
+  wherever the pointer goes in the window, not only over the field,
+  along the line alone (straying above or below never jumps to an end);
+  held past an end, it selects on and the line scrolls, faster the
+  further out (`autoscroll_x`, a timer that lives only while it is held
+  there), until the pointer comes back, the button is let go or the text
+  ends.
+
 - **A click answers what a key answers.** A dialog that waits for an
   answer ends with `modal::footer`: what its keys do, muted, then Cancel
   and the answer, named by its verb (Rename, Unlock, Delete; `ui.ask`
