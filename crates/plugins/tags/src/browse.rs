@@ -406,7 +406,7 @@ pub fn export(
         app.lifetime().child(),
         move || {
             let Some(app) = weak.upgrade() else { return };
-            let files = places.tagged(&address, &root);
+            let files = places.tagged(&address, &root, &mut crate::location::Years::new());
             let Some(made) = crate::location::export(&address, &files, &dest, Path::exists) else {
                 return;
             };

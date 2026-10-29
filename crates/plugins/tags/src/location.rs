@@ -522,29 +522,48 @@ pub struct Contents {
 /// How many pictures a place's tile shows.
 pub const MOSAIC: usize = 4;
 
-/// Whether `path`'s name says it is a picture.
-fn is_picture(path: &Path) -> bool {
-    path.file_name()
-        .and_then(skwir_platform::mime::by_name)
-        .is_some_and(|m| skwir_platform::mime::is_kind(&m, Kind::Image))
+/// The types names say, asked once per extension for all the files of a
+/// listing: a tag on a hundred thousand files asked each name at every
+/// relist. A name without one is asked as it is (`Makefile`).
+#[derive(Default)]
+struct Types(HashMap<std::ffi::OsString, Option<skwir_platform::mime::Mime>>);
+
+impl Types {
+    fn of(&mut self, path: &Path) -> Option<skwir_platform::mime::Mime> {
+        let name = path.file_name()?;
+        let Some(ext) = Path::new(name).extension() else {
+            return skwir_platform::mime::by_name(name);
+        };
+        // As written: a few globs heed case (`*.C`).
+        self.0
+            .entry(ext.to_os_string())
+            .or_insert_with(|| {
+                let mut file = std::ffi::OsString::from("file.");
+                file.push(ext);
+                skwir_platform::mime::by_name(&file)
+            })
+            .clone()
+    }
+
+    /// Whether `path`'s name says it is a picture.
+    fn is_picture(&mut self, path: &Path) -> bool {
+        self.of(path)
+            .is_some_and(|m| skwir_platform::mime::is_kind(&m, Kind::Image))
+    }
 }
 
 /// Whether `file` passes what narrows `address`.
-fn passes(address: &Address, file: &Tagged) -> bool {
+fn passes(address: &Address, file: &Tagged, types: &mut Types) -> bool {
     let within = |category: &String| file.tags.iter().any(|t| tag_within(t, category));
     address.with.iter().all(within)
         && !address.without.iter().any(within)
         && (address.kinds.is_empty()
-            || file
-                .path
-                .file_name()
-                .and_then(skwir_platform::mime::by_name)
-                .is_some_and(|m| {
-                    address
-                        .kinds
-                        .iter()
-                        .any(|k| skwir_platform::mime::is_kind(&m, *k))
-                }))
+            || types.of(&file.path).is_some_and(|m| {
+                address
+                    .kinds
+                    .iter()
+                    .any(|k| skwir_platform::mime::is_kind(&m, *k))
+            }))
         && (address.years.is_empty() || file.year.is_some_and(|y| address.years.contains(&y)))
 }
 
@@ -557,11 +576,15 @@ pub fn contents(address: &Address, files: &[Tagged], drafts: &[String]) -> Conte
     let mut pictures: Vec<Vec<PathBuf>> = Vec::new();
     let mut by_name: HashMap<String, usize> = HashMap::new();
     let mut out = Vec::new();
+    let mut types = Types::default();
     let inside = |file: &&Tagged| match &address.tag {
         Some(category) => file.tags.iter().any(|t| tag_within(t, category)),
         None => !file.tags.is_empty(),
     };
-    for file in files.iter().filter(inside).filter(|f| passes(address, f)) {
+    for file in files.iter().filter(inside) {
+        if !passes(address, file, &mut types) {
+            continue;
+        }
         let mut seen: Vec<String> = Vec::new();
         let mut here = false;
         for tag in &file.tags {
@@ -585,7 +608,7 @@ pub fn contents(address: &Address, files: &[Tagged], drafts: &[String]) -> Conte
                 seen.push(child);
             }
         }
-        let picture = !seen.is_empty() && is_picture(&file.path);
+        let picture = !seen.is_empty() && types.is_picture(&file.path);
         for child in seen {
             let at = *by_name.entry(child.to_lowercase()).or_insert_with(|| {
                 places.push((child, 0));
@@ -844,21 +867,13 @@ impl Places {
     }
 
     /// The tagged files under `root` within `address`'s tag (every one
-    /// at the top), with their years when it is narrowed by one. Reads the
-    /// index and stats: on a worker.
-    pub fn tagged(&self, address: &Address, root: &Path) -> Vec<Tagged> {
+    /// at the top), with their years when it is narrowed by one: those
+    /// `years` knows as it knows them, the others stat-ed and kept there.
+    /// Reads the index and stats: on a worker.
+    pub fn tagged(&self, address: &Address, root: &Path, years: &mut Years) -> Vec<Tagged> {
         let calendar = (!address.years.is_empty()).then(skwir_platform::calendar::Calendar::system);
-        self.index
-            .files_under(root, address.tag.as_deref())
-            .into_iter()
-            .map(|(path, tags)| {
-                let year = calendar.as_ref().and_then(|calendar| {
-                    let modified = std::fs::symlink_metadata(&path).ok()?.modified().ok()?;
-                    Some(calendar.year_of(modified))
-                });
-                Tagged { path, tags, year }
-            })
-            .collect()
+        let files = self.index.files_under(root, address.tag.as_deref());
+        with_years(files, calendar.as_ref(), years)
     }
 
     fn drafts_of(&self, root: &Path) -> Vec<String> {
@@ -878,6 +893,45 @@ impl Places {
     }
 }
 
+/// The year each file was modified in, as a tag location narrowed by one
+/// read it (`None`: it could not be): a file is stat-ed once while the
+/// location is open, not at each relist; a year changed outside skwir
+/// shows after F5.
+pub type Years = HashMap<PathBuf, Option<i64>>;
+
+/// `files` with their years in `calendar` when it is given, `years`
+/// answering for those it knows and keeping the others, read now; it is
+/// left holding the files listed alone.
+fn with_years(
+    files: Vec<(PathBuf, Vec<String>)>,
+    calendar: Option<&skwir_platform::calendar::Calendar>,
+    years: &mut Years,
+) -> Vec<Tagged> {
+    let Some(calendar) = calendar else {
+        years.clear();
+        return files
+            .into_iter()
+            .map(|(path, tags)| Tagged {
+                path,
+                tags,
+                year: None,
+            })
+            .collect();
+    };
+    let mut known = std::mem::take(years);
+    files
+        .into_iter()
+        .map(|(path, tags)| {
+            let year = known.remove(&path).unwrap_or_else(|| {
+                let modified = std::fs::symlink_metadata(&path).ok()?.modified().ok()?;
+                Some(calendar.year_of(modified))
+            });
+            years.insert(path.clone(), year);
+            Tagged { path, tags, year }
+        })
+        .collect()
+}
+
 /// What an open tag location sent: its places and files, by identity,
 /// each file with the tags the index knew it by.
 #[derive(Default)]
@@ -892,6 +946,10 @@ struct Sent {
     /// read at once, as views may have asked already.
     ever: HashSet<EntryId>,
     complete: bool,
+    /// The files' years, when a year narrows it.
+    years: Years,
+    /// F5 asked: the years are read again.
+    years_stale: bool,
 }
 
 /// Its relisting: one at a time, again once if asked meanwhile.
@@ -961,7 +1019,16 @@ impl Open {
     /// last time. Reads the index and stats new files: on a worker.
     fn relist(&self) {
         let index = &self.places.index;
-        let tagged = self.places.tagged(&self.address, &self.root);
+        // Relistings run one at a time: the years are taken and put back.
+        let mut years = {
+            let mut sent = self.sent.lock();
+            if std::mem::take(&mut sent.years_stale) {
+                sent.years.clear();
+            }
+            std::mem::take(&mut sent.years)
+        };
+        let tagged = self.places.tagged(&self.address, &self.root, &mut years);
+        self.sent.lock().years = years;
         let drafts = self.places.drafts_of(&self.root);
         let contents = contents(&self.address, &tagged, &drafts);
         self.places.forget_given(&self.root, &contents.places);
@@ -1178,6 +1245,7 @@ impl OpenLocation for Open {
     /// F5: what changed since the last count is read again.
     fn refresh(&self) {
         self.places.ensure(&self.root, true);
+        self.sent.lock().years_stale = true;
         self.relist_soon();
     }
 
@@ -1343,6 +1411,65 @@ mod tests {
             tag: tag.map(str::to_owned),
             ..Address::default()
         }
+    }
+
+    /// A name's type is asked once per extension, as a name of it says.
+    #[test]
+    fn types_are_asked_once_per_extension() {
+        let mut types = Types::default();
+        for i in 0..1_000 {
+            assert!(types.is_picture(Path::new(&format!("/p/IMG_{i:04}.jpg"))));
+        }
+        assert!(!types.is_picture(Path::new("/p/notes.txt")));
+        assert!(!types.is_picture(Path::new("/p/Makefile")), "asked whole");
+        assert_eq!(types.0.len(), 2, "jpg and txt");
+        for name in ["a.jpg", "b.png", "c.txt", "Makefile"] {
+            assert_eq!(
+                types.of(Path::new(name)),
+                skwir_platform::mime::by_name(std::ffi::OsStr::new(name)),
+                "{name}"
+            );
+        }
+    }
+
+    /// Narrowed by a year, a tag place stats a file once while it lists
+    /// it: a year it knows stands, and it keeps those of the files listed
+    /// alone.
+    #[test]
+    fn a_files_year_is_read_once_and_kept_while_it_is_listed() {
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let shown = tmp.path().join("it's shown.jpg");
+        std::fs::write(&shown, b"x").unwrap();
+        // 2019-06-15 at noon: the same year in every time zone.
+        let june = std::time::UNIX_EPOCH + std::time::Duration::from_hours(18_062 * 24 + 12);
+        std::fs::File::options()
+            .write(true)
+            .open(&shown)
+            .unwrap()
+            .set_modified(june)
+            .unwrap();
+        // Never made: a stat would find no year.
+        let known = tmp.path().join("known.jpg");
+        let unlisted = tmp.path().join("unlisted.jpg");
+        let calendar = skwir_platform::calendar::Calendar::system();
+        let mut years = Years::from([(known.clone(), Some(2001)), (unlisted, Some(1999))]);
+        let files = vec![
+            (shown.clone(), vec!["x".to_owned()]),
+            (known.clone(), vec!["x".to_owned()]),
+        ];
+        let listed = with_years(files.clone(), Some(&calendar), &mut years);
+        assert_eq!(listed[0].year, Some(2019), "read");
+        assert_eq!(listed[1].year, Some(2001), "known: not read again");
+        assert_eq!(
+            years,
+            Years::from([(shown, Some(2019)), (known, Some(2001))]),
+            "the files listed alone"
+        );
+        let listed = with_years(files, None, &mut years);
+        assert!(listed.iter().all(|t| t.year.is_none()));
+        assert!(years.is_empty(), "not narrowed: none kept");
     }
 
     #[test]
