@@ -522,27 +522,48 @@ pub struct Contents {
 /// How many pictures a place's tile shows.
 pub const MOSAIC: usize = 4;
 
-/// The types names say, asked once per extension for all the files of a
+/// The types names say, asked once per suffix for all the files of a
 /// listing: a tag on a hundred thousand files asked each name at every
-/// relist. A name without one is asked as it is (`Makefile`).
+/// relist. A name is typed by the longest compound suffix the database
+/// knows that it ends with (`tar.gz`), else by its last extension, as
+/// written (a few globs heed case: `*.C`); one without any is asked as it
+/// is (`Makefile`).
 #[derive(Default)]
-struct Types(HashMap<std::ffi::OsString, Option<skwir_platform::mime::Mime>>);
+struct Types {
+    types: HashMap<String, Option<skwir_platform::mime::Mime>>,
+    /// The compound suffixes ending in each last extension, lowercase.
+    compounds: HashMap<String, Vec<String>>,
+}
 
 impl Types {
     fn of(&mut self, path: &Path) -> Option<skwir_platform::mime::Mime> {
         let name = path.file_name()?;
-        let Some(ext) = Path::new(name).extension() else {
+        let text = name.to_string_lossy();
+        let start = text.len() - text.trim_start_matches('.').len();
+        let Some((_, last)) = text[start..].rsplit_once('.') else {
             return skwir_platform::mime::by_name(name);
         };
-        // As written: a few globs heed case (`*.C`).
-        self.0
-            .entry(ext.to_os_string())
-            .or_insert_with(|| {
-                let mut file = std::ffi::OsString::from("file.");
-                file.push(ext);
-                skwir_platform::mime::by_name(&file)
+        let compounds = self
+            .compounds
+            .entry(last.to_lowercase())
+            .or_insert_with_key(|last| skwir_platform::mime::compound_suffixes(last));
+        let bytes = text.as_bytes();
+        let suffix = compounds
+            .iter()
+            .filter(|c| {
+                let c = c.as_bytes();
+                bytes.len() > c.len()
+                    && bytes[bytes.len() - c.len() - 1] == b'.'
+                    && bytes[bytes.len() - c.len()..].eq_ignore_ascii_case(c)
             })
-            .clone()
+            .max_by_key(|c| c.len())
+            .map_or(last, String::as_str);
+        if let Some(known) = self.types.get(suffix) {
+            return known.clone();
+        }
+        let found = skwir_platform::mime::by_name(std::ffi::OsStr::new(&format!("file.{suffix}")));
+        self.types.insert(suffix.to_owned(), found.clone());
+        found
     }
 
     /// Whether `path`'s name says it is a picture.
@@ -1413,7 +1434,8 @@ mod tests {
         }
     }
 
-    /// A name's type is asked once per extension, as a name of it says.
+    /// A name's type is asked once per suffix, as a name of it says: its
+    /// last extension, or the compound suffix it ends with.
     #[test]
     fn types_are_asked_once_per_extension() {
         let mut types = Types::default();
@@ -1422,8 +1444,10 @@ mod tests {
         }
         assert!(!types.is_picture(Path::new("/p/notes.txt")));
         assert!(!types.is_picture(Path::new("/p/Makefile")), "asked whole");
-        assert_eq!(types.0.len(), 2, "jpg and txt");
-        for name in ["a.jpg", "b.png", "c.txt", "Makefile"] {
+        assert_eq!(types.types.len(), 2, "jpg and txt");
+        for name in [
+            "a.jpg", "b.png", "c.txt", "Makefile", "d.tar.gz", "e.gz", "f.TAR.XZ",
+        ] {
             assert_eq!(
                 types.of(Path::new(name)),
                 skwir_platform::mime::by_name(std::ffi::OsStr::new(name)),
