@@ -162,8 +162,13 @@ struct State {
     /// The mounts whose waiting files are being looked at again, every
     /// `UPLOADS_LOOKED_EVERY` until none waits.
     watching: std::collections::HashSet<PathBuf>,
-    /// Bumped by each refresh, so a slower one never wins.
-    generation: u64,
+    /// Bumped by each read of the mounts, and of the servers the tools
+    /// know (`Remotes::read_again`), so a slower one never wins.
+    mounts_generation: u64,
+    servers_generation: u64,
+    /// The refreshes asked, whole and of the mounts alone
+    /// (`Remotes::refreshes`).
+    refreshes: (u64, u64),
     /// The mounts as last read (`Remotes::mounted`): what every publish
     /// shows, whoever asks for it.
     mounted: Arc<Vec<Mounted>>,
@@ -275,6 +280,13 @@ impl Remotes {
             _ => noted.or_else(|| lan::local(top.bare_host())),
         };
         options::automatic(kind.as_deref(), near)
+    }
+
+    /// The refreshes asked so far, whole and of the mounts alone: what a
+    /// test counts.
+    #[doc(hidden)]
+    pub fn refreshes(&self) -> (u64, u64) {
+        self.state.lock().refreshes
     }
 
     /// The plugin with `connectors` (a test's).
@@ -550,7 +562,7 @@ impl Remotes {
             state.devices.insert(connector, devices);
         }
         reach::changed();
-        self.refresh(app);
+        self.refresh_mounts(app);
     }
 
     /// The connectors in the order the setting says, those it leaves out
@@ -812,13 +824,35 @@ impl Remotes {
     /// is near take longer, and are published after, unless a later
     /// refresh began meanwhile: the mounts never wait on them.
     fn refresh(&self, app: &App) {
+        self.read_again(app, true);
+    }
+
+    /// Read again what is mounted, and publish it, without the servers the
+    /// tools know: a device said, or a mount GVfs made or let go of, which
+    /// changes no tool's configuration (and `rclone listremotes` is a
+    /// program started).
+    fn refresh_mounts(&self, app: &App) {
+        self.read_again(app, false);
+    }
+
+    /// [`Remotes::refresh`], the servers read again where `servers`, else
+    /// [`Remotes::refresh_mounts`]. Each kind of read stores only while no
+    /// later one of its kind began: a read of the mounts alone never drops
+    /// the servers a whole refresh reads.
+    fn read_again(&self, app: &App, servers: bool) {
         let Some(lifetime) = self.lifetime() else {
             return;
         };
-        let generation = {
+        let (mounts_at, servers_at) = {
             let mut state = self.state.lock();
-            state.generation += 1;
-            state.generation
+            state.mounts_generation += 1;
+            if servers {
+                state.servers_generation += 1;
+                state.refreshes.0 += 1;
+            } else {
+                state.refreshes.1 += 1;
+            }
+            (state.mounts_generation, state.servers_generation)
         };
         let this = self.clone();
         let weak = app.weak();
@@ -828,57 +862,67 @@ impl Remotes {
             lifetime.clone(),
             move || {
                 let mounted = Arc::new(this.mounted());
-                let current = |state: &State| state.generation == generation;
-                {
+                let newest = {
                     let mut state = this.state.lock();
-                    if !current(&state) {
-                        return;
+                    let newest = state.mounts_generation == mounts_at;
+                    if newest {
+                        state.mounted = Arc::clone(&mounted);
+                        state.note_said();
+                        state
+                            .lost
+                            .retain(|point| mounted.iter().any(|m| m.remote.point == *point));
+                        state
+                            .space
+                            .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
+                        state
+                            .features
+                            .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
                     }
-                    state.mounted = Arc::clone(&mounted);
-                    state.note_said();
-                    state
-                        .lost
-                        .retain(|point| mounted.iter().any(|m| m.remote.point == *point));
-                    state
-                        .space
-                        .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
-                    state
-                        .features
-                        .retain(|point, _| mounted.iter().any(|m| m.remote.point == *point));
+                    newest
+                };
+                // A later whole refresh reads the servers: not this one.
+                let servers = servers && this.state.lock().servers_generation == servers_at;
+                if !newest && !servers {
+                    return;
                 }
                 let Some(app) = weak.upgrade() else {
                     return;
                 };
-                this.publish(&app);
-                this.ask_alive(&app, &mounted, &lifetime);
+                if newest {
+                    this.publish(&app);
+                    this.ask_alive(&app, &mounted, &lifetime);
+                }
                 // The servers kept (Skwir's list, KDE's network folders),
-                // then the tools' that are not those.
-                let mut servers = servers::listed(&app);
-                drop(app);
-                for connector in this.connectors.iter() {
-                    if connector.unavailable().is_none() {
-                        for server in connector.servers(&lifetime) {
-                            if !servers.iter().any(|s| s.address == server.address) {
-                                servers.push(server);
+                // then the tools' that are not those: read again where
+                // asked, else as last read.
+                let listed = servers.then(|| {
+                    let mut listed = servers::listed(&app);
+                    for connector in this.connectors.iter() {
+                        if connector.unavailable().is_none() {
+                            for server in connector.servers(&lifetime) {
+                                if !listed.iter().any(|s| s.address == server.address) {
+                                    listed.push(server);
+                                }
                             }
                         }
                     }
-                }
+                    listed
+                });
+                drop(app);
                 // Whether each server is near, for its thumbnails. A
                 // device is near, its name (a serial) never looked up.
-                let hosts: Vec<String> = mounted
+                // What is known of a host stays known.
+                let known = this.state.lock().local.clone();
+                let near: Vec<(String, Option<bool>)> = mounted
                     .iter()
                     .filter_map(|m| m.recognised.address.as_ref())
-                    .filter(|a| a.scheme.device().is_none())
-                    .map(|a| a.host.clone())
+                    .filter(|a| a.scheme.device().is_none() && !known.contains_key(&a.host))
+                    .map(|a| (a.host.clone(), lan::local(&a.host)))
                     .collect();
-                let mut local = this.state.lock().local.clone();
-                for host in hosts {
-                    local
-                        .entry(host.clone())
-                        .or_insert_with(|| lan::local(&host));
-                }
                 // Which of them connect at login: their manager's files.
+                let kept = listed
+                    .clone()
+                    .unwrap_or_else(|| this.state.lock().servers.clone());
                 let at_login = this.login_manager().map_or_else(
                     |_| std::collections::HashSet::new(),
                     |manager| {
@@ -886,21 +930,29 @@ impl Remotes {
                             mounted
                                 .iter()
                                 .filter_map(|m| m.recognised.address.clone())
-                                .chain(servers.iter().map(|s| s.address.clone()))
+                                .chain(kept.iter().map(|s| s.address.clone()))
                                 .filter_map(|a| configure::login_id(&a)),
                         )
                     },
                 );
                 {
                     let mut state = this.state.lock();
-                    if !current(&state) {
+                    for (host, near) in near {
+                        state.local.entry(host).or_insert(near);
+                    }
+                    let newest = if servers {
+                        state.servers_generation == servers_at
+                    } else {
+                        state.mounts_generation == mounts_at
+                    };
+                    if !newest {
                         return;
                     }
-                    if state.servers != servers || state.at_login != at_login {
+                    let listed = listed.unwrap_or_else(|| state.servers.clone());
+                    if state.servers != listed || state.at_login != at_login {
                         this.records.changed();
                     }
-                    state.servers = servers;
-                    state.local = local;
+                    state.servers = listed;
                     state.at_login = at_login;
                 }
                 if let Some(app) = weak.upgrade() {
@@ -1001,7 +1053,7 @@ impl Remotes {
         let mounted = Arc::new(self.mounted());
         {
             let mut state = self.state.lock();
-            state.generation += 1;
+            state.mounts_generation += 1;
             state.mounted = mounted;
             state.note_said();
         }
@@ -1642,7 +1694,7 @@ impl Plugin for RemotePlugin {
                             format!("The remote's thumbnails were not saved: {error:#}"),
                         );
                     }
-                    remotes.refresh(&app);
+                    remotes.publish(&app);
                 };
                 if skwir_core::scheduler::on_window_thread() {
                     app.scheduler.spawn(
@@ -1688,7 +1740,7 @@ impl Plugin for RemotePlugin {
                                 format!("The password was not forgotten: {error:#}"),
                             ),
                         }
-                        remotes.refresh(&app);
+                        remotes.publish(&app);
                     },
                 );
                 Ok(Outcome::Done)
@@ -1704,6 +1756,7 @@ impl Plugin for RemotePlugin {
                 "Read again what is mounted and which servers the tools know",
                 move |_, app| {
                     reach::changed();
+                    rclone::forget_listed();
                     remotes.refresh(app);
                     Ok(Outcome::Done)
                 },
@@ -1717,7 +1770,8 @@ impl Plugin for RemotePlugin {
             .iter()
             .any(|k| k == THUMBNAILS || k == CHOSEN || k == REMEMBERED)
         {
-            self.remotes.refresh(app);
+            // What these change is worded by `publish` alone.
+            self.remotes.publish(app);
         }
     }
 }
@@ -1765,7 +1819,7 @@ impl Remotes {
             }
             state.waiting.insert(point.to_path_buf(), files);
         }
-        self.refresh(app);
+        self.publish(app);
         let (this, weak, followed) = (self.clone(), app.weak(), point.to_path_buf());
         let watched = std::thread::Builder::new()
             .name("skwir-uploads".into())
@@ -1790,8 +1844,9 @@ impl Remotes {
                     } else {
                         this.state.lock().waiting.insert(followed.clone(), now);
                     }
+                    // Said on the mount's place: nothing else is read.
                     if now != said {
-                        this.refresh(&app);
+                        this.publish(&app);
                         said = now;
                     }
                     if now == 0 {
@@ -1955,8 +2010,12 @@ impl Remotes {
 }
 
 /// How often a mount whose files wait to be sent is asked again, while
-/// some do (`Remotes::look_at_uploads`).
-const UPLOADS_LOOKED_EVERY: Duration = Duration::from_secs(2);
+/// some do (`Remotes::look_at_uploads`): a test's at once.
+const UPLOADS_LOOKED_EVERY: Duration = if cfg!(test) {
+    Duration::from_millis(20)
+} else {
+    Duration::from_secs(2)
+};
 
 /// What a mount's place says while it sends what waits.
 fn sending(files: usize) -> String {
@@ -2348,5 +2407,81 @@ mod tests {
             }
         });
         assert_eq!(slow.most.load(Ordering::SeqCst), 1);
+    }
+
+    /// What other programs left to be sent is said on the mount's place
+    /// as it goes down, and nothing else is read for it: no refresh,
+    /// whole or of the mounts (each read the servers, starting rclone,
+    /// and asked every server how full it is). Against a stand-in of the
+    /// mount's remote control, counted.
+    #[cfg(unix)]
+    #[test]
+    fn what_waits_to_be_sent_is_said_without_reading_anything_again() {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(
+            tmp.path().join("app"),
+        ))
+        .unwrap();
+        let remotes = Remotes::with(Vec::new());
+        app.plugins
+            .add(Arc::new(RemotePlugin::with(remotes.clone())), &app);
+        let point = tmp.path().join("example uploads' mount");
+        let socket = crate::rclone_copy::socket_for(&point).unwrap();
+        std::fs::create_dir_all(socket.parent().unwrap()).unwrap();
+        let _ = std::fs::remove_file(&socket);
+        let listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        // The queue as rclone says it, an answer a question: three files,
+        // two, two again, then none.
+        let (served, asked) = crossbeam_channel::unbounded();
+        std::thread::spawn(move || {
+            for count in [3, 2, 2, 0] {
+                let Ok((stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut reader = BufReader::new(stream);
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line.trim().is_empty() {
+                        break;
+                    }
+                    if let Some(n) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = n.trim().parse().unwrap();
+                    }
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                let queue: Vec<_> = (0..count)
+                    .map(|id| serde_json::json!({ "id": id, "name": format!("file {id}") }))
+                    .collect();
+                let text = serde_json::json!({ "queue": queue }).to_string();
+                let mut stream = reader.into_inner();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{text}",
+                    text.len()
+                )
+                .unwrap();
+                served.send(count).unwrap();
+            }
+        });
+        let before = remotes.refreshes();
+        remotes.look_at_uploads(&app, &point);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut said = Vec::new();
+        while said.last() != Some(&0) {
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            said.push(asked.recv_timeout(left).expect("asked until none waits"));
+        }
+        while remotes.state.lock().watching.contains(&point) {
+            assert!(std::time::Instant::now() < deadline, "still watched");
+            std::thread::yield_now();
+        }
+        assert_eq!(said, [3, 2, 2, 0]);
+        assert!(remotes.state.lock().waiting.is_empty());
+        assert_eq!(remotes.refreshes(), before, "nothing read again");
+        let _ = std::fs::remove_file(&socket);
     }
 }

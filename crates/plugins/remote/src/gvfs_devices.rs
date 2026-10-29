@@ -36,15 +36,20 @@ const TRACKER: &str = "org.gtk.vfs.MountTracker";
 const PATIENCE: Duration = Duration::from_secs(10);
 
 /// What on the session bus says what GVfs offers may have changed, as
-/// match rules: its monitors' signals, its daemon's mounts made and let go
-/// of, a monitor started again by another program.
+/// match rules: the signals of its monitors of devices (each names its
+/// monitor first: the disks' and online accounts' are never listed, nor
+/// heard), its daemon's mounts made and let go of, a monitor started again
+/// by another program.
 pub fn signals() -> Vec<String> {
-    vec![
-        format!("type='signal',interface='{INTERFACE}'"),
-        format!("type='signal',interface='{TRACKER}'"),
-        "type='signal',sender='org.freedesktop.DBus',member='NameOwnerChanged',arg0namespace='org.gtk.vfs'"
-            .to_owned(),
-    ]
+    MONITORS
+        .iter()
+        .map(|monitor| format!("type='signal',interface='{INTERFACE}',arg0='{monitor}'"))
+        .chain([
+            format!("type='signal',interface='{TRACKER}'"),
+            "type='signal',sender='org.freedesktop.DBus',member='NameOwnerChanged',arg0namespace='org.gtk.vfs'"
+                .to_owned(),
+        ])
+        .collect()
 }
 
 /// What GVfs's monitors on the bus `env` names (the session's where it
@@ -136,4 +141,40 @@ pub fn volumes(lists: &Structure<'_>) -> Vec<Offered> {
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The monitors of devices are heard; the disks' and online accounts'
+    /// say nothing Skwir lists, and are not: each was a listing of the
+    /// devices again, and the mounts read again after.
+    #[test]
+    fn only_the_monitors_of_devices_are_heard() {
+        let said = signals();
+        let rules: Vec<zbus::MatchRule<'_>> = said
+            .iter()
+            .map(|rule| zbus::MatchRule::try_from(rule.as_str()).unwrap())
+            .collect();
+        let heard = |monitor: &str| {
+            let message = zbus::message::Message::signal(PATH, INTERFACE, "VolumeAdded")
+                .unwrap()
+                .build(&(monitor, "stand-in"))
+                .unwrap();
+            rules.iter().any(|rule| rule.matches(&message).unwrap())
+        };
+        for monitor in MONITORS {
+            assert!(heard(monitor), "{monitor}");
+        }
+        assert!(!heard("org.gtk.vfs.UDisks2VolumeMonitor"));
+        assert!(!heard("org.gtk.vfs.GoaVolumeMonitor"));
+        // A mount GVfs made, by any program: heard.
+        let mounted =
+            zbus::message::Message::signal("/org/gtk/vfs/mounttracker", TRACKER, "Mounted")
+                .unwrap()
+                .build(&("stand-in",))
+                .unwrap();
+        assert!(rules.iter().any(|rule| rule.matches(&mounted).unwrap()));
+    }
 }

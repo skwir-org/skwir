@@ -398,11 +398,17 @@ fn a_device_gvfs_offers_is_listed_until_unplugged_and_said_held() {
         "named so below its top too, never by its serial"
     );
 
-    // Another plugged in, told: listed too, as a camera.
+    // Another plugged in, told: listed too, as a camera. The mounts are
+    // read again for it, never the servers the tools know (`rclone
+    // listremotes`, a program started).
+    let (whole, mounts) = remotes.refreshes();
     plug(&monitor, &volumes, &camera, true);
     let listed = until(&app, "the camera plugged in", |d| {
         found(d, "Example Camera")
     });
+    let (whole_after, mounts_after) = remotes.refreshes();
+    assert_eq!(whole_after, whole, "no whole refresh for a device");
+    assert!(mounts_after > mounts, "the mounts read again");
     let place = listed.iter().find(|p| p.title == "Example Camera").unwrap();
     assert_eq!(place.icon.as_deref(), Some("camera-photo"));
     assert_eq!(

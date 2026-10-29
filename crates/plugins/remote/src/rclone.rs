@@ -18,10 +18,10 @@
 //! environment alone (`RCLONE_SMB_PASS`…), never on a command line.
 
 use std::fmt::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use skwir_core::cancel::CancelToken;
 use skwir_core::fs::reach::Remote;
@@ -90,6 +90,106 @@ impl Rclone {
     pub fn config(&self) -> Option<&Path> {
         self.config.as_deref()
     }
+}
+
+/// Which rclone, given which configuration (`None`: its own).
+type ListedKey = (PathBuf, Option<PathBuf>);
+
+/// A configuration file's length and date, `None` where there is none.
+type Stamp = Option<(u64, Option<SystemTime>)>;
+
+/// What `rclone listremotes` last said of a configuration: where its file
+/// is, as rclone said, and the servers it named while the file had a
+/// stamp. Asked again only once the file changed, or when told to forget
+/// (`forget_listed`, F5's `remote.refresh`): each refresh of the sidebar
+/// started rclone, a program, whatever had changed.
+#[derive(Default)]
+struct Listed {
+    file: Option<PathBuf>,
+    said: Option<(Stamp, Vec<Server>)>,
+}
+
+/// What `rclone listremotes` said, by rclone and configuration: the last
+/// few (a test's each).
+static LISTED: parking_lot::Mutex<Vec<(ListedKey, Listed)>> = parking_lot::Mutex::new(Vec::new());
+
+/// Configurations whose servers are kept.
+const LISTED_KEPT: usize = 4;
+
+/// A file written this recently may be written again within its date's
+/// granularity, its stamp the same: what it names then is not kept.
+const SETTLED: Duration = Duration::from_secs(2);
+
+/// Forget what rclone listed: the next refresh asks it again.
+pub(crate) fn forget_listed() {
+    LISTED.lock().clear();
+}
+
+/// The servers of the configuration `key` names: kept while its file is
+/// as it was when listed, else `list`ed and kept. Its file is found once
+/// (`file`, which may ask rclone). A listing that failed is not kept, nor
+/// one of a file written just now; one of a file rclone cannot place is
+/// asked every time, as before.
+fn servers_listed(
+    key: &ListedKey,
+    file: impl FnOnce() -> Option<PathBuf>,
+    list: impl FnOnce() -> Option<Vec<Server>>,
+) -> Vec<Server> {
+    let known = LISTED
+        .lock()
+        .iter()
+        .find(|(k, _)| k == key)
+        .and_then(|(_, listed)| listed.file.clone());
+    let Some(path) = known.or_else(|| {
+        let found = file()?;
+        with_listed(key, |listed| listed.file = Some(found.clone()));
+        Some(found)
+    }) else {
+        return list().unwrap_or_default();
+    };
+    let (stamp, settled) = match std::fs::metadata(&path) {
+        Ok(meta) => {
+            let modified = meta.modified().ok();
+            let settled = modified
+                .and_then(|m| m.elapsed().ok())
+                .is_some_and(|age| age >= SETTLED);
+            (Some((meta.len(), modified)), settled)
+        }
+        Err(_) => (None, true),
+    };
+    let kept = LISTED
+        .lock()
+        .iter()
+        .find(|(k, _)| k == key)
+        .and_then(|(_, listed)| listed.said.as_ref())
+        .filter(|(at, _)| *at == stamp)
+        .map(|(_, servers)| servers.clone());
+    if let Some(servers) = kept {
+        return servers;
+    }
+    let servers = list();
+    with_listed(key, |listed| {
+        listed.said = servers
+            .as_ref()
+            .filter(|_| settled)
+            .map(|servers| (stamp, servers.clone()));
+    });
+    servers.unwrap_or_default()
+}
+
+/// Change what is kept of the configuration `key` names, made if none is.
+fn with_listed(key: &ListedKey, change: impl FnOnce(&mut Listed)) {
+    let mut all = LISTED.lock();
+    let at = if let Some(at) = all.iter().position(|(k, _)| k == key) {
+        at
+    } else {
+        if all.len() >= LISTED_KEPT {
+            all.remove(0);
+        }
+        all.push((key.clone(), Listed::default()));
+        all.len() - 1
+    };
+    change(&mut all[at].1);
 }
 
 /// `rclone` run with `config` where one is named.
@@ -290,11 +390,23 @@ impl Connector for Rclone {
         let Some(rclone) = skwir_core::os_path::find_program("rclone") else {
             return Vec::new();
         };
+        let key = (rclone.clone(), self.config.clone());
+        servers_listed(
+            &key,
+            || crate::rclone_config::config_file(&rclone, self, cancel).ok(),
+            || self.listed(&rclone, cancel),
+        )
+    }
+}
+
+impl Rclone {
+    /// The servers `rclone listremotes` names, `None` where it failed.
+    fn listed(&self, rclone: &Path, cancel: &CancelToken) -> Option<Vec<Server>> {
         // An encrypted configuration is opened with the password the
         // keyring keeps for it, where the user asked (ADR-086); never asked
         // of the window: nobody asked to see it.
         let listed = |password: Option<&str>| {
-            let mut command = command(&rclone, self.config());
+            let mut command = command(rclone, self.config());
             command
                 .args(["listremotes", "--long", "--ask-password=false"])
                 .env_remove("RCLONE_CONFIG_PASS");
@@ -319,15 +431,15 @@ impl Connector for Rclone {
         };
         match finished {
             Ok(finished) if finished.status.success() => {
-                remotes(&String::from_utf8_lossy(&finished.stdout))
+                Some(remotes(&String::from_utf8_lossy(&finished.stdout)))
             }
             Ok(finished) => {
                 tracing::debug!("rclone listremotes: {}", finished.stderr.trim());
-                Vec::new()
+                None
             }
             Err(error) => {
                 tracing::debug!("rclone listremotes: {error:#}");
-                Vec::new()
+                None
             }
         }
     }
@@ -897,6 +1009,71 @@ pub(crate) fn words(said: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// rclone is asked what its configuration names once, then again only
+    /// when the file changed, a listing failed, the file was written just
+    /// now, or F5 forgot it: counted, with rclone stood in for.
+    #[test]
+    fn rclone_is_asked_its_servers_again_only_once_its_configuration_changed() {
+        use std::cell::Cell;
+        let folder = tempfile::tempdir().unwrap();
+        let config = folder.path().join("rclone.conf");
+        let write = |text: &str, ago: u64| {
+            std::fs::write(&config, text).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&config)
+                .unwrap()
+                .set_modified(SystemTime::now() - Duration::from_secs(ago))
+                .unwrap();
+        };
+        let key = (
+            PathBuf::from("/stand-in/rclone-asked-again"),
+            Some(config.clone()),
+        );
+        let (found, listed) = (Cell::new(0), Cell::new(0));
+        let ask = |answer: Option<&str>| {
+            servers_listed(
+                &key,
+                || {
+                    found.set(found.get() + 1);
+                    Some(config.clone())
+                },
+                || {
+                    listed.set(listed.get() + 1);
+                    answer.map(remotes)
+                },
+            )
+            .len()
+        };
+        write("[nas]\ntype = sftp\n", 60);
+        assert_eq!(ask(Some("nas: sftp")), 1);
+        assert_eq!(ask(Some("nas: sftp")), 1);
+        assert_eq!((found.get(), listed.get()), (1, 1), "kept");
+        write("[nas]\ntype = sftp\n[box]\ntype = s3\n", 50);
+        assert_eq!(ask(Some("nas: sftp\nbox: s3")), 2);
+        assert_eq!(ask(Some("nas: sftp\nbox: s3")), 2);
+        assert_eq!(listed.get(), 2, "the file changed: asked once more");
+        write("[nas]\ntype = sftp\n", 40);
+        assert_eq!(ask(None), 0);
+        assert_eq!(ask(Some("nas: sftp")), 1);
+        assert_eq!(listed.get(), 4, "a failure is not kept");
+        write("[box]\ntype = s3\n", 0);
+        ask(Some("box: s3"));
+        ask(Some("box: s3"));
+        assert_eq!(listed.get(), 6, "a file written just now is not kept");
+        write("[box]\ntype = s3\n[c]\ntype = s3\n", 30);
+        ask(Some("box: s3\nc: s3"));
+        ask(Some("box: s3\nc: s3"));
+        assert_eq!(listed.get(), 7);
+        forget_listed();
+        ask(Some("box: s3\nc: s3"));
+        assert_eq!(
+            (found.get(), listed.get()),
+            (2, 8),
+            "forgotten: placed and asked again"
+        );
+    }
 
     /// A password command whose path holds spaces and a quote is run
     /// whole: rclone splits the flag at spaces, CSV's way. Against the
