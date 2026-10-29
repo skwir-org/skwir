@@ -107,6 +107,12 @@ registered in `App::notes` by its plugin); all share one model,
 - The index learns from what providers read and from applied changes
   (`Executor::observe`), each remote's in its lane: a folder copied,
   restored, or moved in from where no count covered is counted.
+- A batch of files is learned folder by folder: a folder's files are
+  changed in place when none comes or goes, else merged with the batch
+  once from its first name on; a folder moved or gone leaves the index
+  whole (`State::take_folder`), never file by file. Counts by tag are
+  kept in tag order, and the home folder's counts are summed once per
+  batch.
 - Renaming or removing a tag everywhere (`tags.rename`, `tags.delete`;
   several merge into one plan) takes its files from the search, as a plan
   for review. Under home, the tag's pin and color follow as a step of the
@@ -132,6 +138,9 @@ registered in `App::notes` by its plugin); all share one model,
   places count them (`TagIndex::top`): none from hidden folders or the
   network mounts below it. Its counts are kept between pieces, and the
   mounts' pieces alone are read to take theirs out.
+- The tags offered while one is typed (`vocabulary.rs`) are at most
+  2,000; past that, those least recently seen or used are forgotten, a
+  tenth at a time.
 
 ## Companions (ADR-028)
 

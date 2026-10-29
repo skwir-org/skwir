@@ -45,6 +45,17 @@ around the views is in [shell.md](shell.md).
 
 ## Selection
 
+- A listing says what changed through its versions: `version` for
+  anything, `names_version` when entries come, go or are renamed,
+  `shown_version` when whether a listed entry is shown may have changed
+  (gone, hidden, renamed to a dot name, a companion's file), and
+  `updated_since(version)` for the entries that arrived or changed in
+  place since a version (`None` once it no longer keeps that far back).
+  A pane says the same of the folders opened in place: `tree_version`
+  for anything, `tree_members_version` for their entries. A cache of
+  what is shown keys on the membership versions, and on `version` only
+  when it reads metadata; the selection after a pump and a narrowing are
+  tested again only for what `updated_since` names.
 - An arrow or a click selects the item reached, and the selection then
   follows the cursor. Toggles, ranges and select all *pick*: the selection
   stays put.
@@ -169,6 +180,12 @@ around the views is in [shell.md](shell.md).
   which entries a rectangle covers.
 - Its release listener is registered every frame: a quick click releases
   before the repaint that would register it.
+- A band being drawn sends what changed since its last move (`select`
+  with mode `change`: `ids` added, `removed` taken out, typed through
+  `Shell::run_args`), never the whole selection again; what was selected
+  before it began is never taken out, and only the ids added are checked
+  against what the pane shows. The release settles it once, kept then
+  covered in the order shown (`band_change`).
 
 ## Grid
 
@@ -186,10 +203,11 @@ around the views is in [shell.md](shell.md).
   keeps its own height in a taller row, hanging from the top, so its
   highlight and hit area hug it.
 - `GridView::measure` counts each name's lines with the text system's
-  line wrapper when names (`Listing::names_version`, untouched by
-  hydration), order or zoom change; never per frame or metadata batch. The
-  label is clamped to that count, so a disagreement costs an ellipsis, not
-  an overlap.
+  line wrapper when the order drawn changes (its identity: arrivals count
+  once placed in it, and a name changed in place sorts again), or the
+  zoom or the font; never per frame, per batch of arrivals or per batch
+  of metadata. The label is clamped to that count, so a disagreement
+  costs an ellipsis, not an overlap.
 - A tile's height is its name's and the captions chosen, never what its
   metadata holds: an entry's tags or details arriving never move a row.
   Its tags are a strip over the picture's top edge, as wide as the

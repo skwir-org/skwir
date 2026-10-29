@@ -18,6 +18,13 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   guessed. A user's shortcut is checked against the declarations when a
   save adds or changes it; one stored unchanged whose command nothing
   registers waits for its plugin, bound to nothing (ADR-024).
+- A caller in this process holding typed arguments (the window's views:
+  hydration, a rubber band) dispatches with `App::dispatch_args(name,
+  args)`. A command registered with that type (`register::<A>`) is
+  handed them as they are, with no JSON made; any other registration of
+  the name gets them as JSON. The handler, the thread and the panic
+  guard are the same as for `dispatch`, so the command surface is
+  unchanged; an agent's or a script's call still arrives as JSON.
 - **Forms (ADR-024).** Arguments that make a command one thing to do are
   declared with its title (`Declared::forms`: `sort {"key": "size"}` is
   Sort by size), and every list of actions calls it so

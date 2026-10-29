@@ -208,6 +208,10 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   pdfium-render knows one level up only: the third level read as the
   second. `tools/pdf/check.py` asserts three levels and an entry without
   a destination for each engine.
+- The contents' entries and the pages they lead to (`outline::Pages`) are
+  built once per session (`reader::Outline`, in `reader_opened`), never
+  at a frame; the part shown is the entry leading to the highest page at
+  or before the one shown, the last of those, found by binary search.
 
 ## Measuring
 

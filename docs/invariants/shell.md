@@ -601,7 +601,11 @@ of bars, split or not.
   screen, which covers the window (previews.md, "The whole screen").
 - **Footers hold state, never messages** (`status.rs`). A pane's footer:
   counts, the selection's size, or with nothing selected what its files
-  weigh (`weight.rs`, on a worker; `PaneView::weighs` for a view that
+  weigh (`weight.rs`: each file shown as the listing stat-ed it, else as
+  a worker in the folder's lane stat-ed it once per listing, kept by its
+  entry; a filter, hidden files shown or a file come adds up again and
+  stats only what neither knows; a size learnt adds up again once the
+  request running has answered; `PaneView::weighs` for a view that
   measures folders). The window's state (Undo, pending paste, plugin
   counts via `tally::Tally`, proposals, the player's strip) ends the last
   pane's footer. Side panels have no footer.

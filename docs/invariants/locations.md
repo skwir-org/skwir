@@ -178,7 +178,14 @@ and `notes.agree` are core `notes.*` commands.
   descendants through the initial search's traversal rules and depth
   measured from the search root; discoveries stream without clearing or
   completing the listing again. Known descendants follow their renamed
-  parent without being published twice.
+  parent without being published twice. A search checks a plan's
+  changes again only when a change names a path at or below its folder,
+  or a folder above it; it then follows only the results at or below
+  the paths the change names (a path-ordered map), never every result.
+- A search reads a folder's names for the stores that look for files
+  beside a file (companions) only once a store asks, and keeps them
+  while the walk decides that folder's groups (half a second unused,
+  within a bound), one read shared by the walkers asking at once.
 - **Hints (ADR-026):** a search asks indexes first (`skwir_core::hints`:
   Baloo, the tags index), checks what they name, and still walks: the
   index hints, the walk answers.

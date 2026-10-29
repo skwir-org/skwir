@@ -467,6 +467,13 @@ A text document is read as its structure, or laid out as pages.
   entry that leads nowhere but is named (an EPUB 3 heading over a group
   of chapters: a part) is a row without a target, its entries nested
   under it; one with neither only wraps them, and adds no depth.
+- **The contents are worked out once per section** (`inspector::Contents`,
+  on the worker with the inspection): the entries, each fragment and
+  printed page's mark looked up in one map of anchors (`Anchors`), and
+  where each part begins. A frame only finds the part shown from the
+  block at the top, by binary search; it never walks the blocks or the
+  rows. The pictures still to decode are listed once per inspection
+  (`inspector_pictures::Later`).
 - **A book counts chapters or printed pages** (`Inspection::printed_pages`,
   from `page-list` or NCX `pageList`; the `ui.printed_pages` preference,
   chosen in the count's own picker, `preview_bar::unit_popup`).
