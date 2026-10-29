@@ -2,7 +2,7 @@
 //! move, copy, or trash them all at once into wherever you are. The shelf is
 //! also a virtual location (`shelf:`) so any view can show it.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
@@ -86,6 +86,8 @@ impl State {
 
     /// Drop `ids` from the shelf and from every open listing of it.
     fn forget(&mut self, ids: &[EntryId]) -> usize {
+        // Asked of every item: a set, as Clear asks them all.
+        let ids: HashSet<EntryId> = ids.iter().copied().collect();
         let mut removed = Vec::new();
         self.items.retain(|i| {
             let gone = ids.contains(&i.id);
@@ -141,15 +143,21 @@ impl ShelfPlugin {
     /// nothing is stat-ed here: this runs on the dispatching thread.
     fn add(state: &Mutex<State>, new: Vec<(ShelfItem, Option<Entry>)>) -> usize {
         let mut s = state.lock();
+        // A name shelved once, however it came: two names of one file are
+        // two items (ADR-049). Asked of a set of the paths shelved: a
+        // folder's selection shelved compared each with every item.
+        let fresh: Vec<bool> = {
+            let mut shelved: HashSet<&Path> = s.items.iter().map(|i| i.path.as_path()).collect();
+            new.iter()
+                .map(|(item, _)| shelved.insert(item.path.as_path()))
+                .collect()
+        };
         let mut added = Vec::new();
-        for (item, entry) in new {
-            // A name shelved once, however it came: two names of one file
-            // are two items (ADR-049).
-            if s.items.iter().any(|i| i.path == item.path) {
-                continue;
+        for ((item, entry), fresh) in new.into_iter().zip(fresh) {
+            if fresh {
+                added.push(entry.unwrap_or_else(|| item.entry()));
+                s.items.push(item);
             }
-            added.push(entry.unwrap_or_else(|| item.entry()));
-            s.items.push(item);
         }
         let n = added.len();
         if n > 0 {
@@ -223,24 +231,28 @@ fn follow(state: &Arc<Mutex<State>>, changes: &[Change], app: &App) {
                 let mut removed = Vec::new();
                 let mut added = Vec::new();
                 let mut lost = Vec::new();
+                // Where each item is, by its id (one item an id): asked for
+                // each file moved.
+                let mut at: HashMap<EntryId, usize> = HashMap::new();
+                for (n, i) in s.items.iter().enumerate() {
+                    at.entry(i.id).or_insert(n);
+                }
                 for (old, path, entry) in found {
                     // Only items still on the shelf, still at that path.
-                    if !s.items.iter().any(|i| i.id == old && i.path == path) {
+                    let Some(&n) = at.get(&old).filter(|&&n| s.items[n].path == path) else {
                         continue;
-                    }
+                    };
                     let Some(entry) = entry.filter(|e| e.id != old) else {
                         continue;
                     };
-                    if s.items.iter().any(|i| i.id == entry.id) {
+                    if at.contains_key(&entry.id) {
                         // Now the same file as another item: keep that one.
                         lost.push(old);
                         continue;
                     }
-                    let item = s
-                        .items
-                        .iter_mut()
-                        .find(|i| i.id == old)
-                        .expect("checked above");
+                    at.remove(&old);
+                    at.insert(entry.id, n);
+                    let item = &mut s.items[n];
                     item.id = entry.id;
                     item.kind = entry.kind;
                     removed.push(old);
@@ -831,6 +843,38 @@ mod tests {
                 .is_empty()
         );
         assert!(app.dispatch(&Invocation::new("shelf.trash")).is_err());
+    }
+
+    /// A folder's worth of entries shelved, shelved again, half taken off
+    /// and the rest cleared: each asked of a set, at a size where
+    /// comparing each item with every other would not end.
+    #[test]
+    fn a_large_selection_is_shelved_once_taken_off_and_cleared() {
+        const N: u64 = 50_000;
+        let state = Mutex::new(State::default());
+        let items = || -> Vec<(ShelfItem, Option<Entry>)> {
+            (0..N)
+                .map(|i| {
+                    let name = OsString::from(format!("file {i}.txt"));
+                    let path = PathBuf::from("/synthetic/shelved").join(&name);
+                    let id = EntryId::at_path(skwir_core::FileId::new(1, i), &path);
+                    let item = ShelfItem {
+                        id,
+                        path,
+                        name,
+                        kind: EntryKind::File,
+                    };
+                    (item, None)
+                })
+                .collect()
+        };
+        assert_eq!(ShelfPlugin::add(&state, items()), N as usize);
+        assert_eq!(ShelfPlugin::add(&state, items()), 0, "each name once");
+        let half: Vec<EntryId> = state.lock().items.iter().step_by(2).map(|i| i.id).collect();
+        assert_eq!(ShelfPlugin::remove(&state, &half), half.len());
+        assert_eq!(state.lock().items.len(), N as usize - half.len());
+        ShelfPlugin::clear(&state);
+        assert!(state.lock().items.is_empty());
     }
 
     #[test]
