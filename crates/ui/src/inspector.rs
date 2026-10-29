@@ -656,7 +656,7 @@ impl Default for State {
         Self {
             request: InspectRequest::default(),
             focus: None,
-            list: ListState::new(0, ListAlignment::Top, px(100.)),
+            list: ListState::new(0, ListAlignment::Top, px(crate::inspector_pages::OVERDRAW)),
             visible: Arc::new(Vec::new()),
             collapsed: Arc::default(),
             selected: None,
@@ -816,7 +816,7 @@ impl State {
             // Scrolled up out of the next section: read on from this one's
             // end; a screen at a time, from its last page.
             if self.paged() {
-                self.pages.borrow_mut().last_page();
+                self.pages.borrow_mut().last_page(&self.list);
             } else {
                 self.list.scroll_to(gpui::ListOffset {
                     item_ix: self.list.item_count().saturating_sub(1),
@@ -2253,7 +2253,8 @@ impl Shell {
                     cx.notify();
                 }
                 "end" => {
-                    self.preview.inspection.pages.borrow_mut().last_page();
+                    let state = &self.preview.inspection;
+                    state.pages.borrow_mut().last_page(&state.list);
                     cx.notify();
                 }
                 _ => {}

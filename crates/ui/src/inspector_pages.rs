@@ -42,9 +42,13 @@ pub type Texts = Rc<RefCell<Vec<Drawn>>>;
 /// Where gpui sets a line is a sum of line heights: within half a pixel.
 const NEAR: f32 = 0.5;
 
-/// Frames a page found back from where it ends may take to be laid out:
-/// what is above was not laid out yet, and is measured as it comes.
+/// Frames a page found back from where it ends may take: a few, as the list
+/// measures a page above its top meanwhile (`found_back`); more where an
+/// item changes height as it is shown (a picture decoded).
 const SETTLE_TRIES: u8 = 6;
+
+/// What the inspector's list lays out beyond its view, above and below.
+pub const OVERDRAW: f32 = 100.;
 
 /// How long a trackpad's swipe must pause before it turns again: the
 /// system says nothing of where one ends (gpui's Wayland and X11 report
@@ -172,8 +176,9 @@ pub enum Move {
     Stay,
     /// Scroll this far, and read the next frame.
     By(f32),
-    /// Go to this offset and a page above it, and read the next frame.
-    Above(ListOffset, f32),
+    /// Go to this offset, and read the next frame: the page above it is
+    /// measured as it is laid out (`found_back`).
+    To(ListOffset),
 }
 
 /// What a turn did.
@@ -191,6 +196,12 @@ pub enum Turn {
 pub struct Laid<'a> {
     /// The list's scroll top.
     pub top: ListOffset,
+    /// How far the top is from the list's start, items not yet laid out
+    /// counted at their estimate: none at the section's start. Never the
+    /// top's item number: an item that takes no room (the picture an
+    /// inspection carries, empty without one) may stand before it, and
+    /// gpui's list scrolled up to its start stops after it.
+    pub above: f32,
     /// The top and bottom of its view, in the window.
     pub view: (f32, f32),
     /// What the pages are cut at: the view's width and the text's size.
@@ -296,7 +307,7 @@ impl Pages {
             }
             self.layout = Some(laid.layout);
         }
-        let at_start = laid.top.item_ix == 0 && f32::from(laid.top.offset_in_item) <= NEAR;
+        let at_start = laid.above <= NEAR;
         if let Some(settling) = self.settling.as_mut() {
             settling.tries += 1;
             let at = match settling.ending {
@@ -310,7 +321,7 @@ impl Pages {
                 // Covered until found: no page drawn on the way.
                 self.cover = Some(top);
                 let Some(end) = laid.y_of(at) else {
-                    return Move::Above(at, height);
+                    return Move::To(at);
                 };
                 // The view first reaches a page above the end, so what the
                 // page holds is laid out; then it moves down to the first
@@ -389,7 +400,7 @@ impl Pages {
             self.go(list, before);
             return Turn::Page;
         }
-        self.found_back(Ending::At(top));
+        self.found_back(list, Ending::At(top));
         Turn::Page
     }
 
@@ -407,9 +418,9 @@ impl Pages {
     }
 
     /// The section's last page: the one that ends where it does.
-    pub fn last_page(&mut self) {
+    pub fn last_page(&mut self, list: &ListState) {
         self.behind.clear();
-        self.found_back(Ending::End);
+        self.found_back(list, Ending::End);
     }
 
     /// Whether item `item` is drawn whole on the page shown, as last read.
@@ -434,8 +445,13 @@ impl Pages {
     }
 
     /// The page that ends at `ending`, found over the next frames from
-    /// where the list is.
-    fn found_back(&mut self, ending: Ending) {
+    /// where the list is. Until it is, the list measures a page above its
+    /// top as it lays out (its overdraw a view tall): the move up a page
+    /// then crosses heights known, where the estimates of items not laid
+    /// out yet (a long paragraph counted as a short one) would leave it
+    /// short of the page, a frame per item.
+    fn found_back(&mut self, list: &ListState, ending: Ending) {
+        list.set_overdraw(list.viewport_bounds().size.height.max(px(OVERDRAW)));
         self.end = None;
         self.settling = Some(Settling {
             ending,
@@ -489,6 +505,7 @@ pub fn overlay(
             let texts = std::mem::take(&mut *pages.texts.borrow_mut());
             let moved = pages.read(&Laid {
                 top: list.logical_scroll_top(),
+                above: -f32::from(list.scroll_px_offset_for_scrollbar().y),
                 view: (f32::from(view.top()), f32::from(view.bottom())),
                 layout: (f32::from(view.size.width), size),
                 items: &items,
@@ -498,10 +515,11 @@ pub fn overlay(
             match moved {
                 Move::Stay => {}
                 Move::By(by) => list.scroll_by(px(by)),
-                Move::Above(at, height) => {
-                    list.scroll_to(at);
-                    list.scroll_by(px(-height));
-                }
+                Move::To(at) => list.scroll_to(at),
+            }
+            // A page found, the list lays out no more than it shows.
+            if pages.settling.is_none() {
+                list.set_overdraw(px(OVERDRAW));
             }
             if moved != Move::Stay {
                 window.on_next_frame(|window, _| window.refresh());
@@ -671,6 +689,7 @@ mod tests {
         let texts = [text(8., 5, 20.), text(124., 10, 20.)];
         let laid = Laid {
             top: offset(0, 0.),
+            above: 0.,
             view: (0., 300.),
             layout: (600., 16.),
             items: &items,
@@ -688,6 +707,7 @@ mod tests {
         let texts = [text(-160., 10, 20.)];
         let laid = Laid {
             top: offset(2, 168.),
+            above: 284.,
             items: &items,
             texts: &texts,
             ..laid
@@ -701,37 +721,37 @@ mod tests {
         assert_eq!(pages.end, Some(offset(2, 168.)));
     }
 
+    /// Three paragraphs of ten 20 px lines in 216 px items after the
+    /// picture's empty item, the spacer after them; the panel 300 px. The
+    /// frame read with content `y` at the view's top: gpui's list, at its
+    /// start, has its top at the first paragraph's.
+    fn read(pages: &mut Pages, y: f32) -> Move {
+        let items: Vec<(usize, f32, f32)> = [(1, 0.), (2, 216.), (3, 432.), (4, 648.)]
+            .into_iter()
+            .map(|(ix, top)| (ix, top - y, top - y + if ix == 4 { 1000. } else { 216. }))
+            .filter(|&(_, _, bottom)| bottom > 0.)
+            .collect();
+        let texts: Vec<Drawn> = [8., 224., 440.]
+            .into_iter()
+            .map(|top| text(top - y, 10, 20.))
+            .collect();
+        let (ix, at, _) = items[0];
+        pages.read(&Laid {
+            top: offset(ix, -at),
+            above: y,
+            view: (0., 300.),
+            layout: (600., 16.),
+            items: &items,
+            spacer: 4,
+            texts: &texts,
+        })
+    }
+
     #[test]
     fn a_page_turned_back_to_with_nothing_behind_ends_where_the_shown_one_starts() {
-        // Three paragraphs of ten 20 px lines in 216 px items, the spacer
-        // after them; the panel 300 px. A link showed the third at the top.
+        // A link showed the third paragraph at the top.
         let list = ListState::new(5, gpui::ListAlignment::Top, px(100.));
         let mut pages = Pages::default();
-        // The frame as laid out with content `y` at the view's top.
-        let frame = |y: f32| {
-            let items: Vec<(usize, f32, f32)> = [(1, 0.), (2, 216.), (3, 432.), (4, 648.)]
-                .into_iter()
-                .map(|(ix, top)| (ix, top - y, top - y + if ix == 4 { 1000. } else { 216. }))
-                .filter(|&(_, _, bottom)| bottom > 0.)
-                .collect();
-            let texts: Vec<Drawn> = [8., 224., 440.]
-                .into_iter()
-                .map(|top| text(top - y, 10, 20.))
-                .collect();
-            let (ix, at, _) = items[0];
-            (offset(ix, -at), items, texts)
-        };
-        let read = |pages: &mut Pages, y: f32| {
-            let (top, items, texts) = frame(y);
-            pages.read(&Laid {
-                top,
-                view: (0., 300.),
-                layout: (600., 16.),
-                items: &items,
-                spacer: 4,
-                texts: &texts,
-            })
-        };
         assert_eq!(read(&mut pages, 432.), Move::Stay);
         assert_eq!(pages.back(&list), Turn::Page);
         // Up a page from its top, so what the page before holds is laid out…
@@ -744,11 +764,27 @@ mod tests {
         assert_eq!(pages.next, Some(offset(3, 0.)));
         // The section's last page is found the same way from its end.
         // Already a page above its end: down to the second's 8th line.
-        pages.last_page();
+        pages.last_page(&list);
         assert_eq!(read(&mut pages, 148.), Move::By(216.));
         assert_eq!(read(&mut pages, 364.), Move::Stay);
         assert_eq!(pages.cover, Some(284.));
         assert_eq!(pages.next, None, "it ends the section");
+    }
+
+    #[test]
+    fn the_section_starts_where_nothing_above_the_top_takes_room() {
+        // The second paragraph at the top, nothing behind it.
+        let list = ListState::new(5, gpui::ListAlignment::Top, px(100.));
+        let mut pages = Pages::default();
+        assert_eq!(read(&mut pages, 216.), Move::Stay);
+        assert_eq!(pages.back(&list), Turn::Page);
+        assert_eq!(read(&mut pages, 216.), Move::By(-300.));
+        // The list stops at its start, its top the first paragraph's (item
+        // 1, the picture's item before it empty): the page found there is
+        // the section's first, and ends where the one turned from starts.
+        assert_eq!(read(&mut pages, 0.), Move::Stay);
+        assert_eq!(pages.cover, Some(216.));
+        assert_eq!(pages.back(&list), Turn::Section);
     }
 
     #[test]
@@ -764,6 +800,7 @@ mod tests {
         let texts = [text(8., 5, 20.), text(124., 10, 20.)];
         let laid = Laid {
             top: offset(0, 0.),
+            above: 0.,
             view: (0., 300.),
             layout: (600., 16.),
             items: &items,
@@ -775,6 +812,7 @@ mod tests {
         // A link moved the list into a line: the page starts at its top.
         let moved = Laid {
             top: offset(2, 30.),
+            above: 146.,
             items: &[(2, -30., 186.), (3, 186., 1186.)],
             texts: &[text(-22., 10, 20.)],
             ..laid
@@ -788,6 +826,7 @@ mod tests {
         pages.forward(&list);
         let narrower = Laid {
             top: offset(2, 168.),
+            above: 284.,
             layout: (500., 16.),
             items: &[(2, -168., 48.), (3, 48., 1048.)],
             texts: &[text(-160., 10, 20.)],

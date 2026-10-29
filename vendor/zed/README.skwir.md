@@ -71,6 +71,7 @@ at the vendored commit.
 | `0039-shifted-space-is-space` | The space bar with Shift is Space to key bindings whatever the layout types there (Linux) | — |
 | `0040-list-keeps-height-hints-across-a-width-change` | A list keeps each item's height, measured or hinted, as its estimate when its width changes and on its first layout, so a scrollbar measures every item (0004's last hunk) | — |
 | `0041-key-binding-for-a-system` | `KeyBinding::new_for_os` binds any string, its `secondary-` the given system's, without a keyboard mapper (`KeyBinding::new` takes a static string, and `load` maps keys by the layout) | — |
+| `0042-list-overdraw-set-later` | `ListState::set_overdraw`: a list about to scroll up by more than its overdraw measures that far first, and crosses heights known rather than hinted | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -656,6 +657,27 @@ the context does not parse. Skwir names its system once
 keystroke parsed or written back and every binding (`keymap::binding`,
 which warns of one that does not parse). No test of its own: Skwir's
 keymap tests build every default binding through it.
+
+### 0042: A list's overdraw set later
+
+A list measures the items in its overdraw above its scroll top, and only
+those: `scroll_by` counts every other item above at its hint. Upstream fixes
+the overdraw when the `ListState` is made. Text read a screen at a time
+(ADR-103) finds the page that ends where the one shown starts by scrolling
+up a page from there; across items not laid out yet, a book's long
+paragraphs hinted as short ones, the move went too far, and each frame
+measured one more item on the way back, so a chapter's last page was
+found a page short (2026-10-29).
+
+`ListState::set_overdraw` changes it from the next layout on. Skwir's
+pager makes it a view tall while it finds a page back
+(`inspector_pages::found_back`), so the frame laid out from where the page
+ends has measured the page above, and puts it back once the page is
+found. `test_overdraw_set_later_measures_that_far_above_the_top` scrolls
+400 px up from the fifth of ten 300 px items hinted at 50 px: with no
+overdraw it reaches the list's start (eight hints); with 400 px set and a
+layout between, it crosses item 4 and item 3's last 100 px, 200 px into
+item 3. `just gpui-check` runs it with upstream's list tests.
 
 ## Adding or changing a patch
 

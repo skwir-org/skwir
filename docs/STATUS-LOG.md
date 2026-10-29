@@ -7127,3 +7127,51 @@ at once left the pane where it was once the read ended. A place's
 completions (`tags:/`, a provider's) go through the same hold but were
 not tried. Runs: `skwir-ui`'s tests (409 of 409); clippy (`-D warnings`)
 on `skwir-core` and `skwir-ui`; rustfmt.
+
+### Text read a screen at a time: a chapter's start and end (2026-10-29, ADR-103)
+
+Two faults of the pager, found with a book whose chapters hold no
+picture and long paragraphs:
+
+- **Stuck at a chapter's start.** Turning back through a chapter
+  reached from the one after (no pages behind, each found back from
+  where the next starts), the wheel stopped on a blank page and never
+  went to the chapter before. An inspection's first list item is its
+  picture, empty without one; gpui's list scrolled up to its start stops
+  after an empty item (`scroll_by` seeks with `Bias::Right`), so the top
+  was item 1, and the pager took only item 0 at offset 0 for a section's
+  start: the page found back from item 1's top held nothing, and each
+  notch found it again. A section now starts where nothing above the
+  top takes room (`Laid::above`, gpui's scroll offset).
+- **A chapter's last page found a page short.** Landing at a chapter's
+  end (turning back into it), the pager scrolled to the end and up a
+  page, over items not laid out yet that gpui counts at an estimate far
+  below a long paragraph's height: the move went too high, each frame
+  measured one more item, and after the frames allowed
+  (`SETTLE_TRIES`) the page shown ended a page before the chapter did.
+  While a page is found back, the list's overdraw is now a view tall
+  (gpui patch 0042, `ListState::set_overdraw`), so the frame laid out
+  from where the page ends has measured the page above, and the move up
+  crosses heights known; the pager scrolls only to where the page ends
+  (`Move::To`), then up from there.
+
+Checked in a window on Xvfb (debug build, 1280 × 860), the pager's trace
+on (`skwir_ui::inspector_pages=trace`): from a chapter's first page,
+back into the one before, every page turned up from its end to its
+start and on into the chapter before, 64 notches, none read twice in a
+row but the frame after a notch; each landing at a chapter's end was its
+last page (`next None`, the text ending there), and a notch on from it
+opened the next chapter's first page. Before, the same walk stopped on
+the blank page for every notch after it, and the landing needed a notch
+more. Unit tests: a section starts with an empty item before it
+(`the_section_starts_where_nothing_above_the_top_takes_room`, which
+failed with the old test: the pager asked the list to move up 84 px it
+could not); gpui's `test_overdraw_set_later_measures_that_far_above_the_top`.
+Runs: `skwir-ui`'s tests (410 of 410), `just gpui-check gpui` (121 of
+121), clippy (`-D warnings`) on `skwir-ui`, rustfmt. Not tried: the
+session's Wayland; Windows and macOS not compiled for this change.
+
+A page found back from where the one shown starts may still be short at
+a chapter's start: it ends where the page turned from began (ADR-103,
+4), so a chapter's first page may hold only its headings when less than
+a page was left above.

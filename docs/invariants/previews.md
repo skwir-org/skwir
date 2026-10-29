@@ -615,6 +615,18 @@ A text document is read as its structure, or laid out as pages.
   what was turned through forgotten. The pager moves it only to start a
   page with a whole line or to find a page back from its end, asking for
   the next frame (`on_next_frame`).
+- A section starts where nothing above the list's top takes room
+  (`Laid::above`, gpui's scroll offset), never at item 0 by number: an
+  inspection's first item is its picture, empty without one, and gpui's
+  list scrolled up to its start stops after an empty item, so a section
+  reached from below never showed item 0 at its top.
+- A page found back from its end crosses heights known, never estimated:
+  until it is found the list's overdraw is a view tall (`found_back`,
+  gpui's `set_overdraw`, patch 0042), so the frame laid out from where the
+  page ends has measured the page above it. Estimates of items not laid
+  out yet (a long paragraph counted as a short one) left a chapter's last
+  page found a page short, a frame per item, past the frames allowed
+  (`SETTLE_TRIES`, a guard, not a schedule).
 - The pager covers what is past the page's end with the panel's paper
   and a hitbox that blocks the pointer, and takes the wheel in the
   capture phase over the text, before the list scrolls it; what is drawn
