@@ -4677,6 +4677,17 @@ fn kio_opens_an_smb_share() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// Each refusal `Gvfs::disconnect` asks again after, as its log says.
+struct Refusals(std::sync::mpsc::Sender<()>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Refusals {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        if event.fields().any(|field| field.name() == "refused") {
+            let _ = self.0.send(());
+        }
+    }
+}
+
 #[test]
 fn gvfs_opens_an_smb_share_its_password_kept() {
     let Some(package) = std::env::var_os("SKWIR_TEST_GVFS").map(PathBuf::from) else {
@@ -4731,34 +4742,64 @@ fn gvfs_opens_an_smb_share_its_password_kept() {
     );
     let remote = skwir_core::fs::reach::of(&connected.point).unwrap();
     let recognised = gvfs.recognises(&remote).expect("GVfs's");
-    // GVfs refuses to let go as busy while its backend is at work (a read
-    // through its bridge; under load, a folder just listed): asked again
-    // until it lets go.
-    let size = 300 << 20;
-    std::fs::write(base.join("share/large.bin"), vec![7u8; size]).unwrap();
+    // GVfs refuses to let go as busy while one of its reads runs (a read
+    // through its bridge; under load, a folder just listed), not while a
+    // file is merely open: asked again until it lets go. A read Samba
+    // does not answer (its processes stopped) keeps it busy until the
+    // test ends it, however long the machine takes to read.
+    std::fs::write(base.join("share/large.bin"), vec![7u8; 8 << 20]).unwrap();
     let large = connected.point.join("large.bin");
-    let (opened, reading) = std::sync::mpsc::channel();
-    let reader = std::thread::spawn(move || {
-        use std::io::Read;
-        let mut file = std::fs::File::open(&large).unwrap();
-        opened.send(()).unwrap();
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).map(|_| bytes.len())
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let (refused, refusals) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let mut smbd = descendants(samba.child.id());
+        smbd.push(samba.child.id());
+        signal("-STOP", &smbd);
+        // Let go however the test ends, before its threads are waited for.
+        let mut thawed = Thawed(Some(smbd));
+        let reader = scope.spawn(|| {
+            use std::io::Read;
+            let mut file = std::fs::File::open(&large)?;
+            let mut chunk = vec![0u8; 1 << 20];
+            let mut read = 0;
+            while !stop.load(std::sync::atomic::Ordering::SeqCst) {
+                match file.read(&mut chunk)? {
+                    0 => break,
+                    n => read += n,
+                }
+            }
+            Ok::<_, std::io::Error>(read)
+        });
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while waiting_on_fuse().is_empty() {
+            assert!(Instant::now() < deadline, "a read waits on Samba");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let (gvfs, remote, recognised) = (&gvfs, &remote, &recognised);
+        let disconnecting = scope.spawn(move || {
+            use tracing_subscriber::layer::SubscriberExt;
+            let logged = tracing_subscriber::registry().with(Refusals(refused));
+            let _logged = tracing::subscriber::set_default(logged);
+            gvfs.disconnect(remote, recognised, &CancelToken::new())
+        });
+        refusals
+            .recv_timeout(Duration::from_secs(15))
+            .expect("GVfs refused while its read waited, and was asked again");
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        signal("-CONT", &thawed.0.take().unwrap_or_default());
+        disconnecting
+            .join()
+            .unwrap()
+            .expect("disconnect, once GVfs let go");
+        // The reader ends once its read is answered, or is cut where GVfs
+        // let go between two of the reads that one asked.
+        if let Err(error) = reader.join().unwrap() {
+            assert!(
+                matches!(error.raw_os_error(), Some(5 | 107)),
+                "cut as GVfs let go: {error}"
+            );
+        }
     });
-    reading.recv().unwrap();
-    std::thread::sleep(Duration::from_millis(50));
-    gvfs.disconnect(&remote, &recognised, &CancelToken::new())
-        .expect("disconnect, once GVfs let go");
-    // GVfs refuses only while one of its reads runs: the reader ends
-    // whole, or cut where it let go between two (seen once in a run of
-    // the whole suite). Either way the disconnect waited its refusals out.
-    match reader.join().unwrap() {
-        Ok(read) => assert_eq!(read, size, "read whole"),
-        Err(error) => assert!(
-            matches!(error.raw_os_error(), Some(5 | 107)),
-            "cut as GVfs let go: {error}"
-        ),
-    }
     // Again: the keyring answers `gio mount`.
     let quiet = Arc::new(Answers::default());
     let ask: Arc<dyn Ask> = Arc::new(Keyed::new(

@@ -558,8 +558,9 @@ ADR-077 (which revises ADR-021).
   through its bridge, a folder just listed through it, closed after the
   bridge's release returned): `Gvfs::disconnect` asks again while the
   mount is still there, five seconds at most (`BUSY_PATIENCE`). It
-  refuses only while a read of its runs: between two, it lets go, and
-  what another program was reading there is cut.
+  refuses only while a read of its runs (a file merely open there holds
+  nothing): between two, it lets go, and what another program was
+  reading there is cut.
 - The system refuses to unmount a folder watched as one used (GVfs's
   trash puts a watch on the top of every mount, inotify). Refused as
   busy, `mounter::unmount` asks what other programs use the mount

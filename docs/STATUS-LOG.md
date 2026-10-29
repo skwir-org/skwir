@@ -6962,3 +6962,36 @@ The two points ADR-102 had left:
   calls are unchanged here. Alone, beside a release build, it failed 2
   of 6 and took 7 to 9.5 s a run, where it took about 1.2 s alone the
   night before. No test mount was left.
+
+### GVfs's busy Disconnect, tested without a race (2026-10-29)
+
+`gvfs_opens_an_smb_share_its_password_kept` failed whenever the machine
+was loaded: its 300 MiB read through GVfs had to end within
+`Gvfs::disconnect`'s five seconds of busy refusals (four times in
+`remote-check` since 2026-10-23, 2 of 6 alone beside a release build).
+Idle, the read could also end before Disconnect's first try, so the test
+did not always see a refusal at all.
+
+- **What GVfs counts as busy**, probed: a file open there, read once
+  and then left alone, holds nothing (`gio mount -u` let go 20 ms after,
+  the file still open); only a read in flight does.
+- **The test** stops its Samba's processes (`SIGSTOP`, thawed by the
+  `Thawed` guard however the test ends), so a read it starts waits on
+  the server and keeps GVfs busy. The test waits until that read is
+  stuck (`waiting_on_fuse`), then for Disconnect's first refusal, seen
+  in its log: `Gvfs::disconnect` now logs each refusal it asks again
+  after (debug, a `refused` field), which a tracing layer on the test's
+  own thread hears (`Refusals`). Then it tells the reader to stop and
+  thaws Samba; Disconnect must let go within its patience.
+- **Checked**: 16 runs alone at loads of 13 to 37, all passed; every
+  run but the first took 0.6 to 0.82 s, the first 16.7 s, which timed
+  reruns did not reproduce (each phase took tens of milliseconds:
+  stuck about 10 ms after connecting, refused 25 ms later, let go
+  230 ms later, one retry). Seen failing both ways: thawing Samba only
+  after Disconnect returns, it was refused for its full patience
+  (4.98 s, "busy"); a Disconnect that gives up at its first refusal
+  fails the test at once ("asked again"), the guard thawing Samba so
+  the test ended in 5.1 s rather than hanging.
+- **`just remote-check`** afterwards, whole, at a load of 7 to 21: 176
+  of 176 (2 skipped), the namespaces' NFS, AFP, AFC and nearby runs
+  passing too; this test took 1.06 s there. No test mount was left.

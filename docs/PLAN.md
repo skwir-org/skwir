@@ -223,11 +223,6 @@ ADR-102)**:
   compiled there, not run: WinFsp is not under Wine, so Windows' mounts
   are never made here; their remote control on the loopback is checked
   on Linux (`what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback`).
-- `gvfs_opens_an_smb_share_its_password_kept` fails in a loaded
-  `remote-check` (three times on 2026-10-29, once on 2026-10-23), and
-  alone beside a release build (2 of 6 on 2026-10-29): its 300 MiB read through GVfs outlasts `Gvfs::disconnect`'s
-  five seconds of busy refusals. A read whose end the test waits for, or a smaller file,
-  would keep what it proves without the race.
 
 **From the review of 2026-10-28** (fixed the same day, "Review fixes
 (2026-10-28)" below; each with its fixer's proposed design in

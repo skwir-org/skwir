@@ -206,8 +206,9 @@ impl Connector for Gvfs {
             .ok_or_else(|| anyhow::anyhow!("GVfs says no address for this mount"))?;
         let gio = skwir_core::os_path::find_program("gio")
             .ok_or_else(|| anyhow::anyhow!("gio (GLib) is not installed"))?;
-        // Refused while GVfs still holds the mount (busy: what its bridge
-        // held, closed a moment after), asked again; gone, it is let go of.
+        // Refused while GVfs is at work on the mount (busy: a read through
+        // its bridge, a folder just listed; a file merely open is not),
+        // asked again; gone, it is let go of.
         let until = Instant::now() + BUSY_PATIENCE;
         loop {
             let mut command = self.gio(&gio);
@@ -221,6 +222,10 @@ impl Connector for Gvfs {
             if Instant::now() >= until || cancel.is_cancelled() {
                 anyhow::bail!("{}", said(&finished.stderr));
             }
+            tracing::debug!(
+                refused = %said(&finished.stderr),
+                "GVfs kept its mount: asked again"
+            );
             std::thread::sleep(Duration::from_millis(200));
         }
     }
