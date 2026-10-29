@@ -512,8 +512,14 @@ fn opened<'a>(
 /// `Pane::kept`, the shallowest first where several hold one.
 struct OpenedIndex(HashMap<EntryId, (usize, usize)>);
 
+/// How many times an `OpenedIndex` was made, for the tests that count them.
+#[cfg(test)]
+static OPENED_INDEXES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 impl OpenedIndex {
     fn of(kept: &[Kept], expanded: &[Opened]) -> Self {
+        #[cfg(test)]
+        OPENED_INDEXES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut held = HashMap::new();
         for (e, o) in expanded.iter().enumerate() {
             let Some(k) = kept.iter().position(|k| k.location == o.location) else {
@@ -584,6 +590,13 @@ pub struct Pane {
     /// Changes whenever what the opened folders show may have changed: the
     /// set, or one of their listings.
     tree_version: u64,
+    /// Changes when the entries the opened folders show may have: the set,
+    /// or one of their listings' names or what it shows
+    /// (`Listing::names_version`, `Listing::shown_version`). Their metadata
+    /// leaves it alone.
+    tree_members_version: u64,
+    /// The selection as last looked over: see `retain_changed`.
+    retained: Option<Retained>,
     order_cache: parking_lot::Mutex<Option<OrderCache>>,
     /// The order `order` last gave, what is shown: where a cursor whose
     /// entry leaves the view goes from (`Selection::retain_near`).
@@ -611,7 +624,85 @@ pub struct Pane {
     filter_cache: parking_lot::Mutex<Option<FilterCache>>,
 }
 
-type FilterCache = (Arc<[EntryId]>, u64, (u64, u64), Arc<[EntryId]>);
+/// The filtered order, and what made it: what the filter keeps of every
+/// entry listed, tested again only for those that arrived or changed since
+/// (`Listing::updated_since`), so a narrowing that reads metadata tests a
+/// batch of it rather than the whole folder at each batch.
+struct FilterCache {
+    /// The filter's version it tested with.
+    filter: u64,
+    /// Each listing tested, the shown one's then the opened folders', by
+    /// its id, with the version it was tested at.
+    at: Vec<(u64, u64)>,
+    /// The entries listed that the filter keeps, of every listing in `at`
+    /// (with some that went since, until it is made again).
+    kept: crate::hashing::Set<EntryId>,
+    /// The order filtered (by identity), and what it kept of it.
+    from: Arc<[EntryId]>,
+    order: Arc<[EntryId]>,
+}
+
+/// Test again, for `cache`, what arrived in `listings` or changed there
+/// since it was made: whether what it keeps moved. `None` when it is not
+/// theirs (another filter, other listings), when one no longer keeps what
+/// changed that far back, or when it holds many more entries than are
+/// listed (those that went since): it is made again.
+fn retest(
+    cache: &mut FilterCache,
+    filter: u64,
+    listings: &[&Listing],
+    keeps: impl Fn(&Entry) -> bool,
+) -> Option<bool> {
+    let listed: usize = listings.iter().map(|l| l.len()).sum();
+    if cache.filter != filter
+        || cache.kept.len() > 2 * listed + 1024
+        || cache.at.len() != listings.len()
+        || cache
+            .at
+            .iter()
+            .zip(listings)
+            .any(|((id, _), l)| *id != l.id())
+    {
+        return None;
+    }
+    let mut moved = false;
+    for ((_, at), listing) in cache.at.iter_mut().zip(listings) {
+        if *at == listing.version() {
+            continue;
+        }
+        for id in listing.updated_since(*at)? {
+            moved |= if listing.get(id).is_some_and(&keeps) {
+                cache.kept.insert(id)
+            } else {
+                cache.kept.remove(&id)
+            };
+        }
+        *at = listing.version();
+    }
+    Some(moved)
+}
+
+/// What decides which entries a pane shows, metadata aside: the selection
+/// is looked over again after a pump only once one of these moved
+/// (`Pane::retain_changed`), or, while a filter reads metadata, for what
+/// changed of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RetainKey {
+    /// The listing shown, and its `shown_version`.
+    listing: (u64, u64),
+    tree: u64,
+    filter: u64,
+    show_hidden: bool,
+    /// The selection as it was looked over.
+    selection: u64,
+}
+
+/// The selection as last looked over (`Pane::retain_changed`): what decided
+/// it, and each listing's version then (the shown one's first).
+struct Retained {
+    key: RetainKey,
+    at: Vec<(u64, u64)>,
+}
 
 /// What a folder's files are narrowed to (a locked filter): kept while
 /// the pane shows the folder it was set in or one under it
@@ -806,6 +897,8 @@ impl Pane {
             expanded: Vec::new(),
             expanded_version: 0,
             tree_version: 0,
+            tree_members_version: 0,
+            retained: None,
             order_cache: parking_lot::Mutex::new(None),
             shown: parking_lot::Mutex::new(None),
             filter: None,
@@ -1162,13 +1255,19 @@ impl Pane {
             .cloned()
             .chain(self.expanded.iter().map(|o| o.location.clone()))
             .collect();
+        let before = self.kept.len();
         if let Some(left) = self.left.take()
             && wanted.contains(&left.location)
         {
             self.kept.push(left);
         }
+        let pushed = self.kept.len() > before;
         self.kept.retain(|k| wanted.contains(&k.location));
-        self.opened_moved();
+        // Asked at each sync of the window: which opened folder holds which
+        // entry is made again only when what is kept changed.
+        if pushed || self.kept.len() != before {
+            self.opened_moved();
+        }
         let shown = self.location().cloned();
         wanted
             .into_iter()
@@ -1192,6 +1291,8 @@ impl Pane {
         for kept in &mut self.kept {
             kept.listing.companions_changed();
         }
+        self.tree_version += 1;
+        self.tree_members_version += 1;
         self.retain_shown();
     }
 
@@ -1312,19 +1413,29 @@ impl Pane {
         };
         let mut moves: Vec<(Location, Location)> = self.follow_moved().into_iter().collect();
         let mut opened = 0;
+        let mut members = false;
         for kept in &mut self.kept {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
             if left.is_zero() {
                 break;
             }
+            let before = (kept.listing.names_version(), kept.listing.shown_version());
             let applied = kept.pump(left);
             if self.expanded.iter().any(|o| o.location == kept.location) {
                 opened += applied;
+                members |= before != (kept.listing.names_version(), kept.listing.shown_version());
             }
             moves.extend(kept.follow_moved());
         }
         if opened > 0 {
             self.tree_version += 1;
+        }
+        // Which opened folder holds which entry is made again only when
+        // their entries came, went or were renamed: a batch of metadata,
+        // each row scrolled to in a big folder opened in place, made it
+        // again from every entry.
+        if members {
+            self.tree_members_version += 1;
             self.opened_moved();
         }
         if !moves.is_empty() {
@@ -1335,7 +1446,7 @@ impl Pane {
             return 0;
         }
         if n + opened > 0 {
-            self.retain_shown();
+            self.retain_changed();
         }
         if n > 0 {
             self.take_reveal();
@@ -1457,6 +1568,26 @@ impl Pane {
         }
     }
 
+    /// Add `added` to the selection and take out `removed`
+    /// (`Selection::change`), asking only of what it added whether the
+    /// pane shows it: a selection looked over before the change is still
+    /// looked over after it.
+    pub(crate) fn change_selection(&mut self, added: &[EntryId], removed: &[EntryId]) {
+        let before = self.selection.revision();
+        self.selection.change(added, removed);
+        self.retain_shown_of(added);
+        let now = self.retain_key();
+        if let Some(retained) = &mut self.retained
+            && retained.key
+                == (RetainKey {
+                    selection: before,
+                    ..now
+                })
+        {
+            retained.key.selection = now.selection;
+        }
+    }
+
     /// `retain_shown`, the cursor going back to what is before it when its
     /// entry leaves the view (`Selection::retain_near`).
     fn keep_shown(&mut self, back: bool) {
@@ -1474,6 +1605,80 @@ impl Pane {
             Some(shown) => self.selection.retain_near(holds, &shown, back),
             None => self.selection.retain(holds),
         }
+        self.retained = Some(Retained {
+            key: self.retain_key(),
+            at: self.listings_at(),
+        });
+    }
+
+    /// What decides which entries the pane shows, metadata aside, now.
+    fn retain_key(&self) -> RetainKey {
+        RetainKey {
+            listing: (self.listing.id(), self.listing.shown_version()),
+            tree: self.tree_members_version,
+            filter: self.filter_version,
+            show_hidden: self.sort.show_hidden,
+            selection: self.selection.revision(),
+        }
+    }
+
+    /// The listings the pane shows entries of, the shown one's first, each
+    /// by its id with its version.
+    fn listings(&self) -> impl Iterator<Item = &Listing> {
+        std::iter::once(&self.listing)
+            .chain(opened(&self.kept, &self.expanded).map(|(_, k)| &k.listing))
+    }
+
+    fn listings_at(&self) -> Vec<(u64, u64)> {
+        self.listings().map(|l| (l.id(), l.version())).collect()
+    }
+
+    /// `retain_shown` after a pump, only for what may have changed: nothing
+    /// when only metadata did and no filter reads it, the entries it
+    /// changed when one does (a narrowing), the whole selection only once
+    /// what decides what is shown moved (an entry gone, hidden, the
+    /// filter). A pass over a selection of a whole folder for each batch of
+    /// its metadata was the folder's size each time.
+    fn retain_changed(&mut self) {
+        let Some(retained) = self.retained.take() else {
+            return self.retain_shown();
+        };
+        if retained.key != self.retain_key() {
+            return self.retain_shown();
+        }
+        let at = self.listings_at();
+        let metadata = self.narrowed.is_some() || self.read.as_ref().is_some_and(|r| r.metadata);
+        if at == retained.at || !metadata {
+            self.retained = Some(Retained {
+                key: retained.key,
+                at,
+            });
+            return;
+        }
+        // A filter reads metadata: the selected entries whose metadata
+        // changed are asked again, as long as each listing is the one
+        // looked over and keeps what changed since.
+        let same = at.len() == retained.at.len()
+            && at
+                .iter()
+                .zip(&retained.at)
+                .all(|(now, then)| now.0 == then.0);
+        let asked = || -> Option<Vec<EntryId>> {
+            let mut asked = Vec::new();
+            for (listing, (_, then)) in self.listings().zip(&retained.at) {
+                let changed = listing.updated_since(*then)?;
+                asked.extend(changed.filter(|id| self.selection.contains(*id)));
+            }
+            Some(asked)
+        };
+        let Some(asked) = same.then(asked).flatten() else {
+            return self.retain_shown();
+        };
+        self.retain_shown_of(&asked);
+        self.retained = Some(Retained {
+            key: self.retain_key(),
+            at,
+        });
     }
 
     /// Whether the pane shows entry `id`: listed, here or in a folder
@@ -1494,6 +1699,7 @@ impl Pane {
     fn expanded_changed(&mut self) {
         self.expanded_version += 1;
         self.tree_version += 1;
+        self.tree_members_version += 1;
         self.opened_moved();
     }
 
@@ -1535,6 +1741,13 @@ impl Pane {
     /// have: a view keys what it drew on it beside the listing's version.
     pub fn tree_version(&self) -> u64 {
         self.tree_version
+    }
+
+    /// Changes whenever the entries the opened folders show may have (the
+    /// set, their names, which are shown), not their metadata: what a view
+    /// keys on beside the listing's `names_version`.
+    pub fn tree_members_version(&self) -> u64 {
+        self.tree_members_version
     }
 
     /// Open `location` in place, the folder (or place) that is entry `at`
@@ -1837,30 +2050,41 @@ impl Pane {
         if !self.is_filtered() {
             return all;
         }
-        // A narrowing reads metadata, which changes the listings' versions
-        // and not always their order.
-        let listings = if self.narrowed.is_some() || self.read.as_ref().is_some_and(|r| r.metadata)
-        {
-            (self.listing.version(), self.tree_version)
-        } else {
-            (0, 0)
-        };
-        let mut cache = self.filter_cache.lock();
-        if let Some((from, version, at, order)) = cache.as_ref()
-            && Arc::ptr_eq(from, &all)
-            && *version == self.filter_version
-            && *at == listings
-        {
-            return Arc::clone(order);
-        }
         let filter = TextFilter::of(self.filter.as_deref(), self.read.as_deref());
         let (filter, narrowed) = (filter.as_ref(), self.narrowed.as_ref());
-        let order: Arc<[EntryId]> = all
+        let keeps = |e: &Entry| shown(filter, narrowed, e);
+        let listings: Vec<&Listing> = self.listings().collect();
+        let mut cache = self.filter_cache.lock();
+        if let Some(c) = cache.as_mut()
+            && let Some(moved) = retest(c, self.filter_version, &listings, keeps)
+        {
+            if !moved && Arc::ptr_eq(&c.from, &all) {
+                return Arc::clone(&c.order);
+            }
+            let order: Arc<[EntryId]> = all
+                .iter()
+                .copied()
+                .filter(|id| c.kept.contains(id))
+                .collect();
+            c.from = all;
+            c.order = Arc::clone(&order);
+            return order;
+        }
+        // Made again: every entry listed tested.
+        let kept: crate::hashing::Set<EntryId> = listings
             .iter()
-            .copied()
-            .filter(|id| self.entry(*id).is_some_and(|e| shown(filter, narrowed, e)))
+            .flat_map(|listing| listing.iter())
+            .filter(|e| keeps(e))
+            .map(|e| e.id)
             .collect();
-        *cache = Some((all, self.filter_version, listings, Arc::clone(&order)));
+        let order: Arc<[EntryId]> = all.iter().copied().filter(|id| kept.contains(id)).collect();
+        *cache = Some(FilterCache {
+            filter: self.filter_version,
+            at: listings.iter().map(|l| (l.id(), l.version())).collect(),
+            kept,
+            from: all,
+            order: Arc::clone(&order),
+        });
         order
     }
 
@@ -2796,5 +3020,206 @@ mod tests {
         sel.retain_in(&Listing::default());
         assert_eq!(sel.sweeping(), None);
         assert!(!sel.picked());
+    }
+
+    /// A pane showing `entries` through a location whose events `tx`
+    /// sends, at `location`.
+    fn pane_with(
+        location: &str,
+        entries: Vec<Entry>,
+    ) -> (
+        Pane,
+        crossbeam_channel::Sender<crate::location::ListingEvent>,
+    ) {
+        let (tx, events) = crossbeam_channel::unbounded();
+        let mut p = Pane::new(PaneId(1));
+        p.listing
+            .apply(crate::location::ListingEvent::Added(entries));
+        p.open = Some(Arc::new(Searched {
+            location: Location::new("search", location),
+            events,
+            paths: crate::hashing::Map::default(),
+        }));
+        (p, tx)
+    }
+
+    fn file(ino: u64) -> Entry {
+        Entry::new(
+            EntryId {
+                file: crate::FileId::new(1, ino),
+                at: 0,
+            },
+            format!("f{ino}"),
+            crate::entry::EntryKind::File,
+        )
+    }
+
+    fn sized(ino: u64, size: u64) -> Entry {
+        use crate::entry::{Provenance, Value, keys};
+        let mut e = file(ino);
+        e.metadata
+            .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
+        e
+    }
+
+    fn size_of(e: &Entry) -> Option<u64> {
+        e.metadata
+            .value(crate::entry::keys::SIZE)
+            .and_then(crate::entry::Value::as_u64)
+    }
+
+    /// Calls of a filter's test, counted.
+    static TESTED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    fn tested() -> usize {
+        TESTED.swap(0, std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// A filter that reads what the listing knows, counted: a file of size
+    /// 7 it leaves out.
+    fn counted(metadata: bool) -> ReadFilter {
+        ReadFilter {
+            keeps: Arc::new(|e: &Entry| {
+                TESTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                size_of(e) != Some(7)
+            }),
+            waits: Vec::new(),
+            metadata,
+        }
+    }
+
+    /// After a pump, a selection of the whole folder is looked over only
+    /// once what decides what is shown moved (an entry gone), never for a
+    /// batch of metadata no filter reads; while one reads it, only the
+    /// entries it changed are asked again.
+    #[test]
+    fn a_pump_looks_the_selection_over_only_for_what_may_have_changed() {
+        use crate::location::ListingEvent;
+        let n = 20_000;
+        let (mut p, tx) = pane_with("/", (0..n).map(file).collect());
+        p.selection.set((0..n).map(|ino| file(ino).id));
+        let pump = |p: &mut Pane, event| {
+            tx.send(event).unwrap();
+            p.pump(std::time::Duration::from_secs(10));
+        };
+        p.set_filter(Some("f"), Some(counted(false)));
+        assert!(tested() >= n as usize, "set, the filter asks every one");
+
+        pump(
+            &mut p,
+            ListingEvent::Updated((0..10).map(|ino| sized(ino, 1)).collect()),
+        );
+        assert_eq!(tested(), 0, "metadata no filter reads");
+        assert_eq!(p.selection.len(), n as usize);
+
+        pump(&mut p, ListingEvent::Removed(vec![file(5).id]));
+        assert!(tested() > 0, "an entry gone: the selection looked over");
+        assert_eq!(p.selection.len(), n as usize - 1);
+
+        // A filter that reads metadata: the entries changed, asked again.
+        p.read_filter_again(Some(counted(true)));
+        tested();
+        pump(
+            &mut p,
+            ListingEvent::Updated((10..20).map(|ino| sized(ino, 1)).collect()),
+        );
+        assert_eq!(tested(), 10);
+        pump(&mut p, ListingEvent::Updated(vec![sized(30, 7)]));
+        assert_eq!(tested(), 1);
+        assert!(
+            !p.selection.contains(file(30).id),
+            "left out by the filter now"
+        );
+        assert_eq!(p.selection.len(), n as usize - 2);
+    }
+
+    /// A narrowing tests again only the entries that arrived or changed
+    /// since it last made the order, and makes the order a fresh test of
+    /// every entry makes.
+    #[test]
+    fn a_narrowing_tests_again_only_what_changed() {
+        use crate::location::ListingEvent;
+        let n = 10_000;
+        let (mut p, _tx) = pane_with("/", (0..n).map(file).collect());
+        p.set_narrowed(Some(Narrowed {
+            root: PathBuf::from("/"),
+            expr: "size:even".into(),
+            set: Vec::new(),
+            keeps: Arc::new(|e: &Entry| {
+                TESTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                size_of(e).is_some_and(|size| size % 2 == 0)
+            }),
+        }));
+        tested();
+        assert!(p.order().is_empty(), "none known yet");
+        assert_eq!(tested(), n as usize, "made: each tested once");
+
+        p.listing.apply(ListingEvent::Updated(
+            (0..100).map(|ino| sized(ino, ino)).collect(),
+        ));
+        let order = p.order();
+        assert_eq!(tested(), 100, "only what changed");
+        assert_eq!(order.len(), 50);
+        assert!(Arc::ptr_eq(&order, &p.order()), "nothing changed since");
+        assert_eq!(tested(), 0);
+
+        p.listing.apply(ListingEvent::Added(vec![sized(n + 1, 2)]));
+        let order = p.order();
+        assert_eq!(tested(), 1, "an arrival");
+        *p.filter_cache.lock() = None;
+        assert_eq!(order, p.order(), "as a fresh test makes it");
+    }
+
+    /// Which opened folder holds which entry is made again when their
+    /// entries change, not for a batch of their metadata, nor for each
+    /// sync of what the view keeps.
+    #[test]
+    fn a_folder_opened_in_place_is_indexed_again_only_when_its_entries_change() {
+        use crate::location::ListingEvent;
+        use std::sync::atomic::Ordering;
+        let mut folder = file(0);
+        folder.kind = crate::entry::EntryKind::Directory;
+        let at = folder.id;
+        let (mut p, _tx) = pane_with("/", vec![folder]);
+        let inside = Location::new("search", "/f0");
+        assert!(p.expand(inside.clone(), at));
+        let (tx, events) = crossbeam_channel::unbounded();
+        p.add_kept(
+            Arc::new(Searched {
+                location: inside,
+                events,
+                paths: crate::hashing::Map::default(),
+            }),
+            Listing::default(),
+        );
+        let pump = |p: &mut Pane, event| {
+            tx.send(event).unwrap();
+            p.pump(std::time::Duration::from_secs(10));
+        };
+        pump(
+            &mut p,
+            ListingEvent::Added((1..=10_000).map(file).collect()),
+        );
+        let built = || OPENED_INDEXES.load(Ordering::Relaxed);
+        let before = built();
+        assert!(p.entry(file(5).id).is_some());
+        assert_eq!(built(), before + 1);
+
+        let (tree, members) = (p.tree_version(), p.tree_members_version());
+        pump(
+            &mut p,
+            ListingEvent::Updated((1..=100).map(|ino| sized(ino, 3)).collect()),
+        );
+        assert_ne!(p.tree_version(), tree, "what it shows changed");
+        assert_eq!(p.tree_members_version(), members, "not which entries");
+        assert!(p.entry(file(5).id).is_some());
+        assert!(p.keep_only(&[]).is_empty());
+        assert!(p.entry(file(6).id).is_some());
+        assert_eq!(built(), before + 1, "neither made it again");
+
+        pump(&mut p, ListingEvent::Added(vec![file(20_000)]));
+        assert_ne!(p.tree_members_version(), members);
+        assert!(p.entry(file(20_000).id).is_some());
+        assert_eq!(built(), before + 2);
     }
 }

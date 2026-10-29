@@ -864,6 +864,11 @@ struct Delta {
     /// again, not stat-ed for the first time.
     rewritten: bool,
     rating: bool,
+    /// Entries were taken out.
+    gone: bool,
+    /// The entries that arrived or changed in place, for
+    /// `Listing::updated_since`.
+    touched: Vec<EntryId>,
 }
 
 impl Delta {
@@ -889,6 +894,7 @@ impl Delta {
             modified,
             rewritten,
             rating,
+            ..Delta::default()
         }
     }
 
@@ -899,6 +905,7 @@ impl Delta {
             any: true,
             name: true,
             order: companions,
+            gone: true,
             ..Delta::default()
         }
     }
@@ -911,6 +918,11 @@ const FEW_PLACED: usize = 8;
 /// The renames a listing keeps for its holders until one asks
 /// (`Listing::take_renamed`).
 const RENAMED_KEPT: usize = 4096;
+
+/// The entries that arrived or changed a listing keeps at least, for whoever
+/// tests them again (`Listing::updated_since`); a quarter of the listing
+/// when that is more: further back, testing them all costs as much.
+const UPDATES_KEPT: usize = 4096;
 
 /// A set of entries asked about once per entry of a big order
 /// (`Listing::place`): hashed by a multiply, an id being two numbers the
@@ -1073,6 +1085,21 @@ pub struct Listing {
     /// Incremented when entries were taken out: one that comes back (a
     /// file given a tag again) arrives bare, to be hydrated anew.
     removed_version: u64,
+    /// Incremented when whether an entry already listed is shown may have
+    /// changed: one taken out, renamed (to a dot name), hidden or no
+    /// longer (a Mac's `UF_HIDDEN` its stat found), its companion's file
+    /// arriving or going, companions shown or not. Metadata batches leave
+    /// it alone.
+    shown_version: u64,
+    /// The entries that arrived or changed in place, each batch with the
+    /// version it came with (`updated_since`): what a filter that reads
+    /// metadata tests again, rather than every entry. Bounded
+    /// (`UPDATES_KEPT`), its oldest let go first.
+    updates: std::collections::VecDeque<(u64, Vec<EntryId>)>,
+    /// How many ids `updates` holds.
+    updates_len: usize,
+    /// The version since which `updates` holds every change.
+    updates_from: u64,
     sort_cache: parking_lot::Mutex<Option<SortCache>>,
     /// The rules of files beside a file, to hide them (ADR-028).
     companions: Option<Arc<crate::companions::Companions>>,
@@ -1117,6 +1144,10 @@ impl Default for Listing {
             rating_version: id,
             itself_version: id,
             removed_version: id,
+            shown_version: id,
+            updates: std::collections::VecDeque::new(),
+            updates_len: 0,
+            updates_from: id,
             sort_cache: parking_lot::Mutex::new(None),
             companions: None,
             owners: crate::hashing::Set::default(),
@@ -1170,6 +1201,7 @@ impl Listing {
             return;
         }
         self.order_version = stamp();
+        self.shown_version = stamp();
         self.version = stamp();
     }
 
@@ -1293,6 +1325,7 @@ impl Listing {
         for (moved, version) in [
             (delta.name, &mut self.names_version),
             (delta.order, &mut self.order_version),
+            (delta.order || delta.gone, &mut self.shown_version),
             (delta.size, &mut self.size_version),
             (delta.modified, &mut self.modified_version),
             (delta.rewritten, &mut self.rewritten_version),
@@ -1303,11 +1336,30 @@ impl Listing {
                 *version = stamp();
             }
         }
+        if !delta.touched.is_empty() {
+            self.note_updates(delta.touched);
+        }
         delta.any
     }
 
+    /// Note `touched`, arrived or changed in place, under the version just
+    /// stamped, letting go of the oldest batches past `UPDATES_KEPT`.
+    fn note_updates(&mut self, touched: Vec<EntryId>) {
+        self.updates_len += touched.len();
+        self.updates.push_back((self.version, touched));
+        let kept = UPDATES_KEPT.max(self.entries.len() / 4);
+        while self.updates_len > kept {
+            let Some((at, ids)) = self.updates.pop_front() else {
+                break;
+            };
+            self.updates_len -= ids.len();
+            self.updates_from = at;
+        }
+    }
+
     fn upsert(&mut self, mut e: Entry, insert: bool, delta: &mut Delta) {
-        match self.entries.entry(e.id) {
+        let id = e.id;
+        match self.entries.entry(id) {
             indexmap::map::Entry::Occupied(mut slot) => {
                 let old = &slot.get().entry;
                 // A re-listing (refresh, a watcher's rescan) sends bare
@@ -1349,6 +1401,7 @@ impl Listing {
                     e.name_key.0 = None;
                     slot.get_mut().entry = e;
                 }
+                delta.touched.push(id);
                 delta.any = true;
                 delta.name |= d.name;
                 delta.order |= d.order;
@@ -1368,6 +1421,7 @@ impl Listing {
                     }
                     let hash = self.name_hasher.hash_one(new.entry.name.as_os_str());
                     name(&mut self.by_name, hash, new.entry.id);
+                    delta.touched.push(new.entry.id);
                     self.entries.insert(new.entry.id, new);
                     // A new name; nothing listed moved (see `order`).
                     delta.any = true;
@@ -1425,6 +1479,30 @@ impl Listing {
     /// metadata forgets those gone, which come back bare if they come back.
     pub fn removed_version(&self) -> u64 {
         self.removed_version
+    }
+
+    /// Changes to which entries already listed are shown so far; see the
+    /// field. With `names_version` (entries that came, went or were
+    /// renamed), what a cache of what is shown keys on when metadata does
+    /// not change it.
+    pub fn shown_version(&self) -> u64 {
+        self.shown_version
+    }
+
+    /// The entries that arrived or changed in place since `version` (one
+    /// of this listing's `version`s), each at least once: what a test of
+    /// entries made at `version` tests again. `None` once the listing no
+    /// longer keeps what changed that far back: test them all again.
+    pub fn updated_since(&self, version: u64) -> Option<impl Iterator<Item = EntryId> + '_> {
+        if version < self.updates_from {
+            return None;
+        }
+        let first = self.updates.partition_point(|(at, _)| *at <= version);
+        Some(
+            self.updates
+                .range(first..)
+                .flat_map(|(_, ids)| ids.iter().copied()),
+        )
     }
 
     /// The ids in `spec` order, directories first. Cached until something
@@ -2053,6 +2131,61 @@ mod tests {
             let indexed: usize = listing.by_name.values().map(|n| n.ids(None).count()).sum();
             assert_eq!(indexed, listing.len(), "every entry once, step {step}");
         }
+    }
+
+    /// What arrived or changed in place since a version is said, until the
+    /// listing no longer keeps that far back; what is shown moves for an
+    /// entry gone, renamed to a dot name or hidden, never for metadata.
+    #[test]
+    fn what_changed_since_is_said_and_metadata_moves_nothing_shown() {
+        let file = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: FileId::new(1, ino),
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
+        let mut listing = Listing::default();
+        let start = listing.version();
+        listing.apply(ListingEvent::Added(vec![file(1, "a"), file(2, "b")]));
+        let listed = listing.version();
+        let shown = listing.shown_version();
+        listing.apply(ListingEvent::Updated(vec![stat(file(1, "a"), 7)]));
+        let since = |listing: &Listing, v| {
+            let mut ids: Vec<u64> = listing
+                .updated_since(v)
+                .expect("kept")
+                .map(|id| id.file.ino)
+                .collect();
+            ids.sort_unstable();
+            ids
+        };
+        assert_eq!(since(&listing, listed), [1]);
+        assert_eq!(since(&listing, start), [1, 1, 2]);
+        assert!(since(&listing, listing.version()).is_empty());
+        assert_eq!(listing.shown_version(), shown, "metadata");
+
+        listing.apply(ListingEvent::Updated(vec![file(2, ".b")]));
+        assert_ne!(listing.shown_version(), shown, "a dot name");
+        let shown = listing.shown_version();
+        let mut hidden = stat(file(1, "a"), 7);
+        hidden.hidden = true;
+        listing.apply(ListingEvent::Updated(vec![hidden]));
+        assert_ne!(listing.shown_version(), shown, "hidden");
+        let shown = listing.shown_version();
+        listing.apply(ListingEvent::Removed(vec![file(2, ".b").id]));
+        assert_ne!(listing.shown_version(), shown, "gone");
+
+        // Past what it keeps, it says so.
+        let late = listing.version();
+        for size in 0..=UPDATES_KEPT as u64 {
+            listing.apply(ListingEvent::Updated(vec![stat(file(1, "a"), size)]));
+        }
+        assert!(listing.updated_since(late).is_none());
+        assert!(listing.updated_since(listing.version()).is_some());
     }
 
     fn stat(mut e: Entry, size: u64) -> Entry {

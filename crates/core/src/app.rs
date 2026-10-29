@@ -2576,11 +2576,10 @@ mod builtin {
                     }
                     SelectMode::Pick => ids.into_iter().for_each(|id| p.selection.pick(id)),
                     SelectMode::Change => {
-                        p.selection.change(&ids, &a.removed);
                         // Only what it added may be an id the pane no
                         // longer shows: the rest was selected, and shown,
                         // already.
-                        p.retain_shown_of(&ids);
+                        p.change_selection(&ids, &a.removed);
                         return Ok(Outcome::Done);
                     }
                 }
