@@ -3395,6 +3395,8 @@ impl Render for Shell {
         for image in self.thumbs.begin_frame(self.app.thumbnails.budget()) {
             cx.drop_image(image, Some(window));
         }
+        // Files' own icons (an application's, a shortcut's) drawn no more.
+        crate::icons::let_go(self.icons.begin_frame(), window, cx);
         // While the tab shown gets ready, the whole window draws the tab left
         // as it was: its panes, toolbars, status and preview.
         let held = self.presented.take().map(|mut panes| {

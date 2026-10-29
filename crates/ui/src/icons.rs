@@ -14,11 +14,17 @@
 //! pixels rounded up to a few sides (`raster_side`), never at the size its
 //! file declares: Adwaita's are 128 px, which `img()` drew at 256 by 256
 //! for a 16 px row, filters and all.
+//!
+//! Where the system draws its own icons (macOS, Windows), a file may have
+//! an icon of its own (an application, a shortcut): one picture per file,
+//! which GPUI's asset cache and atlas would keep for good. The most drawn
+//! lately are kept (`OwnIcons`); the window gives back the others' when a
+//! frame begins (`let_go`).
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use gpui::{
     AnyElement, Asset, AssetSource, Hsla, ImageCacheError, ImageSource, RenderImage, SharedString,
@@ -239,6 +245,96 @@ pub struct IconCache {
     /// The theme the setting names (`ui.icon_theme`); `None`: the
     /// desktop's.
     theme: Option<String>,
+    /// Files' own icons, the most drawn lately.
+    own: OwnIcons,
+}
+
+/// How many files' own icons are kept beyond what the last two frames
+/// drew: a folder of applications scrolled through keeps no more.
+const OWN_KEPT: usize = 512;
+
+/// The files whose own icons were drawn (`SystemIcon::Path`), the most
+/// recent kept: what this frame and the one before drew never let go of,
+/// the others once more than `OWN_KEPT` are (`ThumbCache` keeps its
+/// pictures so). What is let go waits for the next frame to begin.
+struct OwnIcons {
+    lru: skwir_core::lru::ByteLru<SystemIcon, SystemIcon>,
+    retired: Vec<SystemIcon>,
+    /// The recency clock when this frame and the one before began.
+    frame: u64,
+    before: u64,
+}
+
+impl Default for OwnIcons {
+    fn default() -> Self {
+        OwnIcons {
+            // Each counts one: the budget is a count of files.
+            lru: skwir_core::lru::ByteLru::new(OWN_KEPT),
+            retired: Vec::new(),
+            frame: 0,
+            before: 0,
+        }
+    }
+}
+
+impl OwnIcons {
+    /// `icon` drawn now. What that lets go of is returned, and waits for
+    /// the next frame (`begin_frame`).
+    fn drawn(&mut self, icon: &SystemIcon) -> Vec<SystemIcon> {
+        if self.lru.get(icon).is_some() {
+            return Vec::new();
+        }
+        let gone = self
+            .lru
+            .insert_keeping(icon.clone(), icon.clone(), 1, self.before.max(1));
+        self.retired.extend(gone.iter().cloned());
+        gone
+    }
+
+    /// A frame begins: what was let go since, and from now on what this
+    /// frame draws is kept too.
+    fn begin_frame(&mut self) -> Vec<SystemIcon> {
+        self.before = self.frame;
+        self.frame = self.lru.now() + 1;
+        std::mem::take(&mut self.retired)
+    }
+}
+
+/// The pictures drawn of files' own icons (`SystemPicture`), by icon and
+/// side, as long as GPUI keeps them: what `let_go` gives back to the atlas.
+fn own_drawn() -> &'static Mutex<HashMap<(SystemIcon, u32), Weak<RenderImage>>> {
+    static DRAWN: std::sync::OnceLock<Mutex<HashMap<(SystemIcon, u32), Weak<RenderImage>>>> =
+        std::sync::OnceLock::new();
+    DRAWN.get_or_init(Mutex::default)
+}
+
+/// Give back what the window drew of files' own icons that `icons` lets go
+/// of (`IconCache::begin_frame`): GPUI's asset cache keeps a picture until
+/// told to forget it, and the atlas its texture until it is dropped. At
+/// every side it was drawn at.
+pub fn let_go(icons: Vec<SystemIcon>, window: &mut Window, cx: &mut gpui::App) {
+    if icons.is_empty() {
+        return;
+    }
+    let drawn: Vec<(SystemIcon, u32, Option<Arc<RenderImage>>)> = {
+        let Ok(mut kept) = own_drawn().lock() else {
+            return;
+        };
+        icons
+            .into_iter()
+            .flat_map(|icon| RASTER_SIDES.map(|side| (icon.clone(), side)))
+            .filter_map(|key| {
+                let image = kept.remove(&key)?;
+                Some((key.0, key.1, image.upgrade()))
+            })
+            .collect()
+    };
+    for (icon, side, image) in drawn {
+        cx.remove_asset::<SystemPicture>(&(Arc::new(icon), side));
+        if let Some(image) = image {
+            cx.drop_image(image, Some(&mut *window));
+        }
+    }
 }
 
 impl IconCache {
@@ -257,7 +353,24 @@ impl IconCache {
         true
     }
 
+    /// A frame begins: the files' own icons let go of since, for the
+    /// window to give back (`let_go`).
+    pub fn begin_frame(&mut self) -> Vec<SystemIcon> {
+        self.own.begin_frame()
+    }
+
     fn lookup(&mut self, want: Want, size: u16) -> Option<Pic> {
+        // A file's own icon is kept while drawn lately; one let go is
+        // forgotten here too, and asked again if drawn again.
+        if let Want::System(icon @ SystemIcon::Path(_)) = &want {
+            for gone in self.own.drawn(icon) {
+                let gone = Want::System(gone);
+                for known in self.known.values_mut() {
+                    known.remove(&gone);
+                }
+                self.wanted.retain(|(want, _)| *want != gone);
+            }
+        }
         if let Some(found) = self.known.get(&size).and_then(|known| known.get(&want)) {
             return found.clone();
         }
@@ -553,7 +666,15 @@ impl Asset for SystemPicture {
             let picture = system_icons::picture(&icon, side)
                 .map_err(|e| ImageCacheError::Other(Arc::new(e)))?
                 .ok_or_else(none)?;
-            crate::thumbs::to_render_image(&picture).ok_or_else(none)
+            let image = crate::thumbs::to_render_image(&picture).ok_or_else(none)?;
+            // A file's own, one per file: what the window gives back once
+            // it is no longer drawn (`let_go`).
+            if matches!(*icon, SystemIcon::Path(_))
+                && let Ok(mut drawn) = own_drawn().lock()
+            {
+                drawn.insert(((*icon).clone(), side), Arc::downgrade(&image));
+            }
+            Ok(image)
         }
     }
 }
@@ -755,9 +876,10 @@ pub fn themed(pic: &Pic, size: f32, color: Hsla) -> AnyElement {
 #[cfg(test)]
 mod tests {
     use super::{
-        APP_ICON, IconCache, Pic, Want, is_svg, is_symbolic, preloaded, raster_side, tint,
+        APP_ICON, IconCache, OWN_KEPT, OwnIcons, Pic, SystemIcon, Want, is_svg, is_symbolic,
+        preloaded, raster_side, tint,
     };
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
     #[test]
@@ -780,6 +902,34 @@ mod tests {
         let mut half = vec![0, 0, 0, 255];
         tint(&mut half, [10, 20, 30, 128]);
         assert_eq!(half, [10, 20, 30, 128]);
+    }
+
+    #[test]
+    fn a_file_drawn_lately_keeps_its_own_icon() {
+        let icon = |n: usize| SystemIcon::Path(PathBuf::from(format!("/apps/app {n}.exe")));
+        let mut own = OwnIcons::default();
+        own.begin_frame();
+        // More than are kept, all in one frame: none let go while drawn.
+        for n in 0..OWN_KEPT + 10 {
+            assert!(own.drawn(&icon(n)).is_empty());
+        }
+        assert!(own.begin_frame().is_empty(), "drawn this frame");
+        // Drawn again in the next frame, the first ten only: the oldest of
+        // the rest go once this frame and the one before no longer hold
+        // them.
+        for n in 0..10 {
+            own.drawn(&icon(n));
+        }
+        own.begin_frame();
+        let mut gone = Vec::new();
+        for n in 0..3 {
+            gone.extend(own.drawn(&icon(OWN_KEPT + 100 + n)));
+        }
+        assert_eq!(gone.len(), 13, "back to the budget");
+        assert!(gone.iter().all(|g| *g != icon(0)), "drawn last frame: kept");
+        assert_eq!(own.begin_frame(), gone, "given back when the next begins");
+        // One drawn again is no news.
+        assert!(own.drawn(&icon(0)).is_empty());
     }
 
     #[test]
