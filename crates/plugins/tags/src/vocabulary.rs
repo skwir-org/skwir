@@ -16,9 +16,13 @@ use skwir_core::cache::CacheSlot;
 use skwir_core::cancel::CancelToken;
 use skwir_core::scheduler::Priority;
 
-/// Tags remembered at most; past this, the one least recently used or seen
-/// is forgotten.
+/// Tags remembered at most; past this, those least recently used or seen
+/// are forgotten, down to [`KEPT`].
 const AT_MOST: usize = 2_000;
+/// What is kept once the bound is passed: forgetting a tenth at a time,
+/// not one, a library of more tags than the bound did not sort them all
+/// for every new one a listing showed.
+const KEPT: usize = AT_MOST - AT_MOST / 10;
 const KEY: &[u8] = b"vocabulary";
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -147,8 +151,9 @@ impl Vocabulary {
                 .iter()
                 .map(|(key, k)| (k.last(), key.clone()))
                 .collect();
-            by_age.sort_unstable();
-            let excess = inner.known.len() - AT_MOST;
+            let excess = inner.known.len() - KEPT;
+            // The oldest `excess` first, in no order among themselves.
+            by_age.select_nth_unstable(excess - 1);
             for (_, key) in by_age.into_iter().take(excess) {
                 inner.known.remove(&key);
             }
@@ -280,6 +285,44 @@ mod tests {
         let v = vocabulary();
         let tags: Vec<String> = (0..AT_MOST + 5).map(|i| format!("t{i}")).collect();
         v.touch(&tags, false);
-        assert_eq!(v.inner.lock().known.len(), AT_MOST);
+        assert_eq!(v.inner.lock().known.len(), KEPT);
+    }
+
+    /// Past its bound it forgets a tenth at once, the oldest, and the next
+    /// tags seen are taken in without forgetting any until the bound is
+    /// passed again.
+    #[test]
+    fn it_forgets_a_tenth_at_a_time_and_keeps_the_newest() {
+        let v = vocabulary();
+        {
+            let mut inner = v.inner.lock();
+            for i in 0..AT_MOST {
+                inner.known.insert(
+                    format!("old{i}"),
+                    Known {
+                        name: format!("old{i}"),
+                        used: 0,
+                        seen: i as u64 + 1,
+                        given: None,
+                    },
+                );
+            }
+        }
+        let len = || v.inner.lock().known.len();
+        v.touch(&["new0".into()], false);
+        assert_eq!(len(), KEPT);
+        for i in 1..=AT_MOST - KEPT {
+            v.touch(&[format!("new{i}")], false);
+        }
+        assert_eq!(len(), AT_MOST, "none forgotten below the bound");
+        v.touch(&["new-last".into()], false);
+        assert_eq!(len(), KEPT);
+        let inner = v.inner.lock();
+        assert!(inner.known.contains_key("new-last"));
+        assert!(
+            (0..=AT_MOST - KEPT).all(|i| inner.known.contains_key(&format!("new{i}"))),
+            "the tags seen now outlive the old ones"
+        );
+        assert!(!inner.known.contains_key("old0"), "the oldest forgotten");
     }
 }
