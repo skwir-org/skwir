@@ -260,3 +260,53 @@ fn back_and_forward_select_again_what_the_cursor_was_on() {
     go(&app, "back");
     assert_eq!(selected(&app), ["read me.md"]);
 }
+
+fn entry_id(app: &App, name: &str) -> skwir_core::EntryId {
+    let ws = app.workspace.read();
+    let p = ws.pane(active(app)).expect("pane");
+    p.listing
+        .find_by_name(std::ffi::OsStr::new(name))
+        .expect("entry")
+        .id
+}
+
+/// A change adds what it names and takes out what it says, leaving the
+/// rest: what a rubber band sends as it moves, typed as the window sends
+/// it or as JSON as an agent does. An id the pane does not show is not
+/// added.
+#[test]
+fn a_change_adds_and_takes_out_only_what_it_names() {
+    use skwir_core::app::{SelectArgs, SelectMode};
+    let (_tmp, app) = tree();
+    select(&app, &["a one", "b's"]);
+    let change = |ids: &[&str], removed: &[&str]| {
+        app.dispatch_args(
+            "select",
+            SelectArgs {
+                ids: ids.iter().map(|name| entry_id(&app, name)).collect(),
+                removed: removed.iter().map(|name| entry_id(&app, name)).collect(),
+                mode: SelectMode::Change,
+                ..SelectArgs::default()
+            },
+        )
+        .expect("select");
+    };
+    change(&["d"], &["a one"]);
+    assert_eq!(selected(&app), ["b's", "d"]);
+    assert_eq!(cursor(&app).as_deref(), Some("d"));
+
+    app.dispatch(&Invocation::with_args(
+        "select",
+        &serde_json::json!({
+            "mode": "change",
+            "ids": [id_of(&app, "c ü")],
+            "removed": [id_of(&app, "b's"), id_of(&app, "d")],
+        }),
+    ))
+    .expect("select");
+    assert_eq!(selected(&app), ["c ü"]);
+    assert_eq!(cursor(&app).as_deref(), Some("c ü"));
+
+    change(&[".hidden"], &[]);
+    assert_eq!(selected(&app), ["c ü"], "what is not shown is not added");
+}

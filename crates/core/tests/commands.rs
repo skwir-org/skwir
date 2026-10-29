@@ -290,3 +290,102 @@ fn a_plugin_from_outside_takes_no_other_owners_command() {
     assert_eq!(answer, "core's");
     assert_eq!(&*app.commands.get("probe.kept").unwrap().owner, "core");
 }
+
+/// Arguments made as JSON for a typed command: counted, so a test can tell
+/// whether any were.
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct Counted {
+    n: u64,
+}
+
+static SERIALIZED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+impl serde::Serialize for Counted {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct as _;
+        SERIALIZED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut fields = s.serialize_struct("Counted", 1)?;
+        fields.serialize_field("n", &self.n)?;
+        fields.end()
+    }
+}
+
+/// The same arguments under another type.
+#[derive(serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
+struct Other {
+    n: u64,
+}
+
+/// Typed arguments reach the command registered with their type as they
+/// are, no JSON made of them; a command that took the name with arguments
+/// of its own, or one that reads JSON, gets them as JSON, and the typed one
+/// takes them again once it is withdrawn.
+#[test]
+fn typed_arguments_reach_their_command_without_json() {
+    use std::sync::atomic::Ordering;
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let value = |app: &skwir_core::App| match app.dispatch_args("probe.typed", Counted { n: 7 }) {
+        Ok(Outcome::Value(v)) => v,
+        other => panic!("{other:?}"),
+    };
+    app.commands.register::<Counted, _>(
+        "first",
+        Topic::Files,
+        "probe.typed",
+        "Probe",
+        "",
+        |a, _| Ok(Outcome::Value(a.n.into())),
+    );
+    assert_eq!(value(&app), 7);
+    assert_eq!(SERIALIZED.load(Ordering::Relaxed), 0, "no JSON made");
+
+    // Taken over by one that reads JSON.
+    app.commands.register_raw::<Counted, _>(
+        "second",
+        Topic::Files,
+        "probe.typed",
+        "Probe",
+        "",
+        |args, _| Ok(Outcome::Value((args["n"].as_u64().unwrap() * 2).into())),
+    );
+    assert_eq!(value(&app), 14);
+    assert_eq!(SERIALIZED.load(Ordering::Relaxed), 1);
+
+    // By one of other arguments.
+    app.commands
+        .register::<Other, _>("third", Topic::Files, "probe.typed", "Probe", "", |a, _| {
+            Ok(Outcome::Value((a.n + 1).into()))
+        });
+    assert_eq!(value(&app), 8);
+    assert_eq!(SERIALIZED.load(Ordering::Relaxed), 2);
+
+    // Both withdrawn: typed again.
+    app.commands.unregister_owner("third");
+    app.commands.unregister_owner("second");
+    assert_eq!(value(&app), 7);
+    assert_eq!(SERIALIZED.load(Ordering::Relaxed), 2);
+
+    // JSON still reaches it, checked as ever.
+    let json = |args: serde_json::Value| app.dispatch(&Invocation::with_args("probe.typed", &args));
+    assert!(matches!(
+        json(serde_json::json!({ "n": 3 })),
+        Ok(Outcome::Value(v)) if v == 3
+    ));
+    assert!(json(serde_json::json!({ "n": 3, "m": 1 })).is_err());
+
+    // No such command; a typed handler's panic fails the call alone.
+    assert!(app.dispatch_args("probe.none", Counted { n: 1 }).is_err());
+    app.commands.register::<Other, _>(
+        "faulty",
+        Topic::Files,
+        "probe.faulty",
+        "Probe",
+        "",
+        |_, _| panic!("a fault of its own"),
+    );
+    let error = app
+        .dispatch_args("probe.faulty", Other { n: 1 })
+        .expect_err("it failed");
+    assert!(error.to_string().contains("stopped on a fault"), "{error}");
+}

@@ -1270,6 +1270,21 @@ impl App {
         self.commands.dispatch(inv, self)
     }
 
+    /// [`App::dispatch`] with typed arguments, which a command registered
+    /// with their type takes as they are (`CommandRegistry::dispatch_args`):
+    /// what the window's views send by the thousand (`HydrateArgs`,
+    /// `SelectArgs`).
+    ///
+    /// # Errors
+    /// As [`App::dispatch`].
+    pub fn dispatch_args<A: Serialize + Send + 'static>(
+        &self,
+        name: &str,
+        args: A,
+    ) -> anyhow::Result<Outcome> {
+        self.commands.dispatch_args(name, args, self)
+    }
+
     /// Execute a plan in the background.
     pub fn apply(&self, plan: Plan) {
         self.executor.execute(plan, self.lifetime.child());
@@ -2009,6 +2024,10 @@ pub enum SelectMode {
     /// Pick the given ids, or unpick those picked (yazi's mark): a
     /// selection that followed the cursor is not a pick.
     Pick,
+    /// Add the given ids and take out those in `removed`, leaving the rest
+    /// as it is: what changed of a selection being drawn (a rubber band),
+    /// rather than all of it again.
+    Change,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -2093,7 +2112,7 @@ fn say_as_of(answer: &mut serde_json::Value, as_of: Option<&crate::location::AsO
     );
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 pub struct SelectArgs {
     #[serde(default)]
     pub ids: Vec<EntryId>,
@@ -2104,6 +2123,9 @@ pub struct SelectArgs {
     pub mode: SelectMode,
     #[serde(default)]
     pub pane: Option<PaneId>,
+    /// With `change`: the ids taken out of the selection.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed: Vec<EntryId>,
 }
 
 /// What `expand` does to the folders it is given.
@@ -2228,7 +2250,7 @@ impl MkdirArgs {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub struct HydrateArgs {
     pub ids: Vec<EntryId>,
     #[serde(default)]
@@ -2562,6 +2584,14 @@ mod builtin {
                         }
                     }
                     SelectMode::Pick => ids.into_iter().for_each(|id| p.selection.pick(id)),
+                    SelectMode::Change => {
+                        p.selection.change(&ids, &a.removed);
+                        // Only what it added may be an id the pane no
+                        // longer shows: the rest was selected, and shown,
+                        // already.
+                        p.retain_shown_of(&ids);
+                        return Ok(Outcome::Done);
+                    }
                 }
                 // An id the pane no longer shows (a row drawn a moment
                 // ago) is not selected.

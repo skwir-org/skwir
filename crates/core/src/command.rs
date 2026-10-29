@@ -608,9 +608,24 @@ impl CommandSpec {
     }
 }
 
-type Handler = Arc<dyn Fn(serde_json::Value, &App) -> anyhow::Result<Outcome> + Send + Sync>;
+/// A command's handler as JSON reaches it: read in place, copied only for
+/// a handler that keeps its arguments as they came (`register_raw`,
+/// `register_dynamic`).
+type Handler = Arc<dyn Fn(&serde_json::Value, &App) -> anyhow::Result<Outcome> + Send + Sync>;
+/// A typed command's handler, handed its arguments as the caller made them
+/// (`CommandRegistry::dispatch_args`), of the type it registered.
+type TypedHandler =
+    Arc<dyn Fn(Box<dyn std::any::Any + Send>, &App) -> anyhow::Result<Outcome> + Send + Sync>;
 /// Whether arguments are a command's, without running it.
 type Validator = Arc<dyn Fn(&serde_json::Value) -> Result<(), serde_json::Error> + Send + Sync>;
+
+/// What runs a command: from JSON, and for a typed command from its
+/// arguments' own type, which no JSON is made for.
+#[derive(Clone)]
+struct Handlers {
+    json: Handler,
+    typed: Option<(std::any::TypeId, TypedHandler)>,
+}
 
 /// A command just registered, to say what it does
 /// (`register(..).reads()`); left alone, it acts.
@@ -718,7 +733,7 @@ pub enum CommandError {
 #[derive(Default)]
 pub struct CommandRegistry {
     /// Per name, every owner's registration; the last one is active.
-    commands: RwLock<IndexMap<Arc<str>, Vec<(CommandSpec, Handler, Validator)>>>,
+    commands: RwLock<IndexMap<Arc<str>, Vec<(CommandSpec, Handlers, Validator)>>>,
 }
 
 impl CommandRegistry {
@@ -741,15 +756,29 @@ impl CommandRegistry {
         let n: Arc<str> = name.into();
         let takes = Takes::new(ArgsSchema::of::<A>());
         let check = Arc::clone(&takes);
-        let h: Handler = Arc::new(move |args, app| {
+        let handler = Arc::new(handler);
+        let from_json = Arc::clone(&handler);
+        let json: Handler = Arc::new(move |args, app| {
             let invalid = |reason| CommandError::InvalidArgs {
                 name: n.clone(),
                 reason,
             };
-            check.check(&args).map_err(invalid)?;
-            let typed: A = serde_json::from_value(args).map_err(invalid)?;
-            handler(typed, app)
+            check.check(args).map_err(invalid)?;
+            let typed = A::deserialize(args).map_err(invalid)?;
+            from_json(typed, app)
         });
+        // Its own type needs no checking: it is the handler's.
+        let typed: TypedHandler =
+            Arc::new(move |args: Box<dyn std::any::Any + Send>, app: &App| {
+                match args.downcast::<A>() {
+                    Ok(typed) => handler(*typed, app),
+                    Err(_) => anyhow::bail!("arguments of another type"),
+                }
+            });
+        let h = Handlers {
+            json,
+            typed: Some((std::any::TypeId::of::<A>(), typed)),
+        };
         self.insert::<A>(owner, topic, name, title, description, takes, h)
     }
 
@@ -772,15 +801,16 @@ impl CommandRegistry {
         let n: Arc<str> = name.into();
         let takes = Takes::new(ArgsSchema::of::<A>());
         let check = Arc::clone(&takes);
-        let h: Handler = Arc::new(move |args, app| {
+        let json: Handler = Arc::new(move |args, app| {
             let invalid = |reason| CommandError::InvalidArgs {
                 name: n.clone(),
                 reason,
             };
-            check.check(&args).map_err(invalid)?;
-            serde_json::from_value::<A>(args.clone()).map_err(invalid)?;
-            handler(args, app)
+            check.check(args).map_err(invalid)?;
+            A::deserialize(args).map_err(invalid)?;
+            handler(args.clone(), app)
         });
+        let h = Handlers { json, typed: None };
         self.insert::<A>(owner, topic, name, title, description, takes, h)
     }
 
@@ -836,13 +866,14 @@ impl CommandRegistry {
         });
         let n: Arc<str> = name.into();
         let check = Arc::clone(&v);
-        let h: Handler = Arc::new(move |args, app| {
-            check(&args).map_err(|reason| CommandError::InvalidArgs {
+        let json: Handler = Arc::new(move |args, app| {
+            check(args).map_err(|reason| CommandError::InvalidArgs {
                 name: n.clone(),
                 reason,
             })?;
-            handler(args, app)
+            handler(args.clone(), app)
         });
+        let h = Handlers { json, typed: None };
         let schema = serde_json::from_value(schema)
             .unwrap_or_else(|_| schemars::json_schema!({ "type": "object" }));
         // A plugin from outside never shadows a command another owner
@@ -884,7 +915,7 @@ impl CommandRegistry {
         title: &str,
         description: &str,
         takes: Arc<Takes>,
-        h: Handler,
+        h: Handlers,
     ) -> Declared<'_>
     where
         A: DeserializeOwned + JsonSchema + 'static,
@@ -892,7 +923,7 @@ impl CommandRegistry {
         let schema = takes.schema.clone();
         let v: Validator = Arc::new(move |args| {
             takes.check(args)?;
-            serde_json::from_value::<A>(args.clone()).map(|_| ())
+            A::deserialize(args).map(|_| ())
         });
         self.insert_spec(owner, topic, name, title, description, schema, v, h)
     }
@@ -907,7 +938,7 @@ impl CommandRegistry {
         description: &str,
         args_schema: ArgsSchema,
         v: Validator,
-        h: Handler,
+        h: Handlers,
     ) -> Declared<'_> {
         let name: Arc<str> = name.into();
         let spec = CommandSpec {
@@ -1029,23 +1060,65 @@ impl CommandRegistry {
     /// Dispatch an invocation. The handler runs on the caller's thread and
     /// must not block: long work goes through the scheduler or returns a plan.
     pub fn dispatch(&self, inv: &Invocation, app: &App) -> anyhow::Result<Outcome> {
-        let handler = self
-            .commands
+        let handlers = self.handlers(&inv.name)?;
+        Self::guarded(&inv.name, || (handlers.json)(&inv.args, app))
+    }
+
+    /// [`dispatch`](Self::dispatch) for a caller in this process holding
+    /// typed arguments (the window's views: every row's id they ask
+    /// metadata for, every change of a rubber band): a command registered
+    /// with that type (`register::<A>`) is handed them as they are, without
+    /// a JSON value made, copied and read back. Any other (a plugin's that
+    /// took the name with arguments of its own, one from outside) gets them
+    /// as JSON, as from `dispatch`. The same handler runs either way, on the
+    /// caller's thread, its panic caught the same way.
+    ///
+    /// # Errors
+    /// As [`dispatch`](Self::dispatch); [`CommandError::InvalidArgs`] when
+    /// they cannot be made JSON for a command that takes JSON.
+    pub fn dispatch_args<A: Serialize + Send + 'static>(
+        &self,
+        name: &str,
+        args: A,
+        app: &App,
+    ) -> anyhow::Result<Outcome> {
+        let handlers = self.handlers(name)?;
+        match handlers.typed {
+            Some((of, typed)) if of == std::any::TypeId::of::<A>() => {
+                Self::guarded(name, || typed(Box::new(args), app))
+            }
+            _ => {
+                let args =
+                    serde_json::to_value(&args).map_err(|reason| CommandError::InvalidArgs {
+                        name: name.into(),
+                        reason,
+                    })?;
+                Self::guarded(name, || (handlers.json)(&args, app))
+            }
+        }
+    }
+
+    /// What runs the command `name` now: its last registration's.
+    fn handlers(&self, name: &str) -> Result<Handlers, CommandError> {
+        self.commands
             .read()
-            .get(&inv.name)
+            .get(name)
             .and_then(|stack| stack.last())
-            .map(|(_, h, _)| Arc::clone(h));
-        let handler = handler.ok_or_else(|| CommandError::Unknown(inv.name.clone()))?;
-        // A handler's panic must not unwind into its caller (the window's
-        // event loop, the control channel, a script): it is logged, and the
-        // call fails, as a scheduler's job does.
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            handler(inv.args.clone(), app)
-        }))
-        .unwrap_or_else(|payload| {
+            .map(|(_, h, _)| h.clone())
+            .ok_or_else(|| CommandError::Unknown(name.into()))
+    }
+
+    /// Run a handler of the command `name`. Its panic must not unwind into
+    /// its caller (the window's event loop, the control channel, a script):
+    /// it is logged, and the call fails, as a scheduler's job does.
+    fn guarded(
+        name: &str,
+        run: impl FnOnce() -> anyhow::Result<Outcome>,
+    ) -> anyhow::Result<Outcome> {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)).unwrap_or_else(|payload| {
             let message = crate::scheduler::panic_message(&*payload);
-            tracing::error!(command = %inv.name, "command panicked: {message}");
-            Err(CommandError::Panicked(inv.name.clone()).into())
+            tracing::error!(command = %name, "command panicked: {message}");
+            Err(CommandError::Panicked(name.into()).into())
         })
     }
 }

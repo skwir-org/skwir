@@ -170,6 +170,36 @@ impl Selection {
         self.sweep = None;
     }
 
+    /// Add `added` and take out `removed`, as one change: what changed of a
+    /// selection being drawn (a rubber band), where setting the whole of it
+    /// again was a pass over every item for every move of the pointer. The
+    /// rest stays in its order. The cursor goes to the last added; the
+    /// anchor stays while it is selected, else goes to the first item. As
+    /// with [`Selection::set`], several items were picked.
+    pub fn change(&mut self, added: &[EntryId], removed: &[EntryId]) {
+        self.touch();
+        self.sweep = None;
+        if removed.len() > 16 {
+            let gone: crate::hashing::Set<EntryId> = removed.iter().copied().collect();
+            self.items.retain(|id| !gone.contains(id));
+        } else {
+            for id in removed {
+                self.items.shift_remove(id);
+            }
+        }
+        self.items.extend(added.iter().copied());
+        if self
+            .anchor
+            .is_none_or(|anchor| !self.items.contains(&anchor))
+        {
+            self.anchor = self.items.first().copied();
+        }
+        if let Some(&last) = added.last() {
+            self.cursor = Some(last);
+        }
+        self.picked = self.items.len() > 1;
+    }
+
     /// Pick `id`, or unpick it if it was picked. A selection that followed
     /// the cursor is not a pick, so the first pick starts from nothing;
     /// unpicking the last item gives the selection back to the cursor.
@@ -1407,6 +1437,26 @@ impl Pane {
         self.keep_shown(false);
     }
 
+    /// `retain_shown` asked only of `ids`, those a change just selected
+    /// (`Selection::change`): the rest was selected, and shown, already. A
+    /// pass over the whole selection happens only when one of them goes.
+    pub(crate) fn retain_shown_of(&mut self, ids: &[EntryId]) {
+        let holds = shows(
+            &self.listing,
+            &self.kept,
+            &self.expanded,
+            self.filter.as_deref(),
+            self.read.as_deref(),
+            self.narrowed.as_ref(),
+            self.sort,
+        );
+        let hidden: crate::hashing::Set<EntryId> =
+            ids.iter().copied().filter(|id| !holds(*id)).collect();
+        if !hidden.is_empty() {
+            self.selection.retain(|id| !hidden.contains(&id));
+        }
+    }
+
     /// `retain_shown`, the cursor going back to what is before it when its
     /// entry leaves the view (`Selection::retain_near`).
     fn keep_shown(&mut self, back: bool) {
@@ -2541,6 +2591,38 @@ mod tests {
 
     fn items(sel: &Selection) -> Vec<u64> {
         sel.iter().map(|id| id.file.ino).collect()
+    }
+
+    /// A change adds and takes out, few or many, in one revision: the rest
+    /// keeps its order, the cursor goes to the last added, the anchor to
+    /// the first item once its own goes.
+    #[test]
+    fn a_change_adds_and_takes_out_leaving_the_rest_in_order() {
+        let id = |ino| EntryId {
+            file: crate::FileId::new(1, ino),
+            at: 0,
+        };
+        let mut sel = Selection::default();
+        sel.set((1..=100).map(id));
+        let revision = sel.revision();
+        // Many taken out (one pass), two added.
+        let removed: Vec<EntryId> = (1..=60).map(id).collect();
+        sel.change(&[id(200), id(201)], &removed);
+        assert_ne!(sel.revision(), revision);
+        let mut expected: Vec<u64> = (61..=100).collect();
+        expected.extend([200, 201]);
+        assert_eq!(items(&sel), expected);
+        assert_eq!((sel.anchor, sel.cursor), (Some(id(61)), Some(id(201))));
+        assert!(sel.picked());
+        // Few taken out, none added: the cursor stays.
+        sel.change(&[], &[id(200), id(201), id(61)]);
+        assert_eq!(items(&sel), (62..=100).collect::<Vec<_>>());
+        assert_eq!((sel.anchor, sel.cursor), (Some(id(62)), Some(id(201))));
+        // Down to one, it follows the cursor again, as `set` has it.
+        let rest: Vec<EntryId> = (63..=100).map(id).collect();
+        sel.change(&[], &rest);
+        assert_eq!(items(&sel), [62]);
+        assert!(!sel.picked());
     }
 
     #[test]
