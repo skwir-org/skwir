@@ -160,6 +160,9 @@ and `notes.agree` are core `notes.*` commands.
   tag. Over a folder the same bar appears with Narrow by
   (`ui.narrow_folders`) or while narrowed (`query.narrow`), kept in the
   folder and below it.
+- A filter types names once per suffix: a name's last extension, or the
+  longest compound suffix the type database knows that it ends with
+  (`tar.gz`, `mime::compound_suffixes`); never once per name.
 - Narrowing is pane state (`workspace::Narrowed`, applied by
   `Pane::order`), tested on what the listing knows, never by reading
   files. Folders always show; files wait for their metadata (the bar's

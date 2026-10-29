@@ -376,7 +376,11 @@ working in an area, also read that area's rules (see
 - **Watchers act on changes, never access.** notify reports a file
   opened (`IN_OPEN`), so a watcher that rescans on any event rescans
   forever on its own reads. Drop `EventKind::Access`, as `fs/watch.rs`
-  and Usage do.
+  and Usage do. A name only written to (a download, a log growing) is
+  told once a second from its first write (`watch::WRITTEN_WINDOW`), not
+  at each window; any other change of it, its close after writing
+  included, is told at once with what waited. macOS and Windows report
+  no close: there a written file is told within the second.
 - **Remote paths (ADR-077).** A path may be on a server that stops
   answering, where `stat` waits for good. Work that reads one runs in its
   remote's lane (`fs::reach::lane`, `Scheduler::spawn_in`,

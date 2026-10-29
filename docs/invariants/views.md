@@ -42,6 +42,11 @@ around the views is in [shell.md](shell.md).
   opaque picture has no backdrop to fringe its edges. The preview's
   pictures follow the same rule (previews.md). The map frames its photos
   in its paper.
+- A file's own icon (an application's, a shortcut's, where the system
+  draws its own) stays while drawn lately, at most `icons::OWN_KEPT`
+  beyond what the last two frames drew; the window gives back the
+  others' pictures when a frame begins (`icons::let_go`), from GPUI's
+  asset cache and the atlas.
 
 ## Selection
 
@@ -95,7 +100,10 @@ around the views is in [shell.md](shell.md).
 - Scheme moves say `follow` (`ui.cursor`, `step: follow`): they move a
   following selection and leave a picked one. `pick` is yazi's mark. A
   sweep (`select_sweep`) holds a range while the cursor moves (`sweep` in
-  the key context). The standard keys use none of these.
+  the key context). The standard keys use none of these. A view that
+  knows the cursor's row passes it (`at` on `select`): a sweep or a range
+  then changes only the rows each step crosses, over the order it last
+  drew (`Selection::follow_at`).
 
 ## What waits for a paste
 
@@ -298,6 +306,13 @@ around the views is in [shell.md](shell.md).
   plugin data per frame.
 - A view says what F5 does (`PaneView::refresh`) and whether it draws its
   own empty state (`draws_empty`).
+- The Map view's scan (`geo.scan`) runs one at a time per pane: a listing
+  that changes while it runs waits for it to finish, then is scanned on
+  from what was looked at (`Scans::again`); a scan is cancelled only by
+  another location or the pane's lifetime. While a folder is still
+  listed, the view asks again at most every `map_view::RESCAN_GAP`
+  (500 ms), one timer bringing what came during the gap; another
+  location, or the listing complete, asks at once.
 
 ## Usage (ADR-007)
 
