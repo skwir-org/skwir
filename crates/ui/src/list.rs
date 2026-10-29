@@ -44,6 +44,18 @@ impl Step {
             _ => Step::Select,
         }
     }
+
+    /// How the core's `select` takes a move with this step to an entry,
+    /// and whether it is told the row moved to (`SelectArgs::at`): a range
+    /// and a following move look for the entry in the order otherwise.
+    fn select(self) -> (SelectMode, bool) {
+        match self {
+            Step::Select => (SelectMode::Replace, false),
+            Step::Extend => (SelectMode::RangeTo, true),
+            Step::Cursor => (SelectMode::Cursor, false),
+            Step::Follow => (SelectMode::Follow, true),
+        }
+    }
 }
 
 /// `ui.cursor`'s `to` argument; `here` is the item under the cursor.
@@ -646,13 +658,17 @@ impl Shell {
         }
         let target = target.clamp(0, len as isize - 1) as usize;
         let id = self.ui().list.sorted[target];
-        let mode = match step {
-            Step::Select => "replace",
-            Step::Extend => "range_to",
-            Step::Cursor => "cursor",
-            Step::Follow => "follow",
+        let (mode, at) = step.select();
+        let args = SelectArgs {
+            ids: vec![id],
+            mode,
+            pane: Some(self.pane),
+            // The row is known: a key held down through a big folder never
+            // has the core look for it.
+            at: at.then_some(target),
+            ..SelectArgs::default()
         };
-        self.select_ids(vec![id], mode, window, cx);
+        self.run_args("select", args, window, cx);
         self.with_view(|v, _| v.scroll_to(target));
         cx.notify();
     }
@@ -1286,9 +1302,23 @@ pub fn entry_mouse<E: InteractiveElement>(
 
 #[cfg(test)]
 mod tests {
+    /// Each step selects as it always did (the modes `select_ids` named),
+    /// and a range and a following move say the row they reach.
+    #[test]
+    fn a_step_selects_as_it_did_and_says_its_row_where_asked() {
+        let said = |step: Step| {
+            let (mode, at) = step.select();
+            (serde_json::to_value(mode).unwrap(), at)
+        };
+        assert_eq!(said(Step::Select), (serde_json::json!("replace"), false));
+        assert_eq!(said(Step::Extend), (serde_json::json!("range_to"), true));
+        assert_eq!(said(Step::Cursor), (serde_json::json!("cursor"), false));
+        assert_eq!(said(Step::Follow), (serde_json::json!("follow"), true));
+    }
+
     use std::time::{Duration, Instant};
 
-    use super::{TYPING_PAUSE, Typed, find_matches};
+    use super::{Step, TYPING_PAUSE, Typed, find_matches};
 
     #[test]
     fn a_find_ignores_case_until_the_pattern_has_a_capital() {
