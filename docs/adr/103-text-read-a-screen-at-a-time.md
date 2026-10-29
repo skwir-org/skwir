@@ -49,8 +49,12 @@ what ADR-073 sets in the reading font.
    through, exactly; with nothing behind (after a link, a match found, a
    chapter's end reached by Ctrl+End or by turning back into it), the
    page before is the one that ends where this one starts, found over
-   the frames its items take to be laid out. Pages are not counted: the
-   bar keeps counting chapters or printed pages.
+   the frames its items take to be laid out. At the section's start that
+   page is its first, whole, ending where the panel does: the page turned
+   from shows again in part, and the pages on are cut from its end
+   (amended 2026-10-29: a first page ending where the next began could
+   hold only a chapter's headings, and read as blank). Pages are not
+   counted: the bar keeps counting chapters or printed pages.
 5. **Turning.** A notch of the wheel, Down, Page Down and Right turn on;
    Up, Page Up and Left back (Left and Right are the reader's page keys,
    as in the document reader); Ctrl+Home and Ctrl+End go to the

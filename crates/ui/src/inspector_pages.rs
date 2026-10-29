@@ -3,7 +3,8 @@
 //! (`reading.text_continuous`). A page is what the panel holds from the
 //! line at its top to the last line that fits whole: never through a line
 //! or a picture. The next page starts with the line it left out, and Back
-//! retraces the pages turned through. Pages are where the reader is, not a
+//! retraces the pages turned through; with none behind, the page before
+//! ends where the one shown starts, but a section's first page is whole. Pages are where the reader is, not a
 //! numbering of the section: nothing lays out the whole section first, so a
 //! book kept in one long chapter turns at once, and the bar keeps counting
 //! chapters or printed pages.
@@ -336,7 +337,9 @@ impl Pages {
                 }
             }
             self.settling = None;
-            self.end = Some(at);
+            // At the section's start the page is its first, whole: one ending
+            // where the page turned from starts may hold only the headings.
+            self.end = (!at_start).then_some(at);
             self.at = Some(laid.top);
         }
         if !self.at.is_some_and(|at| same(at, laid.top)) {
@@ -781,9 +784,11 @@ mod tests {
         assert_eq!(read(&mut pages, 216.), Move::By(-300.));
         // The list stops at its start, its top the first paragraph's (item
         // 1, the picture's item before it empty): the page found there is
-        // the section's first, and ends where the one turned from starts.
+        // the section's first, whole, ending after the second's 4th line
+        // rather than where the one turned from starts.
         assert_eq!(read(&mut pages, 0.), Move::Stay);
-        assert_eq!(pages.cover, Some(216.));
+        assert_eq!(pages.cover, Some(284.));
+        assert_eq!(pages.next, Some(offset(2, 68.)));
         assert_eq!(pages.back(&list), Turn::Section);
     }
 

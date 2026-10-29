@@ -7175,3 +7175,21 @@ A page found back from where the one shown starts may still be short at
 a chapter's start: it ends where the page turned from began (ADR-103,
 4), so a chapter's first page may hold only its headings when less than
 a page was left above.
+
+### A chapter's first page is whole (2026-10-29, ADR-103 amended)
+
+Turning back through a chapter with nothing behind, the page before is
+the one that ends where the page shown starts; at the chapter's start it
+could hold only the headings, the rest of the panel blank, which the user
+asked to have full. A page found back that reaches the section's start
+is now its first page whole (`Pages::read`, no end kept): it ends where
+the panel does, the page turned from shows again in part, and the pages
+on are cut from its end.
+
+Checked in a window on Xvfb (debug build) with the book of the entry
+above: walked up from a chapter's end, the first page held its headings
+and text to the panel's foot (ending 19 px above it, after its last whole
+line), the top of the page turned from again under them, and the next
+notch opened the chapter before on its last page. The unit test of a
+section's start now expects the whole page. Runs: `skwir-ui`'s tests
+(410 of 410), clippy (`-D warnings`), rustfmt.

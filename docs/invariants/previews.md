@@ -615,6 +615,9 @@ A text document is read as its structure, or laid out as pages.
   what was turned through forgotten. The pager moves it only to start a
   page with a whole line or to find a page back from its end, asking for
   the next frame (`on_next_frame`).
+- A page found back from where the one shown starts ends there, except
+  at the section's start: the first page is whole (ADR-103, 4, amended),
+  never only the headings above the page turned from.
 - A section starts where nothing above the list's top takes room
   (`Laid::above`, gpui's scroll offset), never at item 0 by number: an
   inspection's first item is its picture, empty without one, and gpui's
