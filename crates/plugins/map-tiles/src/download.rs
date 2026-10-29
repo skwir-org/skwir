@@ -29,10 +29,10 @@ const IN_FLIGHT: usize = 6;
 /// How long a tile is kept when its server says nothing (the policy's
 /// minimum).
 const KEEP: Duration = Duration::from_hours(168);
-/// The downloaded tiles kept, across sources.
+/// The downloaded tiles kept, across sources: trimmed once an eighth of
+/// it was written since the last trim (`CacheSlot::trim_soon`), as a trim
+/// lists and stats every tile kept.
 pub const CACHE_BUDGET: u64 = 128 * 1024 * 1024;
-/// Stores between two trims of the cache: a trim walks the directory.
-const TRIM_EVERY: u32 = 64;
 
 /// A tile as the cache keeps it: what the server said, then its bytes.
 struct Cached {
@@ -159,7 +159,6 @@ struct Shared {
     queue: Arc<Queue>,
     http: http::Http,
     cache: CacheSlot,
-    stores: Mutex<u32>,
     keys: Arc<Keys>,
 }
 
@@ -268,7 +267,6 @@ impl Downloads {
             queue: Arc::clone(&self.queue),
             http: http::Http::system(&self.user_agent)?,
             cache: self.cache.clone(),
-            stores: Mutex::new(0),
             keys: Arc::clone(&self.keys),
         });
         let lifetime = self.lifetime.clone();
@@ -401,13 +399,10 @@ async fn serve(shared: &Arc<Shared>, job: Job) {
         // request was made, and the view may come back.
         let answer = result.and_then(|fresh| {
             let image = decode(&fresh.body);
-            if image.is_ok() && shared.cache.put(place.as_bytes(), &fresh.encode()).is_ok() {
-                let mut count = shared.stores.lock();
-                *count += 1;
-                if (*count).is_multiple_of(TRIM_EVERY)
-                    && let Err(error) = shared.cache.trim_to_bytes(CACHE_BUDGET)
-                {
-                    tracing::debug!(%error, "map tiles: trimming the cache");
+            if image.is_ok() {
+                let kept = fresh.encode();
+                if shared.cache.put(place.as_bytes(), &kept).is_ok() {
+                    shared.cache.trim_soon(kept.len() as u64, CACHE_BUDGET);
                 }
             }
             image
