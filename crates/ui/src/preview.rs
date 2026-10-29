@@ -1273,7 +1273,8 @@ fn decode_image(
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
     }
-    let rgba = img.to_rgba8();
+    // Its own buffer when it is RGBA already, not a copy of it.
+    let rgba = img.into_rgba8();
     let ink = crate::backdrop::ink(&rgba);
     let image = crate::thumbs::owned_render_image(rgba.width(), rgba.height(), rgba.into_raw())
         .ok_or_else(|| anyhow::anyhow!("invalid image"))?;
