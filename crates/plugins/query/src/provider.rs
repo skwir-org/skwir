@@ -243,11 +243,26 @@ pub struct Shared {
 }
 
 #[cfg(test)]
-#[derive(Default)]
 struct Counted {
     rechecks: std::sync::atomic::AtomicUsize,
     considered: std::sync::atomic::AtomicUsize,
     names_read: std::sync::atomic::AtomicUsize,
+    /// The clock the names kept go by: stopped when the search opened, so
+    /// what a test counts does not hang on how busy the machine is (the
+    /// test of `Named` moves its clock itself).
+    clock: Instant,
+}
+
+#[cfg(test)]
+impl Default for Counted {
+    fn default() -> Self {
+        Counted {
+            rechecks: std::sync::atomic::AtomicUsize::default(),
+            considered: std::sync::atomic::AtomicUsize::default(),
+            names_read: std::sync::atomic::AtomicUsize::default(),
+            clock: Instant::now(),
+        }
+    }
 }
 
 /// The results shown, by id and by path: `path_of` asks by id, and a
@@ -425,7 +440,9 @@ struct Deferred<'a> {
 /// least recently used first past the bound: 32 folders kept, the last
 /// decided, let a folder of a hundred thousand names go between two of
 /// its groups while the walk's threads decided others, and read it again
-/// for each.
+/// for each. A folder is read by the first thread that needs it; those
+/// asking meanwhile wait for that read (`Slot`), where two threads deciding
+/// two groups of one folder at once read it twice.
 #[derive(Default)]
 struct Named {
     folders: HashMap<PathBuf, Kept>,
@@ -437,8 +454,13 @@ struct Named {
     count: usize,
 }
 
+/// A folder's names, filled once by the thread that reads them.
+type Slot = Arc<std::sync::OnceLock<Arc<HashSet<OsString>>>>;
+
 struct Kept {
-    names: Arc<HashSet<OsString>>,
+    slot: Slot,
+    /// Its names once read, counted against the bound.
+    len: usize,
     used: Instant,
     stamp: u64,
 }
@@ -452,32 +474,43 @@ impl Named {
     /// are let go of, never the one just used.
     const AT_MOST: usize = 256 * 1024;
 
-    /// `dir`'s names, if kept: used now.
-    fn get(&mut self, dir: &Path, now: Instant) -> Option<Arc<HashSet<OsString>>> {
-        let kept = self.folders.get_mut(dir)?;
+    /// `dir`'s slot, used now: the one kept, filled or being filled, or a
+    /// new one for the caller to fill and say so ([`Named::read`]).
+    fn slot(&mut self, dir: &Path, now: Instant) -> Slot {
         self.stamp += 1;
-        kept.used = now;
-        kept.stamp = self.stamp;
-        let names = Arc::clone(&kept.names);
-        self.uses.push_back((dir.to_path_buf(), self.stamp));
+        let stamp = self.stamp;
+        let slot = if let Some(kept) = self.folders.get_mut(dir) {
+            kept.used = now;
+            kept.stamp = stamp;
+            Arc::clone(&kept.slot)
+        } else {
+            let slot = Slot::default();
+            let kept = Kept {
+                slot: Arc::clone(&slot),
+                len: 0,
+                used: now,
+                stamp,
+            };
+            self.folders.insert(dir.to_path_buf(), kept);
+            slot
+        };
+        self.uses.push_back((dir.to_path_buf(), stamp));
         self.let_go(now);
-        Some(names)
+        slot
     }
 
-    /// Keep `dir`'s `names`, used now.
-    fn keep(&mut self, dir: &Path, names: Arc<HashSet<OsString>>, now: Instant) {
-        self.stamp += 1;
-        self.count += names.len();
-        let kept = Kept {
-            names,
-            used: now,
-            stamp: self.stamp,
-        };
-        if let Some(old) = self.folders.insert(dir.to_path_buf(), kept) {
-            self.count -= old.names.len();
+    /// `dir`'s `slot` was filled with `len` names: counted against the
+    /// bound, unless it was let go of meanwhile.
+    fn read(&mut self, dir: &Path, slot: &Slot, len: usize, now: Instant) {
+        if let Some(kept) = self
+            .folders
+            .get_mut(dir)
+            .filter(|kept| Arc::ptr_eq(&kept.slot, slot))
+        {
+            self.count = self.count - kept.len + len;
+            kept.len = len;
+            self.let_go(now);
         }
-        self.uses.push_back((dir.to_path_buf(), self.stamp));
-        self.let_go(now);
     }
 
     /// Let go of the folders unused a moment, and of the least recently
@@ -499,7 +532,7 @@ impl Named {
             };
             let (dir, _) = self.uses.pop_front().expect("the front was there");
             if go && let Some(kept) = self.folders.remove(&dir) {
-                self.count -= kept.names.len();
+                self.count -= kept.len;
             }
         }
     }
@@ -551,23 +584,37 @@ impl Deferred<'_> {
     /// Every name in `dir`, hidden ones included, read once for the
     /// batches of its group. On a walk's thread.
     fn names_of(&self, dir: &Path) -> Arc<HashSet<OsString>> {
-        if let Some(names) = self.names.lock().get(dir, Instant::now()) {
-            return names;
+        let slot = self.names.lock().slot(dir, self.now());
+        // Read here unless another thread does: then wait for its read.
+        let mut read = None;
+        let names = slot.get_or_init(|| {
+            let names: Arc<HashSet<OsString>> = Arc::new(
+                std::fs::read_dir(dir)
+                    .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
+                    .unwrap_or_default(),
+            );
+            read = Some(names.len());
+            names
+        });
+        if let Some(len) = read {
+            #[cfg(test)]
+            self.shared
+                .counted
+                .names_read
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.names.lock().read(dir, &slot, len, self.now());
         }
-        let names: Arc<HashSet<OsString>> = Arc::new(
-            std::fs::read_dir(dir)
-                .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
-                .unwrap_or_default(),
-        );
+        Arc::clone(names)
+    }
+
+    /// The time the names kept go by: stopped in a test.
+    // `self` holds the clock only in tests.
+    #[cfg_attr(not(test), allow(clippy::unused_self))]
+    fn now(&self) -> Instant {
         #[cfg(test)]
-        self.shared
-            .counted
-            .names_read
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        self.names
-            .lock()
-            .keep(dir, Arc::clone(&names), Instant::now());
-        names
+        return self.shared.counted.clock;
+        #[cfg(not(test))]
+        Instant::now()
     }
 
     fn shard(&self, dir: &Path) -> &Mutex<Shard> {
@@ -1852,8 +1899,9 @@ mod tests {
             let read = count(&open.shared.counted.names_read);
             if asks {
                 // The root (its folders are candidates too), `big` and the
-                // small ones: each once.
-                assert!((1..=22).contains(&read), "{read} folders read");
+                // small ones: each once, though the walk's threads decide
+                // groups of one folder at once.
+                assert_eq!(read, 22, "folders read");
             } else {
                 assert_eq!(read, 0, "no store asked");
             }
@@ -1868,36 +1916,54 @@ mod tests {
         let set = |n: usize| -> Arc<HashSet<OsString>> {
             Arc::new((0..n).map(|i| OsString::from(format!("f{i}"))).collect())
         };
+        // A folder read: its slot made and filled, as `names_of` does.
+        let keep = |named: &mut Named, dir: &Path, n: usize, at: Instant| {
+            let slot = named.slot(dir, at);
+            assert!(slot.set(set(n)).is_ok(), "a slot of its own");
+            named.read(dir, &slot, n, at);
+        };
+        // A folder used again: whether its names were kept.
+        let used = |named: &mut Named, dir: &Path, at: Instant| {
+            let kept = named
+                .folders
+                .get(dir)
+                .is_some_and(|kept| kept.slot.get().is_some());
+            named.slot(dir, at);
+            kept
+        };
         let t0 = Instant::now();
         let ms = |n: u64| t0 + Duration::from_millis(n);
         let mut named = Named::default();
         let big = Path::new("/synthetic/big");
-        named.keep(big, set(1_000), t0);
+        keep(&mut named, big, 1_000, t0);
         for i in 0..100 {
-            named.keep(Path::new(&format!("/synthetic/small{i}")), set(3), ms(i));
-            assert!(
-                named.get(big, ms(i)).is_some(),
-                "kept while its groups come"
-            );
+            let small = format!("/synthetic/small{i}");
+            keep(&mut named, Path::new(&small), 3, ms(i));
+            assert!(used(&mut named, big, ms(i)), "kept while its groups come");
         }
-        assert!(named.get(big, ms(400)).is_some());
+        assert!(used(&mut named, big, ms(400)));
         let late = Path::new("/synthetic/late");
-        named.keep(late, set(1), ms(700));
+        keep(&mut named, late, 1, ms(700));
         let mut kept: Vec<&Path> = named.folders.keys().map(PathBuf::as_path).collect();
         kept.sort();
         assert_eq!(kept, [big, late], "the others unused a moment");
-        named.keep(Path::new("/synthetic/later"), set(1), ms(1_000));
+        keep(&mut named, Path::new("/synthetic/later"), 1, ms(1_000));
         assert!(!named.folders.contains_key(big), "unused since 400 ms");
         assert_eq!(named.count, 2);
 
+        // Asked again while it is read, a folder is read once.
         let mut named = Named::default();
-        named.keep(Path::new("/a"), set(Named::AT_MOST / 2), t0);
-        named.keep(Path::new("/b"), set(Named::AT_MOST / 2), t0);
-        named.keep(Path::new("/c"), set(10), t0);
+        let (first, again) = (named.slot(big, t0), named.slot(big, t0));
+        assert!(Arc::ptr_eq(&first, &again), "one read for both");
+
+        let mut named = Named::default();
+        keep(&mut named, Path::new("/a"), Named::AT_MOST / 2, t0);
+        keep(&mut named, Path::new("/b"), Named::AT_MOST / 2, t0);
+        keep(&mut named, Path::new("/c"), 10, t0);
         let mut kept: Vec<&Path> = named.folders.keys().map(PathBuf::as_path).collect();
         kept.sort();
         assert_eq!(kept, [Path::new("/b"), Path::new("/c")], "the oldest first");
-        named.keep(Path::new("/huge"), set(Named::AT_MOST + 1), t0);
+        keep(&mut named, Path::new("/huge"), Named::AT_MOST + 1, t0);
         let kept: Vec<&Path> = named.folders.keys().map(PathBuf::as_path).collect();
         assert_eq!(kept, [Path::new("/huge")], "the one just used stays");
         assert_eq!(named.count, Named::AT_MOST + 1);
