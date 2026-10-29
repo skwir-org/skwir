@@ -181,7 +181,10 @@ ADR-077 (which revises ADR-021).
   place mounted or not (`remote:<address>`). A device is mounted once
   opened, never because it was plugged in: mounted, it is held from
   every other program. When it does not open, the programs holding its
-  node are named (`holders`), GVfs's own for that kind left out.
+  node are named (`holders`), GVfs's own for that kind left out. Its
+  signals are followed from the three monitors of devices alone, each
+  signal naming its monitor first (`gvfs_devices::signals`, `arg0`): the
+  disks' and online accounts' are not heard.
 - **A phone KDE's kmtpd holds** (ADR-097) opens through it: the `kmtp`
   connector, tried before GVfs, answers only for a phone kmtpd holds
   (`Connector::opens`), asked only where `kiod6` owns its name and kmtpd
@@ -598,7 +601,12 @@ ADR-077 (which revises ADR-021).
   question at a time a mount: none is queued behind one a server gone
   holds for good. A refresh publishes what is mounted at once, read from
   memory, and the servers the tools know after (`rclone listremotes`, a
-  name to resolve): the mounts never wait on them.
+  name to resolve): the mounts never wait on them. A device said, or a
+  mount GVfs made or let go of, reads the mounts again, never the servers
+  (`Remotes::refresh_mounts`); the servers are read at start, on
+  `remote.refresh`, and after connecting or disconnecting. rclone is
+  asked its servers again only once its configuration file changed, or
+  on `remote.refresh` (`rclone::forget_listed`).
 - What is mounted is kept in the plugin's state, the newest read, and
   every publish shows the state as it then is, one at a time: a publish
   never brings back an older list (a slow refresh's, a liveness
@@ -631,7 +639,8 @@ ADR-077 (which revises ADR-021).
   stopped answering, says what stays in the cache, which the next mount
   with that cache sends. What other programs left waiting is said on the
   mount's place, asked when the window comes back (`Known::looked_at`)
-  and every 2 s while some waits, never otherwise. A mount's remote
+  and every 2 s while some waits, never otherwise; a count that changed
+  publishes the place again, and nothing else is read. A mount's remote
   control is reached where it answers on each system
   (`uploads::control_of`: Unix's socket, Windows' loopback behind its
   login), every call about uploads given up after 5 s.

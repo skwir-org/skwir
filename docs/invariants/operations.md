@@ -12,7 +12,10 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   that action, asked already, going on (ADR-080, 9), not a new one.
 - Every operation has an inverse, a dry-run `check`, and is idempotent.
 - Steps reference entries by `EntryRef` (`AGENTS.md`, "Files and
-  entries").
+  entries"). A plan's steps look for a file gone from its name in one
+  listing of its folder (`StepContext::listed`, `op::listed`), kept
+  while the folder's times are unchanged and following the plan's own
+  renames; what it finds is stat-ed, so a stale listing only says gone.
 - A step that changes metadata states its words (`op::Words`: what it
   will do, for the review; what it did, for the toast). What a plan left
   out goes in its note (`Plan::with_note`), never in its title.
@@ -92,6 +95,11 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   is there under its name (`builtin::same_tree`) is read once a plan,
   its settling, dry run and run sharing the verdict while nothing of
   either, nor of their companions, changed (`StepContext::compared`).
+  A merge compares a folder, then its items level by level: each
+  folder's state is read once for the whole settling
+  (`StepContext::keeping_states`), and a folder found different keeps
+  what it found of its items, so no file's bytes are read twice;
+  outside settling, states are read afresh at each comparison.
 - **At once (ADR-079).** Plans, undos and redos start in the order asked,
   except that one starts beside those running when nothing asked before
   it that has not ended conflicts with it (`op::footprint`: what each
@@ -297,7 +305,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   placed); each step then says it removed its own
   (`StepContext::take_removed_ahead`). A
   removal is not taken back: a plan that stops before steps whose
-  removal was made ahead counts them done, with their inverses.
+  removal was made ahead counts them done, with their inverses. After a
+  plan's steps, only removals made ahead in a remote's folder are looked
+  for again (`StepContext::any_removed_ahead`).
   What a transfer writes or removes beside a mount, no watch sees: it
   records the folder (`StepContext::changed_beside`), and at the plan's
   end the executor tells the window (`Executor::set_changed_beside`),
@@ -353,8 +363,13 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   an entry there found under its other case); an item there whole
   (`same_tree`: matching kinds, names, link targets, permissions,
   requested attributes and companions, with regular-file bytes compared
-  in bounded, cancellable reads) is skipped by a copy and put in the
-  trash by a move. Matching size and time alone never prove unrelated
+  in bounded, cancellable reads for a move, whose verdict puts the
+  original in the trash, and for a copy between this machine's folders)
+  is skipped by a copy and put in the trash by a move. A copy from or to
+  a remote (`fs::reach`) is found whole by kind, permissions, attributes,
+  length and time (`finished_as`), its bytes unread
+  (`builtin::proves_bytes`, ADR-104): its verdict only leaves a copy
+  undone. Elsewhere, matching size and time alone never prove unrelated
   files equal; unavailable evidence leaves the normal conflict policy in
   charge. Attribute containers and native attributes are compared through
   the same conversion rules as copies. The metadata-only `finished_as`
@@ -548,6 +563,13 @@ The trash plugin reads ([locations.md](locations.md)); the core acts.
   from.
 - Trash refuses files already in a trash at any depth (`op::in_trash`);
   moves within the trash apply only to a trashed folder's files.
+- Nothing is trashed or deleted whole where a drive or a remote is
+  mounted at or below it (`builtin::mounted_there`, ADR-077): the check
+  reads the live mount table, read again only when the kernel says it
+  changed (`fs::volume::points_within`, poll on `/proc/self/mountinfo`).
+- A plan putting files of one name in one trash numbers them on from the
+  last it took there (`a`, `a.2`…), each name still made only where free
+  (`put_trash::put_numbered`).
 - A trash onto another volume (the home trash for a volume that refuses
   one of its own) copies, then removes the original; failing there, it
   leaves nothing the trash does not list (`builtin::failed_across`):
