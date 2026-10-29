@@ -167,6 +167,12 @@ impl File {
             .collect()
     }
 
+    /// The room it is counted as taking (`file_bytes`).
+    fn room(&self) -> u64 {
+        let (tags, name) = self.split();
+        FILE_BYTES + name.len() as u64 + tags.len() as u64
+    }
+
     fn has(&self, ids: &[u32]) -> bool {
         self.split()
             .0
@@ -182,6 +188,7 @@ impl File {
 #[derive(Default)]
 struct Folder {
     files: Vec<File>,
+    /// By tag number: a folder of photos may carry thousands of keywords.
     counts: Vec<(u32, u32)>,
     /// Its files not hidden.
     visible: u32,
@@ -206,14 +213,18 @@ impl Folder {
             self.visible = self.visible.saturating_sub(1);
         }
         for tag in tags {
-            match self.counts.iter_mut().find(|(t, _)| t == tag) {
-                Some((_, n)) if add => *n += 1,
-                Some((_, n)) => *n = n.saturating_sub(1),
-                None if add => self.counts.push((*tag, 1)),
-                None => {}
+            match self.counts.binary_search_by_key(tag, |(t, _)| *t) {
+                Ok(at) if add => self.counts[at].1 += 1,
+                Ok(at) => {
+                    self.counts[at].1 = self.counts[at].1.saturating_sub(1);
+                    if self.counts[at].1 == 0 {
+                        self.counts.remove(at);
+                    }
+                }
+                Err(at) if add => self.counts.insert(at, (*tag, 1)),
+                Err(_) => {}
             }
         }
-        self.counts.retain(|(_, n)| *n > 0);
     }
 
     /// `name` has `tags` now (none: it is forgotten): what it had.
@@ -353,17 +364,207 @@ impl State {
             .collect()
     }
 
-    fn home_count(&mut self, path: &Path, tags: &[u32], add: bool) {
-        let Some(home) = &self.home else { return };
-        if !path.starts_with(home) || hidden_under(path, home) {
-            return;
+    /// Whether the files of `dir` are counted under the home folder: in
+    /// it, outside hidden folders.
+    fn at_home(&self, dir: &Path) -> bool {
+        self.home
+            .as_deref()
+            .is_some_and(|home| dir.starts_with(home) && !hidden_under(dir, home))
+    }
+
+    /// What a batch changed of the files counted under the home folder, by
+    /// tag, added once: only a tag that reaches none is taken out, where
+    /// every file learned went over every tag.
+    fn add_home(&mut self, changes: HashMap<u32, i64>) {
+        for (tag, change) in changes {
+            if change == 0 {
+                continue;
+            }
+            let n = self.home_counts.entry(tag).or_default();
+            *n = n.saturating_add_signed(change);
+            if *n == 0 {
+                self.home_counts.remove(&tag);
+            }
         }
-        for tag in &with_categories(tags, &self.parents) {
-            let n = self.home_counts.entry(*tag).or_default();
-            *n = if add { *n + 1 } else { n.saturating_sub(1) };
-        }
-        self.home_counts.retain(|_, n| *n > 0);
         self.meta_dirty = true;
+    }
+
+    /// Take the folder `path` (of piece `at`) out whole, with the room its
+    /// files took and what they counted under the home folder: a folder
+    /// moved away or gone, rather than each of its files forgotten, which
+    /// moved all those after it, a folder of many thousands quadratic.
+    fn take_folder(&mut self, at: usize, path: &Path) -> Option<Folder> {
+        let folder = self.pieces[at].folders.remove(path)?;
+        let room = folder_bytes(path) + folder.files.iter().map(File::room).sum::<u64>();
+        self.bytes[at] = self.bytes[at].saturating_sub(room);
+        if self.folders.remove(path).is_some() {
+            self.folders_dirty = true;
+        }
+        if self.at_home(path) {
+            let gone = folder
+                .counts
+                .iter()
+                .map(|(tag, n)| (*tag, -i64::from(*n)))
+                .collect();
+            self.add_home(gone);
+        }
+        self.pieces[at].dirty = true;
+        self.meta_dirty = true;
+        Some(folder)
+    }
+}
+
+/// One read of a file a batch learns, its folder and its name found once:
+/// the folder is the first `dir` bytes of its path, the name those from
+/// `name` on.
+struct Read {
+    path: PathBuf,
+    dir: usize,
+    name: usize,
+    tags: Vec<String>,
+}
+
+impl Read {
+    fn of(path: PathBuf, tags: Vec<String>) -> Option<Read> {
+        let dir = path.parent()?.as_os_str().len();
+        let name = path.file_name()?.len();
+        let len = path.as_os_str().len();
+        // A name ends its path as listings join them; one spelled another
+        // way (a trailing separator) is joined again.
+        if !path
+            .as_os_str()
+            .as_encoded_bytes()
+            .ends_with(path.file_name()?.as_encoded_bytes())
+        {
+            let joined = path.parent()?.join(path.file_name()?);
+            return Read::of(joined, tags);
+        }
+        Some(Read {
+            path,
+            dir,
+            name: len - name,
+            tags,
+        })
+    }
+
+    fn dir_bytes(&self) -> &[u8] {
+        &self.path.as_os_str().as_encoded_bytes()[..self.dir]
+    }
+
+    fn name_bytes(&self) -> &[u8] {
+        &self.path.as_os_str().as_encoded_bytes()[self.name..]
+    }
+
+    fn dir(&self) -> &Path {
+        self.path.parent().unwrap_or(Path::new(""))
+    }
+
+    fn name(&self) -> &OsStr {
+        self.path.file_name().unwrap_or_default()
+    }
+}
+
+/// What becomes of one file a batch learns.
+enum Fate {
+    /// As it was: nothing changed, or no room for it.
+    Same,
+    /// Known, or added, with these tags.
+    Tags(Vec<u32>),
+    /// Forgotten.
+    Gone,
+}
+
+/// One folder's files being learned: the room taken as it goes, and what
+/// changes under the home folder.
+struct Learning<'a> {
+    dir: &'a Path,
+    at: usize,
+    limit: u64,
+    /// The room the index takes in all.
+    total: &'a mut u64,
+    /// The folder's files as it goes: a folder holding none takes no room.
+    live: usize,
+    /// Its files are counted under the home folder.
+    at_home: bool,
+    home: &'a mut HashMap<u32, i64>,
+    changed: bool,
+}
+
+impl Learning<'_> {
+    /// Learn that the file `name` of `folder` (taken out of its piece) has
+    /// `ids` (none: forget it), having had `had` if it was known.
+    fn file(
+        &mut self,
+        state: &mut State,
+        folder: &mut Folder,
+        name: &OsStr,
+        had: Option<&[u32]>,
+        ids: Vec<u32>,
+    ) -> Fate {
+        if had == Some(ids.as_slice()) {
+            return Fate::Same;
+        }
+        if had.is_none() {
+            if ids.is_empty() {
+                return Fate::Same;
+            }
+            let more = file_bytes(name, ids.len())
+                + if self.live == 0 {
+                    folder_bytes(self.dir)
+                } else {
+                    0
+                };
+            if *self.total + more > self.limit {
+                // No room: no folder can be said to be whole.
+                if !state.refused || !state.covered.is_empty() {
+                    state.refused = true;
+                    state.covered.clear();
+                    state.meta_dirty = true;
+                    self.changed = true;
+                }
+                return Fate::Same;
+            }
+        }
+        let parents = &state.parents;
+        let counted = self.at_home && !hidden(name);
+        let before = state.bytes[self.at];
+        let mut bytes = before;
+        if let Some(old) = had {
+            folder.count(name, old, parents, false);
+            bytes = bytes.saturating_sub(file_bytes(name, old.len()));
+            if counted {
+                for tag in with_categories(old, parents) {
+                    *self.home.entry(tag).or_default() -= 1;
+                }
+            }
+        }
+        if !ids.is_empty() {
+            folder.count(name, &ids, parents, true);
+            bytes += file_bytes(name, ids.len());
+            if counted {
+                for tag in with_categories(&ids, parents) {
+                    *self.home.entry(tag).or_default() += 1;
+                }
+            }
+        }
+        // The folder's own room, as it comes to hold files or none.
+        let was = self.live;
+        self.live = self.live + usize::from(had.is_none()) - usize::from(ids.is_empty());
+        if was == 0 && self.live > 0 {
+            bytes += folder_bytes(self.dir);
+        } else if was > 0 && self.live == 0 {
+            bytes = bytes.saturating_sub(folder_bytes(self.dir));
+        }
+        state.bytes[self.at] = bytes;
+        *self.total = *self.total - before + bytes;
+        state.pieces[self.at].dirty = true;
+        state.meta_dirty = true;
+        self.changed = true;
+        if ids.is_empty() {
+            Fate::Gone
+        } else {
+            Fate::Tags(ids)
+        }
     }
 }
 
@@ -765,88 +966,133 @@ impl TagIndex {
 
     /// Learn `read` into `state`, past `limit` no new file: whether that
     /// changed it.
-    fn learn_into(state: &mut State, mut read: Vec<(PathBuf, Vec<String>)>, limit: u64) -> bool {
-        // By path's bytes, each folder's files in the order it keeps them
-        // (`Folder::find`): a new one is added at its end, where a
-        // folder's files learned in the order they were listed were each
-        // inserted among the others, a folder of many thousands tagged
-        // files quadratic. Stable: the later of two reads of a file wins.
-        read.sort_by(|a, b| {
-            a.0.as_os_str()
-                .as_encoded_bytes()
-                .cmp(b.0.as_os_str().as_encoded_bytes())
-        });
+    fn learn_into(state: &mut State, read: Vec<(PathBuf, Vec<String>)>, limit: u64) -> bool {
+        // By folder, then by name, each as its bytes (`Folder::find`): each
+        // folder's files together, in the order it keeps them, learned in
+        // one pass. Stable: the later of two reads of a file wins.
+        let mut read: Vec<Read> = read
+            .into_iter()
+            .filter_map(|(path, tags)| Read::of(path, tags))
+            .collect();
+        read.sort_by(|a, b| (a.dir_bytes(), a.name_bytes()).cmp(&(b.dir_bytes(), b.name_bytes())));
         let mut changed = false;
-        for (path, tags) in read {
-            let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else {
-                continue;
-            };
-            let mut ids: Vec<u32> = Vec::new();
-            for tag in &tags {
-                let id = state.id(tag);
-                if !ids.contains(&id) {
-                    ids.push(id);
-                }
-            }
-            let at = piece_of(dir);
-            let known_folder = state.pieces[at].folders.contains_key(dir);
-            let known_file = known_folder && state.pieces[at].folders[dir].find(name).is_ok();
-            if !known_file && ids.is_empty() {
-                continue;
-            }
-            if !known_file {
-                let more =
-                    file_bytes(name, ids.len()) + if known_folder { 0 } else { folder_bytes(dir) };
-                if state.total() + more > limit {
-                    // No room: no folder can be said to be whole.
-                    if !state.refused || !state.covered.is_empty() {
-                        state.refused = true;
-                        state.covered.clear();
-                        state.meta_dirty = true;
-                        changed = true;
+        let mut total = state.total();
+        let mut home: HashMap<u32, i64> = HashMap::new();
+        for group in read.chunk_by(|a, b| a.dir_bytes() == b.dir_bytes()) {
+            changed |= Self::learn_folder(state, group, limit, &mut total, &mut home);
+        }
+        if !home.is_empty() {
+            state.add_home(home);
+        }
+        changed
+    }
+
+    /// Learn `group`, the reads of one folder's files in its order, into
+    /// it: each file changed where it is when none comes or goes, else the
+    /// folder's files from the group's first on and the group merged in one
+    /// pass, where each file added or forgotten moved all those after it.
+    fn learn_folder(
+        state: &mut State,
+        group: &[Read],
+        limit: u64,
+        total: &mut u64,
+        home: &mut HashMap<u32, i64>,
+    ) -> bool {
+        let dir = group[0].dir();
+        // Each file's last read, its tags by number, before the folder is
+        // taken out: `id` may add tags and their categories.
+        let run: Vec<(&OsStr, Vec<u32>)> = group
+            .iter()
+            .enumerate()
+            .filter(|(i, r)| {
+                group
+                    .get(i + 1)
+                    .is_none_or(|next| next.name_bytes() != r.name_bytes())
+            })
+            .map(|(_, r)| {
+                let mut ids: Vec<u32> = Vec::new();
+                for tag in &r.tags {
+                    let id = state.id(tag);
+                    if !ids.contains(&id) {
+                        ids.push(id);
                     }
-                    continue;
+                }
+                (r.name(), ids)
+            })
+            .collect();
+        let at = piece_of(dir);
+        // Taken out while its files are learned, and put back where it was.
+        let taken = state.pieces[at].folders.get_mut(dir).map(std::mem::take);
+        let mut folder = taken.unwrap_or_default();
+        let held = !folder.files.is_empty();
+        let mut learning = Learning {
+            dir,
+            at,
+            limit,
+            total,
+            live: folder.files.len(),
+            at_home: state.at_home(dir),
+            home,
+            changed: false,
+        };
+        // A file comes (unknown, with tags) or goes (known, with none).
+        let moves = run
+            .iter()
+            .any(|(name, ids)| folder.find(name).is_ok() == ids.is_empty());
+        if moves {
+            // The files before the first of the group stay where they are:
+            // files learned in the order they are named come at the end.
+            let start = run
+                .first()
+                .map_or(0, |(name, _)| folder.find(name).unwrap_or_else(|at| at));
+            let mut files = std::mem::take(&mut folder.files);
+            let mut old = files.split_off(start).into_iter().peekable();
+            files.reserve(old.len() + run.len());
+            for (name, ids) in run {
+                let bytes = name.as_encoded_bytes();
+                while let Some(file) = old.next_if(|f| f.name_bytes() < bytes) {
+                    files.push(file);
+                }
+                let known = old.next_if(|f| f.name_bytes() == bytes);
+                let had = known.as_ref().map(File::tags);
+                match learning.file(state, &mut folder, name, had.as_deref(), ids) {
+                    Fate::Same => files.extend(known),
+                    Fate::Tags(ids) => files.push(File::new(name, &ids)),
+                    Fate::Gone => {}
                 }
             }
-            let folder = state.pieces[at]
-                .folders
-                .entry(dir.to_path_buf())
-                .or_default();
-            let new_len = ids.len();
-            let old = folder.set(name, &ids, &state.parents);
-            if old.as_deref() == Some(ids.as_slice()) {
-                continue;
+            files.extend(old);
+            folder.files = files;
+        } else {
+            for (name, ids) in run {
+                // Unknown and without tags: nothing to learn.
+                let Ok(i) = folder.find(name) else { continue };
+                let had = folder.files[i].tags();
+                if let Fate::Tags(ids) = learning.file(state, &mut folder, name, Some(&had), ids) {
+                    folder.files[i] = File::new(name, &ids);
+                }
             }
-            let emptied = folder.files.is_empty();
-            if emptied {
-                state.pieces[at].folders.remove(dir);
+        }
+        let changed = learning.changed;
+        let piece = &mut state.pieces[at].folders;
+        match (held, folder.files.is_empty()) {
+            (true, false) => {
+                if let Some(place) = piece.get_mut(dir) {
+                    *place = folder;
+                }
             }
-            // Room taken, and the folders held.
-            let mut bytes = state.bytes[at];
-            if let Some(old) = &old {
-                bytes = bytes.saturating_sub(file_bytes(name, old.len()));
+            (true, true) => {
+                piece.remove(dir);
+                if state.folders.remove(dir).is_some() {
+                    state.folders_dirty = true;
+                }
             }
-            if new_len > 0 {
-                bytes += file_bytes(name, new_len);
-            }
-            if !known_folder && new_len > 0 {
-                bytes += folder_bytes(dir);
+            (false, false) => {
+                piece.insert(dir.to_path_buf(), folder);
                 state.folders.insert(dir.to_path_buf(), at);
                 state.folders_dirty = true;
             }
-            if emptied {
-                bytes = bytes.saturating_sub(folder_bytes(dir));
-                state.folders.remove(dir);
-                state.folders_dirty = true;
-            }
-            state.bytes[at] = bytes;
-            if let Some(old) = &old {
-                state.home_count(&path, old, false);
-            }
-            state.home_count(&path, &ids, true);
-            state.pieces[at].dirty = true;
-            state.meta_dirty = true;
-            changed = true;
+            (false, true) => {}
         }
         changed
     }
@@ -961,20 +1207,24 @@ impl TagIndex {
                 // The files it held under `from`: a folder's, or one file.
                 let mut read: Vec<(PathBuf, Vec<String>)> = Vec::new();
                 let mut forget: Vec<(PathBuf, Vec<String>)> = Vec::new();
+                // Each folder under it goes whole, its files learned where
+                // they went.
                 for (folder, at) in self.load_under(&mut state, from) {
-                    if let Some(f) = state.pieces[at].folders.get(&folder) {
-                        for file in &f.files {
-                            let path = folder.join(file.name());
-                            let tags: Vec<String> = file
-                                .tags()
-                                .into_iter()
-                                .map(|t| state.tags[t as usize].clone())
-                                .collect();
-                            forget.push((path.clone(), Vec::new()));
-                            if let (Some(to), Ok(rest)) = (to, path.strip_prefix(from)) {
-                                read.push((to.join(rest), tags));
-                            }
-                        }
+                    let Some(f) = state.take_folder(at, &folder) else {
+                        continue;
+                    };
+                    changed = true;
+                    let (Some(to), Ok(rest)) = (to, folder.strip_prefix(from)) else {
+                        continue;
+                    };
+                    let there = to.join(rest);
+                    for file in &f.files {
+                        let tags: Vec<String> = file
+                            .tags()
+                            .into_iter()
+                            .map(|t| state.tags[t as usize].clone())
+                            .collect();
+                        read.push((there.join(file.name()), tags));
                     }
                 }
                 if let (Some(dir), Some(name)) = (from.parent(), from.file_name()) {

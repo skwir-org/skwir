@@ -430,3 +430,125 @@ fn home_counts_of_hidden_files_kept_before_are_counted_again() {
         again.state().home_counts.len()
     );
 }
+
+fn owned(v: &[(&str, usize)]) -> Vec<(String, usize)> {
+    v.iter().map(|(t, n)| ((*t).to_owned(), *n)).collect()
+}
+
+/// A folder of many thousand tagged files, gone or moved away whole: its
+/// files leave the counts at once, those under the home folder and the
+/// room alike, and those moved are counted where they went.
+#[test]
+fn a_folder_gone_or_moved_takes_its_files_along_at_once() {
+    const N: usize = 100_000;
+    let index = index(None, 64);
+    let home = PathBuf::from("/h/it's me");
+    index.state().home = Some(home.clone());
+    let words = ["vacation", "alps", "work", "family"];
+    let learn = |dir: &Path| {
+        for batch in (0..N).collect::<Vec<_>>().chunks(2_000) {
+            index.learn(
+                batch
+                    .iter()
+                    .map(|&i| {
+                        let file = dir.join(format!("IMG_{i:06}.jpg"));
+                        (file, vec![words[i % 4].to_owned()])
+                    })
+                    .collect(),
+            );
+        }
+    };
+    let each = owned(&[
+        ("alps", N / 4),
+        ("family", N / 4),
+        ("vacation", N / 4),
+        ("work", N / 4),
+    ]);
+    let from = home.join("Pictures/l'été");
+    learn(&from);
+    assert_eq!(index.tally(&from), (each.clone(), N));
+    assert_eq!(index.top(9, &home), each);
+    let room = index.state().total();
+
+    index.moved(&[(from.clone(), None)]);
+    assert_eq!(index.tally(&home), (Vec::new(), 0));
+    assert!(index.top(9, &home).is_empty(), "nor under the home folder");
+    assert_eq!(index.state().total(), 0, "nor any room");
+    assert!(index.state().folders.is_empty());
+
+    learn(&from);
+    let to = home.join("Pictures/archive/l'été 2024");
+    index.moved(&[(from.clone(), Some(to.clone()))]);
+    assert_eq!(index.tally(&from), (Vec::new(), 0));
+    assert_eq!(index.tally(&to), (each.clone(), N));
+    assert_eq!(index.top(9, &home), each);
+    assert_eq!(
+        index.state().total(),
+        room - folder_bytes(&from) + folder_bytes(&to)
+    );
+}
+
+/// Tags given to every other file of a folder whose others have some, one
+/// changed where it is, then all taken off: each batch learned into the
+/// folder at once, the counts and the room exact, the files kept in the
+/// order they are found by.
+#[test]
+fn the_other_half_of_a_folder_tagged_then_all_untagged_counts_exactly() {
+    const N: usize = 50_000;
+    let index = index(None, 64);
+    let dir = PathBuf::from("/r/half");
+    let file = |i: usize| dir.join(format!("{i:06}.raw"));
+    let learn = |from: usize, given: &[&str]| {
+        let files: Vec<usize> = (from..N).step_by(2).collect();
+        for batch in files.chunks(2_000) {
+            index.learn(batch.iter().map(|&i| (file(i), tags(given))).collect());
+        }
+    };
+    learn(0, &["even"]);
+    learn(1, &["odd", "Places/Alps"]);
+    let half = N / 2;
+    assert_eq!(
+        index.tally(&dir),
+        (
+            owned(&[
+                ("even", half),
+                ("odd", half),
+                ("Places", half),
+                ("Places/Alps", half)
+            ]),
+            N
+        )
+    );
+    {
+        let state = index.state();
+        let folder = &state.pieces[piece_of(&dir)].folders[&dir];
+        assert!(
+            folder
+                .files
+                .windows(2)
+                .all(|w| w[0].name_bytes() < w[1].name_bytes()),
+            "the files in the order they are found by"
+        );
+        assert!(
+            folder.counts.windows(2).all(|w| w[0].0 < w[1].0),
+            "the counts by tag number"
+        );
+    }
+    // An odd file given another tag, found where it is.
+    index.learn(vec![(file(half + 1), tags(&["even"]))]);
+    assert_eq!(
+        index.tally(&dir).0,
+        owned(&[
+            ("even", half + 1),
+            ("odd", half - 1),
+            ("Places", half - 1),
+            ("Places/Alps", half - 1)
+        ])
+    );
+    for batch in (0..N).collect::<Vec<_>>().chunks(2_000) {
+        index.learn(batch.iter().map(|&i| (file(i), Vec::new())).collect());
+    }
+    assert_eq!(index.tally(&dir), (Vec::new(), 0));
+    assert_eq!(index.state().total(), 0);
+    assert!(index.state().folders.is_empty());
+}
