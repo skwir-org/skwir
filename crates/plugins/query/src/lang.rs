@@ -2337,11 +2337,23 @@ mod tests {
         use skwir_platform::mime::by_name;
         let types = Types::default();
         let jpeg = by_name(OsStr::new("x.jpg"));
-        for i in 0..10_000 {
-            let name = format!("2024.05.{:02} 12.{i}.jpg", i % 28 + 1);
+        for i in 0..100_000 {
+            let name = format!("IMG.{i}.2024.jpg");
             assert_eq!(types.of(OsStr::new(&name)), jpeg, "{name}");
         }
-        assert_eq!(types.0.lock().types.len(), 1, "one suffix");
+        assert!(
+            types.0.lock().types.len() <= 2,
+            "one suffix, not a name each"
+        );
+        // The free desktops' database names the compressed tar.
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            types
+                .of(OsStr::new("a.TAR.GZ"))
+                .as_ref()
+                .map(skwir_platform::mime::Mime::as_str),
+            Some("application/x-compressed-tar")
+        );
         for name in [
             "a.TAR.GZ",
             "it's b.tar.gz",

@@ -1445,6 +1445,15 @@ mod tests {
         assert!(!types.is_picture(Path::new("/p/notes.txt")));
         assert!(!types.is_picture(Path::new("/p/Makefile")), "asked whole");
         assert_eq!(types.types.len(), 2, "jpg and txt");
+        // As a search's filter types it (the query plugin's `lang::Types`).
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            types
+                .of(Path::new("a.TAR.GZ"))
+                .as_ref()
+                .map(skwir_platform::mime::Mime::as_str),
+            Some("application/x-compressed-tar")
+        );
         for name in [
             "a.jpg", "b.png", "c.txt", "Makefile", "d.tar.gz", "e.gz", "f.TAR.XZ",
         ] {
