@@ -84,6 +84,112 @@ pub struct Report {
     /// Every name of the folder typed by name (`mime::by_name`), as rows,
     /// the Narrow by bar and `kind:` searches type them: the whole of it.
     pub mime_by_name: Stat,
+    /// The folder listed in a pane, all of it selected, and each selected
+    /// entry found again in the pane by its reference
+    /// (`Pane::entry_at`), as `tags.toggle` finds them: the finding alone.
+    pub entry_at_selection: Stat,
+    /// 10 000 of 20 000 empty files in a scratch folder deleted for good
+    /// by a plan, through the executor: from applying it to its end.
+    pub delete_tail: Stat,
+    /// The tags index holding 100 000 tagged files in one folder, told
+    /// the folder went (`TagIndex::moved`).
+    pub tags_forget: Stat,
+}
+
+impl Report {
+    /// Each measurement by its key in the budgets file.
+    fn metrics(&self) -> [(&'static str, &Stat); 26] {
+        [
+            ("first_batch_us", &self.first_batch),
+            ("list_getdents_us", &self.list_getdents),
+            ("list_std_us", &self.list_std),
+            ("stat_statx_us", &self.stat_statx),
+            ("stat_parallel_us", &self.stat_parallel),
+            ("walk_parallel_us", &self.walk_parallel),
+            ("stream_open_us", &self.stream_open),
+            ("stream_first_batch_us", &self.stream_first_batch),
+            ("stream_complete_us", &self.stream_complete),
+            ("thumbs_cold_per_image_us", &self.thumbs_cold_per_image),
+            ("thumbs_warm_per_image_us", &self.thumbs_warm_per_image),
+            ("thumbs_cold_per_drawing_us", &self.thumbs_cold_per_drawing),
+            ("thumbs_warm_per_drawing_us", &self.thumbs_warm_per_drawing),
+            ("tags_fill_us", &self.tags_fill),
+            ("tag_search_us", &self.tag_search),
+            ("tags_check_us", &self.tags_check),
+            ("tags_index_learn_us", &self.tags_index_learn),
+            ("tags_index_tally_us", &self.tags_index_tally),
+            ("tags_index_change_us", &self.tags_index_change),
+            ("usage_scan_us", &self.usage_scan),
+            ("listing_sort_hydrate_us", &self.listing_sort_hydrate),
+            ("listing_sort_update_us", &self.listing_sort_update),
+            ("mime_by_name_us", &self.mime_by_name),
+            ("entry_at_selection_us", &self.entry_at_selection),
+            ("delete_tail_us", &self.delete_tail),
+            ("tags_forget_us", &self.tags_forget),
+        ]
+    }
+}
+
+/// The measurements made in memory or in a scratch folder of their own:
+/// they read no generated tree.
+const OWN_DATA: [&str; 7] = [
+    "tags_index_learn_us",
+    "tags_index_tally_us",
+    "tags_index_change_us",
+    "listing_sort_hydrate_us",
+    "listing_sort_update_us",
+    "delete_tail_us",
+    "tags_forget_us",
+];
+
+/// The measurements of the flat tree alone.
+const FLAT_ONLY: [&str; 6] = [
+    "listing_sort_hydrate_us",
+    "listing_sort_update_us",
+    "entry_at_selection_us",
+    "delete_tail_us",
+    "tags_forget_us",
+    "mime_by_name_us",
+];
+
+/// The metrics a run measures, by their keys in the budgets file: those
+/// named (`--only`), or every one (the default).
+#[derive(Clone, Debug, Default)]
+pub struct Only(Vec<String>);
+
+impl Only {
+    /// The metrics `names`, every one when empty.
+    ///
+    /// # Errors
+    /// For a name that is no metric's.
+    pub fn named(names: Vec<String>) -> anyhow::Result<Only> {
+        let known = Report::default().metrics().map(|(name, _)| name);
+        if let Some(unknown) = names.iter().find(|n| !known.contains(&n.as_str())) {
+            anyhow::bail!("no metric is named {unknown}: {}", known.join(", "));
+        }
+        Ok(Only(names))
+    }
+
+    /// Whether `metric` is measured.
+    pub fn wants(&self, metric: &str) -> bool {
+        self.0.is_empty() || self.0.iter().any(|m| m == metric)
+    }
+
+    /// Whether a run of `profile` reads its generated tree for what it
+    /// measures: not for what is measured in memory or in a scratch folder
+    /// of its own, nor for what is the flat tree's alone.
+    pub fn reads_tree(&self, profile: Profile) -> bool {
+        Report::default().metrics().iter().any(|(name, _)| {
+            self.wants(name)
+                && !OWN_DATA.contains(name)
+                && (profile == Profile::Flat100k || !FLAT_ONLY.contains(name))
+        })
+    }
+}
+
+/// `measure()` when `wanted`, nothing measured otherwise.
+fn measured(wanted: bool, measure: impl FnOnce() -> Stat) -> Stat {
+    if wanted { measure() } else { Stat::NONE }
 }
 
 /// Budgets file: `[profile] metric_us = max`.
@@ -770,13 +876,145 @@ fn mime_by_name(dir: &Path, profile: Profile, runs: usize) -> Stat {
     })
 }
 
+/// [`Report::entry_at_selection`]: `dir` listed in a pane of `app`, all
+/// of it selected; then each selected entry found by its reference, as
+/// `tags.toggle` finds what it toggles. Only the finding is timed.
+fn entry_at_selection(app: &skwir_core::App, dir: &Path, runs: usize) -> Stat {
+    use skwir_core::command::Invocation;
+    use skwir_core::location::Location;
+    let dir = skwir_core::os_path::canonical(dir).expect("tree");
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&dir))
+        .expect("navigate");
+    assert!(
+        app.pump_until_complete(pane, STREAM_DEADLINE),
+        "listing {} did not complete",
+        dir.display()
+    );
+    app.dispatch(&Invocation::with_args(
+        "select_all",
+        &serde_json::json!({ "pane": pane }),
+    ))
+    .expect("select_all");
+    let refs = app.selected_refs(pane);
+    assert!(
+        u64::try_from(refs.len()).unwrap_or(u64::MAX) >= Profile::Flat100k.file_count(),
+        "every file selected"
+    );
+    timed(runs, || {
+        let ws = app.workspace.read();
+        let found = refs
+            .iter()
+            .filter(|r| {
+                ws.pane(pane)
+                    .and_then(|p| p.entry_at(r.id, &r.path))
+                    .is_some()
+            })
+            .count();
+        assert_eq!(found, refs.len(), "every selected entry found");
+        found
+    })
+}
+
+/// How many empty files [`delete_tail`] makes, and deletes every other of.
+const DELETE_TAIL_FILES: usize = 20_000;
+
+/// [`Report::delete_tail`]: each run in a scratch folder of its own under
+/// the tests' folder of the cache (a real disk, never tmpfs), made afresh
+/// and removed after.
+fn delete_tail(runs: usize) -> Stat {
+    use skwir_core::op::{Delete, EntryRef, Operation, Plan};
+    let base = skwir_core::xdg::cache_home()
+        .expect("a cache folder")
+        .join("skwir-tests");
+    std::fs::create_dir_all(&base).expect("tests' folder");
+    let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(
+        std::env::temp_dir().join("skwir-bench-delete"),
+    ))
+    .expect("app");
+    Stat::of(
+        (0..runs)
+            .map(|_| {
+                let scratch = tempfile::Builder::new()
+                    .prefix("bench-delete-tail-")
+                    .tempdir_in(&base)
+                    .expect("scratch folder");
+                let name = |i: usize| scratch.path().join(format!("file-{i:05}"));
+                for i in 0..DELETE_TAIL_FILES {
+                    std::fs::File::create(name(i)).expect("file");
+                }
+                let steps: Vec<Box<dyn Operation>> = (0..DELETE_TAIL_FILES)
+                    .step_by(2)
+                    .map(|i| -> Box<dyn Operation> {
+                        Box::new(Delete {
+                            entry: EntryRef::from_path(name(i)).expect("stat"),
+                        })
+                    })
+                    .collect();
+                let plan = Plan::with_steps("Delete", steps);
+                let t = Instant::now();
+                let done = app.executor.execute_blocking(&plan, app.lifetime());
+                let took = t.elapsed();
+                assert_eq!(
+                    (done.applied, done.error),
+                    (DELETE_TAIL_FILES / 2, None),
+                    "every step deleted its file"
+                );
+                took
+            })
+            .collect(),
+    )
+}
+
+/// [`Report::tags_forget`]: 100 000 tagged files in one folder learned
+/// by an index writing to a cache of its own, emptied first, then the
+/// folder said gone.
+fn tags_forget(runs: usize) -> Stat {
+    use skwir_plugin_tags::index::TagIndex;
+    let app = tags_app();
+    let folder = std::env::home_dir()
+        .expect("home")
+        .join("Pictures/bench-forget");
+    let words = ["vacation", "alps", "work", "family"];
+    Stat::of(
+        (0..runs)
+            .map(|run| {
+                let cache = std::env::temp_dir().join(format!("skwir-bench-tags-forget-{run}"));
+                let _ = std::fs::remove_dir_all(&cache);
+                let slot = skwir_core::cache::Cache::new(&cache).namespace("tags");
+                let index = TagIndex::new(Some(slot), &app, skwir_core::CancelToken::new());
+                for batch in (0..100_000).collect::<Vec<usize>>().chunks(2_000) {
+                    index.learn(
+                        batch
+                            .iter()
+                            .map(|&i| {
+                                (
+                                    folder.join(format!("IMG_{i:06}.jpg")),
+                                    vec![words[i % 4].to_owned()],
+                                )
+                            })
+                            .collect(),
+                    );
+                }
+                index.write_now();
+                let t = Instant::now();
+                index.moved(&[(folder.clone(), None)]);
+                let took = t.elapsed();
+                let (_, files) = index.tally(&folder);
+                assert_eq!(files, 0, "the folder's files forgotten");
+                took
+            })
+            .collect(),
+    )
+}
+
 /// Whether the generator could tag `dir` (see `generate::tag`).
 fn tagged(dir: &Path) -> bool {
     dir.join(".skwir-bench-tagged").exists()
 }
 
-/// Measure `profile` under `root`.
-pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
+/// Measure `profile` under `root`: what `only` names of it.
+pub fn run(root: &Path, profile: Profile, runs: usize, only: &Only) -> Report {
     let dir = root.join(profile.name());
     // Walk is over the whole tree; the per-directory measurements target the
     // largest single directory (the root for flat profiles, a leaf for deep).
@@ -784,7 +1022,12 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         Profile::Deep1m => dir.join("d0/d0/d0/d0"),
         _ => dir.clone(),
     };
-    let n = names(&single);
+    let want = |metric: &str| only.wants(metric);
+    let n = if want("stat_statx_us") || want("stat_parallel_us") {
+        names(&single)
+    } else {
+        Vec::new()
+    };
     let app = skwir_core::App::new(skwir_core::app::AppConfig::ephemeral(
         std::env::temp_dir().join("skwir-bench"),
     ))
@@ -792,38 +1035,64 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
     let mut opens = Vec::new();
     let mut firsts = Vec::new();
     let mut completes = Vec::new();
-    for _ in 0..runs {
-        let (o, f, c) = stream(&app, &single);
-        opens.push(o);
-        firsts.push(f);
-        completes.push(c);
+    if want("stream_open_us") || want("stream_first_batch_us") || want("stream_complete_us") {
+        for _ in 0..runs {
+            let (o, f, c) = stream(&app, &single);
+            opens.push(o);
+            firsts.push(f);
+            completes.push(c);
+        }
     }
-    let (thumbs_cold_per_image, thumbs_warm_per_image) = if profile == Profile::Images10k {
+    let (thumbs_cold_per_image, thumbs_warm_per_image) = if profile == Profile::Images10k
+        && (want("thumbs_cold_per_image_us") || want("thumbs_warm_per_image_us"))
+    {
         thumbs(root, &dir, runs)
     } else {
         (Stat::NONE, Stat::NONE)
     };
-    let (thumbs_cold_per_drawing, thumbs_warm_per_drawing) = if profile == Profile::Images10k {
+    let (thumbs_cold_per_drawing, thumbs_warm_per_drawing) = if profile == Profile::Images10k
+        && (want("thumbs_cold_per_drawing_us") || want("thumbs_warm_per_drawing_us"))
+    {
         drawings(root, runs)
     } else {
         (Stat::NONE, Stat::NONE)
     };
-    let tags = tags_app();
-    let tags_fill = match profile {
-        Profile::Deep1m => Stat::NONE,
-        _ => tags_fill(&tags, &single, runs),
-    };
-    let (listing_sort_hydrate, listing_sort_update) = listing_sort(profile, runs);
-    let mime_by_name = mime_by_name(&single, profile, runs);
+    let tags_fill = measured(profile != Profile::Deep1m && want("tags_fill_us"), || {
+        tags_fill(&tags_app(), &single, runs)
+    });
+    let (listing_sort_hydrate, listing_sort_update) =
+        if want("listing_sort_hydrate_us") || want("listing_sort_update_us") {
+            listing_sort(profile, runs)
+        } else {
+            (Stat::NONE, Stat::NONE)
+        };
+    let mime_by_name = measured(want("mime_by_name_us"), || {
+        mime_by_name(&single, profile, runs)
+    });
+    let flat = profile == Profile::Flat100k;
+    // After the listings: it leaves the pane's listing of the folder open.
+    let entry_at_selection = measured(flat && want("entry_at_selection_us"), || {
+        entry_at_selection(&app, &single, runs)
+    });
     Report {
         files: profile.file_count(),
         runs,
-        first_batch: timed(runs, || getdents_first_batch(&single)),
-        list_getdents: timed(runs, || getdents_full(&single)),
-        list_std: timed(runs, || std_full(&single)),
-        stat_statx: timed(runs, || statx_all(&single, &n)),
-        stat_parallel: timed(runs, || stat_parallel(&single, &n)),
-        walk_parallel: timed(runs, || walk_parallel(&dir)),
+        first_batch: measured(want("first_batch_us"), || {
+            timed(runs, || getdents_first_batch(&single))
+        }),
+        list_getdents: measured(want("list_getdents_us"), || {
+            timed(runs, || getdents_full(&single))
+        }),
+        list_std: measured(want("list_std_us"), || timed(runs, || std_full(&single))),
+        stat_statx: measured(want("stat_statx_us"), || {
+            timed(runs, || statx_all(&single, &n))
+        }),
+        stat_parallel: measured(want("stat_parallel_us"), || {
+            timed(runs, || stat_parallel(&single, &n))
+        }),
+        walk_parallel: measured(want("walk_parallel_us"), || {
+            timed(runs, || walk_parallel(&dir))
+        }),
         stream_open: Stat::of(opens),
         stream_first_batch: Stat::of(firsts),
         stream_complete: Stat::of(completes),
@@ -838,53 +1107,27 @@ pub fn run(root: &Path, profile: Profile, runs: usize) -> Report {
         tags_index_learn: Stat::NONE,
         tags_index_tally: Stat::NONE,
         tags_index_change: Stat::NONE,
-        usage_scan: usage_scan(root, profile, runs),
+        usage_scan: measured(want("usage_scan_us"), || usage_scan(root, profile, runs)),
         listing_sort_hydrate,
         listing_sort_update,
         mime_by_name,
+        entry_at_selection,
+        delete_tail: measured(flat && want("delete_tail_us"), || delete_tail(runs)),
+        tags_forget: measured(flat && want("tags_forget_us"), || tags_forget(runs)),
     }
 }
 
-/// Compare `report` against `budgets`; prints one line per metric. Returns
-/// false on regression, and for a budget it cannot hold to: one of a
-/// metric not measured here (a tree the generator could not tag), or of
-/// none it knows (a misspelled key).
-pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
+/// Compare `report` against `budgets`, for what `only` names; prints one
+/// line per metric. Returns false on regression, and for a budget it
+/// cannot hold to: one of a metric not measured here (a tree the generator
+/// could not tag), or of none it knows (a misspelled key). A metric
+/// without a budget is measured and passes.
+pub fn check(profile: Profile, report: &Report, budgets: &Budgets, only: &Only) -> bool {
     let Some(b) = budgets.profiles.get(profile.name()) else {
         eprintln!("bench: {}: no budgets, skipped", profile.name());
         return true;
     };
-    let measured: [(&str, &Stat); 23] = [
-        ("first_batch_us", &report.first_batch),
-        ("list_getdents_us", &report.list_getdents),
-        ("list_std_us", &report.list_std),
-        ("stat_statx_us", &report.stat_statx),
-        ("stat_parallel_us", &report.stat_parallel),
-        ("walk_parallel_us", &report.walk_parallel),
-        ("stream_open_us", &report.stream_open),
-        ("stream_first_batch_us", &report.stream_first_batch),
-        ("stream_complete_us", &report.stream_complete),
-        ("thumbs_cold_per_image_us", &report.thumbs_cold_per_image),
-        ("thumbs_warm_per_image_us", &report.thumbs_warm_per_image),
-        (
-            "thumbs_cold_per_drawing_us",
-            &report.thumbs_cold_per_drawing,
-        ),
-        (
-            "thumbs_warm_per_drawing_us",
-            &report.thumbs_warm_per_drawing,
-        ),
-        ("tags_fill_us", &report.tags_fill),
-        ("tag_search_us", &report.tag_search),
-        ("tags_check_us", &report.tags_check),
-        ("tags_index_learn_us", &report.tags_index_learn),
-        ("tags_index_tally_us", &report.tags_index_tally),
-        ("tags_index_change_us", &report.tags_index_change),
-        ("usage_scan_us", &report.usage_scan),
-        ("listing_sort_hydrate_us", &report.listing_sort_hydrate),
-        ("listing_sort_update_us", &report.listing_sort_update),
-        ("mime_by_name_us", &report.mime_by_name),
-    ];
+    let measured = report.metrics();
     let mut ok = true;
     for key in b.keys() {
         if !measured.iter().any(|(name, _)| name == key) {
@@ -893,6 +1136,9 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
         }
     }
     for (key, stat) in measured {
+        if !only.wants(key) {
+            continue;
+        }
         if let Some(&max) = b.get(key) {
             if stat.runs == 0 {
                 eprintln!(
@@ -911,6 +1157,12 @@ pub fn check(profile: Profile, report: &Report, budgets: &Budgets) -> bool {
                 stat.min_us,
                 if pass { "ok" } else { "FAIL" }
             );
+        } else if stat.runs > 0 {
+            eprintln!(
+                "bench: {}.{key}: {} us (no budget)",
+                profile.name(),
+                stat.min_us
+            );
         }
     }
     ok
@@ -925,13 +1177,57 @@ mod tests {
     #[test]
     fn a_budget_not_measured_or_of_no_metric_fails() {
         let budgets: Budgets = toml::from_str("[flat100k]\ntags_fill_us = 10\n").unwrap();
+        let all = Only::default();
         let mut report = Report::default();
-        assert!(!check(Profile::Flat100k, &report, &budgets), "not measured");
+        assert!(
+            !check(Profile::Flat100k, &report, &budgets, &all),
+            "not measured"
+        );
         report.tags_fill = Stat::of(vec![Duration::from_micros(5)]);
-        assert!(check(Profile::Flat100k, &report, &budgets));
+        assert!(check(Profile::Flat100k, &report, &budgets, &all));
         report.tags_fill = Stat::of(vec![Duration::from_micros(50)]);
-        assert!(!check(Profile::Flat100k, &report, &budgets), "over");
+        assert!(!check(Profile::Flat100k, &report, &budgets, &all), "over");
         let misspelled: Budgets = toml::from_str("[flat100k]\ntag_fill_us = 10\n").unwrap();
-        assert!(!check(Profile::Flat100k, &report, &misspelled));
+        assert!(!check(Profile::Flat100k, &report, &misspelled, &all));
+    }
+
+    /// A metric measured without a budget passes: a new measurement runs
+    /// before its budget is set.
+    #[test]
+    fn a_measurement_without_a_budget_passes() {
+        let budgets: Budgets = toml::from_str("[flat100k]\ntags_fill_us = 10\n").unwrap();
+        let report = Report {
+            tags_fill: Stat::of(vec![Duration::from_micros(5)]),
+            delete_tail: Stat::of(vec![Duration::from_secs(60)]),
+            ..Report::default()
+        };
+        assert!(check(
+            Profile::Flat100k,
+            &report,
+            &budgets,
+            &Only::default()
+        ));
+    }
+
+    /// Run with `--only`, what is not named is neither measured nor held
+    /// to its budget, and a name that is no metric's is refused.
+    #[test]
+    fn only_what_is_named_is_held_to_its_budget() {
+        let budgets: Budgets =
+            toml::from_str("[flat100k]\ntags_fill_us = 10\nlist_std_us = 10\n").unwrap();
+        let only = Only::named(vec!["delete_tail_us".into()]).unwrap();
+        let report = Report {
+            delete_tail: Stat::of(vec![Duration::from_micros(5)]),
+            ..Report::default()
+        };
+        assert!(check(Profile::Flat100k, &report, &budgets, &only));
+        assert!(!only.wants("tags_fill_us"));
+        assert!(!only.reads_tree(Profile::Flat100k), "a scratch folder");
+        assert!(!only.reads_tree(Profile::Deep1m));
+        let selection = Only::named(vec!["entry_at_selection_us".into()]).unwrap();
+        assert!(selection.reads_tree(Profile::Flat100k));
+        assert!(!selection.reads_tree(Profile::Images10k), "the flat tree's");
+        assert!(Only::default().reads_tree(Profile::Deep1m));
+        assert!(Only::named(vec!["delete_tail".into()]).is_err());
     }
 }

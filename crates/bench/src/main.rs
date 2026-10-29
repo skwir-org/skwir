@@ -38,6 +38,10 @@ enum Cmd {
         /// Number of repetitions; min and median are reported.
         #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(1..))]
         runs: u16,
+        /// Measure only these metrics, by their keys in the budgets file
+        /// (`delete_tail_us,tags_forget_us`); all when omitted.
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
         /// Profiles to measure; all when omitted.
         profiles: Vec<Profile>,
     },
@@ -85,26 +89,48 @@ enum Cmd {
         budgets: PathBuf,
         #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u16).range(1..))]
         runs: u16,
+        /// Measure and check only these metrics, by their keys in the
+        /// budgets file; all when omitted.
+        #[arg(long, value_delimiter = ',')]
+        only: Vec<String>,
     },
 }
 
-/// Measure `profiles` in order, then the searches, which would slow what
-/// followed them (`measure::tag_search`).
+/// Measure what `only` names of `profiles` in order, then the searches,
+/// which would slow what followed them (`measure::tag_search`). A tree is
+/// generated only where what is measured reads it.
 fn measure_all(
     root: &std::path::Path,
     profiles: &[Profile],
     runs: u16,
+    only: &measure::Only,
 ) -> Result<Vec<(Profile, measure::Report)>> {
+    let runs = usize::from(runs);
     let mut reports = Vec::new();
     for &p in profiles {
-        generate::generate(root, p)?;
-        reports.push((p, measure::run(root, p, usize::from(runs))));
+        if only.reads_tree(p) {
+            generate::generate(root, p)?;
+        }
+        reports.push((p, measure::run(root, p, runs, only)));
     }
     for (p, r) in &mut reports {
-        r.tag_search = measure::tag_search(root, *p, usize::from(runs));
-        r.tags_check = measure::tags_check(root, *p, usize::from(runs));
-        (r.tags_index_learn, r.tags_index_tally, r.tags_index_change) =
-            measure::tags_index(*p, usize::from(runs));
+        if only.wants("tag_search_us") {
+            r.tag_search = measure::tag_search(root, *p, runs);
+        }
+        if only.wants("tags_check_us") {
+            r.tags_check = measure::tags_check(root, *p, runs);
+        }
+        if [
+            "tags_index_learn_us",
+            "tags_index_tally_us",
+            "tags_index_change_us",
+        ]
+        .iter()
+        .any(|m| only.wants(m))
+        {
+            (r.tags_index_learn, r.tags_index_tally, r.tags_index_change) =
+                measure::tags_index(*p, runs);
+        }
     }
     Ok(reports)
 }
@@ -122,9 +148,14 @@ fn main() -> Result<()> {
                 generate::generate(&cli.root, p)?;
             }
         }
-        Cmd::List { runs, profiles } => {
+        Cmd::List {
+            runs,
+            only,
+            profiles,
+        } => {
+            let only = measure::Only::named(only)?;
             let mut all = serde_json::Map::new();
-            for (p, r) in measure_all(&cli.root, &profiles::or_all(profiles), runs)? {
+            for (p, r) in measure_all(&cli.root, &profiles::or_all(profiles), runs, &only)? {
                 all.insert(p.name().to_owned(), serde_json::to_value(r)?);
             }
             println!("{}", serde_json::to_string_pretty(&all)?);
@@ -176,13 +207,18 @@ fn main() -> Result<()> {
                 runs: usize::from(runs),
             },
         )?,
-        Cmd::Check { budgets, runs } => {
+        Cmd::Check {
+            budgets,
+            runs,
+            only,
+        } => {
+            let only = measure::Only::named(only)?;
             let text = std::fs::read_to_string(&budgets)
                 .with_context(|| format!("reading {}", budgets.display()))?;
             let budgets: measure::Budgets = toml::from_str(&text)?;
             let mut failed = false;
-            for (p, r) in measure_all(&cli.root, &Profile::ALL, runs)? {
-                failed |= !measure::check(p, &r, &budgets);
+            for (p, r) in measure_all(&cli.root, &Profile::ALL, runs, &only)? {
+                failed |= !measure::check(p, &r, &budgets, &only);
             }
             // The budgets are Linux's, measured on its reference machine:
             // elsewhere they are reported, not enforced, until 5b sets that
