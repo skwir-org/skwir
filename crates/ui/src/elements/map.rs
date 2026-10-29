@@ -435,6 +435,58 @@ pub struct Shapes {
 pub struct ShapeLine {
     pub kind: LineKind,
     pub segments: Vec<Vec<(f64, f64)>>,
+    /// Each segment's parts (`Part`), worked out with it: a frame looks at
+    /// the points of the parts that may show, not at all of a long track.
+    parts: Vec<Vec<Part>>,
+}
+
+impl ShapeLine {
+    pub fn new(kind: LineKind, segments: Vec<Vec<(f64, f64)>>) -> ShapeLine {
+        let parts = segments.iter().map(|segment| parts_of(segment)).collect();
+        ShapeLine {
+            kind,
+            segments,
+            parts,
+        }
+    }
+}
+
+/// Points of a segment a part holds at most, the last shared with the next.
+const PART: usize = 128;
+
+/// A run of a segment's points, `start..=end`, and the box they lie in:
+/// one whose box is beyond an edge of the view has every point beyond it,
+/// so every piece of it is left out, as `runs` leaves out each piece whose
+/// ends are beyond the same edge.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Part {
+    start: usize,
+    end: usize,
+    low: (f64, f64),
+    high: (f64, f64),
+}
+
+/// The parts of `points`, each `PART` points or fewer, every one but the
+/// first starting where the one before ends.
+fn parts_of(points: &[(f64, f64)]) -> Vec<Part> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    while start + 1 < points.len() {
+        let end = (start + PART).min(points.len() - 1);
+        let (mut low, mut high) = (points[start], points[start]);
+        for &(x, y) in &points[start..=end] {
+            low = (low.0.min(x), low.1.min(y));
+            high = (high.0.max(x), high.1.max(y));
+        }
+        parts.push(Part {
+            start,
+            end,
+            low,
+            high,
+        });
+        start = end;
+    }
+    parts
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -613,13 +665,14 @@ impl Shapes {
         let lines: Vec<ShapeLine> = doc
             .lines
             .iter()
-            .map(|line| ShapeLine {
-                kind: line.kind,
-                segments: line
-                    .segments
-                    .iter()
-                    .map(|segment| path(&mut segment.iter().map(|p| p.at)))
-                    .collect(),
+            .map(|line| {
+                ShapeLine::new(
+                    line.kind,
+                    line.segments
+                        .iter()
+                        .map(|segment| path(&mut segment.iter().map(|p| p.at)))
+                        .collect(),
+                )
             })
             .collect();
         let areas = doc
@@ -759,10 +812,7 @@ impl Shapes {
                             .collect()
                     })
                     .collect();
-                self.lines.push(ShapeLine {
-                    kind: LineKind::Track,
-                    segments,
-                });
+                self.lines.push(ShapeLine::new(LineKind::Track, segments));
             }
         }
         true
@@ -1261,48 +1311,80 @@ pub(crate) fn shape(text: SharedString, color: Hsla, window: &mut Window) -> Sha
 /// A line of world points as runs of screen points: thinned to what the
 /// pixels can show, and cut where it leaves the element (with a margin, so
 /// a thick line's end is not clipped square).
+/// The edges of a view `size` long that a point on screen is beyond, a
+/// bit each (left, right, top, bottom), past a margin a line's width takes.
+fn edges((x, y): (f64, f64), size: (f64, f64)) -> u8 {
+    const MARGIN: f64 = 16.;
+    u8::from(x < -MARGIN)
+        | u8::from(x > size.0 + MARGIN) << 1
+        | u8::from(y < -MARGIN) << 2
+        | u8::from(y > size.1 + MARGIN) << 3
+}
+
+/// Whether every point of `part` is beyond one edge of the view: its box's
+/// corners are. `to_screen` keeps the order of what it is given, so the
+/// box on screen holds each of its points there, exactly.
+fn beyond(part: &Part, view: &View, offset: f64, size: (f64, f64)) -> bool {
+    let screen = |(x, y): (f64, f64)| view.to_screen((x + offset, y), size);
+    edges(screen(part.low), size) & edges(screen(part.high), size) != 0
+}
+
 fn runs(
     points: &[(f64, f64)],
+    parts: &[Part],
     view: &View,
     offset: f64,
     size: (f64, f64),
     origin: gpui::Point<Pixels>,
     out: &mut Vec<Vec<gpui::Point<Pixels>>>,
 ) {
-    const MARGIN: f64 = 16.;
-    let code = |(x, y): (f64, f64)| {
-        u8::from(x < -MARGIN)
-            | u8::from(x > size.0 + MARGIN) << 1
-            | u8::from(y < -MARGIN) << 2
-            | u8::from(y > size.1 + MARGIN) << 3
-    };
+    let code = |p| edges(p, size);
     let to_px = |(x, y): (f64, f64)| origin + point(px(x as f32), px(y as f32));
+    let screen = |(x, y): (f64, f64)| view.to_screen((x + offset, y), size);
     let mut run: Vec<gpui::Point<Pixels>> = Vec::new();
     let mut last: Option<(f64, f64)> = None;
     let mut kept: Option<(f64, f64)> = None;
-    for &(x, y) in points {
-        let here = view.to_screen((x + offset, y), size);
-        if let Some(before) = last {
-            if code(before) & code(here) != 0 {
-                // Both ends beyond the same edge: nothing of it shows.
-                if run.len() > 1 {
-                    out.push(std::mem::take(&mut run));
-                }
-                run.clear();
-                kept = None;
-            } else {
-                if run.is_empty() {
-                    run.push(to_px(before));
-                    kept = Some(before);
-                }
-                let far = kept.is_none_or(|k| (k.0 - here.0).hypot(k.1 - here.1) >= 1.);
-                if far {
-                    run.push(to_px(here));
-                    kept = Some(here);
+    for part in parts {
+        // A part beyond an edge: each of its pieces has both ends beyond
+        // it, and is left out as below, at no more cost than its box.
+        if beyond(part, view, offset, size) {
+            if run.len() > 1 {
+                out.push(std::mem::take(&mut run));
+            }
+            run.clear();
+            kept = None;
+            last = Some(screen(points[part.end]));
+            continue;
+        }
+        let first = if last.is_none() {
+            part.start
+        } else {
+            part.start + 1
+        };
+        for &p in &points[first..=part.end] {
+            let here = screen(p);
+            if let Some(before) = last {
+                if code(before) & code(here) != 0 {
+                    // Both ends beyond the same edge: nothing of it shows.
+                    if run.len() > 1 {
+                        out.push(std::mem::take(&mut run));
+                    }
+                    run.clear();
+                    kept = None;
+                } else {
+                    if run.is_empty() {
+                        run.push(to_px(before));
+                        kept = Some(before);
+                    }
+                    let far = kept.is_none_or(|k| (k.0 - here.0).hypot(k.1 - here.1) >= 1.);
+                    if far {
+                        run.push(to_px(here));
+                        kept = Some(here);
+                    }
                 }
             }
+            last = Some(here);
         }
-        last = Some(here);
     }
     // A line ends where it ended, however close to the last point kept.
     if let (Some(end), Some(k)) = (last, kept)
@@ -1498,8 +1580,8 @@ impl Element for Map {
                 LineKind::Track => &mut tracks,
                 LineKind::Route => &mut routes,
             };
-            for segment in &line.segments {
-                runs(segment, &view, offset, size, origin, out);
+            for (segment, parts) in line.segments.iter().zip(&line.parts) {
+                runs(segment, parts, &view, offset, size, origin, out);
             }
         }
 
@@ -2499,6 +2581,126 @@ mod tests {
         assert_eq!(at(&grown), before);
     }
 
+    /// `runs` as it was, walking every point: what culling parts must
+    /// give.
+    fn runs_point_by_point(
+        points: &[(f64, f64)],
+        view: &View,
+        offset: f64,
+        size: (f64, f64),
+        origin: gpui::Point<Pixels>,
+        out: &mut Vec<Vec<gpui::Point<Pixels>>>,
+    ) {
+        let code = |p| edges(p, size);
+        let to_px = |(x, y): (f64, f64)| origin + point(px(x as f32), px(y as f32));
+        let mut run: Vec<gpui::Point<Pixels>> = Vec::new();
+        let mut last: Option<(f64, f64)> = None;
+        let mut kept: Option<(f64, f64)> = None;
+        for &(x, y) in points {
+            let here = view.to_screen((x + offset, y), size);
+            if let Some(before) = last {
+                if code(before) & code(here) != 0 {
+                    if run.len() > 1 {
+                        out.push(std::mem::take(&mut run));
+                    }
+                    run.clear();
+                    kept = None;
+                } else {
+                    if run.is_empty() {
+                        run.push(to_px(before));
+                        kept = Some(before);
+                    }
+                    let far = kept.is_none_or(|k| (k.0 - here.0).hypot(k.1 - here.1) >= 1.);
+                    if far {
+                        run.push(to_px(here));
+                        kept = Some(here);
+                    }
+                }
+            }
+            last = Some(here);
+        }
+        if let (Some(end), Some(k)) = (last, kept)
+            && end != k
+            && !run.is_empty()
+        {
+            run.push(to_px(end));
+        }
+        if run.len() > 1 {
+            out.push(run);
+        }
+    }
+
+    /// A long track drawn a part at a time is the track drawn point by
+    /// point, run for run, from far and from close, panned anywhere, across
+    /// a corner of the view and through it; and from close, most of its
+    /// parts are never looked at point by point.
+    #[test]
+    fn a_track_culled_by_parts_is_drawn_as_point_by_point() {
+        // A wandering track of 20 000 points around the world's middle,
+        // with a stretch doubling back and a run of one point repeated.
+        let points: Vec<(f64, f64)> = (0..20_000u32)
+            .map(|n| {
+                let t = f64::from(n) / 20_000.;
+                let wobble = (f64::from(n) * 0.37).sin() * 0.002;
+                let back = if (8_000..8_400).contains(&n) { -t } else { t };
+                (0.5 + 0.2 * back + wobble, 0.5 + 0.1 * (t * 9.).sin())
+            })
+            .chain(std::iter::repeat_n((0.61, 0.52), 50))
+            .collect();
+        let parts = parts_of(&points);
+        assert!(parts.len() > 100);
+        assert!(parts.windows(2).all(|pair| pair[0].end == pair[1].start));
+        let size = (800., 600.);
+        let origin = point(px(10.), px(20.));
+        let mut culled = 0;
+        for zoom in [2., 6., 10., 14., 17.] {
+            for (n, (x, y)) in [
+                (0.5, 0.5),
+                (0.6, 0.45),
+                (0.3, 0.6),
+                (0.7, 0.55),
+                (0.62, 0.52),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let view = View { x, y, zoom };
+                let offset = if n == 3 { 1. } else { 0. };
+                let (mut whole, mut by_parts) = (Vec::new(), Vec::new());
+                runs_point_by_point(&points, &view, offset, size, origin, &mut whole);
+                runs(&points, &parts, &view, offset, size, origin, &mut by_parts);
+                assert_eq!(by_parts, whole, "zoom {zoom}, view {n}");
+                if zoom >= 14. {
+                    culled += parts
+                        .iter()
+                        .filter(|part| beyond(part, &view, offset, size))
+                        .count();
+                }
+            }
+        }
+        assert!(
+            culled > parts.len(),
+            "close, most parts are culled: {culled}"
+        );
+        // Too short for a piece: nothing, as point by point.
+        assert!(parts_of(&[(0.5, 0.5)]).is_empty());
+        let mut out = Vec::new();
+        runs(
+            &[(0.5, 0.5)],
+            &[],
+            &View {
+                x: 0.5,
+                y: 0.5,
+                zoom: 3.,
+            },
+            0.,
+            size,
+            origin,
+            &mut out,
+        );
+        assert!(out.is_empty());
+    }
+
     fn at(lat: f64, lon: f64) -> LatLon {
         LatLon::new(lat, lon).unwrap()
     }
@@ -2761,7 +2963,16 @@ mod tests {
         points.push((0.9, 0.5));
         points.push((0.95, 0.5));
         let mut out = Vec::new();
-        runs(&points, &view, 0., size, point(px(0.), px(0.)), &mut out);
+        let parts = parts_of(&points);
+        runs(
+            &points,
+            &parts,
+            &view,
+            0.,
+            size,
+            point(px(0.), px(0.)),
+            &mut out,
+        );
         assert_eq!(out.len(), 1);
         // The start, the step leaving the view; the rest is off screen.
         assert!(out[0].len() <= 3, "{}", out[0].len());
