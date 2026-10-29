@@ -47,9 +47,10 @@ static COMICS: mime::Types = mime::Types::new(&[
     "application/x-cb7",
     "application/x-cbt",
 ]);
-/// A comic's pictures in reading order.
-fn pages(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Vec<archive::Member>> {
-    let mut pages: Vec<_> = archive::list(path, cancel)?
+/// A comic's pictures in reading order, as `session` lists them.
+fn pages(session: &archive::Session, cancel: &CancelToken) -> anyhow::Result<Vec<archive::Member>> {
+    let mut pages: Vec<_> = session
+        .list(inspection::limits::Bounds::QUICK, cancel)?
         .members
         .iter()
         .filter(|member| is_page(member))
@@ -75,8 +76,12 @@ impl ThumbnailProvider for Cover {
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
         let path = req.entry.resolve()?;
         skwir_platform::thumb_providers::ensure_file(&path)?;
-        let first = pages(&path, cancel)?.swap_remove(0);
-        let cover = inspection::picture(&archive::read(&path, &first, cancel)?, req.size.pixels())?;
+        // One run of the helper lists the pages and reads the first, and
+        // ends with the session.
+        let session = archive::Session::open(&path, cancel)?;
+        let first = pages(&session, cancel)?.swap_remove(0);
+        let bytes = session.read_one(&first, inspection::limits::Bounds::QUICK, cancel)?;
+        let cover = inspection::picture(&bytes, req.size.pixels())?;
         Ok(Some(Image {
             width: cover.width,
             height: cover.height,
@@ -95,7 +100,9 @@ impl PreviewProvider for Provider {
     /// A comic is a document of pages: read continuously or a page at a
     /// time in the reader, each page decoded at the side it is shown at.
     /// libarchive's helper reads it by its path: the one what is held gives
-    /// a program (a copy of a remote's file held whole).
+    /// a program (a copy of a remote's file held whole). One helper, kept
+    /// for as long as the reader shows it (`lifetime`), lists the pages and
+    /// reads them (`archive::Session`).
     fn open_document(
         &self,
         req: &PreviewRequest,
@@ -103,10 +110,11 @@ impl PreviewProvider for Provider {
     ) -> anyhow::Result<Option<Arc<dyn DocumentSession>>> {
         let held = req.held()?;
         let path = held.path_for_program(lifetime)?.into_owned();
-        let pages = pages(&path, lifetime)?;
+        let session = archive::Session::open(&path, lifetime)?;
+        let pages = pages(&session, lifetime)?;
         let count = u32::try_from(pages.len())?;
         Ok(Some(Arc::new(Comic {
-            path,
+            session,
             _held: held,
             pages,
             read: std::sync::Mutex::default(),
@@ -122,23 +130,32 @@ impl PreviewProvider for Provider {
 
 /// A comic's pages, read from the archive when the reader asks for one.
 struct Comic {
-    path: std::path::PathBuf,
-    /// What the preview holds of it: the copy at `path` lives as long.
+    /// The archive's helper, kept while the reader shows it: a page after
+    /// the last read is read on from it.
+    session: archive::Session,
+    /// What the preview holds of it: the copy the session reads lives as
+    /// long.
     _held: Arc<Held>,
     pages: Vec<archive::Member>,
     /// The pages read last, as the archive holds them, within `KEPT_BYTES`:
     /// drawn sharper once the reader settles, or asked for beside the one
     /// shown, a page was read from the archive again, which for a solid
-    /// one decompresses all the pages before it.
+    /// one, read again from its start, decompresses all the pages before.
     read: std::sync::Mutex<std::collections::VecDeque<(u32, Arc<Vec<u8>>)>>,
     info: DocumentInfo,
 }
+
+/// The pages read with the one asked for, after it in the book: the
+/// reader asks for them next.
+const AHEAD: u32 = 2;
 
 /// The bytes of pages a comic keeps read.
 const KEPT_BYTES: usize = 64 << 20;
 
 impl Comic {
-    /// Page `number` as the archive holds it: kept, or read and kept.
+    /// Page `number` as the archive holds it: kept, or read and kept, with
+    /// the `AHEAD` pages after it not kept yet, in one pass over the
+    /// archive in its own order (`archive::Session::read`).
     fn bytes(&self, number: u32, cancel: &CancelToken) -> anyhow::Result<Arc<Vec<u8>>> {
         let kept = || {
             self.read
@@ -148,14 +165,41 @@ impl Comic {
         if let Some((_, bytes)) = kept().iter().find(|(page, _)| *page == number) {
             return Ok(Arc::clone(bytes));
         }
-        let member = &self.pages[number as usize - 1];
-        let bytes = Arc::new(archive::read(&self.path, member, cancel)?);
-        let mut read = kept();
-        read.push_back((number, Arc::clone(&bytes)));
-        while read.iter().map(|(_, b)| b.len()).sum::<usize>() > KEPT_BYTES && read.len() > 1 {
-            read.pop_front();
+        let wanted: Vec<archive::Member> = {
+            let read = kept();
+            (number..=number.saturating_add(AHEAD).min(self.info.pages))
+                .filter(|&page| page == number || !read.iter().any(|(kept, _)| *kept == page))
+                .map(|page| self.pages[page as usize - 1].clone())
+                .collect()
+        };
+        let mut asked = None;
+        let done = self.session.read(
+            &wanted,
+            inspection::limits::Bounds::QUICK,
+            cancel,
+            |member, bytes| {
+                let Some(page) = self.pages.iter().position(|p| p.index == member.index) else {
+                    return;
+                };
+                let (page, bytes) = (page as u32 + 1, Arc::new(bytes));
+                if page == number {
+                    asked = Some(Arc::clone(&bytes));
+                }
+                let mut read = kept();
+                read.push_back((page, bytes));
+                while read.iter().map(|(_, b)| b.len()).sum::<usize>() > KEPT_BYTES
+                    && read.len() > 1
+                {
+                    read.pop_front();
+                }
+            },
+        );
+        // A page read is shown though one after it failed.
+        match (asked, done) {
+            (Some(bytes), _) => Ok(bytes),
+            (None, Err(error)) => Err(error),
+            (None, Ok(())) => anyhow::bail!("the page was not read"),
         }
-        Ok(bytes)
     }
 }
 
@@ -294,10 +338,10 @@ mod tests {
     /// file ever is, is never read. Needs the helper built in the target
     /// folder the test runs from; without it the test says so and passes,
     /// unless `SKWIR_REQUIRE_WORKERS` is set.
+    /// The helper built beside the tests, named for the plugin: false, said,
+    /// where it is not built.
     #[cfg(target_os = "linux")]
-    #[test]
-    fn a_remote_comic_held_is_read_from_its_copy() {
-        use skwir_core::preview::HeldSlot;
+    fn with_worker() -> bool {
         let built = std::env::current_exe()
             .ok()
             .and_then(|exe| Some(exe.parent()?.parent()?.join(archive::WORKER.executable)))
@@ -311,13 +355,78 @@ mod tests {
                 "skwir-archive-worker is not built"
             );
             eprintln!("skipped: skwir-archive-worker is not built");
-            return;
+            return false;
         };
         // SAFETY: nextest runs each test in a process of its own, and nothing
         // else reads the environment before this.
         #[allow(unsafe_code)]
         unsafe {
             std::env::set_var(archive::WORKER.variable, &worker);
+        }
+        true
+    }
+
+    /// A page is read with the two after it, in one pass over the archive:
+    /// turning to them reads nothing more, and the last page reads only
+    /// what is left of the book.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_page_is_read_with_the_two_after_it() {
+        if !with_worker() {
+            return;
+        }
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::Builder::new()
+            .prefix("comic-")
+            .tempdir_in(base)
+            .unwrap();
+        let path = dir.path().join("l’été comic #2.cbt");
+        let names: Vec<String> = (1..=5).map(|n| format!("Book/page{n}.png")).collect();
+        let members: Vec<(&str, &[u8])> = names.iter().map(|name| (name.as_str(), PNG)).collect();
+        std::fs::write(&path, tar(&members)).unwrap();
+        let cancel = CancelToken::new();
+        let session = archive::Session::open(&path, &cancel).unwrap();
+        let pages = pages(&session, &cancel).unwrap();
+        let comic = Comic {
+            session,
+            _held: Arc::new(Held::of_bytes(&path, Vec::new())),
+            info: DocumentInfo {
+                pages: u32::try_from(pages.len()).unwrap(),
+                outlines: Vec::new(),
+                reflowable: false,
+                labels: Vec::new(),
+            },
+            pages,
+            read: std::sync::Mutex::default(),
+        };
+        let kept = |comic: &Comic| {
+            let mut kept: Vec<u32> = comic
+                .read
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(page, _)| *page)
+                .collect();
+            kept.sort_unstable();
+            kept
+        };
+        assert_eq!(comic.render(1, 64, &cancel).unwrap().content.page, 1);
+        assert_eq!(kept(&comic), [1, 2, 3]);
+        comic.render(2, 64, &cancel).unwrap();
+        assert_eq!(kept(&comic), [1, 2, 3], "read already");
+        comic.render(5, 64, &cancel).unwrap();
+        assert_eq!(kept(&comic), [1, 2, 3, 5], "the last, alone");
+        comic.render(4, 64, &cancel).unwrap();
+        assert_eq!(kept(&comic), [1, 2, 3, 4, 5]);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_remote_comic_held_is_read_from_its_copy() {
+        use skwir_core::preview::HeldSlot;
+        if !with_worker() {
+            return;
         }
         let dir = tempfile::tempdir().unwrap();
         let nowhere = dir.path().join("gone").join("l’été comic #1.cbt");

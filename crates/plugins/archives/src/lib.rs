@@ -51,7 +51,8 @@ impl Plugin for PreviewPlugin {
         ])
     }
     fn register(&self, app: &App) {
-        app.previews.register(self.id(), Arc::new(Provider));
+        app.previews
+            .register(self.id(), Arc::new(Provider::default()));
         extract::register(app, self.id());
         compress::register(app, self.id());
         unmake::register(app, self.id());
@@ -60,7 +61,51 @@ impl Plugin for PreviewPlugin {
 /// Disc images, which the database does not call archives.
 static DISC_IMAGES: mime::Types = mime::Types::new(&["application/x-cd-image"]);
 
-struct Provider;
+/// The previews of archives, and the session of the archive whose members
+/// the panel walks: its helper kept while the panel shows the archive, a
+/// member after the last read read on from it. Withdrawn with the plugin,
+/// the provider takes the session with it.
+#[derive(Default)]
+struct Provider {
+    kept: std::sync::Mutex<Option<Kept>>,
+}
+
+/// The session of the archive at `path`, for as long as the preview shows
+/// it (`shown`, `PreviewRequest::shown`).
+struct Kept {
+    path: std::path::PathBuf,
+    shown: CancelToken,
+    session: Arc<archive::Session>,
+}
+
+impl Provider {
+    /// The session reading the archive at `path` while the preview shows
+    /// it: the one kept, or a new one in its place.
+    fn session(
+        &self,
+        path: &std::path::Path,
+        shown: &CancelToken,
+    ) -> anyhow::Result<Arc<archive::Session>> {
+        let mut kept = self
+            .kept
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(kept) = kept
+            .as_ref()
+            .filter(|kept| kept.path == path && !kept.shown.is_cancelled())
+        {
+            return Ok(Arc::clone(&kept.session));
+        }
+        let session = Arc::new(archive::Session::open(path, shown)?);
+        *kept = Some(Kept {
+            path: path.to_owned(),
+            shown: shown.clone(),
+            session: Arc::clone(&session),
+        });
+        Ok(session)
+    }
+}
+
 impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         "archives"
@@ -86,16 +131,18 @@ impl PreviewProvider for Provider {
         let held = req.held()?;
         let path = held.path_for_program(cancel)?;
         // Found as the listing showed it; written out as the member is to be
-        // looked at.
+        // looked at, by the helper kept while the archive is shown: walking
+        // its members reads a compressed tar once, not once each.
         let member = archive::member(&path, target.parse::<u64>()?, cancel)?;
         anyhow::ensure!(
             member.regular && !member.encrypted,
             "This member cannot be previewed (directory, link or encrypted file)"
         );
+        let session = self.session(&path, req.shown())?;
         Ok(Some(skwir_core::preview::Member {
             own_file: false,
             name: member.file_name().to_owned(),
-            path: archive::extract(&path, &member, into, Bounds::of(view), cancel)?,
+            path: session.write(&member, into, Bounds::of(view), cancel)?,
         }))
     }
     /// The listing. A member is never inspected here: the panel extracts it
@@ -227,7 +274,7 @@ mod tests {
     #[test]
     fn archives_are_what_the_database_calls_archives() {
         let accepts = |name: &str| {
-            Provider.accepts(&PreviewRequest {
+            Provider::default().accepts(&PreviewRequest {
                 entry: skwir_core::op::EntryRef::new(skwir_core::FileId::new(1, 1), name),
                 mime: None,
                 page: 1,
@@ -306,9 +353,10 @@ mod tests {
             fit: None,
             held: skwir_core::preview::HeldSlot::default(),
         };
-        assert!(Provider.accepts(&request));
+        let provider = Provider::default();
+        assert!(provider.accepts(&request));
         let cancel = CancelToken::new();
-        let listing = Provider
+        let listing = provider
             .inspect(&request, &InspectRequest::default(), &cancel)
             .unwrap()
             .unwrap();
@@ -318,12 +366,90 @@ mod tests {
         let into = dir.path().join("members");
         std::fs::create_dir(&into).unwrap();
         let target = listing.rows[1].target.as_deref().unwrap();
-        let member = Provider
+        let member = provider
             .extract(&request, &InspectRequest::default(), target, &into, &cancel)
             .unwrap()
             .unwrap();
         assert_eq!(member.name, "notes.txt");
         assert_eq!(std::fs::read(&member.path).unwrap(), "café\n".as_bytes());
+        // Its session is kept while the archive is shown, and ends with
+        // the request's last holder: the preview showing another file.
+        let kept = |provider: &Provider| {
+            provider
+                .kept
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|kept| (Arc::clone(&kept.session), kept.shown.clone()))
+        };
+        let (session, shown) = kept(&provider).expect("a session kept");
+        provider
+            .extract(&request, &InspectRequest::default(), target, &into, &cancel)
+            .unwrap();
+        assert!(
+            Arc::ptr_eq(&session, &kept(&provider).unwrap().0),
+            "the same, read on"
+        );
+        assert!(!shown.is_cancelled());
+        #[cfg(target_os = "linux")]
+        assert!(!serving_helpers().is_empty(), "its helper serves it");
+        // The preview moves to another file: its last clone of the request,
+        // and with it the slot, goes. The provider keeps no clone of it,
+        // only the token: the helper is reaped.
+        drop(request);
+        assert!(shown.is_cancelled(), "the preview moved on: it ended");
+        #[cfg(target_os = "linux")]
+        {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            while !serving_helpers().is_empty() {
+                assert!(std::time::Instant::now() < deadline, "its helper lingers");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+        drop(session);
+    }
+
+    /// The archive helpers this test process started, serving (`--serve`),
+    /// found through their parents: the sandbox's processes around one say
+    /// its command line too.
+    #[cfg(target_os = "linux")]
+    fn serving_helpers() -> Vec<u32> {
+        let me = std::process::id();
+        let parent = |pid: u32| -> Option<u32> {
+            let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+            // After the command's name in parentheses: its state, then its
+            // parent.
+            stat.rsplit_once(')')?
+                .1
+                .split_whitespace()
+                .nth(1)?
+                .parse()
+                .ok()
+        };
+        let descends = |mut pid: u32| {
+            for _ in 0..16 {
+                match parent(pid) {
+                    Some(up) if up == me => return true,
+                    Some(up) if up > 1 => pid = up,
+                    _ => return false,
+                }
+            }
+            false
+        };
+        std::fs::read_dir("/proc")
+            .unwrap()
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+            .filter(|&pid| {
+                std::fs::read(format!("/proc/{pid}/cmdline")).is_ok_and(|line| {
+                    let args: Vec<&[u8]> = line.split(|b| *b == 0).collect();
+                    args.iter()
+                        .any(|arg| arg.ends_with(b"skwir-archive-worker"))
+                        && args.contains(&b"--serve".as_slice())
+                })
+            })
+            .filter(|&pid| descends(pid))
+            .collect()
     }
 
     #[test]

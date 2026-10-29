@@ -180,7 +180,9 @@ fn read_listing_with(
     bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Listing> {
-    let work = tempfile::tempdir()?;
+    // In memory where the system has a folder that is: nothing the helper
+    // leaves there reaches a disk.
+    let work = crate::file::memory_dir("skwir-archive-")?;
     let mut run = sandbox::untrusted(worker, path, work.path(), Otherwise::Run)?;
     run.command
         .arg(&run.input)
@@ -281,14 +283,376 @@ pub fn extract(
     write_member(path, member, &output, bounds, cancel)?;
     Ok(output)
 }
-/// One member's bytes, within the quick bounds: a comic's page.
+/// One member's bytes, within the quick bounds, by a helper run for it
+/// alone: what is read of an archive not shown (a cover, by a session's
+/// one run where it lists the archive too: [`Session`]).
 pub fn read(path: &Path, member: &Member, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
-    let temp = tempfile::tempdir()?;
+    // Through memory, as a session's: a page never reaches a disk.
+    let temp = crate::file::memory_dir("skwir-member-")?;
     let output = temp.path().join("member");
     write_member(path, member, &output, Bounds::QUICK, cancel)?;
     inspection::read_bounded(&output, limits::BINARY_INPUT, "Member preview", cancel)
         .map(std::borrow::Cow::into_owned)
 }
+
+/// What a session's helper is asked (`--serve` in the helper).
+#[derive(serde::Serialize)]
+enum Request<'a> {
+    List {
+        members: usize,
+        names: usize,
+        seconds: u64,
+    },
+    Read {
+        index: u64,
+        name: &'a str,
+        bytes: usize,
+    },
+}
+
+/// What a session's helper answers.
+#[derive(Deserialize)]
+enum Reply {
+    Ready,
+    Listing(Listing),
+    Written {
+        len: u64,
+        /// The headers it read to find the member, and whether it read the
+        /// archive from its start for it.
+        headers: u64,
+        from_start: bool,
+    },
+    Error(String),
+}
+
+/// What a session's manager is asked, and where it answers.
+struct Job {
+    asked: Asked,
+    cancel: CancelToken,
+    reply: crossbeam_channel::Sender<anyhow::Result<Answer>>,
+}
+enum Asked {
+    List(Bounds),
+    Read(Member, Bounds),
+}
+enum Answer {
+    Listing(Listing),
+    Read(Vec<u8>),
+}
+
+/// The helper's start and greeting.
+const SESSION_STARTUP: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// An archive read while it is shown (ADR-105): one helper, kept with the
+/// archive open, reads its members on request. A member after the last one
+/// read is read on from there; one before it reads the archive again from
+/// its start, which for a compressed tar or a solid RAR or 7z means every
+/// member before it decompressed again. A comic read page after page, an
+/// archive's members walked, read the archive once.
+///
+/// The session lives exactly as long as its `lifetime`, the preview or
+/// the reader showing the archive, and as the value: dropping it, or that
+/// ending, ends the helper and lets go of the archive, so nothing holds a
+/// file open on a drive being ejected (`App::release` closes the preview
+/// first). Before each read the archive is compared with what it was when
+/// the session began: another version of it ends the helper, and the read
+/// fails. A manager thread owns the helper and its folder, so nothing here
+/// waits on the UI thread, nor removes files there.
+pub struct Session {
+    jobs: crossbeam_channel::Sender<Job>,
+}
+
+impl Session {
+    /// A session of the archive at `path`, as it is now, for as long as
+    /// `lifetime`. Its helper starts at the first request.
+    pub fn open(path: &Path, lifetime: &CancelToken) -> anyhow::Result<Session> {
+        Session::with_worker(worker()?, path, lifetime, true)
+    }
+
+    fn with_worker(
+        executable: std::path::PathBuf,
+        path: &Path,
+        lifetime: &CancelToken,
+        isolate: bool,
+    ) -> anyhow::Result<Session> {
+        let key = listing_key(path).ok_or_else(|| anyhow::anyhow!("The archive is gone"))?;
+        let scratch = crate::file::memory_dir("skwir-archive-")?;
+        let (jobs, asked) = crossbeam_channel::unbounded::<Job>();
+        let lifetime = lifetime.clone();
+        std::thread::Builder::new()
+            .name("skwir-archive-session".into())
+            .spawn(move || {
+                Manager {
+                    executable,
+                    isolate,
+                    path: key.0.clone(),
+                    key,
+                    scratch: scratch.path().to_owned(),
+                    lifetime,
+                    helper: None,
+                }
+                .run(&asked);
+                // The manager dropped its helper (kill and reap) on this
+                // thread; only now is its folder removed.
+                drop(scratch);
+            })?;
+        Ok(Session { jobs })
+    }
+
+    fn ask(&self, asked: Asked, cancel: &CancelToken) -> anyhow::Result<Answer> {
+        anyhow::ensure!(!cancel.is_cancelled(), "archive read cancelled");
+        let (reply, answered) = crossbeam_channel::bounded(1);
+        self.jobs
+            .send(Job {
+                asked,
+                cancel: cancel.clone(),
+                reply,
+            })
+            .context("archive session closed")?;
+        let cancelled = cancel.subscribe();
+        crossbeam_channel::select! {
+            recv(answered) -> answer => answer.unwrap_or_else(|_| anyhow::bail!("archive session closed")),
+            recv(cancelled.receiver()) -> _ => anyhow::bail!("archive read cancelled"),
+        }
+    }
+
+    /// The archive's listing within `bounds`, by the session's helper: a
+    /// comic's pages and its cover read in one run. Kept as a listing read
+    /// by [`list_within`] is.
+    pub fn list(&self, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Arc<Listing>> {
+        let Answer::Listing(listing) = self.ask(Asked::List(bounds), cancel)? else {
+            anyhow::bail!("unexpected archive reply");
+        };
+        Ok(Arc::new(listing))
+    }
+
+    /// The bytes of `wanted`, within `bounds`, handed to `each` as each is
+    /// read, in the archive's order: read on from one to the next, a comic's
+    /// page and the next ones never read the archive again from its start.
+    /// The first failure ends it: what was read before was handed over.
+    pub fn read(
+        &self,
+        wanted: &[Member],
+        bounds: Bounds,
+        cancel: &CancelToken,
+        mut each: impl FnMut(&Member, Vec<u8>),
+    ) -> anyhow::Result<()> {
+        let mut order: Vec<&Member> = wanted.iter().collect();
+        order.sort_by_key(|member| member.index);
+        order.dedup_by_key(|member| member.index);
+        for member in order {
+            let most = bounds.binary_input();
+            if u64::try_from(member.size).unwrap_or(0) > most as u64 {
+                return Err(bounds.refuse(format!(
+                    "Member preview exceeds {} limit",
+                    limits::describe(most)
+                )));
+            }
+            let Answer::Read(bytes) = self.ask(Asked::Read(member.clone(), bounds), cancel)? else {
+                anyhow::bail!("unexpected archive reply");
+            };
+            each(member, bytes);
+        }
+        Ok(())
+    }
+
+    /// The bytes of one member, within `bounds`.
+    pub fn read_one(
+        &self,
+        member: &Member,
+        bounds: Bounds,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Vec<u8>> {
+        let mut read = Vec::new();
+        self.read(std::slice::from_ref(member), bounds, cancel, |_, bytes| {
+            read = bytes;
+        })?;
+        Ok(read)
+    }
+
+    /// Write `member` as a file of its own in `into`, named by
+    /// [`member_file`], within `bounds`, as [`extract`] does.
+    pub fn write(
+        &self,
+        member: &Member,
+        into: &Path,
+        bounds: Bounds,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<std::path::PathBuf> {
+        let bytes = self.read_one(member, bounds, cancel)?;
+        let output = member_file(into, member.file_name());
+        std::fs::write(&output, bytes)?;
+        Ok(output)
+    }
+}
+
+/// A session's manager thread: the one owner of its helper.
+struct Manager {
+    executable: std::path::PathBuf,
+    /// Whether the helper runs isolated where the system can: always, but
+    /// for tests that watch a stand-in's process.
+    isolate: bool,
+    path: std::path::PathBuf,
+    /// The archive as the session began: another version of it ends it.
+    key: ListingKey,
+    scratch: std::path::PathBuf,
+    lifetime: CancelToken,
+    helper: Option<crate::process::Helper<Reply>>,
+}
+
+impl Manager {
+    fn run(mut self, asked: &crossbeam_channel::Receiver<Job>) {
+        let cancelled = self.lifetime.subscribe();
+        loop {
+            crossbeam_channel::select! {
+                recv(asked) -> job => {
+                    let Ok(job) = job else { break };
+                    let answer = self.handle(&job);
+                    let _ = job.reply.send(answer);
+                }
+                recv(cancelled.receiver()) -> _ => break,
+            }
+        }
+    }
+
+    fn handle(&mut self, job: &Job) -> anyhow::Result<Answer> {
+        use crate::process::Failure;
+        let cancel = job.cancel.linked(&self.lifetime);
+        anyhow::ensure!(!cancel.is_cancelled(), "archive read cancelled");
+        self.unchanged()?;
+        let request = match &job.asked {
+            Asked::List(bounds) => Request::List {
+                members: bounds.members(),
+                names: bounds.member_names(),
+                seconds: limits::HELPER_TIMEOUT
+                    .saturating_sub(std::time::Duration::from_secs(3))
+                    .as_secs(),
+            },
+            Asked::Read(member, bounds) => Request::Read {
+                index: member.index,
+                name: &member.name,
+                bytes: bounds.binary_input(),
+            },
+        };
+        let reply = match self.exchange(&request, &cancel) {
+            Ok(reply) => reply,
+            Err(Failure::Cancelled) => {
+                // Where it is in the archive is not known: a new helper
+                // serves the next request.
+                self.helper = None;
+                anyhow::bail!("archive read cancelled");
+            }
+            Err(Failure::Broken(error)) => {
+                self.helper = None;
+                return Err(crate::process::explain(&self.executable, &cancel, error));
+            }
+        };
+        self.unchanged()?;
+        match (reply, &job.asked) {
+            (Reply::Listing(listing), Asked::List(_)) => Ok(Answer::Listing(listing)),
+            (
+                Reply::Written {
+                    len,
+                    headers,
+                    from_start,
+                },
+                Asked::Read(..),
+            ) => {
+                tracing::trace!(headers, from_start, "archive member read");
+                // Read as a file, no more than it said: the helper reads an
+                // untrusted archive, and what it leaves could be a pipe.
+                let written = self.scratch.join(SERVED);
+                let read = crate::file::read_regular(&written, len)?;
+                // Read: emptied, so a member kept in memory (`memory_dir`)
+                // is not held twice until the next.
+                if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&written) {
+                    let _ = file.set_len(0);
+                }
+                anyhow::ensure!(read.len() as u64 == len, "the member came short");
+                Ok(Answer::Read(read))
+            }
+            // A member the helper could not read is that member's error;
+            // the helper goes on.
+            (Reply::Error(message), _) => anyhow::bail!("{message}"),
+            _ => {
+                self.helper = None;
+                anyhow::bail!("unexpected archive reply")
+            }
+        }
+    }
+
+    /// Whether the archive is still the version the session began with:
+    /// another one ends its helper, reading the old one open.
+    fn unchanged(&mut self) -> anyhow::Result<()> {
+        if listing_key(&self.path).as_ref() == Some(&self.key) {
+            return Ok(());
+        }
+        self.helper = None;
+        anyhow::bail!("Archive changed since it was listed; select it again")
+    }
+
+    /// Send `request` and wait for its answer, starting a helper if there
+    /// is none.
+    fn exchange(
+        &mut self,
+        request: &Request<'_>,
+        cancel: &CancelToken,
+    ) -> Result<Reply, crate::process::Failure> {
+        use crate::process::Failure;
+        let broken = |error: anyhow::Error| {
+            if cancel.is_cancelled() {
+                Failure::Cancelled
+            } else {
+                Failure::Broken(error)
+            }
+        };
+        if self.helper.is_none() {
+            self.helper = Some(self.start(cancel).map_err(broken)?);
+        }
+        let helper = self.helper.as_mut().expect("started above");
+        let id = helper.send(request).map_err(Failure::Broken)?;
+        let cancelled = cancel.subscribe();
+        let deadline = crossbeam_channel::after(limits::HELPER_TIMEOUT);
+        helper.wait(id, &cancelled, &deadline)
+    }
+
+    /// A helper serving the archive, greeted.
+    fn start(&self, cancel: &CancelToken) -> anyhow::Result<crate::process::Helper<Reply>> {
+        use crate::process::Failure;
+        anyhow::ensure!(!cancel.is_cancelled(), "archive read cancelled");
+        // An archive is a file nobody vouched for: its helper runs isolated
+        // where the system can, reading it and writing its own folder.
+        let mut run = if self.isolate {
+            sandbox::untrusted(&self.executable, &self.path, &self.scratch, Otherwise::Run)?
+        } else {
+            sandbox::plain(&self.executable, &self.path, &self.scratch)
+        };
+        run.command
+            .arg(&run.input)
+            .args(stem(&self.path))
+            .arg("--serve")
+            .arg(&run.work);
+        let mut helper = crate::process::Helper::new(
+            crate::line_channel::LineChannel::spawn(&mut run.command, MAX_REPLY, "skwir-archive")?,
+            "archive helper",
+        );
+        let cancelled = cancel.subscribe();
+        let deadline = crossbeam_channel::after(SESSION_STARTUP);
+        match helper.wait(0, &cancelled, &deadline) {
+            Ok(Reply::Ready) => Ok(helper),
+            Ok(Reply::Error(message)) => anyhow::bail!("{message}"),
+            Ok(_) => anyhow::bail!("invalid archive helper greeting"),
+            Err(Failure::Cancelled) => anyhow::bail!("archive read cancelled"),
+            Err(Failure::Broken(error)) => Err(error),
+        }
+    }
+}
+
+/// Where a session's helper writes the member it read, in its folder.
+const SERVED: &str = "member";
+/// Bytes of one line a session's helper answers: a listing's, at most
+/// Full preview's names and what each member says beside them.
+const MAX_REPLY: usize = 64 * 1024 * 1024;
 /// Units of work the helper may run ahead of what it last reported while
 /// extracting: each an entry, or a MiB of one. A paused extraction stops
 /// within that many; the helper reports every few of them.
@@ -954,6 +1318,148 @@ mod tests {
         assert_eq!(file("x./../y"), into.join("member"));
         assert_eq!(file("a.sh;rm -rf"), into.join("member"));
         assert_eq!(file(&format!("a.{}", "x".repeat(40))), into.join("member"));
+    }
+
+    /// A session with a stand-in helper that answers every read with three
+    /// bytes, telling where it runs (its process and its folder) in `dir`.
+    #[cfg(target_os = "linux")]
+    fn stand_in_session(dir: &Path, lifetime: &CancelToken) -> (Session, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let archive = dir.join("it's a café.tar.gz");
+        std::fs::write(&archive, b"synthetic").unwrap();
+        let helper = dir.join("helper");
+        let shell = crate::process::required("sh").unwrap();
+        let script = format!(
+            concat!(
+                "#!{}\n",
+                "for work; do :; done\n",
+                "printf '%s' \"$$\" > '{told}/pid'\n",
+                "printf '%s' \"$work\" > '{told}/work'\n",
+                "printf '%s\\n' '{{\"id\":0,\"body\":\"Ready\"}}'\n",
+                "while IFS= read -r line; do\n",
+                " id=${{line#*\\\"id\\\":}}; id=${{id%%,*}}\n",
+                " printf 'abc' > \"$work/member\"\n",
+                " printf '{{\"id\":%s,\"body\":{{\"Written\":{{\"len\":3,\"headers\":1,\"from_start\":false}}}}}}\\n' \"$id\"\n",
+                "done\n"
+            ),
+            shell.display(),
+            told = dir.display(),
+        );
+        std::fs::write(&helper, script).unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // It reports its process id, which isolation renumbers.
+        let session = Session::with_worker(helper, &archive, lifetime, false).unwrap();
+        (session, archive)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn until(mut condition: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !condition() {
+            assert!(std::time::Instant::now() < deadline, "it never came");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn scratch_dir() -> tempfile::TempDir {
+        let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        tempfile::Builder::new()
+            .prefix("archive-session-")
+            .tempdir_in(base)
+            .unwrap()
+    }
+
+    fn page() -> Member {
+        Member {
+            index: 0,
+            name: "page 1.png".into(),
+            size: 3,
+            regular: true,
+            ..Member::default()
+        }
+    }
+
+    /// The helper starts at the first read and lives as long as the
+    /// session: dropped, or its lifetime ended (the preview closed, the
+    /// plugin turned off), the helper is gone and its folder removed.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_session_ends_its_helper_when_dropped_or_its_lifetime_ends() {
+        for end_lifetime in [false, true] {
+            let dir = scratch_dir();
+            let lifetime = CancelToken::new();
+            let (session, _) = stand_in_session(dir.path(), &lifetime);
+            assert!(
+                !dir.path().join("pid").exists(),
+                "started at the first read"
+            );
+            let cancel = CancelToken::new();
+            assert_eq!(
+                session.read_one(&page(), Bounds::QUICK, &cancel).unwrap(),
+                b"abc"
+            );
+            let read = |name: &str| std::fs::read_to_string(dir.path().join(name)).unwrap();
+            let (pid, work) = (read("pid"), std::path::PathBuf::from(read("work")));
+            assert!(work.is_dir());
+            if end_lifetime {
+                lifetime.cancel();
+            } else {
+                drop(session);
+            }
+            until(|| !Path::new(&format!("/proc/{pid}")).exists() && !work.exists());
+        }
+    }
+
+    /// Another version of the archive than the session began with ends its
+    /// helper and refuses the read: the helper read the old one, open.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_session_refuses_an_archive_changed_since_it_began() {
+        let dir = scratch_dir();
+        let lifetime = CancelToken::new();
+        let (session, archive) = stand_in_session(dir.path(), &lifetime);
+        let cancel = CancelToken::new();
+        session.read_one(&page(), Bounds::QUICK, &cancel).unwrap();
+        let pid = std::fs::read_to_string(dir.path().join("pid")).unwrap();
+        std::fs::write(&archive, b"another archive, longer").unwrap();
+        let refused = session
+            .read_one(&page(), Bounds::QUICK, &cancel)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            refused.contains("Archive changed since it was listed"),
+            "{refused}"
+        );
+        until(|| !Path::new(&format!("/proc/{pid}")).exists());
+        // Read in order, as asked or not: one request each, the first one's
+        // failure the end of it.
+        let mut read = Vec::new();
+        let late = Member { index: 4, ..page() };
+        let result = session.read(&[late, page()], Bounds::QUICK, &cancel, |member, _| {
+            read.push(member.index);
+        });
+        assert!(result.is_err() && read.is_empty());
+    }
+
+    /// A member larger than the bounds is refused before the helper is
+    /// asked.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_member_past_the_bounds_is_never_asked_for() {
+        let dir = scratch_dir();
+        let (session, _) = stand_in_session(dir.path(), &CancelToken::new());
+        let large = Member {
+            size: i64::try_from(limits::BINARY_INPUT).unwrap() + 1,
+            ..page()
+        };
+        assert!(
+            session
+                .read_one(&large, Bounds::QUICK, &CancelToken::new())
+                .is_err()
+        );
+        assert!(!dir.path().join("pid").exists(), "never started");
     }
 
     /// A paused plan whose helper ends by itself (a full disk, a name the

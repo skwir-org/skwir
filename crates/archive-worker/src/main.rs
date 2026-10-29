@@ -11,7 +11,7 @@ mod native {
     use std::{
         cell::{Cell, RefCell},
         ffi::{CStr, CString, c_char, c_int, c_long, c_uint, c_void},
-        io::{BufRead, Read, Write},
+        io::{BufRead, Read, Seek, Write},
     };
     /// libarchive's `mode_t` for a permission: `unsigned short` on
     /// Windows, the system's `mode_t` elsewhere (16 bits on a Mac).
@@ -21,6 +21,11 @@ mod native {
     type Mode = u32;
     /// What libarchive calls to learn a passphrase.
     type PassphraseCallback = unsafe extern "C" fn(*mut c_void, *mut c_void) -> *const c_char;
+    /// What libarchive calls to read the archive a session opened
+    /// (`--serve`): its next bytes, how far to skip, where to seek.
+    type ReadCallback = unsafe extern "C" fn(*mut c_void, *mut c_void, *mut *const c_void) -> isize;
+    type SkipCallback = unsafe extern "C" fn(*mut c_void, *mut c_void, i64) -> i64;
+    type SeekCallback = unsafe extern "C" fn(*mut c_void, *mut c_void, i64, c_int) -> i64;
     // libarchive, linked by the build script: the system's, or the one a
     // package carries, static.
     unsafe extern "C" {
@@ -35,6 +40,11 @@ mod native {
         #[cfg(windows)]
         fn archive_read_open_filename_w(a: *mut c_void, path: *const u16, block: usize) -> c_int;
         fn archive_read_set_options(a: *mut c_void, options: *const c_char) -> c_int;
+        fn archive_read_set_read_callback(a: *mut c_void, read: Option<ReadCallback>) -> c_int;
+        fn archive_read_set_skip_callback(a: *mut c_void, skip: Option<SkipCallback>) -> c_int;
+        fn archive_read_set_seek_callback(a: *mut c_void, seek: Option<SeekCallback>) -> c_int;
+        fn archive_read_set_callback_data(a: *mut c_void, data: *mut c_void) -> c_int;
+        fn archive_read_open1(a: *mut c_void) -> c_int;
         fn archive_read_next_header(a: *mut c_void, entry: *mut *mut c_void) -> c_int;
         fn archive_entry_pathname_utf8(e: *mut c_void) -> *const c_char;
         fn archive_entry_pathname(e: *mut c_void) -> *const c_char;
@@ -174,6 +184,7 @@ mod native {
 
     const ARCHIVE_OK: c_int = 0;
     const ARCHIVE_EOF: c_int = 1;
+    const ARCHIVE_FATAL: c_int = -30;
     /// `ARCHIVE_FORMAT_RAW`: no archive at all, one stream of data.
     const ARCHIVE_FORMAT_RAW: c_int = 0x90000;
     /// A warning is not a failure where it reports a name or a header:
@@ -341,6 +352,10 @@ mod native {
     /// `skwir-archive-worker <output> --create FORMAT [--encrypt]` writes
     /// an archive at `output` (`zip`, `7z`, `tar`, `tar.gz`, `tar.bz2`,
     /// `tar.xz`, `tar.zst`) of what standard input says ([`create`]).
+    /// `skwir-archive-worker <archive> --serve WORK` keeps the archive open
+    /// while it is shown and answers requests on standard input: its
+    /// listing, and members written to `WORK`'s `member` one at a time, a
+    /// member after the last read going on from it ([`serve`]).
     /// Every bound arrives from the caller so the UI process and this helper
     /// can never disagree on a limit. `--stem STEM` is the file's own name
     /// less its last extension, which a file only compressed names its one
@@ -364,6 +379,8 @@ mod native {
         pub create: Option<String>,
         /// With `--create zip`: encrypted, by a passphrase read first.
         pub encrypt: bool,
+        /// The folder a session writes the members it reads in.
+        pub serve: Option<std::ffi::OsString>,
     }
     pub fn parse_args(args: impl IntoIterator<Item = std::ffi::OsString>) -> anyhow::Result<Args> {
         let mut positional = Vec::new();
@@ -371,6 +388,7 @@ mod native {
         let mut passwords = false;
         let mut create = None;
         let mut encrypt = false;
+        let mut serve = None;
         let mut name = None;
         let mut stem = None;
         let mut bytes = None;
@@ -395,6 +413,13 @@ mod native {
                     stem = Some(
                         args.next()
                             .ok_or_else(|| anyhow::anyhow!("missing value for --stem"))?,
+                    );
+                    continue;
+                }
+                Some("--serve") => {
+                    serve = Some(
+                        args.next()
+                            .ok_or_else(|| anyhow::anyhow!("missing value for --serve"))?,
                     );
                     continue;
                 }
@@ -449,7 +474,12 @@ mod native {
             !encrypt || create.as_deref() == Some("zip"),
             "--encrypt goes with --create zip"
         );
-        if create.is_some() {
+        if serve.is_some() {
+            anyhow::ensure!(
+                !extract && !passwords && create.is_none() && member.is_none(),
+                "--serve takes the archive and its folder, nothing else"
+            );
+        } else if create.is_some() {
             anyhow::ensure!(
                 !extract && member.is_none(),
                 "--create takes the archive to write, nothing else"
@@ -484,6 +514,7 @@ mod native {
             passwords,
             create,
             encrypt,
+            serve,
         })
     }
     /// The member's name as the listing reports it: UTF-8 where libarchive
@@ -996,6 +1027,7 @@ mod native {
             passwords,
             create: creating,
             encrypt,
+            serve: serving,
         } = parse_args(std::env::args_os().skip(1))?;
         let started = std::time::Instant::now();
         let budget = seconds.map(|s| std::time::Duration::from_secs(s as u64));
@@ -1006,6 +1038,9 @@ mod native {
             .map(std::path::PathBuf::from)
             .or_else(|| std::path::Path::new(&path).file_stem().map(Into::into))
             .map_or_else(|| "data".into(), |s| s.to_string_lossy().into_owned());
+        if let Some(work) = serving {
+            return serve(&path, std::path::Path::new(&work), &stem);
+        }
         let path = native_path(&path)?;
         if let Some(format) = creating {
             return create(&path, &format, encrypt);
@@ -1013,13 +1048,8 @@ mod native {
         // Before the reader, so it outlives it: the reader asks it for
         // passphrases (`extract`).
         let tickets = Tickets::new();
-        let reader = Reader(unsafe { archive_read_new() });
-        anyhow::ensure!(!reader.0.is_null(), "libarchive allocation failed");
+        let reader = reader()?;
         unsafe {
-            reader.check(archive_read_support_filter_all(reader.0))?;
-            reader.check(archive_read_support_format_all(reader.0))?;
-            // Raw bids last: it is what is left when no archive format is.
-            reader.check(archive_read_support_format_raw(reader.0))?;
             // Before it is opened, as libarchive wants it.
             if extracting && passwords {
                 reader.check(archive_read_set_passphrase_callback(
@@ -1034,6 +1064,45 @@ mod native {
         if extracting {
             return extract(&reader, &tickets, &stem, passwords);
         }
+        if let Some(index) = member {
+            let output = output
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("missing output"))?;
+            let entry = walk_to(&reader, &mut 0, index)?;
+            let expected = expected.as_deref().and_then(|e| e.to_str());
+            let limit = byte_limit.unwrap_or(0);
+            return write_member(&reader, entry, &stem, expected, output.as_ref(), limit).map(drop);
+        }
+        let limits = (member_limit.unwrap_or(0), name_limit.unwrap_or(0));
+        println!("{}", list(&reader, &stem, limits, budget, started)?);
+        Ok(())
+    }
+
+    /// A reader of every format and filter libarchive has, raw data last,
+    /// not opened yet.
+    fn reader() -> anyhow::Result<Reader> {
+        let reader = Reader(unsafe { archive_read_new() });
+        anyhow::ensure!(!reader.0.is_null(), "libarchive allocation failed");
+        unsafe {
+            reader.check(archive_read_support_filter_all(reader.0))?;
+            reader.check(archive_read_support_format_all(reader.0))?;
+            // Raw bids last: it is what is left when no archive format is.
+            reader.check(archive_read_support_format_raw(reader.0))?;
+        }
+        Ok(reader)
+    }
+
+    /// The members of the archive `reader` opened, from its first, as a
+    /// listing: `{"members": [...], "complete": bool}`. Past `limits`
+    /// (members, bytes of names) or `budget` from `started`, the listing
+    /// ends there, what was listed told with a word that it is not all.
+    fn list(
+        reader: &Reader,
+        stem: &str,
+        (member_limit, name_limit): (usize, usize),
+        budget: Option<std::time::Duration>,
+        started: std::time::Instant,
+    ) -> anyhow::Result<serde_json::Value> {
         let mut entries = Vec::new();
         let mut index = 0u64;
         let mut names = 0usize;
@@ -1046,120 +1115,370 @@ mod native {
             }
             reader.check(status)?;
             anyhow::ensure!(!entry.is_null(), "Missing archive header");
-            if member == Some(index) {
-                let name = member_name(&reader, entry, &stem)?;
-                anyhow::ensure!(
-                    expected.as_deref().and_then(|e| e.to_str()) == Some(name.as_str()),
-                    "Archive changed since it was listed; select it again"
-                );
-                anyhow::ensure!(
-                    unsafe { archive_entry_filetype(entry) } == 0o100_000,
-                    "Only regular archive members can be previewed"
-                );
-                anyhow::ensure!(
-                    unsafe { archive_entry_is_encrypted(entry) } == 0,
-                    "Encrypted member: open in an archive application"
-                );
-                let output = output
-                    .as_ref()
-                    .ok_or_else(|| anyhow::anyhow!("missing output"))?;
-                let limit = byte_limit.unwrap_or(0);
-                let mut file = std::fs::File::create(output)?;
-                let mut total = 0usize;
-                let mut buf = vec![0u8; 64 * 1024];
-                let streamed = (|| -> anyhow::Result<()> {
-                    loop {
-                        let n = unsafe {
-                            archive_read_data(reader.0, buf.as_mut_ptr().cast(), buf.len())
-                        };
-                        if n < 0 {
-                            // A warning too: the bytes are not those stored
-                            // (a CRC that does not match).
-                            data(reader.0, c_int::try_from(n)?, &name, false)?;
-                            anyhow::bail!("Archive decompression failed");
-                        }
-                        if n == 0 {
-                            return Ok(());
-                        }
-                        let n = usize::try_from(n)?;
-                        total += n;
-                        // The caller names its bound in its own words; this
-                        // is the backstop for a member larger than it
-                        // declared.
-                        anyhow::ensure!(total <= limit, "Member exceeds the preview limit");
-                        file.write_all(&buf[..n])?;
-                    }
-                })();
-                if streamed.is_err() {
-                    // Nothing of a member not read whole is shown.
-                    drop(file);
-                    let _ = std::fs::remove_file(output);
-                }
-                return streamed;
+            let name = member_name(reader, entry, stem)?;
+            let kind = unsafe { archive_entry_filetype(entry) };
+            // What a link says, and the first name of a hard link: as
+            // names, they count against the names' bound.
+            let link = (kind == AE_IFLNK)
+                .then(|| {
+                    text(unsafe { archive_entry_symlink_utf8(entry) })
+                        .or_else(|| text(unsafe { archive_entry_symlink(entry) }))
+                })
+                .flatten();
+            let hardlink = text(unsafe { archive_entry_hardlink_utf8(entry) })
+                .or_else(|| text(unsafe { archive_entry_hardlink(entry) }));
+            names += name.len()
+                + link.as_ref().map_or(0, String::len)
+                + hardlink.as_ref().map_or(0, String::len);
+            // Past either bound the listing ends there: what was
+            // listed is shown, with a word that it is not all.
+            // So past the time given: a large compressed tar is read
+            // whole to be listed, and was not listed at all.
+            if names > name_limit
+                || entries.len() >= member_limit
+                || budget.is_some_and(|budget| started.elapsed() > budget)
+            {
+                complete = false;
+                break;
             }
-            if member.is_none() {
-                let name = member_name(&reader, entry, &stem)?;
-                let kind = unsafe { archive_entry_filetype(entry) };
-                // What a link says, and the first name of a hard link: as
-                // names, they count against the names' bound.
-                let link = (kind == AE_IFLNK)
-                    .then(|| {
-                        text(unsafe { archive_entry_symlink_utf8(entry) })
-                            .or_else(|| text(unsafe { archive_entry_symlink(entry) }))
-                    })
-                    .flatten();
-                let hardlink = text(unsafe { archive_entry_hardlink_utf8(entry) })
-                    .or_else(|| text(unsafe { archive_entry_hardlink(entry) }));
-                names += name.len()
-                    + link.as_ref().map_or(0, String::len)
-                    + hardlink.as_ref().map_or(0, String::len);
-                // Past either bound the listing ends there: what was
-                // listed is shown, with a word that it is not all.
-                // So past the time given: a large compressed tar is read
-                // whole to be listed, and was not listed at all.
-                if names > name_limit.unwrap_or(0)
-                    || entries.len() >= member_limit.unwrap_or(0)
-                    || budget.is_some_and(|budget| started.elapsed() > budget)
-                {
-                    complete = false;
-                    break;
-                }
-                let size = if unsafe { archive_entry_size_is_set(entry) } != 0 {
-                    unsafe { archive_entry_size(entry) }
-                } else {
-                    -1
-                };
-                // Its time as libarchive reads it (a ZIP's local time
-                // without a zone in this process's): what extracting it
-                // gives the file, to tell an extraction done (ADR-059).
-                // A `long`, 32 bits on Windows.
-                #[allow(clippy::useless_conversion)]
-                let mtime = (unsafe { archive_entry_mtime_is_set(entry) } != 0).then(|| {
-                    [
-                        unsafe { archive_entry_mtime(entry) },
-                        i64::from(unsafe { archive_entry_mtime_nsec(entry) }),
-                    ]
-                });
-                entries.push(serde_json::json!({
-                    "index": index,
-                    "name": name,
-                    "size": size,
-                    "directory": kind == AE_IFDIR,
-                    "regular": kind == AE_IFREG,
-                    "encrypted": unsafe { archive_entry_is_encrypted(entry) } != 0,
-                    "mtime": mtime,
-                    "link": link,
-                    "hardlink": hardlink,
-                }));
-            }
+            let size = if unsafe { archive_entry_size_is_set(entry) } != 0 {
+                unsafe { archive_entry_size(entry) }
+            } else {
+                -1
+            };
+            // Its time as libarchive reads it (a ZIP's local time
+            // without a zone in this process's): what extracting it
+            // gives the file, to tell an extraction done (ADR-059).
+            // A `long`, 32 bits on Windows.
+            #[allow(clippy::useless_conversion)]
+            let mtime = (unsafe { archive_entry_mtime_is_set(entry) } != 0).then(|| {
+                [
+                    unsafe { archive_entry_mtime(entry) },
+                    i64::from(unsafe { archive_entry_mtime_nsec(entry) }),
+                ]
+            });
+            entries.push(serde_json::json!({
+                "index": index,
+                "name": name,
+                "size": size,
+                "directory": kind == AE_IFDIR,
+                "regular": kind == AE_IFREG,
+                "encrypted": unsafe { archive_entry_is_encrypted(entry) } != 0,
+                "mtime": mtime,
+                "link": link,
+                "hardlink": hardlink,
+            }));
             index += 1;
         }
-        anyhow::ensure!(member.is_none(), "Archive member no longer exists");
-        println!(
-            "{}",
-            serde_json::json!({"members": entries, "complete": complete})
+        Ok(serde_json::json!({"members": entries, "complete": complete}))
+    }
+
+    /// The header of member `index`, read on from `next`, the index of the
+    /// next header `reader` reads, which it moves past it.
+    fn walk_to(reader: &Reader, next: &mut u64, index: u64) -> anyhow::Result<*mut c_void> {
+        loop {
+            let mut entry = std::ptr::null_mut();
+            let status = unsafe { archive_read_next_header(reader.0, &raw mut entry) };
+            anyhow::ensure!(status != ARCHIVE_EOF, "Archive member no longer exists");
+            reader.check(status)?;
+            anyhow::ensure!(!entry.is_null(), "Missing archive header");
+            let at = *next;
+            *next += 1;
+            if at == index {
+                return Ok(entry);
+            }
+        }
+    }
+
+    /// Stream the member whose header is `entry` to `output`, provided it is
+    /// still called `expected`, regular and not encrypted, and holds at most
+    /// `limit` bytes: how many it held. Nothing of a member not read whole
+    /// is left at `output`.
+    fn write_member(
+        reader: &Reader,
+        entry: *mut c_void,
+        stem: &str,
+        expected: Option<&str>,
+        output: &std::path::Path,
+        limit: usize,
+    ) -> anyhow::Result<u64> {
+        let name = member_name(reader, entry, stem)?;
+        anyhow::ensure!(
+            expected == Some(name.as_str()),
+            "Archive changed since it was listed; select it again"
         );
-        Ok(())
+        anyhow::ensure!(
+            unsafe { archive_entry_filetype(entry) } == 0o100_000,
+            "Only regular archive members can be previewed"
+        );
+        anyhow::ensure!(
+            unsafe { archive_entry_is_encrypted(entry) } == 0,
+            "Encrypted member: open in an archive application"
+        );
+        let mut file = std::fs::File::create(output)?;
+        let mut total = 0usize;
+        let mut buf = vec![0u8; 64 * 1024];
+        let streamed = (|| -> anyhow::Result<()> {
+            loop {
+                let n = unsafe { archive_read_data(reader.0, buf.as_mut_ptr().cast(), buf.len()) };
+                if n < 0 {
+                    // A warning too: the bytes are not those stored
+                    // (a CRC that does not match).
+                    data(reader.0, c_int::try_from(n)?, &name, false)?;
+                    anyhow::bail!("Archive decompression failed");
+                }
+                if n == 0 {
+                    return Ok(());
+                }
+                let n = usize::try_from(n)?;
+                total += n;
+                // The caller names its bound in its own words; this
+                // is the backstop for a member larger than it
+                // declared.
+                anyhow::ensure!(total <= limit, "Member exceeds the preview limit");
+                file.write_all(&buf[..n])?;
+            }
+        })();
+        if streamed.is_err() {
+            // Nothing of a member not read whole is shown.
+            drop(file);
+            let _ = std::fs::remove_file(output);
+        }
+        streamed.map(|()| total as u64)
+    }
+
+    /// Where a session writes the member read, in its folder.
+    pub const SERVED: &str = "member";
+    /// The longest request a session reads, its newline included.
+    const REQUEST_BYTES: u64 = 64 * 1024;
+
+    /// The archive kept open while it is shown (`--serve`), read on
+    /// request. Standard input brings requests, a line of JSON each,
+    /// `{"id": n, "body": ...}`, and each is answered once, in order, by a
+    /// line `{"id": n, "body": ...}` on standard output, the greeting first
+    /// as 0 (`"Ready"`):
+    /// - `{"List": {"members": N, "names": N, "seconds": N}}`, the listing
+    ///   within those bounds, `{"Listing": {"members": [...], "complete":
+    ///   bool}}`;
+    /// - `{"Read": {"index": N, "name": NAME, "bytes": N}}`, the member at
+    ///   `index`, still called `NAME`, written to `work`'s `member`
+    ///   ([`SERVED`]), at most `bytes`: `{"Written": {"len": N, "headers":
+    ///   N, "from_start": bool}}`, the headers read to find it and whether
+    ///   the archive was read from its start for it.
+    ///
+    /// A member after the last one read is read on from there; one before
+    /// it reads the archive again from its start (a compressed tar cannot
+    /// be read backwards). A request that fails is answered `{"Error":
+    /// text}`, and the session goes on. The end of standard input ends it.
+    fn serve(path: &std::ffi::OsStr, work: &std::path::Path, stem: &str) -> anyhow::Result<()> {
+        let output = work.join(SERVED);
+        let mut session = Served {
+            path: path.to_owned(),
+            stem: stem.to_owned(),
+            open: None,
+            next: 0,
+        };
+        tell(&serde_json::json!({"id": 0, "body": "Ready"}))?;
+        let mut input = std::io::stdin().lock();
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            if (&mut input)
+                .take(REQUEST_BYTES)
+                .read_until(b'\n', &mut line)?
+                == 0
+            {
+                return Ok(());
+            }
+            anyhow::ensure!(line.ends_with(b"\n"), "a request too long");
+            let request: serde_json::Value = serde_json::from_slice(&line)?;
+            let id = request["id"]
+                .as_u64()
+                .ok_or_else(|| anyhow::anyhow!("a request without its id"))?;
+            let body = session
+                .answer(&request["body"], &output)
+                .unwrap_or_else(|error| serde_json::json!({"Error": format!("{error:#}")}));
+            tell(&serde_json::json!({"id": id, "body": body}))?;
+        }
+    }
+
+    /// What a session holds: the archive opened, and the index of the next
+    /// header it reads.
+    struct Served {
+        path: std::ffi::OsString,
+        stem: String,
+        open: Option<Opened>,
+        next: u64,
+    }
+
+    impl Served {
+        fn answer(
+            &mut self,
+            body: &serde_json::Value,
+            output: &std::path::Path,
+        ) -> anyhow::Result<serde_json::Value> {
+            let number = |request: &serde_json::Value, key: &str| {
+                request[key]
+                    .as_u64()
+                    .ok_or_else(|| anyhow::anyhow!("a request without its {key}"))
+            };
+            if let Some(asked) = body.get("List") {
+                // Read from its start, and not read on from after.
+                self.open = None;
+                let opened = open(&self.path)?;
+                let limits = (
+                    usize::try_from(number(asked, "members")?)?,
+                    usize::try_from(number(asked, "names")?)?,
+                );
+                let budget = std::time::Duration::from_secs(number(asked, "seconds")?);
+                let listing = list(
+                    &opened.reader,
+                    &self.stem,
+                    limits,
+                    Some(budget),
+                    std::time::Instant::now(),
+                )?;
+                return Ok(serde_json::json!({ "Listing": listing }));
+            }
+            let Some(asked) = body.get("Read") else {
+                anyhow::bail!("a request it does not know");
+            };
+            let index = number(asked, "index")?;
+            let limit = usize::try_from(number(asked, "bytes")?)?;
+            let expected = asked["name"].as_str();
+            let from_start = self.open.is_none() || index < self.next;
+            if from_start {
+                self.open = None;
+                self.open = Some(open(&self.path)?);
+                self.next = 0;
+            }
+            let before = self.next;
+            let Some(opened) = &self.open else {
+                anyhow::bail!("the archive is not open");
+            };
+            let read = walk_to(&opened.reader, &mut self.next, index).and_then(|entry| {
+                write_member(&opened.reader, entry, &self.stem, expected, output, limit)
+            });
+            match read {
+                Ok(len) => Ok(serde_json::json!({ "Written": {
+                    "len": len,
+                    "headers": self.next - before,
+                    "from_start": from_start,
+                }})),
+                Err(error) => {
+                    // Where the reader is is not known: read again next time.
+                    self.open = None;
+                    Err(error)
+                }
+            }
+        }
+    }
+
+    /// The archive a session reads, opened by the helper itself and handed
+    /// to libarchive a block at a time ([`source_read`]): on Windows with
+    /// every sharing, so that it held open never stops another program
+    /// replacing or deleting it.
+    struct Source {
+        file: std::fs::File,
+        len: u64,
+        buffer: Vec<u8>,
+    }
+
+    /// A reader of the archive at `path`, as a session reads it. Its reader
+    /// goes before its source, which the reader's callbacks read.
+    struct Opened {
+        reader: Reader,
+        _source: Box<Source>,
+    }
+
+    fn open(path: &std::ffi::OsStr) -> anyhow::Result<Opened> {
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SHARE_DELETE.
+            options.share_mode(0x1 | 0x2 | 0x4);
+        }
+        let file = options.open(path)?;
+        let meta = file.metadata()?;
+        anyhow::ensure!(meta.is_file(), "Not an archive: not a file");
+        let mut source = Box::new(Source {
+            file,
+            len: meta.len(),
+            buffer: vec![0; 64 * 1024],
+        });
+        let reader = reader()?;
+        unsafe {
+            reader.check(archive_read_set_options(reader.0, READ_OPTIONS.as_ptr()))?;
+            reader.check(archive_read_set_read_callback(reader.0, Some(source_read)))?;
+            reader.check(archive_read_set_skip_callback(reader.0, Some(source_skip)))?;
+            reader.check(archive_read_set_seek_callback(reader.0, Some(source_seek)))?;
+            reader.check(archive_read_set_callback_data(
+                reader.0,
+                std::ptr::from_mut::<Source>(&mut source).cast(),
+            ))?;
+            reader.check(archive_read_open1(reader.0))?;
+        }
+        Ok(Opened {
+            reader,
+            _source: source,
+        })
+    }
+
+    /// The next bytes of a session's archive, for libarchive: how many, 0
+    /// at its end, and where they are; a failure to read is fatal.
+    unsafe extern "C" fn source_read(
+        _: *mut c_void,
+        data: *mut c_void,
+        buffer: *mut *const c_void,
+    ) -> isize {
+        let source = unsafe { &mut *data.cast::<Source>() };
+        match source.file.read(&mut source.buffer) {
+            Ok(n) => {
+                unsafe { *buffer = source.buffer.as_ptr().cast() };
+                isize::try_from(n).unwrap_or(-1)
+            }
+            Err(_) => -1,
+        }
+    }
+
+    /// Skip `request` bytes of a session's archive, never past its end: how
+    /// many were.
+    unsafe extern "C" fn source_skip(_: *mut c_void, data: *mut c_void, request: i64) -> i64 {
+        let source = unsafe { &mut *data.cast::<Source>() };
+        let Ok(at) = source.file.stream_position() else {
+            return 0;
+        };
+        let skip = u64::try_from(request)
+            .unwrap_or(0)
+            .min(source.len.saturating_sub(at));
+        match i64::try_from(skip) {
+            Ok(by) if source.file.seek(std::io::SeekFrom::Current(by)).is_ok() => by,
+            _ => 0,
+        }
+    }
+
+    /// Seek in a session's archive as `lseek` does: where it is then.
+    unsafe extern "C" fn source_seek(
+        _: *mut c_void,
+        data: *mut c_void,
+        offset: i64,
+        whence: c_int,
+    ) -> i64 {
+        let source = unsafe { &mut *data.cast::<Source>() };
+        let to = match (whence, u64::try_from(offset)) {
+            (0, Ok(offset)) => std::io::SeekFrom::Start(offset),
+            (1, _) => std::io::SeekFrom::Current(offset),
+            (2, _) => std::io::SeekFrom::End(offset),
+            _ => return i64::from(ARCHIVE_FATAL),
+        };
+        source
+            .file
+            .seek(to)
+            .ok()
+            .and_then(|at| i64::try_from(at).ok())
+            .unwrap_or(i64::from(ARCHIVE_FATAL))
     }
 }
 fn main() {
@@ -1225,6 +1544,15 @@ mod tests {
         let whole = parse_args(args(&["a.zip", "--extract", "--stem", "a"])).unwrap();
         assert!(whole.extract && whole.member.is_none());
         assert!(parse_args(args(&["a.zip", "3", "--extract"])).is_err());
+        // A session takes its folder, and its bounds with each request.
+        let served = parse_args(args(&["a.zip", "--stem", "a", "--serve", "/work"])).unwrap();
+        assert_eq!(
+            served.serve.as_deref().and_then(|w| w.to_str()),
+            Some("/work")
+        );
+        assert!(parse_args(args(&["a.zip", "--serve"])).is_err());
+        assert!(parse_args(args(&["a.zip", "3", "out", "--serve", "/work"])).is_err());
+        assert!(parse_args(args(&["a.zip", "--extract", "--serve", "/work"])).is_err());
     }
     #[test]
     fn an_archive_is_made_of_its_format_alone() {

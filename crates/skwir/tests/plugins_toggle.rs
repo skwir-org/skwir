@@ -235,3 +235,182 @@ fn every_menu_source_takes_what_its_menu_gives() {
         }
     }
 }
+
+/// The libarchive helper: `SKWIR_ARCHIVE_WORKER`, else the one built into
+/// the target directory this test runs from. Without it the test says so
+/// and passes, unless `SKWIR_REQUIRE_WORKERS` is set.
+#[cfg(target_os = "linux")]
+fn archive_worker() -> Option<std::path::PathBuf> {
+    let worker = std::env::var_os("SKWIR_ARCHIVE_WORKER")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            let exe = std::env::current_exe().ok()?;
+            let built = exe.parent()?.parent()?.join("skwir-archive-worker");
+            built.is_file().then_some(built)
+        });
+    if worker.is_none() {
+        assert!(
+            std::env::var_os("SKWIR_REQUIRE_WORKERS").is_none(),
+            "skwir-archive-worker is not built"
+        );
+        eprintln!("skipped: skwir-archive-worker is not built");
+    }
+    worker
+}
+
+/// An archive of `format` at `path`, holding `names`, made by the helper.
+#[cfg(target_os = "linux")]
+fn make_archive(worker: &std::path::Path, path: &std::path::Path, format: &str, names: &[&str]) {
+    use std::fmt::Write as _;
+    use std::io::Write as _;
+    let mut child = std::process::Command::new(worker)
+        .arg(path)
+        .args(["--create", format])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    for name in names {
+        let hex: String = name.bytes().fold(String::new(), |mut out, b| {
+            let _ = write!(out, "{b:02x}");
+            out
+        });
+        writeln!(input, "{{\"name\":\"{hex}\",\"kind\":\"file\",\"size\":4}}").unwrap();
+        input.write_all(b"page").unwrap();
+    }
+    writeln!(input, "{{\"end\":true}}").unwrap();
+    drop(input);
+    assert!(child.wait().unwrap().success());
+}
+
+/// The archive helpers this test process started, serving (`--serve`),
+/// found through their parents: the sandbox's processes around one say
+/// its command line too.
+#[cfg(target_os = "linux")]
+fn serving_helpers() -> Vec<u32> {
+    let me = std::process::id();
+    let parent = |pid: u32| -> Option<u32> {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+        // After the command's name in parentheses: its state, then its parent.
+        stat.rsplit_once(')')?
+            .1
+            .split_whitespace()
+            .nth(1)?
+            .parse()
+            .ok()
+    };
+    let descends = |mut pid: u32| {
+        for _ in 0..16 {
+            match parent(pid) {
+                Some(up) if up == me => return true,
+                Some(up) if up > 1 => pid = up,
+                _ => return false,
+            }
+        }
+        false
+    };
+    std::fs::read_dir("/proc")
+        .unwrap()
+        .flatten()
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|&pid| {
+            std::fs::read(format!("/proc/{pid}/cmdline")).is_ok_and(|line| {
+                let args: Vec<&[u8]> = line.split(|b| *b == 0).collect();
+                args.iter()
+                    .any(|arg| arg.ends_with(b"skwir-archive-worker"))
+                    && args.contains(&b"--serve".as_slice())
+            })
+        })
+        .filter(|&pid| descends(pid))
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+fn until(what: &str, mut condition: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !condition() {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// A comic read and an archive's members walked keep a helper while they
+/// are shown (ADR-105): turned off then, either plugin ends its helper, the
+/// reader or the preview still holding what it opened.
+#[cfg(target_os = "linux")]
+#[test]
+fn comics_and_archives_end_their_helpers_when_turned_off_while_reading() {
+    use skwir_core::preview::{HeldSlot, PreviewRequest};
+    let Some(worker) = archive_worker() else {
+        return;
+    };
+    // SAFETY: nextest runs each test in a process of its own, and nothing
+    // else reads the environment before this.
+    #[allow(unsafe_code)]
+    unsafe {
+        std::env::set_var("SKWIR_ARCHIVE_WORKER", &worker);
+    }
+    let base = dirs::home_dir().unwrap().join(".cache").join("skwir-tests");
+    std::fs::create_dir_all(&base).unwrap();
+    let dir = tempfile::Builder::new()
+        .prefix("toggle-helpers-")
+        .tempdir_in(base)
+        .unwrap();
+    let app = App::new(AppConfig::ephemeral(dir.path().join("state"))).unwrap();
+    for plugin in all_plugins() {
+        if ["comics", "archives"].contains(&plugin.id()) {
+            app.plugins.add(plugin, &app);
+        }
+    }
+    let request = |path: &std::path::Path, mime: &str| PreviewRequest {
+        entry: skwir_core::op::EntryRef::from_path(path).unwrap(),
+        mime: Some(mime.into()),
+        page: 1,
+        seconds: None,
+        max_side: 64,
+        text_size: None,
+        fit: None,
+        held: HeldSlot::default(),
+    };
+    let cancel = skwir_core::CancelToken::new();
+
+    let comic = dir.path().join("l’été comic #3.cbt");
+    make_archive(
+        &worker,
+        &comic,
+        "tar",
+        &["Book/page1.png", "Book/page2.png"],
+    );
+    let reading = request(&comic, "application/x-cbt");
+    let session = app
+        .previews
+        .open_document(&reading, &cancel)
+        .unwrap()
+        .expect("a comic");
+    assert_eq!(session.info().pages, 2);
+    until("the comic's helper", || !serving_helpers().is_empty());
+    assert!(app.plugins.set_enabled("comics", false, &app));
+    until("the comic's helper gone", || serving_helpers().is_empty());
+
+    let zip = dir.path().join("it's an archive.zip");
+    make_archive(&worker, &zip, "zip", &["a.txt", "b.txt"]);
+    let shown = request(&zip, "application/zip");
+    let view = skwir_core::inspection::InspectRequest::default();
+    let listing = app
+        .previews
+        .inspect(&shown, &view, &cancel)
+        .unwrap()
+        .expect("a listing");
+    let target = listing.rows[1].target.clone().unwrap();
+    let into = dir.path().join("members");
+    std::fs::create_dir(&into).unwrap();
+    app.previews
+        .extract(&shown, &view, &target, &into, &cancel)
+        .unwrap()
+        .expect("a member");
+    until("the archive's helper", || !serving_helpers().is_empty());
+    assert!(app.plugins.set_enabled("archives", false, &app));
+    until("the archive's helper gone", || serving_helpers().is_empty());
+    drop((session, reading, shown));
+}
