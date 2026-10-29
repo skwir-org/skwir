@@ -21,8 +21,10 @@ pub struct Display {
     pub images: Arc<[Option<crate::backdrop::Picture>]>,
     pub(crate) row_icons: Arc<Vec<Option<crate::icons::Pic>>>,
     /// Case-folded search text per block, then per row, prepared on the
-    /// worker so Find never lowercases a document on the UI thread.
-    folded: Arc<Vec<String>>,
+    /// worker so Find never lowercases a document on the UI thread: none
+    /// for a block of ASCII text, matched as it is, case ignored
+    /// (`contains_folded`), so a document mostly ASCII is not held twice.
+    folded: Arc<[Option<Box<str>>]>,
     /// Column widths and kinds of a table, worked out on the worker.
     table: Option<Arc<crate::inspector_rows::Shape>>,
     /// The request this inspection answered, which its pictures for later
@@ -190,8 +192,12 @@ impl Display {
         let folded = data
             .blocks
             .iter()
-            .map(|b| fold(&b.text))
-            .chain(listed(&data).iter().map(|r| fold(&r.cells.join("\t"))))
+            .map(|b| (!b.text.is_ascii()).then(|| fold(&b.text).into_boxed_str()))
+            .chain(
+                listed(&data)
+                    .iter()
+                    .map(|r| Some(fold(&r.cells.join("\t")).into_boxed_str())),
+            )
             .collect();
         let table = (data.kind == InspectionKind::Table)
             .then(|| Arc::new(crate::inspector_rows::shape(&data.columns, &data.rows)));
@@ -225,7 +231,7 @@ impl Display {
             data: Arc::new(data),
             images,
             row_icons: Arc::new(row_icons),
-            folded: Arc::new(folded),
+            folded,
             origin: None,
             code_bg,
             code_dark: code.dark,
@@ -241,7 +247,12 @@ impl Display {
     /// The matches of `query` (`folded` too) in block or row `i`: where
     /// they are in a block's text; a row's is the row, at its start.
     fn hits(&self, i: usize, query: &str, folded: &str) -> Vec<std::ops::Range<usize>> {
-        if !self.folded[i].contains(folded) {
+        let holds = match (&self.folded[i], self.data.blocks.get(i)) {
+            (Some(text), _) => text.contains(folded),
+            (None, Some(block)) => contains_folded(&block.text, folded),
+            (None, None) => false,
+        };
+        if !holds {
             return Vec::new();
         }
         match self.data.blocks.get(i) {
@@ -2916,6 +2927,24 @@ pub fn notice(display: &Display) -> Option<String> {
     (!data.notice.is_empty()).then(|| data.notice.clone())
 }
 
+/// Whether ASCII `text` holds `folded` (`text_rows::fold`) once folded
+/// too, without folding it: ASCII folds to ASCII lowercase, so a query
+/// that folds to anything else is never in it, and the rest is compared
+/// a byte at a time, case ignored.
+fn contains_folded(text: &str, folded: &str) -> bool {
+    let (text, needle) = (text.as_bytes(), folded.as_bytes());
+    let Some((&first, rest)) = needle.split_first() else {
+        return true;
+    };
+    if !folded.is_ascii() || needle.len() > text.len() {
+        return false;
+    }
+    (0..=text.len() - needle.len()).any(|at| {
+        text[at].to_ascii_lowercase() == first
+            && text[at + 1..at + needle.len()].eq_ignore_ascii_case(rest)
+    })
+}
+
 /// Whether what is shown has contents: headings, or a book's chapters.
 fn has_contents(data: &Inspection) -> bool {
     data.blocks.iter().any(|block| block.heading > 0) || data.kind == InspectionKind::Book
@@ -5021,6 +5050,51 @@ mod tests {
         state.reveal(&display.data, 3);
         assert_eq!(state.selected, Some(3));
         assert_eq!(state.visible(), [0, 1, 2, 3, 4, 5]);
+    }
+
+    /// Find ignores case alike in text held once, ASCII, and in text held
+    /// folded beside it, the rest: 'İ' folds to two characters, 'ß' stays
+    /// itself, and the Kelvin sign folds to an ASCII 'k' that finds an
+    /// ASCII "K".
+    #[test]
+    fn find_ignores_case_in_ascii_text_held_once() {
+        use super::*;
+        let block = |text: &str| Block {
+            text: text.into(),
+            ..Block::default()
+        };
+        let display = Display::new(
+            Inspection {
+                kind: InspectionKind::Markdown,
+                blocks: vec![
+                    block("Hello World"),
+                    block("Straße und Weg"),
+                    block("İstanbul"),
+                    block("KELVIN scale"),
+                    block("Hello again"),
+                ],
+                ..Inspection::default()
+            },
+            &crate::code_preview::CodeTheme::own(false),
+        );
+        let folded: Vec<bool> = display.folded.iter().map(Option::is_some).collect();
+        assert_eq!(folded, [false, true, true, false, false], "ASCII held once");
+        let find = |query| display.find(query, (0, 0), false).map(|(i, _)| i);
+        assert_eq!(display.find("WORLD", (0, 0), false), Some((0, 6..11)));
+        assert_eq!(find("hello"), Some(0));
+        assert_eq!(
+            display.find("HELLO", (0, 1), false).map(|(i, _)| i),
+            Some(4)
+        );
+        assert_eq!(find("STRASSE"), None, "ß is not two letters to fold");
+        assert_eq!(find("STRAßE"), Some(1));
+        assert_eq!(find("İSTANBUL"), Some(2));
+        assert_eq!(find("istanbul"), None, "İ folds to i and a dot above");
+        assert_eq!(find("\u{212A}elvin"), Some(3), "the Kelvin sign is a k");
+        assert_eq!(find("ünd"), None, "folded beyond ASCII: never in ASCII");
+        assert_eq!(find("hello world!"), None);
+        assert!(contains_folded("ABC", ""));
+        assert!(!contains_folded("AB", "abc"));
     }
 
     #[test]
