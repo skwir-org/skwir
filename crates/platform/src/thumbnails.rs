@@ -2,6 +2,8 @@
 //! (`$XDG_CACHE_HOME/thumbnails/<size>/<md5 of file URI>.png`): lookup,
 //! load to pixels, and spec-compliant write-back.
 
+use std::fs::File;
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -91,6 +93,12 @@ impl ThumbCache {
     /// Find a fresh cached thumbnail for `path`, at `size` or larger.
     /// `path` must be absolute. Stale (mtime mismatch) thumbnails are ignored.
     pub fn lookup(&self, path: &Path, size: ThumbSize) -> Option<PathBuf> {
+        self.find(path, size).map(|(png, _)| png)
+    }
+
+    /// [`ThumbCache::lookup`], the thumbnail found held open: its text read
+    /// through the reader, which is at its start again.
+    fn find(&self, path: &Path, size: ThumbSize) -> Option<(PathBuf, BufReader<File>)> {
         let key = key(path);
         let mtime = std::fs::symlink_metadata(path)
             .ok()?
@@ -101,22 +109,25 @@ impl ThumbCache {
             .as_secs();
         ThumbSize::ALL.iter().filter(|s| **s >= size).find_map(|s| {
             let candidate = self.root.join(s.dir_name()).join(format!("{key}.png"));
-            let thumb_mtime = png_text_chunk(&candidate, "Thumb::MTime")?;
-            (thumb_mtime.trim().parse::<u64>().ok() == Some(mtime)).then_some(candidate)
+            let mut png = open_png(&candidate)?;
+            let [thumb_mtime] =
+                <[_; 1]>::try_from(png_text_chunks(&mut png, &["Thumb::MTime"])).ok()?;
+            (thumb_mtime?.trim().parse::<u64>().ok() == Some(mtime)).then_some(())?;
+            png.seek(SeekFrom::Start(0)).ok()?;
+            Some((candidate, png))
         })
     }
 
     /// `lookup` then decode: the cached thumbnail as RGBA8 pixels, at most
     /// `size` on its longest side. A larger size class serves a smaller
     /// request (a desktop on a high-density screen writes `x-large`), shrunk here so
-    /// callers never hold 16 times the pixels they asked for.
+    /// callers never hold 16 times the pixels they asked for. The file is
+    /// opened once: its time read, then its pixels, through one buffer.
     pub fn load(&self, path: &Path, size: ThumbSize) -> Option<Image> {
-        let png = self.lookup(path, size)?;
-        let file = crate::file::open_regular(&png).ok()?;
-        let img =
-            image::ImageReader::with_format(std::io::BufReader::new(file), image::ImageFormat::Png)
-                .decode()
-                .ok()?;
+        let (_, png) = self.find(path, size)?;
+        let img = image::ImageReader::with_format(png, image::ImageFormat::Png)
+            .decode()
+            .ok()?;
         let px = size.pixels();
         let img = if img.width().max(img.height()) > px {
             img.thumbnail(px, px)
@@ -145,9 +156,15 @@ impl ThumbCache {
         else {
             return false;
         };
-        png_text_chunk(&candidate, "Thumb::MTime")
-            .is_some_and(|m| m.trim().parse::<u64>().ok() == Some(mtime.as_secs()))
-            && png_text_chunk(&candidate, TOOLS_CHUNK).as_deref() == Some(tools)
+        let Some(mut png) = open_png(&candidate) else {
+            return false;
+        };
+        match png_text_chunks(&mut png, &["Thumb::MTime", TOOLS_CHUNK]).as_slice() {
+            [Some(then), Some(stamp)] => {
+                then.trim().parse::<u64>().ok() == Some(mtime.as_secs()) && stamp == tools
+            }
+            _ => false,
+        }
     }
 
     /// Remember that no thumbnail could be made of `path` as of `mtime`,
@@ -262,40 +279,74 @@ fn set_mode(p: &Path, mode: u32) {
 #[cfg(not(unix))]
 fn set_mode(_p: &Path, _mode: u32) {}
 
-/// Read one `tEXt` chunk's value from a PNG without decoding the image.
-/// Only the chunk headers up to `IDAT` are visited.
+/// How many cached thumbnails were opened, for a test to count.
+#[cfg(test)]
+static OPENED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The PNG at `path` opened to be read through a buffer, if it is a file.
+fn open_png(path: &Path) -> Option<BufReader<File>> {
+    #[cfg(test)]
+    OPENED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    crate::file::open_regular(path).ok().map(BufReader::new)
+}
+
+/// Read one `tEXt` chunk's value from a PNG without decoding the image
+/// ([`png_text_chunks`]).
 pub fn png_text_chunk(png: &Path, keyword: &str) -> Option<String> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut f = crate::file::open_regular(png).ok()?;
+    png_text_chunks(&mut open_png(png)?, &[keyword])
+        .pop()
+        .flatten()
+}
+
+/// The values of the `tEXt` chunks named `keys`, in their order (`None`
+/// for one the PNG holds none of), read from the PNG `reader` is at the
+/// start of, without decoding the image: only the chunks before `IDAT`
+/// are visited, through the reader's buffer, and the reading stops once
+/// every key is found.
+pub fn png_text_chunks<R: Read + Seek>(
+    reader: &mut BufReader<R>,
+    keys: &[&str],
+) -> Vec<Option<String>> {
+    let mut found: Vec<Option<String>> = vec![None; keys.len()];
+    let _ = read_text_chunks(reader, keys, &mut found);
+    found
+}
+
+/// [`png_text_chunks`] into `found`; `None` once the PNG ends or cannot
+/// be read further.
+fn read_text_chunks<R: Read + Seek>(
+    reader: &mut BufReader<R>,
+    keys: &[&str],
+    found: &mut [Option<String>],
+) -> Option<()> {
     let mut sig = [0u8; 8];
-    f.read_exact(&mut sig).ok()?;
+    reader.read_exact(&mut sig).ok()?;
     if sig != [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A] {
         return None;
     }
     let mut header = [0u8; 8];
-    loop {
-        f.read_exact(&mut header).ok()?;
-        let len = u64::from(u32::from_be_bytes([
-            header[0], header[1], header[2], header[3],
-        ]));
+    while found.iter().any(Option::is_none) {
+        reader.read_exact(&mut header).ok()?;
+        let len = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
         let kind = &header[4..8];
         if kind == b"IDAT" || kind == b"IEND" {
             return None;
         }
         if kind == b"tEXt" && len < 64 * 1024 {
-            let mut data = vec![0u8; len as usize];
-            f.read_exact(&mut data).ok()?;
-            f.seek(SeekFrom::Current(4)).ok()?; // CRC
+            let mut data = vec![0u8; usize::try_from(len).ok()?];
+            reader.read_exact(&mut data).ok()?;
+            reader.seek_relative(4).ok()?; // CRC
             if let Some(nul) = data.iter().position(|b| *b == 0)
-                && &data[..nul] == keyword.as_bytes()
+                && let Some(at) = keys.iter().position(|k| k.as_bytes() == &data[..nul])
+                && found[at].is_none()
             {
-                return Some(String::from_utf8_lossy(&data[nul + 1..]).into_owned());
+                found[at] = Some(String::from_utf8_lossy(&data[nul + 1..]).into_owned());
             }
             continue;
         }
-        f.seek(SeekFrom::Current(i64::try_from(len).ok()? + 4))
-            .ok()?;
+        reader.seek_relative(i64::from(len) + 4).ok()?;
     }
+    Some(())
 }
 
 #[cfg(test)]
@@ -453,6 +504,49 @@ mod tests {
             .set_modified(mtime + std::time::Duration::from_secs(5))
             .unwrap();
         assert!(!thumbs.failed(&src, "tools-a"), "edited since: tried again");
+    }
+
+    /// A thumbnail loaded is opened once, its time and its pixels read
+    /// through one buffer; a failure's two keys are read in one pass of
+    /// one open, whatever their order in the file.
+    #[test]
+    fn a_thumbnail_is_opened_once_and_its_keys_read_in_one_pass() {
+        use std::sync::atomic::Ordering;
+        let cache = tempfile::tempdir().unwrap();
+        let thumbs = ThumbCache::at(cache.path().join("thumbnails"));
+        let src_dir = tempfile::tempdir().unwrap();
+        let src = src_dir.path().join("it's a photo.jpg");
+        std::fs::write(&src, b"only its mtime matters").unwrap();
+        let mtime = std::fs::metadata(&src).unwrap().modified().unwrap();
+        let img = Image {
+            width: 4,
+            height: 2,
+            rgba: vec![9u8; 4 * 2 * 4].into(),
+        };
+        thumbs.store(&src, ThumbSize::Normal, &img, mtime).unwrap();
+        let before = OPENED.load(Ordering::Relaxed);
+        let back = thumbs.load(&src, ThumbSize::Normal).unwrap();
+        assert_eq!((back.width, back.height), (4, 2));
+        assert_eq!(OPENED.load(Ordering::Relaxed) - before, 1, "one open");
+
+        thumbs.store_failed(&src, mtime, "tools-a").unwrap();
+        let failure = cache
+            .path()
+            .join("thumbnails/fail/skwir")
+            .join(format!("{}.png", key(&src)));
+        let secs = mtime
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            .to_string();
+        let mut png = open_png(&failure).unwrap();
+        assert_eq!(
+            png_text_chunks(&mut png, &[TOOLS_CHUNK, "Thumb::MTime", "Thumb::None"]),
+            [Some("tools-a".to_owned()), Some(secs), None]
+        );
+        let before = OPENED.load(Ordering::Relaxed);
+        assert!(thumbs.failed(&src, "tools-a"));
+        assert_eq!(OPENED.load(Ordering::Relaxed) - before, 1, "one open");
     }
 
     #[test]
