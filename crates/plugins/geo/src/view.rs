@@ -18,10 +18,12 @@
 //! thousand pictures a scan finds.
 //!
 //! The same listing asked again (a file added, a picture changed) is not
-//! a blank start. While its scan runs, the next one begins from what was
-//! already looked at, so the markers stay while a large folder streams.
-//! Once it has finished, what it found stays shown while the files are
-//! looked at again beside it (`Scans::next`), and is replaced at once,
+//! a blank start. While its scan runs, it is left to finish (`Scans::again`,
+//! never cancelled: each start walked the whole listing again, at every
+//! slice of a large folder streaming), and the next one begins then from
+//! what was already looked at, so the markers stay while a large folder
+//! streams. Once it has finished, what it found stays shown while the files
+//! are looked at again beside it (`Scans::next`), and is replaced at once,
 //! under a new generation, only if something moved. A scan resumed keeps
 //! the generation of the one before while it took nothing away: the view
 //! is handed only what it adds.
@@ -115,6 +117,9 @@ struct Scan {
     /// one that goes on from it with none since keeps all it holds.
     removed: u64,
     complete: bool,
+    /// Whether its workers are done: until then, the listing asked again
+    /// waits for it (`Scans::again`).
+    finished: bool,
     cancel: CancelToken,
     published: Instant,
 }
@@ -135,6 +140,9 @@ impl Scan {
 struct Scans {
     shown: Scan,
     next: Option<Scan>,
+    /// The listing changed while the latest scan ran: scanned again once
+    /// it finishes.
+    again: bool,
 }
 
 impl Scans {
@@ -147,6 +155,49 @@ impl Scans {
         if let Some(next) = &self.next {
             next.cancel.cancel();
         }
+    }
+}
+
+/// What a scan asked for does, from the pane's scans and what it lists
+/// now (`decide`).
+#[derive(Debug, PartialEq, Eq)]
+enum Decision {
+    /// The listing the latest scan reads, or reads now: nothing to do.
+    Same,
+    /// The same listing changed while its latest scan runs: scanned again
+    /// once that scan finishes.
+    Defer,
+    /// Another listing, none before, or one cancelled.
+    Fresh,
+    /// The same listing, its scan finished before the listing was.
+    Resume,
+    /// The same listing, its scan finished on all of it.
+    Quiet,
+}
+
+/// What a scan asked for of the listing `source` does, the pane's scans
+/// being `scans`.
+fn decide(scans: Option<&Scans>, source: &Source) -> Decision {
+    let Some(scans) = scans else {
+        return Decision::Fresh;
+    };
+    let latest = scans.latest();
+    if latest.cancel.is_cancelled() {
+        return Decision::Fresh;
+    }
+    if latest.source == *source {
+        return Decision::Same;
+    }
+    let shown = &scans.shown;
+    if (&shown.source.0, shown.source.1) != (&source.0, source.1) {
+        return Decision::Fresh;
+    }
+    if !latest.finished {
+        Decision::Defer
+    } else if shown.complete {
+        Decision::Quiet
+    } else {
+        Decision::Resume
     }
 }
 
@@ -353,15 +404,21 @@ impl Scanner {
                 listing.rewritten_version(),
                 listing.is_complete(),
             );
-            let start = match self.scans.lock().get_mut(&pane) {
-                Some(scans) if scans.latest().cancel.is_cancelled() => Start::Fresh,
-                Some(scans) if scans.latest().source == source => return Ok(()),
-                Some(Scans { shown, .. })
-                    if (&shown.source.0, shown.source.1) == (&source.0, source.1) =>
-                {
-                    if shown.complete {
-                        Start::Quiet
-                    } else {
+            let start = {
+                let mut all = self.scans.lock();
+                let mut scans = all.get_mut(&pane);
+                match decide(scans.as_deref(), &source) {
+                    Decision::Same => return Ok(()),
+                    Decision::Defer => {
+                        if let Some(scans) = scans {
+                            scans.again = true;
+                        }
+                        return Ok(());
+                    }
+                    Decision::Fresh => Start::Fresh,
+                    Decision::Quiet => Start::Quiet,
+                    Decision::Resume => {
+                        let shown = &mut scans.as_mut().expect("resumed from a scan").shown;
                         // What is still listed of what was looked at, taken
                         // from the scan this one replaces below: copied,
                         // every point found was copied at each slice of a
@@ -387,7 +444,6 @@ impl Scanner {
                         Start::Resume(placed, looked, kept)
                     }
                 }
-                _ => Start::Fresh,
             };
             (
                 source,
@@ -434,6 +490,7 @@ impl Scanner {
             listed,
             removed,
             complete: false,
+            finished: false,
             cancel: cancel.clone(),
             published: Instant::now(),
         };
@@ -448,6 +505,7 @@ impl Scanner {
                 Scans {
                     shown: scan,
                     next: None,
+                    again: false,
                 },
             ) {
                 old.cancel();
@@ -608,33 +666,44 @@ impl Scanner {
 
     /// The scan `id` of `pane` ended. One that looked again beside
     /// the one shown replaces it if something moved, and otherwise goes
-    /// without a word.
-    fn finish(&self, pane: PaneId, id: u64) {
-        let news = {
+    /// without a word. The listing changed while it ran: scanned again.
+    fn finish(self: &Arc<Self>, pane: PaneId, id: u64) {
+        let (news, again) = {
             let mut scans = self.scans.lock();
             let Some(scans) = scans.get_mut(&pane) else {
                 return;
             };
-            if scans.shown.id == id {
+            let news = if scans.shown.id == id {
                 scans.shown.complete = scans.shown.source.4;
-                true
+                scans.shown.finished = true;
+                Some(true)
             } else if let Some(mut next) = scans.next.take_if(|n| n.id == id) {
                 next.complete = next.source.4;
+                next.finished = true;
                 if same_places(&scans.shown, &next) {
                     scans.shown.source = next.source;
                     scans.shown.listed = next.listed;
-                    false
+                    Some(false)
                 } else {
                     scans.shown = next;
-                    true
+                    Some(true)
                 }
             } else {
-                false
-            }
+                None
+            };
+            // Only the latest scan's end lets the next one start.
+            let again = news.is_some() && std::mem::take(&mut scans.again);
+            (news.unwrap_or(false), again)
         };
-        tracing::debug!(pane = pane.0, id, news, "geo: scan finished");
+        tracing::debug!(pane = pane.0, id, news, again, "geo: scan finished");
         if news {
             self.changed();
+        }
+        if again
+            && let Some(app) = self.app.upgrade()
+            && let Err(error) = self.scan(&app, pane)
+        {
+            tracing::debug!(pane = pane.0, %error, "geo: scanning again");
         }
     }
 
@@ -783,4 +852,104 @@ fn same_places(a: &Scan, b: &Scan) -> bool {
     }
     let before: HashMap<EntryId, &Placed> = a.placed.iter().map(|p| (p.id, p)).collect();
     b.placed.iter().all(|p| before.get(&p.id) == Some(&p))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A scan of `source`, its workers done where `finished`, and on a
+    /// listing complete when they started where `complete`.
+    fn scan(source: Source, finished: bool, complete: bool) -> Scan {
+        Scan {
+            source,
+            id: 1,
+            generation: 1,
+            placed: Vec::new(),
+            before: Arc::default(),
+            looked: HashSet::new(),
+            candidates: 0,
+            listed: 0,
+            removed: 0,
+            complete,
+            finished,
+            cancel: CancelToken::new(),
+            published: Instant::now(),
+        }
+    }
+
+    fn scans(shown: Scan, next: Option<Scan>) -> Scans {
+        Scans {
+            shown,
+            next,
+            again: false,
+        }
+    }
+
+    /// The folder `listing`, its names at `names`, complete or not.
+    fn folder(listing: u64, names: u64, complete: bool) -> Source {
+        (
+            "/example/Trip d'Example".into(),
+            listing,
+            names,
+            0,
+            complete,
+        )
+    }
+
+    /// A scan asked for while the listing's scan runs waits for it, never
+    /// cancels it: each start walked the whole listing again, at every
+    /// slice of a folder streaming.
+    #[test]
+    fn a_listing_that_changes_while_its_scan_runs_waits_for_it() {
+        let streaming = folder(7, 1, false);
+        assert_eq!(decide(None, &streaming), Decision::Fresh);
+        let running = scans(scan(streaming.clone(), false, false), None);
+        assert_eq!(decide(Some(&running), &streaming), Decision::Same);
+        assert_eq!(
+            decide(Some(&running), &folder(7, 2, false)),
+            Decision::Defer
+        );
+        assert_eq!(
+            decide(Some(&running), &folder(7, 2, true)),
+            Decision::Defer,
+            "complete meanwhile: waits all the same"
+        );
+        // Finished before the folder was: goes on from it.
+        let finished = scans(scan(streaming.clone(), true, false), None);
+        assert_eq!(
+            decide(Some(&finished), &folder(7, 9, true)),
+            Decision::Resume
+        );
+        // Another folder: nothing of the last holds, running or not.
+        assert_eq!(
+            decide(Some(&running), &folder(8, 1, false)),
+            Decision::Fresh
+        );
+        // Cancelled (the pane went elsewhere and back): started again.
+        running.shown.cancel.cancel();
+        assert_eq!(decide(Some(&running), &streaming), Decision::Fresh);
+    }
+
+    /// A scan finished on the whole listing is looked at again beside it
+    /// when the listing changes; a change while that runs waits for it.
+    #[test]
+    fn a_finished_listing_is_looked_at_again_beside_once_at_a_time() {
+        let whole = folder(7, 1, true);
+        let shown = scans(scan(whole.clone(), true, true), None);
+        assert_eq!(decide(Some(&shown), &whole), Decision::Same);
+        assert_eq!(decide(Some(&shown), &folder(7, 2, true)), Decision::Quiet);
+        let rechecking = scans(
+            scan(whole.clone(), true, true),
+            Some(scan(folder(7, 2, true), false, false)),
+        );
+        assert_eq!(
+            decide(Some(&rechecking), &folder(7, 2, true)),
+            Decision::Same
+        );
+        assert_eq!(
+            decide(Some(&rechecking), &folder(7, 3, true)),
+            Decision::Defer
+        );
+    }
 }

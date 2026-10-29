@@ -207,3 +207,58 @@ fn a_folder_s_pictures_and_tracks_are_placed_once_each() {
     .unwrap();
     assert_eq!(points(&app, pane, 0), Value::Null);
 }
+
+/// A picture added while the folder's scan runs is placed once that scan
+/// ends: the scan asked for meanwhile waits for it (never cancelling it),
+/// then goes on from what it looked at, each file looked at once.
+#[test]
+fn a_picture_added_while_the_scan_runs_is_placed_once_it_ends() {
+    const PICTURES: usize = 1500;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("Many places");
+    std::fs::create_dir(&dir).unwrap();
+    for n in 0..PICTURES {
+        std::fs::write(dir.join(format!("Picture {n:04}.tif")), tiff(12, 34, None)).unwrap();
+    }
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_geo::GeoPlugin::default()), &app);
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&dir)).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+
+    app.dispatch(&Invocation::with_args("geo.scan", &json!({ "pane": pane })))
+        .unwrap();
+    std::fs::write(dir.join("Late arrival's.tif"), tiff(56, 78, None)).unwrap();
+    let listed = || app.workspace.read().pane(pane).unwrap().listing.len();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while listed() < PICTURES + 1 {
+        assert!(Instant::now() < deadline, "the picture added never listed");
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Asked while the first scan may still run: whether it waited for it
+    // or looked again beside a finished one, the view ends with every
+    // picture.
+    app.dispatch(&Invocation::with_args("geo.scan", &json!({ "pane": pane })))
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let found = loop {
+        let found = points(&app, pane, 0);
+        if found["complete"] == true
+            && found["rechecking"] == false
+            && found["candidates"] == PICTURES + 1
+        {
+            break found;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "never placed: {} of {}",
+            found["placed"],
+            found["candidates"]
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(found["looked"], PICTURES + 1, "each looked at once");
+    assert_eq!(found["placed"], PICTURES + 1);
+}
