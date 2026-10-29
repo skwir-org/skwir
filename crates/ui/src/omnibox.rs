@@ -49,7 +49,9 @@
 //! what is drawn after the text; Enter keeps the words shown and gives the
 //! files the keyboard, or runs the highlighted row; Alt+Enter runs the
 //! search in the home folder, Shift+Enter opens a file a path names;
-//! Shift+Delete forgets a recent search (`ui.omnibox_forget`). The
+//! Shift+Delete forgets a recent search (`ui.omnibox_forget`). Enter and
+//! Tab pressed while the names a path or a place goes on with are read
+//! wait for them (`Held`), and are done as if pressed once they came. The
 //! keyboard never leaves the field: Up and Down move through the dropdown
 //! (bound in the address bar's context), a click on a row runs it without
 //! taking the focus. The UI knows no query syntax.
@@ -177,6 +179,19 @@ pub struct Omni {
     waiting: Vec<String>,
     /// Each source's last answer, and the text and scope it answered.
     answers: Vec<(String, (String, Option<Location>), Answer)>,
+    /// A key pressed while the names the text completes with were read
+    /// (`completing`): done once they come. Another text, or the arrows,
+    /// forget it.
+    held: Option<Held>,
+}
+
+/// A key that takes a row, held until the names it chooses among are read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Held {
+    /// Enter, Alt+Enter (`everywhere`), Shift+Enter (`open`).
+    Submit { everywhere: bool, open: bool },
+    /// Tab.
+    Complete,
 }
 
 impl Omni {
@@ -978,6 +993,7 @@ impl Shell {
         omni.highlighted = None;
         omni.chosen = false;
         omni.token = false;
+        omni.held = None;
         if typed == Typed::Scope {
             omni.scopes = false;
         }
@@ -1197,7 +1213,7 @@ impl Shell {
                 "address-complete",
                 cancel,
                 move || complete::folders(&app, &asked, show_hidden, &stop),
-                move |shell, resolved, _, cx| {
+                move |shell, resolved, window, cx| {
                     let Some(omni) = shell.pane_ui_mut(pane).and_then(|ui| ui.omni.as_mut()) else {
                         return;
                     };
@@ -1209,7 +1225,10 @@ impl Shell {
                         omni.reading = None;
                     }
                     omni.folders.insert(folder, Some(Arc::new(resolved)));
-                    shell.with_pane(pane, |shell| shell.refresh_rows(cx));
+                    shell.with_pane(pane, |shell| {
+                        shell.refresh_rows(cx);
+                        shell.release_held(window, cx);
+                    });
                 },
                 window,
                 cx,
@@ -1243,7 +1262,7 @@ impl Shell {
                 "address-complete-place",
                 cancel,
                 move || provider.complete(&rest),
-                move |shell, completions, _, cx| {
+                move |shell, completions, window, cx| {
                     let Some(omni) = shell.pane_ui_mut(pane).and_then(|ui| ui.omni.as_mut()) else {
                         return;
                     };
@@ -1252,7 +1271,10 @@ impl Shell {
                     }
                     omni.offering = None;
                     omni.offered = Some((asked, completions));
-                    shell.with_pane(pane, |shell| shell.refresh_rows(cx));
+                    shell.with_pane(pane, |shell| {
+                        shell.refresh_rows(cx);
+                        shell.release_held(window, cx);
+                    });
                 },
                 window,
                 cx,
@@ -1384,6 +1406,7 @@ impl Shell {
         let Some(omni) = self.ui_mut().omni.as_mut() else {
             return;
         };
+        omni.held = None;
         if omni.token && forward(mv) {
             omni.token = false;
             omni.scopes = true;
@@ -1446,8 +1469,12 @@ impl Shell {
     /// is taken, else the first is highlighted. A completion taken writes
     /// the text it makes, as an edit Ctrl+Z takes back: a folder ends with
     /// its separator, and its names are listed in turn. Pressed before
-    /// every source answered the text, it asks them first.
+    /// every source answered the text, it asks them first; while the names
+    /// a path or a place goes on with are read, it waits for them.
     pub fn omnibox_complete(&mut self, cx: &mut Context<Self>) {
+        if self.hold(Held::Complete, cx) {
+            return;
+        }
         self.settle_rows(cx);
         let text = self.omni_text(cx);
         let Some(omni) = self.ui().omni.as_ref() else {
@@ -1575,7 +1602,8 @@ impl Shell {
     /// filtered, or the search below it, run now when it waited for Enter.
     /// Text not edited does what it says: the location shown goes there
     /// again. Pressed before every source answered the text, it asks them
-    /// first: what Enter runs is the text's.
+    /// first; while the names a path or a place goes on with are read, it
+    /// waits for them: what Enter runs is the text's.
     pub fn omnibox_submit(
         &mut self,
         everywhere: bool,
@@ -1583,6 +1611,9 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.hold(Held::Submit { everywhere, open }, cx) {
+            return;
+        }
         self.settle_rows(cx);
         self.submit_shown(everywhere, open, window, cx);
     }
@@ -1851,6 +1882,63 @@ impl Shell {
         self.refresh_rows(cx);
     }
 
+    /// Whether the names `text` goes on with are still being read, on a
+    /// worker: the folder a path's folder part makes, or what a place's
+    /// provider completes it with. Enter and Tab choose among them.
+    fn completing(&self, text: &str) -> bool {
+        let Some(omni) = self.ui().omni.as_ref() else {
+            return false;
+        };
+        let text = text.trim_start();
+        match self.typed_of(text, omni.edited) {
+            Typed::Path => {
+                text != "~"
+                    && self
+                        .typed_folder(complete::split(text).0)
+                        .is_some_and(|folder| matches!(omni.folders.get(&folder), Some(None)))
+            }
+            Typed::Place => omni
+                .offering
+                .as_ref()
+                .is_some_and(|(asked, _)| asked == text),
+            _ => false,
+        }
+    }
+
+    /// Hold `key` while the names the text goes on with are read: true
+    /// when it is held, to be done once they come (`release_held`).
+    fn hold(&mut self, key: Held, cx: &mut Context<Self>) -> bool {
+        let text = self.omni_text(cx);
+        if !self.completing(&text) {
+            return false;
+        }
+        if let Some(omni) = self.ui_mut().omni.as_mut() {
+            omni.held = Some(key);
+        }
+        true
+    }
+
+    /// The names the text goes on with came: the key held for them is
+    /// done. A Tab that then finds nothing to complete keeps the field.
+    fn release_held(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.omni_text(cx);
+        if self.completing(&text) {
+            return;
+        }
+        match self
+            .ui_mut()
+            .omni
+            .as_mut()
+            .and_then(|omni| omni.held.take())
+        {
+            Some(Held::Submit { everywhere, open }) => {
+                self.omnibox_submit(everywhere, open, window, cx);
+            }
+            Some(Held::Complete) => self.omnibox_complete(cx),
+            None => {}
+        }
+    }
+
     /// Shift+Enter on a path: a folder is gone to, a file opened as Enter
     /// opens it in the files (`open`). Whether it is a folder, or there,
     /// is asked on a worker, in its lane, for the pane as it is: shown
@@ -1984,9 +2072,10 @@ impl Shell {
     }
 
     /// Whether Tab completes the active pane's text (the `completes` key
-    /// context): a completion is offered, or words leave one name shown;
-    /// before anything is typed, the row the arrows reached writes one (a
-    /// term to add).
+    /// context): a completion is offered, or words leave one name shown, or
+    /// the names a path or a place goes on with are still read (Tab waits
+    /// for them); before anything is typed, the row the arrows reached
+    /// writes one (a term to add).
     pub fn omnibox_completes(&self, cx: &gpui::App) -> bool {
         let Some(omni) = self.ui().omni.as_ref() else {
             return false;
@@ -1998,9 +2087,11 @@ impl Shell {
                 .and_then(|i| omni.rows.get(i))
                 .is_some_and(|r| r.completion().is_some());
         }
+        let text = self.omni_text(cx);
         omni.one_shown.is_some()
             || omni.rows.iter().any(|r| r.completion().is_some())
-            || matches!(self.omni_text(cx).trim_start(), "~" | "." | "..")
+            || matches!(text.trim_start(), "~" | "." | "..")
+            || self.completing(&text)
     }
 
     /// What `text` offers, first what Enter runs, and what Tab fills in.

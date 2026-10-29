@@ -375,7 +375,8 @@ of bars, split or not.
     path; else the part the names share; else the highlighted row; else
     the first is highlighted. A folder taken ends with its separator and is
     listed in turn. Taking is an edit (Ctrl+Z). Right or End at the end
-    takes what is drawn. Where nothing completes, Tab walks on.
+    takes what is drawn. Where nothing completes, Tab walks on; while the
+    names it would choose among are read, it waits for them (below).
   - A row keeps its exact path: a name that is not UTF-8 goes where it
     says, though the field can only write it approximately.
 - Enter on a path stats it on a worker (`reveal_path`): a folder is gone
@@ -388,6 +389,14 @@ of bars, split or not.
   all there and then (`settle_rows`, `suggest::each`; they answer from
   memory), so what the key takes is always the text's. A row clicked
   runs as it reads.
+- Enter or Tab pressed while the names a path or a place goes on with are
+  still read (the folder typed, a provider's `complete`: on workers, never
+  here) waits for them (`Omni::held`, `completing`): the key is done once
+  they come, as if pressed then, so Enter goes to the first name as it
+  would have. Another text, the arrows, Escape or the field letting go
+  forget it; the card says the folder read once it takes a moment. A
+  Tab held that then finds nothing keeps the field rather than walking on
+  later.
 - **Words typed over a folder, looking in it alone, filter it at once**,
   as the core's `filter` reads them through the query plugin
   (`narrow::read_filter`): the longest start that parses; words, `name:`

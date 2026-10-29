@@ -7102,3 +7102,28 @@ Not changed: Enter on a path typed faster than its folder is read (the
 shell's own completion, read on a worker) still goes to the path as
 typed, before any name of that folder is known. Not tried on the
 session's Wayland.
+
+### Enter and Tab wait for the folder typed (2026-10-29)
+
+The race left above: the names a path goes on with are the folder typed,
+read on a worker (`ask_completions`), and a place's are its provider's
+`complete`, asked there too. Enter pressed before they came took the Go
+row, so `~/files/beta fo` typed fast went to that path as written, which
+is not there, instead of `beta folder`; Tab, with nothing yet to
+complete, walked out of the field. Now a key that chooses among those
+names (Enter, Alt+Enter, Shift+Enter, Tab) pressed while they are read
+is held (`Omni::held`, `completing`) and done once they come, as if
+pressed then; another text, the arrows, Escape or the field letting go
+forget it, and the card says the folder read once it takes a moment.
+While they are read, Tab is the field's (`completes`); a Tab held that
+then finds nothing keeps the field rather than walking on later.
+
+Checked in a window on Xvfb (debug build), keys 1 ms apart: Enter after
+`~/files/beta fo` opened `beta folder` (the same input stayed where it
+was twice before); in a folder of 50 000 names, Enter after `entry 4999`
+opened it with `entry 4999.txt` selected; Tab after `~/files/gamma fo`
+wrote `~/files/gamma folder/` and listed its names; Enter then Escape
+at once left the pane where it was once the read ended. A place's
+completions (`tags:/`, a provider's) go through the same hold but were
+not tried. Runs: `skwir-ui`'s tests (409 of 409); clippy (`-D warnings`)
+on `skwir-core` and `skwir-ui`; rustfmt.
