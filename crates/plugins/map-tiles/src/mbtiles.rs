@@ -6,12 +6,14 @@
 //! nothing is written beside it, its schema not trusted to run functions,
 //! and a request's cancellation interrupting SQLite between steps.
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Context;
 use parking_lot::Mutex;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, types::ValueRef};
 use skwir_core::CancelToken;
 use skwir_core::geo::Bounds;
+use skwir_core::preview::Held;
 
 use crate::archive::{About, Archive, Compression, Format, TILE_INFLATED, inflate};
 
@@ -23,6 +25,11 @@ const METADATA_VALUE: i64 = 1024 * 1024;
 pub(crate) struct MbTiles {
     connection: Mutex<Connection>,
     about: About,
+    /// What a preview holds of the file, kept while SQLite reads it: a
+    /// remote's file is read from the copy what is held keeps
+    /// (`Held::path_for_program`), which goes with it. Dropped after the
+    /// connection (fields drop in order): the copy outlives every read.
+    _held: Option<Arc<Held>>,
 }
 
 /// Steps between two looks at the cancellation.
@@ -70,6 +77,17 @@ impl MbTiles {
         Ok(MbTiles {
             connection: Mutex::new(connection),
             about,
+            _held: None,
+        })
+    }
+
+    /// The archive a preview holds (ADR-101): SQLite reads a file by its
+    /// path, so it is handed what a program is.
+    pub(crate) fn of_held(held: &Arc<Held>, cancel: &CancelToken) -> anyhow::Result<MbTiles> {
+        let archive = MbTiles::open(&held.path_for_program(cancel)?, cancel)?;
+        Ok(MbTiles {
+            _held: Some(Arc::clone(held)),
+            ..archive
         })
     }
 }

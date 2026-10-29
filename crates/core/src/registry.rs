@@ -622,6 +622,10 @@ pub struct MenuSource {
 pub struct PropertySource {
     pub command: Invocation,
     pub revision: Arc<AtomicU64>,
+    /// Whether it is also given `mime`, the type the panel settled for the
+    /// entry (from what the preview read of it, ADR-101): it is asked once
+    /// the type is settled, and never reads the file again to type it.
+    pub typed: bool,
 }
 
 impl PropertySource {
@@ -630,6 +634,7 @@ impl PropertySource {
         PropertySource {
             command,
             revision: Arc::default(),
+            typed: false,
         }
     }
 

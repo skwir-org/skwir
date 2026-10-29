@@ -5,15 +5,14 @@
 //! of tiles that share their bytes; an entry of no run points to a leaf
 //! directory. Every offset and length is checked against its section and
 //! the file before it is read, and what is inflated is bounded.
-use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Context;
 use parking_lot::Mutex;
 use skwir_core::CancelToken;
 use skwir_core::geo::Bounds;
+use skwir_core::preview::{FileSource, ReadSeek};
 
 use crate::archive::{About, Archive, Compression, Format, TILE_INFLATED, inflate};
 
@@ -225,8 +224,12 @@ fn tile_id(z: u8, x: u32, y: u32) -> u64 {
     before + d
 }
 
+/// What an archive is read through, for as long as it is shown: its file
+/// opened, or a reader of what a preview holds of it (`Held::reader`).
+type Reader = Mutex<Box<dyn ReadSeek + Send>>;
+
 pub(crate) struct PmTiles {
-    file: Mutex<File>,
+    file: Reader,
     header: Header,
     root: Arc<Vec<Entry>>,
     /// Leaf directories read, by offset, the latest last.
@@ -235,9 +238,11 @@ pub(crate) struct PmTiles {
 }
 
 impl PmTiles {
-    pub(crate) fn open(path: &Path) -> anyhow::Result<PmTiles> {
-        let mut file = skwir_platform::inspection::open(path)?;
-        let len = file.metadata()?.len();
+    /// The archive `source` holds: its file, or what a preview holds of
+    /// it.
+    pub(crate) fn open<S: FileSource + ?Sized>(source: &S) -> anyhow::Result<PmTiles> {
+        let mut file = skwir_platform::inspection::open(source)?;
+        let len = source.length()?;
         let mut bytes = [0u8; HEADER];
         file.read_exact(&mut bytes)
             .context("Not a PMTiles file: it ends before its header")?;
@@ -322,7 +327,7 @@ fn bounds([west, south, east, north]: [f64; 4]) -> Option<Bounds> {
 
 /// A section of the file, inflated within `limit`.
 fn read(
-    file: &Mutex<File>,
+    file: &Reader,
     section: Section,
     compression: Compression,
     limit: usize,
@@ -544,7 +549,7 @@ pub(crate) mod tests {
     /// read at its middle, and its dark north-west corner.
     #[test]
     fn the_reference_writers_archives_read_as_they_were_made() {
-        let testdata = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/testdata");
+        let testdata = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/testdata");
         let hills = PmTiles::open(&testdata.join("hills.pmtiles")).unwrap();
         let about = hills.about();
         assert_eq!(about.format, Format::Png);

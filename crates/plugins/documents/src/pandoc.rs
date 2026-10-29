@@ -187,13 +187,10 @@ pub(crate) struct Media<'a, K: FnMut(&str, &[u8])> {
 impl<K: FnMut(&str, &[u8])> rich_preview::Resources for Media<'_, K> {
     fn picture(&mut self, src: &str) -> Option<Picture> {
         let name = media_name(src)?;
-        let bytes = inspection::read_bounded(
-            &self.work.join(&name),
-            limits::BINARY_INPUT,
-            "Embedded image",
-            self.cancel,
-        )
-        .ok()?;
+        let file = self.work.join(&name);
+        let bytes =
+            inspection::read_bounded(&file, limits::BINARY_INPUT, "Embedded image", self.cancel)
+                .ok()?;
         let (width, height) = inspection::picture_size(&bytes)?;
         (self.keep)(&name, &bytes);
         Some(Picture::Later {

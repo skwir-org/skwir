@@ -5,10 +5,9 @@
 //! found by its signature. A `LayOut` document is a plain zip with
 //! `doc_thumbnail.png` and its properties.
 use crate::Found;
-use skwir_core::CancelToken;
+use skwir_core::{CancelToken, preview::FileSource};
 use skwir_platform::inspection::{self, limits};
 use std::io::Read;
-use std::path::Path;
 
 /// The start of an older model searched for its picture.
 const OLD_HEAD: u64 = 2 * 1024 * 1024;
@@ -46,9 +45,13 @@ fn release(version: &str) -> Option<String> {
 }
 
 /// A `SketchUp` model.
-pub fn model(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
+pub fn model<S: FileSource + ?Sized>(
+    source: &S,
+    side: u32,
+    cancel: &CancelToken,
+) -> anyhow::Result<Found> {
     let mut head = Vec::new();
-    inspection::open(path)?
+    inspection::open(source)?
         .take(OLD_HEAD)
         .read_to_end(&mut head)?;
     let (name, rest) = string(&head).ok_or_else(|| anyhow::anyhow!("Not a SketchUp model"))?;
@@ -62,7 +65,7 @@ pub fn model(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Fou
     }
     inspection::check(cancel)?;
     // Since 2021: a zip after the header.
-    if let Ok(mut archive) = crate::package::open(path, cancel) {
+    if let Ok(mut archive) = crate::package::open(source, cancel) {
         let bound = limits::BINARY_INPUT as u64;
         found.picture = crate::package::member(&mut archive, "meta/model_thumbnail.png", bound)
             .and_then(|bytes| crate::decoded(&bytes, side));
@@ -84,8 +87,12 @@ pub fn model(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Fou
 }
 
 /// A `LayOut` document: its first page's picture and its page count.
-pub fn layout(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
-    let mut archive = crate::package::open(path, cancel)?;
+pub fn layout<S: FileSource + ?Sized>(
+    source: &S,
+    side: u32,
+    cancel: &CancelToken,
+) -> anyhow::Result<Found> {
+    let mut archive = crate::package::open(source, cancel)?;
     inspection::check(cancel)?;
     let bound = limits::BINARY_INPUT as u64;
     let mut found = Found {

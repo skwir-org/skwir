@@ -12,7 +12,7 @@ use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, InspectionKind, Row},
     plugin::Plugin,
-    preview::{Member, PreviewProvider, PreviewRequest},
+    preview::{Held, Member, PreviewProvider, PreviewRequest},
 };
 use skwir_platform::inspection::{self, limits, limits::Bounds};
 use skwir_platform::preview::{self, PlaylistFormat};
@@ -108,12 +108,12 @@ fn format_of(req: &PreviewRequest) -> Option<PlaylistFormat> {
 }
 
 fn tracks(
-    path: &Path,
+    held: &Arc<Held>,
     format: PlaylistFormat,
     bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Playlist> {
-    let (source, encoding) = inspection::read_text(path, bounds, cancel)?;
+    let (source, encoding) = inspection::read_text(held, bounds, cancel)?;
     let mut tracks = match format {
         PlaylistFormat::Pls => parse::pls(&source),
         PlaylistFormat::Xspf => parse::xspf(&source)?,
@@ -158,12 +158,12 @@ impl PreviewProvider for Provider {
         let Some(format) = format_of(req) else {
             return Ok(None);
         };
-        let path = req.entry.resolve()?;
-        let base = path.parent().unwrap_or(Path::new("."));
+        let held = req.held()?;
+        let base = held.path().parent().unwrap_or(Path::new("."));
         // The track as a row showed it, within whatever bounds it was
         // shown (Full preview's lists past the quick ones). Nothing is
         // written: the track is a file of its own.
-        let list = tracks(&path, format, Bounds::WHOLE, cancel)?;
+        let list = tracks(&held, format, Bounds::WHOLE, cancel)?;
         let track = list
             .tracks
             .get(target.parse::<usize>()?)
@@ -195,10 +195,10 @@ impl PreviewProvider for Provider {
         let Some(format) = format_of(req) else {
             return Ok(None);
         };
-        let path = req.entry.resolve()?;
-        let base = path.parent().unwrap_or(Path::new("."));
+        let held = req.held()?;
+        let base = held.path().parent().unwrap_or(Path::new("."));
         let bounds = Bounds::of(view);
-        let list = tracks(&path, format, bounds, cancel)?;
+        let list = tracks(&held, format, bounds, cancel)?;
         let mut rows = Vec::with_capacity(list.tracks.len());
         let (mut total, mut missing, mut remote) = (0., 0, 0);
         for (index, track) in list.tracks.iter().enumerate() {
@@ -330,21 +330,14 @@ mod tests {
         );
     }
 
+    /// Read from what the preview holds (ADR-101), for a path that leads
+    /// nowhere.
     #[test]
     fn a_marked_legacy_or_long_playlist_is_read_whole_and_said() {
         let dir = tempfile::tempdir().unwrap();
         let read_as = |name: &str, bytes: &[u8], view: &InspectRequest| {
-            let list = dir.path().join(name);
-            std::fs::write(&list, bytes).unwrap();
-            let request = PreviewRequest {
-                entry: skwir_core::op::EntryRef::from_path(&list).unwrap(),
-                mime: Some("audio/x-mpegurl".into()),
-                page: 1,
-                seconds: None,
-                max_side: 256,
-                text_size: None,
-                fit: None,
-            };
+            let list = dir.path().join("gone").join(name);
+            let request = PreviewRequest::holding(list, bytes, Some("audio/x-mpegurl"));
             Provider
                 .inspect(&request, view, &CancelToken::new())
                 .unwrap()
@@ -393,21 +386,13 @@ mod tests {
             b"not really audio",
         )
         .unwrap();
-        let list = dir.path().join("mix.m3u8");
-        std::fs::write(
-            &list,
-            "#EXTM3U\n#EXTINF:75,Someone - A Song\nmusic/it's a café.mp3\ngone.mp3\nhttps://example.invalid/radio\n",
-        )
-        .unwrap();
-        let request = PreviewRequest {
-            entry: skwir_core::op::EntryRef::from_path(&list).unwrap(),
-            mime: None,
-            page: 1,
-            seconds: None,
-            max_side: 256,
-            text_size: None,
-            fit: None,
-        };
+        // The playlist is what the preview holds (ADR-101), never read
+        // from its path, where nothing is: its tracks are beside it.
+        let request = PreviewRequest::holding(
+            dir.path().join("mix.m3u8"),
+            "#EXTM3U\n#EXTINF:75,Someone - A Song\nmusic/it's a café.mp3\ngone.mp3\nhttps://example.invalid/radio\n".as_bytes(),
+            None,
+        );
         let cancel = CancelToken::new();
         let data = Provider
             .inspect(&request, &InspectRequest::default(), &cancel)

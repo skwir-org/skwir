@@ -702,6 +702,7 @@ impl Plugin for ChecksumsPlugin {
             PropertySource {
                 command: Invocation::new("checksums.properties"),
                 revision: Arc::clone(&self.revision),
+                typed: false,
             },
         );
     }

@@ -16,7 +16,7 @@ use skwir_core::{
     App, CancelToken,
     inspection::{Detail, InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
-    preview::{PreviewProvider, PreviewRequest},
+    preview::{FileSource, PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
 use skwir_platform::inspection::{self, limits::Bounds};
@@ -109,17 +109,20 @@ impl Format {
         }
     }
 
+    /// Whether its name is shared with other formats, and its start says
+    /// whether the file is this one (`ours`).
+    fn shared(self) -> bool {
+        matches!(self, Format::Gerber | Format::Drill)
+    }
+
     /// Whether the file is what its name says: a `.gbr` may be a GIMP
-    /// brush, left to the other previews. Reads its start.
-    fn ours(self, path: &Path) -> anyhow::Result<bool> {
-        use std::io::Read as _;
-        if !matches!(self, Format::Gerber | Format::Drill) {
+    /// brush, left to the other previews. Reads its start: of what a
+    /// preview holds, nothing again.
+    fn ours<S: FileSource + ?Sized>(self, source: &S) -> anyhow::Result<bool> {
+        if !self.shared() {
             return Ok(true);
         }
-        let mut head = Vec::new();
-        inspection::open(path)?
-            .take(64 * 1024)
-            .read_to_end(&mut head)?;
+        let head = inspection::read(source, 0, 64 * 1024, &CancelToken::new())?;
         if head.contains(&0) {
             return Ok(false);
         }
@@ -130,10 +133,14 @@ impl Format {
         })
     }
 
-    fn read(self, path: &Path, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Found> {
-        skwir_platform::thumb_providers::ensure_file(path)?;
+    fn read<S: FileSource + ?Sized>(
+        self,
+        source: &S,
+        bounds: Bounds,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Found> {
         let most = bounds.choose(INPUT, WHOLE_INPUT);
-        let bytes = inspection::read_within(path, most, bounds, "The file", cancel)?;
+        let bytes = inspection::read_within(source, most, bounds, "The file", cancel)?;
         let text = String::from_utf8_lossy(&bytes);
         match self {
             Format::Board => board::board(&text, cancel),
@@ -141,7 +148,11 @@ impl Format {
             Format::Schematic => schematic::schematic(&text, cancel),
             Format::Symbols => schematic::library(&text),
             Format::Gerber => {
-                let name = path.file_name().unwrap_or_default().to_string_lossy();
+                let name = source
+                    .path()
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
                 let drawn = gerber::draw(&text, &name, cancel)?;
                 Ok(Found {
                     svg: drawn.svg,
@@ -164,8 +175,8 @@ impl Format {
 }
 
 /// Whether the file is larger than what is drawn within `bounds`.
-fn too_large(path: &Path, bounds: Bounds) -> anyhow::Result<bool> {
-    Ok(std::fs::metadata(path)?.len() > bounds.choose(INPUT, WHOLE_INPUT) as u64)
+fn too_large<S: FileSource + ?Sized>(source: &S, bounds: Bounds) -> anyhow::Result<bool> {
+    Ok(source.length()? > bounds.choose(INPUT, WHOLE_INPUT) as u64)
 }
 
 /// What a file holds: its drawing, and facts in the order shown.
@@ -194,12 +205,16 @@ impl PreviewProvider for Provider {
         ID
     }
     /// Called on a worker (the registry's dispatch), so what a name could
-    /// be two things (a `.gbr` brush) is settled by reading its start: the
-    /// first provider that accepts owns the file, and one that is not ours
-    /// is left to the others.
+    /// be two things (a `.gbr` brush) is settled by its start, as the
+    /// preview holds it: the first provider that accepts owns the file, and
+    /// one that is not ours is left to the others.
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        Format::of(&req.entry.path)
-            .is_some_and(|format| format.ours(&req.entry.path).unwrap_or(false))
+        Format::of(&req.entry.path).is_some_and(|format| {
+            !format.shared()
+                || req
+                    .held()
+                    .is_ok_and(|held| format.ours(&held).unwrap_or(false))
+        })
     }
     fn inspect(
         &self,
@@ -211,21 +226,21 @@ impl PreviewProvider for Provider {
         if view.source {
             return Ok(None);
         }
-        let path = req.entry.resolve()?;
-        let Some(format) = Format::of(&path) else {
+        let held = req.held()?;
+        let Some(format) = Format::of(held.path()) else {
             return Ok(None);
         };
         // Not drawn: the panel shows its source instead, saying why
         // (`preview::source_instead`), and offers Full preview while the
         // bound is the quick one.
         let bounds = Bounds::of(view);
-        if too_large(&path, bounds)? {
+        if too_large(&held, bounds)? {
             return Err(bounds.refuse(format!(
                 "Too large to draw (more than {})",
                 inspection::limits::describe(bounds.choose(INPUT, WHOLE_INPUT))
             )));
         }
-        let found = format.read(&path, bounds, cancel)?;
+        let found = format.read(&held, bounds, cancel)?;
         let image = match &found.svg {
             Some(svg) => Some(raster(svg, PANEL_SIDE, cancel)?),
             None => None,
@@ -271,6 +286,7 @@ impl ThumbnailProvider for Pictures {
         if too_large(&path, Bounds::QUICK)? || !format.ours(&path)? {
             return Ok(None);
         }
+        skwir_platform::thumb_providers::ensure_file(&path)?;
         match format.read(&path, Bounds::QUICK, cancel)?.svg {
             Some(svg) => Ok(Some(raster(&svg, req.size.pixels(), cancel)?)),
             None => Ok(None),
@@ -292,6 +308,7 @@ mod tests {
             max_side: 2048,
             text_size: None,
             fit: None,
+            held: skwir_core::preview::HeldSlot::default(),
         }
     }
 
@@ -355,6 +372,47 @@ mod tests {
             .unwrap()
             .expect("the grid's picture");
         assert_eq!(thumbnail.width.max(thumbnail.height), 128);
+    }
+
+    #[test]
+    fn a_preview_reads_what_is_held_never_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        // Paths that lead nowhere: only what is held can be read.
+        let gone = |name: &str| dir.path().join("gone").join(name);
+        let board = PreviewRequest::holding(
+            gone("a maker’s board.kicad_pcb"),
+            br#"(kicad_pcb (version 20241229)
+                (gr_rect (start 0 0) (end 40 20) (stroke (width 0.1)) (layer "Edge.Cuts")))"#
+                .as_slice(),
+            None,
+        );
+        assert!(Provider.accepts(&board));
+        let data = Provider
+            .inspect(&board, &InspectRequest::default(), &CancelToken::new())
+            .unwrap()
+            .unwrap();
+        assert_eq!(data.title, "KiCad board");
+        assert!(data.image.is_some(), "the board drawn");
+        // A name another format shares is settled by what is held.
+        let layer = PreviewRequest::holding(
+            gone("board-F_Cu.gbr"),
+            b"%FSLAX46Y46*%\n%MOMM*%\n%ADD10C,0.250000*%\nD10*\nX0Y0D02*\nX10000000Y0D01*\nM02*\n"
+                .as_slice(),
+            None,
+        );
+        assert!(Provider.accepts(&layer));
+        let data = Provider
+            .inspect(&layer, &InspectRequest::default(), &CancelToken::new())
+            .unwrap()
+            .unwrap();
+        assert_eq!(data.title, "Gerber layer");
+        assert!(data.image.is_some(), "the layer drawn");
+        let brush = PreviewRequest::holding(
+            gone("pencil.gbr"),
+            b"\0\0\0\x1c\0\0\0\x02GIMP\0\0\0\x0a".as_slice(),
+            None,
+        );
+        assert!(!Provider.accepts(&brush));
     }
 
     #[test]

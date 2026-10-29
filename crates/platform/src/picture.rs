@@ -6,16 +6,18 @@
 //! point (`OpenEXR`) holds linear light, which a screen shows too dark unless
 //! it is encoded as sRGB first; that happens here too.
 use std::io::{BufRead, BufReader, Seek};
-use std::path::Path;
 
 use image::metadata::Orientation;
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, ImageResult};
+use skwir_core::preview::{FileSource, ReadSeek};
 
-/// A reader over the picture file at `path`, its format guessed from the
-/// bytes. Opened without blocking on a FIFO (`file::open_regular`).
-pub fn open(path: &Path) -> anyhow::Result<ImageReader<BufReader<std::fs::File>>> {
-    let file = crate::file::open_regular(path)?;
-    Ok(ImageReader::new(BufReader::new(file)).with_guessed_format()?)
+/// A reader over the picture `file` (what a preview holds of it, or its
+/// path, opened without blocking on a FIFO: `file::open_regular`), its
+/// format guessed from the bytes.
+pub fn open<S: FileSource + ?Sized>(
+    file: &S,
+) -> anyhow::Result<ImageReader<BufReader<Box<dyn ReadSeek + Send>>>> {
+    Ok(ImageReader::new(BufReader::new(file.open_reader()?)).with_guessed_format()?)
 }
 
 /// The picture's width and height once turned, read from its header.

@@ -10,15 +10,14 @@
 //!   central directory declares, which can say anything.
 
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::{BufReader, Read};
-use std::path::Path;
 
 use skwir_core::CancelToken;
+use skwir_core::preview::{FileSource, ReadSeek};
 
 use crate::inspection::{self, limits};
 
-type Archive = zip::ZipArchive<BufReader<File>>;
+type Archive = zip::ZipArchive<BufReader<Box<dyn ReadSeek + Send>>>;
 
 pub struct Package {
     archive: Archive,
@@ -29,19 +28,19 @@ pub struct Package {
 }
 
 impl Package {
-    /// The package at `path`, `what` naming it in the message of a package
-    /// with too many members ("The document"); its names compared without
-    /// case when `folded`.
+    /// The package `file` (what a preview holds of it, or its path),
+    /// `what` naming it in the message of a package with too many members
+    /// ("The document"); its names compared without case when `folded`.
     ///
     /// # Errors
     /// When it cannot be read, is no zip, or holds too many members.
-    pub fn open(
-        path: &Path,
+    pub fn open<S: FileSource + ?Sized>(
+        file: &S,
         what: &str,
         folded: bool,
         cancel: &CancelToken,
     ) -> anyhow::Result<Self> {
-        let mut archive = zip::ZipArchive::new(BufReader::new(inspection::open(path)?))?;
+        let mut archive = zip::ZipArchive::new(BufReader::new(inspection::open(file)?))?;
         anyhow::ensure!(
             archive.len() <= limits::CONTAINER_MEMBERS,
             "{what} holds more than {} members",
@@ -128,12 +127,8 @@ impl Package {
 
 /// Whether the file is a zip, from its first bytes: an encrypted Word file
 /// is an OLE container under the same name.
-pub fn is_zip(path: &Path) -> bool {
-    let mut head = [0u8; 4];
-    inspection::open(path)
-        .and_then(|mut file| Ok(file.read_exact(&mut head)?))
-        .is_ok()
-        && head == *b"PK\x03\x04"
+pub fn is_zip<S: FileSource + ?Sized>(file: &S) -> bool {
+    inspection::read(file, 0, 4, &CancelToken::new()).is_ok_and(|head| head == *b"PK\x03\x04")
 }
 
 /// A member's name with `.`, `..` and empty segments collapsed (`/` and

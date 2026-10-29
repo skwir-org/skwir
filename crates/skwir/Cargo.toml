@@ -96,6 +96,8 @@ proptest.workspace = true
 tempfile.workspace = true
 dirs.workspace = true
 serde_json.workspace = true
+# The index a text's rows are counted into, as the view counts them.
+parking_lot.workspace = true
 # DjVu documents written for the DjVu plugin's tests.
 djvu-rs.workspace = true
 

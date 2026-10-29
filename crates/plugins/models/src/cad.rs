@@ -6,10 +6,9 @@
 //! its entities (`dxf`); when nothing is, the `THUMBNAILIMAGE` section at
 //! its end may hold a bitmap in hexadecimal.
 use crate::Found;
-use skwir_core::CancelToken;
+use skwir_core::{CancelToken, preview::FileSource};
 use skwir_platform::inspection::{self, limits, limits::Bounds};
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
 
 /// What begins a DWG file's list of pictures.
 const SENTINEL: [u8; 16] = [
@@ -58,9 +57,13 @@ pub(crate) fn bitmap(dib: &[u8], side: u32) -> Option<skwir_core::thumbs::Image>
 }
 
 /// A DWG drawing.
-pub fn dwg(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
-    let mut file = inspection::open(path)?;
-    let len = file.metadata()?.len();
+pub fn dwg<S: FileSource + ?Sized>(
+    source: &S,
+    side: u32,
+    cancel: &CancelToken,
+) -> anyhow::Result<Found> {
+    let mut file = inspection::open(source)?;
+    let len = source.length()?;
     let mut header = [0u8; 17];
     file.read_exact(&mut header)?;
     anyhow::ensure!(&header[..2] == b"AC", "Not a DWG drawing");
@@ -115,9 +118,14 @@ pub fn dwg(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found
 
 /// A DXF drawing: text of group codes and values, a pair of lines each,
 /// drawn from its entities when `bounds` hold it.
-pub fn dxf(path: &Path, side: u32, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Found> {
-    let mut file = inspection::open(path)?;
-    let len = file.metadata()?.len();
+pub fn dxf<S: FileSource + ?Sized>(
+    source: &S,
+    side: u32,
+    bounds: Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<Found> {
+    let mut file = inspection::open(source)?;
+    let len = source.length()?;
     let mut head = Vec::new();
     (&mut file).take(DXF_HEAD).read_to_end(&mut head)?;
     let head = String::from_utf8_lossy(&head);
@@ -155,7 +163,7 @@ pub fn dxf(path: &Path, side: u32, bounds: Bounds, cancel: &CancelToken) -> anyh
         ));
         found.whole_available = bounds.cut();
     } else {
-        let text = inspection::read_bounded(path, drawn, "The drawing", cancel)?;
+        let text = inspection::read_bounded(source, drawn, "The drawing", cancel)?;
         let drawing = crate::dxf::draw(&String::from_utf8_lossy(&text), cancel)?;
         found.details.extend(drawing.details);
         found.notice = drawing.notice;

@@ -81,7 +81,10 @@ impl PreviewProvider for Provider {
         into: &std::path::Path,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<skwir_core::preview::Member>> {
-        let path = req.entry.resolve()?;
+        // The helper reads the archive by its path: a remote's, as it was
+        // read once (ADR-101), the copy the listing was read from.
+        let held = req.held()?;
+        let path = held.path_for_program(cancel)?;
         // Found as the listing showed it; written out as the member is to be
         // looked at.
         let member = archive::member(&path, target.parse::<u64>()?, cancel)?;
@@ -103,9 +106,11 @@ impl PreviewProvider for Provider {
         view: &InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Inspection>> {
-        let path = req.entry.resolve()?;
+        // The helper reads the archive by its path: a remote's, as it was
+        // read once (ADR-101).
+        let held = req.held()?;
         let bounds = Bounds::of(view);
-        let listing = archive::list_within(&path, bounds, cancel)?;
+        let listing = archive::list_within(&held.path_for_program(cancel)?, bounds, cancel)?;
         let members = &listing.members;
         let rows = member_rows(members, cancel)?;
         let details = facts(members, &rows);
@@ -230,6 +235,7 @@ mod tests {
                 max_side: 64,
                 text_size: None,
                 fit: None,
+                held: skwir_core::preview::HeldSlot::default(),
             })
         };
         for name in ["a.zip", "a.tar.gz", "a.7z", "a.deb", "a.jar", "a.iso"] {
@@ -239,6 +245,85 @@ mod tests {
         for name in ["a.docx", "a.epub", "a.cbz", "a.txt"] {
             assert!(!accepts(name), "{name} is no archive");
         }
+    }
+
+    /// The libarchive helper: `SKWIR_ARCHIVE_WORKER`, else the one built
+    /// into the target folder this test runs from (its binary sits in
+    /// `deps`). Without it the test says so and passes, unless
+    /// `SKWIR_REQUIRE_WORKERS` says the workers are built.
+    fn with_archive_worker() -> bool {
+        let worker = std::env::var_os("SKWIR_ARCHIVE_WORKER")
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                let exe = std::env::current_exe().ok()?;
+                let built = exe.parent()?.parent()?.join(format!(
+                    "skwir-archive-worker{}",
+                    std::env::consts::EXE_SUFFIX
+                ));
+                built.is_file().then_some(built)
+            });
+        let Some(worker) = worker else {
+            assert!(
+                std::env::var_os("SKWIR_REQUIRE_WORKERS").is_none(),
+                "skwir-archive-worker is not built"
+            );
+            eprintln!("skipped: skwir-archive-worker is not built");
+            return false;
+        };
+        // nextest runs each test in a process of its own.
+        // SAFETY: no other thread of this test process reads the environment.
+        #[allow(unsafe_code)]
+        unsafe {
+            std::env::set_var("SKWIR_ARCHIVE_WORKER", &worker);
+        }
+        true
+    }
+
+    /// The listing and a member written out for the panel read the archive
+    /// through what the preview holds (ADR-101): the helper is handed the
+    /// path a program reads (`Held::path_for_program`), so the archive is a
+    /// file here, not bytes held for a path that leads nowhere.
+    #[test]
+    fn an_archive_is_listed_and_a_member_written_through_what_is_held() {
+        use std::io::Write as _;
+        if !with_archive_worker() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("it's a café.zip");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        zip.start_file("l'été/notes.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"caf\xc3\xa9\n").unwrap();
+        zip.finish().unwrap();
+        let request = PreviewRequest {
+            entry: skwir_core::op::EntryRef::from_path(&path).unwrap(),
+            mime: Some("application/zip".into()),
+            page: 1,
+            seconds: None,
+            max_side: 64,
+            text_size: None,
+            fit: None,
+            held: skwir_core::preview::HeldSlot::default(),
+        };
+        assert!(Provider.accepts(&request));
+        let cancel = CancelToken::new();
+        let listing = Provider
+            .inspect(&request, &InspectRequest::default(), &cancel)
+            .unwrap()
+            .unwrap();
+        assert!(request.held.get().is_some(), "read through what is held");
+        let names: Vec<_> = listing.rows.iter().map(|r| r.cells[0].as_str()).collect();
+        assert_eq!(names, ["l'été", "notes.txt"]);
+        let into = dir.path().join("members");
+        std::fs::create_dir(&into).unwrap();
+        let target = listing.rows[1].target.as_deref().unwrap();
+        let member = Provider
+            .extract(&request, &InspectRequest::default(), target, &into, &cancel)
+            .unwrap()
+            .unwrap();
+        assert_eq!(member.name, "notes.txt");
+        assert_eq!(std::fs::read(&member.path).unwrap(), "café\n".as_bytes());
     }
 
     #[test]

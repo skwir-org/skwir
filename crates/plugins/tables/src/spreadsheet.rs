@@ -8,15 +8,18 @@
 //! calamine reads whole (shared strings, styles) are bounded before it
 //! opens them: every XML or binary part of the container is inflated once
 //! through a counter, within `limits::CONTAINER_EXPANSION`.
+use crate::starts::Version;
 use calamine::{DataRef, Reader, SheetType, SheetVisible, Xlsb, Xlsx};
 use skwir_core::{
     CancelToken,
     inspection::{Inspection, Row},
+    preview::{Held, ReadSeek},
 };
 use skwir_platform::inspection::{self, limits};
 use skwir_platform::mime::Types;
 use std::io::{BufReader, Read};
 use std::path::Path;
+use std::sync::Arc;
 
 /// The workbooks whose cells are read here, by type (AGENTS.md,
 /// "Types"): Excel's, with macros or not, and its binary one.
@@ -33,7 +36,7 @@ static BINARY: Types = Types::new(&["application/vnd.ms-excel.sheet.binary.macro
 /// A page position: the sheet in the high half, the row in the low.
 const SHEET: u64 = 1 << 32;
 
-type File = BufReader<std::fs::File>;
+type File = BufReader<Box<dyn ReadSeek + Send>>;
 
 enum Book {
     Xlsx(Xlsx<File>),
@@ -41,9 +44,9 @@ enum Book {
 }
 
 impl Book {
-    /// The workbook at `path`, read as its type `mime` says.
-    fn open(path: &Path, mime: &str) -> anyhow::Result<Self> {
-        let file = BufReader::new(inspection::open(path)?);
+    /// The workbook `held` holds, read as its type `mime` says.
+    fn open(held: &Arc<Held>, mime: &str) -> anyhow::Result<Self> {
+        let file = BufReader::new(inspection::open(held)?);
         Ok(if BINARY.contains(mime) {
             Self::Xlsb(Xlsb::new(file)?)
         } else {
@@ -99,19 +102,11 @@ impl Book {
     }
 }
 
-/// A workbook as it is: where, its length and its time.
-type Version = (std::path::PathBuf, u64, Option<std::time::SystemTime>);
-
-fn version_of(path: &Path) -> Option<Version> {
-    std::fs::metadata(path)
-        .ok()
-        .map(|meta| (path.to_path_buf(), meta.len(), meta.modified().ok()))
-}
-
-/// The rows and the columns of the sheets walked whole, by workbook as
-/// it is and sheet: a page turned in one of them reads the sheet down to
-/// the page's last row and stops (a sheet's rows are in order in its
-/// file), rather than walking every cell again to count them.
+/// The rows and the columns of the sheets walked whole, by version of a
+/// workbook (`starts::version`) and sheet: a page turned in one of them
+/// reads the sheet down to the page's last row and stops (a sheet's rows
+/// are in order in its file), rather than walking every cell again to
+/// count them.
 static SIZES: std::sync::Mutex<Vec<(Version, String, (u64, u32))>> =
     std::sync::Mutex::new(Vec::new());
 
@@ -135,39 +130,34 @@ impl std::error::Error for PageRead {}
 
 /// Inflate every part calamine may read, counting, before it reads any:
 /// at most `limit` bytes together.
-fn bounded(path: &Path, limit: u64, cancel: &CancelToken) -> anyhow::Result<()> {
-    // A workbook found within the bound, as it is (its length and time),
-    // is not inflated again for that at each page turned: it was, every
-    // part of it, up to 128 MB.
-    type Version = (std::path::PathBuf, u64, Option<std::time::SystemTime>, u64);
-    static WITHIN: std::sync::Mutex<Vec<Version>> = std::sync::Mutex::new(Vec::new());
-    let version = std::fs::metadata(path)
-        .ok()
-        .map(|meta| (path.to_path_buf(), meta.len(), meta.modified().ok(), limit));
+fn bounded(held: &Arc<Held>, limit: u64, cancel: &CancelToken) -> anyhow::Result<()> {
+    // A version of a workbook found within the bound is not inflated
+    // again for that at each page turned: it was, every part of it, up
+    // to 128 MB.
+    static WITHIN: std::sync::Mutex<Vec<(Version, u64)>> = std::sync::Mutex::new(Vec::new());
+    let version = (crate::starts::version(held), limit);
     let within = || {
         WITHIN
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     };
-    if version.as_ref().is_some_and(|v| within().contains(v)) {
+    if within().contains(&version) {
         return Ok(());
     }
-    measure(path, limit, cancel)?;
-    if let Some(version) = version {
-        let mut known = within();
-        known.retain(|v| v.0 != version.0);
-        if known.len() >= 8 {
-            known.remove(0);
-        }
-        known.push(version);
+    measure(held, limit, cancel)?;
+    let mut known = within();
+    known.retain(|v| v.0.0 != version.0.0);
+    if known.len() >= 8 {
+        known.remove(0);
     }
+    known.push(version);
     Ok(())
 }
 
 /// Every part calamine may read inflated and counted.
-fn measure(path: &Path, limit: u64, cancel: &CancelToken) -> anyhow::Result<()> {
+fn measure(held: &Arc<Held>, limit: u64, cancel: &CancelToken) -> anyhow::Result<()> {
     let mut package =
-        skwir_platform::package::Package::open(path, "The spreadsheet", false, cancel)?;
+        skwir_platform::package::Package::open(held, "The spreadsheet", false, cancel)?;
     let parts: Vec<String> = package
         .names()
         .filter(|name| {
@@ -260,15 +250,20 @@ fn text(value: &DataRef<'_>) -> String {
 /// Its columns are `bounds`'. `mime` is the workbook's type, one of
 /// `TYPES`: it says which reader reads it.
 pub fn table(
-    path: &Path,
+    held: &Arc<Held>,
     mime: &str,
     offset: u64,
     bounds: limits::Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
     let most = bounds.table_columns();
-    bounded(path, limits::CONTAINER_EXPANSION, cancel)?;
-    let mut book = Book::open(path, mime)?;
+    // Every part is read to be measured, then again by calamine, a zip's
+    // jumps between them: one the preview keeps whole is read whole first,
+    // once, and both read memory. A larger one is read where it is.
+    let keeps = held.keeps().min(bounds.binary_input() as u64);
+    held.whole(keeps, cancel)?;
+    bounded(held, limits::CONTAINER_EXPANSION, cancel)?;
+    let mut book = Book::open(held, mime)?;
     let sheets = book.sheets();
     anyhow::ensure!(!sheets.is_empty(), "The spreadsheet has no sheet of cells");
     let sheet = usize::try_from(offset / SHEET)
@@ -276,13 +271,11 @@ pub fn table(
         .min(sheets.len() - 1);
     let first = offset % SHEET;
     let page = limits::TABLE_ROWS as u64;
-    let version = version_of(path);
-    let known = version.as_ref().and_then(|version| {
-        sizes()
-            .iter()
-            .find(|(v, name, _)| v == version && *name == sheets[sheet])
-            .map(|(_, _, size)| *size)
-    });
+    let version = crate::starts::version(held);
+    let known = sizes()
+        .iter()
+        .find(|(v, name, _)| *v == version && *name == sheets[sheet])
+        .map(|(_, _, size)| *size);
     let mut grid: Vec<Vec<String>> = Vec::new();
     let (mut rows, mut columns) = (0u64, 0u32);
     let (mut seen, mut cut) = (0usize, 0usize);
@@ -320,7 +313,7 @@ pub fn table(
     }
     if let Some((all_rows, all_columns)) = known {
         (rows, columns) = (all_rows, all_columns);
-    } else if let Some(version) = version {
+    } else {
         let mut kept = sizes();
         kept.retain(|(v, name, _)| v.0 != version.0 || *name != sheets[sheet]);
         if kept.len() >= 64 {
@@ -401,6 +394,11 @@ pub(crate) mod tests {
     /// An Excel workbook's type.
     pub(crate) const XLSX: &str =
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+    /// What a preview holds of the file at `path`, as it holds it.
+    pub(crate) fn held(path: &Path) -> Arc<Held> {
+        Arc::new(Held::open(path, skwir_core::preview::WHOLE).unwrap())
+    }
 
     /// A workbook written by hand, as the smallest Excel file: `sheets`
     /// are (name, `<sheetData>` rows), strings are shared.
@@ -502,7 +500,8 @@ pub(crate) mod tests {
             &["name", "when", "café"],
         );
         let cancel = CancelToken::new();
-        let data = table(&path, XLSX, 0, limits::Bounds::QUICK, &cancel).unwrap();
+        let book = held(&path);
+        let data = table(&book, XLSX, 0, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(data.columns.len(), limits::TABLE_COLUMNS);
         assert_eq!(&data.columns[..4], ["A", "B", "C", "D"]);
         assert_eq!(&data.rows[0].cells[..2], ["name", "when"]);
@@ -523,7 +522,7 @@ pub(crate) mod tests {
         assert_eq!(fact(&data, "Columns").as_deref(), Some("16384"));
         assert_eq!(fact(&data, "Sheets").as_deref(), Some("2"));
         // Turned to again, the page is read alone, its sheet's size known.
-        let again = table(&path, XLSX, 0, limits::Bounds::QUICK, &cancel).unwrap();
+        let again = table(&book, XLSX, 0, limits::Bounds::QUICK, &cancel).unwrap();
         let cells = |data: &Inspection| -> Vec<Vec<String>> {
             data.rows.iter().map(|row| row.cells.clone()).collect()
         };
@@ -544,10 +543,10 @@ pub(crate) mod tests {
         );
 
         // The last page of the sheet, then the next sheet from its top.
-        let last = table(&path, XLSX, 999_900, limits::Bounds::QUICK, &cancel).unwrap();
+        let last = table(&book, XLSX, 999_900, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(last.rows.len(), 100);
         assert_eq!(last.next, Some(SHEET));
-        let other = table(&path, XLSX, SHEET, limits::Bounds::QUICK, &cancel).unwrap();
+        let other = table(&book, XLSX, SHEET, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(other.title, "Other · rows 1–1");
         assert_eq!(other.rows[0].cells, ["TRUE"]);
         assert_eq!((other.previous, other.next), (Some(0), None));
@@ -557,10 +556,10 @@ pub(crate) mod tests {
     fn a_workbook_that_unpacks_too_far_is_refused_before_it_is_read() {
         let dir = tempfile::tempdir().unwrap();
         let blank = " ".repeat(4096);
-        let path = workbook(dir.path(), &[("Data", "")], &[&blank]);
+        let book = held(&workbook(dir.path(), &[("Data", "")], &[&blank]));
         let cancel = CancelToken::new();
-        bounded(&path, 8192, &cancel).unwrap();
-        let error = bounded(&path, 4096, &cancel).unwrap_err();
+        bounded(&book, 8192, &cancel).unwrap();
+        let error = bounded(&book, 4096, &cancel).unwrap_err();
         assert!(error.to_string().contains("unpacked"), "{error}");
     }
 

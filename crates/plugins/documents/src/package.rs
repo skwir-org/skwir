@@ -2,15 +2,20 @@
 //! is (`skwir_platform::package`: bounded, members by normalized name),
 //! its part names compared without case as Word's are.
 use skwir_core::CancelToken;
+use skwir_core::preview::FileSource;
 use skwir_platform::inspection::{self, limits};
 pub(crate) use skwir_platform::package::{is_zip, normalize};
-use std::path::Path;
 
 pub(crate) struct Package(skwir_platform::package::Package);
 
 impl Package {
-    pub(crate) fn open(path: &Path, cancel: &CancelToken) -> anyhow::Result<Self> {
-        skwir_platform::package::Package::open(path, "The document", true, cancel).map(Self)
+    /// The package `file`: what a preview holds of it, or its path (a
+    /// thumbnail's).
+    pub(crate) fn open<S: FileSource + ?Sized>(
+        file: &S,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Self> {
+        skwir_platform::package::Package::open(file, "The document", true, cancel).map(Self)
     }
 
     pub(crate) fn has(&self, name: &str) -> bool {

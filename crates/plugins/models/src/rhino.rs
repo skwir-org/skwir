@@ -6,11 +6,10 @@
 //! before version 5, 8 since); the properties table near the start holds
 //! the preview, a Windows bitmap whose pixels are zlib-compressed.
 use crate::Found;
-use skwir_core::CancelToken;
+use skwir_core::{CancelToken, preview::FileSource};
 use skwir_platform::inspection::{self, limits};
 use skwir_platform::model::{Asked, MeshFormat};
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
 
 const HEADER: &[u8; 24] = b"3D Geometry File Format ";
 const PROPERTIES_TABLE: u32 = 0x1000_0014;
@@ -59,21 +58,21 @@ fn length(bytes: &[u8]) -> Option<usize> {
 
 /// A Rhino model: its stored preview while `picture_first`, else its
 /// meshes, drawn or turned, with what it says of itself.
-pub fn read(
-    path: &Path,
+pub fn read<S: FileSource + ?Sized>(
+    source: &S,
     side: u32,
     asked: Asked,
     picture_first: bool,
     cancel: &CancelToken,
 ) -> anyhow::Result<Found> {
-    let mut found = properties(path, side, cancel)?;
+    let mut found = properties(source, side, cancel)?;
     let worker = skwir_platform::model::worker_path().is_some();
     let turned = matches!(asked, Asked::Turned { .. }) && !picture_first;
     if (found.picture.is_some() && !turned) || !worker {
         found.mesh_available = worker;
         return Ok(found);
     }
-    match crate::mesh::read(path, MeshFormat::Rhino, side, asked, cancel) {
+    match crate::mesh::read(source, MeshFormat::Rhino, side, asked, cancel) {
         Ok(mut drawn) => {
             found.details.append(&mut drawn.details);
             drawn.details = found.details;
@@ -92,8 +91,12 @@ pub fn read(
 }
 
 /// What the file says of itself, and the preview it stores.
-fn properties(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
-    let mut file = inspection::open(path)?;
+fn properties<S: FileSource + ?Sized>(
+    source: &S,
+    side: u32,
+    cancel: &CancelToken,
+) -> anyhow::Result<Found> {
+    let mut file = inspection::open(source)?;
     let mut header = [0u8; 32];
     file.read_exact(&mut header)?;
     anyhow::ensure!(header.starts_with(HEADER), "Not a Rhino model");

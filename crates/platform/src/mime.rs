@@ -7,6 +7,7 @@
 //! more precisely where it can (`refine`), reads the bytes, and holds the
 //! hierarchy and the aliases, whose names are the ones skwir speaks.
 
+use skwir_core::preview::FileSource;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fmt;
@@ -174,18 +175,18 @@ fn suffix(name: &str) -> Option<&str> {
 /// among them (a Vorbis `.ogg` is Vorbis, a Theora one a film), and stays
 /// the name's answer when the bytes do not choose. A name no type claims is
 /// [`by_content`]'s. Reads the head of the file: call from a worker.
-pub fn identify(name: &OsStr, path: &Path) -> Option<Mime> {
+pub fn identify<S: FileSource + ?Sized>(name: &OsStr, file: &S) -> Option<Mime> {
     let candidates = candidates(name);
     if candidates.len() < 2 {
         return match candidates.into_iter().next() {
             Some(only) => Some(only),
-            None => by_content(path),
+            None => by_content(file),
         };
     }
     // The bytes choose only among what the name allows, or something
     // more precise than one of those: magic that names another kind of
     // file altogether does not outvote an extension several types share.
-    let sniffed = head(path)
+    let sniffed = head(file)
         .and_then(|head| database::magic(&head))
         .filter(|m| candidates.iter().any(|c| database::is_a(m, c)));
     sniffed.or_else(|| database::representative(candidates))
@@ -200,8 +201,8 @@ pub fn identify(name: &OsStr, path: &Path) -> Option<Mime> {
 /// only from here, means the bytes were looked at and are binary. `None`
 /// when the file cannot be read or is not a regular file (a FIFO would
 /// otherwise block until something writes to it).
-pub fn by_content(path: &Path) -> Option<Mime> {
-    let head = head(path)?;
+pub fn by_content<S: FileSource + ?Sized>(file: &S) -> Option<Mime> {
+    let head = head(file)?;
     // There is no magic for text/plain: what it does not know is text or
     // binary by the bytes.
     Some(database::magic(&head).unwrap_or_else(|| text_or_binary(&head)))
@@ -899,15 +900,11 @@ fn refine(said: Option<Mime>, known: Vec<Mime>) -> Vec<Mime> {
 }
 
 /// The first bytes of a regular file, as much as sniffing reads.
-fn head(path: &Path) -> Option<Vec<u8>> {
-    use std::io::Read;
-    let mut head = Vec::with_capacity(SNIFF);
-    crate::file::open_regular(path)
-        .ok()?
-        .take(SNIFF as u64)
-        .read_to_end(&mut head)
-        .ok()?;
-    Some(head)
+/// A file's first `SNIFF` bytes: what a preview holds of it, or read from
+/// its path.
+fn head<S: FileSource + ?Sized>(file: &S) -> Option<std::borrow::Cow<'_, [u8]>> {
+    file.read_range(0, SNIFF, &skwir_core::CancelToken::new())
+        .ok()
 }
 
 #[cfg(test)]

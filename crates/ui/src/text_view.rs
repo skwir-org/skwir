@@ -12,6 +12,12 @@
 //! asks for (`file:12`) read the file on a worker too. The paths the text
 //! writes are found as a chunk is colored, never before its text shows
 //! (`links::WrittenPaths`: each a lookup on the disk).
+//!
+//! A remote's file the preview does not hold whole (ADR-101) is counted as
+//! far as it is shown and a little past (`text_rows::count_until`), its
+//! rows beyond estimated from its length: a log of a gigabyte on a server
+//! is not downloaded whole to size a scrollbar. Scrolling on counts on; a
+//! find, a line asked for and a copy count to the end first.
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -79,7 +85,7 @@ fn read_chunk(
     cancel: &CancelToken,
 ) -> anyhow::Result<(Chunk, Option<Resume>)> {
     let at = chunk * STRIDE;
-    let mut rows = text_rows::read(&file.path, form, (at, point), at..at + STRIDE + 1, cancel)?;
+    let mut rows = text_rows::read(file, form, (at, point), at..at + STRIDE + 1, cancel)?;
     let after = (rows.len() as u64 > STRIDE)
         .then(|| rows.pop())
         .flatten()
@@ -139,7 +145,7 @@ fn read_chunk(
 /// once, colored by the view.
 pub(crate) fn start(file: &TextFile, palette: Palette) -> anyhow::Result<Start> {
     let cancel = CancelToken::new();
-    let form = Form::read(&file.path, &cancel)?;
+    let form = Form::read(file, &cancel)?;
     let (chunk, _) = read_chunk(
         file,
         form,
@@ -184,6 +190,12 @@ pub struct TextView {
     pub(crate) file: TextFile,
     index: Arc<RwLock<Index>>,
     counting: CancelToken,
+    /// One count at a time on the index: the view's, and a find's, a
+    /// line's or a copy's that counts to the end first.
+    gate: Arc<Mutex<()>>,
+    /// How a remote's file not held whole is counted, as far as it is
+    /// shown; `None` for any other, counted whole at once.
+    paced: Option<Paced>,
     palette: Arc<Palette>,
     /// What finds the paths the text writes, kept for the file: each word
     /// is looked up once. None for a member written out of its container.
@@ -212,6 +224,20 @@ pub struct TextView {
     /// The rows known at the last wake.
     seen: u64,
 }
+
+/// A count that goes as far as the view needs (`TextView::count_more`).
+struct Paced {
+    /// The file's length, which the rows not yet counted are estimated by.
+    len: u64,
+    /// Whether a count is on its way.
+    going: Arc<std::sync::atomic::AtomicBool>,
+    /// Whether a count failed: none is asked again while the view lasts,
+    /// as a chunk's read is not (`unread`).
+    failed: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// How far a remote's file is counted at first: a few screens.
+const PACED_FIRST: u64 = 4 * STRIDE;
 
 /// The chunks of `per` rows to have for rows `laid` of `rows`: those laid
 /// out, nearest their middle first, then the one after and the one before.
@@ -284,39 +310,26 @@ impl TextView {
         );
         let index = Arc::new(RwLock::new(Index::new(form)));
         let counting = app.lifetime().child();
-        {
-            let (index, path, cancel) = (Arc::clone(&index), file.path.clone(), counting.clone());
-            let wake = app.waker_handle();
-            app.scheduler.spawn_in(
-                skwir_core::fs::reach::lane(&path),
-                Priority::Normal,
-                "text-rows-count",
-                counting.clone(),
-                move || {
-                    let mut told = Instant::now();
-                    let counted = text_rows::count(&path, &index, &cancel, || {
-                        if told.elapsed() >= TELL {
-                            told = Instant::now();
-                            wake();
-                        }
-                    });
-                    if let Err(error) = counted
-                        && !cancel.is_cancelled()
-                    {
-                        tracing::debug!(%error, "counting a text's rows");
-                    }
-                    wake();
-                },
-            );
-        }
+        // A remote's file not held whole is counted as far as it is shown.
+        let paced = file
+            .held
+            .as_ref()
+            .filter(|held| held.is_remote() && held.held_whole().is_none())
+            .map(|held| Paced {
+                len: held.len(),
+                going: Arc::default(),
+                failed: Arc::default(),
+            });
         let paths = paths
             .then(|| WrittenPaths::new(&file.path))
             .flatten()
             .map(|paths| Arc::new(Mutex::new(paths)));
-        TextView {
+        let view = TextView {
             file,
             index,
             counting,
+            gate: Arc::default(),
+            paced,
             palette,
             paths,
             chunks: HashMap::from([(0, Rc::new(chunk))]),
@@ -333,12 +346,75 @@ impl TextView {
             line: None,
             first,
             seen: 0,
-        }
+        };
+        view.count_more(app, view.paced.as_ref().map(|_| PACED_FIRST));
+        view
     }
 
-    /// The rows known: counted, or the first chunk's before any is.
+    /// Count the rows on, to `until` (to the end with `None`), on a worker,
+    /// one count at a time (`gate`). A paced view asks again as it needs
+    /// more, never while a count is on its way or after one failed.
+    fn count_more(&self, app: &Arc<skwir_core::App>, until: Option<u64>) {
+        use std::sync::atomic::Ordering;
+        if let Some(paced) = &self.paced
+            && (paced.failed.load(Ordering::Relaxed) || paced.going.swap(true, Ordering::AcqRel))
+        {
+            return;
+        }
+        let (index, file, cancel) = (
+            Arc::clone(&self.index),
+            self.file.clone(),
+            self.counting.clone(),
+        );
+        let gate = Arc::clone(&self.gate);
+        let paced = self
+            .paced
+            .as_ref()
+            .map(|paced| (Arc::clone(&paced.going), Arc::clone(&paced.failed)));
+        let wake = app.waker_handle();
+        app.scheduler.spawn_in(
+            skwir_core::fs::reach::lane(&self.file.path),
+            Priority::Normal,
+            "text-rows-count",
+            self.counting.clone(),
+            move || {
+                let mut told = Instant::now();
+                let counted = {
+                    let _gate = gate.lock();
+                    text_rows::count_until(&file, &index, until, &cancel, || {
+                        if told.elapsed() >= TELL {
+                            told = Instant::now();
+                            wake();
+                        }
+                    })
+                };
+                if let Err(error) = &counted
+                    && !cancel.is_cancelled()
+                {
+                    tracing::debug!(%error, "counting a text's rows");
+                }
+                if let Some((going, failed)) = paced {
+                    failed.fetch_or(counted.is_err(), Ordering::Relaxed);
+                    going.store(false, Ordering::Release);
+                }
+                wake();
+            },
+        );
+    }
+
+    /// The rows known: counted, or the first chunk's before any is; for a
+    /// paced view, those not counted yet estimated from how far the count
+    /// reached into the file.
     pub(crate) fn rows(&self) -> u64 {
-        self.index.read().rows().max(self.first.0)
+        let index = self.index.read();
+        let counted = index.rows().max(self.first.0);
+        match &self.paced {
+            Some(paced) if !index.done() && index.reached() > 0 => {
+                let per_byte = counted as f64 / index.reached() as f64;
+                ((per_byte * paced.len as f64).ceil() as u64).max(counted)
+            }
+            _ => counted,
+        }
     }
 
     /// The lines known, and whether all are counted.
@@ -415,6 +491,22 @@ impl TextView {
     /// colored again when it started fresh and the one before has since
     /// been colored.
     fn request(&mut self, app: &Arc<skwir_core::App>) {
+        // A paced view counts on to just past the chunks it wants that the
+        // count has not reached.
+        if self.paced.is_some() {
+            let index = self.index.read();
+            let beyond = self
+                .wanted
+                .iter()
+                .copied()
+                .filter(|&chunk| chunk > 0 && index.point(chunk).is_none())
+                .max();
+            let more = beyond.filter(|_| !index.done());
+            drop(index);
+            if let Some(chunk) = more {
+                self.count_more(app, Some((chunk + 2) * STRIDE));
+            }
+        }
         // One the view moved away from is let go for what it shows now.
         if self
             .asking
@@ -519,16 +611,18 @@ impl TextView {
     /// Look for `query` from `from` (a row and a byte in it), forward or
     /// `back`.
     fn find(&mut self, app: &Arc<skwir_core::App>, query: String, from: (u64, usize), back: bool) {
-        let (path, index) = (self.file.path.clone(), Arc::clone(&self.index));
+        let (file, index) = (self.file.clone(), Arc::clone(&self.index));
+        let to_the_end = self.to_the_end();
         self.found.ask(
             app,
-            skwir_core::fs::reach::lane(&path),
+            skwir_core::fs::reach::lane(&file.path),
             &self.counting,
             Priority::Visible,
             "text-rows-find",
             move |cancel| {
-                let (said, error) = match text_rows::find(&path, &index, &query, from, back, cancel)
-                {
+                let found = to_the_end(&file, &index, cancel)
+                    .and_then(|()| text_rows::find(&file, &index, &query, from, back, cancel));
+                let (said, error) = match found {
                     Ok(Some((row, found))) => return Found::Match(row, found),
                     Ok(None) if index.read().done() => ("No match in the file".into(), false),
                     Ok(None) => ("No match in what is counted so far".into(), false),
@@ -551,17 +645,21 @@ impl TextView {
             (index.lines(), index.done())
         };
         if lines < line && !done {
+            // A paced view counts on: the line may be past where it is.
+            if self.paced.is_some() {
+                self.count_more(app, None);
+            }
             return;
         }
         self.line = None;
-        let (path, index) = (self.file.path.clone(), Arc::clone(&self.index));
+        let (file, index) = (self.file.clone(), Arc::clone(&self.index));
         self.found.ask(
             app,
-            skwir_core::fs::reach::lane(&path),
+            skwir_core::fs::reach::lane(&file.path),
             &self.counting,
             Priority::Visible,
             "text-rows-line",
-            move |cancel| match text_rows::row_of_line(&path, &index, line - 1, cancel) {
+            move |cancel| match text_rows::row_of_line(&file, &index, line - 1, cancel) {
                 Ok(Some(row)) => Found::Row(row),
                 Ok(None) => Found::Nothing(format!("The file has no line {line}")),
                 Err(error) => Found::Nothing(format!("{error:#}")),
@@ -575,18 +673,39 @@ impl TextView {
     }
 
     fn copy(&mut self, app: &Arc<skwir_core::App>, from: (u64, usize), to: (u64, usize)) {
-        let (path, index) = (self.file.path.clone(), Arc::clone(&self.index));
+        let (file, index) = (self.file.clone(), Arc::clone(&self.index));
+        let to_the_end = self.to_the_end();
         self.copied.ask(
             app,
-            skwir_core::fs::reach::lane(&path),
+            skwir_core::fs::reach::lane(&file.path),
             &self.counting,
             Priority::Visible,
             "text-rows-copy",
             move |cancel| {
-                text_rows::text(&path, &index, from, to, COPY_BYTES, cancel)
+                to_the_end(&file, &index, cancel)?;
+                text_rows::text(&file, &index, from, to, COPY_BYTES, cancel)
                     .map(|(text, cut)| Copied { text, cut })
             },
         );
+    }
+
+    /// What a find or a copy does first, on its worker: a paced view's
+    /// rows counted to the end, one count at a time; nothing for another.
+    fn to_the_end(
+        &self,
+    ) -> impl Fn(&TextFile, &RwLock<Index>, &CancelToken) -> anyhow::Result<()> + Send + 'static
+    {
+        let gate = self.paced.as_ref().map(|_| Arc::clone(&self.gate));
+        move |file, index, cancel| {
+            let Some(gate) = &gate else {
+                return Ok(());
+            };
+            if index.read().done() {
+                return Ok(());
+            }
+            let _gate = gate.lock();
+            text_rows::count_until(file, index, None, cancel, || {})
+        }
     }
 }
 

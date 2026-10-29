@@ -4,13 +4,14 @@ use skwir_core::{
     App, CancelToken,
     inspection::{Block, InspectRequest, Inspection, Row},
     plugin::Plugin,
-    preview::{PreviewProvider, PreviewRequest},
+    preview::{Held, PreviewProvider, PreviewRequest},
 };
 use skwir_platform::{
     archive,
     inspection::{self, limits, limits::Bounds},
     rich_preview,
 };
+use std::borrow::Cow;
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -56,7 +57,8 @@ impl PreviewProvider for Provider {
         // The message as it was shown, within whatever bounds it was (Full
         // preview's reads past the quick ones); the attachment written out
         // as it is to be looked at.
-        let bytes = read(req, Bounds::WHOLE, cancel)?;
+        let held = req.held()?;
+        let bytes = read(&held, Bounds::WHOLE, cancel)?;
         let message = parse(&bytes, cancel)?;
         let attachment = message
             .attachment(target.parse()?)
@@ -90,7 +92,8 @@ impl PreviewProvider for Provider {
             return Ok(None);
         }
         let bounds = Bounds::of(view);
-        let bytes = read(req, bounds, cancel)?;
+        let held = req.held()?;
+        let bytes = read(&held, bounds, cancel)?;
         let message = parse(&bytes, cancel)?;
         let sent = message
             .date()
@@ -193,8 +196,13 @@ impl PreviewProvider for Provider {
         }))
     }
 }
-fn read(req: &PreviewRequest, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Vec<u8>> {
-    inspection::read_file(&req.entry.resolve()?, bounds, "Email", cancel)
+/// The message whole, from what the preview holds of it.
+fn read<'a>(
+    held: &'a Arc<Held>,
+    bounds: Bounds,
+    cancel: &CancelToken,
+) -> anyhow::Result<Cow<'a, [u8]>> {
+    inspection::read_file(held, bounds, "Email", cancel)
 }
 /// The one parse both the message and its attachments are read from.
 fn parse<'x>(bytes: &'x [u8], cancel: &CancelToken) -> anyhow::Result<mail_parser::Message<'x>> {
@@ -226,6 +234,7 @@ fn addresses(value: Option<&mail_parser::Address<'_>>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use skwir_core::preview::HeldSlot;
 
     fn read(message: &str) -> Inspection {
         let dir = tempfile::tempdir().unwrap();
@@ -239,6 +248,7 @@ mod tests {
             max_side: 64,
             text_size: None,
             fit: None,
+            held: HeldSlot::default(),
         };
         Provider
             .inspect(&request, &InspectRequest::default(), &CancelToken::new())
@@ -297,5 +307,32 @@ mod tests {
         );
         assert_eq!(data.rows[0].cells, ["data.bin", "3 B"]);
         assert_eq!(data.rows[0].bytes, Some(3));
+    }
+
+    /// A preview reads its file once (ADR-101): the message and its
+    /// attachments come from what the request holds, named where no file
+    /// is, so a read of the path would fail.
+    #[test]
+    fn a_message_and_its_attachments_come_from_what_is_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let request = PreviewRequest::holding(
+            dir.path().join("gone").join("l’été message.eml"),
+            b"From: sender@example.invalid\r\nSubject: Held\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=sample\r\n\r\n--sample\r\nContent-Type: text/plain\r\n\r\nJust text.\r\n--sample\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=data.bin\r\nContent-Transfer-Encoding: base64\r\n\r\nAQID\r\n--sample--\r\n".to_vec(),
+            Some("message/rfc822"),
+        );
+        assert!(Provider.accepts(&request));
+        let view = InspectRequest::default();
+        let data = Provider
+            .inspect(&request, &view, &CancelToken::new())
+            .unwrap()
+            .unwrap();
+        assert!(data.plain_text().contains("Just text."));
+        assert_eq!(data.rows[0].cells, ["data.bin", "3 B"]);
+        let member = Provider
+            .extract(&request, &view, "0", dir.path(), &CancelToken::new())
+            .unwrap()
+            .unwrap();
+        assert_eq!(member.name, "data.bin");
+        assert_eq!(std::fs::read(&member.path).unwrap(), [1, 2, 3]);
     }
 }

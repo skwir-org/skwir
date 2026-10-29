@@ -41,13 +41,13 @@ impl PreviewProvider for Provider {
         20
     }
 
-    /// On a worker: the file's first bytes are asked what it is.
+    /// On a worker: the file's first bytes, as the preview holds them,
+    /// are asked what it is.
     fn accepts(&self, req: &PreviewRequest) -> bool {
         Kind::of(&req.entry.path).is_some()
             && req
-                .entry
-                .resolve()
-                .is_ok_and(|path| Kind::detect(&path).is_some())
+                .held()
+                .is_ok_and(|held| Kind::detect(held.path(), held.head()).is_some())
     }
 
     fn inspect(
@@ -60,8 +60,8 @@ impl PreviewProvider for Provider {
             return Ok(None);
         }
         check(cancel)?;
-        let path = req.entry.resolve()?;
-        let archive = archive::open(&path, cancel)?;
+        let held = req.held()?;
+        let archive = archive::open(&held, cancel)?;
         check(cancel)?;
         Ok(Some(inspection(&archive, self)))
     }
@@ -166,6 +166,7 @@ mod tests {
     use super::*;
     use skwir_core::app::{App, AppConfig};
     use skwir_core::op::EntryRef;
+    use skwir_core::preview::{Held, HeldSlot};
 
     fn fact<'a>(data: &'a Inspection, label: &str) -> Option<&'a str> {
         data.details
@@ -183,7 +184,28 @@ mod tests {
             max_side: 512,
             text_size: None,
             fit: None,
+            held: HeldSlot::default(),
         }
+    }
+
+    /// Tile `3/x/y` of `layer`, as the map asks for it.
+    fn ask(layer: &Layer, x: u32, y: u32) -> skwir_core::tiles::TileResult {
+        let (tx, rx) = std::sync::mpsc::channel();
+        layer.source.request(
+            skwir_core::tiles::TileRequest {
+                z: 3,
+                x,
+                y,
+                scale: 1,
+                palette: skwir_core::tiles::Palette::default(),
+            },
+            CancelToken::new(),
+            Box::new(move |tile| {
+                let _ = tx.send(tile);
+            }),
+        );
+        rx.recv_timeout(std::time::Duration::from_secs(20))
+            .expect("an answer")
     }
 
     /// A PNG tile of one color, as a raster archive holds.
@@ -235,28 +257,119 @@ mod tests {
         assert_eq!((layer.info.min_zoom, layer.info.max_zoom), (3, 3));
         assert!(layer.info.holds(3, 4, 2));
 
-        let ask = |x: u32, y: u32| {
-            let (tx, rx) = std::sync::mpsc::channel();
-            layer.source.request(
-                skwir_core::tiles::TileRequest {
-                    z: 3,
-                    x,
-                    y,
-                    scale: 1,
-                    palette: skwir_core::tiles::Palette::default(),
-                },
-                CancelToken::new(),
-                Box::new(move |tile| {
-                    let _ = tx.send(tile);
-                }),
-            );
-            rx.recv_timeout(std::time::Duration::from_secs(20))
-                .expect("an answer")
-        };
-        let tile = ask(4, 2).unwrap();
+        let tile = ask(&layer, 4, 2).unwrap();
         assert_eq!((tile.width, tile.height), (256, 256));
-        let missing = ask(4, 3).err().unwrap();
+        let missing = ask(&layer, 4, 3).err().unwrap();
         assert!(missing.is::<skwir_core::tiles::NoTile>(), "{missing:#}");
+    }
+
+    #[test]
+    fn an_archive_is_read_from_what_the_preview_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(dir.path().join("state"))).unwrap();
+        let provider = Provider {
+            scheduler: app.scheduler.clone(),
+            lifetime: CancelToken::new(),
+        };
+        // Paths that lead nowhere: only what is held can be read.
+        let gone = dir.path().join("gone");
+        let req = PreviewRequest::holding(
+            gone.join("hills.pmtiles"),
+            crate::pmtiles::tests::write(&[(3, 4, 2, png())], 2, true),
+            None,
+        );
+        assert!(provider.accepts(&req));
+        let data = provider
+            .inspect(&req, &InspectRequest::default(), &CancelToken::new())
+            .unwrap()
+            .unwrap();
+        assert_eq!(data.title, "PMTiles 3 · Invented Hills");
+        // Its tiles too, for as long as the map shows them.
+        let layer = data.tiles.clone().expect("its tiles");
+        let tile = ask(&layer, 4, 2).unwrap();
+        assert_eq!((tile.width, tile.height), (256, 256));
+        // An MBTiles database is told by its first bytes as well (SQLite
+        // reads it by its path, `MbTiles::of_held`).
+        let roads = PreviewRequest::holding(
+            gone.join("roads.mbtiles"),
+            b"SQLite format 3\0".as_slice(),
+            None,
+        );
+        assert!(provider.accepts(&roads));
+        let other =
+            PreviewRequest::holding(gone.join("not.pmtiles"), b"plain text".as_slice(), None);
+        assert!(!provider.accepts(&other));
+    }
+
+    /// A request about a remote's file, whose own path never exists:
+    /// `held` is all of it, and a program is handed its copy.
+    fn on_remote(held: &Arc<Held>) -> PreviewRequest {
+        let shape = PreviewRequest::holding(held.path(), Vec::<u8>::new(), None);
+        PreviewRequest {
+            held: HeldSlot::holding(shape.entry.clone(), Arc::clone(held)),
+            ..shape
+        }
+    }
+
+    #[test]
+    fn a_remote_database_is_read_by_sqlite_from_the_copy_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(dir.path().join("state"))).unwrap();
+        let provider = Provider {
+            scheduler: app.scheduler.clone(),
+            lifetime: CancelToken::new(),
+        };
+        // Made here, then held as a remote's file whose path never existed.
+        let made = dir.path().join("made.mbtiles");
+        crate::mbtiles::tests::write(
+            &made,
+            &[(3, 4, 2, &png())],
+            &[
+                ("name", "Invented Hills"),
+                ("format", "png"),
+                ("minzoom", "3"),
+                ("maxzoom", "3"),
+            ],
+        );
+        let bytes = std::fs::read(&made).unwrap();
+        let path = dir.path().join("gone").join("hills.mbtiles");
+        let scratch = dir.path().join("scratch");
+        let held = Arc::new(Held::of_bytes_on_remote(
+            &path,
+            bytes.clone(),
+            scratch.clone(),
+        ));
+        let req = on_remote(&held);
+        assert!(provider.accepts(&req));
+        let data = provider
+            .inspect(&req, &InspectRequest::default(), &CancelToken::new())
+            .unwrap()
+            .unwrap();
+        assert_eq!(data.title, "MBTiles · Invented Hills");
+        // SQLite read the one copy written for it: the path itself never
+        // existed.
+        assert!(!path.exists());
+        assert_eq!(std::fs::read_dir(&scratch).unwrap().count(), 1);
+        let copy = held
+            .path_for_program(&CancelToken::new())
+            .unwrap()
+            .into_owned();
+        assert!(copy.starts_with(&scratch), "{}", copy.display());
+        assert_eq!(std::fs::read(&copy).unwrap(), bytes);
+        // The archive keeps the copy while its tiles are shown, the
+        // request gone.
+        let layer = data.tiles.clone().expect("its tiles");
+        drop((req, held, data));
+        assert!(copy.exists(), "kept while its tiles are shown");
+        let tile = ask(&layer, 4, 2).unwrap();
+        assert_eq!((tile.width, tile.height), (256, 256));
+        // Then removed with it, once the last tile's job lets go.
+        drop(layer);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while copy.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!copy.exists(), "removed with what was held");
     }
 
     #[test]

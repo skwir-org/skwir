@@ -7,10 +7,9 @@
 //! blocks before the first block of G-code.
 use crate::Found;
 use base64::Engine as _;
-use skwir_core::CancelToken;
+use skwir_core::{CancelToken, preview::FileSource};
 use skwir_platform::inspection::{self, limits};
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
 
 /// The end of a text file read for the facts slicers write last.
 const TAIL: u64 = 256 * 1024;
@@ -212,9 +211,13 @@ fn is_picture(tag: &str) -> bool {
 
 /// G-code as text: its first `TEXT_INPUT` bytes for the pictures and the
 /// facts written first, its last `TAIL` for those written last.
-pub fn text(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
-    let mut file = inspection::open(path)?;
-    let len = file.metadata()?.len();
+pub fn text<S: FileSource + ?Sized>(
+    source: &S,
+    side: u32,
+    cancel: &CancelToken,
+) -> anyhow::Result<Found> {
+    let mut file = inspection::open(source)?;
+    let len = source.length()?;
     let mut head = Vec::new();
     (&mut file)
         .take(limits::TEXT_INPUT as u64)
@@ -250,7 +253,7 @@ pub fn text(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Foun
     let mut details = facts.into_details();
     // No picture stored: the moves drawn.
     if picture.is_none()
-        && let Some(drawn) = crate::toolpath::draw(path, side, cancel)?
+        && let Some(drawn) = crate::toolpath::draw(source, side, cancel)?
     {
         picture = Some(drawn.picture);
         details.extend(drawn.details);
@@ -270,8 +273,12 @@ const BLOCKS: usize = 64;
 /// Prusa's binary G-code: a header (`GCDE`, version, checksum kind), then
 /// blocks of metadata and pictures, then blocks of G-code. Metadata is
 /// `key=value` lines, stored as is or deflated.
-pub fn binary(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
-    let mut file = std::io::BufReader::new(inspection::open(path)?);
+pub fn binary<S: FileSource + ?Sized>(
+    source: &S,
+    side: u32,
+    cancel: &CancelToken,
+) -> anyhow::Result<Found> {
+    let mut file = std::io::BufReader::new(inspection::open(source)?);
     let mut header = [0u8; 10];
     file.read_exact(&mut header)?;
     anyhow::ensure!(&header[..4] == b"GCDE", "Not a binary G-code file");

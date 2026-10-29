@@ -9,6 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{CancelToken, op::EntryRef, thumbs::Image};
 
+mod held;
+pub use held::{FileSource, HEAD, Held, HeldSlot, ReadSeek, Reader, TAIL, WHOLE, WHOLE_FULL};
+
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PreviewRequest {
     pub entry: EntryRef,
@@ -31,6 +34,73 @@ pub struct PreviewRequest {
     /// `max_side` bounds it still; `None` is `max_side` alone.
     #[serde(default)]
     pub fit: Option<(u32, u32)>,
+    /// What was read of the file (ADR-101), shared by the request's clones
+    /// and read on the first ask ([`PreviewRequest::held`]): providers read
+    /// it, never the path. A request an agent sends gets one on the worker.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub held: HeldSlot,
+}
+
+impl PreviewRequest {
+    /// What is held of the file asked about: its first bytes read now if
+    /// nothing was, one open (on a worker, in its lane). Name it by
+    /// [`Held::path`], read it through the platform's readers, which take
+    /// it as they take a path.
+    ///
+    /// # Errors
+    /// When the entry is gone, is not a regular file, or cannot be read.
+    pub fn held(&self) -> std::io::Result<Arc<Held>> {
+        self.held.of(&self.entry)
+    }
+
+    /// Ask about another file (a member, a converted file): what was held
+    /// and answered of the one before stays with the requests that carry
+    /// it.
+    pub fn retarget(&mut self, entry: EntryRef, mime: Option<String>) {
+        self.entry = entry;
+        self.mime = mime;
+        self.held = self.held.emptied();
+    }
+
+    /// A request about a file named `path` whose bytes are `bytes`, never
+    /// read from it: `path` may lead nowhere. What a test gives a provider
+    /// to prove it reads what is held (ADR-101), and nothing else.
+    pub fn holding(
+        path: impl Into<std::path::PathBuf>,
+        bytes: impl Into<Arc<[u8]>>,
+        mime: Option<&str>,
+    ) -> PreviewRequest {
+        let path = path.into();
+        let entry = EntryRef {
+            id: crate::FileId::new(0, 0),
+            path: path.clone(),
+            only_name: false,
+        };
+        let held = Arc::new(Held::of_bytes(path, bytes));
+        PreviewRequest {
+            held: HeldSlot::holding(entry.clone(), held),
+            entry,
+            mime: mime.map(str::to_owned),
+            page: 1,
+            seconds: None,
+            max_side: 1024,
+            text_size: None,
+            fit: None,
+        }
+    }
+
+    /// Whether `provider` accepts this request, asked once per file, type
+    /// and registry revision: every stage of a preview shares the answer.
+    fn accepted_by(&self, provider: &dyn PreviewProvider, revision: u64) -> bool {
+        self.held.accepted(
+            &self.entry,
+            self.mime.as_deref(),
+            provider.id(),
+            revision,
+            || provider.accepts(self),
+        )
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -186,11 +256,11 @@ pub trait PreviewProvider: Send + Sync {
 fn inspector<'a>(
     request: &'a PreviewRequest,
     view: &'a crate::inspection::InspectRequest,
-) -> impl Fn(&dyn PreviewProvider) -> bool + 'a {
-    |p| {
+) -> impl Fn(&dyn PreviewProvider, u64) -> bool + 'a {
+    |p, revision| {
         view.provider
             .as_deref()
-            .map_or_else(|| p.accepts(request), |id| p.id() == id)
+            .map_or_else(|| request.accepted_by(p, revision), |id| p.id() == id)
     }
 }
 
@@ -217,12 +287,15 @@ impl Previews {
     fn dispatch<T>(
         &self,
         cancel: &CancelToken,
-        chosen: impl Fn(&dyn PreviewProvider) -> bool,
+        chosen: impl Fn(&dyn PreviewProvider, u64) -> bool,
         call: impl FnOnce(&dyn PreviewProvider, &CancelToken) -> anyhow::Result<T>,
     ) -> anyhow::Result<Option<T>> {
         anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
-        let providers = self.providers.read().clone();
-        let Some(p) = providers.into_iter().find(|p| chosen(&*p.provider)) else {
+        let (providers, revision) = self.providers();
+        let Some(p) = providers
+            .into_iter()
+            .find(|p| chosen(&*p.provider, revision))
+        else {
             return Ok(None);
         };
         let cancel = cancel.linked(&p.lifetime);
@@ -241,7 +314,7 @@ impl Previews {
     ) -> anyhow::Result<Option<Preview>> {
         self.dispatch(
             cancel,
-            |p| p.accepts(request),
+            |p, revision| request.accepted_by(p, revision),
             |p, cancel| p.render(request, cancel),
         )
     }
@@ -288,7 +361,7 @@ impl Previews {
         Ok(self
             .dispatch(
                 cancel,
-                |p| p.accepts(request),
+                |p, revision| request.accepted_by(p, revision),
                 |p, cancel| p.extract(request, view, target, into, cancel),
             )?
             .flatten())
@@ -304,7 +377,7 @@ impl Previews {
         Ok(self
             .dispatch(
                 cancel,
-                |p| p.accepts(request),
+                |p, revision| request.accepted_by(p, revision),
                 |p, cancel| p.converted(request, cancel),
             )?
             .flatten())
@@ -313,10 +386,10 @@ impl Previews {
     /// Whether the provider that shows `request` shows it as media
     /// (`PreviewProvider::media`): the one `open_media` and `render` go to.
     pub fn media(&self, request: &PreviewRequest) -> bool {
-        let providers = self.providers.read().clone();
+        let (providers, revision) = self.providers();
         providers
             .iter()
-            .find(|p| p.provider.accepts(request))
+            .find(|p| request.accepted_by(&*p.provider, revision))
             .is_some_and(|p| p.provider.media())
     }
 
@@ -330,7 +403,7 @@ impl Previews {
         Ok(self
             .dispatch(
                 lifetime,
-                |p| p.accepts(request),
+                |p, revision| request.accepted_by(p, revision),
                 |p, lifetime| p.open_media(request, lifetime, wake),
             )?
             .flatten())
@@ -346,7 +419,7 @@ impl Previews {
         Ok(self
             .dispatch(
                 lifetime,
-                |p| p.accepts(request),
+                |p, revision| request.accepted_by(p, revision),
                 |p, lifetime| p.open_document(request, lifetime),
             )?
             .flatten())
@@ -392,6 +465,13 @@ impl Previews {
 
     pub fn revision(&self) -> u64 {
         self.revision.load(Ordering::Acquire)
+    }
+
+    /// The providers as registered, with the revision they are at: an
+    /// answer kept for one revision is not one for the next.
+    fn providers(&self) -> (Vec<Registered>, u64) {
+        let providers = self.providers.read();
+        (providers.clone(), self.revision.load(Ordering::Acquire))
     }
 
     /// The provider that shows any file as its bytes (View as hex), if one
@@ -496,6 +576,7 @@ mod tests {
             max_side: 128,
             text_size: None,
             fit: None,
+            held: HeldSlot::default(),
         };
         for attempt in 0..8 {
             previews.register("test", provider.clone());

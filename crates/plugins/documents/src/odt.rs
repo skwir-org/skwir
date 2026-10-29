@@ -5,9 +5,9 @@ use crate::package::{self, Package};
 use roxmltree::Node;
 use skwir_core::CancelToken;
 use skwir_core::inspection::{Align, Script};
+use skwir_core::preview::FileSource;
 use skwir_platform::inspection::{self, Numbering, limits};
 use std::collections::HashMap;
-use std::path::Path;
 
 const OFFICE: &str = "urn:oasis:names:tc:opendocument:xmlns:office:1.0";
 const STYLE: &str = "urn:oasis:names:tc:opendocument:xmlns:style:1.0";
@@ -923,8 +923,12 @@ fn rows_in<'a, 'i>(
     }
 }
 
-pub(crate) fn read(path: &Path, wanted: u64, cancel: &CancelToken) -> anyhow::Result<Read> {
-    let mut package = Package::open(path, cancel)?;
+pub(crate) fn read<S: FileSource + ?Sized>(
+    file: &S,
+    wanted: u64,
+    cancel: &CancelToken,
+) -> anyhow::Result<Read> {
+    let mut package = Package::open(file, cancel)?;
     if let Some(manifest) = package.text("META-INF/manifest.xml", "Manifest", cancel)?
         && manifest.contains("encryption-data")
     {
@@ -973,7 +977,7 @@ pub(crate) fn read(path: &Path, wanted: u64, cancel: &CancelToken) -> anyhow::Re
     // with its pictures read.
     if wanted >= parts && parts > 0 {
         drop(walk);
-        return read(path, parts - 1, cancel);
+        return read(file, parts - 1, cancel);
     }
     for (ordinal, target) in referenced.iter().enumerate() {
         let Some((label, body)) = notes
@@ -1063,11 +1067,11 @@ impl Walk<'_> {
 }
 
 /// What an `OpenDocument` file says about itself, for Properties.
-pub(crate) fn about(
-    path: &Path,
+pub(crate) fn about<S: FileSource + ?Sized>(
+    file: &S,
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<(&'static str, String)>> {
-    Ok(details(&mut Package::open(path, cancel)?, cancel))
+    Ok(details(&mut Package::open(file, cancel)?, cancel))
 }
 
 /// What the document says about itself: its title, author and the pages

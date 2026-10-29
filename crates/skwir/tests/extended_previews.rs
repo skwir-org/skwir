@@ -41,6 +41,7 @@ fn request(path: &Path) -> PreviewRequest {
         max_side: 512,
         text_size: None,
         fit: None,
+        held: skwir_core::preview::HeldSlot::default(),
     }
 }
 /// What the preview worker shows: the provider's inspection, else, for the
@@ -51,7 +52,7 @@ fn try_inspect(app: &App, path: &Path, view: &InspectRequest) -> Option<Inspecti
         &app.previews,
         &request(path),
         &mut view.clone(),
-        path,
+        &request(path),
         false,
         &CancelToken::new(),
     )
@@ -435,7 +436,7 @@ fn a_type_shown_as_its_source_opens_on_it_where_the_file_has_one() {
             &app.previews,
             &request(path),
             &mut view,
-            path,
+            &request(path),
             true,
             &CancelToken::new(),
         )
@@ -515,7 +516,7 @@ fn a_presentation_that_fails_on_text_shows_its_source_instead() {
         &app.previews,
         &request(&bytes),
         &mut InspectRequest::default(),
-        &bytes,
+        &request(&bytes),
         false,
         &CancelToken::new(),
     )
@@ -529,7 +530,7 @@ fn a_presentation_that_fails_on_text_shows_its_source_instead() {
     let failed = || anyhow::anyhow!("Synthetic failure");
     let instead = skwir_ui::preview::source_instead(
         &InspectRequest::default(),
-        &page,
+        &request(&page),
         failed(),
         &CancelToken::new(),
     )
@@ -540,12 +541,20 @@ fn a_presentation_that_fails_on_text_shows_its_source_instead() {
         provider: Some("hex".into()),
         ..InspectRequest::default()
     };
-    assert!(skwir_ui::preview::source_instead(&hex, &page, failed(), &CancelToken::new()).is_err());
+    assert!(
+        skwir_ui::preview::source_instead(&hex, &request(&page), failed(), &CancelToken::new())
+            .is_err()
+    );
     let cancelled = CancelToken::new();
     cancelled.cancel();
     assert!(
-        skwir_ui::preview::source_instead(&InspectRequest::default(), &page, failed(), &cancelled)
-            .is_err()
+        skwir_ui::preview::source_instead(
+            &InspectRequest::default(),
+            &request(&page),
+            failed(),
+            &cancelled
+        )
+        .is_err()
     );
 }
 
@@ -633,6 +642,7 @@ fn format_providers_never_compete_for_the_same_file() {
             max_side: 64,
             text_size: None,
             fit: None,
+            held: skwir_core::preview::HeldSlot::default(),
         };
         let accepting = app.previews.accepting(&request);
         for (i, (owner, id, priority)) in accepting.iter().enumerate() {

@@ -141,21 +141,29 @@ impl PreviewProvider for Pictures {
     }
 
     fn render(&self, req: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Preview> {
-        let path = req.entry.resolve()?;
+        let held = req.held()?;
+        let path = held.path();
         let mime = req.mime.as_deref().unwrap_or_default();
-        let cached = self
-            .cache
-            .as_ref()
-            .and_then(|c| c.load(&path, PICTURE_SIZE));
+        let cached = self.cache.as_ref().and_then(|c| c.load(path, PICTURE_SIZE));
         let image = if let Some(image) = cached {
             image
         } else {
-            self.draw(&path, mime, cancel)?
+            // A thumbnailer reads the file by its path: a remote's, as it
+            // was read once (ADR-101). The cache keeps it by its own, and
+            // the version read.
+            let (_, modified) = held.version();
+            self.draw(
+                path,
+                &held.path_for_program(cancel)?,
+                modified,
+                mime,
+                cancel,
+            )?
         };
         // Only a picture has a camera's size to read.
         let written = mime
             .starts_with("image/")
-            .then(|| skwir_platform::exif::dimensions(&path))
+            .then(|| skwir_platform::exif::dimensions(&held))
             .flatten();
         let (width, height) = own_size(written, (image.width, image.height));
         Ok(Preview {
@@ -194,11 +202,15 @@ impl Pictures {
             .filter(|magick| self.magick && magick.draws(mime))
     }
 
-    /// The picture drawn by its thumbnailer, else by `ImageMagick` (when the
-    /// thumbnailer failed too), and kept in the cache.
+    /// The picture of the file at `path` drawn by its thumbnailer, else by
+    /// `ImageMagick` (when the thumbnailer failed too), each handed
+    /// `program` to read, and kept in the cache for `path` as it was at
+    /// `modified`.
     fn draw(
         &self,
         path: &std::path::Path,
+        program: &std::path::Path,
+        modified: Option<std::time::SystemTime>,
         mime: &str,
         cancel: &CancelToken,
     ) -> anyhow::Result<Image> {
@@ -206,7 +218,7 @@ impl Pictures {
         let mut failed = None;
         let mut drawn = None;
         if let Some(thumbnailers) = self.thumbnailers.found.get().filter(|t| t.claims(mime)) {
-            match thumbnailers.draw(path, mime, pixels, cancel) {
+            match thumbnailers.draw(program, mime, pixels, cancel) {
                 Ok(image) => drawn = Some(image),
                 Err(error) => failed = Some(error),
             }
@@ -214,7 +226,7 @@ impl Pictures {
         if drawn.is_none()
             && let Some(magick) = self.converted(mime)
         {
-            drawn = Some(magick.draw(path, mime, pixels, cancel)?);
+            drawn = Some(magick.draw(program, mime, pixels, cancel)?);
         }
         let image = match (drawn, failed) {
             (Some(Some(image)), _) => image,
@@ -223,7 +235,7 @@ impl Pictures {
             (None, None) => anyhow::bail!("No thumbnailer draws this picture"),
         };
         if let Some(cache) = self.cache.as_ref().filter(|_| self.write_back)
-            && let Ok(modified) = std::fs::metadata(path).and_then(|m| m.modified())
+            && let Some(modified) = modified
             && let Err(error) = cache.store(path, PICTURE_SIZE, &image, modified)
         {
             tracing::debug!("picture cache write failed: {error:#}");
@@ -624,6 +636,7 @@ mod tests {
             max_side: 2048,
             text_size: None,
             fit: None,
+            held: skwir_core::preview::HeldSlot::default(),
         };
         assert!(
             !pictures.accepts(&request("image/png")),
@@ -652,6 +665,78 @@ mod tests {
         assert!(
             cache.lookup(&photo, PICTURE_SIZE).is_some(),
             "kept in the desktop's cache"
+        );
+    }
+
+    /// A picture's own size is read from what the preview holds
+    /// (ADR-101), and its thumbnailer, a program, is handed a path to read
+    /// (`Held::path_for_program`). Held here are bytes whose metadata says
+    /// what size a camera wrote, for a file on the disk whose bytes say
+    /// none: the size shown is the held one's, the picture the file's.
+    #[cfg(unix)]
+    #[test]
+    fn a_pictures_own_size_is_read_from_what_is_held() {
+        use skwir_platform::thumb_providers::ThumbnailerEntry;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let photo = dir.path().join("a photo’s name.heic");
+        image::RgbImage::from_pixel(30, 20, image::Rgb([0, 128, 255]))
+            .save_with_format(&photo, image::ImageFormat::Png)
+            .unwrap();
+        let tool = dir.path().join("draw");
+        std::fs::write(&tool, "#!/bin/sh\ncp \"$1\" \"$2\"\n").unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let discovered = Arc::new(Discovered::default());
+        let _ = discovered
+            .found
+            .set(Thumbnailers::new(vec![ThumbnailerEntry {
+                name: "heif".into(),
+                try_exec: None,
+                exec: format!("{} %i %o", tool.display()),
+                mime_types: vec!["image/heif".into()],
+            }]));
+        let pictures = Pictures {
+            thumbnailers: discovered,
+            magick: false,
+            cache: None,
+            write_back: false,
+        };
+        // A TIFF of one directory pointing at an Exif one: 300 × 200.
+        let entry = |data: &mut Vec<u8>, tag: u16, kind: u16, value: u32| {
+            data.extend(tag.to_le_bytes());
+            data.extend(kind.to_le_bytes());
+            data.extend(1u32.to_le_bytes());
+            data.extend(value.to_le_bytes());
+        };
+        let mut tiff = b"II*\0\x08\0\0\0".to_vec();
+        tiff.extend(1u16.to_le_bytes());
+        entry(&mut tiff, 0x8769, 4, 26); // the Exif directory, at 26
+        tiff.extend(0u32.to_le_bytes());
+        tiff.extend(2u16.to_le_bytes());
+        entry(&mut tiff, 0xa002, 4, 300); // PixelXDimension
+        entry(&mut tiff, 0xa003, 4, 200); // PixelYDimension
+        tiff.extend(0u32.to_le_bytes());
+        // A PNG of its metadata alone (checks left zero).
+        let chunk = |kind: &[u8], data: &[u8]| {
+            let mut out = u32::try_from(data.len()).unwrap().to_be_bytes().to_vec();
+            out.extend(kind);
+            out.extend(data);
+            out.extend([0; 4]);
+            out
+        };
+        let mut held = b"\x89PNG\r\n\x1a\n".to_vec();
+        held.extend(chunk(b"eXIf", &tiff));
+        held.extend(chunk(b"IEND", &[]));
+        let request = PreviewRequest::holding(&photo, held, Some("image/heif"));
+        assert!(pictures.accepts(&request));
+        let preview = pictures.render(&request, &CancelToken::new()).unwrap();
+        assert_eq!((preview.image.width, preview.image.height), (30, 20));
+        assert_eq!(
+            preview.info,
+            PreviewInfo::Picture {
+                width: 300,
+                height: 200
+            }
         );
     }
 
@@ -723,6 +808,7 @@ mod tests {
             max_side: 2048,
             text_size: None,
             fit: None,
+            held: skwir_core::preview::HeldSlot::default(),
         };
         assert!(
             pictures(false)

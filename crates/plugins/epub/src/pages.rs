@@ -1,10 +1,11 @@
 //! A fixed-layout book in the document reader (ADR-013): a book of pages,
 //! like a PDF, read continuously or a page at a time. Each page is drawn by
 //! `rich_preview::page` at the side the reader asks, on the reader's worker,
-//! from the container read again for it; nothing is kept but the spine.
-//! A drawn page has no text layer: converted comics set their lettering in
-//! private-use glyphs, which read as nothing.
-use std::{path::PathBuf, sync::Arc};
+//! from the container read again for it, out of what the preview holds of
+//! the book (ADR-101); nothing else is kept but the spine. A drawn page
+//! has no text layer: converted comics set their lettering in private-use
+//! glyphs, which read as nothing.
+use std::sync::Arc;
 
 use skwir_core::{
     CancelToken,
@@ -13,6 +14,7 @@ use skwir_core::{
         SearchHit, page_labels,
     },
     inspection::Picture,
+    preview::Held,
 };
 use skwir_platform::{
     inspection::{self, limits},
@@ -30,7 +32,8 @@ const SIZE_PAGES: usize = 8;
 const PAGE_SIZE: (f32, f32) = (600., 800.);
 
 pub(crate) struct FixedBook {
-    path: PathBuf,
+    /// What the preview holds of the book, read again for each page.
+    held: Arc<Held>,
     pages: Vec<Page>,
     /// The size a page that states none is drawn at: the book's own.
     size: (f32, f32),
@@ -44,11 +47,11 @@ struct Page {
 }
 
 impl FixedBook {
-    /// The book at `path` as a document of pages, when it is laid out in
+    /// The book `held` as a document of pages, when it is laid out in
     /// pages (`rendition:layout pre-paginated`); `None` for a book that
     /// reflows, which reading mode shows. Called on a scheduler worker.
-    pub(crate) fn open(path: PathBuf, cancel: &CancelToken) -> anyhow::Result<Option<Self>> {
-        let mut container = Container::open(&path, cancel)?;
+    pub(crate) fn open(held: Arc<Held>, cancel: &CancelToken) -> anyhow::Result<Option<Self>> {
+        let mut container = Container::open(&held, cancel)?;
         let (book, fixed) = package(&mut container, cancel)?;
         if !fixed {
             return Ok(None);
@@ -118,7 +121,7 @@ impl FixedBook {
                 reflowable: false,
                 labels,
             },
-            path,
+            held,
             pages,
             size,
         }))
@@ -130,7 +133,7 @@ impl FixedBook {
     /// book's page size.
     fn draw(&self, index: usize, side: u32, cancel: &CancelToken) -> anyhow::Result<Drawing> {
         let page = &self.pages[index];
-        let mut container = Container::open(&self.path, cancel)?;
+        let mut container = Container::open(&self.held, cancel)?;
         let bytes = container.read(&page.href, "Page", cancel)?;
         let Some(markup) = page.markup else {
             return picture(&bytes, side);
@@ -232,7 +235,7 @@ impl DocumentSession for FixedBook {
         if query.is_empty() {
             return Ok(Vec::new());
         }
-        let mut container = Container::open(&self.path, cancel)?;
+        let mut container = Container::open(&self.held, cancel)?;
         let mut hits = Vec::new();
         let mut sheets = Sheets::new();
         for (index, page) in self.pages.iter().enumerate() {

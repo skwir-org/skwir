@@ -802,6 +802,7 @@ pub fn plugin_rows(
     app: &skwir_core::App,
     sources: &[skwir_core::registry::PropertySource],
     target: &EntryRef,
+    mime: Option<&str>,
 ) -> Vec<SourceRow> {
     #[derive(serde::Deserialize)]
     struct Answer {
@@ -809,10 +810,13 @@ pub fn plugin_rows(
     }
     let mut rows = Vec::new();
     for source in sources {
-        let command = source
+        let mut command = source
             .command
             .clone()
             .with("entries", serde_json::json!([target]));
+        if let (true, Some(mime)) = (source.typed, mime) {
+            command = command.with("mime", serde_json::json!(mime));
+        }
         let answer = match app.dispatch(&command) {
             Ok(skwir_core::command::Outcome::Value(value)) => {
                 serde_json::from_value::<Answer>(value)

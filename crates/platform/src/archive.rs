@@ -287,6 +287,7 @@ pub fn read(path: &Path, member: &Member, cancel: &CancelToken) -> anyhow::Resul
     let output = temp.path().join("member");
     write_member(path, member, &output, Bounds::QUICK, cancel)?;
     inspection::read_bounded(&output, limits::BINARY_INPUT, "Member preview", cancel)
+        .map(std::borrow::Cow::into_owned)
 }
 /// Units of work the helper may run ahead of what it last reported while
 /// extracting: each an entry, or a MiB of one. A paused extraction stops

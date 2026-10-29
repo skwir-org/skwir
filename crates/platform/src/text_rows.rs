@@ -9,10 +9,10 @@
 
 use std::io::{Read, Seek, SeekFrom};
 use std::ops::Range;
-use std::path::Path;
 
 use parking_lot::RwLock;
 use skwir_core::CancelToken;
+use skwir_core::preview::FileSource;
 
 use crate::inspection::{Encoding, check, limits, open};
 
@@ -67,9 +67,9 @@ impl Form {
         }
     }
 
-    /// The form of the file at `path`, from its first bytes.
-    pub fn read(path: &Path, cancel: &CancelToken) -> anyhow::Result<Form> {
-        Ok(Form::of(&crate::inspection::read(path, 0, HEAD, cancel)?))
+    /// The form of `file`, from its first bytes.
+    pub fn read<S: FileSource + ?Sized>(file: &S, cancel: &CancelToken) -> anyhow::Result<Form> {
+        Ok(Form::of(&crate::inspection::read(file, 0, HEAD, cancel)?))
     }
 
     fn wide(self) -> bool {
@@ -280,6 +280,19 @@ pub struct Index {
     rows: u64,
     lines: u64,
     done: bool,
+    /// How far into the file the rows counted reach.
+    reached: u64,
+    /// Where a count stopped before the end (`count_until`), to go on from.
+    paused: Option<Paused>,
+}
+
+/// Where a count stopped: the next row's place, and what was counted.
+#[derive(Clone, Copy, Debug)]
+struct Paused {
+    offset: u64,
+    rows: u64,
+    lines: u64,
+    first: bool,
 }
 
 impl Index {
@@ -291,7 +304,20 @@ impl Index {
             rows: 0,
             lines: 0,
             done: false,
+            reached: 0,
+            paused: None,
         }
+    }
+
+    /// How far into the file the rows counted reach, in bytes.
+    pub fn reached(&self) -> u64 {
+        self.reached
+    }
+
+    /// Whether a count stopped before the end, to go on later
+    /// (`count_until`).
+    pub fn paused(&self) -> bool {
+        self.paused.is_some()
     }
 
     /// The rows counted so far.
@@ -330,21 +356,49 @@ impl Index {
 /// Count the rows of the file at `path` into `index`, from nothing, a block
 /// at a time: what each block adds is published under the lock, then
 /// `progress` is told. Cancelled, the index stays as far as it got.
-pub fn count(
-    path: &Path,
+pub fn count<S: FileSource + ?Sized>(
+    path: &S,
     index: &RwLock<Index>,
+    cancel: &CancelToken,
+    progress: impl FnMut(),
+) -> anyhow::Result<()> {
+    // Read again: the file may have been written anew.
+    *index.write() = Index::new(Form::read(path, cancel)?);
+    count_until(path, index, None, cancel, progress)
+}
+
+/// Count on from where `index` stopped (from nothing, if it never
+/// counted), until `until` rows are counted (all of them with `None`): a
+/// block at a time, as `count`. Stopped short, the index says where
+/// (`Index::paused`), to go on from there: a remote's file is counted as
+/// far as it is shown, not downloaded whole to size a scrollbar
+/// (ADR-101). Two counts never run on one index at once: the caller keeps
+/// them apart.
+pub fn count_until<S: FileSource + ?Sized>(
+    path: &S,
+    index: &RwLock<Index>,
+    until: Option<u64>,
     cancel: &CancelToken,
     mut progress: impl FnMut(),
 ) -> anyhow::Result<()> {
-    // Read again: the file may have been written anew.
-    let form = Form::read(path, cancel)?;
+    let (form, done, paused) = {
+        let index = index.read();
+        (index.form, index.done, index.paused)
+    };
+    if done {
+        return Ok(());
+    }
+    let (start, mut rows, mut lines, mut first) = if let Some(at) = paused {
+        (at.offset, at.rows, at.lines, at.first)
+    } else {
+        *index.write() = Index::new(form);
+        (form.start, 0u64, 0u64, true)
+    };
     let mut file = open(path)?;
-    file.seek(SeekFrom::Start(form.start))?;
-    let mut cutter = Cutter::new(file, form, form.start, BLOCK);
-    *index.write() = Index::new(form);
-    let (mut rows, mut lines, mut first) = (0u64, 0u64, true);
+    file.seek(SeekFrom::Start(start))?;
+    let mut cutter = Cutter::new(file, form, start, BLOCK);
     let mut points = Vec::new();
-    let mut reported = form.start;
+    let mut reported = start;
     loop {
         let found = cutter.next()?;
         if let Some(found) = &found {
@@ -365,13 +419,25 @@ pub fn count(
         if found.is_none() || cutter.offset - reported >= BLOCK as u64 {
             check(cancel)?;
             reported = cutter.offset;
+            let done = found.is_none();
+            let stop = !done && until.is_some_and(|until| rows >= until);
             let mut shared = index.write();
             shared.points.append(&mut points);
             shared.rows = rows;
             shared.lines = lines;
-            shared.done = found.is_none();
+            shared.done = done;
+            shared.reached = cutter.offset;
+            shared.paused = stop.then_some(Paused {
+                offset: cutter.offset,
+                rows,
+                lines,
+                first,
+            });
             drop(shared);
             progress();
+            if stop {
+                return Ok(());
+            }
         }
         if found.is_none() {
             return Ok(());
@@ -390,8 +456,8 @@ pub struct Row {
 
 /// Rows `rows` of the file at `path`, read from `point`, the place of row
 /// `at` (the chunk's first), up to the file's end.
-pub fn read(
-    path: &Path,
+pub fn read<S: FileSource + ?Sized>(
+    path: &S,
     form: Form,
     (at, point): (u64, Point),
     rows: Range<u64>,
@@ -436,8 +502,8 @@ pub fn origin(form: Form) -> Point {
 
 /// The row that begins line `line` (from 0) of the file, once the index
 /// has counted past it.
-pub fn row_of_line(
-    path: &Path,
+pub fn row_of_line<S: FileSource + ?Sized>(
+    path: &S,
     index: &RwLock<Index>,
     line: u64,
     cancel: &CancelToken,
@@ -524,8 +590,8 @@ pub fn matches(text: &str, query: &str) -> Vec<Range<usize>> {
 /// passed, as far as `from`; or the last before `from`, going on from the
 /// end, when `back`. Its row and where it is in the row's text. Only the
 /// rows counted are searched, each on its own: a match is within a row.
-pub fn find(
-    path: &Path,
+pub fn find<S: FileSource + ?Sized>(
+    path: &S,
     index: &RwLock<Index>,
     query: &str,
     from: (u64, usize),
@@ -609,8 +675,8 @@ pub fn find(
 /// The text from `from` to `to`, (row, byte in the row's text), as the
 /// file has it: rows of one line joined, lines joined by a newline, up to
 /// `limit` bytes. Whether it stopped at the limit.
-pub fn text(
-    path: &Path,
+pub fn text<S: FileSource + ?Sized>(
+    path: &S,
     index: &RwLock<Index>,
     from: (u64, usize),
     to: (u64, usize),
@@ -751,6 +817,45 @@ mod tests {
     }
 
     #[test]
+    fn a_count_stopped_and_gone_on_with_finds_what_one_count_finds() {
+        // Lines long enough that a block (1 MiB) ends inside the file
+        // several times.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a long one.log");
+        let line = "x".repeat(300);
+        let text: String = (0..12_000).fold(String::new(), |mut text, n| {
+            use std::fmt::Write as _;
+            let _ = writeln!(text, "{n} {line}");
+            text
+        });
+        std::fs::write(&path, &text).unwrap();
+        let cancel = CancelToken::new();
+        let whole = counted(&path);
+        let form = Form::read(&path, &cancel).unwrap();
+        let index = RwLock::new(Index::new(form));
+        count_until(&path, &index, Some(STRIDE * 2), &cancel, || {}).unwrap();
+        {
+            let first = index.read();
+            assert!(first.paused() && !first.done(), "stopped short of the end");
+            assert!(first.rows() >= STRIDE * 2 && first.rows() < whole.read().rows());
+            assert!(first.reached() < text.len() as u64);
+        }
+        let mut steps = 0;
+        while index.read().paused() {
+            // Asked outside the call, which takes the index to write.
+            let until = index.read().rows() + STRIDE;
+            count_until(&path, &index, Some(until), &cancel, || {}).unwrap();
+            steps += 1;
+        }
+        assert!(steps > 1, "gone on more than once");
+        let (index, whole) = (index.read(), whole.read());
+        assert!(index.done());
+        assert_eq!(index.reached(), text.len() as u64);
+        assert_eq!((index.rows(), index.lines()), (whole.rows(), whole.lines()));
+        assert_eq!(index.points, whole.points);
+    }
+
+    #[test]
     fn the_form_is_its_mark_else_utf8_else_the_code_page() {
         assert_eq!(Form::of(b"plain").encoding, Encoding::Utf8);
         // Cut through its last character: still UTF-8.
@@ -786,7 +891,7 @@ mod tests {
         (dir, path, text)
     }
 
-    fn counted(path: &Path) -> RwLock<Index> {
+    fn counted(path: &std::path::Path) -> RwLock<Index> {
         let cancel = CancelToken::new();
         let index = RwLock::new(Index::new(Form::read(path, &cancel).unwrap()));
         let mut told = 0;

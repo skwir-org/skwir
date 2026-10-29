@@ -3,12 +3,15 @@
 //! read from the nearest start before it, where each was read from the
 //! file's start, every page before it read again.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-/// A file as it is: its path, length and modification time.
-type Version = (PathBuf, u64, Option<SystemTime>);
+use skwir_core::preview::Held;
+
+/// A version of a file: its path, length and modification time, as a
+/// preview read it (`Held::version`, ADR-101): the path is asked nothing.
+pub(crate) type Version = (PathBuf, u64, Option<SystemTime>);
 
 /// The files' page starts: `(records before, byte)`, by file, the last few.
 static STARTS: Mutex<Vec<(Version, Vec<(u64, u64)>)>> = Mutex::new(Vec::new());
@@ -18,18 +21,17 @@ const FILES: usize = 8;
 /// Starts kept for one file.
 const PER_FILE: usize = 4096;
 
-fn version(path: &Path) -> Option<Version> {
-    let meta = std::fs::metadata(path).ok()?;
-    Some((path.to_path_buf(), meta.len(), meta.modified().ok()))
+/// The version of the file `held` holds.
+pub(crate) fn version(held: &Held) -> Version {
+    let (len, modified) = held.version();
+    (held.path().to_path_buf(), len, modified)
 }
 
-/// The start known nearest before `records` records of the file at
-/// `path`, as it is now: how many records come before it, and its byte.
+/// The start known nearest before `records` records of the version of
+/// the file `held` holds: how many records come before it, and its byte.
 /// `(0, 0)` when none is known.
-pub(crate) fn nearest(path: &Path, records: u64) -> (u64, u64) {
-    let Some(version) = version(path) else {
-        return (0, 0);
-    };
+pub(crate) fn nearest(held: &Held, records: u64) -> (u64, u64) {
+    let version = version(held);
     let starts = STARTS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -46,11 +48,10 @@ pub(crate) fn nearest(path: &Path, records: u64) -> (u64, u64) {
         .unwrap_or((0, 0))
 }
 
-/// The record after `records` begins at `byte` in the file at `path`.
-pub(crate) fn learn(path: &Path, records: u64, byte: u64) {
-    let Some(version) = version(path) else {
-        return;
-    };
+/// The record after `records` begins at `byte` in the version of the file
+/// `held` holds.
+pub(crate) fn learn(held: &Held, records: u64, byte: u64) {
+    let version = version(held);
     let mut starts = STARTS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

@@ -268,12 +268,12 @@ impl PreviewProvider for Previews {
         let Some(kept) = &self.pages else {
             return Ok(None);
         };
-        let path = request.entry.resolve()?;
-        anyhow::ensure!(!private(&self.app, &path), PRIVATE);
+        let held = request.held()?;
+        anyhow::ensure!(!private(&self.app, held.path()), PRIVATE);
         let pages = Pages::open(
             Arc::clone(&self.runner),
             kept.clone(),
-            path,
+            held,
             request.entry.id,
             request.mime.clone(),
             lifetime,
@@ -290,9 +290,9 @@ impl PreviewProvider for Previews {
         if self.converted.is_some() || self.pages.is_some() {
             return Ok(None);
         }
-        let path = request.entry.resolve()?;
-        anyhow::ensure!(!private(&self.app, &path), PRIVATE);
-        let call = Call::new(vec![path], self.runner.granted, cancel.clone());
+        let held = request.held()?;
+        anyhow::ensure!(!private(&self.app, held.path()), PRIVATE);
+        let call = Call::holding(held, self.runner.granted, cancel.clone());
         let params = InspectParams {
             file: call.describe(0, request.mime.clone()),
             offset: view.offset,
@@ -318,11 +318,13 @@ impl PreviewProvider for Previews {
         let Some(folder) = &self.converted else {
             return Ok(None);
         };
-        let path = request.entry.resolve()?;
-        anyhow::ensure!(!private(&self.app, &path), PRIVATE);
+        // Kept by the version read (ADR-101): what it makes of the bytes
+        // held is never kept as another version's.
+        let held = request.held()?;
+        anyhow::ensure!(!private(&self.app, held.path()), PRIVATE);
         let key = skwir_platform::preview::made_key(
             request.entry.id,
-            &path,
+            &held,
             self.runner.made_by(),
             "converted",
         )?;
@@ -335,7 +337,7 @@ impl PreviewProvider for Previews {
         if let Some(made) = only_file(&kept) {
             return Ok(Some(self.shown(made)));
         }
-        let call = Call::new(vec![path], self.runner.granted, cancel.clone());
+        let call = Call::holding(held, self.runner.granted, cancel.clone());
         let params = ConvertParams {
             file: call.describe(0, request.mime.clone()),
         };

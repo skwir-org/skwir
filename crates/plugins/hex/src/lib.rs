@@ -3,7 +3,7 @@ use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection},
     plugin::Plugin,
-    preview::{PreviewProvider, PreviewRequest},
+    preview::{Held, PreviewProvider, PreviewRequest},
 };
 use skwir_platform::inspection::{self, HEX_ROW, check, limits, read};
 use std::{io::Read, sync::Arc};
@@ -55,14 +55,14 @@ impl PreviewProvider for Provider {
         view: &InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Inspection>> {
-        let path = req.entry.resolve()?;
-        let len = path.metadata()?.len();
+        let held = req.held()?;
+        let len = held.len();
         let row = HEX_ROW as u64;
         let mut position = view.offset.min(len.saturating_sub(1)) / row * row;
         let mut notice = String::new();
         if let Some(query) = &view.query {
             let needle = needle(query)?;
-            if let Some(found) = find(&path, &needle, view.offset, cancel)? {
+            if let Some(found) = find(&held, &needle, view.offset, cancel)? {
                 position = found;
                 notice = format!("Match at 0x{found:X}");
             } else {
@@ -70,7 +70,7 @@ impl PreviewProvider for Provider {
             }
         }
         let offset = position / row * row;
-        let bytes = read(&path, offset, limits::HEX_PAGE as usize, cancel)?;
+        let bytes = read(&held, offset, limits::HEX_PAGE as usize, cancel)?;
         let mut page = inspection::hex_page(
             format!("Hex · {}", inspection::size(len)),
             &bytes,
@@ -104,14 +104,16 @@ fn needle(query: &str) -> anyhow::Result<Vec<u8>> {
     );
     Ok(needle)
 }
+/// The first `needle` at or after `offset`, read on through what is held
+/// of the file.
 fn find(
-    path: &std::path::Path,
+    held: &Arc<Held>,
     needle: &[u8],
     offset: u64,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<u64>> {
     use std::io::{Seek, SeekFrom};
-    let mut file = inspection::open(path)?;
+    let mut file = inspection::open(held)?;
     file.seek(SeekFrom::Start(offset))?;
     let finder = memchr::memmem::Finder::new(needle);
     let mut bytes = vec![0; 64 * 1024 + needle.len()];
@@ -136,21 +138,24 @@ fn find(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use skwir_core::op::EntryRef;
 
+    /// Past what is held of a file's start, the search reads on through
+    /// the file, across its chunks.
     #[test]
     fn search_crosses_chunks_and_cancels() {
         let tmp = tempfile::NamedTempFile::new().unwrap();
         let mut data = vec![0; 65537];
         data.extend(b"needle");
         std::fs::write(tmp.path(), data).unwrap();
+        let held = Arc::new(Held::open(tmp.path(), skwir_core::preview::WHOLE).unwrap());
+        assert!(held.held_whole().is_none(), "only its start is held");
         assert_eq!(
-            find(tmp.path(), b"needle", 0, &CancelToken::new()).unwrap(),
+            find(&held, b"needle", 0, &CancelToken::new()).unwrap(),
             Some(65537)
         );
         let c = CancelToken::new();
         c.cancel();
-        assert!(find(tmp.path(), b"x", 0, &c).is_err());
+        assert!(find(&held, b"x", 0, &c).is_err());
     }
 
     #[test]
@@ -166,22 +171,15 @@ mod tests {
     #[test]
     fn repeated_search_resumes_after_the_previous_match() {
         let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("Synthetic bytes.bin");
+        let path = tmp.path().join("gone/Synthetic bytes.bin");
         let mut bytes = vec![0u8; 9000];
         // Two occurrences on the same row, then one on a later page.
         bytes[100..106].copy_from_slice(b"needle");
         bytes[108..114].copy_from_slice(b"needle");
         bytes[8000..8006].copy_from_slice(b"needle");
-        std::fs::write(&path, &bytes).unwrap();
-        let request = PreviewRequest {
-            entry: EntryRef::from_path(&path).unwrap(),
-            mime: Some("application/octet-stream".into()),
-            page: 1,
-            seconds: None,
-            max_side: 64,
-            text_size: None,
-            fit: None,
-        };
+        // Held for a path that leads nowhere: pages and searches read what
+        // the preview holds (ADR-101).
+        let request = PreviewRequest::holding(path, bytes, Some("application/octet-stream"));
         let cancel = CancelToken::new();
         let search = |offset: u64| {
             Provider

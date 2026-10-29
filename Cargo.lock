@@ -7380,6 +7380,7 @@ dependencies = [
  "djvu-rs",
  "embed-resource",
  "flate2",
+ "parking_lot",
  "proptest",
  "resvg",
  "rustix",

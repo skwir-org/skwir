@@ -5,11 +5,11 @@
 //! start-up per picture and often is not installed; nothing here needs it.
 //! Only the container's metadata segment is parsed, never the pixels, and the
 //! facts are bounded like every other detail.
-use std::path::Path;
 
 use exif::{Exif, In, Tag, Value};
 use skwir_core::geo::LatLon;
 use skwir_core::inspection::Detail;
+use skwir_core::preview::FileSource;
 
 use crate::inspection::{detail, limits};
 
@@ -21,9 +21,9 @@ const TIFF_HEAD: u64 = 1 << 20;
 /// not it: the reader's own way read a raw file whole, every chunk of a
 /// PNG and a JPEG's scan to its end, up to 16 MB a picture (a first map
 /// of a thousand raw files read 16 GB).
-fn metadata(path: &Path) -> Option<Exif> {
+fn metadata<S: FileSource + ?Sized>(source: &S) -> Option<Exif> {
     use std::io::{Read, Seek, SeekFrom};
-    let mut file = crate::file::open_regular(path).ok()?;
+    let mut file = source.open_reader().ok()?;
     let mut head = [0u8; 8];
     let read = file.read(&mut head).ok()?;
     let head = &head[..read];
@@ -129,9 +129,9 @@ fn jpeg_head(
 /// seeking from segment to segment: a document's photos were each read
 /// 256 KB to learn their size. `None` for another format, or one whose
 /// header is not found that way.
-pub fn jpeg_size(path: &Path) -> Option<(u32, u32)> {
+pub fn jpeg_size<S: FileSource + ?Sized>(source: &S) -> Option<(u32, u32)> {
     use std::io::Read;
-    let mut file = crate::file::open_regular(path).ok()?;
+    let mut file = source.open_reader().ok()?;
     let mut soi = [0u8; 2];
     file.read_exact(&mut soi).ok()?;
     if soi != [0xFF, 0xD8] {
@@ -183,15 +183,15 @@ fn png_exif(file: &mut (impl std::io::Read + std::io::Seek)) -> Option<Vec<u8>> 
 }
 
 /// The facts worth a row, in the order they are shown.
-pub fn details(path: &Path) -> Vec<Detail> {
-    metadata(path).map(|exif| read(&exif)).unwrap_or_default()
+pub fn details<S: FileSource + ?Sized>(source: &S) -> Vec<Detail> {
+    metadata(source).map(|exif| read(&exif)).unwrap_or_default()
 }
 
 /// The picture's own width and height as its camera wrote them, for a
 /// picture whose pixels are read by another program. Before any turn: the
 /// caller knows which way what it was given stands.
-pub fn dimensions(path: &Path) -> Option<(u32, u32)> {
-    let exif = metadata(path)?;
+pub fn dimensions<S: FileSource + ?Sized>(source: &S) -> Option<(u32, u32)> {
+    let exif = metadata(source)?;
     let length = |tag| {
         exif.get_field(tag, In::PRIMARY)?
             .value
@@ -213,8 +213,8 @@ pub struct Taken {
 }
 
 /// Where and when the picture was taken, from one read of its metadata.
-pub fn taken(path: &Path) -> Taken {
-    metadata(path).map_or_else(Taken::default, |exif| Taken {
+pub fn taken<S: FileSource + ?Sized>(source: &S) -> Taken {
+    metadata(source).map_or_else(Taken::default, |exif| Taken {
         at: located(&exif),
         clock: text(&exif, Tag::DateTimeOriginal)
             .or_else(|| text(&exif, Tag::DateTime))
@@ -378,7 +378,7 @@ mod tests {
     /// what follows it.
     #[test]
     fn the_metadata_is_found_in_each_container() {
-        let camera = |path: &Path| {
+        let camera = |path: &std::path::Path| {
             metadata(path).map(|exif| {
                 read(&exif)
                     .into_iter()

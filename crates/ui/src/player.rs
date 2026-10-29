@@ -653,6 +653,7 @@ impl Shell {
                             max_side: 0,
                             text_size: None,
                             fit: None,
+                            held: skwir_core::preview::HeldSlot::default(),
                         };
                         previews.open_media(&request, &lifetime, wake.clone())
                     });
@@ -724,6 +725,7 @@ impl Shell {
                         max_side: 512,
                         text_size: None,
                         fit: None,
+                        held: skwir_core::preview::HeldSlot::default(),
                     };
                     let image = previews.render(&request, &job).ok()??.image;
                     let picture =

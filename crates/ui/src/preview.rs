@@ -8,7 +8,7 @@ use std::time::SystemTime;
 
 use skwir_core::inspection::TooLarge;
 use skwir_core::op::EntryRef;
-use skwir_core::preview::{PreviewInfo, PreviewRequest};
+use skwir_core::preview::{Held, HeldSlot, PreviewInfo, PreviewRequest, WHOLE, WHOLE_FULL};
 use skwir_core::workspace::PaneId;
 use skwir_platform::inspection::limits::Bounds;
 use std::sync::Arc;
@@ -27,7 +27,6 @@ use crate::keymap;
 use crate::shell::Shell;
 use crate::theme::Theme;
 
-const TEXT_LIMIT: usize = 64 * 1024;
 /// The text size a book is read at before the reader changes it, in pixels.
 pub(crate) const TEXT_SIZE: f32 = 16.;
 /// The zoom range of a picture or a page, as a share of its pixels. The
@@ -539,6 +538,9 @@ pub struct PreviewState {
     pub(crate) generation: u64,
     key: Option<PreviewKey>,
     version: Option<Version>,
+    /// What is read of the file shown, as it was at its time modified
+    /// (ADR-101): every request about it shares the slot.
+    held: Option<(EntryRef, Option<SystemTime>, HeldSlot)>,
     /// The request in flight reads the shown file again after it changed:
     /// what it brings keeps the folds, the selection and the place.
     pub(crate) refresh: bool,
@@ -848,6 +850,7 @@ impl Default for PreviewState {
             generation: 0,
             key: None,
             version: None,
+            held: None,
             refresh: false,
             page: 1,
             seconds: None,
@@ -927,6 +930,67 @@ impl Default for PreviewState {
 }
 
 impl PreviewState {
+    /// What is read of `content`, the file to show, as it is at `modified`
+    /// (ADR-101): the same file at the same version keeps what was read;
+    /// the file shown before is kept a minute (`held_before`) and taken
+    /// back if it is this one. Under Full preview (`whole`) the file is
+    /// kept whole up to `WHOLE_FULL`, alone. A remote's file is copied for
+    /// a program into `scratch`, the preview's own folder.
+    fn held_for(
+        &mut self,
+        content: &EntryRef,
+        modified: Option<SystemTime>,
+        whole: bool,
+        scratch: PathBuf,
+    ) -> HeldSlot {
+        let keeps = if whole { WHOLE_FULL } else { WHOLE };
+        if let Some((entry, at, slot)) = &self.held
+            && entry == content
+            && *at == modified
+            && slot.keeps() == keeps
+        {
+            return slot.clone();
+        }
+        // The one asked for is taken back before the one left is kept in
+        // its place: flipping between two keeps both.
+        let back = crate::held_before::take(content, modified);
+        if let Some((entry, at, slot)) = self.held.take()
+            && let Some(held) = slot.get()
+            && !(entry == *content && at == modified)
+        {
+            crate::held_before::keep(entry, at, held);
+        }
+        if whole {
+            crate::held_before::let_go();
+        }
+        let slot = match back {
+            Some(held) if held.keeps() == keeps => HeldSlot::holding(content.clone(), held),
+            _ => HeldSlot::copying(keeps, Some(scratch)),
+        };
+        self.held = Some((content.clone(), modified, slot.clone()));
+        slot
+    }
+
+    /// Let go of what was read of the files shown (ADR-101): the panel
+    /// shows nothing. Moving to another file keeps the one left
+    /// (`held_for`).
+    fn let_go_of_held(&mut self) {
+        if self.held.take().is_some() {
+            crate::held_before::let_go();
+        }
+    }
+
+    /// The slot of the file shown, for another request about `entry`
+    /// (a picture asked for later, a sharper poster): shared when it is
+    /// that file.
+    pub(crate) fn held_of(&self, entry: &EntryRef) -> HeldSlot {
+        self.held
+            .as_ref()
+            .filter(|(shown, ..)| shown == entry)
+            .map(|(.., slot)| slot.clone())
+            .unwrap_or_default()
+    }
+
     /// The file the panel is showing, when it is a file on disk. Links inside
     /// a document are relative to it.
     pub fn path(&self) -> Option<&Path> {
@@ -992,6 +1056,7 @@ impl PreviewState {
                 (member.entry.clone(), member.mime.clone())
             }
         };
+        let held = self.held_of(&entry);
         Some(PreviewRequest {
             entry,
             mime,
@@ -1000,6 +1065,7 @@ impl PreviewState {
             max_side: 0,
             text_size: None,
             fit: None,
+            held,
         })
     }
 
@@ -1119,7 +1185,6 @@ impl Turn {
 pub(crate) fn media_picture(
     previews: &skwir_core::preview::Previews,
     request: &PreviewRequest,
-    path: &Path,
     cancel: &CancelToken,
 ) -> anyhow::Result<PreviewContent> {
     let preview = previews
@@ -1141,7 +1206,10 @@ pub(crate) fn media_picture(
         document: None,
         // Where it was recorded, which Properties shows beside what the
         // player says.
-        facts: skwir_platform::mp4::details(path),
+        facts: request
+            .held()
+            .map(|held| skwir_platform::mp4::details(&held))
+            .unwrap_or_default(),
         pixels: Pixels::Own,
         ink: crate::backdrop::ink(&preview.image.rgba),
     })
@@ -1164,20 +1232,20 @@ fn opens_as_pages(shell: &Shell) -> bool {
 
 /// An image's own size, from its header, turned as it is shown; a
 /// drawing's, from its document.
-fn image_size(path: &Path, mime: &str, cancel: &CancelToken) -> Option<(u32, u32)> {
+fn image_size(held: &Arc<Held>, mime: &str, cancel: &CancelToken) -> Option<(u32, u32)> {
     use skwir_platform::inspection;
     if skwir_platform::thumb_providers::is_drawing(mime) {
-        let bytes = inspection::read_drawing(path, Bounds::QUICK, cancel).ok()?;
+        let bytes = inspection::read_drawing(held, Bounds::QUICK, cancel).ok()?;
         return inspection::drawing_size(&bytes).ok();
     }
-    skwir_platform::picture::size(skwir_platform::picture::open(path).ok()?).ok()
+    skwir_platform::picture::size(skwir_platform::picture::open(held).ok()?).ok()
 }
 
 /// An image decoded at most `side` pixels on its longer side (at least the
 /// display side, `IMAGE_MAX_SIDE`; a zoom asks for more), with its own size,
 /// what 100% is, as its width and height, if its pixels are within `bounds`.
 fn decode_image(
-    path: &Path,
+    held: &Arc<Held>,
     side: u32,
     bounds: Bounds,
     turn: Turn,
@@ -1187,7 +1255,7 @@ fn decode_image(
         IMAGE_MAX_SIDE,
         skwir_platform::inspection::limits::PICTURE_SIDE,
     );
-    let reader = || skwir_platform::picture::open(path);
+    let reader = || skwir_platform::picture::open(held);
     let (w, h) = skwir_platform::picture::size(reader()?)?;
     if u64::from(w) * u64::from(h) > bounds.picture_pixels() {
         return Err(bounds.refuse(format!(
@@ -1215,7 +1283,7 @@ fn decode_image(
         height: h,
         detail: None,
         document: None,
-        facts: skwir_platform::exif::details(path),
+        facts: skwir_platform::exif::details(held),
         pixels: Pixels::Own,
         ink,
     })
@@ -1225,13 +1293,13 @@ fn decode_image(
 /// for `side` pixels (a zoom, a high-density panel), at that; its own size
 /// is what 100% is. Its file is read within `bounds`.
 fn decode_drawing(
-    path: &Path,
+    held: &Arc<Held>,
     side: u32,
     bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<PreviewContent> {
     use skwir_platform::inspection;
-    let bytes = inspection::read_drawing(path, bounds, cancel)?;
+    let bytes = inspection::read_drawing(held, bounds, cancel)?;
     let decoded = inspection::drawing(&bytes, (side > 0).then_some(side))?;
     if cancel.is_cancelled() {
         anyhow::bail!("cancelled");
@@ -1309,40 +1377,48 @@ impl TurnedTypes {
 /// only where the file is text, as for any file shown as text: otherwise
 /// `view.source` is cleared and nothing is answered, for the file to be
 /// asked again as it shows without its source. A provider that fails on a
-/// file that is text leaves its source instead (`source_instead`). `path`
-/// is the file's own, which its source is read from, though a plugin from
-/// outside converted what `request` names.
+/// file that is text leaves its source instead (`source_instead`). `own`
+/// asks about the file's own, which its source is read from, though a
+/// plugin from outside converted what `request` names.
 pub fn inspect_shown(
     previews: &skwir_core::preview::Previews,
     request: &PreviewRequest,
     view: &mut skwir_core::inspection::InspectRequest,
-    path: &Path,
+    own: &PreviewRequest,
     remembered: bool,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<skwir_core::inspection::Inspection>> {
     let found = match previews.inspect(request, view, cancel) {
         Ok(found) => found,
-        Err(error) => return source_instead(view, path, error, cancel).map(Some),
+        Err(error) => return source_instead(view, own, error, cancel).map(Some),
     };
     if found.is_some() || !view.source {
         return Ok(found);
     }
-    if remembered && !read_head(path).is_ok_and(|head| skwir_platform::inspection::is_text(&head)) {
+    if remembered && !is_text(own) {
         view.source = false;
         return Ok(None);
     }
-    skwir_platform::inspection::source(path, cancel).map(Some)
+    skwir_platform::inspection::source(&own.held()?, cancel).map(Some)
 }
 
-/// An inspection as the panel shows it, of the file at `path`, answering
-/// `request` and `view`, its Source kept by `typed`.
+/// Whether the file `request` asks about is text, by its first bytes,
+/// whatever its name declared.
+fn is_text(request: &PreviewRequest) -> bool {
+    request
+        .held()
+        .is_ok_and(|held| skwir_platform::inspection::is_text(held.head()))
+}
+
+/// An inspection as the panel shows it, of the file `own` asks about,
+/// answering `request` and `view`, its Source kept by `typed`.
 fn inspected(
     data: skwir_core::inspection::Inspection,
     code: &crate::code_preview::CodeTheme,
     request: &PreviewRequest,
     view: &skwir_core::inspection::InspectRequest,
     typed: Option<String>,
-    path: &Path,
+    own: &PreviewRequest,
 ) -> PreviewContent {
     let mut display = crate::inspector::Display::new(data, code);
     // Its pictures for later are asked for as it was.
@@ -1350,7 +1426,7 @@ fn inspected(
     display.typed = typed;
     // Bytes are shown whole: as many rows as the file holds (`bytes_view`).
     if display.data.kind == skwir_core::inspection::InspectionKind::Hex {
-        display.bytes = std::fs::metadata(path).ok().map(|m| m.len());
+        display.bytes = own.held().ok().map(|held| held.len());
     }
     PreviewContent::Inspection(display)
 }
@@ -1366,18 +1442,18 @@ fn inspected(
 /// (`inspection::TooLarge`).
 pub fn source_instead(
     view: &skwir_core::inspection::InspectRequest,
-    path: &Path,
+    own: &PreviewRequest,
     error: anyhow::Error,
     cancel: &CancelToken,
 ) -> anyhow::Result<skwir_core::inspection::Inspection> {
-    if view.provider.is_some()
-        || view.target.is_some()
-        || cancel.is_cancelled()
-        || !read_head(path).is_ok_and(|head| skwir_platform::inspection::is_text(&head))
-    {
+    if view.provider.is_some() || view.target.is_some() || cancel.is_cancelled() || !is_text(own) {
         return Err(error);
     }
-    let Ok(mut data) = skwir_platform::inspection::source(path, cancel) else {
+    let Ok(mut data) = own
+        .held()
+        .map_err(anyhow::Error::from)
+        .and_then(|held| skwir_platform::inspection::source(&held, cancel))
+    else {
         return Err(error);
     };
     data.notice = std::iter::once(format!("Shown as written: {error:#}"))
@@ -1403,10 +1479,9 @@ fn failure_content(error: &anyhow::Error) -> PreviewContent {
 /// drawing), so that its source is another way of looking at it: its type
 /// descends from text (`mime::Kind::Text`), and so do its bytes. Only such
 /// a type's file is read.
-fn picture_written(mime: &str, path: &Path) -> bool {
+fn picture_written(mime: &str, own: &PreviewRequest) -> bool {
     use skwir_platform::mime::{Kind, Mime, is_kind};
-    is_kind(&Mime(mime.to_owned()), Kind::Text)
-        && read_head(path).is_ok_and(|head| skwir_platform::inspection::is_text(&head))
+    is_kind(&Mime(mime.to_owned()), Kind::Text) && is_text(own)
 }
 
 /// Where this process keeps the members it extracted: in the one deletable
@@ -1482,6 +1557,7 @@ fn extract_member(
 }
 
 fn compute(
+    request: &PreviewRequest,
     path: &Path,
     is_dir: bool,
     mime: Option<&str>,
@@ -1506,52 +1582,35 @@ fn compute(
             Err(e) => PreviewContent::Error(e.to_string()),
         };
     }
+    let held = match request.held() {
+        Ok(held) => held,
+        Err(e) => return PreviewContent::Error(e.to_string()),
+    };
     let top = mime.and_then(|m| m.split('/').next()).unwrap_or("");
     if mime.is_some_and(skwir_platform::thumb_providers::is_drawing) {
-        return decode_drawing(path, picture_side, bounds, cancel)
+        return decode_drawing(&held, picture_side, bounds, cancel)
             .unwrap_or_else(|e| failure_content(&e));
     }
     if top == "image" {
-        return decode_image(path, picture_side, bounds, Turn::Shown, cancel)
+        return decode_image(&held, picture_side, bounds, Turn::Shown, cancel)
             .unwrap_or_else(|e| failure_content(&e));
     }
     if top == "video" || mime == Some("application/pdf") {
         return PreviewContent::Generic;
     }
-    let head = match read_head(path) {
-        Ok(h) => h,
-        Err(e) => return PreviewContent::Error(e.to_string()),
-    };
     // Whatever the name declared, the bytes decide, by the same rule that
     // names an unknown file's bytes (`mime::by_content`): a `.txt` holding
     // NULs is not text, and a PEM key named like a Keynote file is, as is
     // one written in a legacy code page or UTF-16, which `plain` decodes.
-    if skwir_platform::inspection::is_text(&head) {
+    if skwir_platform::inspection::is_text(held.head()) {
         // Every text file is read the way structured code is: a gutter,
         // selection, find and copy. There is no second, poorer text view.
-        return match skwir_platform::inspection::plain(path, cancel) {
+        return match skwir_platform::inspection::plain(&held, cancel) {
             Ok(data) => PreviewContent::Inspection(crate::inspector::Display::new(data, code)),
             Err(error) => failure_content(&error),
         };
     }
     PreviewContent::Generic
-}
-
-fn read_head(path: &Path) -> std::io::Result<Vec<u8>> {
-    use std::io::Read;
-    // Never a pipe's open, which waits for a writer.
-    let mut f = skwir_platform::file::open_regular(path)?;
-    let mut buf = vec![0u8; TEXT_LIMIT];
-    let mut n = 0;
-    while n < TEXT_LIMIT {
-        let k = f.read(&mut buf[n..])?;
-        if k == 0 {
-            break;
-        }
-        n += k;
-    }
-    buf.truncate(n);
-    Ok(buf)
 }
 
 impl Shell {
@@ -1668,6 +1727,7 @@ impl Shell {
             if self.preview.key.is_some() {
                 self.cancel_preview(window, cx);
             }
+            self.preview.let_go_of_held();
             if let Some(count) = self.preview.count.take() {
                 count.cancel.cancel();
             }
@@ -1708,6 +1768,7 @@ impl Shell {
         let Some((seen, key, version, entry)) = current else {
             self.exit_fullscreen(window, cx);
             self.cancel_preview(window, cx);
+            self.preview.let_go_of_held();
             // Nothing shown, nothing counted: a search, Recent or the shelf
             // shows no Properties, and a count of the folder left goes.
             if let Some(count) = self.preview.count.take() {
@@ -2448,6 +2509,13 @@ impl Shell {
             self.app.wake();
             return;
         };
+        // What is read of the file, shared by every step (ADR-101).
+        let held = self.preview.held_for(
+            &content,
+            version.modified,
+            self.preview.inspection.request.whole,
+            members_dir(self.app.cache.root()),
+        );
         let request = PreviewRequest {
             entry: content,
             mime: self.preview.info.mime.clone(),
@@ -2456,6 +2524,7 @@ impl Shell {
             max_side: IMAGE_MAX_SIDE,
             text_size: self.preview.text_size,
             fit: None,
+            held,
         };
         let mut inspection = self.preview.inspection.request.clone();
         // A window that draws meshes turns a model (ADR-067).
@@ -2547,8 +2616,7 @@ impl Shell {
                 // Whether the entry itself is shown, not a member of it.
                 let own = nested.is_none() && descend.is_none();
                 let source = |member: &Nested, request: &mut PreviewRequest, path: &mut PathBuf| {
-                    request.entry = member.entry.clone();
-                    request.mime.clone_from(&member.mime);
+                    request.retarget(member.entry.clone(), member.mime.clone());
                     path.clone_from(&member.path);
                 };
                 if let Some(member) = &nested {
@@ -2579,9 +2647,13 @@ impl Shell {
                 // `application/octet-stream` request means binary bytes. A
                 // member went down into was identified when extracted.
                 if !is_dir && (request.mime.is_none() || (own && unsettled.is_some())) {
+                    let held = match request.held() {
+                        Ok(held) => held,
+                        Err(error) => return fail(error.into()),
+                    };
                     request.mime = match unsettled.as_deref().filter(|_| own) {
-                        Some(name) => skwir_platform::mime::identify(name, &path),
-                        None => skwir_platform::mime::by_content(&path),
+                        Some(name) => skwir_platform::mime::identify(name, &held),
+                        None => skwir_platform::mime::by_content(&held),
                     }
                     .map(|m| m.to_string());
                     sniffed.replace(request.mime.clone());
@@ -2610,7 +2682,7 @@ impl Shell {
                 }
                 // The file's own: what its source and its bytes are read
                 // from, whatever a plugin from outside converts it to.
-                let own_path = path.clone();
+                let own_request = request.clone();
                 // Asked again, once, without the source its type asked for,
                 // when this file has none.
                 if !is_dir {
@@ -2627,8 +2699,7 @@ impl Shell {
                                     let Some(entry) = EntryRef::from_path(&made.path) else {
                                         return fail(anyhow::anyhow!("The converted file is gone"));
                                     };
-                                    request.entry = entry;
-                                    request.mime = made.mime;
+                                    request.retarget(entry, made.mime);
                                     path = made.path;
                                     closed_links.replace(made.closed_links);
                                 }
@@ -2637,7 +2708,7 @@ impl Shell {
                                 // that failed.
                                 Err(error) => {
                                     failed = Some(
-                                        source_instead(&inspection, &own_path, error, &cancel)
+                                        source_instead(&inspection, &own_request, error, &cancel)
                                             .map(Some),
                                     );
                                 }
@@ -2648,15 +2719,21 @@ impl Shell {
                                 &previews,
                                 &request,
                                 &mut inspection,
-                                &own_path,
+                                &own_request,
                                 remembered,
                                 &cancel,
                             )
                         });
                         match shown {
                             Ok(Some(data)) => {
-                                let display =
-                                    inspected(data, &code, &request, &inspection, typed, &own_path);
+                                let display = inspected(
+                                    data,
+                                    &code,
+                                    &request,
+                                    &inspection,
+                                    typed,
+                                    &own_request,
+                                );
                                 return send(display, true, None, None);
                             }
                             Err(error) => return fail(error),
@@ -2687,7 +2764,7 @@ impl Shell {
                             .mime
                             .as_deref()
                             .filter(|mime| mime.starts_with("image/"))
-                            .and_then(|mime| image_size(&path, mime, &cancel))
+                            .and_then(|mime| image_size(&request.held().ok()?, mime, &cancel))
                             .unwrap_or_else(|| {
                                 let scale = f64::from(IMAGE_MAX_SIDE)
                                     / f64::from(image.width.max(image.height).max(1));
@@ -2741,8 +2818,15 @@ impl Shell {
                 // A presentation that fails from here on, of a file that is
                 // text, leaves its source (`source_instead`).
                 let instead = |error: anyhow::Error| {
-                    source_instead(&inspection, &own_path, error, &cancel).map(|data| {
-                        inspected(data, &code, &request, &inspection, typed.clone(), &own_path)
+                    source_instead(&inspection, &own_request, error, &cancel).map(|data| {
+                        inspected(
+                            data,
+                            &code,
+                            &request,
+                            &inspection,
+                            typed.clone(),
+                            &own_request,
+                        )
                     })
                 };
                 let failed = |error: anyhow::Error| match instead(error) {
@@ -2764,7 +2848,7 @@ impl Shell {
                     let sniffed_now = sniffed.borrow().clone();
                     return std::thread::scope(|scope| {
                         let picture = scope.spawn(|| {
-                            match media_picture(&previews, &asked, &path, &picture_cancel) {
+                            match media_picture(&previews, &asked, &picture_cancel) {
                                 Ok(content) => {
                                     if !cancel.is_cancelled() {
                                         let _ = tx.send(PreviewResult {
@@ -2888,7 +2972,10 @@ impl Shell {
                                 height,
                                 detail: None,
                                 document: None,
-                                facts: skwir_platform::exif::details(&path),
+                                facts: request
+                                    .held()
+                                    .map(|held| skwir_platform::exif::details(&held))
+                                    .unwrap_or_default(),
                                 pixels: Pixels::Drawn,
                                 ink: crate::backdrop::ink(&preview.image.rgba),
                             },
@@ -2906,6 +2993,7 @@ impl Shell {
                         None => PreviewContent::Error("Invalid preview image".into()),
                     },
                     Ok(None) => compute(
+                        &request,
                         &path,
                         is_dir,
                         request.mime.as_deref(),
@@ -2929,7 +3017,7 @@ impl Shell {
                         picture_source.replace(
                             typed
                                 .as_deref()
-                                .filter(|typed| picture_written(typed, &own_path))
+                                .filter(|typed| picture_written(typed, &own_request))
                                 .map(str::to_owned),
                         );
                         content
@@ -3025,6 +3113,7 @@ impl Shell {
             max_side: IMAGE_MAX_SIDE,
             text_size: None,
             fit: None,
+            held: HeldSlot::default(),
         };
         let slot = Arc::new(parking_lot::Mutex::new(AheadSlot::Asking));
         let previews = Arc::clone(&self.app.previews);
@@ -3055,13 +3144,17 @@ impl Shell {
                     return;
                 }
                 // As `compute` decodes it, in the turn of what is read ahead.
-                let path = &request.entry.path;
-                let content = if skwir_platform::thumb_providers::is_drawing(&mime) {
-                    decode_drawing(path, side, Bounds::QUICK, &token)
-                } else {
-                    decode_image(path, side, Bounds::QUICK, Turn::Ahead, &token)
-                }
-                .unwrap_or_else(|error| failure_content(&error));
+                let content = request
+                    .held()
+                    .map_err(anyhow::Error::from)
+                    .and_then(|held| {
+                        if skwir_platform::thumb_providers::is_drawing(&mime) {
+                            decode_drawing(&held, side, Bounds::QUICK, &token)
+                        } else {
+                            decode_image(&held, side, Bounds::QUICK, Turn::Ahead, &token)
+                        }
+                    })
+                    .unwrap_or_else(|error| failure_content(&error));
                 if token.is_cancelled() {
                     return;
                 }
@@ -3433,6 +3526,18 @@ impl Shell {
         let Some((at, modified, size)) = self.preview.fields_for.clone() else {
             return;
         };
+        // A source that takes the entry's type waits for the preview to
+        // settle it from what it read (ADR-101), rather than read the file
+        // again to type it: asked at the next sync once it is.
+        let typed = self
+            .preview
+            .info
+            .identified
+            .then(|| self.preview.info.mime.clone())
+            .flatten();
+        if typed.is_none() && !entry.is_dir() && sources.iter().any(|source| source.typed) {
+            return;
+        }
         let asked = (at, modified, size, revision);
         if self.preview.sources_asked.as_ref() == Some(&asked) {
             return;
@@ -3469,7 +3574,8 @@ impl Shell {
                 let Some(app) = weak.upgrade() else {
                     return;
                 };
-                let rows = crate::properties::plugin_rows(&app, &sources, &target);
+                let rows =
+                    crate::properties::plugin_rows(&app, &sources, &target, typed.as_deref());
                 if tx.send((generation, rows)).is_ok() {
                     wake();
                 }
@@ -4320,6 +4426,7 @@ impl Shell {
         else {
             return;
         };
+        let held = self.preview.held_of(&entry);
         let request = skwir_core::preview::PreviewRequest {
             entry,
             mime: self.preview.info.mime.clone(),
@@ -4328,6 +4435,7 @@ impl Shell {
             max_side: side,
             text_size: None,
             fit: None,
+            held,
         };
         tracing::debug!(side, "draw the poster sharper");
         let previews = Arc::clone(&self.app.previews);
@@ -4337,10 +4445,7 @@ impl Shell {
             self.app.lifetime(),
             skwir_core::scheduler::Priority::Visible,
             "poster",
-            move |cancel| {
-                let path = request.entry.path.clone();
-                crate::preview::media_picture(&previews, &request, &path, cancel)
-            },
+            move |cancel| crate::preview::media_picture(&previews, &request, cancel),
         );
     }
 
@@ -5996,6 +6101,46 @@ mod tests {
     };
     use skwir_core::workspace::{PaneId, Selection};
 
+    /// A request about the file at `path`, as the panel makes one.
+    fn asked(path: &std::path::Path) -> super::PreviewRequest {
+        super::PreviewRequest {
+            entry: super::EntryRef::from_path(path).unwrap(),
+            mime: None,
+            page: 1,
+            seconds: None,
+            max_side: super::IMAGE_MAX_SIDE,
+            text_size: None,
+            fit: None,
+            held: super::HeldSlot::default(),
+        }
+    }
+
+    /// What a preview holds of the file at `path` (ADR-101).
+    fn held(path: &std::path::Path) -> std::sync::Arc<super::Held> {
+        std::sync::Arc::new(super::Held::open(path, super::WHOLE).unwrap())
+    }
+
+    #[test]
+    fn flipping_between_two_files_reads_neither_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let scratch = dir.path().join("scratch");
+        let (a, b) = (dir.path().join("l'été.txt"), dir.path().join("b c.txt"));
+        std::fs::write(&a, "one").unwrap();
+        std::fs::write(&b, "two").unwrap();
+        let mut state = super::PreviewState::default();
+        let mut shown = |path: &std::path::Path| {
+            let mut request = asked(path);
+            request.held = state.held_for(&request.entry, None, false, scratch.clone());
+            request.held().unwrap()
+        };
+        let (first_a, first_b) = (shown(&a), shown(&b));
+        // Each read again would be another `Held`: the one kept comes back.
+        assert!(std::sync::Arc::ptr_eq(&shown(&a), &first_a));
+        assert!(std::sync::Arc::ptr_eq(&shown(&b), &first_b));
+        assert!(std::sync::Arc::ptr_eq(&shown(&b), &first_b), "shown again");
+        assert!(std::sync::Arc::ptr_eq(&shown(&a), &first_a));
+    }
+
     /// Space tapped leaves peek open; held until the system repeats it, its
     /// release closes peek, unless peek was put to use meanwhile; another
     /// key's repeats hold nothing (ADR-066).
@@ -6125,13 +6270,13 @@ mod tests {
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>"#,
         )
         .unwrap();
-        assert!(picture_written("image/svg+xml", &drawing));
+        assert!(picture_written("image/svg+xml", &asked(&drawing)));
         // A type that is not text is never read for it.
-        assert!(!picture_written("image/png", &drawing));
+        assert!(!picture_written("image/png", &asked(&drawing)));
         // Bytes that are not text, whatever the name says.
         let packed = dir.path().join("Synthetic packed.svg");
         std::fs::write(&packed, b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\x03").unwrap();
-        assert!(!picture_written("image/svg+xml", &packed));
+        assert!(!picture_written("image/svg+xml", &asked(&packed)));
     }
 
     fn id(ino: u64) -> skwir_core::EntryId {
@@ -6230,6 +6375,7 @@ mod tests {
         let cancel = skwir_core::CancelToken::new();
         for (side, drawn) in [(0, 40), (1024, 1024)] {
             let content = compute(
+                &asked(&path),
                 &path,
                 false,
                 Some("image/svg+xml"),
@@ -6309,8 +6455,10 @@ mod tests {
             max_side: 1024,
             text_size: None,
             fit: None,
+            held: super::HeldSlot::default(),
         };
         let notice = |path: &Path, mime: Option<&str>| match compute(
+            &asked(path),
             path,
             false,
             mime,
@@ -6398,7 +6546,7 @@ mod tests {
         bmp.extend_from_slice(&[0; 24]);
         std::fs::write(&path, &bmp).unwrap();
         let error = super::decode_image(
-            &path,
+            &held(&path),
             0,
             Bounds::QUICK,
             super::Turn::Shown,
@@ -6426,7 +6574,7 @@ mod tests {
         });
         strip.save(&path).unwrap();
         let content = super::decode_image(
-            &path,
+            &held(&path),
             0,
             Bounds::QUICK,
             super::Turn::Ahead,

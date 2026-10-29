@@ -9,7 +9,7 @@ use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
-    preview::{PreviewProvider, PreviewRequest},
+    preview::{Held, PreviewProvider, PreviewRequest},
 };
 use skwir_platform::mime::Types;
 use skwir_platform::{inspection, inspection::limits::Bounds, rich_preview};
@@ -114,12 +114,12 @@ impl PreviewProvider for Provider {
         key: &str,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<skwir_core::thumbs::Image>> {
-        let path = req.entry.resolve()?;
+        let held = req.held()?;
         if key.starts_with(notebook::OUTPUT) && format_of(req) == Some(Format::Notebook) {
-            let notebook = notebook::read(&path, Bounds::of(view), cancel)?;
+            let notebook = notebook::read(&held, Bounds::of(view), cancel)?;
             return Ok(notebook::decoded(&notebook, key));
         }
-        let base = path.parent().unwrap_or(std::path::Path::new("."));
+        let base = held.path().parent().unwrap_or(std::path::Path::new("."));
         Ok(rich_preview::local_image(base, key, cancel))
     }
     fn inspect(
@@ -135,16 +135,17 @@ impl PreviewProvider for Provider {
         let Some(format) = format_of(req) else {
             return Ok(None);
         };
-        let path = req.entry.resolve()?;
+        let held = req.held()?;
         let bounds = Bounds::of(view);
         if format == Format::Notebook {
-            return notebook(&path, bounds, cancel).map(Some);
+            return notebook(&held, bounds, cancel).map(Some);
         }
-        let (source, encoding) = inspection::read_text(&path, bounds, cancel)?;
+        let (source, encoding) = inspection::read_text(&held, bounds, cancel)?;
+        let path = held.path();
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         let image = |href: &str| rich_preview::local_picture(base, href, cancel);
         let (title, page, notice) = if format == Format::Markdown {
-            let mut wiki = markdown::Wiki::new(&path);
+            let mut wiki = markdown::Wiki::new(path);
             let page = markdown::parse(&source, bounds, cancel, image, wiki.as_mut())?;
             ("Markdown", page, "")
         } else {
@@ -182,14 +183,10 @@ impl PreviewProvider for Provider {
 
 /// A notebook read as a document: its Markdown, its code and outputs, and
 /// its pictures beside it or drawn by its outputs.
-fn notebook(
-    path: &std::path::Path,
-    bounds: Bounds,
-    cancel: &CancelToken,
-) -> anyhow::Result<Inspection> {
-    let value = notebook::read(path, bounds, cancel)?;
+fn notebook(held: &Arc<Held>, bounds: Bounds, cancel: &CancelToken) -> anyhow::Result<Inspection> {
+    let value = notebook::read(held, bounds, cancel)?;
     let read = notebook::markdown(&value, bounds, cancel)?;
-    let base = path.parent().unwrap_or(std::path::Path::new("."));
+    let base = held.path().parent().unwrap_or(std::path::Path::new("."));
     let page = markdown::parse(
         &read.markdown,
         bounds,
@@ -246,6 +243,7 @@ mod tests {
                 max_side: 64,
                 text_size: None,
                 fit: None,
+                held: skwir_core::preview::HeldSlot::default(),
             })
         };
         assert!(format("a.md") == Some(Format::Markdown));
@@ -256,19 +254,12 @@ mod tests {
         assert!(format("a.txt").is_none());
     }
 
+    /// `bytes` read as a Markdown file named `name`, from what the preview
+    /// holds (ADR-101): its path leads nowhere, so a read of it fails.
     fn read_as(name: &str, bytes: &[u8], view: &InspectRequest) -> Option<Inspection> {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(name);
-        std::fs::write(&path, bytes).unwrap();
-        let request = PreviewRequest {
-            entry: skwir_core::op::EntryRef::from_path(&path).unwrap(),
-            mime: Some("text/markdown".into()),
-            page: 1,
-            seconds: None,
-            max_side: 64,
-            text_size: None,
-            fit: None,
-        };
+        let path = dir.path().join("gone").join(name);
+        let request = PreviewRequest::holding(path, bytes, Some("text/markdown"));
         Provider
             .inspect(&request, view, &CancelToken::new())
             .unwrap()
@@ -338,10 +329,15 @@ mod tests {
                 {"cell_type": "raw", "source": "not for reading"}
             ]
         });
+        // Held for a path that leads nowhere: the notebook and the plot it
+        // drew are read from what the preview holds (ADR-101).
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("a notebook’s name.ipynb");
-        std::fs::write(&path, document.to_string()).unwrap();
-        let data = notebook(&path, Bounds::QUICK, &CancelToken::new()).unwrap();
+        let request = PreviewRequest::holding(
+            dir.path().join("gone/a notebook’s name.ipynb"),
+            document.to_string().into_bytes(),
+            Some("application/x-ipynb+json"),
+        );
+        let data = notebook(&request.held().unwrap(), Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(data.blocks[0].heading, 1);
         assert_eq!(data.blocks[0].text, "Café results");
         let code: Vec<_> = data
@@ -378,15 +374,6 @@ mod tests {
                 _ => None,
             })
             .expect("the plot is named for later");
-        let request = PreviewRequest {
-            entry: skwir_core::op::EntryRef::from_path(&path).unwrap(),
-            mime: Some("application/x-ipynb+json".into()),
-            page: 1,
-            seconds: None,
-            max_side: 64,
-            text_size: None,
-            fit: None,
-        };
         let image = Provider
             .picture(
                 &request,

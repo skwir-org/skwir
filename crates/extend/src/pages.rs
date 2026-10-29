@@ -7,7 +7,6 @@
 //! apart, so a search reads the text of pages never drawn, and nothing
 //! is asked twice.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use serde_json::json;
@@ -17,6 +16,7 @@ use skwir_core::document::{
     Outline, PageContent, PixelOrder, Rect, SearchHit, TextChar, words,
 };
 use skwir_core::permissions::Capability;
+use skwir_core::preview::Held;
 use skwir_core::{CancelToken, FileId};
 use skwir_plugin_api::protocol::{OutlineEntry, PageAnswer, PageLink, PageParams, TextRun, method};
 
@@ -53,7 +53,9 @@ struct Contents {
 pub(crate) struct Pages {
     runner: Arc<Runner>,
     kept: CacheSlot,
-    path: PathBuf,
+    /// What the preview holds of the file (ADR-101), which every page's
+    /// call reads.
+    held: Arc<Held>,
     id: FileId,
     mime: Option<String>,
     info: DocumentInfo,
@@ -72,12 +74,12 @@ fn picture_kept(bytes: &[u8]) -> Option<((f32, f32), &[u8])> {
 }
 
 impl Pages {
-    /// The file of `path` (entry `id`) as pages: asked how many there are
+    /// The file `held` (entry `id`) as pages: asked how many there are
     /// and its outline. `None` when the plugin shows nothing of it.
     pub fn open(
         runner: Arc<Runner>,
         kept: CacheSlot,
-        path: PathBuf,
+        held: Arc<Held>,
         id: FileId,
         mime: Option<String>,
         cancel: &CancelToken,
@@ -92,7 +94,7 @@ impl Pages {
             runner,
             closed_links,
             kept,
-            path,
+            held,
             id,
             mime,
             info: DocumentInfo {
@@ -133,7 +135,7 @@ impl Pages {
     /// Where what the plugin made of this version of the file is kept:
     /// the file's version, the plugin's, and `what`.
     fn key(&self, what: &serde_json::Value) -> anyhow::Result<Vec<u8>> {
-        skwir_platform::preview::made_key(self.id, &self.path, self.runner.made_by(), what)
+        skwir_platform::preview::made_key(self.id, &self.held, self.runner.made_by(), what)
     }
 
     fn keep(&self, key: &[u8], value: &[u8]) {
@@ -152,7 +154,7 @@ impl Pages {
         text: bool,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<PageAnswer>> {
-        let call = Call::new(vec![self.path.clone()], self.runner.granted, cancel.clone());
+        let call = Call::holding(Arc::clone(&self.held), self.runner.granted, cancel.clone());
         let params = PageParams {
             file: call.describe(0, self.mime.clone()),
             page,
@@ -443,7 +445,7 @@ mod tests {
             Pages::open(
                 Arc::clone(&runner),
                 cache.namespace("three").within("pages"),
-                file.clone(),
+                Arc::new(Held::open(&file, skwir_core::preview::WHOLE).unwrap()),
                 id,
                 None,
                 &CancelToken::new(),
@@ -554,7 +556,7 @@ mod tests {
         let pages = Pages::open(
             runner,
             cache.namespace("endless").within("pages"),
-            file,
+            Arc::new(Held::open(&file, skwir_core::preview::WHOLE).unwrap()),
             id,
             None,
             &CancelToken::new(),

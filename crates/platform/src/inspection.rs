@@ -2,13 +2,10 @@
 use skwir_core::{
     CancelToken,
     inspection::{Block, Inspection, InspectionKind, Row},
+    preview::{FileSource, ReadSeek},
     thumbs::Image,
 };
-use std::{
-    borrow::Cow,
-    io::{Read, Seek, SeekFrom},
-    path::Path,
-};
+use std::{borrow::Cow, io::Read, path::Path};
 
 /// Every preview bound, in one place. Plugins and helpers name these instead
 /// of repeating literals, so a limit changes once and stays consistent across
@@ -318,11 +315,10 @@ pub fn check(cancel: &CancelToken) -> anyhow::Result<()> {
     anyhow::ensure!(!cancel.is_cancelled(), "preview cancelled");
     Ok(())
 }
-/// A regular file opened for a preview that streams it (a table, a byte
-/// search): through `file::open_regular`, so a named pipe fails instead of
-/// blocking the worker.
-pub fn open(path: &Path) -> anyhow::Result<std::fs::File> {
-    crate::file::open_regular(path).map_err(|error| {
+/// What a failed open says: a named pipe or a device is refused
+/// (`file::open_regular`) rather than blocking the worker.
+fn opened<T>(result: std::io::Result<T>) -> anyhow::Result<T> {
+    result.map_err(|error| {
         if error.kind() == std::io::ErrorKind::InvalidInput {
             anyhow::anyhow!("preview needs a regular file")
         } else {
@@ -330,18 +326,21 @@ pub fn open(path: &Path) -> anyhow::Result<std::fs::File> {
         }
     })
 }
-/// Up to `limit` bytes of a regular file from `offset`, opened by `open`.
-pub fn read(
-    path: &Path,
+/// A regular file read by a preview that streams it (a table, a byte
+/// search): what the preview holds of it (`preview::Held`, ADR-101), or
+/// its path opened through `file::open_regular`.
+pub fn open<S: FileSource + ?Sized>(file: &S) -> anyhow::Result<Box<dyn ReadSeek + Send>> {
+    opened(file.open_reader())
+}
+/// Up to `limit` bytes of a regular file from `offset`.
+pub fn read<S: FileSource + ?Sized>(
+    file: &S,
     offset: u64,
     limit: usize,
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<u8>> {
     check(cancel)?;
-    let mut file = open(path)?;
-    file.seek(SeekFrom::Start(offset))?;
-    let mut out = Vec::new();
-    file.take(limit as u64).read_to_end(&mut out)?;
+    let out = opened(file.read_range(offset, limit, cancel))?.into_owned();
     check(cancel)?;
     Ok(out)
 }
@@ -350,52 +349,44 @@ pub fn read(
 /// `what` in the message, so the panel offers Full preview while they are
 /// the quick ones. Its length is asked first: a file far past the bound is
 /// refused unread.
-pub fn read_within(
-    path: &Path,
+pub fn read_within<'a, S: FileSource + ?Sized>(
+    file: &'a S,
     limit: usize,
     bounds: limits::Bounds,
     what: &str,
     cancel: &CancelToken,
-) -> anyhow::Result<Vec<u8>> {
-    let refused = || {
+) -> anyhow::Result<Cow<'a, [u8]>> {
+    check(cancel)?;
+    let bytes = opened(file.read_whole(limit as u64, cancel))?;
+    check(cancel)?;
+    bytes.ok_or_else(|| {
         bounds.refuse(format!(
             "{what} exceeds {} preview limit",
             limits::describe(limit)
         ))
-    };
-    if std::fs::metadata(path).is_ok_and(|meta| meta.len() > limit as u64) {
-        return Err(refused());
-    }
-    let bytes = read(path, 0, limit + 1, cancel)?;
-    if bytes.len() > limit {
-        return Err(refused());
-    }
-    Ok(bytes)
+    })
 }
 /// A file read whole (a font, a message, a notebook) within `bounds`'
 /// `binary_input` (`read_within`).
-pub fn read_file(
-    path: &Path,
+pub fn read_file<'a, S: FileSource + ?Sized>(
+    file: &'a S,
     bounds: limits::Bounds,
     what: &str,
     cancel: &CancelToken,
-) -> anyhow::Result<Vec<u8>> {
-    read_within(path, bounds.binary_input(), bounds, what, cancel)
+) -> anyhow::Result<Cow<'a, [u8]>> {
+    read_within(file, bounds.binary_input(), bounds, what, cancel)
 }
 /// Read a whole file of at most `limit` bytes, or fail with `what` in the message.
-pub fn read_bounded(
-    path: &Path,
+pub fn read_bounded<'a, S: FileSource + ?Sized>(
+    file: &'a S,
     limit: usize,
     what: &str,
     cancel: &CancelToken,
-) -> anyhow::Result<Vec<u8>> {
-    let bytes = read(path, 0, limit + 1, cancel)?;
-    anyhow::ensure!(
-        bytes.len() <= limit,
-        "{what} exceeds {} preview limit",
-        limits::describe(limit)
-    );
-    Ok(bytes)
+) -> anyhow::Result<Cow<'a, [u8]>> {
+    check(cancel)?;
+    let bytes = opened(file.read_whole(limit as u64, cancel))?;
+    check(cancel)?;
+    bytes.ok_or_else(|| anyhow::anyhow!("{what} exceeds {} preview limit", limits::describe(limit)))
 }
 /// Copy at most `limit` bytes from a stream; more is an error, never a truncation.
 pub fn copy_bounded(
@@ -499,19 +490,22 @@ pub fn decode(bytes: &[u8]) -> (Cow<'_, str>, Encoding) {
 /// A whole text file parsed by a format (Markdown, tables, structured data),
 /// within `bounds`' `text_input` (`read_within`), decoded by `decode`, with
 /// the encoding it was read in.
-pub fn read_text(
-    path: &Path,
+pub fn read_text<S: FileSource + ?Sized>(
+    file: &S,
     bounds: limits::Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<(String, Encoding)> {
-    let bytes = read_within(path, bounds.text_input(), bounds, "Text", cancel)?;
+    let bytes = read_within(file, bounds.text_input(), bounds, "Text", cancel)?;
     let (text, encoding) = decode(&bytes);
     Ok((text.into_owned(), encoding))
 }
 /// A file's own text behind a rendered presentation: what any text file
 /// is (`plain`), with the switch back to the presentation.
-pub fn source(path: &Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
-    let mut data = plain(path, cancel)?;
+pub fn source(
+    held: &std::sync::Arc<skwir_core::preview::Held>,
+    cancel: &CancelToken,
+) -> anyhow::Result<Inspection> {
+    let mut data = plain(held, cancel)?;
     data.source_available = true;
     Ok(data)
 }
@@ -520,11 +514,15 @@ pub fn source(path: &Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
 /// shown (ADR-051): its first rows, and the file (`Inspection::text`) for
 /// the view to read on from. It is the same view as `source`, so every
 /// text file is read, searched and copied the same way.
-pub fn plain(path: &Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
+pub fn plain(
+    held: &std::sync::Arc<skwir_core::preview::Held>,
+    cancel: &CancelToken,
+) -> anyhow::Result<Inspection> {
     use crate::text_rows::{Form, STRIDE, origin, read};
-    let form = Form::read(path, cancel)?;
+    let form = Form::of(held.head());
     // One more than shown says whether there is more.
-    let mut rows = read(path, form, (0, origin(form)), 0..STRIDE + 1, cancel)?;
+    let mut rows = read(held, form, (0, origin(form)), 0..STRIDE + 1, cancel)?;
+    let path = held.path();
     let whole = rows.len() as u64 <= STRIDE;
     rows.truncate(STRIDE as usize);
     let language = path
@@ -554,6 +552,7 @@ pub fn plain(path: &Path, cancel: &CancelToken) -> anyhow::Result<Inspection> {
             path: path.to_path_buf(),
             language,
             whole,
+            held: Some(std::sync::Arc::clone(held)),
         }),
         ..Inspection::default()
     })
@@ -707,21 +706,22 @@ fn svg(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
 }
 /// A drawing file (SVG, or SVG compressed as `.svgz`) read whole, within
 /// `bounds`' `binary_input` before and after inflating.
-pub fn read_drawing(
-    path: &Path,
+pub fn read_drawing<'a, S: FileSource + ?Sized>(
+    file: &'a S,
     bounds: limits::Bounds,
     cancel: &CancelToken,
-) -> anyhow::Result<Vec<u8>> {
-    let bytes = read_file(path, bounds, "Drawing", cancel)?;
+) -> anyhow::Result<Cow<'a, [u8]>> {
+    let bytes = read_file(file, bounds, "Drawing", cancel)?;
     if bytes.starts_with(&[0x1f, 0x8b]) {
         // Larger inflated than read: refused as a larger file would be.
-        let inflated = flate2::read::GzDecoder::new(bytes.as_slice());
+        let inflated = flate2::read::GzDecoder::new(&bytes[..]);
         return copy_with(inflated, bounds.binary_input(), cancel, |limit| {
             bounds.refuse(format!(
                 "Drawing exceeds {} preview limit",
                 limits::describe(limit)
             ))
-        });
+        })
+        .map(Cow::Owned);
     }
     Ok(bytes)
 }
@@ -1089,6 +1089,13 @@ pub fn hex_page(title: String, page: &[u8], len: u64, offset: u64, position: u64
 mod tests {
     use super::*;
 
+    /// What a preview holds of the file at `path` (ADR-101).
+    fn held(path: &Path) -> std::sync::Arc<skwir_core::preview::Held> {
+        std::sync::Arc::new(
+            skwir_core::preview::Held::open(path, skwir_core::preview::WHOLE).unwrap(),
+        )
+    }
+
     #[test]
     fn xml_nested_past_the_parsers_reach_is_refused_before_parsing() {
         let deep = |n: usize| format!("{}x{}", "<a>".repeat(n), "</a>".repeat(n));
@@ -1271,7 +1278,7 @@ mod tests {
         let cancel = CancelToken::new();
         let path = dir.path().join("it's a café.rs");
         std::fs::write(&path, "fn main() {\r\n    let x = 1;\n}\n").unwrap();
-        let data = plain(&path, &cancel).unwrap();
+        let data = plain(&held(&path), &cancel).unwrap();
         assert_eq!(data.kind, InspectionKind::Code);
         assert_eq!(data.title, "3 lines");
         assert_eq!(data.blocks[0].text, "fn main() {");
@@ -1279,7 +1286,7 @@ mod tests {
         assert!(data.notice.is_empty() && !data.source_available);
         let file = data.text.unwrap();
         assert!(file.whole && file.path == path);
-        let shown = source(&path, &cancel).unwrap();
+        let shown = source(&held(&path), &cancel).unwrap();
         assert!(shown.source_available);
         assert_eq!(
             shown.title, "3 lines",
@@ -1290,7 +1297,7 @@ mod tests {
         let long = dir.path().join("Makefile");
         let line = "target: dependency # comment\n";
         std::fs::write(&long, line.repeat(1000)).unwrap();
-        let first = plain(&long, &cancel).unwrap();
+        let first = plain(&held(&long), &cancel).unwrap();
         assert_eq!(first.blocks[0].language.as_deref(), Some("Makefile"));
         assert_eq!(first.blocks.len() as u64, crate::text_rows::STRIDE);
         assert!(first.title.is_empty() && !first.text.unwrap().whole);
@@ -1299,7 +1306,7 @@ mod tests {
         // One endless line is rows of the code view, a line's number once.
         let minified = dir.path().join("app.min.js");
         std::fs::write(&minified, "x".repeat(limits::LINE_BYTES + 1)).unwrap();
-        let data = plain(&minified, &cancel).unwrap();
+        let data = plain(&held(&minified), &cancel).unwrap();
         assert_eq!((data.kind, data.blocks.len()), (InspectionKind::Code, 2));
         assert_eq!(data.title, "1 line");
     }
@@ -1340,7 +1347,7 @@ mod tests {
             read_text(&path, limits::Bounds::QUICK, &cancel).unwrap(),
             ("name;price\ncaf\u{e9};3\n".into(), Encoding::Windows1252)
         );
-        let data = plain(&path, &cancel).unwrap();
+        let data = plain(&held(&path), &cancel).unwrap();
         assert_eq!(data.blocks[1].text, "caf\u{e9};3");
         assert_eq!(data.notice, "Read as Windows-1252");
     }

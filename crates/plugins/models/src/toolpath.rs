@@ -5,10 +5,10 @@
 //! and its rapid moves faint. The file is read twice, as a stream: once for
 //! what it covers, once to draw; nothing but the picture is held.
 use skwir_core::CancelToken;
+use skwir_core::preview::FileSource;
 use skwir_core::thumbs::Image;
 use skwir_platform::inspection;
 use std::io::{BufRead, Read};
-use std::path::Path;
 use tiny_skia::{Color, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
 
 /// The largest program drawn; it is streamed, this bounds the time.
@@ -407,13 +407,13 @@ fn words(code: &str) -> Vec<(char, f64)> {
     out
 }
 
-/// Every segment of the program at `path`, fed to `sink`.
-fn read(
-    path: &Path,
+/// Every segment of the program `source` holds, fed to `sink`.
+fn read<S: FileSource + ?Sized>(
+    source: &S,
     cancel: &CancelToken,
     sink: &mut impl FnMut([f64; 3], [f64; 3], Move, Feature),
 ) -> anyhow::Result<bool> {
-    let file = inspection::open(path)?;
+    let file = inspection::open(source)?;
     let mut reader = std::io::BufReader::with_capacity(256 * 1024, file.take(BYTES));
     let mut machine = Machine::new();
     let mut line = Vec::new();
@@ -470,15 +470,19 @@ pub struct Drawn {
     pub details: Vec<(String, String)>,
 }
 
-/// The program at `path` drawn at most `side` pixels on its longer side;
-/// `None` when it moves nowhere worth drawing.
-pub fn draw(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Option<Drawn>> {
+/// The program `source` holds drawn at most `side` pixels on its longer
+/// side; `None` when it moves nowhere worth drawing.
+pub fn draw<S: FileSource + ?Sized>(
+    source: &S,
+    side: u32,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<Drawn>> {
     // First: what kind of program, and what its work covers.
     let mut extrusions = 0usize;
     let mut feeds = 0usize;
     let mut print = [f64::INFINITY, f64::NEG_INFINITY].map(|v| [v; 3]);
     let mut work = print;
-    let typed = read(path, cancel, &mut |from, to, kind, _| {
+    let typed = read(source, cancel, &mut |from, to, kind, _| {
         if let Move::Feed { extrudes } = kind {
             feeds += 1;
             grow(&mut work, from);
@@ -554,7 +558,7 @@ pub fn draw(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Opti
         cursor: None,
         width,
     };
-    read(path, cancel, &mut |from, to, how, feature| {
+    read(source, cancel, &mut |from, to, how, feature| {
         let (color, opacity) = match (kind, how) {
             (Kind::Print, Move::Feed { extrudes: true }) => {
                 if !across(from, to) {

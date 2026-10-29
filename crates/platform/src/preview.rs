@@ -107,16 +107,20 @@ fn key(base: &[u8], suffix: impl serde::Serialize) -> anyhow::Result<Vec<u8>> {
     Ok(serde_json::to_vec(&("preview-v1", base, suffix))?)
 }
 
-/// Where what `tool` made of `path` (entry `id`) is cached, `what` telling
-/// the products of one conversion apart: by the file's version and the
-/// tool's, so either changing makes it again.
+/// Where what `tool` made of the file `held` (entry `id`) is cached, `what`
+/// telling the products of one conversion apart: by the version of the
+/// file that was read (`Held::version`, never a second look at the path,
+/// which may have changed since) and the tool's, so either changing makes
+/// it again. A file whose number a mount made up is kept by its path and
+/// version alone (`FileId::lasts`).
 pub fn made_key(
     id: skwir_core::FileId,
-    path: &Path,
+    held: &skwir_core::preview::Held,
     tool: &Path,
     what: impl serde::Serialize,
 ) -> anyhow::Result<Vec<u8>> {
-    key(&fingerprint_of(id, path)?, (tool_stamp(tool)?, what))
+    let read = serde_json::to_vec(&(id.lasts().then_some(id), held.path(), held.version()))?;
+    key(&read, (tool_stamp(tool)?, what))
 }
 
 // A tiny JSON header followed by the compressed picture (PNG, or JPEG for a
@@ -390,11 +394,12 @@ impl DocumentPreviews {
     fn office_pdf(
         &self,
         req: &PreviewRequest,
-        source: &Path,
         office: &Path,
         scratch: &Path,
         cancel: &CancelToken,
     ) -> anyhow::Result<PathBuf> {
+        let held = req.held()?;
+        let source = held.path();
         let base = fingerprint(req, source)?;
         let conversion_key = conversion_key(&base, office)?;
         let pdf = scratch.join("document.pdf");
@@ -405,7 +410,15 @@ impl DocumentPreviews {
         {
             std::fs::write(&pdf, bytes)?;
         } else {
-            convert_office(office, source, scratch, "pdf", cancel)?;
+            // LibreOffice reads the file by its path: a remote's, as it was
+            // read once (ADR-101).
+            convert_office(
+                office,
+                &held.path_for_program(cancel)?,
+                scratch,
+                "pdf",
+                cancel,
+            )?;
             let bytes = read_artifact(&pdf).context(
                 "LibreOffice did not produce a PDF (the file may be encrypted or unsupported)",
             )?;
@@ -591,7 +604,10 @@ impl PreviewProvider for DocumentPreviews {
             "mupdf" => &[Engine::Mupdf],
             _ => &crate::document::AUTO,
         };
-        let source = req.entry.resolve()?;
+        // The reader's worker reads the file by its path: a remote's, as it
+        // was read once (ADR-101), so its jumps through it read this disk.
+        let held = req.held()?;
+        let source = held.path().to_path_buf();
         let base = fingerprint(req, &source)?;
         let available: Vec<Engine> = engines
             .iter()
@@ -609,7 +625,7 @@ impl PreviewProvider for DocumentPreviews {
             let office = process::required("libreoffice")?;
             let dir = tempfile::tempdir()?;
             let _gate = acquire(&self.gate, lifetime)?;
-            let pdf = self.office_pdf(req, &source, &office, dir.path(), lifetime)?;
+            let pdf = self.office_pdf(req, &office, dir.path(), lifetime)?;
             Some((dir, pdf))
         };
         for engine in available {
@@ -619,7 +635,7 @@ impl PreviewProvider for DocumentPreviews {
             // megabytes, is copied in with them).
             let scratch = crate::file::memory_dir("skwir-pages-")?;
             let pdf = match &converted {
-                None => source.clone(),
+                None => held.path_for_program(lifetime)?.into_owned(),
                 Some((_, converted)) => {
                     let pdf = scratch.path().join("document.pdf");
                     if std::fs::hard_link(converted, &pdf).is_err() {
@@ -710,10 +726,12 @@ impl PreviewProvider for DocumentPreviews {
             return Ok(preview);
         }
         let tmp = tempfile::tempdir()?;
+        // Read only past the cache: a remote's file as it was read once
+        // (ADR-101), for programs that read it by its path.
         let pdf = if let Some(office) = office {
-            self.office_pdf(req, &path, &office, tmp.path(), cancel)?
+            self.office_pdf(req, &office, tmp.path(), cancel)?
         } else {
-            path.clone()
+            req.held()?.path_for_program(cancel)?.into_owned()
         };
         let metadata_key = self::key(&base, ("pages", tool_stamp(&pdfinfo)?, &office_stamp))?;
         let pages = match document.as_ref() {
@@ -1029,6 +1047,7 @@ mod tests {
             max_side: 256,
             text_size: None,
             fit: None,
+            held: skwir_core::preview::HeldSlot::default(),
         }
     }
 

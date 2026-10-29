@@ -20,13 +20,12 @@ use skwir_core::{
     cache::CacheSlot,
     inspection::{InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
-    preview::{PreviewProvider, PreviewRequest},
+    preview::{Held, PreviewProvider, PreviewRequest},
 };
 use skwir_platform::inspection::{self, limits, limits::Bounds};
 use skwir_platform::preview::DocumentPreviews;
 use skwir_platform::rich_preview;
 use skwir_platform::thumb_providers::{OfficePages, PdfPages};
-use std::path::Path;
 use std::sync::Arc;
 
 const ID: &str = "documents";
@@ -248,23 +247,24 @@ struct Reading {
     cache: CacheSlot,
 }
 
-/// skwir's own reader for `path`, if it reads its format.
-fn builtin(path: &Path) -> Option<Engine> {
-    let engine = match inspection::extension(path).as_str() {
+/// skwir's own reader for the file `held`, if it reads its format: by its
+/// name, and its first bytes.
+fn builtin(held: &Arc<Held>) -> Option<Engine> {
+    let engine = match inspection::extension(held.path()).as_str() {
         "docx" | "docm" | "dotx" | "dotm" => Engine::Word,
         "odt" | "ott" => Engine::OpenDocument,
         _ => return None,
     };
-    package::is_zip(path).then_some(engine)
+    package::is_zip(held).then_some(engine)
 }
 
-/// Pandoc for `path`, if it is installed and reads its format.
-fn by_pandoc(path: &Path) -> Option<Engine> {
-    let format = pandoc::format_of(&inspection::extension(path))?;
+/// Pandoc for the file `held`, if it is installed and reads its format.
+fn by_pandoc(held: &Arc<Held>) -> Option<Engine> {
+    let format = pandoc::format_of(&inspection::extension(held.path()))?;
     let readable = if format == "rtf" {
-        inspection::read(path, 0, 5, &CancelToken::new()).is_ok_and(|head| head == b"{\\rtf")
+        held.head().starts_with(b"{\\rtf")
     } else {
-        package::is_zip(path)
+        package::is_zip(held)
     };
     if !readable {
         return None;
@@ -274,30 +274,30 @@ fn by_pandoc(path: &Path) -> Option<Engine> {
 }
 
 impl Reading {
-    /// What reads `path`: the choice when what it needs is there, else the
-    /// next that can; `None` leaves it to the pages.
-    fn engine(&self, path: &Path) -> Option<Engine> {
+    /// What reads the file `held`: the choice when what it needs is there,
+    /// else the next that can; `None` leaves it to the pages.
+    fn engine(&self, held: &Arc<Held>) -> Option<Engine> {
         match self.choice {
-            Choice::Pages if skwir_platform::preview::shown_as_pages(path, None) => None,
-            Choice::Pages | Choice::Reading => builtin(path).or_else(|| by_pandoc(path)),
-            Choice::Pandoc => by_pandoc(path).or_else(|| builtin(path)),
+            Choice::Pages if skwir_platform::preview::shown_as_pages(held.path(), None) => None,
+            Choice::Pages | Choice::Reading => builtin(held).or_else(|| by_pandoc(held)),
+            Choice::Pandoc => by_pandoc(held).or_else(|| builtin(held)),
         }
     }
 
-    /// Where Pandoc's picture `name` of `path` is kept.
+    /// Where Pandoc's picture `name` of the file `held` is kept.
     fn media_key(
         req: &PreviewRequest,
-        path: &Path,
+        held: &Held,
         tool: &Pandoc,
         name: &str,
     ) -> anyhow::Result<Vec<u8>> {
-        skwir_platform::preview::made_key(req.entry.id, path, &tool.path, ("pandoc-media", name))
+        skwir_platform::preview::made_key(req.entry.id, held, &tool.path, ("pandoc-media", name))
     }
 
     fn pandoc(
         &self,
         req: &PreviewRequest,
-        path: &Path,
+        held: &Arc<Held>,
         tool: &Pandoc,
         format: &str,
         bounds: Bounds,
@@ -308,7 +308,7 @@ impl Reading {
         // running Pandoc.
         let html_key = skwir_platform::preview::made_key(
             req.entry.id,
-            path,
+            held,
             &tool.path,
             (bounds.choose("pandoc-html", "pandoc-html-whole"), format),
         )?;
@@ -329,14 +329,15 @@ impl Reading {
             )
         } else {
             let work = tempfile::tempdir()?;
-            let (html, cut) = tool.convert(path, format, work.path(), bounds, cancel)?;
+            let source = held.path_for_program(cancel)?;
+            let (html, cut) = tool.convert(&source, format, work.path(), bounds, cancel)?;
             let mut kept = 0u64;
             let mut sizes = std::collections::HashMap::new();
             let keep = |name: &str, bytes: &[u8]| {
                 if let Some(size) = inspection::picture_size(bytes) {
                     sizes.insert(name.to_owned(), size);
                 }
-                if let Ok(key) = Self::media_key(req, path, tool, name)
+                if let Ok(key) = Self::media_key(req, held, tool, name)
                     && self.cache.put(&key, bytes).is_ok()
                 {
                     kept += bytes.len() as u64;
@@ -364,7 +365,7 @@ impl Reading {
             .filter(|b| b.note.is_none())
             .map(|b| b.text.split_whitespace().count())
             .sum();
-        let facts = about(path, cancel);
+        let facts = about(held, cancel);
         let notice = [
             Some("Read by Pandoc · layout, headers and comments are not shown".to_owned()),
             cut.then(|| "Only the start is shown".to_owned()),
@@ -432,10 +433,10 @@ fn converted_from(
 
 /// What a Word or `OpenDocument` file says about itself, for Properties; none
 /// for another format.
-fn about(path: &Path, cancel: &CancelToken) -> Vec<(&'static str, String)> {
-    let read = match builtin(path) {
-        Some(Engine::Word) => docx::about(path, cancel),
-        Some(Engine::OpenDocument) => odt::about(path, cancel),
+fn about(held: &Arc<Held>, cancel: &CancelToken) -> Vec<(&'static str, String)> {
+    let read = match builtin(held) {
+        Some(Engine::Word) => docx::about(held, cancel),
+        Some(Engine::OpenDocument) => odt::about(held, cancel),
         _ => return Vec::new(),
     };
     read.unwrap_or_default()
@@ -501,8 +502,11 @@ impl PreviewProvider for Reading {
     fn priority(&self) -> i32 {
         10
     }
+    /// By its name, then its first bytes: what is held is read only for a
+    /// file named as one it may read.
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        self.engine(&req.entry.path).is_some()
+        pandoc::format_of(&inspection::extension(&req.entry.path)).is_some()
+            && req.held().is_ok_and(|held| self.engine(&held).is_some())
     }
     fn inspect(
         &self,
@@ -513,15 +517,15 @@ impl PreviewProvider for Reading {
         if view.source {
             return Ok(None);
         }
-        let path = req.entry.resolve()?;
+        let held = req.held()?;
         let engine = self
-            .engine(&path)
+            .engine(&held)
             .ok_or_else(|| anyhow::anyhow!("Nothing installed reads this document as text"))?;
         Ok(Some(match engine {
-            Engine::Word => shown(docx::read(&path, view.offset, cancel)?),
-            Engine::OpenDocument => shown(odt::read(&path, view.offset, cancel)?),
+            Engine::Word => shown(docx::read(&held, view.offset, cancel)?),
+            Engine::OpenDocument => shown(odt::read(&held, view.offset, cancel)?),
             Engine::Pandoc(tool, format) => {
-                self.pandoc(req, &path, &tool, format, Bounds::of(view), cancel)?
+                self.pandoc(req, &held, &tool, format, Bounds::of(view), cancel)?
             }
         }))
     }
@@ -535,22 +539,23 @@ impl PreviewProvider for Reading {
         key: &str,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<skwir_core::thumbs::Image>> {
-        let path = req.entry.resolve()?;
-        let bytes = match self.engine(&path) {
+        let held = req.held()?;
+        let bytes = match self.engine(&held) {
             Some(Engine::Word | Engine::OpenDocument) => {
-                package::Package::open(&path, cancel)?.read(key, "Embedded image", cancel)?
+                package::Package::open(&held, cancel)?.read(key, "Embedded image", cancel)?
             }
             Some(Engine::Pandoc(tool, format)) => {
                 let name = pandoc::media_name(key)
                     .ok_or_else(|| anyhow::anyhow!("not a picture of this document"))?;
-                let cache_key = Self::media_key(req, &path, &tool, &name)?;
+                let cache_key = Self::media_key(req, &held, &tool, &name)?;
                 if let Some(bytes) = self.cache.get(&cache_key) {
                     bytes
                 } else {
                     // Converted again: every picture is kept again, not
                     // only this one, so the others do not each convert.
                     let work = tempfile::tempdir()?;
-                    tool.convert(&path, format, work.path(), Bounds::of(view), cancel)?;
+                    let source = held.path_for_program(cancel)?;
+                    tool.convert(&source, format, work.path(), Bounds::of(view), cancel)?;
                     let mut wanted = None;
                     let mut kept = 0u64;
                     for (each, file) in pandoc::extracted(work.path()) {
@@ -562,13 +567,13 @@ impl PreviewProvider for Reading {
                         ) else {
                             continue;
                         };
-                        if let Ok(key) = Self::media_key(req, &path, &tool, &each)
+                        if let Ok(key) = Self::media_key(req, &held, &tool, &each)
                             && self.cache.put(&key, &bytes).is_ok()
                         {
                             kept += bytes.len() as u64;
                         }
                         if each == name {
-                            wanted = Some(bytes);
+                            wanted = Some(bytes.into_owned());
                         }
                     }
                     if kept > 0 {

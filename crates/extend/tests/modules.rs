@@ -29,6 +29,7 @@ fn request(path: &Path) -> PreviewRequest {
         max_side: 64,
         text_size: None,
         fit: None,
+        held: skwir_core::preview::HeldSlot::default(),
     }
 }
 
@@ -434,8 +435,14 @@ fn a_picture_from_outside_is_previewed_as_the_png_it_makes() {
     assert_eq!(again.path, made.path);
     #[cfg(target_os = "linux")]
     assert_eq!(children(), 0, "nothing was started");
-    // The picture changed: made again.
+    // The picture changed: made again, from a request about the file as it
+    // is now, as the window asks once it sees it changed (what a request
+    // read stays its own).
     std::fs::write(&picture, b"P5\n2 1\n255\n\x00\xff").unwrap();
+    let asked = PreviewRequest {
+        mime: Some("image/x-portable-pixmap".into()),
+        ..request(&picture)
+    };
     let changed = app
         .previews
         .converted(&asked, &CancelToken::new())

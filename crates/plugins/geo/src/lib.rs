@@ -37,6 +37,7 @@ mod view;
 mod wpml;
 mod xml;
 
+use std::borrow::Cow;
 use std::io::{BufReader, Read};
 use std::path::Path;
 use std::sync::Arc;
@@ -53,7 +54,7 @@ use skwir_core::{
     geo::GeoDoc,
     inspection::{Detail, InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
-    preview::{PreviewProvider, PreviewRequest},
+    preview::{FileSource, Held, PreviewProvider, PreviewRequest},
 };
 use skwir_platform::inspection::{self, limits::Bounds};
 
@@ -366,17 +367,35 @@ impl Format {
     /// `.txt` for other things, and a file is read as a format only when
     /// it is one. Reads at most `HEAD` bytes: on a worker.
     pub(crate) fn detect(path: &Path) -> Option<Self> {
+        Self::confirmed(path, || {
+            let mut head = Vec::with_capacity(HEAD);
+            inspection::open(path)
+                .ok()?
+                .take(HEAD as u64)
+                .read_to_end(&mut head)
+                .ok()?;
+            Some(head.into())
+        })
+    }
+
+    /// The format of a file a preview holds, as `detect` tells it, from
+    /// the start already read (ADR-101): nothing is read again.
+    pub(crate) fn of_held(held: &Held) -> Option<Self> {
+        Self::confirmed(held.path(), || Some(held.head().into()))
+    }
+
+    /// The format a file named `path` is, its first bytes asked of `head`
+    /// only where they decide, and only `HEAD` of them looked at: a
+    /// preview holds more, which must not change the answer.
+    fn confirmed<'a>(path: &Path, head: impl FnOnce() -> Option<Cow<'a, [u8]>>) -> Option<Self> {
         let format = Self::of(path)?;
         if !format.confirmed_by_content() {
             return Some(format);
         }
-        let mut head = Vec::with_capacity(HEAD);
-        inspection::open(path)
-            .ok()?
-            .take(HEAD as u64)
-            .read_to_end(&mut head)
-            .ok()?;
-        format.sniff(&head).then_some(format)
+        let head = head()?;
+        format
+            .sniff(&head[..head.len().min(HEAD)])
+            .then_some(format)
     }
 
     /// Whether the Map view looks inside files of this name.
@@ -452,18 +471,18 @@ impl Format {
     }
 }
 
-/// Read `path` into `into`, what is read whole within `bounds`; a note
-/// when the file was damaged or cut.
-fn read(
-    path: &Path,
+/// Read `source` (a path, or what a preview holds) into `into`, what is
+/// read whole within `bounds`; a note when the file was damaged or cut.
+fn read<S: FileSource + ?Sized>(
+    source: &S,
     format: Format,
     into: &mut Collector,
     bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<String>> {
     let mut notes = Vec::new();
-    let file = inspection::open(path)?;
-    if file.metadata().is_ok_and(|m| m.len() > MAX_INPUT) {
+    let file = inspection::open(source)?;
+    if source.length().is_ok_and(|len| len > MAX_INPUT) {
         notes.push(format!(
             "Only the first {} were read",
             inspection::size(MAX_INPUT)
@@ -485,7 +504,7 @@ fn read(
         Format::Kmz => {
             drop(file);
             let mut package =
-                skwir_platform::package::Package::open(path, "This KMZ", false, cancel)?;
+                skwir_platform::package::Package::open(source, "This KMZ", false, cancel)?;
             // A DJI mission (WPML) is a KMZ of its own kind.
             if let Some(name) = wpml::MEMBERS.iter().find(|name| package.has(name)) {
                 let member = package
@@ -502,7 +521,7 @@ fn read(
             }
         }
         Format::QgcPlan => {
-            let bytes = inspection::read_file(path, bounds, "This plan", cancel)?;
+            let bytes = inspection::read_file(source, bounds, "This plan", cancel)?;
             let document: serde_json::Value = serde_json::from_slice(&bytes)
                 .map_err(|error| anyhow::anyhow!("Not a valid QGroundControl plan: {error}"))?;
             inspection::check(cancel)?;
@@ -510,7 +529,7 @@ fn read(
             None
         }
         Format::GeoJson => {
-            let bytes = inspection::read_file(path, bounds, "This GeoJSON file", cancel)?;
+            let bytes = inspection::read_file(source, bounds, "This GeoJSON file", cancel)?;
             geojson::read(&bytes, into, cancel)?;
             None
         }
@@ -799,15 +818,16 @@ pub(crate) fn inspect_file(
     inspect_as(path, format, bounds, cancel)
 }
 
-/// Read a file of a format already known.
-pub(crate) fn inspect_as(
-    path: &Path,
+/// Read a file of a format already known: at its path, or what a preview
+/// holds of it.
+pub(crate) fn inspect_as<S: FileSource + ?Sized>(
+    source: &S,
     format: Format,
     bounds: Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
     let mut collector = Collector::new();
-    let mut notes = read(path, format, &mut collector, bounds, cancel)?;
+    let mut notes = read(source, format, &mut collector, bounds, cancel)?;
     let (doc, c) = collector.finish();
     if doc.bounds.is_none() {
         notes.insert(0, "Nothing in this file has a position".into());
@@ -858,13 +878,16 @@ impl PreviewProvider for Provider {
     fn priority(&self) -> i32 {
         20
     }
-    /// On a worker: a file of a shared extension is asked what it is.
+    /// On a worker: a file of a shared extension is asked what it is, of
+    /// the start the preview holds.
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        Format::of(&req.entry.path).is_some()
-            && req
-                .entry
-                .resolve()
-                .is_ok_and(|path| Format::detect(&path).is_some())
+        match Format::of(&req.entry.path) {
+            None => false,
+            Some(format) if !format.confirmed_by_content() => true,
+            Some(_) => req
+                .held()
+                .is_ok_and(|held| Format::of_held(&held).is_some()),
+        }
     }
     fn inspect(
         &self,
@@ -876,8 +899,9 @@ impl PreviewProvider for Provider {
         if view.source {
             return Ok(None);
         }
-        let path = req.entry.resolve()?;
-        inspect_file(&path, Bounds::of(view), cancel).map(Some)
+        let held = req.held()?;
+        let format = Format::of_held(&held).ok_or_else(|| anyhow::anyhow!("Not a map file"))?;
+        inspect_as(&held, format, Bounds::of(view), cancel).map(Some)
     }
 }
 
@@ -916,11 +940,9 @@ mod tests {
         assert_eq!(geo.lines.len(), 2);
     }
 
-    #[test]
-    fn a_kmz_is_read_through_its_kml() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("trip.kmz");
-        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    /// A KMZ of one place, beside a picture.
+    fn kmz() -> Vec<u8> {
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
         zip.start_file("files/icon.png", options).unwrap();
@@ -930,11 +952,60 @@ mod tests {
             b"<kml><Placemark><name>Here</name><Point><coordinates>2.35,48.85</coordinates></Point></Placemark></kml>",
         )
         .unwrap();
-        zip.finish().unwrap();
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn a_kmz_is_read_through_its_kml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("trip.kmz");
+        std::fs::write(&path, kmz()).unwrap();
         let data = inspect_file(&path, Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(data.title, "KMZ · 1 waypoint");
         assert!(!data.source_available);
         assert_eq!(data.geo.as_ref().unwrap().waypoints[0].name, "Here");
+    }
+
+    #[test]
+    fn a_preview_reads_what_is_held_never_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        // Paths that lead nowhere: only what is held can be read.
+        let gone = |name: &str| dir.path().join("gone").join(name);
+        let cancel = CancelToken::new();
+        let show = |req: &PreviewRequest| {
+            Provider
+                .inspect(req, &InspectRequest::default(), &cancel)
+                .unwrap()
+                .unwrap()
+        };
+        let mission = mavlink::tests::SURVEY.join("\n");
+        let req =
+            PreviewRequest::holding(gone("survey.txt"), mission.as_bytes(), Some("text/plain"));
+        assert!(Provider.accepts(&req));
+        let data = show(&req);
+        assert_eq!(data.kind, InspectionKind::Map);
+        assert_eq!(data.title, "Drone mission · 5 waypoints");
+        // A text file of that name is not a mission: its start says so.
+        let notes = PreviewRequest::holding(
+            gone("notes.txt"),
+            b"QGC WPL is what a mission starts with\n".as_slice(),
+            Some("text/plain"),
+        );
+        assert!(!Provider.accepts(&notes));
+        let hike = PreviewRequest::holding(
+            gone("hike.gpx"),
+            gpx::tests::HIKE.as_bytes(),
+            Some("application/gpx+xml"),
+        );
+        assert!(Provider.accepts(&hike));
+        assert_eq!(show(&hike).title, "GPX · 1 track, 1 route, 2 waypoints");
+        let trip = PreviewRequest::holding(
+            gone("trip.kmz"),
+            kmz(),
+            Some("application/vnd.google-earth.kmz"),
+        );
+        assert!(Provider.accepts(&trip));
+        assert_eq!(show(&trip).title, "KMZ · 1 waypoint");
     }
 
     #[test]

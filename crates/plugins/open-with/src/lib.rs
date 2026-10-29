@@ -504,6 +504,10 @@ struct TargetArgs {
     /// The pane's folder itself, not entries in it.
     #[serde(default)]
     here: bool,
+    /// The entry's type as the window settled it (`open_with.properties`,
+    /// for one entry): taken as it is, the file not read again to type it.
+    #[serde(default)]
+    mime: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -875,7 +879,11 @@ struct ChoicesArgs {
 /// not say its type: on Properties' worker.
 fn properties(args: TargetArgs, cache: &Cached, app: &App) -> anyhow::Result<Outcome> {
     let named = args.entries.clone();
-    let (_, _, targets) = targets(args, app)?;
+    let settled = args.mime.clone();
+    let (_, _, mut targets) = targets(args, app)?;
+    if let (Some(mime), [one]) = (settled, targets.as_mut_slice()) {
+        one.typed = Some(Mime(mime));
+    }
     let rows = match targets.as_slice() {
         [one]
             if one
@@ -1273,6 +1281,9 @@ impl Plugin for OpenWithPlugin {
             skwir_core::registry::PropertySource {
                 command: Invocation::new("open_with.properties"),
                 revision: Arc::clone(&self.catalog.properties),
+                // The type the preview settled: a name several types claim
+                // is not read again to type it (ADR-101).
+                typed: true,
             },
         );
         let cache = Arc::clone(&self.catalog);
@@ -1575,6 +1586,7 @@ mod tests {
             ids: vec![id],
             entries: Vec::new(),
             here: false,
+            mime: None,
         };
         let (_, _, listed) = targets(args, &app).unwrap();
         assert_eq!(listed[0].mime(), Mime("inode/socket".into()));
@@ -1584,6 +1596,7 @@ mod tests {
             ids: Vec::new(),
             entries: vec![skwir_core::op::EntryArg::Path(root.join("x.png").into())],
             here: false,
+            mime: None,
         };
         let (_, _, named) = targets(args, &app).unwrap();
         assert_eq!(named[0].mime(), Mime("inode/socket".into()));
@@ -2163,6 +2176,47 @@ mod tests {
     /// a picker of choices that change it, and a new answer once changed.
     // The free desktops' files (step E, ADR-035).
     #[cfg(target_os = "linux")]
+    #[test]
+    fn properties_take_the_type_the_window_settled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        // Named as a picture, read as text: the type given is the one used.
+        let notes = root.join("l'été.png");
+        std::fs::write(&notes, b"plain words, no picture").unwrap();
+        fake_catalog(tmp.path(), std::path::Path::new("record"));
+        let cache = cached(tmp.path());
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(
+            Arc::new(OpenWithPlugin {
+                catalog: Arc::clone(&cache),
+            }),
+            &app,
+        );
+        let source = app.registry.property_sources.all();
+        assert!(source[0].typed, "asked with the type settled");
+        let Outcome::Value(answer) = app
+            .dispatch(
+                &source[0]
+                    .command
+                    .clone()
+                    .with(
+                        "entries",
+                        serde_json::json!([skwir_core::op::EntryRef::from_path(&notes).unwrap()]),
+                    )
+                    .with("mime", serde_json::json!("text/plain")),
+            )
+            .unwrap()
+        else {
+            panic!("rows are a value")
+        };
+        assert_eq!(answer["rows"][0]["value"], "Editor");
+        assert_eq!(
+            answer["rows"][0]["actions"][0]["command"]["args"]["title"],
+            "Open plain text document files with"
+        );
+    }
+
     #[test]
     fn properties_say_what_a_file_opens_with_and_change_it() {
         let tmp = tempfile::tempdir().unwrap();

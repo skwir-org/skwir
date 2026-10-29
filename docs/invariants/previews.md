@@ -12,6 +12,26 @@ is binding, like `AGENTS.md`.
 - Format plugins publish `inspection::Inspection` from scheduler
   workers, via the preview registry and owner lifetimes. Fallbacks rank
   below typed providers, also after disable and re-enable.
+- **A preview reads its file once (ADR-101).** What is read is held by
+  the request (`PreviewRequest::held`, `preview::Held`), shared by its
+  clones (the job, the pictures asked for later, the reader) and read in
+  the file's lane on the first ask: its first 64 KiB, all of it up to
+  `preview::WHOLE` (16 MiB; `WHOLE_FULL` under Full preview), its last
+  64 KiB and, on a remote, a few blocks between. A provider reads that,
+  never the path: it hands `&held` to the platform's readers (each takes
+  any `FileSource`: a path for thumbnails and fields, what is held for a
+  preview), names the file by `held.path()`, decides `accepts` on the
+  name, the type and `held.head()`, and hands a program that reads by
+  path `held.path_for_program` (a remote's file held whole, copied once
+  into the preview's folder). A provider's `accepts` is asked once per
+  file, type and registry revision (`HeldSlot`), whatever the stage.
+  Never a memory map, never a descriptor kept between reads. Tested from
+  `PreviewRequest::holding` (bytes at a path that leads nowhere) and
+  `Held::of_bytes_on_remote`; on a mount, by the GETs its server counts
+  (`a_preview_of_a_file_on_a_mount_fetches_it_once`).
+- What the preview showed before is kept a minute unseen, for flipping
+  back (`held_before`): up to `WHOLE`, none under Full preview. Both go
+  when the preview shows nothing.
 - Providers of one priority never accept the same file (registration
   order would decide). A provider that settles a shared name by content
   (geo's Litchi `.csv`) outranks one that takes the name whole (the
@@ -825,6 +845,10 @@ is still to come are in `docs/preview-frame.md`.
   row joins the group it names, or a group of its own before the drive's.
   The shell names no plugin: Opens with is Open with's answer, the
   checksums the checksums plugin's, which says its group ships folded.
+  A source that says so (`PropertySource::typed`: Open with) is also
+  given `mime`, the type the preview settled from what it read, and
+  asked only once it is settled: a name several types claim (`.json`)
+  is not read again to type it (ADR-101).
 - **A source that reads a whole file** (the checksums) reads what the
   window asks in a lane of its own: one job at a time holds a worker,
   reading the file asked last for everything asked of it at once, so
@@ -1279,7 +1303,14 @@ is still to come are in `docs/preview-frame.md`.
     the file's first bytes; UTF-16 is cut in its own units.
   - A worker counts the rows into an index of every `STRIDE`th
     (`text_rows::count`), published a block at a time; the view shows
-    what is counted, and the bar the lines so far ("…" until done).
+    what is counted, and the bar the lines so far ("…" until done). What
+    the preview holds is read, never the file again (`TextFile::held`,
+    ADR-101). A remote's file not held whole is counted as far as it is
+    shown and a little past (`text_rows::count_until`, `Index::paused`),
+    its rows beyond estimated from its length: scrolling counts on, and
+    a find, a copy or a line asked for counts to the end first, one
+    count at a time on the index (`TextView::gate`). A count that failed
+    is not asked again while the view lasts.
   - The view (`text_view.rs`) asks for the chunks around the rows laid
     out, nearest first, one at a time (`Latest`), never per row or per
     frame; a bounded cache keeps those near the view. A chunk is read

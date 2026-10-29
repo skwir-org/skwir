@@ -178,6 +178,7 @@ fn an_office_document_has_a_thumbnail_once_previewed() {
         max_side: 512,
         text_size: None,
         fit: None,
+        held: skwir_core::preview::HeldSlot::default(),
     };
     app.previews
         .render(&preview, &CancelToken::new())

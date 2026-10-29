@@ -6,9 +6,9 @@ use crate::package::{self, Package};
 use roxmltree::Node;
 use skwir_core::CancelToken;
 use skwir_core::inspection::{Align, Script};
+use skwir_core::preview::FileSource;
 use skwir_platform::inspection::{self, Numbering, limits};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 const W: [&str; 2] = [
     "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
@@ -1067,8 +1067,12 @@ fn wrapped_in<'a, 'i>(
     }
 }
 
-pub(crate) fn read(path: &Path, wanted: u64, cancel: &CancelToken) -> anyhow::Result<Read> {
-    let mut package = Package::open(path, cancel)?;
+pub(crate) fn read<S: FileSource + ?Sized>(
+    file: &S,
+    wanted: u64,
+    cancel: &CancelToken,
+) -> anyhow::Result<Read> {
+    let mut package = Package::open(file, cancel)?;
     let main = related(&mut package, "", "officeDocument", cancel)
         .unwrap_or_else(|| "word/document.xml".into());
     let source = package
@@ -1119,7 +1123,7 @@ pub(crate) fn read(path: &Path, wanted: u64, cancel: &CancelToken) -> anyhow::Re
     // with its pictures read.
     if wanted >= parts && parts > 0 {
         drop(walk);
-        return read(path, parts - 1, cancel);
+        return read(file, parts - 1, cancel);
     }
     if !referenced.is_empty() {
         for (kind, name) in notes {
@@ -1167,11 +1171,11 @@ pub(crate) fn read(path: &Path, wanted: u64, cancel: &CancelToken) -> anyhow::Re
 }
 
 /// What a Word document says about itself, for Properties.
-pub(crate) fn about(
-    path: &Path,
+pub(crate) fn about<S: FileSource + ?Sized>(
+    file: &S,
     cancel: &CancelToken,
 ) -> anyhow::Result<Vec<(&'static str, String)>> {
-    Ok(details(&mut Package::open(path, cancel)?, cancel))
+    Ok(details(&mut Package::open(file, cancel)?, cancel))
 }
 
 /// What the package says about the document: its title, author and the

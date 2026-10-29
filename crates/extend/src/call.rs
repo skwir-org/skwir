@@ -5,9 +5,12 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
+use std::sync::Arc;
+
 use serde_json::Value;
 use skwir_core::CancelToken;
 use skwir_core::permissions::{Capabilities, Capability};
+use skwir_core::preview::{FileSource, Held};
 use skwir_plugin_api::protocol::{File, READ_LIMIT};
 
 /// How a plugin's answers reach skwir: a program's pipe, a module's call.
@@ -22,6 +25,9 @@ pub(crate) trait Transport: Send + Sync {
 #[derive(Clone)]
 pub(crate) struct Call {
     files: Vec<PathBuf>,
+    /// What a preview holds of each (ADR-101): a plugin's reads are
+    /// answered from it, never from the file again.
+    held: Vec<Option<Arc<Held>>>,
     /// The handle of its first file: each call's are its own, so a read a
     /// program sends late, for a call given up, never reaches the next
     /// call's files.
@@ -42,11 +48,26 @@ impl Call {
             .fetch_add(count, std::sync::atomic::Ordering::Relaxed)
             .max(1);
         Call {
+            held: vec![None; files.len()],
             files,
             first,
             read: granted.has(Capability::Read),
             cancel,
         }
+    }
+
+    /// A call about the file a preview holds, `held`, its reads answered
+    /// from what is held.
+    pub fn holding(held: Arc<Held>, granted: Capabilities, cancel: CancelToken) -> Call {
+        let mut call = Call::new(vec![held.path().to_path_buf()], granted, cancel);
+        call.held = vec![Some(held)];
+        call
+    }
+
+    /// What is held of the file `handle` names, if a preview holds it.
+    fn held(&self, handle: u32) -> Option<&Arc<Held>> {
+        let n = usize::try_from(handle.wrapping_sub(self.first)).ok()?;
+        self.held.get(n)?.as_ref()
     }
 
     /// The `n`-th file (from 0) as the plugin is told of it.
@@ -60,7 +81,10 @@ impl Call {
                 .unwrap_or_default(),
             path: path.to_string_lossy().into_owned(),
             mime,
-            size: std::fs::metadata(path).ok().map(|meta| meta.len()),
+            size: match &self.held[n] {
+                Some(held) => Some(held.len()),
+                None => std::fs::metadata(path).ok().map(|meta| meta.len()),
+            },
         }
     }
 
@@ -92,6 +116,13 @@ impl Call {
         let path = self
             .path(handle)
             .ok_or_else(|| format!("no file {handle} in this call"))?;
+        if let Some(held) = self.held(handle) {
+            let length = usize::try_from(length.min(READ_LIMIT)).unwrap_or(usize::MAX);
+            return held
+                .read_range(offset, length, &self.cancel)
+                .map(std::borrow::Cow::into_owned)
+                .map_err(|error| error.to_string());
+        }
         let mut file =
             skwir_core::fs::file::open_regular(path).map_err(|error| error.to_string())?;
         file.seek(SeekFrom::Start(offset))

@@ -28,7 +28,7 @@ use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, InspectionKind},
     plugin::Plugin,
-    preview::{PreviewProvider, PreviewRequest},
+    preview::{FileSource, PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
 use skwir_platform::inspection::{self, limits, limits::Bounds};
@@ -152,32 +152,33 @@ impl Format {
 
     /// What the file says of itself, its picture at most `side` pixels on
     /// its longer side, or its mesh when it is asked to be turned; a model
-    /// that stores a picture shows it while `picture_first`.
-    fn read(
+    /// that stores a picture shows it while `picture_first`. Read from
+    /// `source`: the file at its path (a thumbnail's), or what a preview
+    /// holds of it (ADR-101), which nothing reads again.
+    fn read<S: FileSource + ?Sized>(
         self,
-        path: &Path,
+        source: &S,
         side: u32,
         asked: Asked,
         picture_first: bool,
         bounds: Bounds,
         cancel: &CancelToken,
     ) -> anyhow::Result<Found> {
-        skwir_platform::thumb_providers::ensure_file(path)?;
         match self {
-            Format::Blend => blend::read(path, side, cancel),
-            Format::Gcode => gcode::text(path, side, cancel),
-            Format::Bgcode => gcode::binary(path, side, cancel),
-            Format::ThreeMf => package::three_mf(path, side, asked, picture_first, cancel),
-            Format::FreeCad => package::freecad(path, side, cancel),
-            Format::Dwg => cad::dwg(path, side, cancel),
-            Format::Dxf => cad::dxf(path, side, bounds, cancel),
-            Format::SketchUp => sketchup::model(path, side, cancel),
-            Format::LayOut => sketchup::layout(path, side, cancel),
-            Format::Rhino => rhino::read(path, side, asked, picture_first, cancel),
+            Format::Blend => blend::read(source, side, cancel),
+            Format::Gcode => gcode::text(source, side, cancel),
+            Format::Bgcode => gcode::binary(source, side, cancel),
+            Format::ThreeMf => package::three_mf(source, side, asked, picture_first, cancel),
+            Format::FreeCad => package::freecad(source, side, cancel),
+            Format::Dwg => cad::dwg(source, side, cancel),
+            Format::Dxf => cad::dxf(source, side, bounds, cancel),
+            Format::SketchUp => sketchup::model(source, side, cancel),
+            Format::LayOut => sketchup::layout(source, side, cancel),
+            Format::Rhino => rhino::read(source, side, asked, picture_first, cancel),
             Format::Mesh(format @ (MeshFormat::Step | MeshFormat::Iges)) => {
-                exchange::read(path, format, side, asked, bounds, cancel)
+                exchange::read(source, format, side, asked, bounds, cancel)
             }
-            Format::Mesh(format) => mesh::read(path, format, side, asked, cancel),
+            Format::Mesh(format) => mesh::read(source, format, side, asked, cancel),
         }
     }
 }
@@ -233,12 +234,13 @@ impl PreviewProvider for Provider {
         ID
     }
     /// Called on a worker (the registry's dispatch), so a CNC program's
-    /// name, also a binary format's (`.nc`), is settled by its start: the
-    /// first provider that accepts owns the file.
+    /// name, also a binary format's (`.nc`), is settled by its start, as
+    /// the preview holds it: the first provider that accepts owns the file.
     fn accepts(&self, req: &PreviewRequest) -> bool {
         Format::of(&req.entry.path, req.mime.as_deref()).is_some_and(|format| {
             format.available()
-                && (!machining(&req.entry.path) || is_text(&req.entry.path).unwrap_or(false))
+                && (!machining(&req.entry.path)
+                    || req.held().is_ok_and(|held| is_text(&held).unwrap_or(false)))
         })
     }
     fn inspect(
@@ -251,11 +253,11 @@ impl PreviewProvider for Provider {
         if view.source {
             return Ok(None);
         }
-        let path = req.entry.resolve()?;
-        let Some(format) = Format::of(&path, req.mime.as_deref()) else {
+        let held = req.held()?;
+        let Some(format) = Format::of(held.path(), req.mime.as_deref()) else {
             return Ok(None);
         };
-        if format == Format::Mesh(MeshFormat::Obj) && !is_text(&path)? {
+        if format == Format::Mesh(MeshFormat::Obj) && !is_text(&held)? {
             return Ok(Some(Inspection {
                 kind: InspectionKind::Text,
                 title: "Object file".into(),
@@ -276,7 +278,7 @@ impl PreviewProvider for Provider {
             Asked::Preview
         };
         let found = format.read(
-            &path,
+            &held,
             side,
             asked,
             view.turned != Some(true),
@@ -316,7 +318,7 @@ impl PreviewProvider for Provider {
             // Text without a picture is read as the text it is, saying what
             // was left out.
             None if format.is_text() => {
-                let mut data = inspection::plain(&path, cancel)?;
+                let mut data = inspection::plain(&held, cancel)?;
                 data.details = details;
                 data.notice = [notice, std::mem::take(&mut data.notice)]
                     .into_iter()
@@ -356,10 +358,8 @@ fn machining(path: &Path) -> bool {
 
 /// Whether the file begins as text: an OBJ model does, a compiled object
 /// does not.
-fn is_text(path: &Path) -> anyhow::Result<bool> {
-    use std::io::Read;
-    let mut head = Vec::new();
-    inspection::open(path)?.take(1024).read_to_end(&mut head)?;
+fn is_text<S: FileSource + ?Sized>(source: &S) -> anyhow::Result<bool> {
+    let head = inspection::read(source, 0, 1024, &CancelToken::new())?;
     Ok(inspection::is_text(&head))
 }
 
@@ -386,6 +386,7 @@ impl ThumbnailProvider for Pictures {
         if !format.available() || (text_only && !is_text(&path)?) {
             return Ok(None);
         }
+        skwir_platform::thumb_providers::ensure_file(&path)?;
         Ok(format
             .read(
                 &path,
@@ -403,6 +404,7 @@ impl ThumbnailProvider for Pictures {
 mod tests {
     use super::*;
     use skwir_core::op::EntryRef;
+    use skwir_core::preview::{Held, HeldSlot};
 
     fn request(path: &Path) -> PreviewRequest {
         PreviewRequest {
@@ -413,6 +415,7 @@ mod tests {
             max_side: 2048,
             text_size: None,
             fit: None,
+            held: HeldSlot::default(),
         }
     }
 
@@ -513,6 +516,69 @@ mod tests {
                 .is_none(),
             "the shared source view takes it"
         );
+    }
+
+    #[test]
+    fn a_preview_reads_what_is_held_never_the_path() {
+        let dir = tempfile::tempdir().unwrap();
+        // Paths that lead nowhere: only what is held can be read.
+        let gone = |name: &str| dir.path().join("gone").join(name);
+        let cancel = CancelToken::new();
+        let show = |req: &PreviewRequest| {
+            Provider
+                .inspect(req, &InspectRequest::default(), &cancel)
+                .unwrap()
+                .unwrap()
+        };
+        // G-code that moves is drawn; that does not, read as its text.
+        let moves = PreviewRequest::holding(
+            gone("a part’s print.gcode"),
+            b";TIME:65\nG28\nG1 X10 Y5 F600\n".as_slice(),
+            None,
+        );
+        assert!(Provider.accepts(&moves));
+        let data = show(&moves);
+        assert!(data.image.is_some(), "its moves drawn");
+        assert_eq!(data.details[1].label, "Size");
+        let still = PreviewRequest::holding(
+            gone("still.gcode"),
+            b";TIME:65\nM104 S200\n".as_slice(),
+            None,
+        );
+        let data = show(&still);
+        assert!(data.image.is_none());
+        assert!(data.plain_text().contains("M104 S200"));
+        // A program's name another format shares is settled by its start.
+        let program =
+            PreviewRequest::holding(gone("sign.nc"), b"G0 X0 Y0\nG1 X10\n".as_slice(), None);
+        assert!(Provider.accepts(&program));
+        let binary = PreviewRequest::holding(
+            gone("climate.nc"),
+            b"CDF\x01\0\0\0\x0a\0\0\0\x01".as_slice(),
+            None,
+        );
+        assert!(!Provider.accepts(&binary));
+        // A package's picture, a drawing's version.
+        let plate = show(&PreviewRequest::holding(
+            gone("plate.3mf"),
+            pictured_3mf(),
+            None,
+        ));
+        let picture = plate.image.expect("the stored picture");
+        assert_eq!((picture.width, picture.height), (6, 4));
+        let drawing = show(&PreviewRequest::holding(
+            gone("plain.dwg"),
+            b"AC1015 and nothing more".as_slice(),
+            None,
+        ));
+        assert_eq!(drawing.details[0].value, "DWG 2000");
+        // A compiled object named like a model, told by its start.
+        let object = show(&PreviewRequest::holding(
+            gone("main.obj"),
+            b"\x7fELF\x02\x01\x01\0\0\0\0\0\0\0\0\0\x01\0".as_slice(),
+            None,
+        ));
+        assert_eq!(object.notice, "Not a Wavefront OBJ model");
     }
 
     #[test]
@@ -647,6 +713,45 @@ mod tests {
             .unwrap();
         assert!(data.image.is_none());
         assert_eq!(data.notice, "Not a Wavefront OBJ model");
+    }
+
+    /// A request about a remote's file, whose own path never exists:
+    /// `held` is all of it, and a program is handed its copy.
+    fn on_remote(held: &Arc<Held>) -> PreviewRequest {
+        let shape = PreviewRequest::holding(held.path(), Vec::<u8>::new(), None);
+        PreviewRequest {
+            held: HeldSlot::holding(shape.entry.clone(), Arc::clone(held)),
+            ..shape
+        }
+    }
+
+    #[test]
+    fn a_remote_mesh_is_handed_to_its_helper_as_the_copy_held() {
+        if !with_model_worker() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gone").join("a part’s cube.stl");
+        let scratch = dir.path().join("scratch");
+        let held = Arc::new(Held::of_bytes_on_remote(&path, cube_stl(), scratch.clone()));
+        let request = on_remote(&held);
+        assert!(Provider.accepts(&request));
+        let data = Provider
+            .inspect(&request, &InspectRequest::default(), &CancelToken::new())
+            .unwrap()
+            .unwrap();
+        assert!(data.image.is_some(), "the model drawn");
+        assert_eq!(data.details[0].value, "10 × 10 × 10 mm");
+        // The helper read the one copy written for it: the path itself
+        // never existed.
+        assert!(!path.exists());
+        assert_eq!(std::fs::read_dir(&scratch).unwrap().count(), 1);
+        let copy = held
+            .path_for_program(&CancelToken::new())
+            .unwrap()
+            .into_owned();
+        assert!(copy.starts_with(&scratch), "{}", copy.display());
+        assert_eq!(std::fs::read(&copy).unwrap(), cube_stl());
     }
 
     /// A cylinder 20 mm across and 30 mm tall as a CAD program exports it.
@@ -849,13 +954,13 @@ END-ISO-10303-21;
     }
 
     /// A 3MF of a tetrahedron, with the picture its slicer stored.
-    fn pictured_3mf(path: &Path) {
+    fn pictured_3mf() -> Vec<u8> {
         let model = r#"<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/><vertex x="0" y="10" z="0"/><vertex x="0" y="0" z="10"/></vertices><triangles><triangle v1="0" v2="2" v3="1"/><triangle v1="0" v2="1" v3="3"/><triangle v1="1" v2="2" v3="3"/><triangle v1="2" v2="0" v3="3"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>"#;
         let mut png = Vec::new();
         image::RgbaImage::from_pixel(6, 4, image::Rgba([9, 8, 7, 255]))
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .unwrap();
-        let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         for (name, bytes) in [
             ("3D/3dmodel.model", model.as_bytes()),
             ("Metadata/thumbnail.png", png.as_slice()),
@@ -864,7 +969,7 @@ END-ISO-10303-21;
                 .unwrap();
             std::io::Write::write_all(&mut zip, bytes).unwrap();
         }
-        zip.finish().unwrap();
+        zip.finish().unwrap().into_inner()
     }
 
     /// A model that stores a picture shows it unless 3D is chosen; a mesh
@@ -887,7 +992,7 @@ END-ISO-10303-21;
                 .unwrap()
         };
         let package = dir.path().join("a slicer’s plate.3mf");
-        pictured_3mf(&package);
+        std::fs::write(&package, pictured_3mf()).unwrap();
         let data = ask(&package, None);
         assert_eq!(data.kind, InspectionKind::Text);
         let picture = data.image.as_ref().expect("the stored picture");

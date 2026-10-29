@@ -6,9 +6,11 @@ use serde_json::Value;
 use skwir_core::{
     CancelToken,
     inspection::{Inspection, Row},
+    preview::Held,
 };
 use skwir_platform::inspection::{self, limits};
 use std::io::{BufRead, BufReader, Read};
+use std::sync::Arc;
 
 /// The column for what is not an object.
 const VALUE: &str = "value";
@@ -20,11 +22,11 @@ pub fn named(path: &std::path::Path) -> bool {
     matches!(inspection::extension(path).as_str(), "jsonl" | "ndjson")
 }
 
-/// One page of `TABLE_ROWS` lines from line `offset`, streamed from the
-/// file like a CSV table: lines before the page are counted, not parsed.
-/// Blank lines are no row. Its columns are `bounds`'.
+/// One page of `TABLE_ROWS` lines from line `offset`, streamed from what
+/// is held of the file like a CSV table: lines before the page are
+/// counted, not parsed. Blank lines are no row. Its columns are `bounds`'.
 pub fn table(
-    path: &std::path::Path,
+    held: &Arc<Held>,
     offset: u64,
     bounds: limits::Bounds,
     cancel: &CancelToken,
@@ -32,8 +34,8 @@ pub fn table(
     use std::io::Seek as _;
     let page = limits::TABLE_ROWS as u64;
     // From the nearest page start known before the page.
-    let (mut index, mut at) = crate::starts::nearest(path, offset);
-    let mut file = inspection::open(path)?;
+    let (mut index, mut at) = crate::starts::nearest(held, offset);
+    let mut file = inspection::open(held)?;
     file.seek(std::io::SeekFrom::Start(at))?;
     let mut reader = BufReader::new(file);
     let mut line = Vec::new();
@@ -42,7 +44,7 @@ pub fn table(
     loop {
         // Where each page begins, for the next turn.
         if index > 0 && index.is_multiple_of(page) {
-            crate::starts::learn(path, index, at);
+            crate::starts::learn(held, index, at);
         }
         line.clear();
         (&mut reader)
@@ -219,10 +221,8 @@ mod tests {
     use super::*;
 
     fn read(bytes: &str, offset: u64) -> Inspection {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("a log’s name.jsonl");
-        std::fs::write(&path, bytes).unwrap();
-        table(&path, offset, limits::Bounds::QUICK, &CancelToken::new()).unwrap()
+        let held = Arc::new(Held::of_bytes("a log’s name.jsonl", bytes.as_bytes()));
+        table(&held, offset, limits::Bounds::QUICK, &CancelToken::new()).unwrap()
     }
 
     #[test]

@@ -7,6 +7,7 @@ use skwir_core::{
     thumbs::Image,
 };
 use skwir_platform::inspection::{self, limits, limits::Bounds};
+use std::borrow::Cow;
 use std::sync::Arc;
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
@@ -71,7 +72,8 @@ impl PreviewProvider for Provider {
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Inspection>> {
         let bounds = Bounds::of(view);
-        let bytes = inspection::read_file(&req.entry.resolve()?, bounds, "Font", cancel)?;
+        let held = req.held()?;
+        let bytes = inspection::read_file(&held, bounds, "Font", cancel)?;
         let (font, packed) = unpacked(bytes, bounds)?;
         specimen(&font, packed, view, cancel).map(Some)
     }
@@ -80,8 +82,12 @@ impl PreviewProvider for Provider {
 /// as, for Properties; any other font as it is. Bounded like every input:
 /// WOFF is inflated table by table within `bounds`' binary input, as a
 /// font read as it is (a table can declare any size), WOFF2 within its
-/// decoder's own bound (at most 100 times its size, and 128 MB).
-fn unpacked(bytes: Vec<u8>, bounds: Bounds) -> anyhow::Result<(Vec<u8>, Option<&'static str>)> {
+/// decoder's own bound (at most 100 times its size, and 128 MB). A font as
+/// it is stays the bytes held, uncopied.
+fn unpacked(
+    bytes: Cow<'_, [u8]>,
+    bounds: Bounds,
+) -> anyhow::Result<(Cow<'_, [u8]>, Option<&'static str>)> {
     let damaged = || anyhow::anyhow!("The web font is damaged or uses an unknown feature");
     match bytes.get(..4) {
         Some(b"wOFF") => {
@@ -108,10 +114,12 @@ fn unpacked(bytes: Vec<u8>, bounds: Bounds) -> anyhow::Result<(Vec<u8>, Option<&
                     limits::describe(bounds.binary_input())
                 )));
             }
-            Ok((font.map_err(|_| damaged())?, Some("WOFF")))
+            Ok((font.map_err(|_| damaged())?.into(), Some("WOFF")))
         }
         Some(b"wOF2") => Ok((
-            wuff::decompress_woff2(&bytes).map_err(|_| damaged())?,
+            wuff::decompress_woff2(&bytes)
+                .map_err(|_| damaged())?
+                .into(),
             Some("WOFF2"),
         )),
         _ => Ok((bytes, None)),
@@ -425,6 +433,7 @@ mod tests {
                 max_side: 64,
                 text_size: None,
                 fit: None,
+                held: skwir_core::preview::HeldSlot::default(),
             })
         };
         assert!(accepts("a.ttf", None));
@@ -552,7 +561,7 @@ mod tests {
     }
 
     fn render(font: Vec<u8>, query: Option<&str>) -> anyhow::Result<Inspection> {
-        let (font, packed) = unpacked(font, Bounds::QUICK)?;
+        let (font, packed) = unpacked(font.into(), Bounds::QUICK)?;
         specimen(
             &font,
             packed,
@@ -562,6 +571,29 @@ mod tests {
             },
             &CancelToken::new(),
         )
+    }
+
+    /// A preview reads its file once (ADR-101): the font comes from what
+    /// the request holds, named where no file is, so a read of the path
+    /// would fail.
+    #[test]
+    fn a_font_is_drawn_from_what_is_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let request = PreviewRequest::holding(
+            dir.path().join("gone").join("Synthétique.ttf"),
+            synthetic_ttf(1000, 400, 400),
+            Some("font/ttf"),
+        );
+        assert!(Provider.accepts(&request));
+        let data = Provider
+            .inspect(&request, &InspectRequest::default(), &CancelToken::new())
+            .unwrap()
+            .unwrap();
+        assert!(data.title.starts_with("Font · "));
+        let glyphs = data.details.iter().find(|d| d.label == "Glyphs");
+        assert_eq!(glyphs.map(|d| d.value.as_str()), Some("2"));
+        let image = data.image.unwrap();
+        assert!(image.rgba.chunks(4).any(|px| px[0] < 128));
     }
 
     #[test]

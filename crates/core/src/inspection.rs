@@ -202,8 +202,9 @@ impl std::fmt::Debug for Mesh {
 }
 
 /// A text file a view reads where it shows it, a few rows at a time
-/// (ADR-051), never held whole.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// (ADR-051): from what the preview holds of it (ADR-101), whole up to
+/// `preview::WHOLE`, else from the file.
+#[derive(Clone, Debug)]
 pub struct TextFile {
     pub path: std::path::PathBuf,
     /// What it is colored as: an extension or a name, as the highlighter
@@ -211,6 +212,71 @@ pub struct TextFile {
     pub language: Option<String>,
     /// Whether its first rows are all of it: nothing is left to count.
     pub whole: bool,
+    /// What the preview holds of it, read instead of the file: `None` for
+    /// a text read by its path (a member written out, a test).
+    pub held: Option<std::sync::Arc<crate::preview::Held>>,
+}
+
+impl PartialEq for TextFile {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path
+            && self.language == other.language
+            && self.whole == other.whole
+            && match (&self.held, &other.held) {
+                (Some(a), Some(b)) => std::sync::Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            }
+    }
+}
+
+impl Eq for TextFile {}
+
+/// A text file is read from what the preview holds of it, else from its
+/// path.
+impl crate::preview::FileSource for TextFile {
+    fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+    fn length(&self) -> std::io::Result<u64> {
+        match &self.held {
+            Some(held) => held.length(),
+            None => self.path.length(),
+        }
+    }
+    fn first_bytes(&self) -> std::io::Result<std::borrow::Cow<'_, [u8]>> {
+        match &self.held {
+            Some(held) => held.first_bytes(),
+            None => self.path.first_bytes(),
+        }
+    }
+    fn read_range(
+        &self,
+        offset: u64,
+        limit: usize,
+        cancel: &crate::CancelToken,
+    ) -> std::io::Result<std::borrow::Cow<'_, [u8]>> {
+        match &self.held {
+            Some(held) => held.read_range(offset, limit, cancel),
+            None => self.path.read_range(offset, limit, cancel),
+        }
+    }
+    fn read_whole(
+        &self,
+        limit: u64,
+        cancel: &crate::CancelToken,
+    ) -> std::io::Result<Option<std::borrow::Cow<'_, [u8]>>> {
+        match &self.held {
+            Some(held) => held.read_whole(limit, cancel),
+            None => self.path.read_whole(limit, cancel),
+        }
+    }
+    fn open_reader(&self) -> std::io::Result<Box<dyn crate::preview::ReadSeek + Send>> {
+        match &self.held {
+            Some(held) => held.open_reader(),
+            None => self.path.open_reader(),
+        }
+    }
 }
 /// A page of the printed book (`Inspection::printed_pages`): its number as
 /// printed ("xii", "47"), the section that holds it, and the link to where

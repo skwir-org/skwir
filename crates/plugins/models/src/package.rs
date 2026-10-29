@@ -5,10 +5,9 @@
 //! meshes are left alone.
 use crate::Found;
 use quick_xml::events::Event;
-use skwir_core::CancelToken;
+use skwir_core::{CancelToken, preview::FileSource};
 use skwir_platform::inspection::{self, limits};
 use skwir_platform::model::Asked;
-use std::path::Path;
 
 /// The start of a model's XML read for its metadata, which comes before
 /// its resources (the meshes, megabytes of them).
@@ -17,8 +16,11 @@ const MODEL_HEAD: u64 = 64 * 1024;
 /// A model's package, read as every package is (`skwir_platform::package`).
 pub(crate) type Archive = skwir_platform::package::Package;
 
-pub(crate) fn open(path: &Path, cancel: &CancelToken) -> anyhow::Result<Archive> {
-    Archive::open(path, "The package", false, cancel)
+pub(crate) fn open<S: FileSource + ?Sized>(
+    source: &S,
+    cancel: &CancelToken,
+) -> anyhow::Result<Archive> {
+    Archive::open(source, "The package", false, cancel)
 }
 
 /// The member `name`, if it is there and within `bound` once inflated.
@@ -70,14 +72,14 @@ fn thumbnail_target(archive: &mut Archive) -> Option<String> {
 /// model and its slicer say. The picture it stores comes first, unless
 /// `picture_first` is false and the mesh is asked to be turned
 /// (`Asked::Turned`).
-pub fn three_mf(
-    path: &Path,
+pub fn three_mf<S: FileSource + ?Sized>(
+    source: &S,
     side: u32,
     asked: Asked,
     picture_first: bool,
     cancel: &CancelToken,
 ) -> anyhow::Result<Found> {
-    let mut archive = open(path, cancel)?;
+    let mut archive = open(source, cancel)?;
     inspection::check(cancel)?;
     let names: Vec<String> = archive.names().map(str::to_owned).collect();
     // Bambu Studio and Orca store a picture per plate: `plate_1.png`.
@@ -137,7 +139,7 @@ pub fn three_mf(
             ..Found::default()
         });
     }
-    match crate::mesh::read(path, format, side, asked, cancel) {
+    match crate::mesh::read(source, format, side, asked, cancel) {
         Ok(mut drawn) => {
             // The size says the unit.
             details.retain(|(label, _)| label != "Unit");
@@ -250,8 +252,12 @@ fn slice_info(xml: &[u8]) -> Vec<(String, String)> {
 
 /// A `FreeCAD` document: the picture `FreeCAD` stores when it saves, and the
 /// version that saved it (`Document.xml`'s first element).
-pub fn freecad(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
-    let mut archive = open(path, cancel)?;
+pub fn freecad<S: FileSource + ?Sized>(
+    source: &S,
+    side: u32,
+    cancel: &CancelToken,
+) -> anyhow::Result<Found> {
+    let mut archive = open(source, cancel)?;
     inspection::check(cancel)?;
     let picture = member(
         &mut archive,
@@ -303,7 +309,7 @@ mod tests {
         bytes
     }
 
-    fn zip(path: &Path, members: &[(&str, &[u8])]) {
+    fn zip(path: &std::path::Path, members: &[(&str, &[u8])]) {
         let mut writer = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
         for (name, bytes) in members {
             writer

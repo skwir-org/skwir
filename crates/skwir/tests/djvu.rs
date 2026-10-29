@@ -117,6 +117,7 @@ fn request(path: &Path) -> PreviewRequest {
         max_side: 512,
         text_size: None,
         fit: None,
+        held: skwir_core::preview::HeldSlot::default(),
     }
 }
 

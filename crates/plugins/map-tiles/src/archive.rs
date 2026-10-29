@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use skwir_core::CancelToken;
 use skwir_core::geo::Bounds;
+use skwir_core::preview::Held;
 use skwir_core::scheduler::{Priority, Scheduler};
 use skwir_core::tiles::{NoTile, SourceInfo, TileDone, TileRequest, TileSource};
 
@@ -42,16 +43,10 @@ impl Kind {
         }
     }
 
-    /// The kind its name says, when its first bytes are that kind's.
-    /// Reads 16 bytes: on a worker.
-    pub(crate) fn detect(path: &Path) -> Option<Kind> {
+    /// The kind its name says, when its first bytes (`head`, what a
+    /// preview holds) are that kind's.
+    pub(crate) fn detect(path: &Path, head: &[u8]) -> Option<Kind> {
         let kind = Kind::of(path)?;
-        let mut head = Vec::with_capacity(16);
-        skwir_platform::inspection::open(path)
-            .ok()?
-            .take(16)
-            .read_to_end(&mut head)
-            .ok()?;
         let magic: &[u8] = match kind {
             Kind::PmTiles => crate::pmtiles::MAGIC,
             Kind::MbTiles => b"SQLite format 3\0",
@@ -163,11 +158,13 @@ pub(crate) trait Archive: Send + Sync {
     fn tile(&self, z: u8, x: u32, y: u32, cancel: &CancelToken) -> anyhow::Result<Option<Vec<u8>>>;
 }
 
-/// Open the archive at `path`, as its name and first bytes say it is.
-pub(crate) fn open(path: &Path, cancel: &CancelToken) -> anyhow::Result<Arc<dyn Archive>> {
-    match Kind::detect(path) {
-        Some(Kind::PmTiles) => Ok(Arc::new(crate::pmtiles::PmTiles::open(path)?)),
-        Some(Kind::MbTiles) => Ok(Arc::new(crate::mbtiles::MbTiles::open(path, cancel)?)),
+/// Open the archive a preview holds (ADR-101), as its name and first
+/// bytes say it is: a `PMTiles` file read through what is held, an
+/// `MBTiles` database by SQLite, which reads by path.
+pub(crate) fn open(held: &Arc<Held>, cancel: &CancelToken) -> anyhow::Result<Arc<dyn Archive>> {
+    match Kind::detect(held.path(), held.head()) {
+        Some(Kind::PmTiles) => Ok(Arc::new(crate::pmtiles::PmTiles::open(held)?)),
+        Some(Kind::MbTiles) => Ok(Arc::new(crate::mbtiles::MbTiles::of_held(held, cancel)?)),
         None => anyhow::bail!("Not a tile archive"),
     }
 }
@@ -374,10 +371,9 @@ mod tests {
             skwir_core::testing::mutated(&include_bytes!("testdata/roads.pmtiles")[..]),
             skwir_core::testing::bytes(1024),
         ]) {
-            let file = tempfile::Builder::new().suffix(".pmtiles").tempfile().unwrap();
-            std::fs::write(file.path(), &bytes).unwrap();
+            let held = Arc::new(Held::of_bytes("any.pmtiles", bytes));
             let cancel = CancelToken::new();
-            if let Ok(archive) = open(file.path(), &cancel) {
+            if let Ok(archive) = open(&held, &cancel) {
                 let _ = archive.about();
                 for (z, x, y) in [(0, 0, 0), (1, 1, 0), (2, 1, 2), (14, 8000, 5000)] {
                     let _ = archive.tile(z, x, y, &cancel);

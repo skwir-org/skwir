@@ -4,7 +4,7 @@ use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Row},
     plugin::Plugin,
-    preview::{PreviewProvider, PreviewRequest},
+    preview::{Held, PreviewProvider, PreviewRequest},
     settings::SettingSpec,
 };
 use skwir_platform::inspection::{self, Encoding, limits};
@@ -107,16 +107,21 @@ impl PreviewProvider for Provider {
         if view.source {
             return Ok(None);
         }
-        let path = req.entry.resolve()?;
+        let held = req.held()?;
         let bounds = limits::Bounds::of(view);
-        match reader(&req.entry.path, req.mime.as_deref()) {
-            Some(Reader::Database) => sqlite::table(&path, view.offset, bounds, cancel).map(Some),
-            Some(Reader::Lines) => jsonl::table(&path, view.offset, bounds, cancel).map(Some),
+        match reader(held.path(), req.mime.as_deref()) {
+            // SQLite opens the database by its path: a remote's, as it was
+            // read once (ADR-101).
+            Some(Reader::Database) => {
+                sqlite::table(&held.path_for_program(cancel)?, view.offset, bounds, cancel)
+                    .map(Some)
+            }
+            Some(Reader::Lines) => jsonl::table(&held, view.offset, bounds, cancel).map(Some),
             Some(Reader::Workbook(mime)) => {
-                spreadsheet::table(&path, mime.as_str(), view.offset, bounds, cancel).map(Some)
+                spreadsheet::table(&held, mime.as_str(), view.offset, bounds, cancel).map(Some)
             }
             Some(Reader::Text { tabs }) => {
-                table(&path, tabs, view.offset, bounds, cancel).map(Some)
+                table(&held, tabs, view.offset, bounds, cancel).map(Some)
             }
             None => Ok(None),
         }
@@ -192,30 +197,27 @@ impl<R: Read> Read for RecordBound<R> {
     }
 }
 
-/// One page of `TABLE_ROWS` records from record `offset`, streamed from the
-/// file: a table is as long as its file, and only the page is kept. Rows
-/// before the page are parsed and dropped, so numbering stays exact. Its
-/// columns are `asked`'s. `tsv`: its cells are split by tabs, else by
-/// commas.
+/// One page of `TABLE_ROWS` records from record `offset`, streamed from
+/// what is held of the file (its start, then the file read on through it):
+/// a table is as long as its file, and only the page is kept. Rows before
+/// the page are parsed and dropped, so numbering stays exact. Its columns
+/// are `asked`'s. `tsv`: its cells are split by tabs, else by commas.
 fn table(
-    path: &std::path::Path,
+    held: &Arc<Held>,
     tsv: bool,
     offset: u64,
     asked: limits::Bounds,
     cancel: &CancelToken,
 ) -> anyhow::Result<Inspection> {
-    let mut file = inspection::open(path)?;
-    let mut prefix = Vec::new();
-    (&mut file).take(64 * 1024).read_to_end(&mut prefix)?;
-    let encoding = sniff(&prefix);
+    let encoding = sniff(held.head());
     // The CSV reader reads bytes that are ASCII-compatible; UTF-16 is not,
     // so it is decoded whole, within the bound for text read whole.
     let input: Box<dyn Read> = match encoding {
         Encoding::Utf16Le | Encoding::Utf16Be => {
-            let (text, _) = inspection::read_text(path, asked, cancel)?;
+            let (text, _) = inspection::read_text(held, asked, cancel)?;
             Box::new(std::io::Cursor::new(text.into_bytes()))
         }
-        _ => Box::new(std::io::Cursor::new(prefix).chain(file)),
+        _ => Box::new(inspection::open(held)?),
     };
     let cells_in = match encoding {
         Encoding::Windows1252 => Encoding::Windows1252,
@@ -247,12 +249,12 @@ fn table(
     // (a file read as bytes: one decoded whole is read from its start).
     let (mut index, from) = match encoding {
         Encoding::Utf16Le | Encoding::Utf16Be => (0, 0),
-        _ => starts::nearest(path, offset),
+        _ => starts::nearest(held, offset),
     };
     let mut base = 0;
     if from > 0 {
         use std::io::Seek as _;
-        let mut file = inspection::open(path)?;
+        let mut file = inspection::open(held)?;
         file.seek(std::io::SeekFrom::Start(from))?;
         reader = csv::ReaderBuilder::new()
             .delimiter(if tsv { b'\t' } else { b',' })
@@ -273,7 +275,7 @@ fn table(
             && index.is_multiple_of(page)
             && !matches!(encoding, Encoding::Utf16Le | Encoding::Utf16Be)
         {
-            starts::learn(path, index, base + reader.position().byte());
+            starts::learn(held, index, base + reader.position().byte());
         }
         if !reader.read_byte_record(&mut record)? {
             break;
@@ -402,14 +404,18 @@ pub(crate) fn bounded_cell(cell: &str, truncated: &mut usize) -> String {
 mod tests {
     use super::*;
 
+    /// What a preview holds of a file named `name` whose bytes are
+    /// `bytes`.
+    fn held(name: &str, bytes: &[u8]) -> Arc<Held> {
+        Arc::new(Held::of_bytes(name, bytes))
+    }
+
     fn read(name: &str, bytes: &[u8], offset: u64) -> Inspection {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(name);
-        std::fs::write(&path, bytes).unwrap();
+        let held = held(name, bytes);
         // As the database types these names.
-        let tabs = TAB_SEPARATED.holds(&path, None);
+        let tabs = TAB_SEPARATED.holds(held.path(), None);
         table(
-            &path,
+            &held,
             tabs,
             offset,
             limits::Bounds::QUICK,
@@ -427,6 +433,7 @@ mod tests {
             max_side: 0,
             text_size: None,
             fit: None,
+            held: skwir_core::preview::HeldSlot::default(),
         }
     }
 
@@ -489,10 +496,52 @@ mod tests {
         assert_eq!(shown(&provider, &request).rows[0].cells[0], "l'été");
     }
 
+    /// A table, a JSON Lines log and a workbook are read from what the
+    /// preview holds (ADR-101), never from their paths, which lead nowhere
+    /// here.
+    #[test]
+    fn tables_are_read_from_what_is_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("gone");
+        let provider = Provider { pages: false };
+        let previewed = |name: &str, bytes: &[u8], mime: Option<&str>| {
+            let request = PreviewRequest::holding(gone.join(name), bytes, mime);
+            assert!(provider.accepts(&request), "{name}");
+            shown(&provider, &request)
+        };
+        let csv = previewed("l'été.csv", b"name,note\ncaf\xe9,a b\n", Some("text/csv"));
+        assert_eq!(csv.columns, ["name", "note"]);
+        assert_eq!(csv.rows[0].cells, ["caf\u{e9}", "a b"]);
+        assert_eq!(csv.notice, "Read as Windows-1252");
+        let tsv = previewed(
+            "it's data.tsv",
+            b"a\tb\n1\t2\n",
+            Some("text/tab-separated-values"),
+        );
+        assert_eq!(tsv.rows[0].cells, ["1", "2"]);
+        let lines = previewed("a log’s name.jsonl", b"{\"n\": 1}\n{\"n\": 2}\n", None);
+        assert_eq!(lines.columns, ["n"]);
+        assert_eq!(lines.rows.len(), 2);
+        let made = spreadsheet::tests::workbook(
+            dir.path(),
+            &[("Data", r#"<row r="1"><c r="A1" t="s"><v>0</v></c></row>"#)],
+            &["l'été"],
+        );
+        let bytes = std::fs::read(&made).unwrap();
+        let book = previewed(
+            "a budget’s name.xlsx",
+            &bytes,
+            Some(spreadsheet::tests::XLSX),
+        );
+        assert_eq!(book.rows[0].cells[0], "l'été");
+    }
+
     /// A database is one by its type, read from its bytes where its name
     /// gives none (`.db3`), never by a list of names: a file named as one
     /// whose bytes are another format's is left to another preview, and
-    /// one asked about without its bytes typed is not taken.
+    /// one asked about without its bytes typed is not taken. SQLite opens
+    /// it by its path (`Held::path_for_program`), so it is read from a
+    /// file, never from bytes held for a path that leads nowhere.
     #[test]
     fn a_database_is_read_by_its_type_not_its_name() {
         let dir = tempfile::tempdir().unwrap();
@@ -535,10 +584,8 @@ mod tests {
             Some("text/tab-separated-values")
         ));
         assert!(!TAB_SEPARATED.holds(std::path::Path::new("data.tab"), Some("text/csv")));
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("it's data.tab");
-        std::fs::write(&path, b"name\tnote\na,b\tc\n").unwrap();
-        let t = table(&path, true, 0, limits::Bounds::QUICK, &CancelToken::new()).unwrap();
+        let tab = held("it's data.tab", b"name\tnote\na,b\tc\n");
+        let t = table(&tab, true, 0, limits::Bounds::QUICK, &CancelToken::new()).unwrap();
         assert_eq!(t.columns, ["name", "note"]);
         assert_eq!(t.rows[0].cells, ["a,b", "c"]);
     }
@@ -585,36 +632,44 @@ mod tests {
         assert_eq!(data.rows[1].cells, ["short"]);
         assert_eq!(data.notice, "2 rows cut to 64 columns");
         assert!(data.whole_available, "Full preview shows the rest");
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("wide.csv");
-        std::fs::write(&path, format!("{wide}\n{wide}\n")).unwrap();
-        let all = table(&path, false, 0, limits::Bounds::WHOLE, &CancelToken::new()).unwrap();
+        let two = held("wide.csv", format!("{wide}\n{wide}\n").as_bytes());
+        let all = table(&two, false, 0, limits::Bounds::WHOLE, &CancelToken::new()).unwrap();
         assert_eq!(all.columns.len(), limits::TABLE_COLUMNS + 6);
         assert!(all.notice.is_empty() && !all.whole_available);
     }
 
     /// A page turned to is read from where the pages before it were seen
-    /// to begin, and says the same as one read from the file's start.
+    /// to begin in the version of the file held, and says the same as one
+    /// read from the file's start.
     #[test]
     fn pages_turned_to_start_where_they_were_seen_to_begin() {
         use std::fmt::Write as _;
-        let dir = tempfile::tempdir().unwrap();
         let rows = 2600;
         let mut text = String::from("n,name\n");
         for n in 1..=rows {
             let _ = writeln!(text, "{n},\"row, {n}\"");
         }
-        let path = dir.path().join("long.csv");
-        std::fs::write(&path, &text).unwrap();
+        let long = held("long.csv", text.as_bytes());
         let cancel = CancelToken::new();
-        let fresh = |offset| table(&path, false, offset, limits::Bounds::QUICK, &cancel).unwrap();
+        let fresh = |offset| table(&long, false, offset, limits::Bounds::QUICK, &cancel).unwrap();
         let first_last = fresh(2500);
         assert_eq!(first_last.rows[0].cells[0], "2501");
         // Read in turn, each page's start is learned.
         for offset in (0..=2000).step_by(500) {
-            table(&path, false, offset, limits::Bounds::QUICK, &cancel).unwrap();
+            table(&long, false, offset, limits::Bounds::QUICK, &cancel).unwrap();
         }
-        assert_eq!(starts::nearest(&path, 2500).0, 2500);
+        assert_eq!(starts::nearest(&long, 2500).0, 2500);
+        // The file read again later, as it was, knows them; another
+        // version of it (a row more) knows none.
+        assert_eq!(
+            starts::nearest(&held("long.csv", text.as_bytes()), 2500).0,
+            2500
+        );
+        let longer = format!("{text}{},\"row, {}\"\n", rows + 1, rows + 1);
+        assert_eq!(
+            starts::nearest(&held("long.csv", longer.as_bytes()), 2500),
+            (0, 0)
+        );
         let again = fresh(2500);
         assert_eq!(again.rows.len(), first_last.rows.len());
         assert_eq!(again.rows[0].cells, first_last.rows[0].cells);
@@ -627,13 +682,12 @@ mod tests {
                 lines.push('\n');
             }
         }
-        let path = dir.path().join("long.jsonl");
-        std::fs::write(&path, &lines).unwrap();
-        let before = jsonl::table(&path, 1000, limits::Bounds::QUICK, &cancel).unwrap();
-        jsonl::table(&path, 0, limits::Bounds::QUICK, &cancel).unwrap();
-        jsonl::table(&path, 500, limits::Bounds::QUICK, &cancel).unwrap();
-        assert_eq!(starts::nearest(&path, 1000).0, 1000);
-        let after = jsonl::table(&path, 1000, limits::Bounds::QUICK, &cancel).unwrap();
+        let long = held("long.jsonl", lines.as_bytes());
+        let before = jsonl::table(&long, 1000, limits::Bounds::QUICK, &cancel).unwrap();
+        jsonl::table(&long, 0, limits::Bounds::QUICK, &cancel).unwrap();
+        jsonl::table(&long, 500, limits::Bounds::QUICK, &cancel).unwrap();
+        assert_eq!(starts::nearest(&long, 1000).0, 1000);
+        let after = jsonl::table(&long, 1000, limits::Bounds::QUICK, &cancel).unwrap();
         assert_eq!(after.rows[0].cells, before.rows[0].cells);
         assert_eq!(after.rows.len(), before.rows.len());
     }
@@ -670,10 +724,9 @@ mod tests {
     fn a_row_is_bounded_and_tab_separated_values_have_no_quotes() {
         let mut text = String::from("a,\"b\n");
         text.push_str(&"x\n".repeat(inspection::limits::TEXT_INPUT / 2 + 1024));
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("unclosed.csv");
-        std::fs::write(&path, &text).unwrap();
-        assert!(table(&path, false, 0, limits::Bounds::QUICK, &CancelToken::new()).is_err());
+        let unclosed = held("unclosed.csv", text.as_bytes());
+        let cancel = CancelToken::new();
+        assert!(table(&unclosed, false, 0, limits::Bounds::QUICK, &cancel).is_err());
         let data = read("quoted.tsv", b"name\tnote\n\"it\ta\n", 0);
         assert_eq!(data.rows[0].cells, ["\"it", "a"]);
     }

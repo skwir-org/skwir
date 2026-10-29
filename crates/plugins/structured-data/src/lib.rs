@@ -55,13 +55,13 @@ impl PreviewProvider for Provider {
         view: &InspectRequest,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Inspection>> {
-        let path = req.entry.resolve()?;
-        let language = inspection::extension(&path);
+        let held = req.held()?;
+        let language = inspection::extension(held.path());
         // A file that cannot be read whole or parsed fails: the panel shows
         // its source instead, saying why (`preview::source_instead`), and
         // offers Full preview when only its size kept it from being shown.
         let bounds = Bounds::of(view);
-        let (text, encoding) = inspection::read_text(&path, bounds, cancel)?;
+        let (text, encoding) = inspection::read_text(&held, bounds, cancel)?;
         let mut data = code(&text, &language, view.source, bounds, cancel)?;
         data.notice = encoding.notice().unwrap_or_default();
         Ok(Some(data))
@@ -434,6 +434,7 @@ mod tests {
             max_side: 64,
             text_size: None,
             fit: None,
+            held: skwir_core::preview::HeldSlot::default(),
         };
         let view = InspectRequest {
             source,
@@ -469,6 +470,37 @@ mod tests {
         let data = inspect(&legacy, false);
         assert_eq!(data.plain_text(), "name: caf\u{e9}\n");
         assert_eq!(data.notice, "Read as Windows-1252");
+    }
+
+    /// The file is read from what the preview holds (ADR-101), never from
+    /// its path, which leads nowhere here.
+    #[test]
+    fn data_is_read_from_what_is_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("gone");
+        let shown = |name: &str, bytes: &[u8], mime: &str| {
+            let request = PreviewRequest::holding(gone.join(name), bytes, Some(mime));
+            assert!(Provider.accepts(&request), "{name}");
+            Provider
+                .inspect(&request, &InspectRequest::default(), &CancelToken::new())
+                .unwrap()
+                .unwrap()
+        };
+        let json = shown(
+            "l'été.json",
+            br#"{"name":"caf\u00e9","items":[1,2]}"#,
+            "application/json",
+        );
+        assert_eq!(json.title, "JSON · formatted");
+        assert_eq!(json.blocks[1].text, r#"  "name": "caf\u00e9","#);
+        assert!(!json.folds.is_empty());
+        let toml = shown(
+            "it's settings.toml",
+            b"# caf\xe9\n[a]\nb = 1\n",
+            "application/toml",
+        );
+        assert_eq!(toml.plain_text(), "# caf\u{e9}\n[a]\nb = 1\n");
+        assert_eq!(toml.notice, "Read as Windows-1252");
     }
 
     #[test]

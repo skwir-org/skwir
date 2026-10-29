@@ -8,10 +8,10 @@
 //! skipped by seeking, and a leaf box is read only when it is one of those
 //! and small. A box that lies about its size ends the walk, never a read.
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
 
 use skwir_core::geo::LatLon;
 use skwir_core::inspection::Detail;
+use skwir_core::preview::FileSource;
 
 use crate::exif::Taken;
 
@@ -26,11 +26,11 @@ const LOCATION_KEY: &[u8] = b"com.apple.quicktime.location.ISO6709";
 const DATE_KEY: &[u8] = b"com.apple.quicktime.creationdate";
 
 /// Where and when the video was recorded, if it says.
-pub fn taken(path: &Path) -> Taken {
-    let Ok(file) = crate::file::open_regular(path) else {
+pub fn taken<S: FileSource + ?Sized>(source: &S) -> Taken {
+    let Ok(file) = source.open_reader() else {
         return Taken::default();
     };
-    let Ok(length) = file.metadata().map(|m| m.len()) else {
+    let Ok(length) = source.length() else {
         return Taken::default();
     };
     let mut walk = Walk {
@@ -51,8 +51,8 @@ pub fn taken(path: &Path) -> Taken {
 }
 
 /// The facts for Properties: the position, which shows the video on the map.
-pub fn details(path: &Path) -> Vec<Detail> {
-    taken(path)
+pub fn details<S: FileSource + ?Sized>(source: &S) -> Vec<Detail> {
+    taken(source)
         .at
         .and_then(|at| {
             crate::inspection::detail("Position", format!("{:.5}, {:.5}", at.lat, at.lon))

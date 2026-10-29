@@ -2,8 +2,10 @@
 use super::*;
 use skwir_core::inspection::{Align, Block, BlockKind, Picture, Script};
 use skwir_core::op::EntryRef;
+use skwir_core::preview::HeldSlot;
 use std::fmt::Write as _;
 use std::io::Write;
+use std::path::Path;
 
 /// A 2 × 3 picture.
 const PNG: &[u8] = b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x02\x00\x00\x00\x03\x08\x06\x00\x00\x00\xb9\xea\xde\x81\x00\x00\x00\x11\x49\x44\x41\x54\x78\x9c\x63\xf8\xcf\xc0\xf0\x1f\x84\x19\x30\x18\x00\xa1\x79\x0b\xf5\x4d\xc4\x9a\x07\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
@@ -381,6 +383,7 @@ fn request(path: &Path) -> PreviewRequest {
         max_side: 256,
         text_size: None,
         fit: None,
+        held: HeldSlot::default(),
     }
 }
 
@@ -428,6 +431,69 @@ fn reading_takes_what_skwir_reads_and_names_its_pictures_for_later() {
     let legacy = dir.path().join("old.doc");
     zip(&legacy, &[("x", b"y")]);
     assert!(!provider.accepts(&request(&legacy)));
+}
+
+/// A preview reads its file once (ADR-101): the provider takes it, its
+/// parts and its pictures from what the request holds, named where no file
+/// is, so a read of the path would fail.
+#[test]
+fn reading_takes_the_document_from_what_is_held() {
+    let dir = tempfile::tempdir().unwrap();
+    let provider = reading(Choice::Reading, dir.path());
+    let view = InspectRequest::default();
+    let held = |name: &str, written: &Path, mime: &str| {
+        PreviewRequest::holding(
+            dir.path().join("gone").join(name),
+            std::fs::read(written).unwrap(),
+            Some(mime),
+        )
+    };
+    let written = dir.path().join("written.docx");
+    word(&written, BODY, &[(1, "The note.")], false);
+    let req = held(
+        "l’été report.docx",
+        &written,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    assert!(provider.accepts(&req));
+    let data = provider
+        .inspect(&req, &view, &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_eq!(data.blocks[0].text, "Café report");
+    let labels: Vec<_> = data.details.iter().map(|d| d.label.as_str()).collect();
+    assert_eq!(labels, ["Title", "Author", "Words"]);
+    let picture = provider
+        .picture(&req, &view, "word/media/a.png", &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_eq!((picture.width, picture.height), (2, 3));
+    let written = dir.path().join("written.odt");
+    open_document(&written, ODF_BODY);
+    let req = held(
+        "l’été report.odt",
+        &written,
+        "application/vnd.oasis.opendocument.text",
+    );
+    assert!(provider.accepts(&req));
+    let data = provider
+        .inspect(&req, &view, &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_eq!(data.blocks[0].text, "Café report");
+    let picture = provider
+        .picture(&req, &view, "Pictures/a.png", &CancelToken::new())
+        .unwrap()
+        .unwrap();
+    assert_eq!((picture.width, picture.height), (2, 3));
+    // A Word file in name only is told by the first bytes held.
+    let locked = dir.path().join("locked.docx");
+    std::fs::write(&locked, b"\xd0\xcf\x11\xe0 not a zip").unwrap();
+    assert!(!provider.accepts(&held(
+        "locked.docx",
+        &locked,
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )));
 }
 
 const ODF_NS: &str = r#"xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:dc="http://purl.org/dc/elements/1.1/""#;

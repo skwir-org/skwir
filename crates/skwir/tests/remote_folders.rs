@@ -1620,6 +1620,101 @@ fn rclone_copies_within_its_mount_on_the_server() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A text file on a mount that keeps nothing it reads (rclone's `minimal`,
+/// which Automatic chooses on the local network) is fetched once for its
+/// preview (ADR-101): every provider asked at each stage, the text's
+/// first rows, its rows counted and read as the view reads them. Counted
+/// at the server, where each fetch is a GET.
+#[test]
+fn a_preview_of_a_file_on_a_mount_fetches_it_once() {
+    use skwir_core::inspection::InspectRequest;
+    use skwir_core::preview::{HeldSlot, PreviewRequest};
+    use skwir_platform::text_rows;
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("rclone-preview-once");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    let text: String = (1..=600).fold(String::new(), |mut text, n| {
+        use std::fmt::Write as _;
+        let _ = writeln!(text, "line {n} of a note");
+        text
+    });
+    std::fs::write(served_root.join("a note.txt"), &text).unwrap();
+    let served = Served::start("webdav", &served_root, &["-v"]);
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    // Every plugin that previews, as the window has them, with rclone alone
+    // to mount.
+    for plugin in skwir::plugins()
+        .into_iter()
+        .filter(|plugin| plugin.id() != "remote")
+    {
+        app.plugins.add(plugin, &app);
+    }
+    let remotes = Remotes::with(vec![Arc::new(Rclone::default())]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let pane = app.workspace.read().active_id();
+    let address = Location::parse(&format!("dav://127.0.0.1:{}/", served.port));
+    app.navigate(pane, &address).unwrap();
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    let mounted = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&mounted).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+    let log = served_root.with_extension("webdav.log");
+    let fetched = || {
+        std::fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| line.contains("a note.txt: GET from"))
+            .count()
+    };
+    let before = fetched();
+
+    // As the panel's worker asks, in its order (`Shell::preview_request`).
+    let path = mounted.join("a note.txt");
+    let request = PreviewRequest {
+        entry: skwir_core::op::EntryRef::from_path(&path).unwrap(),
+        mime: Some("text/plain".into()),
+        page: 1,
+        seconds: None,
+        max_side: 1024,
+        text_size: None,
+        fit: None,
+        held: HeldSlot::default(),
+    };
+    let (previews, cancel) = (&app.previews, CancelToken::new());
+    assert!(previews.converted(&request, &cancel).unwrap().is_none());
+    let mut view = InspectRequest::default();
+    let shown =
+        skwir_ui::preview::inspect_shown(previews, &request, &mut view, &request, false, &cancel)
+            .unwrap();
+    assert!(shown.is_none(), "no provider takes plain text");
+    assert!(!previews.media(&request));
+    assert!(previews.open_document(&request, &cancel).unwrap().is_none());
+    assert!(previews.render(&request, &cancel).unwrap().is_none());
+    let held = request.held().unwrap();
+    assert!(skwir_platform::inspection::is_text(held.head()));
+    let plain = skwir_platform::inspection::plain(&held, &cancel).unwrap();
+    // The view: its rows counted, a chunk read.
+    let file = plain.text.unwrap();
+    let form = text_rows::Form::read(&file, &cancel).unwrap();
+    let index = parking_lot::RwLock::new(text_rows::Index::new(form));
+    text_rows::count(&file, &index, &cancel, || {}).unwrap();
+    assert_eq!(index.read().lines(), 600);
+    let rows = text_rows::read(&file, form, (0, text_rows::origin(form)), 0..300, &cancel).unwrap();
+    assert_eq!(rows[299].text, "line 300 of a note");
+
+    assert_eq!(fetched() - before, 1, "fetched once ({})", log.display());
+    drop(request);
+    drop(left);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// The Nearby place (ADR-084) lists what Avahi and wsdd find, each server
 /// once, leading to its address; let go of, the wsdd it started ends and
 /// its connection to Avahi is closed. Run by `tools/test/nearby.sh`, in

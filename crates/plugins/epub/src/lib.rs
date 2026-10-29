@@ -9,7 +9,7 @@ use skwir_core::{
     App, CancelToken,
     inspection::{InspectRequest, Inspection, Picture, PrintedPage, Row},
     plugin::Plugin,
-    preview::{PreviewProvider, PreviewRequest},
+    preview::{FileSource, Held, PreviewProvider, PreviewRequest},
     thumbs::{Image, Stage, ThumbRequest, ThumbnailProvider},
 };
 use skwir_platform::{
@@ -188,35 +188,39 @@ impl PreviewProvider for Provider {
         key: &str,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<skwir_core::thumbs::Image>> {
-        let mut container = Container::open(&req.entry.resolve()?, cancel)?;
+        let mut container = Container::open(&req.held()?, cancel)?;
         let bytes = container.read(key, "Embedded image", cancel)?;
         Ok(Some(inspection::image(&bytes)?))
     }
     /// A book of pages opens in the document reader: with `MuPDF`, every
     /// book, laid out into pages at the reader's text size and again when it
     /// changes; with the built-in engine, a fixed-layout book, its pages
-    /// drawn as it lays them out (`pages::FixedBook`).
+    /// drawn as it lays them out (`pages::FixedBook`), from what is held.
+    /// `MuPDF`'s helper reads it by its path: the one what is held gives a
+    /// program (a copy of a remote's file held whole).
     fn open_document(
         &self,
         req: &PreviewRequest,
         lifetime: &CancelToken,
     ) -> anyhow::Result<Option<Arc<dyn skwir_core::document::DocumentSession>>> {
+        let held = req.held()?;
         if self.engine != Engine::Mupdf {
-            let book = pages::FixedBook::open(req.entry.resolve()?, lifetime)?;
+            let book = pages::FixedBook::open(held, lifetime)?;
             return Ok(
                 book.map(|book| Arc::new(book) as Arc<dyn skwir_core::document::DocumentSession>)
             );
         }
-        let session = skwir_platform::document::open_book(
-            req.entry.resolve()?,
-            req.text_size,
-            lifetime.clone(),
-        )?;
-        anyhow::ensure!(
-            session.is_some(),
-            "Reading books with MuPDF needs skwir-mupdf-worker; install it, or choose the built-in book engine"
-        );
-        Ok(session)
+        let source = held.path_for_program(lifetime)?.into_owned();
+        let session = skwir_platform::document::open_book(source, req.text_size, lifetime.clone())?;
+        let Some(session) = session else {
+            anyhow::bail!(
+                "Reading books with MuPDF needs skwir-mupdf-worker; install it, or choose the built-in book engine"
+            );
+        };
+        Ok(Some(Arc::new(Holding {
+            session,
+            _held: held,
+        })))
     }
     fn inspect(
         &self,
@@ -228,8 +232,7 @@ impl PreviewProvider for Provider {
         if self.engine == Engine::Mupdf {
             return Ok(None);
         }
-        let path = req.entry.resolve()?;
-        let mut container = Container::open(&path, cancel)?;
+        let mut container = Container::open(&req.held()?, cancel)?;
         let (book, fixed) = package(&mut container, cancel)?;
         // A book of pages is a document (`open_document`).
         if fixed {
@@ -414,6 +417,40 @@ impl PreviewProvider for Provider {
         }))
     }
 }
+/// `MuPDF`'s session over the path what is held gave it: the copy there
+/// lives as long as the session, which may start its helper again.
+struct Holding {
+    session: Arc<dyn skwir_core::document::DocumentSession>,
+    _held: Arc<Held>,
+}
+
+impl skwir_core::document::DocumentSession for Holding {
+    fn info(&self) -> &skwir_core::document::DocumentInfo {
+        self.session.info()
+    }
+    fn render(
+        &self,
+        page: u32,
+        side: u32,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<skwir_core::document::DocumentPage> {
+        self.session.render(page, side, cancel)
+    }
+    fn search(
+        &self,
+        query: &str,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Vec<skwir_core::document::SearchHit>> {
+        self.session.search(query, cancel)
+    }
+    fn locate(&self, text: &str, near: u32, cancel: &CancelToken) -> anyhow::Result<Option<u32>> {
+        self.session.locate(text, near, cancel)
+    }
+    fn closed_links(&self) -> Option<&str> {
+        self.session.closed_links()
+    }
+}
+
 /// A chapter's folder in the container, which its links start from.
 fn base(href: &str) -> &str {
     href.rsplit_once('/').map_or("", |(base, _)| base)
@@ -554,12 +591,14 @@ fn deobfuscate(bytes: &mut [u8], algorithm: &str, identifier: &str) -> Option<()
     Some(())
 }
 impl Container {
-    fn open(path: &std::path::Path, cancel: &CancelToken) -> anyhow::Result<Self> {
+    /// The book `file`: what a preview holds of it, or its path (a
+    /// cover's).
+    fn open<S: FileSource + ?Sized>(file: &S, cancel: &CancelToken) -> anyhow::Result<Self> {
         // Declared sizes are not checked here: a book's pictures, audio or
         // video are never read unless a chapter shows them, and `read`
         // bounds the bytes each read actually produces.
         let mut container = Self {
-            package: skwir_platform::package::Package::open(path, "This EPUB", false, cancel)?,
+            package: skwir_platform::package::Package::open(file, "This EPUB", false, cancel)?,
             encrypted: HashMap::new(),
             identifier: None,
         };
@@ -842,6 +881,7 @@ fn contents(
 mod tests {
     use super::*;
     use skwir_core::op::EntryRef;
+    use skwir_core::preview::HeldSlot;
 
     const CONTAINER_XML: &str = r#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="EPUB/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
     const OPF: &str = r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:example:synthetic</dc:identifier><dc:title>Synthetic book</dc:title><dc:language>en</dc:language></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/><item id="three" href="sub/caf%C3%A9%20three.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/><itemref idref="three"/></spine></package>"#;
@@ -897,6 +937,7 @@ mod tests {
             max_side: 64,
             text_size: None,
             fit: None,
+            held: HeldSlot::default(),
         };
         Provider::default()
             .inspect(&request, view, &CancelToken::new())
@@ -916,6 +957,7 @@ mod tests {
             max_side: 64,
             text_size: Some(20.),
             fit: None,
+            held: HeldSlot::default(),
         };
         let cancel = CancelToken::new();
         // The built-in engine inspects; it opens no document.
@@ -1393,6 +1435,7 @@ mod tests {
             max_side: 64,
             text_size: None,
             fit: None,
+            held: HeldSlot::default(),
         };
         let provider = Provider::default();
         let cancel = CancelToken::new();
@@ -1449,6 +1492,7 @@ mod tests {
             max_side: 64,
             text_size: None,
             fit: None,
+            held: HeldSlot::default(),
         };
         let cancel = CancelToken::new();
         let view = InspectRequest::default();
@@ -1658,6 +1702,58 @@ mod tests {
             (2, 3),
             "a picture is never enlarged"
         );
+    }
+
+    /// A preview reads its file once (ADR-101): a book's chapters, its
+    /// pictures and the pages drawn later come from what the request
+    /// holds, named where no file is, so a read of the path would fail.
+    #[test]
+    fn a_book_and_its_pages_come_from_what_is_held() {
+        let tmp = tempfile::tempdir().unwrap();
+        let held = |written: &std::path::Path| {
+            PreviewRequest::holding(
+                tmp.path().join("gone").join("l’été book.epub"),
+                std::fs::read(written).unwrap(),
+                Some("application/epub+zip"),
+            )
+        };
+        let cancel = CancelToken::new();
+        let view = InspectRequest::default();
+        let provider = Provider::default();
+        let written = tmp.path().join("Synthetic book.epub");
+        book(&written);
+        let request = held(&written);
+        assert!(provider.accepts(&request));
+        let first = provider.inspect(&request, &view, &cancel).unwrap().unwrap();
+        assert_eq!(first.title, "EPUB · chapter 1 / 3");
+        assert!(first.blocks.iter().any(|b| b.text == "First"));
+        let written = tmp.path().join("Synthetic drawn book.epub");
+        fixed(
+            &written,
+            &[(
+                "EPUB/one.xhtml",
+                br#"<html><body><img src="images/p1.png" alt=""/><p>Lettering</p></body></html>"#,
+            )],
+        );
+        let request = held(&written);
+        let pages = provider
+            .open_document(&request, &cancel)
+            .unwrap()
+            .expect("a book of pages");
+        assert_eq!(pages.info().pages, 3);
+        assert!(pages.render(1, 800, &cancel).is_ok());
+        let found: Vec<_> = pages
+            .search("lettering", &cancel)
+            .unwrap()
+            .into_iter()
+            .map(|hit| hit.page)
+            .collect();
+        assert_eq!(found, [1]);
+        let picture = provider
+            .picture(&request, &view, "EPUB/images/p1.png", &cancel)
+            .unwrap()
+            .unwrap();
+        assert_eq!((picture.width, picture.height), (2, 3));
     }
 
     #[test]

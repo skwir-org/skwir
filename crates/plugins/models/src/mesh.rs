@@ -5,9 +5,8 @@
 //! window that draws and turns them (ADR-067). Properties says what a print
 //! needs: its size, whether it is watertight and what it holds.
 use crate::Found;
-use skwir_core::CancelToken;
+use skwir_core::{CancelToken, preview::FileSource};
 use skwir_platform::model::{self, Asked, Measures, MeshFormat, Shown};
-use std::path::Path;
 use std::sync::Arc;
 
 /// The unit's volume as it is usually said, from a length unit cubed.
@@ -71,15 +70,23 @@ fn title(format: MeshFormat) -> &'static str {
     }
 }
 
-/// The mesh at `path` drawn at most `side` pixels on its longer side.
-pub fn read(
-    path: &Path,
+/// The mesh `source` holds drawn at most `side` pixels on its longer
+/// side, by the helper, which reads it by path
+/// (`FileSource::path_for_program`).
+pub fn read<S: FileSource + ?Sized>(
+    source: &S,
     format: MeshFormat,
     side: u32,
     asked: Asked,
     cancel: &CancelToken,
 ) -> anyhow::Result<Found> {
-    let drawn = model::draw(path, format, side, asked, cancel)?;
+    let drawn = model::draw(
+        &source.path_for_program(cancel)?,
+        format,
+        side,
+        asked,
+        cancel,
+    )?;
     let details = details(format, &drawn.measures);
     // Faces that would not mesh are holes in what is shown, not in the
     // model: said, so a hole is never taken for the shape.

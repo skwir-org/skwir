@@ -4,10 +4,9 @@
 //! Blender 3.0, Zstandard since) is decoded as a stream, and only as far as
 //! that picture: the blocks before it are a few scenes' names.
 use crate::Found;
-use skwir_core::{CancelToken, thumbs::Image};
+use skwir_core::{CancelToken, preview::FileSource, thumbs::Image};
 use skwir_platform::inspection;
 use std::io::Read;
-use std::path::Path;
 
 /// Bytes read before the picture: a `REND` block per scene precedes it.
 const BEFORE_PICTURE: u64 = 1024 * 1024;
@@ -55,8 +54,8 @@ fn i32_at(bytes: &[u8], at: usize) -> i32 {
 }
 
 /// The file's content, decompressed as it is read.
-fn content(path: &Path) -> anyhow::Result<Box<dyn Read>> {
-    let mut file = std::io::BufReader::new(inspection::open(path)?);
+fn content<S: FileSource + ?Sized>(source: &S) -> anyhow::Result<Box<dyn Read>> {
+    let mut file = std::io::BufReader::new(inspection::open(source)?);
     let mut magic = [0u8; 4];
     let got = read_up_to(&mut file, &mut magic)?;
     let file = std::io::Cursor::new(magic[..got].to_vec()).chain(file);
@@ -161,8 +160,12 @@ fn version(number: u32) -> String {
 
 /// What the file says of itself: its picture (at most `side` on its longer
 /// side), the version that saved it and its scenes.
-pub fn read(path: &Path, side: u32, cancel: &CancelToken) -> anyhow::Result<Found> {
-    let mut content = content(path)?.take(BEFORE_PICTURE + u64::from(PICTURE_SIDE).pow(2) * 4);
+pub fn read<S: FileSource + ?Sized>(
+    source: &S,
+    side: u32,
+    cancel: &CancelToken,
+) -> anyhow::Result<Found> {
+    let mut content = content(source)?.take(BEFORE_PICTURE + u64::from(PICTURE_SIDE).pow(2) * 4);
     let mut header = [0u8; 17];
     read_exact(&mut content, &mut header[..12])?;
     anyhow::ensure!(&header[..7] == b"BLENDER", "Not a Blender file");
@@ -349,7 +352,7 @@ mod tests {
         file
     }
 
-    fn write(dir: &Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+    fn write(dir: &std::path::Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
         let path = dir.join(name);
         std::fs::write(&path, bytes).unwrap();
         path
