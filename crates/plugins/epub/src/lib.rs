@@ -254,7 +254,7 @@ impl PreviewProvider for Provider {
         anyhow::ensure!(!chapters.is_empty(), "EPUB has no readable chapters");
         // A chapter is found by the member it names, however a link spells
         // it (`Text/../Text/ch2.xhtml`, escaped, with a fragment).
-        let keys: Vec<_> = chapters.iter().map(|href| member_key(href)).collect();
+        let sections = Sections::of(chapters.iter().map(|href| member_key(href)));
         let mut index = view.offset.min(chapters.len().saturating_sub(1) as u64) as usize;
         let mut sheets = Sheets::new();
         let mut notice = vec![String::from(
@@ -310,10 +310,7 @@ impl PreviewProvider for Provider {
             .filter(|_| view.query.is_none())
             .unwrap_or_else(|| chapters[index].clone());
         let target = member_key(&href);
-        let index = keys
-            .iter()
-            .position(|key| key.is_some() && *key == target)
-            .unwrap_or(index);
+        let index = sections.of_key(target.as_deref()).unwrap_or(index);
         let bytes = container.read(&href, "Chapter", cancel)?;
         let (source, encoding) = inspection::decode(&bytes);
         notice.extend(encoding.notice());
@@ -334,9 +331,8 @@ impl PreviewProvider for Provider {
         // the reader is: a row naming no chapter of the spine knows none.
         for row in &mut rows {
             let key = row.target.as_deref().and_then(member_key);
-            row.section = keys
-                .iter()
-                .position(|k| k.is_some() && *k == key)
+            row.section = sections
+                .of_key(key.as_deref())
                 .map(|section| section as u64);
         }
         // What the package says about the book, for the panel's Properties.
@@ -370,7 +366,7 @@ impl PreviewProvider for Provider {
             next: (index + 1 < chapters.len()).then_some(index as u64 + 1),
             position: index as u64,
             sections: chapters.len() as u64,
-            printed_pages: printed_pages(&book, &keys),
+            printed_pages: printed_pages(&book, &sections),
             source_available: true,
             ..Inspection::default()
         };
@@ -681,6 +677,30 @@ impl Container {
 }
 /// The member an href names: without its fragment or query, unescaped and
 /// normalized. Chapters, links and resources are all compared by it.
+/// The spine's members by their key (`member_key`), each at its first
+/// place in the spine, as reading the spine for it would find: a link's
+/// chapter found at once, where each of a thousand contents' entries read
+/// a spine of a thousand chapters.
+pub(crate) struct Sections(HashMap<String, usize>);
+
+impl Sections {
+    /// The spine's members' `keys`, in its order.
+    pub(crate) fn of(keys: impl IntoIterator<Item = Option<String>>) -> Self {
+        let mut first = HashMap::new();
+        for (index, key) in keys.into_iter().enumerate() {
+            if let Some(key) = key {
+                first.entry(key).or_insert(index);
+            }
+        }
+        Sections(first)
+    }
+
+    /// The first place in the spine of the member `key` names.
+    pub(crate) fn of_key(&self, key: Option<&str>) -> Option<usize> {
+        self.0.get(key?).copied()
+    }
+}
+
 fn member_key(href: &str) -> Option<String> {
     let href = href.split(['#', '?']).next().unwrap_or(href);
     let decoded = percent_encoding::percent_decode_str(href)
@@ -810,13 +830,13 @@ fn table_of_contents(book: &rbook::Epub) -> Vec<Row> {
 /// `pageList`): each with the chapter that holds it, among `keys` (the
 /// spine's members), and its link. A page in no chapter of the spine is
 /// left out.
-fn printed_pages(book: &rbook::Epub, keys: &[Option<String>]) -> Vec<PrintedPage> {
+fn printed_pages(book: &rbook::Epub, sections: &Sections) -> Vec<PrintedPage> {
     /// Pages kept: more than any printed book has.
     const PAGES: usize = 20_000;
     fn walk(
         entry: rbook::epub::toc::EpubTocEntry<'_>,
         depth: usize,
-        keys: &[Option<String>],
+        sections: &Sections,
         pages: &mut Vec<PrintedPage>,
     ) {
         if depth > limits::NESTING || pages.len() >= PAGES {
@@ -825,7 +845,7 @@ fn printed_pages(book: &rbook::Epub, keys: &[Option<String>]) -> Vec<PrintedPage
         if let Some(href) = entry.href() {
             let target = href.as_str();
             let key = member_key(target);
-            if let Some(section) = keys.iter().position(|k| k.is_some() && *k == key) {
+            if let Some(section) = sections.of_key(key.as_deref()) {
                 pages.push(PrintedPage {
                     label: entry.label().trim().to_owned(),
                     section: section as u64,
@@ -834,12 +854,12 @@ fn printed_pages(book: &rbook::Epub, keys: &[Option<String>]) -> Vec<PrintedPage
             }
         }
         for child in entry {
-            walk(child, depth + 1, keys, pages);
+            walk(child, depth + 1, sections, pages);
         }
     }
     let mut pages = Vec::new();
     if let Some(root) = book.toc().page_list() {
-        walk(root, 0, keys, &mut pages);
+        walk(root, 0, sections, &mut pages);
     }
     pages.retain(|page| !page.label.is_empty());
     pages
@@ -882,6 +902,43 @@ mod tests {
     use super::*;
     use skwir_core::op::EntryRef;
     use skwir_core::preview::HeldSlot;
+
+    /// A member the spine names twice is found at its first place, as
+    /// reading the spine for it found it; a link however spelt finds its
+    /// member, and one to no member (or no key) finds nothing.
+    #[test]
+    fn a_member_is_found_at_its_first_place_in_the_spine() {
+        let spine = [
+            "Text/one.xhtml",
+            "Text/two.xhtml",
+            "Text/one.xhtml",
+            "Text/caf%C3%A9%20three.xhtml",
+        ];
+        let keys: Vec<_> = spine.iter().map(|href| member_key(href)).collect();
+        let sections = Sections::of(keys.iter().cloned());
+        let read = |href: &str| {
+            let key = member_key(href);
+            keys.iter().position(|k| k.is_some() && *k == key)
+        };
+        for href in [
+            "Text/one.xhtml",
+            "Text/../Text/one.xhtml#part",
+            "Text/two.xhtml",
+            "Text/café three.xhtml",
+            "Text/four.xhtml",
+        ] {
+            assert_eq!(
+                sections.of_key(member_key(href).as_deref()),
+                read(href),
+                "{href}"
+            );
+        }
+        assert_eq!(
+            sections.of_key(member_key("Text/one.xhtml").as_deref()),
+            Some(0)
+        );
+        assert_eq!(sections.of_key(None), None);
+    }
 
     const CONTAINER_XML: &str = r#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="EPUB/book.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
     const OPF: &str = r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="id">urn:example:synthetic</dc:identifier><dc:title>Synthetic book</dc:title><dc:language>en</dc:language></metadata><manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="one" href="one.xhtml" media-type="application/xhtml+xml"/><item id="two" href="two.xhtml" media-type="application/xhtml+xml"/><item id="three" href="sub/caf%C3%A9%20three.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="one"/><itemref idref="two"/><itemref idref="three"/></spine></package>"#;

@@ -5,6 +5,7 @@
 //! the book (ADR-101); nothing else is kept but the spine. A drawn page
 //! has no text layer: converted comics set their lettering in private-use
 //! glyphs, which read as nothing.
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use skwir_core::{
@@ -22,7 +23,8 @@ use skwir_platform::{
 };
 
 use crate::{
-    Chapter, Container, Sheets, base, member_key, package, printed_pages, table_of_contents,
+    Chapter, Container, Sections, Sheets, base, member_key, package, printed_pages,
+    table_of_contents,
 };
 
 /// Pages read to find the size a page stating none is drawn at.
@@ -81,7 +83,7 @@ impl FixedBook {
         );
         // The contents lead to the page each entry names, however its link
         // spells it.
-        let keys: Vec<_> = pages.iter().map(|page| member_key(&page.href)).collect();
+        let sections = Sections::of(pages.iter().map(|page| member_key(&page.href)));
         let outlines = table_of_contents(&book)
             .into_iter()
             .map(|row| {
@@ -90,7 +92,7 @@ impl FixedBook {
                     title: row.cells.into_iter().next().unwrap_or_default(),
                     depth: u32::try_from(row.depth).unwrap_or(0),
                     page: target
-                        .and_then(|key| keys.iter().position(|k| k.is_some() && *k == key))
+                        .and_then(|key| sections.of_key(key.as_deref()))
                         .map(|index| index as u32 + 1),
                 }
             })
@@ -105,12 +107,15 @@ impl FixedBook {
             })
             .unwrap_or(PAGE_SIZE);
         // A page's label is the first printed page the page list puts on it.
-        let printed = printed_pages(&book, &keys);
+        let printed = printed_pages(&book, &sections);
+        let mut first: HashMap<u64, &str> = HashMap::new();
+        for page in &printed {
+            first.entry(page.section).or_insert(&page.label);
+        }
         let labels = page_labels((0..pages.len()).map(|index| {
-            printed
-                .iter()
-                .find(|page| page.section == index as u64)
-                .map(|page| page.label.clone())
+            first
+                .get(&(index as u64))
+                .map(|label| (*label).to_owned())
                 .unwrap_or_default()
         }));
         inspection::check(cancel)?;
