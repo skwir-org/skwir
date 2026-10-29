@@ -2068,6 +2068,13 @@ const LISTED_WITHIN: std::time::Duration = std::time::Duration::from_secs(3);
 
 /// What an undo or a redo did, for a script or an agent: the plan's
 /// title under `what`, and how its steps went.
+/// Where `id` is in `order`: at `at` when the caller said so rightly (a
+/// view, by its row), else searched for.
+fn at_in(order: &[EntryId], id: EntryId, at: Option<usize>) -> Option<usize> {
+    at.filter(|&at| order.get(at) == Some(&id))
+        .or_else(|| order.iter().position(|x| *x == id))
+}
+
 fn replayed(what: &str, title: Option<&str>, result: &op::ExecResult) -> Outcome {
     Outcome::Value(serde_json::json!({
         what: title,
@@ -2126,6 +2133,10 @@ pub struct SelectArgs {
     /// With `change`: the ids taken out of the selection.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub removed: Vec<EntryId>,
+    /// Where the last of `ids` is in the pane's order, when the caller
+    /// knows it (a view, by its row): spares a search of the order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<usize>,
 }
 
 /// What `expand` does to the folders it is given.
@@ -2152,13 +2163,17 @@ pub struct ExpandArgs {
     pub pane: Option<PaneId>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Default, Deserialize, Serialize, JsonSchema)]
 pub struct SweepArgs {
     /// Deselect what the range covers instead of selecting it.
     #[serde(default)]
     pub unset: bool,
     #[serde(default)]
     pub pane: Option<PaneId>,
+    /// Where the cursor is in the pane's order, when the caller knows it
+    /// (a view, by its row): spares a search of the order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub at: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -2548,7 +2563,7 @@ mod builtin {
                         let order = p.order();
                         let anchor = p.selection.anchor.or(p.selection.cursor).unwrap_or(target);
                         let pos = |id: EntryId| order.iter().position(|x| *x == id);
-                        match (pos(anchor), pos(target)) {
+                        match (pos(anchor), at_in(&order, target, a.at)) {
                             (Some(a), Some(b)) => {
                                 let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
                                 let range = order[lo..=hi].iter().copied();
@@ -2571,7 +2586,10 @@ mod builtin {
                     SelectMode::Follow => {
                         if let Some(&target) = ids.last() {
                             let order = p.order();
-                            p.selection.follow(target, &order);
+                            match at_in(&order, target, a.at) {
+                                Some(at) => p.selection.follow_at(target, at, &order),
+                                None => p.selection.follow(target, &order),
+                            }
                         }
                     }
                     SelectMode::Pick => ids.into_iter().for_each(|id| p.selection.pick(id)),
@@ -2741,7 +2759,10 @@ mod builtin {
                     .pane_mut(pane)
                     .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
                 let order = p.order();
-                p.selection.sweep_start(a.unset, &order);
+                match p.selection.cursor.and_then(|cursor| at_in(&order, cursor, a.at)) {
+                    Some(at) => p.selection.sweep_start_at(a.unset, at, &order),
+                    None => p.selection.sweep_start(a.unset, &order),
+                }
                 Ok(Outcome::Done)
             },
         );

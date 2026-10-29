@@ -77,7 +77,16 @@ struct Sweep {
     from: EntryId,
     unset: bool,
     base: IndexSet<EntryId>,
+    /// The order it was last drawn over (held, so it is told by identity),
+    /// with where `from` and the cursor were in it: a step over the same
+    /// order changes only what lies between where the cursor was and where
+    /// it is (`Selection::follow_at`).
+    drawn: Option<(Arc<[EntryId]>, usize, usize)>,
 }
+
+/// How many times a sweep was drawn whole, for the tests that count them.
+#[cfg(test)]
+static SWEEPS_DRAWN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 static SELECTION_REVISION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -246,8 +255,91 @@ impl Selection {
         } else {
             IndexSet::new()
         };
-        self.sweep = Some(Sweep { from, unset, base });
+        self.sweep = Some(Sweep {
+            from,
+            unset,
+            base,
+            drawn: None,
+        });
         self.redraw_sweep(order);
+    }
+
+    /// [`Selection::sweep_start`], the cursor at `at` in `order` (the pane's,
+    /// as its view has it): the steps that follow over that order
+    /// ([`Selection::follow_at`]) change only what they cross.
+    pub fn sweep_start_at(&mut self, unset: bool, at: usize, order: &Arc<[EntryId]>) {
+        let Some(from) = self.cursor else { return };
+        if order.get(at) != Some(&from) {
+            return self.sweep_start(unset, order);
+        }
+        self.sweep_start(unset, &order[at..=at]);
+        if let Some(sweep) = &mut self.sweep {
+            sweep.drawn = Some((Arc::clone(order), at, at));
+        }
+    }
+
+    /// [`Selection::follow`], `id` being at `at` in `order`: during a sweep
+    /// begun or last drawn over that same order, only what lies between
+    /// where the cursor was and where it is changes. A step of a sweep over
+    /// a whole folder searched the order for both ends and made the whole
+    /// selection again, at each key held down. Another order, or an `at`
+    /// that is not `id`'s, draws it whole, as `follow` does.
+    pub fn follow_at(&mut self, id: EntryId, at: usize, order: &Arc<[EntryId]>) {
+        let drawn = self.sweep.as_ref().and_then(|sweep| {
+            let (drawn, from_at, was) = sweep.drawn.as_ref()?;
+            (Arc::ptr_eq(drawn, order) && order.get(at) == Some(&id)).then_some((*from_at, *was))
+        });
+        let Some((from_at, was)) = drawn else {
+            self.follow(id, order);
+            // Drawn whole over this order: the next steps need not be.
+            let cursor = order.get(at).filter(|here| **here == id).map(|_| at);
+            if let (Some(sweep), Some(at)) = (&mut self.sweep, cursor) {
+                sweep.drawn = order
+                    .iter()
+                    .position(|x| *x == sweep.from)
+                    .map(|from_at| (Arc::clone(order), from_at, at));
+            }
+            return;
+        };
+        self.cursor = Some(id);
+        let Some(sweep) = &mut self.sweep else { return };
+        let span = |c: usize| (from_at.min(c), from_at.max(c));
+        let ((lo0, hi0), (lo1, hi1)) = (span(was), span(at));
+        // Both hold `from`: what one holds and not the other lies below
+        // both or above both.
+        let below = &order[lo0.min(lo1)..lo0.max(lo1)];
+        let above = &order[hi0.min(hi1) + 1..=hi0.max(hi1)];
+        let (mut entered, mut left): (Vec<EntryId>, Vec<EntryId>) = (Vec::new(), Vec::new());
+        (if lo1 < lo0 { &mut entered } else { &mut left }).extend_from_slice(below);
+        (if hi1 > hi0 { &mut entered } else { &mut left }).extend_from_slice(above);
+        // What enters the range is selected (or deselected); what leaves it
+        // is as it was before the sweep.
+        let (add, take): (Vec<EntryId>, Vec<EntryId>) = if sweep.unset {
+            let back = left
+                .into_iter()
+                .filter(|id| sweep.base.contains(id))
+                .collect();
+            (back, entered)
+        } else {
+            let back = left
+                .into_iter()
+                .filter(|id| !sweep.base.contains(id))
+                .collect();
+            (entered, back)
+        };
+        if take.len() > 16 {
+            let take: crate::hashing::Set<EntryId> = take.into_iter().collect();
+            self.items.retain(|id| !take.contains(id));
+        } else {
+            for id in &take {
+                self.items.shift_remove(id);
+            }
+        }
+        self.items.extend(add);
+        sweep.drawn = Some((Arc::clone(order), from_at, at));
+        self.anchor = Some(sweep.from);
+        self.picked = true;
+        self.touch();
     }
 
     /// End the sweep, keeping what it covers.
@@ -258,7 +350,10 @@ impl Selection {
     }
 
     fn redraw_sweep(&mut self, order: &[EntryId]) {
-        let Some(sweep) = &self.sweep else { return };
+        #[cfg(test)]
+        SWEEPS_DRAWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let Some(sweep) = &mut self.sweep else { return };
+        sweep.drawn = None;
         let cursor = self.cursor.unwrap_or(sweep.from);
         let pos = |id: EntryId| order.iter().position(|x| *x == id);
         let range: &[EntryId] = match (pos(sweep.from), pos(cursor)) {
@@ -333,6 +428,7 @@ impl Selection {
         if let Some(sweep) = &mut self.sweep {
             sweep.from = now(sweep.from);
             sweep.base = sweep.base.iter().map(|id| now(*id)).collect();
+            sweep.drawn = None;
         }
     }
 
@@ -357,6 +453,7 @@ impl Selection {
         if let Some(sweep) = &mut self.sweep {
             if holds(sweep.from) {
                 sweep.base.retain(|id| holds(*id));
+                sweep.drawn = None;
             } else {
                 self.sweep = None;
             }
@@ -3221,5 +3318,86 @@ mod tests {
         assert_ne!(p.tree_members_version(), members);
         assert!(p.entry(file(20_000).id).is_some());
         assert_eq!(built(), before + 2);
+    }
+
+    /// A sweep over the order it was drawn over changes only what each step
+    /// crosses: drawn whole once, it holds what a whole drawing holds at
+    /// every step, back over where it began too, selecting or deselecting.
+    #[test]
+    fn a_sweep_steps_without_being_drawn_whole_again() {
+        use std::sync::atomic::Ordering;
+        let id = |ino| EntryId {
+            file: crate::FileId::new(1, ino),
+            at: 0,
+        };
+        let n = 50_000;
+        let order: Arc<[EntryId]> = (0..n).map(id).collect();
+        let base: Vec<EntryId> = (0..n).step_by(10).map(id).collect();
+        let from = 25_000;
+        let swept = |to: usize, unset: bool| -> std::collections::HashSet<EntryId> {
+            let range: std::collections::HashSet<EntryId> =
+                order[from.min(to)..=from.max(to)].iter().copied().collect();
+            if unset {
+                base.iter()
+                    .copied()
+                    .filter(|id| !range.contains(id))
+                    .collect()
+            } else {
+                base.iter().copied().chain(range).collect()
+            }
+        };
+        for unset in [false, true] {
+            let mut sel = Selection::default();
+            sel.set(base.iter().copied());
+            sel.cursor = Some(order[from]);
+            let drawn = SWEEPS_DRAWN.load(Ordering::Relaxed);
+            sel.sweep_start_at(unset, from, &order);
+            // Down a row at a time, back up past where it began, down by
+            // pages.
+            let mut at = from;
+            let steps = std::iter::repeat_n(1isize, 300)
+                .chain(std::iter::repeat_n(-1, 600))
+                .chain(std::iter::repeat_n(7, 100));
+            for (i, step) in steps.enumerate() {
+                at = at.checked_add_signed(step).unwrap();
+                sel.follow_at(order[at], at, &order);
+                if i % 97 == 0 || at == from {
+                    assert_eq!(
+                        sel.iter().collect::<std::collections::HashSet<_>>(),
+                        swept(at, unset),
+                        "step {i}, unset {unset}"
+                    );
+                    assert_eq!(
+                        (sel.anchor, sel.cursor),
+                        (Some(order[from]), Some(order[at]))
+                    );
+                }
+            }
+            assert_eq!(
+                SWEEPS_DRAWN.load(Ordering::Relaxed),
+                drawn + 1,
+                "drawn once"
+            );
+            assert_eq!(
+                sel.iter().collect::<std::collections::HashSet<_>>(),
+                swept(at, unset)
+            );
+            // Another order: drawn whole once, then stepped over again.
+            let other: Arc<[EntryId]> = order.iter().copied().collect();
+            sel.follow_at(other[at + 1], at + 1, &other);
+            sel.follow_at(other[at + 2], at + 2, &other);
+            assert_eq!(SWEEPS_DRAWN.load(Ordering::Relaxed), drawn + 2);
+            assert_eq!(
+                sel.iter().collect::<std::collections::HashSet<_>>(),
+                swept(at + 2, unset)
+            );
+            // Told a row that is not the id's: drawn whole, rightly.
+            sel.follow_at(other[at + 3], 0, &other);
+            assert_eq!(SWEEPS_DRAWN.load(Ordering::Relaxed), drawn + 3);
+            assert_eq!(
+                sel.iter().collect::<std::collections::HashSet<_>>(),
+                swept(at + 3, unset)
+            );
+        }
     }
 }
