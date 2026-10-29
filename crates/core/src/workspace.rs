@@ -1680,13 +1680,14 @@ impl Pane {
     }
 
     /// The entry the pane shows of the file `file` at `path`: of a file
-    /// with several names, the one listed there (ADR-049). Looks names up
-    /// one by one: for what a command was given, not for every row.
+    /// with several names, the one listed there (ADR-049). Found by its
+    /// name and file in each listing (`Listing::named_file`), so a command
+    /// may ask it of each entry of a selection of a whole folder.
     pub fn entry_at(&self, file: crate::FileId, path: &Path) -> Option<&Entry> {
         let name = path.file_name()?;
         std::iter::once(&self.listing)
             .chain(self.kept.iter().map(|k| &k.listing))
-            .flat_map(|l| l.iter().filter(move |e| e.name == name && e.file() == file))
+            .flat_map(|l| l.named_file(name, file))
             .find(|e| self.path_of(e.id).as_deref() == Some(path))
     }
 
@@ -2591,6 +2592,76 @@ mod tests {
 
     fn items(sel: &Selection) -> Vec<u64> {
         sel.iter().map(|id| id.file.ino).collect()
+    }
+
+    /// A location of entries from many folders, whose paths it knows.
+    struct Searched {
+        location: Location,
+        events: crossbeam_channel::Receiver<crate::location::ListingEvent>,
+        paths: crate::hashing::Map<EntryId, PathBuf>,
+    }
+
+    impl OpenLocation for Searched {
+        fn location(&self) -> &Location {
+            &self.location
+        }
+        fn events(&self) -> &crossbeam_channel::Receiver<crate::location::ListingEvent> {
+            &self.events
+        }
+        fn hydrate(&self, _: &[EntryId], _: crate::scheduler::Priority) {}
+        fn path_of(&self, id: EntryId) -> Option<PathBuf> {
+            self.paths.get(&id).cloned()
+        }
+        fn refresh(&self) {}
+        fn close(&self) {}
+    }
+
+    /// Each entry of a selection of a whole listing is found at its path by
+    /// its name and file, half of them under one name as a search lists
+    /// `README.md` from every folder: never by a walk of the listing for
+    /// each, which was the square of its size.
+    #[test]
+    fn every_entry_of_a_large_listing_is_found_at_its_path() {
+        use crate::entry::EntryKind;
+        use crate::location::ListingEvent;
+        let n = 50_000u64;
+        let (mut entries, mut paths) = (Vec::new(), crate::hashing::Map::default());
+        for i in 0..n {
+            let id = EntryId {
+                file: crate::FileId::new(1, i),
+                at: i,
+            };
+            let (name, path) = if i % 2 == 0 {
+                ("README.md".to_owned(), format!("/s/{i}/README.md"))
+            } else {
+                (format!("f{i}"), format!("/s/f{i}"))
+            };
+            entries.push(Entry::new(id, name, EntryKind::File));
+            paths.insert(id, PathBuf::from(path));
+        }
+        let mut p = Pane::new(PaneId(1));
+        p.listing.apply(ListingEvent::Added(entries));
+        let (_sink, events) = crossbeam_channel::unbounded();
+        let asked: Vec<(EntryId, PathBuf)> = paths.iter().map(|(id, p)| (*id, p.clone())).collect();
+        p.open = Some(Arc::new(Searched {
+            location: Location::new("search", "/"),
+            events,
+            paths,
+        }));
+        let started = std::time::Instant::now();
+        for (id, path) in &asked {
+            assert_eq!(p.entry_at(id.file, path).map(|e| e.id), Some(*id));
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
+        // Another file at a listed path is not that entry.
+        assert!(
+            p.entry_at(crate::FileId::new(1, n + 1), Path::new("/s/0/README.md"))
+                .is_none()
+        );
     }
 
     /// A change adds and takes out, few or many, in one revision: the rest

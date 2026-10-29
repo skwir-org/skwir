@@ -2520,19 +2520,10 @@ mod builtin {
                     .pane_mut(pane)
                     .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
                 let mut ids = a.ids;
-                // Names looked up in one pass over the listing: one each
-                // was the whole listing's for every name given.
+                // Each name looked up by the listing's index of names.
                 if !a.names.is_empty() {
-                    let mut by_name: HashMap<&std::ffi::OsStr, EntryId> = p
-                        .listing
-                        .iter()
-                        .map(|e| (e.name.as_os_str(), e.id))
-                        .collect();
                     for n in &a.names {
-                        match by_name
-                            .remove(n.as_os_str())
-                            .or_else(|| p.listing.find_by_name(n.as_os_str()).map(|e| e.id))
-                        {
+                        match p.listing.find_by_name(n.as_os_str()).map(|e| e.id) {
                             // Nothing acts on what cannot be seen: a dot
                             // file while hidden files are off, a name the
                             // filter leaves out (`Pane::select_revealed`

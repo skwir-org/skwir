@@ -7,6 +7,7 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fmt;
+use std::hash::BuildHasher as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -14,7 +15,7 @@ use crossbeam_channel::{Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
 use crate::cancel::CancelToken;
-use crate::entry::{Entry, EntryId};
+use crate::entry::{Entry, EntryId, FileId};
 use crate::os_path::PathArg;
 use crate::scheduler::{Priority, Scheduler};
 
@@ -935,6 +936,93 @@ impl std::hash::Hasher for IdHasher {
     }
 }
 
+/// The entries a name's hash leads to (`Listing::by_name`): one, as in a
+/// folder, or several, as a search lists `README.md` from every folder
+/// that has one, kept by file so that the entry of one file under that
+/// name (`Listing::named_file`) is found at once among thousands.
+#[derive(Debug)]
+enum Named {
+    One(EntryId),
+    More(Box<crate::hashing::IndexMap<FileId, Vec<EntryId>>>),
+}
+
+impl Named {
+    /// Its entries, of `file` alone when one is given.
+    fn ids(&self, file: Option<FileId>) -> impl Iterator<Item = EntryId> + '_ {
+        let (one, all, of_file) = match (self, file) {
+            (Named::One(id), _) => (
+                Some(*id).filter(|id| file.is_none_or(|f| id.file == f)),
+                None,
+                None,
+            ),
+            (Named::More(files), None) => (None, Some(files), None),
+            (Named::More(files), Some(file)) => (None, None, files.get(&file)),
+        };
+        one.into_iter()
+            .chain(
+                all.into_iter()
+                    .flat_map(|files| files.values().flatten().copied()),
+            )
+            .chain(of_file.into_iter().flatten().copied())
+    }
+}
+
+/// `id` has the name whose hash is `hash` (`Listing::by_name`): named
+/// when it arrives or is renamed.
+fn name(by_name: &mut crate::hashing::Map<u64, Named>, hash: u64, id: EntryId) {
+    let Some(named) = by_name.get_mut(&hash) else {
+        by_name.insert(hash, Named::One(id));
+        return;
+    };
+    match named {
+        Named::One(first) if *first == id => {}
+        Named::One(first) => {
+            let first = *first;
+            let mut files = crate::hashing::IndexMap::default();
+            files.insert(first.file, vec![first]);
+            files.entry(id.file).or_insert_with(Vec::new).push(id);
+            *named = Named::More(Box::new(files));
+        }
+        Named::More(files) => {
+            let ids = files.entry(id.file).or_default();
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+}
+
+/// `id` no longer has the name whose hash is `hash`.
+fn unname(by_name: &mut crate::hashing::Map<u64, Named>, hash: u64, id: EntryId) {
+    let Some(named) = by_name.get_mut(&hash) else {
+        return;
+    };
+    let left = match named {
+        Named::One(only) if *only == id => None,
+        Named::One(_) => return,
+        Named::More(files) => {
+            if let Some(ids) = files.get_mut(&id.file) {
+                ids.retain(|other| *other != id);
+                if ids.is_empty() {
+                    files.swap_remove(&id.file);
+                }
+            }
+            match files.first() {
+                None => None,
+                // One left, as a folder's names are.
+                Some((_, ids)) if files.len() == 1 && ids.len() == 1 => Some(Named::One(ids[0])),
+                Some(_) => return,
+            }
+        }
+    };
+    match left {
+        Some(one) => *named = one,
+        None => {
+            by_name.remove(&hash);
+        }
+    }
+}
+
 /// What an entry sorts by: see `Listing::sort_key`.
 type SortKeyOf<'a> = (bool, bool, u64, &'a [u8], EntryId);
 
@@ -991,6 +1079,12 @@ pub struct Listing {
     /// The names companions listed belong to: one arriving re-sorts, so
     /// its companion is hidden.
     owners: crate::hashing::Set<OsString>,
+    /// Each name listed, by its hash (`name_hasher`), with the entries that
+    /// have it (`named`): a name is looked up, never searched for along the
+    /// listing, which was the whole listing's for each name a command was
+    /// given, each companion placed, each entry of a selection resolved.
+    by_name: crate::hashing::Map<u64, Named>,
+    name_hasher: crate::hashing::State,
     /// Entries renamed since a holder last asked (`take_renamed`): each
     /// id before and after.
     renamed: Vec<(EntryId, EntryId)>,
@@ -1026,6 +1120,8 @@ impl Default for Listing {
             sort_cache: parking_lot::Mutex::new(None),
             companions: None,
             owners: crate::hashing::Set::default(),
+            by_name: crate::hashing::Map::default(),
+            name_hasher: crate::hashing::State::default(),
             renamed: Vec::new(),
             redirect: None,
             moved: None,
@@ -1044,7 +1140,8 @@ impl Drop for Listing {
         let entries = std::mem::take(&mut self.entries);
         let order = self.sort_cache.get_mut().take();
         let owners = std::mem::take(&mut self.owners);
-        crate::scheduler::let_go((entries, order, owners));
+        let by_name = std::mem::take(&mut self.by_name);
+        crate::scheduler::let_go((entries, order, owners, by_name));
     }
 }
 
@@ -1118,6 +1215,12 @@ impl Listing {
                         {
                             c.seen -= 1;
                         }
+                    }
+                }
+                for id in &ids {
+                    if let Some(slot) = self.entries.get(id) {
+                        let hash = self.name_hasher.hash_one(slot.entry.name.as_os_str());
+                        unname(&mut self.by_name, hash, *id);
                     }
                 }
                 if ids.len() > 1 {
@@ -1228,6 +1331,10 @@ impl Listing {
                     c.moved.push(e.id);
                 }
                 if d.name {
+                    let before = self.name_hasher.hash_one(old.name.as_os_str());
+                    let after = self.name_hasher.hash_one(e.name.as_os_str());
+                    unname(&mut self.by_name, before, e.id);
+                    name(&mut self.by_name, after, e.id);
                     let replaced = Slot::new(e, self.companions.as_deref());
                     if let Some(owner) = &replaced.beside {
                         self.owners.insert(owner.clone());
@@ -1259,6 +1366,8 @@ impl Listing {
                     if new.beside.is_some() || self.owners.contains(&new.entry.name) {
                         delta.order = true;
                     }
+                    let hash = self.name_hasher.hash_one(new.entry.name.as_os_str());
+                    name(&mut self.by_name, hash, new.entry.id);
                     self.entries.insert(new.entry.id, new);
                     // A new name; nothing listed moved (see `order`).
                     delta.any = true;
@@ -1419,20 +1528,14 @@ impl Listing {
     }
 
     /// Whether `slot` is shown under `spec`: a hidden file only with hidden
-    /// files; a companion whose file is listed (in `listed`) only with
+    /// files; a companion whose file is listed (`is_named`) only with
     /// hidden files and companions both; one whose file is gone, an
     /// orphan, as any file.
-    fn shown(
-        spec: SortSpec,
-        slot: &Slot,
-        listed: Option<&crate::hashing::Set<&OsStr>>,
-        companions: bool,
-    ) -> bool {
-        let with_file = match (&slot.beside, listed) {
-            (Some(owner), _) if owner.is_empty() => true,
-            (Some(owner), Some(listed)) => listed.contains(owner.as_os_str()),
-            _ => false,
-        };
+    fn shown(&self, spec: SortSpec, slot: &Slot, companions: bool) -> bool {
+        let with_file = slot
+            .beside
+            .as_ref()
+            .is_some_and(|owner| owner.is_empty() || self.is_named(owner));
         if with_file {
             return spec.show_hidden && companions;
         }
@@ -1441,40 +1544,23 @@ impl Listing {
 
     /// Whether an entry is listed and shown under `spec`: not a hidden file
     /// while hidden files are not shown, nor a companion hidden beside its
-    /// file. The names a companion asks after are gathered once, and only
-    /// when one is asked about.
+    /// file.
     pub fn shows(&self, spec: SortSpec) -> impl Fn(EntryId) -> bool + '_ {
         let companions = self.companions_shown();
-        let listed = std::cell::OnceCell::new();
         move |id| {
-            self.entries.get(&id).is_some_and(|slot| {
-                let listed = slot
-                    .beside
-                    .as_ref()
-                    .and_then(|_| listed.get_or_init(|| self.listed()).as_ref());
-                Self::shown(spec, slot, listed, companions)
-            })
-        }
-    }
-
-    /// The names listed, when companions may hide: their files among them.
-    fn listed(&self) -> Option<crate::hashing::Set<&OsStr>> {
-        (!self.owners.is_empty()).then(|| {
             self.entries
-                .values()
-                .map(|slot| slot.entry.name.as_os_str())
-                .collect()
-        })
+                .get(&id)
+                .is_some_and(|slot| self.shown(spec, slot, companions))
+        }
     }
 
     /// The shown entries' sort keys, in order.
     fn keyed(&self, spec: SortSpec) -> Vec<SortKeyOf<'_>> {
-        let listed = self.listed();
         let companions = self.companions_shown();
         let mut keyed: Vec<SortKeyOf<'_>> = self
             .entries
             .values()
-            .filter(|slot| Self::shown(spec, slot, listed.as_ref(), companions))
+            .filter(|slot| self.shown(spec, slot, companions))
             .map(|slot| Self::sort_key(spec, slot))
             .collect();
         keyed.sort_unstable_by(|a, b| Self::compare(spec, *a, *b));
@@ -1518,9 +1604,8 @@ impl Listing {
     /// the copy of the order costs anyway. A new name or kind never comes
     /// here; it changes `order_version`, and the order is made again.
     fn place(&self, cache: &mut SortCache, spec: SortSpec) {
-        let listed = self.listed();
         let companions = self.companions_shown();
-        let shown = |slot: &&Slot| Self::shown(spec, slot, listed.as_ref(), companions);
+        let shown = |slot: &&Slot| self.shown(spec, slot, companions);
         let mut out = std::mem::take(&mut cache.gone);
         let mut again: Vec<SortKeyOf<'_>> = Vec::new();
         for id in std::mem::take(&mut cache.moved) {
@@ -1635,8 +1720,42 @@ impl Listing {
         self.entries.keys().copied()
     }
 
+    /// The first entry listed named `name`.
     pub fn find_by_name(&self, name: &OsStr) -> Option<&Entry> {
-        self.iter().find(|e| e.name == name)
+        self.named(name)
+            .min_by_key(|e| self.entries.get_index_of(&e.id))
+    }
+
+    /// The entries named `name`, found by the name, in no order: one in a
+    /// folder, any number where a search lists the same name from several.
+    pub fn named<'a>(&'a self, name: &OsStr) -> impl Iterator<Item = &'a Entry> {
+        self.named_in(name, None)
+    }
+
+    /// The entries named `name` of the file `file`: found at once, however
+    /// many others have that name.
+    pub fn named_file<'a>(&'a self, name: &OsStr, file: FileId) -> impl Iterator<Item = &'a Entry> {
+        self.named_in(name, Some(file))
+    }
+
+    /// Whether an entry is named `name`.
+    pub fn is_named(&self, name: &OsStr) -> bool {
+        self.named(name).next().is_some()
+    }
+
+    fn named_in<'a>(
+        &'a self,
+        name: &OsStr,
+        file: Option<FileId>,
+    ) -> impl Iterator<Item = &'a Entry> {
+        self.by_name
+            .get(&self.name_hasher.hash_one(name))
+            .into_iter()
+            .flat_map(move |named| named.ids(file))
+            .filter_map(|id| self.entries.get(&id))
+            .map(|slot| &slot.entry)
+            // Two names may share a hash.
+            .filter(move |e| e.name == name)
     }
 
     /// The entries renamed since this was last asked, each id before and
@@ -1840,6 +1959,100 @@ mod tests {
             assert_ne!(a, b);
         }
         assert_ne!(Listing::default().version(), Listing::default().version());
+    }
+
+    /// The index of names finds what a walk of the listing finds, whatever
+    /// arrives, is renamed or goes, with names shared as a search shares
+    /// them (`README.md` from every folder) and one file listed under one
+    /// name in several folders (two names of it, ADR-049).
+    #[test]
+    fn the_names_found_are_those_a_walk_finds() {
+        const NAMES: [&str; 5] = ["README.md", "a", "b", "c d", "é"];
+        const FILES: u64 = 40;
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move |below: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % below
+        };
+        let entry = |file: u64, at: u64, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: FileId::new(1, file),
+                    at,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
+        let mut listing = Listing::default();
+        for step in 0..1000 {
+            let listed: Vec<EntryId> = listing.ids().collect();
+            let len = listed.len() as u64;
+            match next(5) {
+                0 | 1 => {
+                    let batch = (0..=next(4))
+                        .map(|_| entry(next(FILES), next(3), NAMES[next(5) as usize]))
+                        .collect();
+                    listing.apply(ListingEvent::Added(batch));
+                }
+                // Renamed in place: the same id under another name.
+                2 if len > 0 => {
+                    let mut e = listing.get(listed[next(len) as usize]).unwrap().clone();
+                    e.name = NAMES[next(5) as usize].into();
+                    listing.apply(ListingEvent::Updated(vec![e]));
+                }
+                // One gone, or several (the same twice too).
+                3 if len > 0 => {
+                    let ids = (0..=next(3)).map(|_| listed[next(len) as usize]).collect();
+                    listing.apply(ListingEvent::Removed(ids));
+                }
+                4 if len > 0 => {
+                    let old = listed[next(len) as usize];
+                    let new = entry(next(FILES), next(3), NAMES[next(5) as usize]);
+                    listing.apply(ListingEvent::Renamed(vec![(old, new)]));
+                }
+                _ => {}
+            }
+            for name in NAMES.map(OsStr::new) {
+                let walked: Vec<EntryId> = listing
+                    .iter()
+                    .filter(|e| e.name == name)
+                    .map(|e| e.id)
+                    .collect();
+                let sorted = |mut ids: Vec<EntryId>| {
+                    ids.sort();
+                    ids
+                };
+                assert_eq!(
+                    sorted(listing.named(name).map(|e| e.id).collect()),
+                    sorted(walked.clone()),
+                    "step {step}"
+                );
+                assert_eq!(
+                    listing.find_by_name(name).map(|e| e.id),
+                    walked.first().copied(),
+                    "the first listed, step {step}"
+                );
+                assert_eq!(listing.is_named(name), !walked.is_empty());
+                for file in (0..FILES).map(|ino| FileId::new(1, ino)) {
+                    assert_eq!(
+                        sorted(listing.named_file(name, file).map(|e| e.id).collect()),
+                        sorted(
+                            walked
+                                .iter()
+                                .copied()
+                                .filter(|id| id.file == file)
+                                .collect()
+                        ),
+                        "step {step}"
+                    );
+                }
+            }
+            let indexed: usize = listing.by_name.values().map(|n| n.ids(None).count()).sum();
+            assert_eq!(indexed, listing.len(), "every entry once, step {step}");
+        }
     }
 
     fn stat(mut e: Entry, size: u64) -> Entry {
