@@ -52,6 +52,8 @@ pub mod sftp;
 mod ssh_mount;
 pub mod sshfs;
 pub mod system_shares;
+#[cfg(unix)]
+pub mod uploads;
 pub mod winfsp;
 
 use std::collections::HashMap;
@@ -141,7 +143,7 @@ struct State {
     /// Whether each host is on the local network, as found out.
     local: HashMap<String, Option<bool>>,
     /// Mounts being connected or let go of, by point (or address).
-    busy: HashMap<String, &'static str>,
+    busy: HashMap<String, String>,
     /// Points whose program is gone (`ENOTCONN`): drawn unavailable.
     lost: std::collections::HashSet<PathBuf>,
     /// What reads proved of the mounts when last published
@@ -246,6 +248,29 @@ impl Default for Remotes {
 }
 
 impl Remotes {
+    /// The cache Automatic chooses for `top`'s server, and why
+    /// (`options::automatic`, ADR-102): by its kind, as rclone's
+    /// configuration last said, and whether its server is on the local
+    /// network (a remote of rclone's configuration is named, not
+    /// addressed: not asked). May resolve a name for a moment: on a
+    /// worker.
+    pub fn automatic_cache(&self, top: &Address) -> (&'static str, &'static str) {
+        let (kind, noted) = {
+            let state = self.state.lock();
+            let kind = state
+                .servers
+                .iter()
+                .find(|server| server.address.top() == *top)
+                .map(|server| server.kind.clone());
+            (kind, state.local.get(top.bare_host()).copied().flatten())
+        };
+        let near = match top.scheme {
+            Scheme::Rclone => None,
+            _ => noted.or_else(|| lan::local(top.bare_host())),
+        };
+        options::automatic(kind.as_deref(), near)
+    }
+
     /// The plugin with `connectors` (a test's).
     pub fn with(connectors: Vec<Arc<dyn Connector>>) -> Self {
         Remotes {
@@ -341,7 +366,8 @@ impl Remotes {
             cancel.clone(),
         ));
         let asked: Arc<dyn Ask> = keyed.clone();
-        let options = options::of(app, &address.top());
+        let top = address.top();
+        let options = options::of(app, &top).mounting(self.automatic_cache(&top).0);
         let connected = connector
             .connect_with(address, &options, &asked, cancel)
             .map_err(|error| anyhow::anyhow!("{error:#}"))?;
@@ -1052,10 +1078,7 @@ impl Remotes {
                     place.activate = Some(Invocation::navigate(&address.location()));
                 }
             }
-            place.busy = state
-                .busy
-                .get(&point.display().to_string())
-                .map(|s| (*s).to_owned());
+            place.busy = state.busy.get(&point.display().to_string()).cloned();
             place.space = state.space.get(point).copied();
             place.menu = thumbnail_items(&key, rule);
             place
@@ -1134,10 +1157,7 @@ impl Remotes {
             let location = server.address.location();
             let mut place = Place::new(GROUP, &server.label, "network-server", location);
             place.key = Some(format!("remote:{}", server.address));
-            place.busy = state
-                .busy
-                .get(&server.address.to_string())
-                .map(|s| (*s).to_owned());
+            place.busy = state.busy.get(&server.address.to_string()).cloned();
             place.menu.extend(forget_item(&server.address, &remembered));
             place.menu.extend(options_item(&server.address));
             place
@@ -1753,7 +1773,10 @@ impl Remotes {
         let home = skwir_core::os_path::home().unwrap_or_else(|| PathBuf::from("/"));
         app.release(point, &Location::from_path(home))?;
         let key = point.display().to_string();
-        self.state.lock().busy.insert(key.clone(), "Disconnecting…");
+        self.state
+            .lock()
+            .busy
+            .insert(key.clone(), "Disconnecting…".to_owned());
         self.refresh(app);
         let this = self.clone();
         let lifetime = self.lifetime().unwrap_or_default();
@@ -1766,6 +1789,9 @@ impl Remotes {
             // read waiting for a server that does not answer: that one
             // waits for the server, not for time, and is cut.
             let mut result = Ok(());
+            // Whether its server stopped answering: what waits there is
+            // not waited for (it cannot be sent), but said.
+            let mut stalled = false;
             if let Some(app) = weak.upgrade() {
                 let (lane, until) = (mounted.remote.lane(), Instant::now() + LET_GO);
                 loop {
@@ -1784,7 +1810,44 @@ impl Remotes {
                 if !force {
                     result = under_way(&app, &mounted.remote.point);
                 }
+                stalled = app
+                    .scheduler
+                    .stalled(lane)
+                    .is_some_and(|ran| ran >= skwir_core::fs::reach::NOT_ANSWERING);
             }
+            // What waits there to be sent goes first (ADR-102): a refusal
+            // keeps the mount, and what it keeps, connected. Its remote
+            // control is a socket of the runtime folder: Unix's alone.
+            #[cfg(unix)]
+            let kept = {
+                let socket = (mounted.remote.fstype == rclone::FSTYPE)
+                    .then(|| rclone_copy::socket_for(&mounted.remote.point))
+                    .flatten()
+                    .filter(|socket| socket.exists());
+                let sends = !force && !stalled;
+                if let (Some(socket), true) = (&socket, sends) {
+                    result = result.and_then(|()| {
+                        let mut left = |files: usize| {
+                            if let Some(app) = weak.upgrade() {
+                                this.state.lock().busy.insert(key.clone(), sending(files));
+                                this.refresh(&app);
+                            }
+                        };
+                        uploads::send_now(socket, &lifetime, &|| {}, &mut left)
+                            .map_err(|e| anyhow::anyhow!("“{said}” was not disconnected: {e:#}"))
+                    });
+                }
+                match (&socket, sends) {
+                    (Some(socket), false) => uploads::waiting(socket, &lifetime).unwrap_or(0),
+                    _ => 0,
+                }
+            };
+            // Nothing is sent before letting go there (`uploads` is Unix's).
+            #[cfg(not(unix))]
+            let kept = {
+                let _ = stalled;
+                0
+            };
             let mut result = result.and_then(|()| {
                 connector.disconnect(&mounted.remote, &mounted.recognised, &lifetime)
             });
@@ -1795,13 +1858,39 @@ impl Remotes {
             this.state.lock().busy.remove(&key);
             if let Some(app) = weak.upgrade() {
                 this.refresh(&app);
-                if result.is_ok() {
-                    app.notify(NotifyLevel::Info, format!("Disconnected from “{said}”"));
+                match (&result, kept) {
+                    (Ok(()), 0) => {
+                        app.notify(NotifyLevel::Info, format!("Disconnected from “{said}”"));
+                    }
+                    (Ok(()), kept) => app.notify(
+                        NotifyLevel::Warning,
+                        format!(
+                            "Disconnected from “{said}”: {} not sent yet stay in rclone's \
+                             cache, sent when it next connects",
+                            files(kept)
+                        ),
+                    ),
+                    (Err(_), _) => {}
                 }
             }
             result
         };
         Ok((label, letting_go))
+    }
+}
+
+/// What a mount's place says while it sends what waits before letting go.
+#[cfg(unix)]
+fn sending(files: usize) -> String {
+    format!("Sending {} to the server…", self::files(files))
+}
+
+/// `1 file`, `3 files`.
+fn files(n: usize) -> String {
+    if n == 1 {
+        "1 file".to_owned()
+    } else {
+        format!("{n} files")
     }
 }
 

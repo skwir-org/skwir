@@ -76,6 +76,12 @@ const ON_REMOTES: &[&str] = &[
     "alias", "crypt", "union", "combine", "chunker", "compress", "hasher",
 ];
 
+/// Whether a remote of rclone's type `kind` encrypts or wraps others
+/// (crypt, alias, union…): its files are another remote's.
+pub fn wraps_others(kind: &str) -> bool {
+    ON_REMOTES.contains(&kind)
+}
+
 /// The kinds never offered: a test's storage in memory, rclone's own
 /// cache (deprecated by rclone), the Storj alias.
 const NOT_OFFERED: &[&str] = &["memory", "cache", "tardigrade"];

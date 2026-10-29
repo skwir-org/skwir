@@ -614,10 +614,33 @@ ADR-077 (which revises ADR-021).
 - A tool that daemonizes is run until it has mounted
   (`process::run_leaving`): cancelled, it and what it started are stopped;
   mounted, nothing it left running is touched.
-- A copy onto a remote is done when the server has it: rclone mounts with
-  `--vfs-cache-mode minimal` (a file written alone goes straight up), and
-  a copy is done once its close said so (operations.md): a FUSE program
-  sends there what it held and tells there what its server refused.
+- A copy onto a remote is done when the server has it (ADR-102), whatever
+  the mount's cache: a copy is done once its close said so (operations.md):
+  a FUSE program sends there what it held and tells there what its server
+  refused; and a mount that sends a file only after it is closed
+  (rclone's `writes` and `full`: `Transfer::sends_later`, asked of its
+  remote control once a mount) is written out as a removable drive is:
+  before the plan ends, and before a move removes its originals, it is
+  asked to send what waits now (`vfs/queue-set-expiry`) and waited for
+  (`Transfer::send`, `uploads::send_now`), the plan's progress saying how
+  many files the server still takes. An upload tried three times fails
+  the write-out: the file stays in rclone's cache, which goes on trying,
+  and a move's original stays. Disconnect sends what waits first (a
+  refusal keeps it connected); a forced one says what stays in the
+  cache, which the next mount with that cache sends.
+- **rclone's cache** is the one the user chose for the server, else
+  Automatic's (`options::automatic`, `Remotes::automatic_cache`, resolved
+  when connecting and for the entry at login, never stored): `full` (what
+  is read is read again from this disk), but `minimal` for a remote that
+  encrypts or wraps others (its kind, `rclone_forms::wraps_others`:
+  `full` keeps its files on this disk as read) and on the local network
+  (`lan`), and on Windows, where a copy is not waited for yet (its
+  mounts' remote control is on loopback; `uploads` is Unix's). A cache
+  chosen is kept, `minimal` included. rclone's own cache
+  folder holds what it keeps, never Skwir's, which must stay deletable
+  without loss: an hour unread, a gigabyte, never the disk's last two
+  (`--vfs-cache-max-age`, `--vfs-cache-max-size`,
+  `--vfs-cache-min-free-space`).
 - A question refused ends that attempt (`mounter::attempt`): ssh counts
   a refused password as a wrong one and asks again otherwise. What its
   asker stopped waiting for leaves the window (`App::withdraw`,

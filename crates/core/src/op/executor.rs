@@ -161,6 +161,9 @@ pub struct Transfer {
     /// The bytes of the step under way: moved, and announced.
     pub step_done: u64,
     pub step_total: u64,
+    /// The files a mount that sends later still sends to its server before
+    /// the plan ends (ADR-102), while it does.
+    pub sending: Option<usize>,
 }
 
 /// Told, once per finished run of a plan (undo and redo runs included),
@@ -997,6 +1000,7 @@ impl Executor {
                     ended: steps.ended,
                     step_done: done.saturating_sub(steps.done),
                     step_total: total.saturating_sub(steps.total),
+                    sending: a.meter.sending.load(Ordering::Relaxed).checked_sub(1),
                 }
             })
     }

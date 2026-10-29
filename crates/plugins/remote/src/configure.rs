@@ -718,7 +718,12 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                     .spawn(move || {
                         let Some(app) = weak.upgrade() else { return };
                         let cancel = lifetime.child();
-                        let blank = crate::options::form(&top, &crate::options::of(&app, &top));
+                        let automatic = remotes.automatic_cache(&top);
+                        let blank = crate::options::form(
+                            &top,
+                            &crate::options::of(&app, &top),
+                            automatic,
+                        );
                         let mut asked = blank.clone();
                         loop {
                             let Some(skwir_core::form::Answer::Accepted(values)) =
@@ -734,7 +739,9 @@ pub(crate) fn register(remotes: &Remotes, app: &App) {
                                             format!("The mount options were not saved: {error:#}")
                                         })
                                         .and_then(|()| {
-                                            renew_at_login(&remotes, &top, &options, &cancel)
+                                            let mounting =
+                                                options.clone().mounting(automatic.0);
+                                            renew_at_login(&remotes, &top, &mounting, &cancel)
                                                 .map_err(|error| {
                                                     format!(
                                                         "The mount options were saved, but \
@@ -1078,7 +1085,9 @@ fn at_login(
         let point = crate::login::point_of(connector, top)?;
         return manager.uninstall(id, &point, cancel);
     }
-    let at = login_entry(remotes, top, &crate::options::of(app, top), cancel)?;
+    // Automatic's cache as connecting chooses it (ADR-102).
+    let options = crate::options::of(app, top).mounting(remotes.automatic_cache(top).0);
+    let at = login_entry(remotes, top, &options, cancel)?;
     manager.install(&at, cancel)
 }
 

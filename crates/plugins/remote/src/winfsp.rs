@@ -427,7 +427,16 @@ mod tests {
         let mut served: Vec<OsString> = Vec::new();
         let mut words = args[3..].iter();
         while let Some(word) = words.next() {
-            if word == "--vfs-cache-mode" || word == "--dir-cache-time" {
+            if [
+                "--vfs-cache-mode",
+                "--vfs-cache-max-age",
+                "--vfs-cache-max-size",
+                "--vfs-cache-min-free-space",
+                "--dir-cache-time",
+            ]
+            .iter()
+            .any(|flag| word == flag)
+            {
                 words.next();
             } else if word != "--rc" && word != "--no-console" {
                 served.push(word.clone());

@@ -21,8 +21,9 @@ pub struct MountOptions {
     /// Nothing is written there.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub read_only: bool,
-    /// rclone's file cache (`--vfs-cache-mode`): `off`, `minimal` (what
-    /// Skwir mounts with otherwise), `writes`, `full`.
+    /// rclone's file cache (`--vfs-cache-mode`): `off`, `minimal`,
+    /// `writes`, `full`, each kept once chosen; `None` for Automatic
+    /// (`automatic`, ADR-102).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache: Option<String>,
     /// rclone's bandwidth limit (`--bwlimit`): `10M`, `1M:512k`.
@@ -36,19 +37,62 @@ pub struct MountOptions {
 /// rclone's file caches, as it names them, and what each does.
 const CACHES: [(&str, &str); 4] = [
     (
+        "full",
+        "What is read and written is kept on this disk an hour: read again from it, sent after it is closed, tried again",
+    ),
+    (
+        "writes",
+        "Files written are kept on this disk and sent after they are closed; each read asks the server",
+    ),
+    (
         "minimal",
-        "Files opened to read and write are kept on this disk while open",
+        "Each read asks the server; a file written whole is on it once closed",
     ),
     (
         "off",
         "Nothing kept on this disk: some programs cannot write",
     ),
-    ("writes", "Files written are kept on this disk until sent"),
-    (
-        "full",
-        "What is read is kept on this disk too: faster again, more space",
-    ),
 ];
+
+/// The cache Automatic chooses for a server (ADR-102), and why: `full`,
+/// which keeps what is read and written, but `minimal` for a remote that
+/// encrypts or wraps others (`kind`, rclone's type: `full` would keep
+/// their files on this disk as read) and on the local network (`near`),
+/// where a read costs little and a server is expected to have a file
+/// written once it is closed.
+pub fn automatic(kind: Option<&str>, near: Option<bool>) -> (&'static str, &'static str) {
+    // What a mount sends after a file is closed is waited for through its
+    // remote control on a socket (`uploads`): on Unix alone. Elsewhere a
+    // copy would be said done before its server had it.
+    if cfg!(not(unix)) {
+        return (
+            "minimal",
+            "Skwir does not wait yet, on this system, for what is sent after a file is closed",
+        );
+    }
+    if kind.is_some_and(crate::rclone_forms::wraps_others) {
+        (
+            "minimal",
+            "it encrypts or wraps other remotes, whose files Full would keep on this disk",
+        )
+    } else if near == Some(true) {
+        ("minimal", "it is on the local network")
+    } else {
+        ("full", "what is read is read again from this disk")
+    }
+}
+
+impl MountOptions {
+    /// These options as a mount is made with them: Automatic's cache,
+    /// `chosen`, where none was chosen.
+    #[must_use]
+    pub fn mounting(mut self, chosen: &str) -> MountOptions {
+        if self.cache.is_none() {
+            self.cache = Some(chosen.to_owned());
+        }
+        self
+    }
+}
 
 /// Whether the tools that mount `scheme` take options: rclone and sshfs.
 /// Never a device's, which GVfs alone mounts.
@@ -96,8 +140,9 @@ pub fn bandwidth_refusal(limit: &str) -> Option<&'static str> {
     )
 }
 
-/// The form of `top`'s options, holding `now`.
-pub fn form(top: &Address, now: &MountOptions) -> Form {
+/// The form of `top`'s options, holding `now`; `automatic` is what
+/// Automatic chooses there, and why (`automatic`).
+pub fn form(top: &Address, now: &MountOptions, automatic: (&str, &str)) -> Form {
     let mut form = Form::new(format!("Mount Options of “{}”", top.label()), "Save")
         .intro("Used when it next connects, by rclone or sshfs. GVfs and KIO mount as the desktop does.")
         .field(
@@ -117,14 +162,20 @@ pub fn form(top: &Address, now: &MountOptions) -> Form {
             "cache",
             "File Cache",
             Kind::Choice {
-                choices: CACHES
-                    .iter()
-                    .map(|(value, detail)| Choice::new(*value, *value).detail(*detail))
-                    .collect(),
+                choices: std::iter::once(
+                    Choice::new("", "automatic")
+                        .detail(format!("{} here: {}", automatic.0, automatic.1)),
+                )
+                .chain(
+                    CACHES
+                        .iter()
+                        .map(|(value, detail)| Choice::new(*value, *value).detail(*detail)),
+                )
+                .collect(),
                 open: false,
             },
         )
-        .value(now.cache.clone().unwrap_or_else(|| "minimal".to_owned()))
+        .value(now.cache.clone().unwrap_or_default())
         .help("What rclone keeps of its files on this disk"),
     )
     .field(
@@ -148,7 +199,7 @@ pub fn of_values(values: &Values) -> anyhow::Result<MountOptions> {
     let cache = values.get("cache");
     Ok(MountOptions {
         read_only: values.on("read_only"),
-        cache: (!cache.is_empty() && cache != "minimal").then(|| cache.to_owned()),
+        cache: (!cache.is_empty()).then(|| cache.to_owned()),
         bandwidth: (!bandwidth.is_empty()).then(|| bandwidth.to_owned()),
         compression: values.on("compression"),
     })
@@ -223,13 +274,40 @@ mod tests {
     }
 
     #[test]
+    fn automatic_keeps_what_a_cloud_reads_but_not_near_or_wrapped() {
+        // Where a copy is not waited for yet, never `full` (Windows).
+        let far = if cfg!(unix) { "full" } else { "minimal" };
+        assert_eq!(automatic(Some("dropbox"), None).0, far);
+        assert_eq!(automatic(None, Some(false)).0, far);
+        assert_eq!(automatic(Some("sftp"), Some(true)).0, "minimal");
+        for wraps in ["crypt", "alias", "union", "combine"] {
+            assert_eq!(automatic(Some(wraps), None).0, "minimal", "{wraps}");
+        }
+        // Chosen, it stands; Automatic's where nothing was.
+        let chosen = MountOptions {
+            cache: Some("minimal".into()),
+            ..MountOptions::default()
+        };
+        assert_eq!(chosen.mounting("full").cache.as_deref(), Some("minimal"));
+        let none = MountOptions::default().mounting("full");
+        assert_eq!(none.cache.as_deref(), Some("full"));
+    }
+
+    #[test]
     fn the_form_says_the_options_back() {
         let top = Address::parse("sftp://me@nas/").unwrap();
         let mut values = Values::default();
-        for field in &form(&top, &MountOptions::default()).fields {
+        let automatic = automatic(Some("sftp"), Some(true));
+        for field in &form(&top, &MountOptions::default(), automatic).fields {
             values.set(field.key.clone(), field.value.clone());
         }
         assert_eq!(of_values(&values).unwrap(), MountOptions::default());
+        // Minimal chosen is kept, not taken for Automatic (ADR-102).
+        values.set("cache", "minimal");
+        assert_eq!(
+            of_values(&values).unwrap().cache.as_deref(),
+            Some("minimal")
+        );
         values.set("read_only", "true");
         values.set("bandwidth", "2M");
         values.set("cache", "writes");
@@ -241,7 +319,8 @@ mod tests {
         assert!(
             !form(
                 &Address::parse("rclone://photos/").unwrap(),
-                &MountOptions::default()
+                &MountOptions::default(),
+                automatic,
             )
             .fields
             .iter()

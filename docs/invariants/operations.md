@@ -242,6 +242,13 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   opens the file to give it). A refusal there is said as one, never as a
   source gone (kio-fuse calls it "no such file"). A volume that keeps no
   modes says so with `ENOTSUP`, or kio-fuse's `ENOTTY` (`sys::mode_kept`).
+- A copy onto a mount that sends a file to its server only after it is
+  closed (rclone's `writes` and `full` caches: `Transfer::sends_later`,
+  ADR-102) is written through as onto a removable drive (`copy_entry`'s
+  `through`): `StepContext::write_out` has the mount send what waits
+  (`Transfer::send`) before the plan ends and before a move removes its
+  originals (`after_write_out`), and the plan's progress says how many
+  files the server still takes (`op::Transfer::sending`).
 - **Batches (ADR-078).** Before a copy or a move to another device is
   checked, the run of such steps that follow into the same folder is
   looked at once (`op::transfer::batch_ahead`): where one end is a

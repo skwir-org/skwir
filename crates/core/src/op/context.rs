@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, Sender};
@@ -90,6 +90,9 @@ pub(super) struct Meter {
     pub(super) steps: Mutex<Steps>,
     wake: Option<Waker>,
     last_wake: Mutex<Option<Instant>>,
+    /// The files a mount that sends later still has to send before the
+    /// plan ends (ADR-102), plus one; 0 while none is being sent.
+    pub(super) sending: AtomicUsize,
 }
 
 /// The steps of a plan that ended, and `done` and `total` as the next one
@@ -110,6 +113,17 @@ impl Meter {
         Self {
             wake,
             ..Self::default()
+        }
+    }
+
+    /// How many files a mount still sends before the plan ends; `None` once
+    /// it is done. The window is woken to say it.
+    pub(super) fn sending(&self, files: Option<usize>) {
+        let files = files.map_or(0, |files| files.saturating_add(1));
+        if self.sending.swap(files, Ordering::Relaxed) != files
+            && let Some(wake) = &self.wake
+        {
+            wake();
         }
     }
 
@@ -171,6 +185,11 @@ pub struct StepContext {
     /// volume, so the drive's queue runs on from one item to the next, and
     /// [`Self::write_out`] writes each out.
     paces: RefCell<Vec<(Option<u64>, Rc<super::pace::Pace>)>>,
+    /// The mounts this plan wrote into that send it to their server only
+    /// after it is closed ([`Transfer::sends_later`](super::transfer::Transfer::sends_later),
+    /// ADR-102), by their point: each written out with the drives
+    /// ([`Self::write_out`]), its server having what was written.
+    sends: RefCell<Vec<(PathBuf, Arc<dyn super::transfer::Transfer>)>>,
     /// What waits until a write-out has put on the drive what this plan
     /// wrote through (a move's removal of what it copied), done at the
     /// next one ([`Self::after_write_out`]).
@@ -530,6 +549,7 @@ impl StepContext {
             sized: RefCell::default(),
             secret_asker: None,
             transfers: None,
+            sends: RefCell::default(),
             batched_until: std::cell::Cell::new(0),
             removed_until: std::cell::Cell::new(0),
             removed: RefCell::default(),
@@ -899,9 +919,30 @@ impl StepContext {
         Ok(pace)
     }
 
+    /// Whether what this plan writes into `dest_dir` reaches its server
+    /// only after it is closed, its mount then noted to be written out
+    /// with the drives ([`Self::write_out`], ADR-102).
+    pub(super) fn sends_later(&self, dest_dir: &Path) -> bool {
+        let Some(point) = crate::fs::reach::of(dest_dir).map(|remote| remote.point.clone()) else {
+            return false;
+        };
+        if self.sends.borrow().iter().any(|(p, _)| *p == point) {
+            return true;
+        }
+        let Some(transfer) = self
+            .transfers()
+            .and_then(|transfers| transfers.sending_later(dest_dir))
+        else {
+            return false;
+        };
+        self.sends.borrow_mut().push((point, transfer));
+        true
+    }
+
     /// Wait until the drives this plan's copies were written through to
     /// have every byte, then write their volumes out (`syncfs`), names and
-    /// folders included, and do what waited for it
+    /// folders included, and have the mounts that send later send what
+    /// waits ([`Self::sends_later`]), and do what waited for it
     /// ([`Self::after_write_out`]). At the plan's end, and on the way when
     /// moves wait: on a journaled or copy-on-write filesystem it commits
     /// the whole volume, which a hard drive takes a third of a second to do
@@ -921,14 +962,22 @@ impl StepContext {
 
     fn write_out_now(&self) -> anyhow::Result<()> {
         let began = Instant::now();
-        for (_, pace) in self.paces.borrow().iter() {
-            if let Err(e) = pace.write_out() {
-                return Err(if self.waiting.borrow().is_empty() {
-                    e
-                } else {
-                    e.context("what was moved stays where it was")
-                });
+        let stays = |e: anyhow::Error| {
+            if self.waiting.borrow().is_empty() {
+                e
+            } else {
+                e.context("what was moved stays where it was")
             }
+        };
+        for (_, pace) in self.paces.borrow().iter() {
+            pace.write_out().map_err(stays)?;
+        }
+        let sends: Vec<_> = self.sends.borrow().clone();
+        for (point, transfer) in sends {
+            let mut left = |files| self.meter.sending(Some(files));
+            let sent = transfer.send(&point, &self.control(), &mut left);
+            self.meter.sending(None);
+            sent.map_err(stays)?;
         }
         let ended = Instant::now();
         self.written_out.set((Some(ended), ended - began));

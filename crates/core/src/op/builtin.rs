@@ -1622,12 +1622,16 @@ fn copy_entry(
         TransferTarget::InsideSource => anyhow::bail!("a folder cannot be copied into itself"),
         TransferTarget::Separate => {}
     }
-    let through = crate::fs::volume::is_removable(dest_dir);
-    let pace = if through {
+    let removable = crate::fs::volume::is_removable(dest_dir);
+    let pace = if removable {
         ctx.pace_through(dest_dir)?
     } else {
         std::rc::Rc::new(Pace::at_once())
     };
+    // Written out before the plan ends, as onto a drive: onto one the user
+    // can unplug, and onto a mount that sends to its server only after a
+    // file is closed (ADR-102).
+    let through = removable || ctx.sends_later(dest_dir);
     let beside = copy_staged(
         src,
         target,

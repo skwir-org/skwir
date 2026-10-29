@@ -1620,6 +1620,101 @@ fn rclone_copies_within_its_mount_on_the_server() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// A copy onto a mount that sends what is written after it is closed
+/// (rclone's `full` cache, chosen in the server's Mount Options) is done
+/// when the server has it (ADR-102): the plan ends after the server has
+/// every file, a move's original goes only then, and Disconnect sends what
+/// another program wrote there before letting go. Read on the server the
+/// moment each ends: on `full`, rclone sends a file 5 s after its close.
+#[test]
+fn a_copy_onto_a_mount_that_sends_later_ends_once_the_server_has_it() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("rclone-sends-later");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(served_root.join("copies")).unwrap();
+    let local = base.join("local");
+    std::fs::create_dir_all(local.join("a folder/l'été")).unwrap();
+    std::fs::write(local.join("a note’s draft.txt"), "a note").unwrap();
+    std::fs::write(local.join("a folder/l'été/two.txt"), "two").unwrap();
+    std::fs::write(local.join("moved away.txt"), "moved").unwrap();
+    let served = Served::start("webdav", &served_root, &[]);
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![Arc::new(Rclone::default())]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let top = Address::parse(&format!("dav://127.0.0.1:{}/", served.port)).unwrap();
+    let full = skwir_plugin_remote::options::MountOptions {
+        cache: Some("full".into()),
+        ..skwir_plugin_remote::options::MountOptions::default()
+    };
+    skwir_plugin_remote::options::keep(&app, &top, &full).unwrap();
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::parse(&top.to_string()))
+        .unwrap();
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    let mounted = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&mounted).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+    let socket = skwir_plugin_remote::rclone_copy::socket_for(&point).unwrap();
+    assert_eq!(
+        skwir_plugin_remote::uploads::cache_mode(&socket, &CancelToken::new()).unwrap(),
+        "full",
+        "mounted with the cache chosen"
+    );
+    let read = |path: &Path| std::fs::read_to_string(path).unwrap_or_default();
+
+    let r = app.executor.execute_blocking(
+        &copies(
+            &[local.join("a note’s draft.txt"), local.join("a folder")],
+            &mounted.join("copies"),
+        ),
+        app.lifetime(),
+    );
+    assert!(r.error.is_none(), "{:?}", r.error);
+    assert_eq!(
+        read(&served_root.join("copies/a note’s draft.txt")),
+        "a note"
+    );
+    assert_eq!(
+        read(&served_root.join("copies/a folder/l'été/two.txt")),
+        "two"
+    );
+
+    let r = app.executor.execute_blocking(
+        &moves(&[local.join("moved away.txt")], &mounted.join("copies")),
+        app.lifetime(),
+    );
+    assert!(r.error.is_none(), "{:?}", r.error);
+    assert_eq!(read(&served_root.join("copies/moved away.txt")), "moved");
+    assert!(
+        !local.join("moved away.txt").exists(),
+        "its original went once the server had the copy"
+    );
+
+    // Written by another program, waiting to be sent: sent first.
+    std::fs::write(mounted.join("copies/written aside.txt"), "aside").unwrap();
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    until(&app, 60, "it was let go of", || {
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point)
+    });
+    assert_eq!(
+        read(&served_root.join("copies/written aside.txt")),
+        "aside",
+        "sent before it was let go of"
+    );
+    drop(left);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
 /// A text file on a mount that keeps nothing it reads (rclone's `minimal`,
 /// which Automatic chooses on the local network) is fetched once for its
 /// preview (ADR-101): every provider asked at each stage, the text's

@@ -167,6 +167,34 @@ pub trait Transfer: Send + Sync {
         let _ = folder;
         false
     }
+
+    /// Whether what is written into `folder`, on a mount it knows, reaches
+    /// the server only after it is closed: rclone's `writes` and `full`
+    /// caches (ADR-102). A plan then writes it out before it ends, and a
+    /// move removes its original only then, as onto a drive the user can
+    /// unplug ([`Transfer::send`]). Asked as [`Transfer::serves`] is.
+    fn sends_later(&self, folder: &Path) -> bool {
+        let _ = folder;
+        false
+    }
+
+    /// Have the server of the mount holding `folder` take now what waits
+    /// there to be sent, and return once it has: `left` told how many
+    /// files wait, as they go. Blocking, on the plan's thread; stopped
+    /// when the plan is cancelled ([`Control`]).
+    ///
+    /// # Errors
+    /// When the server refused what waits (it stays, to be sent again), or
+    /// the wait was cancelled.
+    fn send(
+        &self,
+        folder: &Path,
+        control: &Control,
+        left: &mut dyn FnMut(usize),
+    ) -> anyhow::Result<()> {
+        let _ = (folder, control, left);
+        Ok(())
+    }
 }
 
 /// The folders a transfer writes in beside the one it copies into
@@ -292,6 +320,16 @@ impl Transfers {
     /// Whether one removes entries of `folder` ([`Transfer::removes`]).
     pub(super) fn remove_in(&self, folder: &Path) -> bool {
         self.list.read().iter().any(|(_, t)| t.removes(folder))
+    }
+
+    /// The one whose mount sends what is written into `folder` after it is
+    /// closed ([`Transfer::sends_later`]), if one does.
+    pub(super) fn sending_later(&self, folder: &Path) -> Option<Arc<dyn Transfer>> {
+        self.list
+            .read()
+            .iter()
+            .find(|(_, t)| t.sends_later(folder))
+            .map(|(_, t)| Arc::clone(t))
     }
 
     /// The names of those registered, for a test of plugins withdrawn.

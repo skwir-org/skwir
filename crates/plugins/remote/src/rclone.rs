@@ -1,9 +1,13 @@
 //! rclone (ADR-077): the remotes of its configuration (`rclone://gdrive/`,
 //! seventy kinds of storage), and SFTP, SMB, WebDAV and FTP addresses
-//! (SFTP through the user's own ssh). Mounted so that a file written is on
-//! the server once closed (`--vfs-cache-mode minimal`: a file opened to
-//! write only goes straight up; one opened to read and write, as an editor
-//! does, is kept on the disk and sent after).
+//! (SFTP through the user's own ssh). Mounted with the cache the user
+//! chose for the server, else Automatic's (ADR-102): `full`, which keeps
+//! what is read and written on this disk an hour and sends a file a few
+//! seconds after it is closed, but `minimal` on the local network and for
+//! a remote that encrypts or wraps others (`options::automatic`). A copy is
+//! done when the server has it whatever the cache: a mount that sends
+//! later is asked to send what a plan wrote, and waited for
+//! (`uploads`). rclone's own cache folder holds what it keeps, bounded.
 //!
 //! A server's password (ADR-082): rclone cannot ask, and a WebDAV mount
 //! checks nothing until it is read. So an SMB, WebDAV or FTP address is
@@ -820,6 +824,15 @@ pub(crate) fn mount_arguments(remote: &str, point: &Path) -> Vec<std::ffi::OsStr
             "60s",
             "--vfs-cache-mode",
             "minimal",
+            // What a cache keeps (`writes`, `full`): an hour unread, a
+            // gigabyte, and never the disk's last two. A file open or
+            // waiting to be sent stays whatever the bounds.
+            "--vfs-cache-max-age",
+            "1h",
+            "--vfs-cache-max-size",
+            "1G",
+            "--vfs-cache-min-free-space",
+            "2G",
             // What the server changed is seen within a minute where it
             // says (and on F5 and focus everywhere).
             "--dir-cache-time",
@@ -994,14 +1007,21 @@ mod tests {
     }
 
     #[test]
-    fn rclone_mounts_so_a_copy_is_on_the_server_once_closed() {
+    fn rclone_mounts_minimal_unless_a_cache_is_chosen_and_bounds_what_it_keeps() {
         let args = mount_arguments("gdrive:", Path::new("/m"));
         let args: Vec<_> = args
             .iter()
             .map(|a| a.to_string_lossy().into_owned())
             .collect();
-        let at = args.iter().position(|a| a == "--vfs-cache-mode").unwrap();
-        assert_eq!(args[at + 1], "minimal");
+        let value = |flag: &str| {
+            let at = args.iter().position(|a| a == flag).unwrap();
+            args[at + 1].clone()
+        };
+        // The options' cache, Automatic's included, comes later and wins.
+        assert_eq!(value("--vfs-cache-mode"), "minimal");
+        assert_eq!(value("--vfs-cache-max-age"), "1h");
+        assert_eq!(value("--vfs-cache-max-size"), "1G");
+        assert_eq!(value("--vfs-cache-min-free-space"), "2G");
         assert_eq!(args[..3], ["mount", "gdrive:", "/m"]);
     }
 }

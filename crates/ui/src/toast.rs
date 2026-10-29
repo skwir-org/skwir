@@ -597,6 +597,15 @@ fn waiting_lines(waiting: &[skwir_core::op::Waiting]) -> Vec<String> {
     lines
 }
 
+/// What a plan copying onto a mount that sends later says while the
+/// server takes what it wrote.
+fn sending(files: usize) -> String {
+    match files {
+        0 => "sending to the server".to_owned(),
+        n => format!("sending {} to the server", format::count(n, "file")),
+    }
+}
+
 /// What a stopped plan's toast adds once its server is found not
 /// answering (`ExecEvent::WaitsForServer`).
 const WAITS_FOR_SERVER: &str = ". It goes on by itself once the server answers again";
@@ -619,10 +628,13 @@ fn progress_card(
     let (fraction, amount) = bar(running.total, transfer);
     let plan = running.plan;
     let paused = running.paused;
-    let state = match (paused, running.going_on) {
-        (true, _) => "paused at ",
-        (false, true) => "going on, ",
-        (false, false) => "",
+    let state = match (paused, running.going_on, transfer.sending) {
+        (true, ..) => "paused at ".to_owned(),
+        // Copied onto a mount that sends to its server after: what the
+        // server still has to take before the copy is done (ADR-102).
+        (false, _, Some(files)) => format!("{}, ", sending(files)),
+        (false, true, None) => "going on, ".to_owned(),
+        (false, false, None) => String::new(),
     };
     // What runs, said by its title; how far, as a value, said when asked,
     // never at each step.
@@ -1039,6 +1051,7 @@ mod tests {
             ended: 1286,
             step_done: 0,
             step_total: 64,
+            sending: None,
         };
         let (fraction, words) = bar(40_000, &small);
         assert_eq!(words, "1,286 of 40,000 items · 80.4 KB");
@@ -1050,6 +1063,7 @@ mod tests {
             ended: 1,
             step_done: 1 << 30,
             step_total: 2 << 30,
+            sending: None,
         };
         assert!((bar(3, &large).0 - 0.5).abs() < 1e-6);
         // Nothing moved yet, or nothing to move: the count alone.

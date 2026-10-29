@@ -148,12 +148,18 @@ fn copy_tree(
     Ok(())
 }
 
-/// rclone's copies on the server, within one mount Skwir made.
+/// rclone's copies on the server, within one mount Skwir made; and what a
+/// mount Skwir made sends to its server after a file is closed, written
+/// out before a plan ends (ADR-102).
 #[derive(Default)]
 pub struct RcloneCopy {
     /// What each mount's remote is and whether it copies on the server,
     /// asked once a mount (`None`: it does not).
     known: Mutex<HashMap<PathBuf, Option<String>>>,
+    /// Whether each mount sends what is written after its `close`, by its
+    /// point and the system's number for that mount: one made again there
+    /// may keep another cache.
+    sends: Mutex<HashMap<(PathBuf, u64), bool>>,
     /// The batches it copied (a test asks).
     made: AtomicUsize,
 }
@@ -220,6 +226,62 @@ impl Transfer for RcloneCopy {
         a.point == b.point
             && a.fstype == crate::rclone::FSTYPE
             && socket_for(&a.point).is_some_and(|socket| socket.exists())
+    }
+
+    /// A mount Skwir made whose cache keeps what is written and sends it
+    /// after its `close` (`writes`, `full`): asked of its remote control
+    /// once a mount (`options/get`).
+    fn sends_later(&self, folder: &Path) -> bool {
+        let Some(remote) = skwir_core::fs::reach::of(folder) else {
+            return false;
+        };
+        if remote.fstype != crate::rclone::FSTYPE {
+            return false;
+        }
+        let mount = (
+            remote.point.clone(),
+            remote.device.map_or(0, skwir_core::fs::reach::mount_of),
+        );
+        if let Some(sends) = self.sends.lock().get(&mount) {
+            return *sends;
+        }
+        let Some(socket) = socket_for(&remote.point).filter(|socket| socket.exists()) else {
+            return false;
+        };
+        let sends = match crate::uploads::cache_mode(&socket, &CancelToken::new()) {
+            Ok(mode) => crate::uploads::sends_later(&mode),
+            // Not known: a later copy asks again.
+            Err(error) => {
+                tracing::debug!("rclone's remote control did not say its cache: {error:#}");
+                return false;
+            }
+        };
+        self.sends.lock().insert(mount, sends);
+        sends
+    }
+
+    /// What waits on the mount is sent now, and waited for.
+    fn send(
+        &self,
+        folder: &Path,
+        control: &Control,
+        left: &mut dyn FnMut(usize),
+    ) -> anyhow::Result<()> {
+        let Some(socket) = skwir_core::fs::reach::of(folder)
+            .and_then(|remote| socket_for(&remote.point))
+            .filter(|socket| socket.exists())
+        else {
+            anyhow::bail!(
+                "rclone's mount of “{}” is gone before its server had what was written",
+                folder.display()
+            );
+        };
+        crate::uploads::send_now(
+            &socket,
+            control.cancel(),
+            &|| control.wait_while_paused(),
+            left,
+        )
     }
 
     fn copy(
