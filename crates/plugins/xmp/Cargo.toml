@@ -11,6 +11,7 @@ rust-version.workspace = true
 skwir-core.workspace = true
 skwir-platform.workspace = true
 anyhow.workspace = true
+memchr.workspace = true
 roxmltree.workspace = true
 tracing.workspace = true
 

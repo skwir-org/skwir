@@ -8331,6 +8331,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "dirs 7.0.0",
+ "memchr",
  "proptest",
  "roxmltree 0.21.2",
  "serde_json",

@@ -449,8 +449,11 @@ pub fn packet_in(bytes: &[u8]) -> Option<&str> {
     std::str::from_utf8(&bytes[start..end]).ok()
 }
 
+/// Where `needle` first is in `haystack`: a packet is looked for in up to
+/// 16 MiB of a file, where comparing each window with the needle was
+/// quadratic on bytes that almost make it.
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|w| w == needle)
+    memchr::memmem::find(haystack, needle)
 }
 
 #[cfg(test)]
@@ -607,5 +610,16 @@ pub(crate) mod tests {
         let packet = packet_in(&jpeg).unwrap();
         assert_eq!(notes_of(packet).unwrap().rating, Some(6));
         assert!(packet_in(b"no packet here").is_none());
+    }
+
+    /// A packet at the end of a mebibyte of bytes that almost begin one.
+    #[test]
+    fn a_packet_after_a_mebibyte_of_near_misses_is_found() {
+        let mut bytes = b"<x:xmpmet".repeat((1 << 20) / 9);
+        let start = bytes.len();
+        bytes.extend(DARKTABLE.split_once('\n').unwrap().1.as_bytes());
+        assert_eq!(find(&bytes, b"<x:xmpmeta"), Some(start));
+        let packet = packet_in(&bytes).unwrap();
+        assert_eq!(notes_of(packet).unwrap().rating, Some(6));
     }
 }
