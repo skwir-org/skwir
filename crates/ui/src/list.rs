@@ -10,7 +10,7 @@ use gpui::{
     AnyElement, Context, ExternalPaths, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent,
     Window, div, prelude::*,
 };
-use skwir_core::command::Invocation;
+use skwir_core::app::{HydrateArgs, SelectArgs, SelectMode};
 use skwir_core::workspace::PaneId;
 use skwir_core::{EntryId, SortKey, SortSpec};
 
@@ -497,10 +497,15 @@ impl Shell {
             return;
         }
         tracing::debug!(n = need.len(), on_screen, "hydrate request");
-        if let Err(e) = self.app.dispatch(&Invocation::with_args(
+        // Typed: a sort by size asks for a hundred thousand at once.
+        if let Err(e) = self.app.dispatch_args(
             "hydrate",
-            &serde_json::json!({ "ids": need, "pane": pane, "off_screen": !on_screen }),
-        )) {
+            HydrateArgs {
+                ids: need,
+                pane: Some(pane),
+                off_screen: !on_screen,
+            },
+        ) {
             tracing::warn!("hydrate: {e:#}");
         }
     }
@@ -1053,7 +1058,9 @@ impl Shell {
             start,
             current: position,
             covered: Vec::new(),
+            keeps: kept.iter().copied().collect(),
             kept,
+            sent: None,
         });
         cx.notify();
     }
@@ -1071,27 +1078,86 @@ impl Shell {
         drag.current = position;
         if drag.covered != covered {
             drag.covered.clone_from(&covered);
-            let mut ids = drag.kept.clone();
             // In the pane the band began in, whichever is active now (a
             // key or the other pane's menu may have moved it meanwhile).
             let pane = drag.pane;
             self.with_pane(pane, |shell| {
-                let sorted = &shell.ui().list.sorted;
-                ids.extend(
-                    covered
-                        .iter()
-                        .filter_map(|index| sorted.get(*index).copied()),
-                );
-                shell.select_ids(ids, "replace", window, cx);
+                let sorted = std::sync::Arc::clone(&shell.ui().list.sorted);
+                let covered: Vec<EntryId> = covered
+                    .iter()
+                    .filter_map(|index| sorted.get(*index).copied())
+                    .collect();
+                let Some(drag) = shell.marquee.as_mut() else {
+                    return;
+                };
+                // Its first move replaces the selection with what was kept
+                // and what it covers; each after sends what it changed
+                // (`band_change`), never the whole selection again.
+                let args = match drag.sent.as_mut() {
+                    None => {
+                        drag.sent = Some(
+                            covered
+                                .iter()
+                                .copied()
+                                .filter(|id| !drag.keeps.contains(id))
+                                .collect(),
+                        );
+                        let mut ids = drag.kept.clone();
+                        ids.extend(covered);
+                        SelectArgs {
+                            ids,
+                            mode: SelectMode::Replace,
+                            pane: Some(pane),
+                            ..SelectArgs::default()
+                        }
+                    }
+                    Some(sent) => {
+                        let (ids, removed) =
+                            crate::elements::marquee::band_change(&drag.keeps, sent, &covered);
+                        SelectArgs {
+                            ids,
+                            removed,
+                            mode: SelectMode::Change,
+                            pane: Some(pane),
+                            ..SelectArgs::default()
+                        }
+                    }
+                };
+                shell.run_args("select", args, window, cx);
             });
         }
         cx.notify();
     }
 
-    pub fn marquee_end(&mut self, cx: &mut Context<Self>) {
-        if self.marquee.take().is_some() {
-            cx.notify();
+    /// The band let go: what it selected is settled as one band replacing
+    /// the selection would have it, what was kept first, then what it
+    /// covers in the order shown (which the changes it sent as it moved
+    /// may have mixed): what is read in the selection's order (a bulk
+    /// rename's numbers, a drag's label) reads it so.
+    pub fn marquee_end(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(drag) = self.marquee.take() else {
+            return;
+        };
+        if drag.sent.is_some() {
+            let pane = drag.pane;
+            self.with_pane(pane, |shell| {
+                let sorted = &shell.ui().list.sorted;
+                let mut ids = drag.kept;
+                ids.extend(
+                    drag.covered
+                        .iter()
+                        .filter_map(|index| sorted.get(*index).copied()),
+                );
+                let args = SelectArgs {
+                    ids,
+                    mode: SelectMode::Replace,
+                    pane: Some(pane),
+                    ..SelectArgs::default()
+                };
+                shell.run_args("select", args, window, cx);
+            });
         }
+        cx.notify();
     }
 
     /// Wrap a view's element in the pane container: focus, key context,

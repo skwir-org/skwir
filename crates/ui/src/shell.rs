@@ -60,6 +60,10 @@ pub struct PaneUi {
     pub loading: crate::loading::State,
     /// The address field while it is typed in (`omnibox.rs`).
     pub omni: Option<crate::omnibox::Omni>,
+    /// The listing and its names when a filter that reads metadata last
+    /// asked for what its files lack (`Shell::ask_filter_metadata`): each
+    /// key typed changes the filter, not what lacks it.
+    pub filter_hydrated: Option<(u64, u64)>,
     /// What the files it shows weigh, for its footer (`weight.rs`).
     pub weight: crate::weight::Weight,
     /// What its search of tags can be narrowed to.
@@ -969,6 +973,7 @@ impl Shell {
             usage: UsageState::default(),
             loading: crate::loading::State::default(),
             omni: None,
+            filter_hydrated: None,
             weight: crate::weight::Weight::default(),
             narrow: crate::narrow::Narrow::default(),
             chips: crate::search_bar::Chips::default(),
@@ -1987,6 +1992,49 @@ impl Shell {
         }
     }
 
+    /// Whether `name` runs now. When the dialog open takes it instead,
+    /// Settings keeps what it is not asked, and the overview and About
+    /// close. What the user does acts on the tab shown: it is drawn first.
+    /// Moving between tabs keeps holding, so cycling through them draws only
+    /// the one it stops on.
+    fn admit(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.takes_now(name) {
+            if self.settings.is_none() && self.shortcuts.is_some() {
+                self.toggle_shortcuts(window, cx);
+            } else if self.settings.is_none() && self.about.is_some() {
+                self.toggle_about(window, cx);
+            }
+            return false;
+        }
+        if self.presented.is_some() && !name.starts_with("tab.") {
+            self.present(false, window, cx);
+        }
+        true
+    }
+
+    /// `run` for a core command the views send by the thousand, with its
+    /// arguments typed (`App::dispatch_args`: a band's `select`), never
+    /// made into JSON. Such a command answers `Done`; one refused says why,
+    /// as `run` says it.
+    pub fn run_args<A: serde::Serialize + Send + 'static>(
+        &mut self,
+        name: &str,
+        args: A,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.admit(name, window, cx) {
+            return;
+        }
+        tracing::debug!(name, "run");
+        match self.app.dispatch_args(name, args) {
+            Ok(Outcome::Done | Outcome::Value(_)) => {}
+            Ok(_) => tracing::warn!(name, "an answer only `run` follows"),
+            Err(e) => self.report_error(&e, cx),
+        }
+        cx.notify();
+    }
+
     /// Route a command: `ui.*` to the shell, everything else to the core.
     pub fn run(
         &mut self,
@@ -1995,25 +2043,12 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.takes_now(name) {
-            // Settings keeps what it is not asked; the overview and About
-            // close.
-            if self.settings.is_none() && self.shortcuts.is_some() {
-                self.toggle_shortcuts(window, cx);
-            } else if self.settings.is_none() && self.about.is_some() {
-                self.toggle_about(window, cx);
-            }
+        if !self.admit(name, window, cx) {
             return;
         }
         // Settings may contain private paths; never trace their values.
         if !name.starts_with("ui.settings") && !name.starts_with("settings.") {
             tracing::debug!(name, %args, "run");
-        }
-        // What the user does acts on the tab shown: draw it first. Moving
-        // between tabs keeps holding, so cycling through them draws only the
-        // one it stops on.
-        if self.presented.is_some() && !name.starts_with("tab.") {
-            self.present(false, window, cx);
         }
         // A setting the window changes (a menu's switch, a background
         // chosen) waits behind a save that runs, never refused by it

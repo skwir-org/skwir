@@ -14,6 +14,9 @@ use gpui::{
     Point, ScrollHandle, Style, WeakEntity, Window, point, px, relative,
 };
 
+use std::collections::HashSet;
+
+use skwir_core::EntryId;
 use skwir_core::workspace::PaneId;
 
 use crate::elements::uniform_grid::UniformGridScrollHandle;
@@ -81,8 +84,46 @@ pub struct Drag {
     pub current: Point<Pixels>,
     /// What the last move selected, to skip moves that change nothing.
     pub covered: Vec<usize>,
-    /// Entries selected before the drag, kept when it began with Ctrl/Shift.
-    pub kept: Vec<skwir_core::EntryId>,
+    /// Entries selected before the drag, kept when it began with Ctrl/Shift,
+    /// in the selection's order: the release settles them first.
+    pub kept: Vec<EntryId>,
+    /// `kept`, to tell one at once.
+    pub keeps: HashSet<EntryId>,
+    /// What the band has selected beside `kept`, as last sent; `None`
+    /// before its first move.
+    pub sent: Option<HashSet<EntryId>>,
+}
+
+/// What a band covering `covered` (in the order shown) changes in the
+/// selection since it `sent` what it covered before, `keeps` selected
+/// beside it: what it newly covers, in the order shown, and what it no
+/// longer covers, never one kept. `sent` becomes what it covers now. The
+/// cursor goes to the last entry covered, as a band replacing the whole
+/// selection put it there: that entry ends what is added even when it was
+/// selected already, which adds nothing.
+pub(crate) fn band_change(
+    keeps: &HashSet<EntryId>,
+    sent: &mut HashSet<EntryId>,
+    covered: &[EntryId],
+) -> (Vec<EntryId>, Vec<EntryId>) {
+    let now: HashSet<EntryId> = covered
+        .iter()
+        .copied()
+        .filter(|id| !keeps.contains(id))
+        .collect();
+    let mut added: Vec<EntryId> = covered
+        .iter()
+        .copied()
+        .filter(|id| now.contains(id) && !sent.contains(id))
+        .collect();
+    if let Some(&last) = covered.last()
+        && added.last() != Some(&last)
+    {
+        added.push(last);
+    }
+    let removed: Vec<EntryId> = sent.difference(&now).copied().collect();
+    *sent = now;
+    (added, removed)
 }
 
 /// Where a view's entries are, read when the marquee paints: after the
@@ -230,9 +271,11 @@ impl Element for Marquee {
         // click presses and releases before the repaint that would register
         // them, and a band must never outlive its button.
         let shell = self.shell.clone();
-        window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
+        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
             if phase.bubble() && event.button == MouseButton::Left {
-                shell.update(cx, Shell::marquee_end).ok();
+                shell
+                    .update(cx, |shell, cx| shell.marquee_end(window, cx))
+                    .ok();
             }
         });
         let Some(start) = self
@@ -250,7 +293,9 @@ impl Element for Marquee {
             }
             // The release can be missed (it may land outside the window).
             if event.pressed_button != Some(MouseButton::Left) {
-                shell.update(cx, Shell::marquee_end).ok();
+                shell
+                    .update(cx, |shell, cx| shell.marquee_end(window, cx))
+                    .ok();
                 return;
             }
             let covered = geometry.covered(start, to_content(event.position), count);
@@ -265,7 +310,11 @@ impl Element for Marquee {
 
 #[cfg(test)]
 mod tests {
-    use super::{Geometry, Slots};
+    use std::collections::HashSet;
+
+    use skwir_core::{EntryId, FileId};
+
+    use super::{Geometry, Slots, band_change};
     use crate::elements::uniform_grid::math::Columns;
 
     #[test]
@@ -299,5 +348,54 @@ mod tests {
             [7],
             "the rest are past the end"
         );
+    }
+
+    fn id(ino: u64) -> EntryId {
+        EntryId {
+            file: FileId::new(1, ino),
+            at: ino,
+        }
+    }
+
+    fn ids(inos: &[u64]) -> Vec<EntryId> {
+        inos.iter().map(|ino| id(*ino)).collect()
+    }
+
+    /// A band sends what changed since its last move, never the whole
+    /// selection: what it newly covers in the order shown, the last entry
+    /// covered at the end (the cursor's), what it no longer covers, and
+    /// never takes out what was selected before it began.
+    #[test]
+    fn a_band_sends_what_it_changed() {
+        let keeps: HashSet<EntryId> = ids(&[1, 20]).into_iter().collect();
+        let mut sent: HashSet<EntryId> = HashSet::new();
+        // Growing down over 3..=5, then to 7.
+        assert_eq!(
+            band_change(&keeps, &mut sent, &ids(&[3, 4, 5])),
+            (ids(&[3, 4, 5]), vec![])
+        );
+        assert_eq!(
+            band_change(&keeps, &mut sent, &ids(&[3, 4, 5, 6, 7])),
+            (ids(&[6, 7]), vec![])
+        );
+        // Shrinking: what it left, and the cursor to the last still covered.
+        let (added, mut removed) = band_change(&keeps, &mut sent, &ids(&[3, 4]));
+        removed.sort_by_key(|id| id.at);
+        assert_eq!((added, removed), (ids(&[4]), ids(&[5, 6, 7])));
+        // Over an entry kept: added for the cursor alone, never taken out.
+        assert_eq!(
+            band_change(&keeps, &mut sent, &ids(&[3, 4, 20])),
+            (ids(&[20]), vec![])
+        );
+        assert_eq!(
+            band_change(&keeps, &mut sent, &ids(&[3, 4])),
+            (ids(&[4]), vec![])
+        );
+        assert_eq!(sent, ids(&[3, 4]).into_iter().collect::<HashSet<_>>());
+        // Covering nothing: all it had taken goes, the kept stay.
+        let (added, mut removed) = band_change(&keeps, &mut sent, &[]);
+        removed.sort_by_key(|id| id.at);
+        assert_eq!((added, removed), (vec![], ids(&[3, 4])));
+        assert!(sent.is_empty());
     }
 }
