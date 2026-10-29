@@ -25,7 +25,8 @@ is binding, like `AGENTS.md`.
   path `held.path_for_program` (a remote's file held whole, copied once
   into the preview's folder). A provider's `accepts` is asked once per
   file, type and registry revision (`HeldSlot`), whatever the stage.
-  Never a memory map, never a descriptor kept between reads. Tested from
+  Never a memory map, never a descriptor kept between reads, but by a
+  helper reading what is shown, for as long as it is (ADR-105). Tested from
   `PreviewRequest::holding` (bytes at a path that leads nowhere) and
   `Held::of_bytes_on_remote`; on a mount, by the GETs its server counts
   (`a_preview_of_a_file_on_a_mount_fetches_it_once`).
@@ -646,6 +647,12 @@ A text document is read as its structure, or laid out as pages.
 ## Archives
 
 - Only `skwir-archive-worker` links libarchive.
+- **An archive shown keeps one helper** (`archive::Session`, ADR-105), for
+  as long as it is shown (`PreviewRequest::shown`) or read (a comic's
+  reader): members are read forward from the last one, an earlier one
+  from the start; its version is checked before and after each read, and
+  another ends the helper. Comics read a page and the two after it in one
+  pass. Member bytes go through `file::memory_dir`, never a disk.
 - For a preview, member names are labels and keys, never paths: read
   only the selected regular members, bound the actual decompressed
   bytes, and keep temporary cleanup off the UI thread.

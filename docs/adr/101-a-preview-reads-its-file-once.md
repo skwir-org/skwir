@@ -88,7 +88,13 @@ as it is shown).
    cancellation and lanes. No descriptor kept between reads: Eject and
    Disconnect fail while a file there is open ("busy"), and on Windows
    another program's save by replacement fails while anyone holds the
-   file. Open, read, close; keep the bytes.
+   file. Open, read, close; keep the bytes. *Amended by ADR-105:* except
+   a helper reading what is shown (a document's engine, an archive's
+   session), which keeps the file open exactly as long as it is shown,
+   never past it: before an unmount `App::release` sends the panes there
+   home, the preview shows another file, and the helper ends. The
+   archive's helper opens it sharing read, write and delete on
+   Windows.
 5. **One version, as long as it is shown.** `Held` belongs to a version
    of the file: its `FileId`, size and time modified, the preview's
    `Version`. A change the watcher sees, or a remote's listing read
