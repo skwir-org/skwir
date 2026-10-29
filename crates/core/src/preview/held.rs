@@ -773,6 +773,16 @@ struct Slot {
     /// What providers answered (`accepts`), by the entry and the type asked
     /// about, the provider and the registry's revision.
     accepted: Mutex<Vec<(Asked, bool)>>,
+    /// Cancelled once the last holder of the slot lets go of it: the
+    /// preview shows another file or closes. What a provider keeps for the
+    /// file shown (an archive's helper, the file open) ends with it.
+    shown: crate::CancelToken,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        self.shown.cancel();
+    }
 }
 
 /// What an `accepts` was asked about.
@@ -814,6 +824,7 @@ impl HeldSlot {
             scratch,
             held: Mutex::new(None),
             accepted: Mutex::new(Vec::new()),
+            shown: crate::CancelToken::new(),
         }))
     }
 
@@ -834,6 +845,13 @@ impl HeldSlot {
     /// How large a file it keeps whole.
     pub fn keeps(&self) -> u64 {
         self.0.keeps
+    }
+
+    /// Cancelled once the last holder of this slot lets go of it: what a
+    /// provider keeps for the file shown ends with it. An emptied slot
+    /// (`emptied`, a request retargeted) has its own.
+    pub fn shown(&self) -> &crate::CancelToken {
+        &self.0.shown
     }
 
     /// What it holds now, if it was read.
@@ -910,6 +928,27 @@ mod tests {
         let path = dir.join(name);
         std::fs::write(&path, bytes).unwrap();
         path
+    }
+
+    /// A slot is shown while any of its clones lives, and no longer once
+    /// the last goes; an emptied one is another, shown on its own.
+    #[test]
+    fn a_slot_is_shown_until_its_last_holder_lets_go() {
+        let slot = HeldSlot::keeping(WHOLE);
+        let shown = slot.shown().clone();
+        let clone = slot.clone();
+        drop(slot);
+        assert!(!shown.is_cancelled(), "a clone still holds it");
+        let other = clone.emptied();
+        drop(clone);
+        assert!(shown.is_cancelled());
+        assert!(!other.shown().is_cancelled());
+        let held = Arc::new(Held::of_bytes(Path::new("/synthetic/x"), b"x".to_vec()));
+        let entry = crate::op::EntryRef::new(crate::FileId::new(1, 1), "/synthetic/x");
+        let holding = HeldSlot::holding(entry, held);
+        let shown = holding.shown().clone();
+        drop(holding);
+        assert!(shown.is_cancelled());
     }
 
     #[test]

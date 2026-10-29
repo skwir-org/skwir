@@ -54,6 +54,16 @@ impl PreviewRequest {
         self.held.of(&self.entry)
     }
 
+    /// What lives exactly as long as the preview shows the file asked
+    /// about: a provider ties to it what it keeps for that file (an
+    /// archive's helper, which holds the archive open), so nothing
+    /// outlives the preview or keeps a file on a drive being ejected busy.
+    /// Cancelled once the last clone of the request's slot goes; a
+    /// retargeted request (`retarget`) has its own.
+    pub fn shown(&self) -> &crate::CancelToken {
+        self.held.shown()
+    }
+
     /// Ask about another file (a member, a converted file): what was held
     /// and answered of the one before stays with the requests that carry
     /// it.
