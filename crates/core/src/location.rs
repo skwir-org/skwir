@@ -1209,14 +1209,14 @@ impl Listing {
                 let old = &slot.get().entry;
                 // A re-listing (refresh, a watcher's rescan) sends bare
                 // entries: keep what hydration found rather than blanking
-                // every column until the rows are stat-ed again.
+                // every column until the rows are stat-ed again. What its
+                // stat said is kept whole, its kind, its target and whether
+                // it is hidden too (a Mac's UF_HIDDEN, which a listing may
+                // not tell; it is stat-ed again after), so with the same
+                // name nothing changes: told without a copy of each row's
+                // metadata, the whole folder's on every refresh.
                 if !e.metadata.is_hydrated() && old.metadata.is_hydrated() && old.name == e.name {
-                    e.metadata = old.metadata.clone();
-                    e.kind = old.kind;
-                    e.target.clone_from(&old.target);
-                    // What its stat said hides it, which a listing may not
-                    // tell (a Mac's UF_HIDDEN): it is stat-ed again after.
-                    e.hidden = old.hidden;
+                    return;
                 }
                 let d = Delta::between(old, &e);
                 if !d.any {
