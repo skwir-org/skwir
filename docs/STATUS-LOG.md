@@ -6995,3 +6995,78 @@ did not always see a refusal at all.
 - **`just remote-check`** afterwards, whole, at a load of 7 to 21: 176
   of 176 (2 skipped), the namespaces' NFS, AFP, AFC and nearby runs
   passing too; this test took 1.06 s there. No test mount was left.
+
+### Text read a screen at a time (2026-10-29, ADR-103)
+
+Asked: a page mode for reflowed EPUBs "and similar", as the document
+reader's continuous or page choice, a notch of the wheel turning a page.
+The user's choices: everything read in the reading font, a choice of its
+own apart from `reading.continuous`, screens from where the reader is
+(no count, nothing laid out ahead).
+
+- **Built**: `reading.text_continuous` (on by default) and
+  `ui.text_continuous`, the bar's Continuous scrolling after Full width
+  (in More when the bar is narrow), the Settings dialog's Pages section.
+  `crates/ui/src/inspector_pages.rs`: each text prepainted tells its
+  bounds and line height (`MarkdownStyle::lines`, a canvas in
+  `inspector_text::part`); the pager, a canvas after the list, reads the
+  frame, ends the page after its last whole line (where every text it
+  crosses is between lines: a table row's cells too), covers the rest
+  with the paper and a pointer-blocking hitbox, and takes the wheel in
+  the capture phase. The list ends with a spacer as tall as the window:
+  gpui's list moves a top up until its view is filled, which drew a
+  chapter's short last page from higher up. Back retraces the pages
+  turned; with nothing behind, the page ending where the shown one starts
+  is found over two or three frames (up a page so what it holds is laid
+  out, then down to the first whole line). Keys through `ui.inspect`'s
+  scroll (Down, Up, Page Down, Page Up, Ctrl+Home, Ctrl+End) and Left and
+  Right (`preview_scroll`). A trackpad's swipe turns one page, then waits
+  for a 200 ms pause: gpui's Wayland and X11 report every scroll as
+  moving, with no end to a gesture. Items brought to the top (links,
+  find, printed pages) go through `State::show_item`, which keeps a page
+  that holds the item whole and starts one at it otherwise.
+- **Checked** in a window, the debug build on Xvfb :90 at 1280 × 860
+  (lavapipe), a synthetic EPUB of three chapters of numbered paragraphs
+  (30, 8 and 30) and a Markdown file of 40 paragraphs, driven by
+  `skwir cmd` and xdotool's wheel buttons:
+  - sixteen notches 1.3 s apart turned sixteen pages, each starting with
+    the line after the last one's end (read from the numbered ends);
+    chapters 1 and 2 ended on short last pages; past them the next
+    chapter opened at its first page;
+  - turning back gave pages pixel-identical to the ones turned through
+    (`magick compare`, 0 pixels differing, four pages), across a chapter
+    boundary too; back into chapter 2 from chapter 3's first page landed
+    on its last page, ending at "[end 2.8]", and back again on the page
+    ending where that one starts;
+  - five notches 50 ms apart turned five pages, one into the next
+    chapter;
+  - Page Down and Right turned on, Left and Up back to identical pages;
+    Ctrl+End reached the book's last page, a notch past it did nothing,
+    Ctrl+Home its chapter's first page;
+  - continuous scrolling switched on by the command brought back the
+    scrollbar and pixel scrolling; off again, the top moved up to the
+    line it had cut;
+  - find (`[3.20]`, `end 3.24`) showed pages holding each match;
+  - the Markdown file turned likewise, a page ending inside a paragraph;
+    with the text one size larger, its pages still began and ended on
+    whole lines (`RUST_LOG=skwir_ui::inspector_pages=trace` traces each
+    page read: top, view, end, next).
+  Unit tests (`inspector_pages`, 9): the cut between lines, a picture
+  that does not fit, cells side by side, a page found back from its end
+  over frames, the chapter's last page, forgetting what was turned
+  through after a move or another layout, the swipe.
+- **Found on the way**: a layout change (another width or text size)
+  kept the top's pixel offset, which may fall inside a line: it now
+  starts the page again with that line whole. A first draft found a page
+  back from its end by checking, every frame, that enough was laid out
+  above the view: once moved down to the first whole line, the check
+  failed again, and the page went up and down; the find now moves up
+  once, then lands, and the next frame shows the page (found while
+  tracing its unit test's frames by hand).
+- **Runs**: `skwir-ui`'s tests, 406 of 406; the binary's, 152 of 152
+  (4 skipped); clippy (`-D warnings`) on both; rustfmt; `just
+  check-cross` (Windows' pass checks `skwir-ui`; macOS' leaves it out, it
+  needs Apple's SDK).
+- **Not tried**: a trackpad, a high-resolution wheel, the session's
+  Wayland; macOS not compiled. What a screen reader hears still includes
+  the lines under the cover.

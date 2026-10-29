@@ -206,6 +206,9 @@ pub struct Preferences {
     /// `ui.wrap_lines`: a text's long lines wrap to the panel, else go on
     /// sideways (`text_view`).
     pub wrap_lines: bool,
+    /// `ui.text_continuous`: what is read scrolls as one column, else
+    /// turns a screen at a time (`inspector_pages`).
+    pub text_continuous: bool,
     /// `reading.read_ahead`: the picture the next step shows is decoded
     /// ahead (`Shell::read_ahead_next`).
     pub read_ahead: bool,
@@ -234,6 +237,7 @@ impl Default for Preferences {
             full_path: false,
             printed_pages: false,
             wrap_lines: true,
+            text_continuous: true,
             read_ahead: true,
             drag_image: crate::dragicon::Layout::Fan,
             model_look: crate::elements::model::Look::default(),
@@ -1802,6 +1806,21 @@ impl Shell {
         crate::settings::remember(self, crate::settings::WRAP_LINES_KEY, on.to_string(), cx);
     }
 
+    /// `ui.text_continuous`: what is read scrolls as one column, or turns
+    /// a screen at a time; what is shown changes at once, from the line at
+    /// its top. A preference, saved as the dialog's switch is.
+    fn set_text_continuous(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.prefs.text_continuous = on;
+        self.page_text();
+        cx.notify();
+        crate::settings::remember(
+            self,
+            crate::settings::TEXT_CONTINUOUS_KEY,
+            on.to_string(),
+            cx,
+        );
+    }
+
     /// `ui.contents_pin`: the contents stay open beside what is read, or
     /// close once an entry is chosen. A preference, saved as the dialog's
     /// switch is.
@@ -2532,6 +2551,13 @@ impl Shell {
                     .unwrap_or(!self.prefs.wrap_lines);
                 self.set_wrap_lines(on, cx);
             }
+            "text_continuous" => {
+                let on = args
+                    .get("on")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(!self.prefs.text_continuous);
+                self.set_text_continuous(on, cx);
+            }
             "contents_pin" => {
                 let on = args
                     .get("on")
@@ -2911,6 +2937,8 @@ impl Shell {
             );
             self.prefs.printed_pages = self.switch(crate::settings::PRINTED_PAGES_KEY, false);
             self.prefs.wrap_lines = self.switch(crate::settings::WRAP_LINES_KEY, true);
+            self.prefs.text_continuous = self.switch(crate::settings::TEXT_CONTINUOUS_KEY, true);
+            self.page_text();
             self.prefs.read_ahead = self
                 .app
                 .settings

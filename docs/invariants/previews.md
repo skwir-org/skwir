@@ -589,6 +589,37 @@ A text document is read as its structure, or laid out as pages.
   has laid out, and alone barely moves. A heading, a search match or an
   outline entry further down needs `scroll_into_view`, which jumps
   straight to anything unmeasured.
+- Read a screen at a time, an item is shown through `State::show_item`:
+  revealed at the bottom of the view, it would be under the page's
+  cover. One the page holds whole stays where it is; another starts the
+  page.
+
+### A screen at a time (ADR-103)
+
+- What is read (`inspector::reads`) turns a screen at a time while
+  `reading.text_continuous` is off, its own choice, never the document
+  reader's `reading.continuous`. The shell says which when a section
+  arrives and when the choice changes (`State::set_paged`), before the
+  list is made: the list's last item is then a spacer as tall as the
+  window, for gpui's list moves a top up until its view is filled, and a
+  chapter's last page must end short.
+- A page ends after its last whole line, read from the frame the list
+  just laid out (`inspector_pages`): the items' bounds and the lines each
+  text told while prepainted (`MarkdownStyle::lines`, a canvas after the
+  text). Never measured in render, never the whole section laid out
+  ahead: a page is where the reader is, and the next starts where it
+  ended. A text drawn some other way than `inspector_text::part` has no
+  lines to end a page between: draw text through it.
+- The list stays the one place the text is: what moves it (a link, find,
+  a printed page, the contents) is followed, the page starting there and
+  what was turned through forgotten. The pager moves it only to start a
+  page with a whole line or to find a page back from its end, asking for
+  the next frame (`on_next_frame`).
+- The pager covers what is past the page's end with the panel's paper
+  and a hitbox that blocks the pointer, and takes the wheel in the
+  capture phase over the text, before the list scrolls it; what is drawn
+  over the text later (the floating contents, popups) occludes it and
+  keeps its own wheel. A turn waits until the page turned to is drawn.
 
 ## Archives
 

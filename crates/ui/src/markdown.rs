@@ -85,6 +85,10 @@ pub struct MarkdownStyle {
     /// background, and the tokens of the look `reading.code_appearance`
     /// keeps code in (`code`).
     pub code_look: Option<std::rc::Rc<MarkdownStyle>>,
+    /// While the text is read a screen at a time: where each text drew its
+    /// lines this frame, for the pager to end a page between two
+    /// (`inspector_pages`).
+    pub lines: Option<crate::inspector_pages::Texts>,
 }
 
 /// The widest a reading column may be, in ems of its text, for a
@@ -155,6 +159,7 @@ impl MarkdownStyle {
             find_current: theme.find_current,
             find_current_text: theme.find_current_text,
             code_look: None,
+            lines: None,
         }
     }
 
@@ -166,6 +171,7 @@ impl MarkdownStyle {
             armed_link: self.armed_link.clone(),
             labels: self.labels.clone(),
             sought: self.sought.clone(),
+            lines: self.lines.clone(),
             ..Self::new(theme, self.body_size, self.reading, None)
         }
     }

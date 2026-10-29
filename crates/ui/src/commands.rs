@@ -579,6 +579,7 @@ const SHOWS: &[&str] = &[
     "ui.inspect",
     "ui.printed_pages",
     "ui.wrap_lines",
+    "ui.text_continuous",
     "ui.model_perspective",
     "ui.model_smooth",
     "ui.full_width",
@@ -2072,6 +2073,13 @@ pub fn declare_all(app: &App) {
         "ui.wrap_lines",
         "Wrap lines",
         "Wrap a text's long lines to the panel, or let them go on sideways",
+    );
+    declare::<On>(
+        app,
+        Topic::Preview,
+        "ui.text_continuous",
+        "Continuous scrolling of text",
+        "Read a book, a document or a message as one scrolling column, or a screen at a time",
     );
     none(
         Topic::Preview,

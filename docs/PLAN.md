@@ -201,6 +201,18 @@ bytes again, a name several types claim; it is now given the type the
 preview settled, `PropertySource::typed`). Detail in `docs/STATUS-LOG.md`
 (2026-10-29); what is left under "What is left".
 
+## Text read a screen at a time (2026-10-29)
+
+A book, a document, a page in reading mode or a message can turn a
+screen at a time, as the document reader turns pages (ADR-103): its own
+choice (`reading.text_continuous`, the bar's Continuous scrolling); each
+screen ends at a whole line and the next starts with the line after it;
+Back retraces the screens turned; a notch of the wheel, the arrows and
+Page Down turn, and past a chapter's last screen comes the next chapter.
+Screens are not counted, so nothing is laid out ahead. Checked in a
+window on Xvfb (`docs/STATUS-LOG.md`, 2026-10-29); what is left under
+"What is left".
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -213,6 +225,14 @@ closes an item removes its line; work that leaves one adds it here.
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
+
+**From text read a screen at a time (2026-10-29, ADR-103)**:
+- Not tried: a trackpad (a swipe turns one screen, then waits for a
+  pause), a high-resolution wheel (each part of a notch turns, as in the
+  document reader), the session's Wayland; Windows compiled only, macOS
+  not compiled (check-cross leaves `skwir-ui` out of its macOS pass).
+- What a screen reader hears still holds the lines laid out under the
+  page's cover.
 
 **From previews read once and rclone's cache (2026-10-29, ADR-101,
 ADR-102)**:

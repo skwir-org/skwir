@@ -201,6 +201,11 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
     ("ui.model_perspective", "{}", "Model: perspective"),
     ("ui.model_smooth", "{}", "Model: smooth shading"),
     ("ui.wrap_lines", "{}", "Preview: wrap lines"),
+    (
+        "ui.text_continuous",
+        "{}",
+        "Preview: toggle continuous scrolling of text",
+    ),
     ("ui.preview_contents", "{}", "Preview: contents"),
     ("ui.contents_pin", "{}", "Preview: keep contents open"),
     ("ui.preview_copy", "{}", "Preview: copy"),

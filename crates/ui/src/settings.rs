@@ -86,6 +86,9 @@ pub const TABS_IN_SIDEBAR: &str = "sidebar";
 pub const FULL_PATH_KEY: &str = "ui.full_path";
 /// How documents are read: one scrolling column, or a page at a time.
 pub const READER_CONTINUOUS_KEY: &str = "reading.continuous";
+/// How what is read is: one scrolling column, or a screen at a time
+/// (`ui.text_continuous`, `inspector_pages`).
+pub const TEXT_CONTINUOUS_KEY: &str = "reading.text_continuous";
 /// How wide a reading column may grow (`markdown::measure`).
 pub const READING_WIDTH_KEY: &str = "reading.width";
 /// Whether a book's position counts its printed pages (`ui.printed_pages`).
@@ -454,6 +457,15 @@ pub fn declare(app: &App) {
         )
         .section("Pages")
         .essential(),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            TEXT_CONTINUOUS_KEY,
+            "Continuous scrolling of text",
+            "Read a book, a document, a page in reading mode or a message as one scrolling column. Off shows a screen at a time, ending at a whole line: the wheel, the arrows and Page Down turn it, and past a chapter's last page comes the next chapter. The button beside the text's size changes it too.",
+            true,
+        )
+        .section("Pages"),
     );
     app.settings.declare(font_spec(
         READING_FONT_KEY,

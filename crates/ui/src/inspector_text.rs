@@ -431,6 +431,7 @@ pub fn part(
     let text = StyledText::new(shown).with_highlights(highlights);
     let down = text.layout().clone();
     let placed = text.layout().clone();
+    let told = text.layout().clone();
     let start = range.start;
     let moved = down.clone();
     // While labelled the text moved along by its labels: the keys follow
@@ -514,6 +515,26 @@ pub fn part(
         .id(gpui::ElementId::from((id, "select")))
         .cursor_text()
         .child(text)
+        // Prepainted after the text: where its lines are is known, for a
+        // page read a screen at a time to end between two.
+        .when_some(style.lines.clone(), |d, lines| {
+            let laid = told.clone();
+            d.child(
+                gpui::canvas(
+                    move |_, _, _| {
+                        let bounds = laid.bounds();
+                        lines.borrow_mut().push(crate::inspector_pages::Drawn {
+                            top: f32::from(bounds.top()),
+                            bottom: f32::from(bounds.bottom()),
+                            line: f32::from(laid.line_height()),
+                        });
+                    },
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .size_0(),
+            )
+        })
         // Prepainted after the text: where the match is drawn is known.
         .when_some(spot, |d, (seen, found)| {
             d.child(

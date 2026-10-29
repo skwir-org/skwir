@@ -566,6 +566,9 @@ pub struct State {
     sideways: gpui::ScrollHandle,
     /// The tools the sections of this file offered (`Offered`).
     offered: Offered,
+    /// What is read a screen at a time (`inspector_pages`): the pages of
+    /// the section shown, shared with the pager drawn over the list.
+    pub(crate) pages: Rc<RefCell<crate::inspector_pages::Pages>>,
 }
 
 /// What the bar of a file looked at one way has offered: a tool one of its
@@ -609,6 +612,44 @@ impl State {
             None => self.sideways.max_offset().x > px(0.),
         }
     }
+
+    /// Whether what is shown is read a screen at a time.
+    pub(crate) fn paged(&self) -> bool {
+        self.pages.borrow().on
+    }
+
+    /// Read a screen at a time, or continuously: the spacer that ends a
+    /// paged list comes or goes, and pages are cut again from the line at
+    /// the top.
+    pub(crate) fn set_paged(&mut self, on: bool) {
+        let mut pages = self.pages.borrow_mut();
+        if pages.on == on {
+            return;
+        }
+        pages.on = on;
+        pages.reset();
+        drop(pages);
+        let count = self.list.item_count();
+        if on {
+            self.list.splice(count..count, 1);
+        } else if count > 0 {
+            self.list.splice(count - 1..count, 0);
+        }
+    }
+
+    /// Bring list item `item` into view; read a screen at a time, the page
+    /// shown when it holds it whole, else the page that starts with it.
+    fn show_item(&self, item: usize) {
+        if !self.paged() {
+            return scroll_into_view(&self.list, item);
+        }
+        if !self.pages.borrow().holds(&self.list, item) {
+            self.list.scroll_to(gpui::ListOffset {
+                item_ix: item,
+                offset_in_item: px(0.),
+            });
+        }
+    }
 }
 impl Default for State {
     fn default() -> Self {
@@ -639,6 +680,7 @@ impl Default for State {
             bytes: None,
             sideways: gpui::ScrollHandle::new(),
             offered: Offered::default(),
+            pages: Rc::default(),
         }
     }
 }
@@ -769,12 +811,18 @@ impl State {
         self.offered.add(data);
         self.page_starts = page_starts(data);
         (self.at_edge, self.turn) = (0, crate::reader_scroll::WheelTurn::default());
+        self.pages.borrow_mut().reset();
         if std::mem::take(&mut self.land_at_end) {
-            // Scrolled up out of the next section: read on from this one's end.
-            self.list.scroll_to(gpui::ListOffset {
-                item_ix: self.list.item_count().saturating_sub(1),
-                offset_in_item: px(0.),
-            });
+            // Scrolled up out of the next section: read on from this one's
+            // end; a screen at a time, from its last page.
+            if self.paged() {
+                self.pages.borrow_mut().last_page();
+            } else {
+                self.list.scroll_to(gpui::ListOffset {
+                    item_ix: self.list.item_count().saturating_sub(1),
+                    offset_in_item: px(0.),
+                });
+            }
         }
         // A link into a chapter lands where its fragment points.
         if data.kind == InspectionKind::Book
@@ -790,7 +838,7 @@ impl State {
                 .position(|block| block.anchors.iter().any(|name| name == fragment))
                 .and_then(|index| self.item_of(data, index))
         {
-            scroll_into_view(&self.list, item);
+            self.show_item(item);
         }
         // Landed: the chapter is its number now, like any other (`offset`,
         // set above), not a place inside a container to go back out of.
@@ -926,7 +974,7 @@ impl State {
         self.collapsed = Arc::default();
         self.reindex(data);
         if let Some(item) = self.item_of(data, index) {
-            scroll_into_view(&self.list, item);
+            self.show_item(item);
         }
     }
     /// The block list item `item` draws, if it draws one (the first item
@@ -1005,7 +1053,7 @@ impl State {
         else {
             return false;
         };
-        scroll_into_view(&self.list, item);
+        self.show_item(item);
         true
     }
     pub(crate) fn show_line(&mut self, data: &Inspection, line: u32) {
@@ -1034,7 +1082,7 @@ impl State {
         let index = data.blocks.len() + row;
         self.selected = Some(index);
         if let Some(item) = self.item_of(data, index) {
-            scroll_into_view(&self.list, item);
+            self.show_item(item);
         }
     }
     /// The member whose row is highlighted, if one is: what a container's
@@ -1165,8 +1213,12 @@ impl State {
             return;
         }
         self.visible = Arc::new(visible_rows(data, &self.collapsed, self.sort));
-        self.list
-            .reset_with_uniform_height(data.blocks.len() + self.visible.len() + 1, estimate);
+        // Read a screen at a time, a spacer ends the list (`inspector_pages`).
+        let spacer = usize::from(self.paged());
+        self.list.reset_with_uniform_height(
+            data.blocks.len() + self.visible.len() + 1 + spacer,
+            estimate,
+        );
     }
 }
 /// What changes a container's view alone, so it is done on the view kept
@@ -1708,7 +1760,7 @@ impl Shell {
                         .as_u64()
                         .and_then(|i| state.item_of(&display.data, i as usize))
                     {
-                        scroll_into_view(&state.list, item);
+                        state.show_item(item);
                     }
                     cx.notify();
                     return;
@@ -2049,6 +2101,11 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Read a screen at a time, the pager turned the page already, and
+        // what it left (Shift, sideways) is not the section's.
+        if self.preview.inspection.paged() {
+            return;
+        }
         // A note stays under its reference: the text moving away closes it.
         if self.preview.inspection.notes.open.is_some() {
             self.preview.inspection.notes.close(window, cx);
@@ -2096,6 +2153,79 @@ impl Shell {
         }
     }
 
+    /// Turn the page of what is read a screen at a time, on (`toward` 1)
+    /// or back; past the section's last or first page, to the section
+    /// after or before, on its first page or its last. Nothing while a
+    /// section is on its way.
+    pub(crate) fn inspect_turn(
+        &mut self,
+        toward: i32,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::inspector_pages::Turn;
+        let state = &mut self.preview.inspection;
+        // A note stays under its reference: the text moving away closes it.
+        if state.notes.open.is_some() {
+            state.notes.close(window, cx);
+        }
+        let turned = {
+            let mut pages = state.pages.borrow_mut();
+            if toward > 0 {
+                pages.forward(&state.list)
+            } else {
+                pages.back(&state.list)
+            }
+        };
+        match turned {
+            Turn::Page => cx.notify(),
+            Turn::Wait => {}
+            Turn::Section => {
+                let Some(PreviewContent::Inspection(display)) = &self.preview.content else {
+                    return;
+                };
+                let target = if toward > 0 {
+                    display.data.next
+                } else {
+                    display.data.previous
+                };
+                if let Some(offset) = target
+                    && self.preview.phase == PreviewPhase::Idle
+                {
+                    self.preview.inspection.land_at_end = toward < 0;
+                    self.run(
+                        "ui.inspect",
+                        serde_json::json!({"action":"page","offset":offset}),
+                        window,
+                        cx,
+                    );
+                }
+            }
+        }
+    }
+
+    /// The wheel over what is read a screen at a time
+    /// (`inspector_pages::overlay`): a notch turns a page, and so does a
+    /// trackpad's swipe.
+    pub(crate) fn inspect_flip(
+        &mut self,
+        delta: f32,
+        lines: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let pending = self.preview.phase != PreviewPhase::Idle;
+        let turn = self.preview.inspection.pages.borrow_mut().flip.turn(
+            delta,
+            lines,
+            pending,
+            std::time::Instant::now(),
+        );
+        if turn != 0 {
+            self.inspect_turn(turn, window, cx);
+        }
+    }
+
     /// `ui.inspect`'s `scroll` on what is not a text (`text_view::scroll`
     /// has that): `to` a step up or down (a row of bytes), a screen less a
     /// step, either end, or a step sideways where a table or bytes are
@@ -2112,6 +2242,24 @@ impl Shell {
             state.notes.close(window, cx);
         }
         let to = args["to"].as_str().unwrap_or("");
+        // Read a screen at a time, the page turns: a screen is a page.
+        if state.paged() && state.bytes.is_none() && !matches!(to, "left" | "right") {
+            match to {
+                "up" | "page_up" => self.inspect_turn(-1, window, cx),
+                "down" | "page_down" => self.inspect_turn(1, window, cx),
+                "start" => {
+                    let state = &self.preview.inspection;
+                    state.pages.borrow_mut().first_page(&state.list);
+                    cx.notify();
+                }
+                "end" => {
+                    self.preview.inspection.pages.borrow_mut().last_page();
+                    cx.notify();
+                }
+                _ => {}
+            }
+            return;
+        }
         match (to, state.bytes.as_ref()) {
             ("left", _) => {
                 crate::preview::arrow(&state.sideways, -1, 0);
@@ -2507,6 +2655,23 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             Button::new("inspect-full-width", "width", "Full width", "ui.full_width")
                 .active(shell.reading_measure.is_none())
                 .enabled(sized),
+        ));
+    }
+    // What is read scrolls as one column or turns a screen at a time, as a
+    // document's Continuous does: a choice of its own for text
+    // (`reading.text_continuous`), lit while it scrolls.
+    if offered.sized && reads(data.kind) {
+        bar.push(Item::button(
+            Slot::View,
+            1,
+            Button::new(
+                "inspect-continuous",
+                "continuous",
+                "Continuous scrolling",
+                "ui.text_continuous",
+            )
+            .active(shell.prefs.text_continuous)
+            .enabled(sized),
         ));
     }
     // How the file is shown, after its size, as a document's Continuous is:
@@ -2946,6 +3111,24 @@ fn named_headings(data: &Inspection, starts: &[(usize, Option<usize>)]) -> Vec<u
     named
 }
 
+/// Whether what `data` shows is read a screen at a time: what is read,
+/// while continuous scrolling of text is off (`ui.text_continuous`).
+pub(crate) fn pages_text(shell: &Shell, data: &Inspection) -> bool {
+    !shell.prefs.text_continuous && reads(data.kind)
+}
+
+impl Shell {
+    /// Tell the inspection shown whether it is read a screen at a time,
+    /// once the choice changed.
+    pub(crate) fn page_text(&mut self) {
+        let paged = match &self.preview.content {
+            Some(PreviewContent::Inspection(display)) => pages_text(self, &display.data),
+            _ => false,
+        };
+        self.preview.inspection.set_paged(paged);
+    }
+}
+
 /// Whether `kind` is read, its running text in the reading font: Markdown
 /// and HTML, word processors' documents, books the built-in engine
 /// reflows, mail (ADR-073). Code and text files are the code font's;
@@ -2986,6 +3169,13 @@ pub fn content(
             .blocks
             .iter()
             .any(|block| matches!(block.picture, Some(Picture::Later { .. })));
+    // Read a screen at a time, the pager over the list cuts its pages
+    // (`inspector_pages`), told where each text drew its lines; the list
+    // ends with a spacer, room under a section's last page.
+    let paging = state.paged() && !view.parked && state.text.is_none() && state.bytes.is_none();
+    let spacer = state
+        .paged()
+        .then(|| state.list.item_count().saturating_sub(1));
     let row_icons = display.row_icons.clone();
     let visible = state.visible.clone();
     let collapsed = state.collapsed.clone();
@@ -3037,6 +3227,7 @@ pub fn content(
                 ..sought.clone()
             })
         });
+    list_style.lines = paging.then(|| Rc::clone(&state.pages.borrow().texts));
     // Code in the look its colors are for, which may not be skwir's
     // (`reading.code_appearance`), on the background its theme is for:
     // the code view whole, its gutter too, and a document's code blocks.
@@ -3110,7 +3301,17 @@ pub fn content(
     let grid = shape
         .as_deref()
         .map(|shape| shape.widths.iter().sum::<f32>());
-    let list = gpui::list(state.list.clone(), move |index, _, _| {
+    let list = gpui::list(state.list.clone(), move |index, window, _| {
+        if Some(index) == spacer {
+            // As tall as the window, so taller than the view: the list
+            // never moves a last page up to fill the room under it.
+            let room = if paging {
+                window.viewport_size().height
+            } else {
+                px(0.)
+            };
+            return div().h(room).into_any_element();
+        }
         let theme = &list_theme;
         if index == 0 {
             // The notice is the frame's strip (`notice`); the first item is
@@ -3513,9 +3714,22 @@ pub fn content(
                     .size_0(),
                 )
             })
+            // The pages, cut after the list laid this frame out, before
+            // what is drawn over it.
+            .when(paging, |d| {
+                d.child(crate::inspector_pages::overlay(
+                    Rc::clone(&state.pages),
+                    state.list.clone(),
+                    spacer.unwrap_or_default(),
+                    font_size,
+                    code_bg.unwrap_or(theme.bg),
+                    cx,
+                ))
+            })
             // Over what does not scroll sideways: a table or bytes wider
-            // than the panel keep their bars in view (below).
-            .when(!wide, |d| {
+            // than the panel keep their bars in view (below). A page that
+            // fits has none, as in the document reader.
+            .when(!wide && !paging, |d| {
                 d.child(crate::elements::scrollbar::vertical(
                     "inspect-scrollbar",
                     scrolls.clone(),

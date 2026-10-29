@@ -3365,6 +3365,9 @@ impl Shell {
         let refresh = std::mem::take(&mut self.preview.refresh);
         let mut content = content;
         if let Some(PreviewContent::Inspection(display)) = &content {
+            // Read a screen at a time or not, before its list is made.
+            let paged = crate::inspector::pages_text(self, &display.data);
+            self.preview.inspection.set_paged(paged);
             self.preview.inspection.arrived(display, refresh);
             self.preview
                 .inspection
@@ -3726,6 +3729,12 @@ impl Shell {
             Some(PreviewContent::Inspection(_)) => {
                 let wide =
                     self.preview.inspection.wide() || self.container_has_keyboard(window, cx);
+                // Read a screen at a time, Left and Right turn the page, as
+                // a document's do.
+                if dx != 0 && !wide && self.preview.inspection.paged() {
+                    self.inspect_turn(dx, window, cx);
+                    return cx.notify();
+                }
                 if dx == 0 || wide {
                     let args = serde_json::json!({"action":"scroll","to":to});
                     self.inspect_command(&args, window, cx);

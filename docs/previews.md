@@ -91,12 +91,12 @@ contributors). The rules for working on preview code are in
 | `Ctrl+I`, `Alt+Enter` | Anywhere | Properties |
 | `Ctrl+F`; `F3`, `Shift+F3` | Preview | Find; next or previous match |
 | `Ctrl+C`, `Ctrl+A` | Preview | Copy; select all |
-| Up, Down; the wheel | Reader, picture, structured previews | Scroll; a page read a page at a time turns at its edge, a page a notch of the wheel |
-| Left, Right | Reader, picture, structured previews | Scroll sideways when wider than the panel; else previous or next page or section (not a picture) |
+| Up, Down; the wheel | Reader, picture, structured previews | Scroll; a page read a page at a time turns at its edge, a page a notch of the wheel; text read a screen at a time turns a screen |
+| Left, Right | Reader, picture, structured previews | Scroll sideways when wider than the panel; else previous or next page or section (not a picture), or screen of text read a screen at a time |
 | `Page Up`, `Page Down` | Reader | Previous or next page |
 | `[`, `]` | Reader, book | Previous or next page or chapter |
 | Up, Down | Text | A line |
-| `Page Up`, `Page Down`; `Ctrl+Home`, `Ctrl+End` | Text and structured previews | A screen; the start or the end |
+| `Page Up`, `Page Down`; `Ctrl+Home`, `Ctrl+End` | Text and structured previews | A screen; the start or the end (the first or last screen, read a screen at a time) |
 | `Alt+Z` | Text | Wrap long lines, or let them go on sideways |
 | `Alt+Page Up`, `Alt+Page Down` | Any preview | Previous or next section, chapter or comic page |
 | `F` | Picture, reader, text, peek | Fullscreen, or back |
@@ -225,8 +225,18 @@ The player, in the panel or pinned at its foot:
   reference opens the note under it, from this chapter or another; **Go
   to note** leads there.
 - The bar: previous chapter, the chapter number (click to type one),
-  next; smaller, the text size, larger; **Full width**. How wide lines
-  may grow is the **Reading width** preference.
+  next; smaller, the text size, larger; **Full width**; **Continuous
+  scrolling**. How wide lines may grow is the **Reading width**
+  preference.
+- **Continuous scrolling** off, a book turns a screen at a time, and so
+  does everything read the same way (Markdown, web pages in reading
+  mode, word processors' documents, mail): each screen ends at a whole
+  line, and the next starts with the line after it. A notch of the
+  wheel, Down, Page Down or Right turns on; Up, Page Up or Left back,
+  through the screens turned; past a chapter's last screen comes the
+  next chapter. Screens are not numbered: the count stays chapters or
+  printed pages. The choice is remembered for all text (**Continuous
+  scrolling of text**), apart from the document reader's.
 - A book that lists its printed edition's page numbers can be counted by
   them: the picker after the count switches between chapters and printed
   pages, and the **Printed page numbers** preference remembers it.
