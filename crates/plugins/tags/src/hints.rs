@@ -26,7 +26,8 @@ impl HintProvider for Learned {
         root: &Path,
         _: &CancelToken,
     ) -> Option<Vec<PathBuf>> {
-        (key == keys::TAGS).then(|| self.0.files_with(value, root))
+        // Not stat-ed here: the search stats every file it is named.
+        (key == keys::TAGS).then(|| self.0.candidates_with(value, root))
     }
 }
 

@@ -26,27 +26,31 @@ pub struct Rename {
     pub to: Option<String>,
 }
 
+/// A file the search found, with its tags as the search read them, when
+/// it did.
+type Found = (EntryRef, Option<Vec<String>>);
+
 /// Add to `files` those of `found` not in it yet (by path, as `seen`
 /// keeps them), in the order found: a file with several of the tags is
 /// edited once. A rename of a tag on a hundred thousand files compared
 /// each with every one before it.
-fn gather(files: &mut Vec<EntryRef>, seen: &mut HashSet<PathBuf>, found: Vec<EntryRef>) {
-    for r in found {
-        if seen.insert(r.path.clone()) {
-            files.push(r);
+fn gather(files: &mut Vec<Found>, seen: &mut HashSet<PathBuf>, found: Vec<Found>) {
+    for file in found {
+        if seen.insert(file.0.path.clone()) {
+            files.push(file);
         }
     }
 }
 
 /// The files under `root` (the home folder when `None`) tagged `tag`,
-/// with their ids, as the search finds them. Blocks until it completes:
-/// call on a worker.
+/// with their ids and the tags the search read of them, as it finds them.
+/// Blocks until it completes: call on a worker.
 fn tagged(
     app: &App,
     tag: &str,
     root: Option<&PathBuf>,
     cancel: &CancelToken,
-) -> anyhow::Result<Vec<EntryRef>> {
+) -> anyhow::Result<Vec<Found>> {
     let mut args = serde_json::json!({ "facet": "tag", "value": tag });
     if let Some(root) = root {
         args["root"] = serde_json::json!(PathArg::from(root.as_path()));
@@ -67,12 +71,14 @@ fn tagged(
             Ok(ListingEvent::Added(entries)) => {
                 for e in entries {
                     if let Some(path) = open.path_of(e.id) {
-                        found.push((e.id, EntryRef::new(e.file(), path)));
+                        // A `tag:` search read each file's tags to find it.
+                        let tags = crate::tags_of(&e.metadata);
+                        found.push((e.id, (EntryRef::new(e.file(), path), tags)));
                     }
                 }
             }
             Ok(ListingEvent::Removed(ids)) => found.retain(|(id, _)| !ids.contains(id)),
-            Ok(ListingEvent::Complete) => break Ok(found.into_iter().map(|(_, r)| r).collect()),
+            Ok(ListingEvent::Complete) => break Ok(found.into_iter().map(|(_, f)| f).collect()),
             Ok(ListingEvent::Error(e)) => break Err(anyhow::anyhow!("{e}")),
             Ok(_) | Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
@@ -274,7 +280,7 @@ fn start_all(
         cancel.clone(),
         move || {
             let Some(app) = weak.upgrade() else { return };
-            let mut files: Vec<EntryRef> = Vec::new();
+            let mut files: Vec<Found> = Vec::new();
             let mut seen = HashSet::new();
             for tag in &tags {
                 match tagged(&app, tag, root.as_ref(), &cancel) {
@@ -306,13 +312,15 @@ fn start_all(
             };
             let mut plan = Plan::new(title);
             let mut merged = 0;
-            for r in files {
-                // Read to leave out a file it would not change, and to say
-                // how many it merges.
-                let current = app
-                    .notes
-                    .read_path(&r.path, &app.notes.policy())
-                    .tag_names();
+            for (r, read) in files {
+                // What it holds, to leave out a file it would not change,
+                // and to say how many it merges: as the search read it, or
+                // read now.
+                let current = read.unwrap_or_else(|| {
+                    app.notes
+                        .read_path(&r.path, &app.notes.policy())
+                        .tag_names()
+                });
                 let changed = change.applied(&current);
                 if changed == current {
                     continue;
@@ -426,13 +434,11 @@ mod tests {
     #[test]
     fn the_files_of_several_tags_are_gathered_once_each() {
         const N: u64 = 100_000;
-        let refs = |from: u64| -> Vec<EntryRef> {
+        let refs = |from: u64| -> Vec<Found> {
             (from..from + N)
                 .map(|i| {
-                    EntryRef::new(
-                        skwir_core::FileId::new(1, i),
-                        PathBuf::from(format!("/synthetic/tagged/file {i}.txt")),
-                    )
+                    let path = PathBuf::from(format!("/synthetic/tagged/file {i}.txt"));
+                    (EntryRef::new(skwir_core::FileId::new(1, i), path), None)
                 })
                 .collect()
         };
@@ -446,7 +452,7 @@ mod tests {
             files
                 .iter()
                 .zip(refs(0).into_iter().chain(refs(N)))
-                .all(|(a, b)| a.path == b.path),
+                .all(|(a, b)| a.0.path == b.0.path),
             "in the order found"
         );
     }

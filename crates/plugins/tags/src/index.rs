@@ -1319,36 +1319,41 @@ impl TagIndex {
         (out, files)
     }
 
+    /// The files under `root` known to have `tag`, as the index knows
+    /// them: nothing is read. A search's hint, which stats every file it
+    /// is named anyway (ADR-026).
+    pub fn candidates_with(&self, tag: &str, root: &Path) -> Vec<PathBuf> {
+        let mut state = self.state();
+        let ids: Vec<u32> = state
+            .tags
+            .iter()
+            .enumerate()
+            // A category's files: those of the tags within it.
+            .filter(|(_, t)| tag_within(t, tag))
+            .map(|(i, _)| u32::try_from(i).unwrap_or(u32::MAX))
+            .collect();
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        let under = self.load_reached(&mut state, root);
+        under
+            .into_iter()
+            .filter_map(|(path, at)| Some((state.pieces[at].folders.get(&path)?, path)))
+            .flat_map(|(folder, path)| {
+                folder
+                    .files
+                    .iter()
+                    .filter(|f| f.has(&ids))
+                    .map(move |f| path.join(f.name()))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     /// The files under `root` known to have `tag`. Those gone since are
     /// forgotten on the way.
     pub fn files_with(self: &Arc<Self>, tag: &str, root: &Path) -> Vec<PathBuf> {
-        let found: Vec<PathBuf> = {
-            let mut state = self.state();
-            let ids: Vec<u32> = state
-                .tags
-                .iter()
-                .enumerate()
-                // A category's files: those of the tags within it.
-                .filter(|(_, t)| tag_within(t, tag))
-                .map(|(i, _)| u32::try_from(i).unwrap_or(u32::MAX))
-                .collect();
-            if ids.is_empty() {
-                return Vec::new();
-            }
-            let under = self.load_reached(&mut state, root);
-            under
-                .into_iter()
-                .filter_map(|(path, at)| Some((state.pieces[at].folders.get(&path)?, path)))
-                .flat_map(|(folder, path)| {
-                    folder
-                        .files
-                        .iter()
-                        .filter(|f| f.has(&ids))
-                        .map(move |f| path.join(f.name()))
-                        .collect::<Vec<_>>()
-                })
-                .collect()
-        };
+        let found = self.candidates_with(tag, root);
         let (here, gone): (Vec<PathBuf>, Vec<PathBuf>) = found.into_iter().partition(|path| {
             !matches!(std::fs::symlink_metadata(path),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound)

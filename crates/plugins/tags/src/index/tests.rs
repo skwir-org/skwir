@@ -552,3 +552,22 @@ fn the_other_half_of_a_folder_tagged_then_all_untagged_counts_exactly() {
     assert_eq!(index.state().total(), 0);
     assert!(index.state().folders.is_empty());
 }
+
+/// A search's hint is the index as it knows it, nothing read: a file gone
+/// since is named still, and the search, which stats each, leaves it out.
+#[test]
+fn a_hint_names_what_the_index_knows_and_reads_nothing() {
+    let index = index(None, 64);
+    let gone = PathBuf::from("/synthetic/never made/it's tagged.txt");
+    index.learn(vec![(gone.clone(), tags(&["Places/Paris"]))]);
+    let root = Path::new("/synthetic");
+    assert_eq!(
+        index.candidates_with("places", root),
+        std::slice::from_ref(&gone)
+    );
+    assert_eq!(index.candidates_with("Places/Paris", root), [gone]);
+    assert!(index.candidates_with("work", root).is_empty());
+    // `files_with` stats them, and forgets those gone.
+    assert!(index.files_with("places", root).is_empty());
+    assert!(index.candidates_with("places", root).is_empty());
+}
