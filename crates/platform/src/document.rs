@@ -11,17 +11,18 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use anyhow::Context;
 use crossbeam_channel::{Receiver, Sender};
 use skwir_core::CancelToken;
 use skwir_core::document::{
     DocumentInfo, DocumentPage, DocumentSession, MAX_PAGE_SIZE, MAX_REPLY, MAX_SIDE, PIXELS_FILE,
-    SearchHit, Tagged, WorkerReply, WorkerRequest,
+    SearchHit, WorkerReply, WorkerRequest,
 };
 
 use crate::line_channel::LineChannel;
+use crate::process::Failure;
 
 /// Worker spawn, library load and the document's first parse.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -279,7 +280,7 @@ impl WorkerSession {
                     isolate,
                 };
                 let started = || -> anyhow::Result<(Worker, DocumentInfo)> {
-                    let (worker, greeting) = Worker::start(&launch, &lifetime)?;
+                    let (worker, greeting) = start(&launch, &lifetime)?;
                     match greeting {
                         WorkerReply::Ready(info) if info.pages > 0 => Ok((worker, info)),
                         WorkerReply::Unavailable(message) => Err(Unavailable(message).into()),
@@ -547,7 +548,7 @@ impl Manager {
             }
         }
         if self.worker.is_none() {
-            let (worker, greeting) = Worker::start(&self.launch, cancel).map_err(|error| {
+            let (worker, greeting) = start(&self.launch, cancel).map_err(|error| {
                 if cancel.is_cancelled() {
                     Failure::Cancelled
                 } else {
@@ -577,144 +578,72 @@ impl Manager {
     }
 }
 
-enum Failure {
-    Cancelled,
-    /// The worker cannot be trusted with another request.
-    Broken(anyhow::Error),
-}
+/// The document's worker, as the manager talks to it.
+type Worker = crate::process::Helper<WorkerReply>;
 
-struct Worker {
-    channel: LineChannel<Tagged<WorkerReply>>,
-    /// Id of the last request sent, and of the next reply due: replies come
-    /// once per request, in order, starting with the greeting as 0.
-    sent: u64,
-    due: u64,
-}
-impl Worker {
-    fn start(launch: &Launch, cancel: &CancelToken) -> anyhow::Result<(Self, WorkerReply)> {
-        anyhow::ensure!(!cancel.is_cancelled(), "document open cancelled");
-        // A document is a file nobody vouched for: its engine runs isolated
-        // where the system can (ADR-041), as skwir's other helpers on such
-        // files do, reading its own folder (where a package carries
-        // PDFium) and the library the settings name.
-        let run = if launch.isolate {
-            let mut readable: Vec<&Path> = launch.executable.parent().into_iter().collect();
-            readable.extend(launch.setup.library.as_deref());
-            crate::sandbox::untrusted_reading(
-                &launch.executable,
-                &launch.pdf,
-                &launch.scratch,
-                crate::sandbox::Otherwise::Run,
-                &readable,
-            )?
-        } else {
-            crate::sandbox::plain(&launch.executable, &launch.pdf, &launch.scratch)
-        };
-        let mut command = run.command;
-        // Run as it is (no sandbox here), a document whose path is no
-        // UTF-8 is named by a link in the session's own folder: an engine
-        // (MuPDF) takes its path as text, and refused it.
-        #[cfg(unix)]
-        let input = if run.isolated || run.input.to_str().is_some() {
-            run.input.clone()
-        } else {
-            let inside = crate::sandbox::inside_name(&run.input);
-            let name = Path::new(&inside).file_name().unwrap_or_default();
-            let link = run.work.join(name);
-            if std::fs::symlink_metadata(&link).is_err() {
-                std::os::unix::fs::symlink(&run.input, &link)?;
-            }
-            link
-        };
-        #[cfg(not(unix))]
-        let input = run.input.clone();
-        command.arg(&input).arg(&run.work);
-        if let Some(Layout { width, height, em }) = launch.setup.layout {
-            command.arg(format!("--layout={width},{height},{em}"));
+/// Start a worker for `launch`: it and its greeting.
+fn start(launch: &Launch, cancel: &CancelToken) -> anyhow::Result<(Worker, WorkerReply)> {
+    anyhow::ensure!(!cancel.is_cancelled(), "document open cancelled");
+    // A document is a file nobody vouched for: its engine runs isolated
+    // where the system can (ADR-041), as skwir's other helpers on such
+    // files do, reading its own folder (where a package carries
+    // PDFium) and the library the settings name.
+    let run = if launch.isolate {
+        let mut readable: Vec<&Path> = launch.executable.parent().into_iter().collect();
+        readable.extend(launch.setup.library.as_deref());
+        crate::sandbox::untrusted_reading(
+            &launch.executable,
+            &launch.pdf,
+            &launch.scratch,
+            crate::sandbox::Otherwise::Run,
+            &readable,
+        )?
+    } else {
+        crate::sandbox::plain(&launch.executable, &launch.pdf, &launch.scratch)
+    };
+    let mut command = run.command;
+    // Run as it is (no sandbox here), a document whose path is no
+    // UTF-8 is named by a link in the session's own folder: an engine
+    // (MuPDF) takes its path as text, and refused it.
+    #[cfg(unix)]
+    let input = if run.isolated || run.input.to_str().is_some() {
+        run.input.clone()
+    } else {
+        let inside = crate::sandbox::inside_name(&run.input);
+        let name = Path::new(&inside).file_name().unwrap_or_default();
+        let link = run.work.join(name);
+        if std::fs::symlink_metadata(&link).is_err() {
+            std::os::unix::fs::symlink(&run.input, &link)?;
         }
-        if launch.setup.first_page {
-            command.arg(skwir_core::document::FIRST_PAGE);
-        }
-        if let Some(library) = &launch.setup.library {
-            command.env("SKWIR_PDFIUM_LIBRARY", library);
-        }
-        let mut worker = Self {
-            channel: LineChannel::spawn(&mut command, MAX_REPLY, "skwir-pdf")?,
-            sent: 0,
-            due: 0,
-        };
-        let cancelled = cancel.subscribe();
-        let deadline = crossbeam_channel::after(STARTUP_TIMEOUT);
-        match worker.wait(0, &cancelled, &deadline) {
-            Ok(greeting) => Ok((worker, greeting)),
-            Err(Failure::Cancelled) => anyhow::bail!("document open cancelled"),
-            // Its library is not there: the engine is not installed, and
-            // one chosen automatically gives way to the next.
-            Err(Failure::Broken(_)) if worker.channel.missing_runtime() => {
-                Err(Unavailable("the engine's library is missing".into()).into())
-            }
-            Err(Failure::Broken(error)) => Err(error),
-        }
+        link
+    };
+    #[cfg(not(unix))]
+    let input = run.input.clone();
+    command.arg(&input).arg(&run.work);
+    if let Some(Layout { width, height, em }) = launch.setup.layout {
+        command.arg(format!("--layout={width},{height},{em}"));
     }
-
-    fn busy(&self) -> bool {
-        self.due <= self.sent
+    if launch.setup.first_page {
+        command.arg(skwir_core::document::FIRST_PAGE);
     }
-
-    fn send(&mut self, request: &WorkerRequest) -> anyhow::Result<u64> {
-        let id = self.sent + 1;
-        self.channel.send(&Tagged { id, body: request })?;
-        self.sent = id;
-        Ok(id)
+    if let Some(library) = &launch.setup.library {
+        command.env("SKWIR_PDFIUM_LIBRARY", library);
     }
-
-    /// Take one reply off the channel, in order.
-    fn accept(
-        &mut self,
-        reply: Result<anyhow::Result<Tagged<WorkerReply>>, crossbeam_channel::RecvError>,
-    ) -> anyhow::Result<Tagged<WorkerReply>> {
-        let reply = reply.map_err(|_| anyhow::anyhow!("document worker exited unexpectedly"))??;
-        anyhow::ensure!(
-            reply.id == self.due && reply.id <= self.sent,
-            "document worker answered out of order"
-        );
-        self.due += 1;
-        Ok(reply)
-    }
-
-    /// Wait for the reply to `id`, dropping the answers to earlier requests.
-    fn wait(
-        &mut self,
-        id: u64,
-        cancelled: &skwir_core::cancel::CancelSignal,
-        deadline: &Receiver<Instant>,
-    ) -> Result<WorkerReply, Failure> {
-        loop {
-            crossbeam_channel::select! {
-                recv(self.channel.replies()) -> reply => {
-                    let reply = self.accept(reply).map_err(Failure::Broken)?;
-                    if reply.id == id {
-                        return Ok(reply.body);
-                    }
-                }
-                recv(cancelled.receiver()) -> _ => return Err(Failure::Cancelled),
-                recv(deadline) -> _ => {
-                    return Err(Failure::Broken(anyhow::anyhow!("document worker timed out")));
-                }
-            }
+    let mut worker = Worker::new(
+        LineChannel::spawn(&mut command, MAX_REPLY, "skwir-pdf")?,
+        "document worker",
+    );
+    let cancelled = cancel.subscribe();
+    let deadline = crossbeam_channel::after(STARTUP_TIMEOUT);
+    match worker.wait(0, &cancelled, &deadline) {
+        Ok(greeting) => Ok((worker, greeting)),
+        Err(Failure::Cancelled) => anyhow::bail!("document open cancelled"),
+        // Its library is not there: the engine is not installed, and
+        // one chosen automatically gives way to the next.
+        Err(Failure::Broken(_)) if worker.channel.missing_runtime() => {
+            Err(Unavailable("the engine's library is missing".into()).into())
         }
-    }
-
-    /// Wait until every request sent has been answered.
-    fn settle(
-        &mut self,
-        cancelled: &skwir_core::cancel::CancelSignal,
-        deadline: &Receiver<Instant>,
-    ) -> Result<(), Failure> {
-        if self.busy() {
-            self.wait(self.sent, cancelled, deadline)?;
-        }
-        Ok(())
+        Err(Failure::Broken(error)) => Err(error),
     }
 }
 
@@ -722,6 +651,7 @@ impl Worker {
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
+    use std::time::Instant;
 
     fn wait_until(mut condition: impl FnMut() -> bool) {
         let deadline = Instant::now() + Duration::from_secs(3);

@@ -1264,6 +1264,112 @@ mod reaper {
     }
 }
 
+/// A helper kept for a session (`document`'s, `archive`'s), as its manager
+/// thread talks to it: requests and replies are JSON lines
+/// ([`LineChannel`](crate::line_channel::LineChannel)), each request tagged
+/// with an id and answered once, in order, starting with the greeting as 0
+/// (`document::Tagged`), so the answer to a request given up on is drained,
+/// not a reason to start another helper.
+pub(crate) struct Helper<Reply> {
+    pub(crate) channel: crate::line_channel::LineChannel<skwir_core::document::Tagged<Reply>>,
+    /// What the helper is called in what goes wrong: "document worker".
+    what: &'static str,
+    /// Id of the last request sent, and of the next reply due.
+    sent: u64,
+    due: u64,
+}
+
+/// Why a helper's answer did not come.
+pub(crate) enum Failure {
+    Cancelled,
+    /// The helper cannot be trusted with another request: it timed out,
+    /// exited or broke the protocol.
+    Broken(anyhow::Error),
+}
+
+impl<Reply: serde::de::DeserializeOwned + Send + 'static> Helper<Reply> {
+    /// A helper started on `channel`, its greeting not read yet.
+    pub(crate) fn new(
+        channel: crate::line_channel::LineChannel<skwir_core::document::Tagged<Reply>>,
+        what: &'static str,
+    ) -> Self {
+        Helper {
+            channel,
+            what,
+            sent: 0,
+            due: 0,
+        }
+    }
+
+    /// Whether a request sent is still unanswered.
+    pub(crate) fn busy(&self) -> bool {
+        self.due <= self.sent
+    }
+
+    /// Send `request`: its id.
+    pub(crate) fn send(&mut self, request: &impl serde::Serialize) -> anyhow::Result<u64> {
+        let id = self.sent + 1;
+        self.channel
+            .send(&skwir_core::document::Tagged { id, body: request })?;
+        self.sent = id;
+        Ok(id)
+    }
+
+    /// Take one reply off the channel, in order.
+    pub(crate) fn accept(
+        &mut self,
+        reply: Result<
+            anyhow::Result<skwir_core::document::Tagged<Reply>>,
+            crossbeam_channel::RecvError,
+        >,
+    ) -> anyhow::Result<skwir_core::document::Tagged<Reply>> {
+        let what = self.what;
+        let reply = reply.map_err(|_| anyhow::anyhow!("{what} exited unexpectedly"))??;
+        anyhow::ensure!(
+            reply.id == self.due && reply.id <= self.sent,
+            "{what} answered out of order"
+        );
+        self.due += 1;
+        Ok(reply)
+    }
+
+    /// Wait for the reply to `id`, dropping the answers to earlier requests.
+    pub(crate) fn wait(
+        &mut self,
+        id: u64,
+        cancelled: &skwir_core::cancel::CancelSignal,
+        deadline: &crossbeam_channel::Receiver<Instant>,
+    ) -> Result<Reply, Failure> {
+        loop {
+            crossbeam_channel::select! {
+                recv(self.channel.replies()) -> reply => {
+                    let reply = self.accept(reply).map_err(Failure::Broken)?;
+                    if reply.id == id {
+                        return Ok(reply.body);
+                    }
+                }
+                recv(cancelled.receiver()) -> _ => return Err(Failure::Cancelled),
+                recv(deadline) -> _ => {
+                    let what = self.what;
+                    return Err(Failure::Broken(anyhow::anyhow!("{what} timed out")));
+                }
+            }
+        }
+    }
+
+    /// Wait until every request sent has been answered.
+    pub(crate) fn settle(
+        &mut self,
+        cancelled: &skwir_core::cancel::CancelSignal,
+        deadline: &crossbeam_channel::Receiver<Instant>,
+    ) -> Result<(), Failure> {
+        if self.busy() {
+            self.wait(self.sent, cancelled, deadline)?;
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 // Helpers of the tests that run on Unix alone (ADR-035).
 #[cfg_attr(not(unix), allow(dead_code, unused_imports))]
