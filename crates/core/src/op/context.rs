@@ -230,6 +230,9 @@ pub struct StepContext {
     /// The copies this plan made of files with several names, by the file
     /// copied: a later name of one is linked to its copy (ADR-049).
     copies: RefCell<HashMap<crate::FileId, Copied>>,
+    /// The files of `copies` in the order they were copied: a step's own
+    /// are those after its mark ([`Self::copied_mark`]).
+    copied_order: RefCell<Vec<crate::FileId>>,
     /// The files of several names whose bytes this plan counted already:
     /// copied once, they are counted once.
     sized: RefCell<HashSet<crate::FileId>>,
@@ -303,6 +306,11 @@ impl Compared {
         self.0.lock().insert(key, (state, same));
     }
 }
+
+/// How many copies [`StepContext::placed`] looked at, for a test to count.
+#[cfg(test)]
+pub(super) static PLACED_LOOKS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 /// What a move's source was as a batch copied it (`builtin::state_of`:
 /// `None` where it could not all be read), which its step compares before
@@ -546,6 +554,7 @@ impl StepContext {
             trashes: super::put_trash::Trashes::default(),
             checked: RefCell::default(),
             copies: RefCell::default(),
+            copied_order: RefCell::default(),
             sized: RefCell::default(),
             secret_asker: None,
             transfers: None,
@@ -609,12 +618,28 @@ impl StepContext {
                 left: names - 1,
             },
         );
+        self.copied_order.borrow_mut().push(file);
+    }
+
+    /// Where the copies a step is about to make begin among those of the
+    /// plan ([`Self::placed`]).
+    pub(super) fn copied_mark(&self) -> usize {
+        self.copied_order.borrow().len()
     }
 
     /// What was staged at `staged` is at `target` now: the copies made
-    /// under it are found there.
-    pub(super) fn placed(&self, staged: &Path, target: &Path) {
-        for copied in self.copies.borrow_mut().values_mut() {
+    /// under it, made since `mark` (a staging folder is a step's own), are
+    /// found there.
+    pub(super) fn placed(&self, staged: &Path, target: &Path, mark: usize) {
+        let mut order = self.copied_order.borrow_mut();
+        let mut made = self.copies.borrow_mut();
+        let since = mark.min(order.len());
+        for file in order.drain(since..) {
+            #[cfg(test)]
+            PLACED_LOOKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let Some(copied) = made.get_mut(&file) else {
+                continue;
+            };
             if let Ok(rest) = copied.at.strip_prefix(staged) {
                 // The file staged itself, or one in the folder staged.
                 copied.at = if rest.as_os_str().is_empty() {

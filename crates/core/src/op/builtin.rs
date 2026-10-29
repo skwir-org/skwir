@@ -1700,6 +1700,7 @@ fn copy_staged(
     // name of its own.
     let (staging, name) = ctx.staging_for(dest_dir)?;
     ctx.copy_begins();
+    let mark = ctx.copied_mark();
     let (staged, made) = match batched {
         // At its target already: nothing to place.
         Some(super::transfer::Batched::Placed(at, _)) if at == target => return Ok(Vec::new()),
@@ -1740,7 +1741,7 @@ fn copy_staged(
                 display_name(dest_dir)
             )
         })?;
-        ctx.placed(&staged, target);
+        ctx.placed(&staged, target, mark);
         // The companions placed, or the copy taken back to be removed
         // from the staging folder.
         rename_along(&beside).inspect_err(|_| {
@@ -5068,6 +5069,47 @@ mod tests {
             std::fs::read(camera.join(".notes/it’s a.jpg.note")).unwrap(),
             b"theirs"
         );
+    }
+
+    /// Each copy step placing its staged copy looks at its own copies of
+    /// files with several names, never at every earlier step's: files
+    /// whose other names the plan never copies stay known all plan long.
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_placed_looks_at_its_own_copies_alone() {
+        use std::os::unix::fs::MetadataExt;
+        use std::sync::atomic::Ordering;
+        const FILES: usize = 200;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let (src, outside, dest) = (
+            tmp.path().join("src"),
+            tmp.path().join("outside"),
+            tmp.path().join("dest"),
+        );
+        for dir in [&src, &outside, &dest] {
+            std::fs::create_dir(dir).unwrap();
+        }
+        let ctx = StepContext::detached();
+        let before = super::super::context::PLACED_LOOKS.load(Ordering::Relaxed);
+        for n in 0..FILES {
+            let name = format!("it's {n}.jpg");
+            std::fs::write(src.join(&name), n.to_string()).unwrap();
+            std::fs::hard_link(src.join(&name), outside.join(&name)).unwrap();
+            let copy = Copy {
+                entry: EntryRef::from_path(src.join(&name)).unwrap(),
+                dest_dir: dest.clone(),
+                new_name: None,
+                preserve_attributes: false,
+            };
+            super::super::Effect::apply(&copy, &ctx).unwrap();
+        }
+        let looked = super::super::context::PLACED_LOOKS.load(Ordering::Relaxed) - before;
+        assert_eq!(looked, FILES, "one look a step, at its own copy");
+        let ino = |path: PathBuf| std::fs::metadata(path).unwrap().ino();
+        assert_ne!(ino(dest.join("it's 7.jpg")), ino(src.join("it's 7.jpg")));
+        assert_eq!(std::fs::read(dest.join("it's 7.jpg")).unwrap(), b"7");
     }
 
     /// A copy of a file is finished when it has its length and time:
