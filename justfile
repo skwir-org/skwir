@@ -335,9 +335,10 @@ bench-gen *profiles:
 bench-list *profiles:
     cargo run --release -p skwir-bench -- list {{profiles}}
 
-# Fail on any performance budget regression (full release gate and manual CI).
-bench-check:
-    cargo run --release -p skwir-bench -- check
+# Fail on any performance budget regression (full release gate and manual CI);
+# `--only <metric,…>` and `--runs N` measure a part.
+bench-check *args:
+    cargo run --release -p skwir-bench -- check {{args}}
 
 # Idle memory and first frame (ADR-033) on this display; close other skwir first.
 idle-pss:
