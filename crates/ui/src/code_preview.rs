@@ -475,10 +475,11 @@ impl<'a> Highlighter<'a> {
     }
 }
 
-/// Highlight the code view: one block per line, parser state kept between
-/// them, and the addresses each line writes found as links, followed with
-/// Ctrl (`Run::found`). Runs on the preview conversion worker, before any UI
-/// rows exist.
+/// Highlight a code view whole: one block per line, parser state kept
+/// between them, and the addresses each line writes found as links,
+/// followed with Ctrl (`Run::found`). What a code view colored where it is
+/// shown (`coloring::CodeColors`) must come to.
+#[cfg(test)]
 pub(crate) fn highlight(data: &mut Inspection, palette: &Palette) {
     let language = data.blocks.first().and_then(|b| b.language.clone());
     let mut highlighter = Highlighter::new(language.as_deref(), palette);

@@ -22,10 +22,10 @@ use skwir_core::preview::PreviewRequest;
 use skwir_core::scheduler::Priority;
 use skwir_platform::inspection::HEX_ROW;
 
+use crate::coloring::{around, let_go, unread};
 use crate::elements::rows::Scroll;
 use crate::latest::Latest;
 use crate::shell::Shell;
-use crate::text_view::{around, let_go, unread};
 
 const ROW: u64 = HEX_ROW as u64;
 
@@ -54,7 +54,7 @@ pub struct BytesView {
     asked: Latest<Reply>,
     /// The chunk asked for, while it is.
     asking: Option<u64>,
-    /// The pages a read failed for: not asked again (`text_view::unread`).
+    /// The pages a read failed for: not asked again (`coloring::unread`).
     failed: HashSet<u64>,
     pub(crate) scroll: Scroll,
     found: Latest<Found>,

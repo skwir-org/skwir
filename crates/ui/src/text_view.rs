@@ -33,13 +33,12 @@ use skwir_core::scheduler::Priority;
 use skwir_platform::links::WrittenPaths;
 use skwir_platform::text_rows::{self, Form, Index, Point, STRIDE};
 
-use crate::code_preview::{Highlighter, Palette, Resume};
+use crate::code_preview::{Palette, Resume};
+use crate::coloring::{Shade, around, color_rows, let_go, next_to_color, unread};
 use crate::elements::rows::{Scroll, Seen};
 use crate::latest::Latest;
 use crate::shell::Shell;
 
-/// Chunks kept around the view: a few screens either way.
-const KEPT: usize = 24;
 /// The most Copy reads from the file.
 pub const COPY_BYTES: usize = 16 * 1024 * 1024;
 /// How often counting shows how far it got.
@@ -96,48 +95,48 @@ fn read_chunk(
                 .map_or(after.unwrap_or(true), |next| next.first)
         })
         .collect();
-    let (mut colors, exact) = match reading {
-        Reading::Plain => (None, false),
-        Reading::Colored(from, palette) => {
-            let exact = chunk == 0 || from.is_some();
-            let colors = Highlighter::resume(file.language.as_deref(), palette, from);
-            (Some(colors), exact)
-        }
-    };
     let mut blocks = Vec::with_capacity(rows.len());
     let mut lines = Vec::with_capacity(rows.len());
-    for (n, row) in rows.into_iter().enumerate() {
-        if n % 64 == 0 {
-            skwir_platform::inspection::check(cancel)?;
-        }
-        let mut block = Block {
-            runs: colors
-                .as_mut()
-                .map(|colors| colors.row(&row.text, ends[n]))
-                .unwrap_or_default(),
+    for row in rows {
+        blocks.push(Block {
             text: row.text,
             code: true,
             language: file.language.clone(),
             ..Block::default()
-        };
-        skwir_platform::links::link_block(&mut block, true);
-        blocks.push(block);
+        });
         lines.push((row.line, row.first));
     }
-    // Colored rows are read after the plain ones showed: the paths they
-    // write are looked up now.
-    if let (Some(paths), true) = (paths, colors.is_some()) {
-        paths.lock().link(&mut blocks);
-        skwir_platform::inspection::check(cancel)?;
-    }
+    let (stop, exact) = match reading {
+        Reading::Plain => {
+            for (n, block) in blocks.iter_mut().enumerate() {
+                if n % 64 == 0 {
+                    skwir_platform::inspection::check(cancel)?;
+                }
+                skwir_platform::links::link_block(block, true);
+            }
+            (None, false)
+        }
+        Reading::Colored(from, palette) => {
+            let exact = chunk == 0 || from.is_some();
+            let language = file.language.as_deref();
+            let stop = color_rows(&mut blocks, |n| ends[n], (language, palette), from, cancel)?;
+            // Colored rows are read after the plain ones showed: the paths
+            // they write are looked up now.
+            if let Some(paths) = paths {
+                paths.lock().link(&mut blocks);
+                skwir_platform::inspection::check(cancel)?;
+            }
+            (Some(stop), exact)
+        }
+    };
     Ok((
         Chunk {
             rows: blocks,
             lines,
-            colored: colors.is_some(),
+            colored: stop.is_some(),
             exact,
         },
-        colors.map(Highlighter::stop),
+        stop,
     ))
 }
 
@@ -238,48 +237,6 @@ struct Paced {
 
 /// How far a remote's file is counted at first: a few screens.
 const PACED_FIRST: u64 = 4 * STRIDE;
-
-/// The chunks of `per` rows to have for rows `laid` of `rows`: those laid
-/// out, nearest their middle first, then the one after and the one before.
-/// And their middle, to tell what is far.
-pub(crate) fn around(laid: &Range<u64>, rows: u64, per: u64) -> (Vec<u64>, u64) {
-    let last = rows.saturating_sub(1) / per;
-    let (first, end) = (laid.start / per, laid.end.saturating_sub(1) / per);
-    let middle = u64::midpoint(first, end);
-    let mut wanted: Vec<u64> = (first..=end.min(last)).collect();
-    wanted.sort_by_key(|chunk| chunk.abs_diff(middle));
-    wanted.extend((end < last).then_some(end + 1));
-    wanted.extend(first.checked_sub(1));
-    (wanted, middle)
-}
-
-/// Whether `chunk` is still to be read: not read, and no read of it
-/// failed. A failed one is not asked again while the view lasts: asked at
-/// once, it fails at once, and each answer wakes the window to draw, a
-/// loop with nothing new (a file made unreadable while shown, a bad
-/// sector). A change to the file replaces the view.
-pub(crate) fn unread<T>(chunk: u64, chunks: &HashMap<u64, T>, failed: &HashSet<u64>) -> bool {
-    !chunks.contains_key(&chunk) && !failed.contains(&chunk)
-}
-
-/// Past `KEPT`, the chunks farthest from `middle` that are not wanted go.
-/// Which went.
-pub(crate) fn let_go<T>(chunks: &mut HashMap<u64, T>, wanted: &[u64], middle: u64) -> Vec<u64> {
-    if chunks.len() <= KEPT {
-        return Vec::new();
-    }
-    let mut far: Vec<u64> = chunks
-        .keys()
-        .copied()
-        .filter(|chunk| !wanted.contains(chunk))
-        .collect();
-    far.sort_by_key(|chunk| std::cmp::Reverse(chunk.abs_diff(middle)));
-    far.truncate(chunks.len() - KEPT);
-    for chunk in &far {
-        chunks.remove(chunk);
-    }
-    far
-}
 
 impl Drop for TextView {
     fn drop(&mut self) {
@@ -535,17 +492,26 @@ impl TextView {
                 .copied()
                 .filter(|chunk| unread(*chunk, &self.chunks, &self.failed))
                 .find_map(|chunk| Some((chunk, place(chunk)?, false)));
+            // Then one to color: plain, or colored fresh while where it
+            // starts is now known.
+            let shade = |chunk: u64| {
+                if self.failed.contains(&chunk) {
+                    return None;
+                }
+                let read = self.chunks.get(&chunk)?;
+                place(chunk)?;
+                Some(match (read.colored, read.exact) {
+                    (false, _) => Shade::Plain,
+                    (true, false) => Shade::Fresh,
+                    (true, true) => Shade::Exact,
+                })
+            };
             missing
                 .or_else(|| {
-                    self.wanted.iter().copied().find_map(|chunk| {
-                        if self.failed.contains(&chunk) {
-                            return None;
-                        }
-                        let read = self.chunks.get(&chunk)?;
-                        let stale =
-                            !read.colored || (!read.exact && self.starts.contains_key(&chunk));
-                        stale.then(|| Some((chunk, place(chunk)?, true))).flatten()
-                    })
+                    let chunk = next_to_color(&self.wanted, shade, |chunk| {
+                        self.starts.contains_key(&chunk)
+                    })?;
+                    Some((chunk, place(chunk)?, true))
                 })
                 .map(|(chunk, point, colored)| (chunk, point, colored, form))
         };
@@ -850,6 +816,8 @@ impl Shell {
     /// Take what the workers read, as the core wakes the UI: a chunk, how
     /// far counting got, a match, a copy.
     pub(crate) fn sync_text(&mut self, cx: &mut Context<Self>) {
+        // A code view held whole is colored where it is shown too.
+        self.sync_colors(cx);
         let app = Arc::clone(&self.app);
         let state = &mut self.preview.inspection;
         let Some(view) = state.text.as_mut() else {
@@ -998,32 +966,4 @@ pub(crate) fn scroll(scroll: &Scroll, args: &serde_json::Value) {
         _ => return,
     };
     scroll.scroll_by(by);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_chunks_laid_out_come_first_then_their_neighbours() {
-        // Rows 600 to 900 of 2000, chunks of 256: chunks 2 and 3 laid out,
-        // 3 then 2 nearest their middle (2.5 rounds down), then 4 and 1.
-        let (wanted, middle) = around(&(600..900), 2000, 256);
-        assert_eq!((wanted, middle), (vec![2, 3, 4, 1], 2));
-        // At the end: no chunk after the last; at the start, none before.
-        assert_eq!(around(&(1900..2000), 2000, 256).0, [7, 6]);
-        assert_eq!(around(&(0..30), 2000, 256).0, [0, 1]);
-        assert_eq!(around(&(0..0), 0, 256).0, [0], "nothing yet: the first");
-    }
-
-    #[test]
-    fn past_the_budget_the_farthest_chunks_go() {
-        let mut chunks: HashMap<u64, u64> =
-            (0..KEPT as u64 + 3).map(|chunk| (chunk, chunk)).collect();
-        let gone = let_go(&mut chunks, &[0, 1], 0);
-        assert_eq!(gone.len(), 3);
-        assert!(gone.iter().all(|chunk| *chunk >= KEPT as u64), "{gone:?}");
-        assert_eq!(chunks.len(), KEPT);
-        assert!(let_go(&mut chunks, &[], 0).is_empty(), "within it: none");
-    }
 }

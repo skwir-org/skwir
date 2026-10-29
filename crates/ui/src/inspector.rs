@@ -67,6 +67,9 @@ pub struct Display {
     page_starts: Vec<(usize, usize)>,
     /// The pictures its blocks name for later (`inspector_pictures`).
     pub(crate) later: Arc<crate::inspector_pictures::Later>,
+    /// What colors its code view where it is shown (`coloring`): a code
+    /// view held whole is shown plain at once, colored as it is drawn.
+    pub(crate) colors: Option<crate::coloring::Colorer>,
 }
 impl Display {
     pub fn new(mut data: Inspection, code: &crate::code_preview::CodeTheme) -> Self {
@@ -92,8 +95,10 @@ impl Display {
         };
         // Read only where there is code: a theme of the user's is read
         // from bat's folder the first time.
-        let palette = (data.kind == InspectionKind::Code || data.blocks.iter().any(|b| b.code))
+        let mut palette = (data.kind == InspectionKind::Code || data.blocks.iter().any(|b| b.code))
             .then(|| crate::code_preview::Palette::of(code));
+        let code_bg = palette.as_ref().and_then(|palette| palette.background);
+        let mut colorer = None;
         // A text read where it is shown colors its rows as it reads them:
         // its first ones here, for the view (`text_view`).
         let text = data
@@ -108,11 +113,19 @@ impl Display {
             });
         if text.is_some() {
             // The view's rows are colored as they are read.
-        } else if let Some(palette) = palette
-            .as_ref()
-            .filter(|_| data.kind == InspectionKind::Code)
+        } else if data.kind == InspectionKind::Code
+            && let Some(palette) = palette.take()
         {
-            crate::code_preview::highlight(&mut data, palette);
+            // Colored where it is drawn (`coloring::CodeColors`), not whole
+            // before it shows: its lines plain until then, their links
+            // found here.
+            for block in &mut data.blocks {
+                skwir_platform::links::link_block(block, true);
+            }
+            colorer = Some(crate::coloring::Colorer {
+                language: data.blocks.first().and_then(|b| b.language.clone()),
+                palette: Arc::new(palette),
+            });
         } else {
             // Text too long for the code view is raw text all the same: its
             // addresses are found before it is cut, so none is cut in two.
@@ -214,7 +227,7 @@ impl Display {
             row_icons: Arc::new(row_icons),
             folded: Arc::new(folded),
             origin: None,
-            code_bg: palette.and_then(|palette| palette.background),
+            code_bg,
             code_dark: code.dark,
             text,
             bytes: None,
@@ -222,6 +235,7 @@ impl Display {
             contents,
             page_starts,
             later,
+            colors: colorer,
         }
     }
     /// The matches of `query` (`folded` too) in block or row `i`: where
@@ -573,6 +587,8 @@ pub struct State {
     land_at_end: bool,
     /// Pictures the page named for later, decoded as they come into view.
     pub(crate) pictures: crate::inspector_pictures::Pictures,
+    /// A code view held whole, colored as it comes into view.
+    pub(crate) colors: crate::coloring::CodeColors,
     /// A note opened under its reference.
     pub(crate) notes: crate::note_popover::Notes,
     /// The links in view labelled (Ctrl+Shift+O): typing a label follows
@@ -695,6 +711,7 @@ impl Default for State {
             at_edge: 0,
             land_at_end: false,
             pictures: crate::inspector_pictures::Pictures::default(),
+            colors: crate::coloring::CodeColors::default(),
             notes: crate::note_popover::Notes::default(),
             labels: None,
             text: None,
@@ -797,6 +814,8 @@ impl State {
     /// the folds, the selection and the place they were at.
     pub fn arrived(&mut self, display: &Display, refresh: bool) {
         let data = &display.data;
+        // Colors are of the text they were found in, read again or not.
+        self.colors = crate::coloring::CodeColors::default();
         if refresh {
             let top = self.place(data);
             let folds: BTreeSet<usize> = if data.kind == InspectionKind::Code {
@@ -3276,6 +3295,12 @@ pub fn content(
     // A container's view kept above a member decodes nothing more: what it
     // showed is what it keeps.
     let later = !view.parked && !display.later.is_empty();
+    // A code view held whole is colored where it is drawn: the lines the
+    // rows draw are reported after layout too (`Shell::inspector_colors`).
+    let colors = !view.parked && display.colors.is_some() && state.text.is_none();
+    let colored = Rc::clone(&state.colors.chunks);
+    let lines_drawn = Rc::new(RefCell::new(Vec::new()));
+    let lines_seen = Rc::clone(&lines_drawn);
     // Read a screen at a time, the pager over the list cuts its pages
     // (`inspector_pages`), told where each text drew its lines; the list
     // ends with a spacer, room under a section's last page.
@@ -3439,8 +3464,13 @@ pub fn content(
                 .binary_search_by_key(&line, |fold| fold.start)
                 .ok()
                 .map(|i| (&data.folds[i], collapsed.contains(&line)));
+            if colors {
+                lines_seen.borrow_mut().push(line);
+            }
+            let block =
+                crate::coloring::CodeColors::row(&colored, line).unwrap_or(&data.blocks[line]);
             return crate::code_preview::CodeRow {
-                block: &data.blocks[line],
+                block,
                 index: line,
                 number: Some(line as u64 + 1),
                 digits: crate::code_preview::digits(data.blocks.len() as u64),
@@ -3812,6 +3842,25 @@ pub fn content(
                                     shell.update(cx, |shell, cx| {
                                         shell.inspector_pictures(seen, window, cx);
                                     });
+                                }
+                            });
+                        },
+                        |_, (), _, _| {},
+                    )
+                    .absolute()
+                    .size_0(),
+                )
+            })
+            // So are the lines of a code view, to color.
+            .when(colors, |d| {
+                let entity = cx.entity().downgrade();
+                d.child(
+                    gpui::canvas(
+                        move |_, window, cx| {
+                            let lines = std::mem::take(&mut *lines_drawn.borrow_mut());
+                            window.defer(cx, move |_, cx| {
+                                if let Some(shell) = entity.upgrade() {
+                                    shell.update(cx, |shell, _| shell.inspector_colors(lines));
                                 }
                             });
                         },
@@ -4618,6 +4667,50 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A code view held whole shows plain at once, its links found: its
+    /// colors are found where it is drawn (`coloring`), not before.
+    #[test]
+    fn a_code_view_held_whole_is_colored_where_it_is_drawn() {
+        use super::*;
+        let line = |text: &str| Block {
+            text: text.into(),
+            code: true,
+            language: Some("toml".into()),
+            ..Block::default()
+        };
+        let display = Display::new(
+            Inspection {
+                kind: InspectionKind::Code,
+                blocks: vec![line("key = 1"), line("# see https://example.invalid/")],
+                ..Inspection::default()
+            },
+            &crate::code_preview::CodeTheme::own(false),
+        );
+        let colorer = display.colors.as_ref().expect("colored where drawn");
+        assert_eq!(colorer.language.as_deref(), Some("toml"));
+        let runs: Vec<_> = display.data.blocks.iter().flat_map(|b| &b.runs).collect();
+        assert!(runs.iter().all(|run| run.color.is_none()), "none colored");
+        assert!(runs.iter().any(|run| run.link.is_some()), "links found");
+        let markdown = Display::new(
+            Inspection {
+                kind: InspectionKind::Markdown,
+                blocks: vec![line("key = 1")],
+                ..Inspection::default()
+            },
+            &crate::code_preview::CodeTheme::own(false),
+        );
+        assert!(
+            markdown.colors.is_none(),
+            "a document's code, colored with it"
+        );
+        assert!(
+            markdown.data.blocks[0]
+                .runs
+                .iter()
+                .any(|run| run.color.is_some())
+        );
     }
 
     #[test]
