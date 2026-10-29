@@ -64,7 +64,11 @@ pub struct BoardView {
     row: ScrollHandle,
     /// The columns drawn last, by their entry and location, with their
     /// cards: where the keys move.
-    drawn: Vec<(Option<EntryId>, Location, Arc<[EntryId]>)>,
+    drawn: Vec<Drawn>,
+    /// Where each of `drawn`'s entries is (`index_of_columns`), made the
+    /// first time a key asks after the columns changed: a key walked every
+    /// card of every column to find the cursor's.
+    drawn_index: std::cell::OnceCell<HashMap<EntryId, (usize, Option<usize>)>>,
     /// The pane's order when last drawn, to find the card at an index.
     order: Arc<[EntryId]>,
     /// Every column shown since the board showed this place: one emptied
@@ -78,16 +82,33 @@ pub struct BoardView {
 
 type ColumnsOf = (u64, u64, u64, skwir_core::SortSpec, u64, u64);
 
+/// A column drawn: its entry, where it leads, its cards.
+type Drawn = (Option<EntryId>, Location, Arc<[EntryId]>);
+
+/// Where each entry of `drawn` is: its column and its card there, or `None`
+/// for a column's own entry; the first column holding it, and in a column
+/// its first card before its own entry, as walking them in order finds it.
+fn index_of_columns(drawn: &[Drawn]) -> HashMap<EntryId, (usize, Option<usize>)> {
+    let mut index = HashMap::with_capacity(drawn.iter().map(|(_, _, ids)| ids.len() + 1).sum());
+    for (k, (at, _, ids)) in drawn.iter().enumerate() {
+        for (card, id) in ids.iter().enumerate() {
+            index.entry(*id).or_insert((k, Some(card)));
+        }
+        if let Some(at) = at {
+            index.entry(*at).or_insert((k, None));
+        }
+    }
+    index
+}
+
 impl BoardView {
     /// The column drawn holding `id`, and its card there; `None` for the
     /// card when `id` is the column's own entry.
     fn find(&self, id: EntryId) -> Option<(usize, Option<usize>)> {
-        self.drawn.iter().enumerate().find_map(|(k, (at, _, ids))| {
-            match ids.iter().position(|card| *card == id) {
-                Some(card) => Some((k, Some(card))),
-                None => (*at == Some(id)).then_some((k, None)),
-            }
-        })
+        self.drawn_index
+            .get_or_init(|| index_of_columns(&self.drawn))
+            .get(&id)
+            .copied()
     }
 
     /// The columns of the place `shell` shows, and those not open yet;
@@ -493,10 +514,20 @@ impl PaneView for BoardView {
                 tracing::debug!("board: {error:#}");
             }
         }
-        self.drawn = columns
+        let drawn: Vec<Drawn> = columns
             .iter()
             .map(|c| (c.at, c.location.clone(), Arc::clone(&c.ids)))
             .collect();
+        // The same columns frame after frame (`columns_of`) keep their index.
+        let same = drawn.len() == self.drawn.len()
+            && drawn
+                .iter()
+                .zip(&self.drawn)
+                .all(|(a, b)| a.0 == b.0 && a.1 == b.1 && Arc::ptr_eq(&a.2, &b.2));
+        if !same {
+            self.drawn = drawn;
+            self.drawn_index = std::cell::OnceCell::new();
+        }
         self.order = Arc::clone(&shell.ui().list.sorted);
         for c in &columns {
             self.scrolls.entry(c.location.clone()).or_default();
@@ -602,6 +633,54 @@ impl PaneView for BoardView {
     fn reset(&mut self) {
         self.asked = None;
         self.drawn.clear();
+        self.drawn_index = std::cell::OnceCell::new();
         self.seen.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use skwir_core::FileId;
+
+    /// The index finds what walking the columns found: the first column
+    /// holding an entry, its first card there before its own entry.
+    #[test]
+    fn a_card_is_found_where_walking_the_columns_finds_it() {
+        let id = |ino| EntryId {
+            file: FileId::new(1, ino),
+            at: ino,
+        };
+        let column = |name: &str| Location::from_path(std::path::Path::new("/data").join(name));
+        let drawn: Vec<Drawn> = vec![
+            (None, column("here"), Arc::from([id(1), id(2)])),
+            (
+                Some(id(2)),
+                column("photos"),
+                Arc::from([id(3), id(4), id(3)]),
+            ),
+            (Some(id(5)), column("empty"), Arc::from([])),
+            (Some(id(6)), column("again"), Arc::from([id(4), id(6)])),
+        ];
+        let walked = |want: EntryId| {
+            drawn.iter().enumerate().find_map(|(k, (at, _, ids))| {
+                match ids.iter().position(|card| *card == want) {
+                    Some(card) => Some((k, Some(card))),
+                    None => (*at == Some(want)).then_some((k, None)),
+                }
+            })
+        };
+        let index = index_of_columns(&drawn);
+        for ino in 0..8 {
+            assert_eq!(index.get(&id(ino)).copied(), walked(id(ino)), "entry {ino}");
+        }
+        assert_eq!(
+            index[&id(2)],
+            (0, Some(1)),
+            "a card before a column's own entry"
+        );
+        assert_eq!(index[&id(3)], (1, Some(0)), "its first card");
+        assert_eq!(index[&id(5)], (2, None), "an empty column's own entry");
+        assert_eq!(index[&id(6)], (3, Some(1)), "a card in its own column");
     }
 }
