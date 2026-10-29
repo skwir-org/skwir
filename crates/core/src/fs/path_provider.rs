@@ -90,6 +90,10 @@ struct Names {
     by_name: hashing::Map<OsString, EntryId>,
     /// Provisional (device, `d_ino`) ids to the id a stat reports.
     aliases: hashing::Map<EntryId, EntryId>,
+    /// `aliases` the other way, the latest provisional id of each: where a
+    /// folder's stats never agree with its listing, every entry is re-keyed,
+    /// and a walk of `aliases` for each was the folder's size squared.
+    aliased: hashing::Map<EntryId, EntryId>,
     /// The entries stat-ed since they were listed: what a listing again
     /// (F5, a watcher's rescan) stats again, its metadata kept meanwhile.
     /// The others were never asked for, and a refresh does not read the
@@ -144,14 +148,19 @@ impl Names {
             self.insert(new, name);
         }
         let provisional = self
-            .aliases
-            .iter()
-            .find(|(_, to)| **to == old)
-            .map_or(old, |(from, _)| *from);
+            .aliased
+            .remove(&old)
+            .filter(|from| self.aliases.get(from) == Some(&old))
+            .unwrap_or(old);
         if provisional == new {
             self.aliases.remove(&provisional);
         } else {
-            self.aliases.insert(provisional, new);
+            if let Some(before) = self.aliases.insert(provisional, new)
+                && self.aliased.get(&before) == Some(&provisional)
+            {
+                self.aliased.remove(&before);
+            }
+            self.aliased.insert(new, provisional);
         }
     }
 
@@ -176,8 +185,12 @@ fn gone_after(
         .unwrap_or_default()
         .into_iter()
         .partition(|id| seen.contains(id));
+    // Asked of a set: a folder its FUSE program numbered anew has every id
+    // replaced and every one gone, and a look along `gone` for each was the
+    // folder's size squared.
+    let mut going: hashing::Set<EntryId> = gone.iter().copied().collect();
     for id in replaced {
-        if !seen.contains(&id) && !gone.contains(&id) {
+        if !seen.contains(&id) && going.insert(id) {
             gone.push(id);
         }
     }
@@ -731,31 +744,7 @@ impl Shared {
                 removed.push(id);
             }
         }
-        let arrived: hashing::Set<EntryId> = added.iter().map(|e| e.id).collect();
-        removed.retain(|id| !arrived.contains(id));
-        // A file renamed within the folder is gone under its old name and
-        // come under its new one: a rename, so its row keeps its place and
-        // its selection.
-        let mut renamed = renames(&mut removed, &mut added);
-        // A name another file took is its row still, unless its file was
-        // renamed: an editor saves by writing a new file and renaming it
-        // onto the name (gedit, Kate, VS Code), and what was selected there
-        // stays so, as in Dolphin and Nautilus. A file renamed onto it from
-        // beside it is both.
-        for (stale, now) in replaced {
-            let Some(at) = removed.iter().position(|id| *id == stale) else {
-                continue;
-            };
-            removed.swap_remove(at);
-            let entry = match added.iter().position(|e| e.id == now) {
-                Some(at) => added.swap_remove(at),
-                None => match renamed.iter().find(|(_, e)| e.id == now) {
-                    Some((_, e)) => e.clone(),
-                    None => continue,
-                },
-            };
-            renamed.push((stale, entry));
-        }
+        let (removed, mut renamed, mut added) = pair_changes(removed, added, replaced);
         if !removed.is_empty() {
             self.send_as_now(ListingEvent::Removed(removed));
         }
@@ -796,10 +785,69 @@ fn spelled_as(before: &Path, now: PathBuf) -> PathBuf {
     }
 }
 
+/// What a batch of a watcher's changes sends, from the ids that went
+/// (`removed`), the entries that came (`added`) and the names another file
+/// took (`replaced`: the id each held, and the one it holds now): what
+/// still went, the renames, and what still came. Each id and entry is
+/// found by a map, never by a walk of the others: a bulk rename lands
+/// thousands of changes in one batch.
+fn pair_changes(
+    mut removed: Vec<EntryId>,
+    mut added: Vec<Entry>,
+    replaced: Vec<(EntryId, EntryId)>,
+) -> (Vec<EntryId>, Vec<(EntryId, Entry)>, Vec<Entry>) {
+    let arrived: hashing::Set<EntryId> = added.iter().map(|e| e.id).collect();
+    removed.retain(|id| !arrived.contains(id));
+    // A file renamed within the folder is gone under its old name and come
+    // under its new one: a rename, so its row keeps its place and its
+    // selection.
+    let mut renamed = renames(&mut removed, &mut added);
+    // A name another file took is its row still, unless its file was
+    // renamed: an editor saves by writing a new file and renaming it onto
+    // the name (gedit, Kate, VS Code), and what was selected there stays
+    // so, as in Dolphin and Nautilus. A file renamed onto it from beside it
+    // is both.
+    if !replaced.is_empty() {
+        let mut removed_at: hashing::Map<EntryId, usize> = hashing::Map::default();
+        for (i, id) in removed.iter().enumerate() {
+            removed_at.entry(*id).or_insert(i);
+        }
+        let mut added_at: hashing::Map<EntryId, usize> = hashing::Map::default();
+        for (i, e) in added.iter().enumerate() {
+            added_at.entry(e.id).or_insert(i);
+        }
+        let mut renamed_at: hashing::Map<EntryId, usize> = hashing::Map::default();
+        for (i, (_, e)) in renamed.iter().enumerate() {
+            renamed_at.entry(e.id).or_insert(i);
+        }
+        let mut went = vec![false; removed.len()];
+        let mut came: Vec<Option<Entry>> = added.into_iter().map(Some).collect();
+        for (stale, now) in replaced {
+            let Some(r) = removed_at.remove(&stale) else {
+                continue;
+            };
+            went[r] = true;
+            let entry = match added_at.remove(&now).and_then(|a| came[a].take()) {
+                Some(entry) => entry,
+                None => match renamed_at.get(&now) {
+                    Some(&at) => renamed[at].1.clone(),
+                    None => continue,
+                },
+            };
+            renamed_at.entry(now).or_insert(renamed.len());
+            renamed.push((stale, entry));
+        }
+        let mut went = went.into_iter();
+        removed.retain(|_| !went.next().unwrap_or(false));
+        added = came.into_iter().flatten().collect();
+    }
+    (removed, renamed, added)
+}
+
 /// The renames among a batch's changes, taken out of `removed` and
 /// `added`: a file one of whose names went and one came. A file that lost
 /// or gained several names at once is left as it is: which name became
-/// which cannot be told.
+/// which cannot be told. What is left keeps its order.
 fn renames(removed: &mut Vec<EntryId>, added: &mut Vec<Entry>) -> Vec<(EntryId, Entry)> {
     let count =
         |files: &mut hashing::Map<FileId, usize>, file| *files.entry(file).or_default() += 1;
@@ -811,19 +859,30 @@ fn renames(removed: &mut Vec<EntryId>, added: &mut Vec<Entry>) -> Vec<(EntryId, 
         count(&mut came, e.file());
     }
     let one = |files: &hashing::Map<FileId, usize>, file| files.get(&file) == Some(&1);
+    // Where each file gone under one name went: found by its file, not by a
+    // walk of `removed` for each one that came.
+    let mut gone_at: hashing::Map<FileId, usize> = removed
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| one(&gone, id.file))
+        .map(|(i, id)| (id.file, i))
+        .collect();
+    let mut went = vec![false; removed.len()];
     let mut renamed = Vec::new();
-    let mut i = 0;
-    while i < added.len() {
-        let file = added[i].file();
-        if one(&came, file)
-            && one(&gone, file)
-            && let Some(at) = removed.iter().position(|id| id.file == file)
-        {
-            renamed.push((removed.swap_remove(at), added.swap_remove(i)));
-        } else {
-            i += 1;
+    let mut left = Vec::with_capacity(added.len());
+    for e in std::mem::take(added) {
+        let file = e.file();
+        match gone_at.remove(&file).filter(|_| one(&came, file)) {
+            Some(at) => {
+                went[at] = true;
+                renamed.push((removed[at], e));
+            }
+            None => left.push(e),
         }
     }
+    *added = left;
+    let mut went = went.into_iter();
+    removed.retain(|_| !went.next().unwrap_or(false));
     renamed
 }
 
@@ -928,6 +987,122 @@ mod tests {
         // An id seen under another name stays.
         let (_, gone) = gone_after(Some(vec![]), &[added_since], vec![added_since]);
         assert!(gone.is_empty());
+    }
+
+    /// What may take the square of a folder's size takes far longer than
+    /// this; what takes its size, a fraction of it, unoptimized.
+    const LINEAR_WITHIN: Duration = Duration::from_secs(5);
+
+    /// A folder its FUSE program numbered anew: every name's id replaced,
+    /// and every id noted before gone, each once.
+    #[test]
+    fn a_folder_numbered_anew_goes_in_one_pass() {
+        let folder = FileId::new(1, 2);
+        let n = 100_000;
+        let id = |ino| EntryId::in_folder(FileId::new(1, ino), folder, OsStr::new("a"));
+        let before: Vec<EntryId> = (0..n).map(id).collect();
+        let now: Vec<EntryId> = (n..2 * n).map(id).collect();
+        let started = std::time::Instant::now();
+        let (kept, gone) = gone_after(Some(before.clone()), &now, before.clone());
+        assert!(started.elapsed() < LINEAR_WITHIN, "{:?}", started.elapsed());
+        assert!(kept.is_empty());
+        assert_eq!(gone, before, "each once, in order");
+    }
+
+    fn named(ino: u64, name: &str) -> Entry {
+        let id = EntryId::in_folder(FileId::new(1, ino), FileId::new(1, 2), OsStr::new(name));
+        Entry::new(id, name, EntryKind::File)
+    }
+
+    /// A bulk rename and as many editors saving, in one batch: each paired
+    /// by a map, nothing left over.
+    #[test]
+    fn a_batch_of_renames_pairs_in_one_pass() {
+        let n = 50_000;
+        let (mut removed, mut added, mut replaced) = (Vec::new(), Vec::new(), Vec::new());
+        let mut expected = std::collections::HashMap::new();
+        for i in 0..n {
+            // Renamed: one name went, one came.
+            let (old, new) = (named(i, &format!("old {i}")), named(i, &format!("new {i}")));
+            expected.insert(old.id, new.id);
+            removed.push(old.id);
+            added.push(new);
+            // Saved over: the name held one file, now another.
+            let (stale, saved) = (
+                named(n + i, &format!("saved {i}")),
+                named(2 * n + i, &format!("saved {i}")),
+            );
+            expected.insert(stale.id, saved.id);
+            removed.push(stale.id);
+            replaced.push((stale.id, saved.id));
+            added.push(saved);
+        }
+        let started = std::time::Instant::now();
+        let (removed, renamed, added) = pair_changes(removed, added, replaced);
+        assert!(started.elapsed() < LINEAR_WITHIN, "{:?}", started.elapsed());
+        assert!(removed.is_empty() && added.is_empty());
+        assert_eq!(renamed.len(), expected.len());
+        for (old, new) in &renamed {
+            assert_eq!(expected.get(old), Some(&new.id));
+        }
+    }
+
+    /// Each file takes the name of the next: each row follows its file,
+    /// and the last name's row follows the file that took it.
+    #[test]
+    fn a_name_taken_by_its_neighbour_follows_both() {
+        let (n0, n1, n2) = (named(0, "n0"), named(1, "n1"), named(2, "n2"));
+        let (to_n1, to_n2) = (named(0, "n1"), named(1, "n2"));
+        let (removed, renamed, added) = pair_changes(
+            vec![n0.id, n1.id, n2.id],
+            vec![to_n1.clone(), to_n2.clone()],
+            vec![(n1.id, to_n1.id), (n2.id, to_n2.id)],
+        );
+        assert!(removed.is_empty() && added.is_empty());
+        let pairs: Vec<(EntryId, EntryId)> = renamed.iter().map(|(old, e)| (*old, e.id)).collect();
+        assert_eq!(
+            pairs,
+            [(n0.id, to_n1.id), (n1.id, to_n2.id), (n2.id, to_n2.id)]
+        );
+    }
+
+    /// A folder whose stats never agree with its listing: every entry
+    /// re-keyed, each alias found by its target, followed when re-keyed
+    /// again, gone once the stat agrees.
+    #[test]
+    fn every_entry_re_keyed_finds_its_alias_by_its_target() {
+        let folder = FileId::new(1, 2);
+        let n = 50_000;
+        let id =
+            |ino: u64, name: &str| EntryId::in_folder(FileId::new(1, ino), folder, name.as_ref());
+        let mut names = Names::default();
+        let listed: Vec<(EntryId, String)> = (0..n)
+            .map(|i| {
+                let name = i.to_string();
+                (id(i, &name), name)
+            })
+            .collect();
+        for (provisional, name) in &listed {
+            names.insert(*provisional, name.into());
+        }
+        let started = std::time::Instant::now();
+        for (i, (provisional, name)) in listed.iter().enumerate() {
+            names.rekey(*provisional, id(n + i as u64, name));
+        }
+        for (i, (_, name)) in listed.iter().enumerate() {
+            names.rekey(id(n + i as u64, name), id(2 * n + i as u64, name));
+        }
+        assert!(started.elapsed() < LINEAR_WITHIN, "{:?}", started.elapsed());
+        for (i, (provisional, name)) in listed.iter().enumerate() {
+            assert_eq!(names.listing_id(*provisional), id(2 * n + i as u64, name));
+        }
+        // The stat agrees with the listing again: no alias left for it.
+        let (first, name) = &listed[0];
+        names.rekey(id(2 * n, name), *first);
+        assert_eq!(names.listing_id(*first), *first);
+        assert_eq!(names.aliases.len(), listed.len() - 1);
+        assert_eq!(names.aliased.len(), listed.len() - 1);
+        assert_eq!(names.by_name.get(OsStr::new(name.as_str())), Some(first));
     }
 
     /// The pane's rows after `events`, from `rows`.
