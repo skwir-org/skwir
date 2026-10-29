@@ -491,6 +491,33 @@ fn plain_extension(glob: &str) -> Option<String> {
         .then(|| extension.to_lowercase())
 }
 
+/// The suffix a `globs2` pattern names, lowercase, if it is a literal
+/// `*.a.b` (`tar.gz`): two parts or more, none empty, no wildcard.
+fn compound_suffix(glob: &str) -> Option<String> {
+    let suffix = glob.strip_prefix("*.")?;
+    (suffix.contains('.')
+        && !suffix.contains(['*', '?', '['])
+        && suffix.split('.').all(|part| !part.is_empty()))
+    .then(|| suffix.to_lowercase())
+}
+
+/// The compound suffixes files are named by whose last part is `ext`
+/// (`tar.gz`, `svg.gz` for `gz`), lowercase, without their leading dot:
+/// the type database's literal `*.a.b` globs, in its order (heaviest
+/// first, the most important folder first), each once. `ext` is taken
+/// without its case and with or without its dot. The systems' own
+/// registries (macOS's, Windows') name a file by its last extension
+/// alone: there, the database found beside skwir answers, and nothing
+/// where none is found (`found_database`). No I/O once the database's
+/// globs are read.
+pub fn compound_suffixes(ext: &str) -> Vec<String> {
+    let ext = ext.strip_prefix('.').unwrap_or(ext).to_lowercase();
+    if ext.is_empty() {
+        return Vec::new();
+    }
+    database::compound_suffixes(&ext)
+}
+
 /// `mime` and the types it descends from, nearest first, each once: its
 /// declared parents and theirs, then the ones every type implies, as the
 /// desktop reads them to find an application: `text/plain` under any
@@ -720,36 +747,74 @@ mod database {
             .unwrap_or_default()
     }
 
-    /// The extensions of the type `m` in the database, from every folder's
-    /// `globs2` (lines of `weight:type:glob[:flags]`), read once.
+    /// Every folder's `globs2` (lines of `weight:type:glob[:flags]`), the
+    /// most important folder first, each line's type and glob: read once.
+    fn globs() -> &'static [(String, String)] {
+        static GLOBS: OnceLock<Vec<(String, String)>> = OnceLock::new();
+        GLOBS.get_or_init(|| {
+            let mut globs = Vec::new();
+            for dir in data_dirs() {
+                let Ok(text) = std::fs::read_to_string(dir.join("mime/globs2")) else {
+                    continue;
+                };
+                for line in text.lines().filter(|l| !l.starts_with('#')) {
+                    let mut fields = line.split(':');
+                    if let (Some(_weight), Some(mime), Some(glob)) =
+                        (fields.next(), fields.next(), fields.next())
+                    {
+                        globs.push((mime.to_owned(), glob.to_owned()));
+                    }
+                }
+            }
+            globs
+        })
+    }
+
+    /// The extensions of the type `m` in the database, from its plain
+    /// `*.ext` globs ([`globs`]).
     pub fn extensions(m: &Mime) -> Vec<String> {
         static EXTENSIONS: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
         EXTENSIONS
             .get_or_init(|| {
                 let mut map = HashMap::<String, Vec<String>>::new();
-                for dir in data_dirs() {
-                    let Ok(text) = std::fs::read_to_string(dir.join("mime/globs2")) else {
+                for (mime, glob) in globs() {
+                    let Some(extension) = super::plain_extension(glob) else {
                         continue;
                     };
-                    for line in text.lines().filter(|l| !l.starts_with('#')) {
-                        let mut fields = line.split(':');
-                        let (Some(_weight), Some(mime), Some(glob)) =
-                            (fields.next(), fields.next(), fields.next())
-                        else {
-                            continue;
-                        };
-                        let Some(extension) = super::plain_extension(glob) else {
-                            continue;
-                        };
-                        let known = map.entry(mime.to_owned()).or_default();
-                        if !known.contains(&extension) {
-                            known.push(extension);
-                        }
+                    let known = map.entry(mime.clone()).or_default();
+                    if !known.contains(&extension) {
+                        known.push(extension);
                     }
                 }
                 map
             })
             .get(m.as_str())
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// The compound suffixes of the database's literal `*.a.b` globs
+    /// ([`globs`]) whose last part is `last` (lowercase), in its order.
+    pub fn compound_suffixes(last: &str) -> Vec<String> {
+        static COMPOUND: OnceLock<HashMap<String, Vec<String>>> = OnceLock::new();
+        COMPOUND
+            .get_or_init(|| {
+                let mut map = HashMap::<String, Vec<String>>::new();
+                for (_, glob) in globs() {
+                    let Some(suffix) = super::compound_suffix(glob) else {
+                        continue;
+                    };
+                    let Some((_, last)) = suffix.rsplit_once('.') else {
+                        continue;
+                    };
+                    let known = map.entry(last.to_owned()).or_default();
+                    if !known.contains(&suffix) {
+                        known.push(suffix);
+                    }
+                }
+                map
+            })
+            .get(last)
             .cloned()
             .unwrap_or_default()
     }
@@ -910,6 +975,46 @@ fn head<S: FileSource + ?Sized>(file: &S) -> Option<std::borrow::Cow<'_, [u8]>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A literal `*.a.b` glob is a compound suffix; a plain extension, a
+    /// wildcard or an empty part is not.
+    #[test]
+    fn a_compound_suffix_is_a_literal_glob_of_two_parts_or_more() {
+        assert_eq!(compound_suffix("*.tar.gz").as_deref(), Some("tar.gz"));
+        assert_eq!(compound_suffix("*.Tar.GZ").as_deref(), Some("tar.gz"));
+        assert_eq!(
+            compound_suffix("*.gnucash.tar.gz").as_deref(),
+            Some("gnucash.tar.gz")
+        );
+        for glob in [
+            "*.gz",
+            "*.[0-9].gz",
+            "*.x*.gz",
+            "*..gz",
+            "*.gz.",
+            "README.tar",
+        ] {
+            assert_eq!(compound_suffix(glob), None, "{glob}");
+        }
+    }
+
+    /// The database names `.tar.gz` among the suffixes under `gz`,
+    /// whatever case or dot `gz` is asked with; an extension of no
+    /// compound glob has none.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn the_compound_suffixes_of_an_extension_are_the_database_s() {
+        let gz = compound_suffixes("gz");
+        assert!(gz.contains(&"tar.gz".to_owned()), "{gz:?}");
+        assert!(
+            gz.iter()
+                .all(|s| s.rsplit_once('.').is_some_and(|(_, last)| last == "gz")
+                    && *s == s.to_lowercase())
+        );
+        assert_eq!(compound_suffixes(".GZ"), gz);
+        assert!(compound_suffixes("png").is_empty());
+        assert!(compound_suffixes("").is_empty());
+    }
 
     #[test]
     fn a_suffix_starts_at_the_first_dot_after_a_hidden_files_own() {
