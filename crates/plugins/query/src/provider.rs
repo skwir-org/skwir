@@ -2,8 +2,9 @@
 //! as a virtual listing. Entries are stat-ed only when the query needs it
 //! (and always once for their identity when they match).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::ffi::{OsStr, OsString};
+use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
 use std::time::{Duration, Instant, SystemTime};
@@ -60,6 +61,9 @@ impl Searches {
                 .collect()
         };
         for (location, shared) in open {
+            if !shared.touched_by(changes) {
+                continue;
+            }
             let changes = changes.to_vec();
             let cancel = shared.walk.lock().clone();
             let s = Arc::clone(&shared);
@@ -223,12 +227,117 @@ pub struct Shared {
     /// A remote reached through an alias is known by the opened folder's
     /// device. Keep its lane for every later read, including hydration.
     lane: Mutex<Lane>,
-    paths: Mutex<HashMap<EntryId, PathBuf>>,
+    /// The root's real path, as the last walk read it on its worker:
+    /// `None` until then, or when it could not be read.
+    real_root: Mutex<Option<PathBuf>>,
+    results: Mutex<Results>,
     /// The current walk's token. Results are published while holding it, so
     /// once a refresh has swapped it no batch of the old walk can land.
     walk: Mutex<CancelToken>,
     /// The pane's and the plugin's lifetimes together.
     lifetime: CancelToken,
+    /// Rechecks run, results they looked at, and folders whose names were
+    /// read for the stores: what the tests count.
+    #[cfg(test)]
+    counted: Counted,
+}
+
+#[cfg(test)]
+#[derive(Default)]
+struct Counted {
+    rechecks: std::sync::atomic::AtomicUsize,
+    considered: std::sync::atomic::AtomicUsize,
+    names_read: std::sync::atomic::AtomicUsize,
+}
+
+/// The results shown, by id and by path: `path_of` asks by id, and a
+/// recheck asks which are at or below each path a plan's changes say (a
+/// range of paths in order), not every result for every plan.
+#[derive(Default)]
+struct Results {
+    by_id: HashMap<EntryId, Arc<Path>>,
+    by_path: BTreeMap<Arc<Path>, Ids>,
+}
+
+/// The results at one path: one, but for a file found there again under
+/// another identity before the old result was taken out.
+enum Ids {
+    One(EntryId),
+    Many(Vec<EntryId>),
+}
+
+impl Ids {
+    fn as_slice(&self) -> &[EntryId] {
+        match self {
+            Ids::One(id) => std::slice::from_ref(id),
+            Ids::Many(ids) => ids,
+        }
+    }
+
+    fn push(&mut self, id: EntryId) {
+        match self {
+            Ids::One(one) if *one == id => {}
+            Ids::One(one) => *self = Ids::Many(vec![*one, id]),
+            Ids::Many(ids) if ids.contains(&id) => {}
+            Ids::Many(ids) => ids.push(id),
+        }
+    }
+
+    /// Take `id` out: whether none is left.
+    fn remove(&mut self, id: EntryId) -> bool {
+        match self {
+            Ids::One(one) => *one == id,
+            Ids::Many(ids) => {
+                ids.retain(|other| *other != id);
+                ids.is_empty()
+            }
+        }
+    }
+}
+
+impl Results {
+    fn get(&self, id: EntryId) -> Option<&Arc<Path>> {
+        self.by_id.get(&id)
+    }
+
+    fn insert(&mut self, id: EntryId, path: PathBuf) {
+        self.remove(id);
+        let path: Arc<Path> = Arc::from(path);
+        match self.by_path.get_mut(&*path) {
+            Some(ids) => ids.push(id),
+            None => {
+                self.by_path.insert(Arc::clone(&path), Ids::One(id));
+            }
+        }
+        self.by_id.insert(id, path);
+    }
+
+    fn remove(&mut self, id: EntryId) -> Option<Arc<Path>> {
+        let path = self.by_id.remove(&id)?;
+        if self
+            .by_path
+            .get_mut(&*path)
+            .is_some_and(|ids| ids.remove(id))
+        {
+            self.by_path.remove(&*path);
+        }
+        Some(path)
+    }
+
+    /// Every result taken out: their ids.
+    fn clear(&mut self) -> Vec<EntryId> {
+        self.by_path.clear();
+        self.by_id.drain().map(|(id, _)| id).collect()
+    }
+
+    /// The results at `path` or below it: paths in order keep those below
+    /// a folder together, from the folder on.
+    fn under<'a>(&'a self, path: &'a Path) -> impl Iterator<Item = (EntryId, &'a Arc<Path>)> {
+        self.by_path
+            .range::<Path, _>((Bound::Included(path), Bound::Unbounded))
+            .take_while(move |(at, _)| at.starts_with(path))
+            .flat_map(|(at, ids)| ids.as_slice().iter().map(move |id| (*id, at)))
+    }
 }
 
 pub struct QueryLocation {
@@ -302,13 +411,98 @@ struct Deferred<'a> {
     query: &'a Query,
     batcher: &'a Batcher<'a>,
     shards: Vec<Mutex<Shard>>,
-    /// The names of the folders whose groups were decided last
+    /// The names of the folders whose groups are being decided
     /// (`Deferred::names_of`): read once for every batch of a folder and
     /// handed to every provider (`fill_listed`), so the stores that look
     /// for files beside a file (an XMP sidecar, a Mac's `._` file, a
     /// `TagSpaces` folder) do not each read the folder, and stat it again
     /// for each batch.
-    names: Mutex<std::collections::VecDeque<(PathBuf, Arc<HashSet<OsString>>)>>,
+    names: Mutex<Named>,
+}
+
+/// Folders' names kept while their groups keep coming ([`Named::IDLE`]),
+/// within a bound in all. A folder is let go of once unused a moment, the
+/// least recently used first past the bound: 32 folders kept, the last
+/// decided, let a folder of a hundred thousand names go between two of
+/// its groups while the walk's threads decided others, and read it again
+/// for each.
+#[derive(Default)]
+struct Named {
+    folders: HashMap<PathBuf, Kept>,
+    /// Each use, oldest first, with its stamp: a folder used since has a
+    /// later one (`Kept::stamp`), and its older uses are passed over.
+    uses: VecDeque<(PathBuf, u64)>,
+    stamp: u64,
+    /// Names kept in all.
+    count: usize,
+}
+
+struct Kept {
+    names: Arc<HashSet<OsString>>,
+    used: Instant,
+    stamp: u64,
+}
+
+impl Named {
+    /// How long a folder's names are kept unused: its groups come one
+    /// after another while the walk passes it, each within
+    /// `Batcher::MAX_AGE` of its first file.
+    const IDLE: Duration = Duration::from_millis(500);
+    /// Names kept at most in all; past it, the folders least recently used
+    /// are let go of, never the one just used.
+    const AT_MOST: usize = 256 * 1024;
+
+    /// `dir`'s names, if kept: used now.
+    fn get(&mut self, dir: &Path, now: Instant) -> Option<Arc<HashSet<OsString>>> {
+        let kept = self.folders.get_mut(dir)?;
+        self.stamp += 1;
+        kept.used = now;
+        kept.stamp = self.stamp;
+        let names = Arc::clone(&kept.names);
+        self.uses.push_back((dir.to_path_buf(), self.stamp));
+        self.let_go(now);
+        Some(names)
+    }
+
+    /// Keep `dir`'s `names`, used now.
+    fn keep(&mut self, dir: &Path, names: Arc<HashSet<OsString>>, now: Instant) {
+        self.stamp += 1;
+        self.count += names.len();
+        let kept = Kept {
+            names,
+            used: now,
+            stamp: self.stamp,
+        };
+        if let Some(old) = self.folders.insert(dir.to_path_buf(), kept) {
+            self.count -= old.names.len();
+        }
+        self.uses.push_back((dir.to_path_buf(), self.stamp));
+        self.let_go(now);
+    }
+
+    /// Let go of the folders unused a moment, and of the least recently
+    /// used past the bound.
+    fn let_go(&mut self, now: Instant) {
+        while let Some((dir, stamp)) = self.uses.front() {
+            let go = match self.folders.get(dir) {
+                // Used since (a later use stands for it), or let go of.
+                Some(kept) if kept.stamp != *stamp => false,
+                None => false,
+                Some(kept) => {
+                    let idle = now.duration_since(kept.used) >= Self::IDLE;
+                    let over = self.count > Self::AT_MOST && *stamp != self.stamp;
+                    if !idle && !over {
+                        return;
+                    }
+                    true
+                }
+            };
+            let (dir, _) = self.uses.pop_front().expect("the front was there");
+            if go && let Some(kept) = self.folders.remove(&dir) {
+                self.count -= kept.names.len();
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -354,26 +548,25 @@ impl Deferred<'_> {
         }
     }
 
-    /// Folders whose names are kept at once: the walk's threads decide
-    /// the groups of a few folders at a time.
-    const NAMED: usize = 32;
-
     /// Every name in `dir`, hidden ones included, read once for the
     /// batches of its group. On a walk's thread.
     fn names_of(&self, dir: &Path) -> Arc<HashSet<OsString>> {
-        if let Some((_, names)) = self.names.lock().iter().find(|(d, _)| d == dir) {
-            return Arc::clone(names);
+        if let Some(names) = self.names.lock().get(dir, Instant::now()) {
+            return names;
         }
         let names: Arc<HashSet<OsString>> = Arc::new(
             std::fs::read_dir(dir)
                 .map(|entries| entries.flatten().map(|e| e.file_name()).collect())
                 .unwrap_or_default(),
         );
-        let mut kept = self.names.lock();
-        if kept.len() >= Self::NAMED {
-            kept.pop_front();
-        }
-        kept.push_back((dir.to_path_buf(), Arc::clone(&names)));
+        #[cfg(test)]
+        self.shared
+            .counted
+            .names_read
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.names
+            .lock()
+            .keep(dir, Arc::clone(&names), Instant::now());
         names
     }
 
@@ -434,8 +627,10 @@ impl Deferred<'_> {
         if self.batcher.cancel.is_cancelled() {
             return;
         }
-        let names = self.names_of(dir);
-        let listed = |name: &OsStr| names.contains(name);
+        // Read once a store asks: only those that look for files beside a
+        // file do.
+        let names = std::cell::OnceCell::new();
+        let listed = |name: &OsStr| names.get_or_init(|| self.names_of(dir)).contains(name);
         self.shared
             .ctx
             .metadata
@@ -467,9 +662,12 @@ impl QueryLocation {
             tx,
             root: query.root.clone(),
             lane: Mutex::new(reach::lane(&query.root)),
-            paths: Mutex::new(HashMap::new()),
+            real_root: Mutex::new(None),
+            results: Mutex::default(),
             walk: Mutex::new(lifetime.child()),
             lifetime,
+            #[cfg(test)]
+            counted: Counted::default(),
         });
         Shared::start(&shared, &location, query);
         Arc::new(QueryLocation {
@@ -494,6 +692,22 @@ impl Shared {
         } else {
             lane
         }
+    }
+
+    /// Whether a change says a path at or below the root, or a folder
+    /// above it (moving it): a search elsewhere has nothing to check
+    /// again. From memory, on the thread that applied the plan: the root's
+    /// real path was read by the walk, and until it was, every plan is
+    /// checked.
+    fn touched_by(&self, changes: &[Change]) -> bool {
+        let Some(real) = self.real_root.lock().clone() else {
+            return true;
+        };
+        let near = |path: &Path, root: &Path| path.starts_with(root) || root.starts_with(path);
+        changes
+            .iter()
+            .flat_map(Change::paths)
+            .any(|path| near(path, &self.root) || near(path, &real))
     }
 
     /// Walk for `query`, and list again when its periods move on
@@ -569,7 +783,7 @@ impl Shared {
             let mut walk = this.walk.lock();
             walk.cancel();
             *walk = this.lifetime.child();
-            this.paths.lock().drain().map(|(id, _)| id).collect()
+            this.results.lock().clear()
         };
         if !old.is_empty() {
             this.tx.send(ListingEvent::Removed(old));
@@ -799,15 +1013,15 @@ impl Shared {
             return;
         }
         if !batch.is_empty() {
-            let mut paths = self.paths.lock();
+            let mut results = self.results.lock();
             let entries = batch
                 .into_iter()
                 .map(|(entry, path)| {
-                    paths.insert(entry.id, path);
+                    results.insert(entry.id, path);
                     entry
                 })
                 .collect();
-            drop(paths);
+            drop(results);
             self.tx.send(ListingEvent::Added(entries));
         }
         if complete {
@@ -826,6 +1040,9 @@ impl Shared {
     }
 
     fn run(&self, q: &Query, cancel: &CancelToken) {
+        // What a plan's changes are compared with (`touched_by`), read here,
+        // in the root's lane.
+        *self.real_root.lock() = skwir_core::os_path::canonical(&q.root).ok();
         let batcher = Batcher {
             shared: self,
             cancel,
@@ -1025,14 +1242,27 @@ impl Shared {
         let mut removed: Vec<EntryId> = Vec::new();
         // Paths to read again, with the result each was, if one.
         let mut again: Vec<(PathBuf, Option<EntryId>)> = Vec::new();
-        // Followed outside the lock, which `path_of` waits for under the
-        // workspace's.
-        let results: Vec<(EntryId, PathBuf)> = self
-            .paths
-            .lock()
-            .iter()
-            .map(|(id, path)| (*id, path.clone()))
-            .collect();
+        // The results a change may move, take away or change: those at or
+        // below a path it says (`Follow::through` follows a path through
+        // the changes that name it or a folder above it). Followed outside
+        // the lock, which `path_of` waits for under the workspace's.
+        let results: Vec<(EntryId, PathBuf)> = {
+            let results = self.results.lock();
+            let mut picked = HashSet::new();
+            changes
+                .iter()
+                .flat_map(Change::paths)
+                .flat_map(|path| results.under(path))
+                .filter(|(id, _)| picked.insert(*id))
+                .map(|(id, path)| (id, path.to_path_buf()))
+                .collect()
+        };
+        #[cfg(test)]
+        {
+            use std::sync::atomic::Ordering::Relaxed;
+            self.counted.rechecks.fetch_add(1, Relaxed);
+            self.counted.considered.fetch_add(results.len(), Relaxed);
+        }
         let follow = skwir_core::op::Follow::new(changes);
         for (id, path) in results {
             let through = follow.through(&path);
@@ -1098,11 +1328,11 @@ impl Shared {
             if cancel.is_cancelled() {
                 return;
             }
-            let mut paths = self.paths.lock();
+            let mut results = self.results.lock();
             for id in &removed {
-                paths.remove(id);
+                results.remove(*id);
             }
-            drop(paths);
+            drop(results);
             self.tx.send(ListingEvent::Removed(removed));
         }
         if !renamed.is_empty() {
@@ -1110,16 +1340,16 @@ impl Shared {
             if cancel.is_cancelled() {
                 return;
             }
-            let mut paths = self.paths.lock();
+            let mut results = self.results.lock();
             let pairs = renamed
                 .into_iter()
                 .map(|(was, entry, path)| {
-                    paths.remove(&was);
-                    paths.insert(entry.id, path);
+                    results.remove(was);
+                    results.insert(entry.id, path);
                     (was, entry)
                 })
                 .collect();
-            drop(paths);
+            drop(results);
             self.tx.send(ListingEvent::Renamed(pairs));
         }
         self.publish(cancel, found, false);
@@ -1216,16 +1446,16 @@ impl Shared {
 
     fn hydrate(&self, ids: &[EntryId], cancel: &CancelToken) {
         let items: Vec<(EntryId, PathBuf)> = {
-            let paths = self.paths.lock();
+            let results = self.results.lock();
             ids.iter()
-                .filter_map(|id| paths.get(id).map(|p| (*id, p.clone())))
+                .filter_map(|id| results.get(*id).map(|p| (*id, p.to_path_buf())))
                 .collect()
         };
         let gone = skwir_core::fs::hydrate_paths(&items, &self.ctx.metadata, &self.tx, cancel);
         if !gone.is_empty() {
-            let mut paths = self.paths.lock();
+            let mut results = self.results.lock();
             for id in &gone {
-                paths.remove(id);
+                results.remove(*id);
             }
         }
     }
@@ -1260,7 +1490,7 @@ impl OpenLocation for QueryLocation {
     }
 
     fn path_of(&self, id: EntryId) -> Option<PathBuf> {
-        self.shared.paths.lock().get(&id).cloned()
+        self.shared.results.lock().get(id).map(|p| p.to_path_buf())
     }
 
     fn refresh(&self) {
@@ -1283,13 +1513,21 @@ mod tests {
     use super::*;
 
     fn open(root: &Path) -> (Arc<QueryLocation>, Location) {
-        let location = crate::location_for("ext:txt", Some(root));
+        open_with(root, "ext:txt", Arc::default())
+    }
+
+    fn open_with(
+        root: &Path,
+        expr: &str,
+        metadata: Arc<skwir_core::metadata::MetadataProviders>,
+    ) -> (Arc<QueryLocation>, Location) {
+        let location = crate::location_for(expr, Some(root));
         let ctx = OpenContext {
             scheduler: skwir_core::scheduler::Scheduler::new(2),
             cancel: CancelToken::new(),
             batch_size: 64,
             waker: None,
-            metadata: Arc::default(),
+            metadata,
             fields: Arc::default(),
             hints: Arc::default(),
             companions: Arc::default(),
@@ -1392,9 +1630,23 @@ mod tests {
         *remote.shared.lane.lock() = Lane::keyed(1);
         remote.refresh();
         assert_eq!(until_complete(&remote), (4, 4));
-        let mut found: Vec<PathBuf> = remote.shared.paths.lock().values().cloned().collect();
+        let mut found: Vec<PathBuf> = remote
+            .shared
+            .results
+            .lock()
+            .by_id
+            .values()
+            .map(|p| p.to_path_buf())
+            .collect();
         found.sort();
-        let mut expected: Vec<PathBuf> = local.shared.paths.lock().values().cloned().collect();
+        let mut expected: Vec<PathBuf> = local
+            .shared
+            .results
+            .lock()
+            .by_id
+            .values()
+            .map(|p| p.to_path_buf())
+            .collect();
         expected.sort();
         assert_eq!(found, expected);
     }
@@ -1424,7 +1676,7 @@ mod tests {
         std::fs::write(tmp.path().join("a.txt"), "x").unwrap();
         let (open, location) = open(tmp.path());
         assert_eq!(until_complete(&open), (1, 0));
-        let id = *open.shared.paths.lock().keys().next().unwrap();
+        let id = *open.shared.results.lock().by_id.keys().next().unwrap();
         let release = block_remote(&open);
         open.hydrate(&[id], Priority::Visible);
         let folder = tmp.path().join("arrived");
@@ -1459,6 +1711,196 @@ mod tests {
         }
         assert!(updated, "hydration resumes when the lane is free");
         assert!(added, "the operation's new result is rechecked");
+    }
+
+    /// A folder of its own for a test that writes files, on the home
+    /// filesystem as the user's are.
+    fn home_tempdir() -> tempfile::TempDir {
+        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        tempfile::tempdir_in(base).unwrap()
+    }
+
+    fn count(n: &std::sync::atomic::AtomicUsize) -> usize {
+        n.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// A plan elsewhere checks nothing again; one under the root checks
+    /// again the results at or below the paths it says, not every result.
+    #[test]
+    fn a_plan_checks_again_only_the_results_it_touched() {
+        const MANY: usize = 2_000;
+        let tmp = home_tempdir();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("many")).unwrap();
+        std::fs::create_dir_all(root.join("one")).unwrap();
+        for i in 0..MANY {
+            std::fs::write(root.join("many").join(format!("f{i}.txt")), "x").unwrap();
+        }
+        std::fs::write(root.join("one/a.txt"), "x").unwrap();
+        let elsewhere = tmp.path().join("elsewhere");
+        let (open, location) = open(&root);
+        assert_eq!(until_complete(&open), (MANY + 1, 0));
+        let searches = Searches::default();
+        searches
+            .0
+            .lock()
+            .push((location, Arc::downgrade(&open.shared)));
+        let idle = || assert!(open.shared.ctx.scheduler.wait_idle(Duration::from_secs(10)));
+        for i in 0..100 {
+            let path = elsewhere.join(format!("x{i}.txt"));
+            searches.changed(&[Change::Trash { path }]);
+        }
+        idle();
+        assert_eq!(
+            count(&open.shared.counted.rechecks),
+            0,
+            "nothing under the root"
+        );
+
+        let (from, to) = (root.join("one/a.txt"), root.join("one/b.txt"));
+        std::fs::rename(&from, &to).unwrap();
+        searches.changed(&[Change::Rename {
+            from,
+            to: to.clone(),
+        }]);
+        idle();
+        assert_eq!(count(&open.shared.counted.rechecks), 1);
+        assert_eq!(
+            count(&open.shared.counted.considered),
+            1,
+            "the file renamed"
+        );
+        let renamed = open.rx.try_iter().any(|event| {
+            matches!(event, ListingEvent::Renamed(pairs)
+                if pairs.iter().any(|(_, entry)| open.path_of(entry.id) == Some(to.clone())))
+        });
+        assert!(renamed, "the result follows its file");
+
+        // A folder taken away takes its results along, those alone looked at.
+        searches.changed(&[Change::Trash {
+            path: root.join("many"),
+        }]);
+        idle();
+        assert_eq!(count(&open.shared.counted.considered), 1 + MANY);
+        let removed: usize = open
+            .rx
+            .try_iter()
+            .map(|event| match event {
+                ListingEvent::Removed(ids) => ids.len(),
+                _ => 0,
+            })
+            .sum();
+        assert_eq!(removed, MANY);
+        assert_eq!(open.shared.results.lock().by_id.len(), 1);
+        assert_eq!(open.shared.results.lock().by_path.len(), 1);
+    }
+
+    /// A store that looks for files beside a file has the folder's names,
+    /// read once for its groups; when none looks, the folder is not read
+    /// again.
+    #[test]
+    fn a_folders_names_are_read_once_and_only_when_a_store_asks() {
+        use skwir_core::entry::{Provenance, Value, keys};
+        use skwir_core::metadata::{Listed, MetadataProvider};
+        /// Tags every `*.tagged` file; asks for each file's sidecar when
+        /// `asks`, as an XMP store does.
+        struct Sidecars {
+            asks: bool,
+        }
+        impl MetadataProvider for Sidecars {
+            fn id(&self) -> &'static str {
+                "sidecars"
+            }
+            fn fill(&self, _: &Path, entries: &mut [Entry]) {
+                for e in entries {
+                    if e.name_str().ends_with(".tagged") {
+                        let tags = Value::List(vec![Value::Text("Work".into())]);
+                        e.metadata.set(keys::TAGS, tags, Provenance::User);
+                    }
+                }
+            }
+            fn fill_listed(&self, dir: &Path, listed: &Listed<'_>, entries: &mut [Entry]) {
+                if self.asks {
+                    for e in entries.iter() {
+                        let mut sidecar = e.name.clone();
+                        sidecar.push(".xmp");
+                        listed(&sidecar);
+                    }
+                }
+                self.fill(dir, entries);
+            }
+        }
+        let tmp = home_tempdir();
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("big")).unwrap();
+        for i in 0..300 {
+            let ext = if i % 10 == 0 { "tagged" } else { "plain" };
+            std::fs::write(root.join("big").join(format!("f{i}.{ext}")), "x").unwrap();
+        }
+        for i in 0..20 {
+            let small = root.join(format!("small{i}"));
+            std::fs::create_dir(&small).unwrap();
+            std::fs::write(small.join("a.tagged"), "x").unwrap();
+            std::fs::write(small.join("b.plain"), "x").unwrap();
+        }
+        for asks in [false, true] {
+            let metadata = Arc::new(skwir_core::metadata::MetadataProviders::default());
+            metadata.register("sidecars", Arc::new(Sidecars { asks }));
+            let (open, _) = open_with(&root, "tag:work", metadata);
+            assert_eq!(until_complete(&open).0, 30 + 20);
+            let read = count(&open.shared.counted.names_read);
+            if asks {
+                // The root (its folders are candidates too), `big` and the
+                // small ones: each once.
+                assert!((1..=22).contains(&read), "{read} folders read");
+            } else {
+                assert_eq!(read, 0, "no store asked");
+            }
+        }
+    }
+
+    /// A folder's names stay while its groups keep coming, others decided
+    /// meanwhile, and go once unused a moment; past the bound, the least
+    /// recently used go first, never the one just used.
+    #[test]
+    fn a_folders_names_stay_while_its_groups_come() {
+        let set = |n: usize| -> Arc<HashSet<OsString>> {
+            Arc::new((0..n).map(|i| OsString::from(format!("f{i}"))).collect())
+        };
+        let t0 = Instant::now();
+        let ms = |n: u64| t0 + Duration::from_millis(n);
+        let mut named = Named::default();
+        let big = Path::new("/synthetic/big");
+        named.keep(big, set(1_000), t0);
+        for i in 0..100 {
+            named.keep(Path::new(&format!("/synthetic/small{i}")), set(3), ms(i));
+            assert!(
+                named.get(big, ms(i)).is_some(),
+                "kept while its groups come"
+            );
+        }
+        assert!(named.get(big, ms(400)).is_some());
+        let late = Path::new("/synthetic/late");
+        named.keep(late, set(1), ms(700));
+        let mut kept: Vec<&Path> = named.folders.keys().map(PathBuf::as_path).collect();
+        kept.sort();
+        assert_eq!(kept, [big, late], "the others unused a moment");
+        named.keep(Path::new("/synthetic/later"), set(1), ms(1_000));
+        assert!(!named.folders.contains_key(big), "unused since 400 ms");
+        assert_eq!(named.count, 2);
+
+        let mut named = Named::default();
+        named.keep(Path::new("/a"), set(Named::AT_MOST / 2), t0);
+        named.keep(Path::new("/b"), set(Named::AT_MOST / 2), t0);
+        named.keep(Path::new("/c"), set(10), t0);
+        let mut kept: Vec<&Path> = named.folders.keys().map(PathBuf::as_path).collect();
+        kept.sort();
+        assert_eq!(kept, [Path::new("/b"), Path::new("/c")], "the oldest first");
+        named.keep(Path::new("/huge"), set(Named::AT_MOST + 1), t0);
+        let kept: Vec<&Path> = named.folders.keys().map(PathBuf::as_path).collect();
+        assert_eq!(kept, [Path::new("/huge")], "the one just used stays");
+        assert_eq!(named.count, Named::AT_MOST + 1);
     }
 
     /// A search that finds nothing says what it looked for, not where:
