@@ -220,8 +220,8 @@ faster than its input and what costs CPU, memory, disk, syscalls,
 network or wakeups: 59 findings, ten quadratic at sizes Skwir meets (a
 folder of 100,000 entries and a selection of all of it, a tag on 100,000
 files, a solid comic, a CSV of millions of rows), none exponential. Six
-fixers, each owning its files, fixed 53 of them (one in part) and left
-six judged not worth it, in one tree; the integrator committed them fix by
+fixers, each owning its files, fixed 53 of them (one in part), then four
+of the six first judged not worth it, in one tree; the integrator committed them fix by
 fix (`a3d100ec..`; detail in `docs/STATUS-LOG.md`, 2026-10-29). Three
 bench cases measure what was quadratic. Two decisions closed doors:
 ADR-104 (a copy across a network is found whole by length and time) and
@@ -258,12 +258,13 @@ leave (ADR-077).
 
 **From the performance review (2026-10-29, ADR-104, ADR-105)**:
 - Dropped as not worth it: a folder copy walks its source three times
-  (warm caches; ops#6), the tags index's folder list rewritten every 2 s
-  while a count learns (tags#8), the tag editor's scan (ui#8), the XMP
-  packet's search, the remote places republished only when changed
-  (remote#3, part), a cached thumbnail's PNG opened twice (platform#1:
-  with the next change there), an EPUB's contents looked up by scan
-  (epub#1).
+  (warm caches; ops#6); the tags index's folder list rewritten every 2 s
+  while a count learns (tags#8: split by piece, it would trade those
+  rare writes for up to 256 reads at every load); the remote places
+  republished only when changed (remote#3, part: their closures cannot
+  be compared). The tag editor's scan, the XMP packet's search, a cached
+  thumbnail's two opens and an EPUB's lookups by scan were done after
+  all, the same day.
 - Many single-file moves out of one large folder in one plan still cost
   the folder's size each in the tags index (tags#2 left them).
 - The Map view's scan walks the listing again after a change; it could

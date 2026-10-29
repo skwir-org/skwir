@@ -7299,3 +7299,33 @@ rules (`just mtp-check`); the document engines' opens on Windows. Seen
 in the final check and not looked into: an Undo in the footer after the
 permanent delete; such a delete journals no inverse (`Delete::undoable`
 is false), so it was likely an earlier action's.
+
+### Four of the dropped findings done after all (2026-10-30)
+
+The user asked, once the reasons were explained, for four of the six
+left out: the tag editor's rows (ui#8), the XMP packet's search, a
+cached thumbnail's opens (platform#1) and an EPUB's lookups (epub#1);
+tags#8 stays out (splitting the index's folder list by piece trades
+writes during a rare count for up to 256 reads at every load), and the
+vocabulary keeps its 2,000 tags (it only suggests, refilling as folders
+are shown), now forgetting the tags only seen before those the user gave.
+
+- ui#8 was quadratic, not small: the editor's rows grew as each known
+  tag was checked against them (2,000 tags: 9.6 s in a debug-build test
+  of the check alone; release not timed). The tags plugin's `known()`,
+  run on each keystroke of the address field's tag suggestions, had the
+  same shape. Both use a set of names folded as `same_tag` folds.
+- The XMP packet is found with `memchr::memmem` (a direct dependency of
+  the xmp plugin now, already in the tree through `regex`).
+- A cached thumbnail is opened once, its text chunks read in one
+  buffered pass (`png_text_chunks`), a failure's two keys in one open:
+  `thumbs_warm_per_image_us` 38 µs, `thumbs_cold_per_image_us` 109 µs at
+  a load of 11 to 14 (budgets 100 and 250).
+- An EPUB's members are found by a map of their first place in the spine
+  (`Sections`), its page labels by a map per section.
+
+Checked: rustfmt; clippy (`-D warnings`) on the workspace; the tests of
+skwir-ui, platform and the tags, xmp, epub and thumbnails plugins (847
+passed, 21 skipped) and of skwir's tag, notes, thumbnail and plugin
+toggle tests (35 passed, 3 skipped); the Windows and macOS cross checks
+of the crates touched. Not run again: the whole release check.
