@@ -2,8 +2,9 @@
 //! those given, with when each was last used. It only suggests (the tag
 //! editor offers the tags used last first), so it lives in the deletable
 //! cache: deleting it forgets suggestions, never a tag, which stays on the
-//! files. It is bounded, and writes only when a tag is used or a new one is
-//! seen, on a worker.
+//! files. It is bounded, a tag only ever seen forgotten before any the
+//! user gave, and writes only when a tag is used or a new one is seen, on
+//! a worker.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,8 +17,11 @@ use skwir_core::cache::CacheSlot;
 use skwir_core::cancel::CancelToken;
 use skwir_core::scheduler::Priority;
 
-/// Tags remembered at most; past this, those least recently used or seen
-/// are forgotten, down to [`KEPT`].
+/// Tags remembered at most; past this, some are forgotten, down to
+/// [`KEPT`]: those only ever seen first, the least recently seen first,
+/// and the tags the user gave only once those alone pass it, the least
+/// recently used first. A walk through a library of many tags forgot the
+/// user's own.
 const AT_MOST: usize = 2_000;
 /// What is kept once the bound is passed: forgetting a tenth at a time,
 /// not one, a library of more tags than the bound did not sort them all
@@ -146,15 +150,16 @@ impl Vocabulary {
             }
         }
         if inner.known.len() > AT_MOST {
-            let mut by_age: Vec<(u64, String)> = inner
+            // Those only ever seen before those given, each the oldest first.
+            let mut by_age: Vec<(bool, u64, String)> = inner
                 .known
                 .iter()
-                .map(|(key, k)| (k.last(), key.clone()))
+                .map(|(key, k)| (k.used > 0, k.last(), key.clone()))
                 .collect();
             let excess = inner.known.len() - KEPT;
-            // The oldest `excess` first, in no order among themselves.
+            // The first `excess` first, in no order among themselves.
             by_age.select_nth_unstable(excess - 1);
-            for (_, key) in by_age.into_iter().take(excess) {
+            for (_, _, key) in by_age.into_iter().take(excess) {
                 inner.known.remove(&key);
             }
         }
@@ -291,6 +296,64 @@ mod tests {
     /// Past its bound it forgets a tenth at once, the oldest, and the next
     /// tags seen are taken in without forgetting any until the bound is
     /// passed again.
+    /// The tags the user gave outlive any number of tags only seen since.
+    #[test]
+    fn the_tags_given_outlive_those_only_seen() {
+        let v = vocabulary();
+        {
+            let mut inner = v.inner.lock();
+            for i in 0..100 {
+                inner.known.insert(
+                    format!("given{i}"),
+                    Known {
+                        name: format!("given{i}"),
+                        used: i + 1,
+                        seen: 0,
+                        given: None,
+                    },
+                );
+            }
+        }
+        for i in 0..AT_MOST {
+            v.touch(&[format!("seen{i}")], false);
+        }
+        let inner = v.inner.lock();
+        assert!(inner.known.len() <= AT_MOST);
+        assert!(
+            (0..100).all(|i| inner.known.contains_key(&format!("given{i}"))),
+            "every tag given kept"
+        );
+    }
+
+    /// Given tags alone past the bound: those only seen go first, then the
+    /// given ones least recently used.
+    #[test]
+    fn past_the_bound_with_given_tags_alone_the_oldest_given_go() {
+        let v = vocabulary();
+        {
+            let mut inner = v.inner.lock();
+            for i in 0..=AT_MOST {
+                inner.known.insert(
+                    format!("given{i}"),
+                    Known {
+                        name: format!("given{i}"),
+                        used: u64::try_from(i).unwrap() + 1,
+                        seen: 0,
+                        given: None,
+                    },
+                );
+            }
+        }
+        v.touch(&["only seen".into()], false);
+        let inner = v.inner.lock();
+        assert_eq!(inner.known.len(), KEPT);
+        assert!(!inner.known.contains_key("only seen"), "seen alone: first");
+        // Of the 2,001 given, those past `KEPT`, the least recently used.
+        let gone = AT_MOST + 1 - KEPT;
+        assert!((0..gone).all(|i| !inner.known.contains_key(&format!("given{i}"))));
+        assert!((gone..=AT_MOST).all(|i| inner.known.contains_key(&format!("given{i}"))));
+    }
+
     #[test]
     fn it_forgets_a_tenth_at_a_time_and_keeps_the_newest() {
         let v = vocabulary();

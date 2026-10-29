@@ -139,8 +139,9 @@ registered in `App::notes` by its plugin); all share one model,
   network mounts below it. Its counts are kept between pieces, and the
   mounts' pieces alone are read to take theirs out.
 - The tags offered while one is typed (`vocabulary.rs`) are at most
-  2,000; past that, those least recently seen or used are forgotten, a
-  tenth at a time.
+  2,000; past that it forgets a tenth at a time, the tags only ever seen
+  first (the least recently seen first), and the tags the user gave only
+  when those alone pass the bound (the least recently used first).
 
 ## Companions (ADR-028)
 
