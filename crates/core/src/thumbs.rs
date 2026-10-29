@@ -218,7 +218,7 @@ impl Drop for Unwound<'_> {
     fn drop(&mut self) {
         let mut s = self.this.state.lock();
         s.in_flight.remove(&self.key);
-        s.unavailable.insert(self.key);
+        s.mark_unavailable(self.key);
     }
 }
 
@@ -290,8 +290,25 @@ struct State {
     budget: usize,
 }
 
+impl State {
+    /// Remember that `key` has no picture, forgetting all of them first
+    /// once `UNAVAILABLE_KEPT` are: a grid browsed through a million files
+    /// would otherwise keep one for each for the session. One forgotten is
+    /// asked of the providers again, which say so from its name and type.
+    fn mark_unavailable(&mut self, key: Key) {
+        if self.unavailable.len() >= UNAVAILABLE_KEPT {
+            self.unavailable.clear();
+        }
+        self.unavailable.insert(key);
+    }
+}
+
 /// Frames a request may go unasked before it is dropped or cancelled.
 const STALE_FRAMES: u64 = 3;
+
+/// How many files without a picture are remembered at most
+/// (`State::mark_unavailable`).
+const UNAVAILABLE_KEPT: usize = 65_536;
 
 /// The service. One per app, shared with workers.
 pub struct Thumbnails {
@@ -469,7 +486,7 @@ impl Thumbnails {
         };
         let mut s = self.state.lock();
         if !accepted {
-            s.unavailable.insert(key);
+            s.mark_unavailable(key);
             return ThumbState::Unavailable;
         }
         if s.in_flight.contains_key(&key) || s.lru.contains(&key) {
@@ -764,7 +781,7 @@ impl Thumbnails {
                 // new set.
                 None if s.providers != generation => Vec::new(),
                 None => {
-                    s.unavailable.insert(key);
+                    s.mark_unavailable(key);
                     if tried {
                         drop(s);
                         for p in &providers {
@@ -1129,6 +1146,27 @@ mod tests {
             matches!(t.get(req(1), Priority::Visible), ThumbState::Pending),
             "oldest entry was evicted"
         );
+    }
+
+    /// Files without a picture are remembered up to a bound, then
+    /// forgotten together: what no provider takes is still said so.
+    #[test]
+    fn files_without_a_picture_are_remembered_within_a_bound() {
+        let t = Thumbnails::new(Scheduler::new(1));
+        let asked = UNAVAILABLE_KEPT as u64 + 1000;
+        for ino in 0..asked {
+            assert!(matches!(
+                t.get(req(ino), Priority::Visible),
+                ThumbState::Unavailable
+            ));
+        }
+        let kept = t.state.lock().unavailable.len();
+        assert!(kept <= UNAVAILABLE_KEPT, "{kept} kept");
+        assert_eq!(kept, 1000, "forgotten once full, then kept again");
+        assert!(matches!(
+            t.get(req(0), Priority::Visible),
+            ThumbState::Unavailable
+        ));
     }
 
     #[test]
