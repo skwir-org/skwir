@@ -675,7 +675,7 @@ impl Shell {
                         p.listing.names_version(),
                         p.sort.show_hidden,
                         p.filter_version(),
-                        p.tree_version(),
+                        p.tree_members_version(),
                     ),
                     p.location_lifetime(),
                 )

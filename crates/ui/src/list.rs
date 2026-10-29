@@ -560,7 +560,7 @@ impl Shell {
             let key = (
                 p.listing.id(),
                 p.listing.names_version(),
-                p.tree_version(),
+                p.tree_members_version(),
                 p.sort,
                 p.filter_version(),
             );
