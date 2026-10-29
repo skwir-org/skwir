@@ -50,6 +50,13 @@ impl Changes {
 /// worker) and returns, never reading the disk there.
 pub type Deliver = Arc<dyn Fn(Changes) + Send + Sync>;
 
+/// How long a name only written to (a download, a log growing) waits
+/// before it is told, from its first write: a file written to all along
+/// is told once a second, not at each of the watcher's windows, each
+/// costing a stat, a row and a frame. Any other change of it (closed after
+/// writing, renamed, removed) tells it at once, with what waited.
+pub const WRITTEN_WINDOW: Duration = Duration::from_secs(1);
+
 /// Keeps the watch alive; dropping it stops watching.
 pub struct WatchHandle {
     _inner: Box<dyn std::any::Any + Send>,
@@ -81,7 +88,8 @@ mod imp {
     //! following their changes. Two subscribers of one folder share its
     //! descriptor (inotify answers the same one for the same inode), which
     //! is removed with the last of them.
-    use std::collections::{BTreeMap, HashMap};
+    use std::collections::{BTreeMap, HashMap, HashSet};
+    use std::ffi::OsString;
     use std::path::Path;
     use std::sync::OnceLock;
     use std::time::{Duration, Instant};
@@ -90,7 +98,7 @@ mod imp {
     use parking_lot::Mutex;
     use rustix::event::{PollFd, PollFlags};
 
-    use super::{Changes, Deliver, WatchHandle};
+    use super::{Changes, Deliver, WRITTEN_WINDOW, WatchHandle};
     use crate::cancel::CancelToken;
 
     const MASK: WatchMask = WatchMask::CREATE
@@ -111,6 +119,10 @@ mod imp {
         /// What was gathered since the first change of its window, and
         /// when the window ends.
         pending: Option<(Changes, Instant)>,
+        /// The names only written to since the first of them, and when
+        /// they are told (`WRITTEN_WINDOW`): with `pending` when it is told
+        /// first.
+        written: Option<(HashSet<OsString>, Instant)>,
     }
 
     impl Subscriber {
@@ -120,6 +132,50 @@ mod imp {
                 .pending
                 .get_or_insert_with(|| (Changes::default(), now + window))
                 .0
+        }
+
+        /// `name` was written to, and nothing else happened to it yet: it
+        /// waits, unless it is told already.
+        fn written(&mut self, name: &std::ffi::OsStr, now: Instant) {
+            if self
+                .pending
+                .as_ref()
+                .is_some_and(|(changes, _)| changes.names.contains(name))
+            {
+                return;
+            }
+            self.written
+                .get_or_insert_with(|| (HashSet::new(), now + WRITTEN_WINDOW))
+                .0
+                .insert(name.to_os_string());
+        }
+
+        /// What it tells now, if anything: what its window gathered, with
+        /// the names only written to, or those alone once they waited
+        /// enough.
+        fn take_due(&mut self, now: Instant) -> Option<Changes> {
+            if self.pending.as_ref().is_some_and(|(_, at)| *at <= now) {
+                let (mut changes, _) = self.pending.take()?;
+                if let Some((written, _)) = self.written.take() {
+                    changes.names.extend(written);
+                }
+                return Some(changes);
+            }
+            if self.written.as_ref().is_some_and(|(_, at)| *at <= now) {
+                let (names, _) = self.written.take()?;
+                return Some(Changes {
+                    names,
+                    ..Changes::default()
+                });
+            }
+            None
+        }
+
+        /// When it tells next.
+        fn due(&self) -> Option<Instant> {
+            let pending = self.pending.as_ref().map(|(_, at)| *at);
+            let written = self.written.as_ref().map(|(_, at)| *at);
+            pending.into_iter().chain(written).min()
         }
     }
 
@@ -203,6 +259,7 @@ mod imp {
                 deliver,
                 cancel: cancel.clone(),
                 pending: None,
+                written: None,
             });
             (wd, id)
         });
@@ -317,7 +374,7 @@ mod imp {
             self.by_wd
                 .values()
                 .flatten()
-                .filter_map(|s| s.pending.as_ref().map(|(_, due)| *due))
+                .filter_map(Subscriber::due)
                 .min()
         }
 
@@ -347,6 +404,13 @@ mod imp {
                 return;
             };
             for s in subscribers.iter_mut() {
+                // Only written to: it waits (`WRITTEN_WINDOW`).
+                if let Some(name) = name
+                    && mask.difference(EventMask::ISDIR) == EventMask::MODIFY
+                {
+                    s.written(name, now);
+                    continue;
+                }
                 let changes = s.gathered(now);
                 if mask.contains(EventMask::MOVE_SELF) {
                     changes.moved = true;
@@ -374,9 +438,7 @@ mod imp {
             let mut gone = Vec::new();
             for (wd, subscribers) in &mut self.by_wd {
                 for s in subscribers.iter_mut() {
-                    if s.pending.as_ref().is_some_and(|(_, at)| *at <= now)
-                        && let Some((changes, _)) = s.pending.take()
-                    {
+                    if let Some(changes) = s.take_due(now) {
                         let deleted = changes.deleted;
                         if !s.cancel.is_cancelled() {
                             due.push((s.deliver.clone(), changes));
@@ -428,14 +490,17 @@ mod imp {
 
 #[cfg(not(target_os = "linux"))]
 mod imp {
+    use std::collections::HashSet;
+    use std::ffi::{OsStr, OsString};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
-    use crossbeam_channel::{Receiver, unbounded};
+    use crossbeam_channel::{Receiver, RecvTimeoutError, unbounded};
+    use notify::event::ModifyKind;
     use notify::{EventKind, RecursiveMode, Watcher};
 
-    use super::{Changes, Deliver, WatchHandle};
+    use super::{Changes, Deliver, WRITTEN_WINDOW, WatchHandle};
     use crate::cancel::CancelToken;
 
     pub fn watch(
@@ -472,6 +537,66 @@ mod imp {
         })
     }
 
+    /// What was gathered and not told yet: a window's changes, and the
+    /// names only written to (`WRITTEN_WINDOW`), each with when it is told.
+    struct Gathered {
+        window: Duration,
+        pending: Option<(Changes, Instant)>,
+        written: Option<(HashSet<OsString>, Instant)>,
+    }
+
+    impl Gathered {
+        fn changes(&mut self, now: Instant) -> &mut Changes {
+            let window = self.window;
+            &mut self
+                .pending
+                .get_or_insert_with(|| (Changes::default(), now + window))
+                .0
+        }
+
+        /// `name` was written to, and nothing else happened to it yet: it
+        /// waits, unless it is told already.
+        fn written(&mut self, name: &OsStr, now: Instant) {
+            if self
+                .pending
+                .as_ref()
+                .is_some_and(|(changes, _)| changes.names.contains(name))
+            {
+                return;
+            }
+            self.written
+                .get_or_insert_with(|| (HashSet::new(), now + WRITTEN_WINDOW))
+                .0
+                .insert(name.to_os_string());
+        }
+
+        fn due(&self) -> Option<Instant> {
+            let pending = self.pending.as_ref().map(|(_, at)| *at);
+            let written = self.written.as_ref().map(|(_, at)| *at);
+            pending.into_iter().chain(written).min()
+        }
+
+        /// What is told by `now`: the window's changes with the names only
+        /// written to, or those alone once they waited enough.
+        fn take(&mut self, now: Instant) -> Option<Changes> {
+            if self.pending.as_ref().is_some_and(|(_, at)| *at <= now) {
+                let (mut changes, _) = self.pending.take()?;
+                if let Some((written, _)) = self.written.take() {
+                    changes.names.extend(written);
+                }
+                return Some(changes);
+            }
+            if self.written.as_ref().is_some_and(|(_, at)| *at <= now) {
+                let (names, _) = self.written.take()?;
+                return Some(Changes {
+                    names,
+                    ..Changes::default()
+                });
+            }
+            None
+        }
+    }
+
     fn coalesce(
         raw: &Receiver<notify::Result<notify::Event>>,
         deliver: &Deliver,
@@ -479,48 +604,86 @@ mod imp {
         window: Duration,
         cancel: &CancelToken,
     ) {
-        // Ends when the watcher is dropped: its sender with it.
-        while let Ok(first) = raw.recv() {
-            let mut changes = Changes::default();
-            absorb(&mut changes, first, dirs);
-            let deadline = std::time::Instant::now() + window;
-            while let Ok(ev) = raw.recv_deadline(deadline) {
-                absorb(&mut changes, ev, dirs);
+        let mut gathered = Gathered {
+            window,
+            pending: None,
+            written: None,
+        };
+        loop {
+            let ev = match gathered.due() {
+                Some(due) => match raw.recv_deadline(due) {
+                    Ok(ev) => Some(ev),
+                    Err(RecvTimeoutError::Timeout) => None,
+                    // The watcher dropped, its sender with it: what was
+                    // gathered is told, and it ends.
+                    Err(RecvTimeoutError::Disconnected) => {
+                        let far = Instant::now() + WRITTEN_WINDOW + window;
+                        if let Some(changes) = gathered.take(far)
+                            && !cancel.is_cancelled()
+                        {
+                            deliver(changes);
+                        }
+                        return;
+                    }
+                },
+                None => match raw.recv() {
+                    Ok(ev) => Some(ev),
+                    Err(_) => return,
+                },
+            };
+            let now = Instant::now();
+            if let Some(ev) = ev {
+                absorb(&mut gathered, ev, dirs, now);
             }
-            if cancel.is_cancelled() {
-                return;
+            if let Some(changes) = gathered.take(now) {
+                if cancel.is_cancelled() {
+                    return;
+                }
+                deliver(changes);
             }
-            deliver(changes);
         }
     }
 
-    /// What `ev` says of the folder watched, known by any of `dirs`.
-    fn absorb(changes: &mut Changes, ev: notify::Result<notify::Event>, dirs: &[PathBuf]) {
+    /// What `ev` says of the folder watched, known by any of `dirs`. A
+    /// file only written to waits (`Gathered::written`): macOS says so
+    /// (`ModifyKind::Data`), Windows says a file changed (`ModifyKind::Any`,
+    /// its attributes too, which then wait as long).
+    fn absorb(
+        gathered: &mut Gathered,
+        ev: notify::Result<notify::Event>,
+        dirs: &[PathBuf],
+        now: Instant,
+    ) {
         let Ok(ev) = ev else {
-            changes.rescan = true;
+            gathered.changes(now).rescan = true;
             return;
         };
         if ev.need_rescan() {
-            changes.rescan = true;
+            gathered.changes(now).rescan = true;
             return;
         }
         if matches!(ev.kind, EventKind::Access(_)) {
             return;
         }
+        let written = matches!(
+            ev.kind,
+            EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Any)
+        );
         let watched = |path: Option<&Path>| path.is_some_and(|p| dirs.iter().any(|d| d == p));
         for p in ev.paths {
             if watched(p.parent())
                 && let Some(name) = p.file_name()
             {
-                changes.names.insert(name.to_os_string());
-            } else if watched(Some(&p)) {
-                if matches!(
-                    ev.kind,
-                    EventKind::Modify(notify::event::ModifyKind::Metadata(_))
-                ) {
-                    changes.itself = true;
+                if written {
+                    gathered.written(name, now);
                 } else {
-                    changes.rescan = true;
+                    gathered.changes(now).names.insert(name.to_os_string());
+                }
+            } else if watched(Some(&p)) {
+                if matches!(ev.kind, EventKind::Modify(ModifyKind::Metadata(_))) {
+                    gathered.changes(now).itself = true;
+                } else {
+                    gathered.changes(now).rescan = true;
                 }
             }
         }
@@ -656,6 +819,53 @@ mod tests {
         let (_again, again_rx) = watched(root.path());
         std::fs::write(root.path().join("c"), b"").unwrap();
         assert!(told(&again_rx, "c"));
+    }
+
+    /// A file only written to (a download) is told once a second, not at
+    /// each window; closed, it is told at once.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_file_only_written_to_waits_and_its_close_is_told_at_once() {
+        use std::io::Write as _;
+        use std::time::Instant;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let root = tempfile::tempdir_in(&base).unwrap();
+        let mut file = std::fs::File::create(root.path().join("growing.part")).unwrap();
+        let (_handle, rx) = watched(root.path());
+        let named = |c: &Changes| c.names.contains(std::ffi::OsStr::new("growing.part"));
+        let started = Instant::now();
+        for _ in 0..10 {
+            file.write_all(b"x").unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let mut told = 0;
+        while let Some(left) =
+            (started + Duration::from_millis(1300)).checked_duration_since(Instant::now())
+        {
+            match rx.recv_timeout(left) {
+                Ok(c) if named(&c) => told += 1,
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        assert!(told <= 2, "told {told} times in a second of writes");
+        let closed = Instant::now();
+        drop(file);
+        let deadline = closed + SOON;
+        let mut seen = None;
+        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            match rx.recv_timeout(left) {
+                Ok(c) if named(&c) => {
+                    seen = Some(closed.elapsed());
+                    break;
+                }
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        let seen = seen.expect("its close is told");
+        assert!(seen < WRITTEN_WINDOW, "told {seen:?} after its close");
     }
 
     #[test]
