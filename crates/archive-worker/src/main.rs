@@ -1409,6 +1409,11 @@ mod native {
             buffer: vec![0; 64 * 1024],
         });
         let reader = reader()?;
+        // SAFETY: the callbacks are handed `source`, a `Source` boxed, whose
+        // place does not move with the box; `Opened` keeps the box after
+        // the reader, which it frees first (its fields' order), so libarchive
+        // never reads it freed. No close callback is set: libarchive frees
+        // nothing of it.
         unsafe {
             reader.check(archive_read_set_options(reader.0, READ_OPTIONS.as_ptr()))?;
             reader.check(archive_read_set_read_callback(reader.0, Some(source_read)))?;
@@ -1433,9 +1438,15 @@ mod native {
         data: *mut c_void,
         buffer: *mut *const c_void,
     ) -> isize {
+        // SAFETY: `data` is the `Source` that `open` registered, which
+        // `Opened` keeps alive until after the reader is freed; libarchive
+        // calls one callback at a time, on this thread, so nothing else
+        // holds it.
         let source = unsafe { &mut *data.cast::<Source>() };
         match source.file.read(&mut source.buffer) {
             Ok(n) => {
+                // SAFETY: `buffer` is where libarchive takes the bytes from;
+                // they stay in `source.buffer` until its next call.
                 unsafe { *buffer = source.buffer.as_ptr().cast() };
                 isize::try_from(n).unwrap_or(-1)
             }
@@ -1446,6 +1457,8 @@ mod native {
     /// Skip `request` bytes of a session's archive, never past its end: how
     /// many were.
     unsafe extern "C" fn source_skip(_: *mut c_void, data: *mut c_void, request: i64) -> i64 {
+        // SAFETY: as `source_read`'s: the `Source` that `open` registered,
+        // alive until after the reader is freed, one callback at a time.
         let source = unsafe { &mut *data.cast::<Source>() };
         let Ok(at) = source.file.stream_position() else {
             return 0;
@@ -1466,6 +1479,8 @@ mod native {
         offset: i64,
         whence: c_int,
     ) -> i64 {
+        // SAFETY: as `source_read`'s: the `Source` that `open` registered,
+        // alive until after the reader is freed, one callback at a time.
         let source = unsafe { &mut *data.cast::<Source>() };
         let to = match (whence, u64::try_from(offset)) {
             (0, Ok(offset)) => std::io::SeekFrom::Start(offset),
