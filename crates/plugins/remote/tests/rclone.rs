@@ -134,3 +134,72 @@ fn an_address_rclone_opens_is_a_folder_and_a_copy_is_on_the_server_once_done() {
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// What a mount keeps and sends after a file is closed (`full`) is sent now
+/// and waited for through its remote control on the loopback, behind a
+/// login of its own, as Windows' mounts serve theirs (ADR-102): the calls
+/// a socket takes on Unix, checked here on a mount of this machine.
+#[cfg(target_os = "linux")]
+#[test]
+fn what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback() {
+    use skwir_plugin_remote::rc::At;
+    use skwir_plugin_remote::uploads;
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("sends-loopback");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    let served = Served::start(&served_root);
+    let point = base.join("mounted");
+    std::fs::create_dir_all(&point).unwrap();
+    let at = At::loopback().unwrap();
+    let (serving, login) = at.serving();
+    let mut mount = Command::new("rclone")
+        .arg("mount")
+        .arg(format!(":webdav,url='http://127.0.0.1:{}/':", served.port))
+        .arg(&point)
+        .args(["--vfs-cache-mode", "full", "--cache-dir"])
+        .arg(base.join("cache"))
+        .arg("--config")
+        .arg(base.join("rclone.conf"))
+        .arg("--rc")
+        .args(serving)
+        .envs(login)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start rclone mount");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mounted = || {
+        std::fs::read_to_string("/proc/self/mountinfo")
+            .is_ok_and(|table| table.contains(point.to_str().unwrap()))
+    };
+    while !(at.answers() && mounted()) {
+        assert!(Instant::now() < deadline, "never mounted");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let cancel = CancelToken::new();
+    assert_eq!(uploads::cache_mode(&at, &cancel).unwrap(), "full");
+
+    // Kept on this disk, sent after its close (5 s on): waiting, until sent
+    // now.
+    std::fs::write(point.join("l'été — a note.txt"), "sent").unwrap();
+    assert_eq!(uploads::waiting(&at, &cancel).unwrap(), 1);
+    let mut told = Vec::new();
+    uploads::send_now(&at, &cancel, &|| {}, &mut |left| told.push(left)).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(served_root.join("l'été — a note.txt")).unwrap(),
+        "sent",
+        "on the server once sent"
+    );
+    assert_eq!(told.last(), Some(&0), "said as it went: {told:?}");
+    assert_eq!(uploads::waiting(&at, &cancel).unwrap(), 0);
+
+    let _ = Command::new("fusermount3").arg("-uz").arg(&point).status();
+    let _ = mount.kill();
+    let _ = mount.wait();
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}

@@ -1659,9 +1659,9 @@ fn a_copy_onto_a_mount_that_sends_later_ends_once_the_server_has_it() {
     let mounted = app.pane_location(pane).unwrap().path().unwrap();
     let point = skwir_core::fs::reach::of(&mounted).unwrap().point.clone();
     let left = Unmounted(point.clone());
-    let socket = skwir_plugin_remote::rclone_copy::socket_for(&point).unwrap();
+    let control = skwir_plugin_remote::uploads::control_of(&point).unwrap();
     assert_eq!(
-        skwir_plugin_remote::uploads::cache_mode(&socket, &CancelToken::new()).unwrap(),
+        skwir_plugin_remote::uploads::cache_mode(&control, &CancelToken::new()).unwrap(),
         "full",
         "mounted with the cache chosen"
     );
@@ -1710,6 +1710,73 @@ fn a_copy_onto_a_mount_that_sends_later_ends_once_the_server_has_it() {
         "aside",
         "sent before it was let go of"
     );
+    drop(left);
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// What another program left on a mount that sends later is said on its
+/// place while it waits (ADR-102), asked when the window comes back
+/// (`App::refresh_remote`, `Known::looked_at`) and then while some waits,
+/// gone once the server has it.
+#[test]
+fn what_another_program_left_to_send_is_said_on_its_place_until_sent() {
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("rclone-left-to-send");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    let served = Served::start("webdav", &served_root, &[]);
+    let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
+    let remotes = Remotes::with(vec![Arc::new(Rclone::default())]);
+    app.plugins.add(Arc::new(RemotePlugin::with(remotes)), &app);
+    let top = Address::parse(&format!("dav://127.0.0.1:{}/", served.port)).unwrap();
+    let full = skwir_plugin_remote::options::MountOptions {
+        cache: Some("full".into()),
+        ..skwir_plugin_remote::options::MountOptions::default()
+    };
+    skwir_plugin_remote::options::keep(&app, &top, &full).unwrap();
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::parse(&top.to_string()))
+        .unwrap();
+    until(&app, 60, "the address led to its folder", || {
+        app.pane_location(pane).is_some_and(|l| l.is_path())
+    });
+    let mounted = app.pane_location(pane).unwrap().path().unwrap();
+    let point = skwir_core::fs::reach::of(&mounted).unwrap().point.clone();
+    let left = Unmounted(point.clone());
+    let said = || {
+        app.registry
+            .places
+            .all()
+            .into_iter()
+            .find(|place| place.location == Location::from_path(&point))
+            .and_then(|place| place.busy)
+    };
+    assert_eq!(said(), None);
+
+    // Another program writes there: rclone sends it 5 s after its close.
+    std::fs::write(mounted.join("l'été — written aside.txt"), "aside").unwrap();
+    app.refresh_remote();
+    until(&app, 4, "said on its place", || {
+        said().as_deref() == Some("Sending 1 file to the server…")
+    });
+    until(&app, 30, "no more said once sent", || said().is_none());
+    assert_eq!(
+        std::fs::read_to_string(served_root.join("l'été — written aside.txt")).unwrap(),
+        "aside"
+    );
+
+    app.dispatch(&Invocation::with_args(
+        "remote.disconnect",
+        &serde_json::json!({ "path": point }),
+    ))
+    .unwrap();
+    until(&app, 30, "it was let go of", || {
+        skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point)
+    });
     drop(left);
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();

@@ -216,23 +216,17 @@ leave (ADR-077).
 
 **From previews read once and rclone's cache (2026-10-29, ADR-101,
 ADR-102)**:
-- A remote's place saying what other programs left waiting to be sent
-  (ADR-102, point 6): asked after a plan, on focus and while something
-  waits. A copy's progress and a Disconnect say it already.
 - An upload refused three times fails a copy's write-out; not tested
   against a server that refuses (rclone retries each upload itself
   before counting a try): only the queue's reading is.
-- Windows: a copy onto a mount that sends later is not waited for yet
-  (its mounts' remote control is on loopback; `uploads` speaks a
-  socket), so Automatic keeps `minimal` there, and a `full` chosen by
-  the user ends a copy before its server has it, as before.
-- Windows and macOS: `Held` and the cache bounds are compiled there, not
-  run (Wine's rclone mounts are not tried); macOS's copy wait is
-  compiled only.
+- Windows and macOS: `Held`, the cache bounds and the copy's wait are
+  compiled there, not run: WinFsp is not under Wine, so Windows' mounts
+  are never made here; their remote control on the loopback is checked
+  on Linux (`what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback`).
 - `gvfs_opens_an_smb_share_its_password_kept` fails in a loaded
-  `remote-check` (twice on 2026-10-29, once on 2026-10-23): its 300 MiB
-  read through GVfs outlasts `Gvfs::disconnect`'s five seconds of busy
-  refusals. A read whose end the test waits for, or a smaller file,
+  `remote-check` (three times on 2026-10-29, once on 2026-10-23), and
+  alone beside a release build (2 of 6 on 2026-10-29): its 300 MiB read through GVfs outlasts `Gvfs::disconnect`'s
+  five seconds of busy refusals. A read whose end the test waits for, or a smaller file,
   would keep what it proves without the race.
 
 **From the review of 2026-10-28** (fixed the same day, "Review fixes

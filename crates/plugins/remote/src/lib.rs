@@ -52,7 +52,6 @@ pub mod sftp;
 mod ssh_mount;
 pub mod sshfs;
 pub mod system_shares;
-#[cfg(unix)]
 pub mod uploads;
 pub mod winfsp;
 
@@ -156,6 +155,13 @@ struct State {
     /// What the storage of each rclone mount Skwir made can do, as rclone
     /// says (ADR-086): asked once a mount, in its lane.
     features: HashMap<PathBuf, rclone_features::Features>,
+    /// The files each rclone mount Skwir made still sends to its server,
+    /// what other programs wrote there (ADR-102): said on its place while
+    /// some wait (`Remotes::look_at_uploads`).
+    waiting: HashMap<PathBuf, usize>,
+    /// The mounts whose waiting files are being looked at again, every
+    /// `UPLOADS_LOOKED_EVERY` until none waits.
+    watching: std::collections::HashSet<PathBuf>,
     /// Bumped by each refresh, so a slower one never wins.
     generation: u64,
     /// The mounts as last read (`Remotes::mounted`): what every publish
@@ -1046,6 +1052,16 @@ impl Remotes {
                 thumbnails: thumbnails(rule, near, whole, fast),
                 forget: m.connector.as_ref().and_then(|c| c.forget(&m.remote)),
                 trash: state.features.get(point).and_then(|f| f.trash.clone()),
+                // What other programs left to be sent there, looked at when
+                // the window comes back (ADR-102).
+                looked_at: (m.remote.fstype == rclone::FSTYPE).then(|| {
+                    let (this, weak, point) = (self.clone(), app.weak(), point.clone());
+                    skwir_core::fs::reach::Look(Arc::new(move || {
+                        if let Some(app) = weak.upgrade() {
+                            this.look_at_uploads(&app, &point);
+                        }
+                    }))
+                }),
             });
             let mut place = match m.recognised.device {
                 Some(device) => Place::new(
@@ -1078,7 +1094,17 @@ impl Remotes {
                     place.activate = Some(Invocation::navigate(&address.location()));
                 }
             }
-            place.busy = state.busy.get(&point.display().to_string()).cloned();
+            place.busy = state
+                .busy
+                .get(&point.display().to_string())
+                .cloned()
+                .or_else(|| {
+                    state
+                        .waiting
+                        .get(point)
+                        .filter(|files| **files > 0)
+                        .map(|files| sending(*files))
+                });
             place.space = state.space.get(point).copied();
             place.menu = thumbnail_items(&key, rule);
             place
@@ -1719,6 +1745,66 @@ impl Remotes {
         known
     }
 
+    /// Ask the rclone mount Skwir made at `point` what other programs left
+    /// waiting to be sent there (ADR-102), and while some waits, say so on
+    /// its place and ask again every `UPLOADS_LOOKED_EVERY`, on a thread of
+    /// its own, until none does or the mount is gone. In the remote's lane
+    /// (`Known::looked_at`): its remote control may wait.
+    pub fn look_at_uploads(&self, app: &App, point: &Path) {
+        let Some(at) = uploads::control_of(point) else {
+            return;
+        };
+        let Some(lifetime) = self.lifetime() else {
+            return;
+        };
+        let files = uploads::waiting(&at, &lifetime).unwrap_or(0);
+        {
+            let mut state = self.state.lock();
+            if files == 0 || !state.watching.insert(point.to_path_buf()) {
+                return;
+            }
+            state.waiting.insert(point.to_path_buf(), files);
+        }
+        self.refresh(app);
+        let (this, weak, followed) = (self.clone(), app.weak(), point.to_path_buf());
+        let watched = std::thread::Builder::new()
+            .name("skwir-uploads".into())
+            .spawn(move || {
+                let mut said = files;
+                loop {
+                    std::thread::sleep(UPLOADS_LOOKED_EVERY);
+                    let now = if lifetime.is_cancelled() {
+                        0
+                    } else {
+                        uploads::control_of(&followed)
+                            .and_then(|at| uploads::waiting(&at, &lifetime).ok())
+                            .unwrap_or(0)
+                    };
+                    let Some(app) = weak.upgrade() else {
+                        return;
+                    };
+                    if now == 0 {
+                        let mut state = this.state.lock();
+                        state.waiting.remove(&followed);
+                        state.watching.remove(&followed);
+                    } else {
+                        this.state.lock().waiting.insert(followed.clone(), now);
+                    }
+                    if now != said {
+                        this.refresh(&app);
+                        said = now;
+                    }
+                    if now == 0 {
+                        return;
+                    }
+                }
+            });
+        if let Err(error) = watched {
+            tracing::debug!("what waits to be sent is not followed: {error}");
+            self.state.lock().watching.remove(point);
+        }
+    }
+
     /// Let go of the mount at `point`: what shows it goes home, then its
     /// tool lets go of it, on a worker, saying how it went. Refused while
     /// an action of Skwir's is under way there, unless `force`d; what else
@@ -1816,37 +1902,26 @@ impl Remotes {
                     .is_some_and(|ran| ran >= skwir_core::fs::reach::NOT_ANSWERING);
             }
             // What waits there to be sent goes first (ADR-102): a refusal
-            // keeps the mount, and what it keeps, connected. Its remote
-            // control is a socket of the runtime folder: Unix's alone.
-            #[cfg(unix)]
-            let kept = {
-                let socket = (mounted.remote.fstype == rclone::FSTYPE)
-                    .then(|| rclone_copy::socket_for(&mounted.remote.point))
-                    .flatten()
-                    .filter(|socket| socket.exists());
-                let sends = !force && !stalled;
-                if let (Some(socket), true) = (&socket, sends) {
-                    result = result.and_then(|()| {
-                        let mut left = |files: usize| {
-                            if let Some(app) = weak.upgrade() {
-                                this.state.lock().busy.insert(key.clone(), sending(files));
-                                this.refresh(&app);
-                            }
-                        };
-                        uploads::send_now(socket, &lifetime, &|| {}, &mut left)
-                            .map_err(|e| anyhow::anyhow!("“{said}” was not disconnected: {e:#}"))
-                    });
-                }
-                match (&socket, sends) {
-                    (Some(socket), false) => uploads::waiting(socket, &lifetime).unwrap_or(0),
-                    _ => 0,
-                }
-            };
-            // Nothing is sent before letting go there (`uploads` is Unix's).
-            #[cfg(not(unix))]
-            let kept = {
-                let _ = stalled;
-                0
+            // keeps the mount, and what it keeps, connected.
+            let control = (mounted.remote.fstype == rclone::FSTYPE)
+                .then(|| uploads::control_of(&mounted.remote.point))
+                .flatten();
+            let sends = !force && !stalled;
+            if let (Some(at), true) = (&control, sends) {
+                result = result.and_then(|()| {
+                    let mut left = |files: usize| {
+                        if let Some(app) = weak.upgrade() {
+                            this.state.lock().busy.insert(key.clone(), sending(files));
+                            this.refresh(&app);
+                        }
+                    };
+                    uploads::send_now(at, &lifetime, &|| {}, &mut left)
+                        .map_err(|e| anyhow::anyhow!("“{said}” was not disconnected: {e:#}"))
+                });
+            }
+            let kept = match (&control, sends) {
+                (Some(at), false) => uploads::waiting(at, &lifetime).unwrap_or(0),
+                _ => 0,
             };
             let mut result = result.and_then(|()| {
                 connector.disconnect(&mounted.remote, &mounted.recognised, &lifetime)
@@ -1879,8 +1954,11 @@ impl Remotes {
     }
 }
 
-/// What a mount's place says while it sends what waits before letting go.
-#[cfg(unix)]
+/// How often a mount whose files wait to be sent is asked again, while
+/// some do (`Remotes::look_at_uploads`).
+const UPLOADS_LOOKED_EVERY: Duration = Duration::from_secs(2);
+
+/// What a mount's place says while it sends what waits.
 fn sending(files: usize) -> String {
     format!("Sending {} to the server…", self::files(files))
 }

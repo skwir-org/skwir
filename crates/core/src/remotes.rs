@@ -111,9 +111,11 @@ impl App {
     }
 
     /// Read again each folder shown that is on a remote: a server does not
-    /// say what changed on it, so the window does when it comes back. At
-    /// most once in [`REFRESHED_WITHIN`]: a window gone back and forth
-    /// does not list a large folder across the network each time.
+    /// say what changed on it, so the window does when it comes back; and
+    /// ask each remote what its plugin looks at then (`Known::looked_at`:
+    /// what waits to be sent there). At most once in
+    /// [`REFRESHED_WITHIN`]: a window gone back and forth does not list a
+    /// large folder across the network each time.
     pub fn refresh_remote(&self) {
         static LAST: parking_lot::Mutex<Option<std::time::Instant>> = parking_lot::Mutex::new(None);
         {
@@ -122,6 +124,18 @@ impl App {
                 return;
             }
             *last = Some(std::time::Instant::now());
+        }
+        for known in self.registry.remotes.all() {
+            let (Some(look), Some(remote)) = (known.looked_at, reach::of(&known.point)) else {
+                continue;
+            };
+            self.scheduler.spawn_in(
+                remote.lane(),
+                Priority::Normal,
+                "remote.looked_at",
+                self.lifetime().child(),
+                move || (look.0)(),
+            );
         }
         let open: Vec<_> = {
             let ws = self.workspace.read();

@@ -626,17 +626,21 @@ ADR-077 (which revises ADR-021).
   many files the server still takes. An upload tried three times fails
   the write-out: the file stays in rclone's cache, which goes on trying,
   and a move's original stays. Disconnect sends what waits first (a
-  refusal keeps it connected); a forced one says what stays in the
-  cache, which the next mount with that cache sends.
+  refusal keeps it connected); a forced one, or one of a server that
+  stopped answering, says what stays in the cache, which the next mount
+  with that cache sends. What other programs left waiting is said on the
+  mount's place, asked when the window comes back (`Known::looked_at`)
+  and every 2 s while some waits, never otherwise. A mount's remote
+  control is reached where it answers on each system
+  (`uploads::control_of`: Unix's socket, Windows' loopback behind its
+  login), every call about uploads given up after 5 s.
 - **rclone's cache** is the one the user chose for the server, else
   Automatic's (`options::automatic`, `Remotes::automatic_cache`, resolved
   when connecting and for the entry at login, never stored): `full` (what
   is read is read again from this disk), but `minimal` for a remote that
   encrypts or wraps others (its kind, `rclone_forms::wraps_others`:
   `full` keeps its files on this disk as read) and on the local network
-  (`lan`), and on Windows, where a copy is not waited for yet (its
-  mounts' remote control is on loopback; `uploads` is Unix's). A cache
-  chosen is kept, `minimal` included. rclone's own cache
+  (`lan`). A cache chosen is kept, `minimal` included. rclone's own cache
   folder holds what it keeps, never Skwir's, which must stay deletable
   without loss: an hour unread, a gigabyte, never the disk's last two
   (`--vfs-cache-max-age`, `--vfs-cache-max-size`,

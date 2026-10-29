@@ -268,15 +268,21 @@ impl Connector for Rclone {
     }
 
     /// Copies within one mount Skwir made, by rclone on the server
-    /// (`rclone_copy`).
+    /// (`rclone_copy`, Unix's), and what a mount sends after a file is
+    /// closed, waited for before a plan ends (`uploads`, every system).
     fn transfers(&self) -> Vec<Arc<dyn skwir_core::op::transfer::Transfer>> {
+        let sends = Arc::new(crate::uploads::RcloneSends::default())
+            as Arc<dyn skwir_core::op::transfer::Transfer>;
         #[cfg(unix)]
         {
-            vec![crate::rclone_copy::shared() as Arc<dyn skwir_core::op::transfer::Transfer>]
+            vec![
+                crate::rclone_copy::shared() as Arc<dyn skwir_core::op::transfer::Transfer>,
+                sends,
+            ]
         }
         #[cfg(not(unix))]
         {
-            Vec::new()
+            vec![sends]
         }
     }
 

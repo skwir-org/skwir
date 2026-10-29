@@ -1,7 +1,8 @@
 # ADR-102: rclone keeps what it reads; a copy waits until the server has it
 
-Status: accepted 2026-10-28, built 2026-10-29 on Linux but for point 6's
-place (see Consequences). Revises ADR-077's mount
+Status: accepted 2026-10-28, built 2026-10-29 on Linux; macOS and
+Windows compiled (Windows' remote control on the loopback checked on
+Linux; WinFsp is not under Wine). Revises ADR-077's mount
 (`--vfs-cache-mode minimal`), keeping its rule: a copy onto a remote is
 done when the server has it. Amends ADR-086's Mount Options (the File
 Cache gains Automatic, and a cache chosen is kept, `minimal` included).
@@ -49,11 +50,7 @@ Cache gains Automatic, and a cache chosen is kept, `minimal` included).
      was written when `close` returns: `minimal`;
    - a remote that encrypts or wraps others (crypt, alias, union,
      combine, chunker, compress, hasher: its kind, `ON_REMOTES`), whose
-     files `full` would keep decrypted on this disk: `minimal`;
-   - Windows (built 2026-10-29): `minimal` until a copy is waited for
-     there (its mounts' remote control is on loopback, which `uploads`
-     does not speak yet): a copy must never be said done before the
-     server has it.
+     files `full` would keep decrypted on this disk: `minimal`.
 2. **A choice is kept.** The File Cache offers Automatic (nothing stored;
    the form says what it chose for this server, and why) beside `off`,
    `minimal`, `writes` and `full`, each stored when chosen and given to
@@ -83,9 +80,17 @@ Cache gains Automatic, and a cache chosen is kept, `minimal` included).
    says what stays in the cache, to be sent by the next mount.
 6. **Seen while it sends.** A plan's progress says how many files the
    server still takes (`op::Transfer::sending`), and a Disconnect's place
-   how many it sends first. Not built yet: a place saying what other
-   programs left waiting (asked after a plan, on focus and while
-   something waits, every 2 s, no timer otherwise).
+   how many it sends first. What other programs left waiting is said on
+   the mount's place ("Sending 3 files to the server…"): asked when the
+   window comes back (`App::refresh_remote`, `Known::looked_at`: every
+   remote, shown or not, at most every 10 s), then every 2 s while
+   something waits, on a thread of its own, until nothing does. No timer
+   otherwise.
+9. **Every system.** A mount's remote control is reached where it
+   answers (`uploads::control_of`): a socket of the runtime folder on
+   Unix, the loopback behind its login on Windows (`winfsp::rc_of`). The
+   copy's wait is a transfer of its own (`uploads::RcloneSends`),
+   registered everywhere beside Unix's copies on the server.
 7. **Quitting Skwir leaves rclone sending**: its mounts outlive it
    (ADR-077). A session ended with uploads waiting leaves them in the
    cache, sent by the next mount (at login: ADR-087).

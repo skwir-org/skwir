@@ -112,6 +112,29 @@ pub struct Known {
     /// that it is gone for good (ADR-086). `None`: deleted for good, as on
     /// any network folder.
     pub trash: Option<String>,
+    /// What its plugin asks of it when the window comes back
+    /// (`App::refresh_remote`), shown or not: what other programs left
+    /// waiting to be sent to its server (rclone's, ADR-102). Called in
+    /// the remote's lane.
+    pub looked_at: Option<Look>,
+}
+
+/// What a remote's plugin asks of it when the window comes back
+/// (`Known::looked_at`). Called in the remote's lane: it may wait on the
+/// remote's program.
+#[derive(Clone)]
+pub struct Look(pub Arc<dyn Fn() + Send + Sync>);
+
+impl std::fmt::Debug for Look {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Look")
+    }
+}
+
+impl PartialEq for Look {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
 }
 
 /// What a remote's program is told so that it reads its server again

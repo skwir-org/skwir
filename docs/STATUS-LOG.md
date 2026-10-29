@@ -6926,3 +6926,39 @@ about uploads give up after 5 s, the count comes from `vfs/queue`, and a
 server that stopped answering is not waited for). Not run: `smoke`,
 `a11y-check`, the PDF checks, `bench-check` (release-check was not run:
 it is the release's).
+
+### What other programs left to send, and Windows' copy wait (2026-10-29, ADR-102)
+
+The two points ADR-102 had left:
+
+- **Other programs' uploads.** A file another program wrote on a mount
+  that sends later (rclone's `writes`, `full`) waited unseen. Each rclone
+  mount's `Known` now carries `looked_at` (core: `fs::reach::Look`),
+  which `App::refresh_remote` calls in the remote's lane when the window
+  comes back (every remote, shown or not, at most every 10 s); the
+  plugin asks the mount's queue (`Remotes::look_at_uploads`) and, while
+  some file waits, says so on its place ("Sending 1 file to the
+  server…") and asks again every 2 s on a thread of its own, until none
+  does. No timer otherwise.
+- **Windows.** `uploads` reaches a mount's remote control where it
+  answers (`control_of`: Unix's socket, Windows' loopback behind its kept
+  login, `winfsp::rc_of`); the copy's wait moved from `RcloneCopy`
+  (Unix's copies on the server) to a transfer of its own
+  (`uploads::RcloneSends`), registered on every system; Disconnect sends
+  first everywhere. Automatic chooses `full` on Windows too.
+- **Checked**: `what_another_program_left_to_send_is_said_on_its_place_until_sent`
+  (remote_folders: a `full` mount, a file written beside Skwir, the
+  window coming back; said within 4 s, gone once the server has it;
+  seen failing with `looked_at` taken away) and
+  `what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback`
+  (the plugin's: a real `rclone mount` on Linux serving its remote
+  control on the loopback behind a login, as Windows' mounts do; a file
+  written waits, is sent by `send_now`, and is on the server when it
+  returns). Windows itself compiled only: WinFsp is not under Wine.
+- **Runs**, on this code: `just lint-all` passed (Windows' and macOS'
+  cross clippy included); the whole workspace passed, 2405 tests, 30
+  skipped; `just remote-check` 175 of 176, the one failing GVfs's SMB
+  Disconnect again (PLAN's What is left), whose test and the GVfs code it
+  calls are unchanged here. Alone, beside a release build, it failed 2
+  of 6 and took 7 to 9.5 s a run, where it took about 1.2 s alone the
+  night before. No test mount was left.

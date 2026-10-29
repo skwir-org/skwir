@@ -61,15 +61,6 @@ const CACHES: [(&str, &str); 4] = [
 /// where a read costs little and a server is expected to have a file
 /// written once it is closed.
 pub fn automatic(kind: Option<&str>, near: Option<bool>) -> (&'static str, &'static str) {
-    // What a mount sends after a file is closed is waited for through its
-    // remote control on a socket (`uploads`): on Unix alone. Elsewhere a
-    // copy would be said done before its server had it.
-    if cfg!(not(unix)) {
-        return (
-            "minimal",
-            "Skwir does not wait yet, on this system, for what is sent after a file is closed",
-        );
-    }
     if kind.is_some_and(crate::rclone_forms::wraps_others) {
         (
             "minimal",
@@ -275,10 +266,8 @@ mod tests {
 
     #[test]
     fn automatic_keeps_what_a_cloud_reads_but_not_near_or_wrapped() {
-        // Where a copy is not waited for yet, never `full` (Windows).
-        let far = if cfg!(unix) { "full" } else { "minimal" };
-        assert_eq!(automatic(Some("dropbox"), None).0, far);
-        assert_eq!(automatic(None, Some(false)).0, far);
+        assert_eq!(automatic(Some("dropbox"), None).0, "full");
+        assert_eq!(automatic(None, Some(false)).0, "full");
         assert_eq!(automatic(Some("sftp"), Some(true)).0, "minimal");
         for wraps in ["crypt", "alias", "union", "combine"] {
             assert_eq!(automatic(Some(wraps), None).0, "minimal", "{wraps}");
