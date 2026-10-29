@@ -236,6 +236,13 @@ pub struct StepContext {
     /// Folders listed for the steps (`Self::listed`), each with its times
     /// then, the last asked at the end: at most [`LISTINGS_KEPT`].
     listings: RefCell<Vec<KeptListing>>,
+    /// The states of folders compared (`builtin::state_in`), each read
+    /// once while nothing changes them: within one comparison, and all
+    /// through the settling of a plan's names ([`Self::keeping_states`]),
+    /// which changes nothing.
+    states: RefCell<HashMap<PathBuf, blake3::Hash>>,
+    /// Whether `states` are kept past a comparison ([`Self::keeping_states`]).
+    keeps_states: std::cell::Cell<bool>,
     /// The files of several names whose bytes this plan counted already:
     /// copied once, they are counted once.
     sized: RefCell<HashSet<crate::FileId>>,
@@ -283,9 +290,11 @@ pub struct StepContext {
 
 /// What a plan found comparing a source with what is there under its name
 /// (`builtin::same_tree`), by the two and whether attributes count, with
-/// what they and their companions were then (`builtin::compared_state`):
-/// settling its names, its dry run and its run read the bytes once while
-/// nothing of them changed. One a plan's run (`Executor::show`).
+/// what they and their companions were then, and whether bytes were
+/// proven (`builtin::compared_state`): settling its names, its dry run
+/// and its run read the bytes once while nothing of them changed, and a
+/// merge's items found while their folder was compared are not compared
+/// again. One a plan's run (`Executor::show`).
 #[derive(Default)]
 pub(super) struct Compared(
     parking_lot::Mutex<HashMap<(PathBuf, PathBuf, bool), (blake3::Hash, bool)>>,
@@ -580,6 +589,8 @@ impl StepContext {
             copies: RefCell::default(),
             copied_order: RefCell::default(),
             listings: RefCell::default(),
+            states: RefCell::default(),
+            keeps_states: std::cell::Cell::new(false),
             sized: RefCell::default(),
             secret_asker: None,
             transfers: None,
@@ -694,9 +705,44 @@ impl StepContext {
         kept.downcast::<T>().ok().map(|kept| *kept)
     }
 
-    /// Another step begins: what the last one's check kept is not its own.
+    /// Another step begins: what the last one's check kept is not its own,
+    /// and the trees the last one applied to may have changed.
     pub(super) fn step_begins(&self) {
         self.checked.borrow_mut().take();
+        self.states.borrow_mut().clear();
+    }
+
+    /// The state of the folder `path` found since the last step began
+    /// (`builtin::state_in`), if it was read whole.
+    pub(super) fn state_found(&self, path: &Path) -> Option<blake3::Hash> {
+        self.states.borrow().get(path).copied()
+    }
+
+    /// The folder `path` was found to be `state` (`builtin::state_in`).
+    pub(super) fn state_seen(&self, path: &Path, state: blake3::Hash) {
+        self.states.borrow_mut().insert(path.to_path_buf(), state);
+    }
+
+    /// A comparison ended (`builtin::same_tree`): the folders' states it
+    /// read are let go of, unless they are kept ([`Self::keeping_states`]).
+    /// A context asked again later (a step checked, the disk changed, the
+    /// step checked again) reads them afresh.
+    pub(super) fn compared_ended(&self) {
+        if !self.keeps_states.get() {
+            self.states.borrow_mut().clear();
+        }
+    }
+
+    /// Run `f`, which changes nothing on the disk (the settling of a
+    /// plan's names: a merge comparing its folder, then each of its items,
+    /// level by level), keeping each folder's state read for the whole of
+    /// it: each tree is read once, not once a level.
+    pub(super) fn keeping_states<T>(&self, f: impl FnOnce() -> T) -> T {
+        let kept = self.keeps_states.replace(true);
+        let out = f();
+        self.keeps_states.set(kept);
+        self.compared_ended();
+        out
     }
 
     /// The same context, going on from `partial`, what a copy this plan

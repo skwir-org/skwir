@@ -249,6 +249,13 @@ pub struct Settled {
 /// meet (a folder merged, its own clashes after it). Reads the disk: on
 /// the plan's thread.
 pub fn settle(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext) -> Settled {
+    // Nothing changes on the disk as names are settled: what a merge
+    // reads of a folder, it does not read again for its items.
+    ctx.keeping_states(|| settle_names(steps, answer, ctx))
+}
+
+/// [`settle`], each folder's state read kept for the whole of it.
+fn settle_names(steps: &[Box<dyn Operation>], answer: &Answer, ctx: &StepContext) -> Settled {
     let mut walk = Walk {
         ctx,
         answer,
@@ -462,14 +469,21 @@ impl Walk<'_> {
         if !self.ctx.exists(&target) {
             return self.keep(transfer, child);
         }
-        // There already: the link made, or the item verified whole, including
-        // its bytes, kept metadata and companions. A copy or a link has nothing
-        // to do, and a move leaves what was moved in the trash.
+        // There already: the link made, or the item verified whole, its
+        // kept metadata and companions, and its bytes where they must be
+        // proven (a move's always). A copy or a link has nothing to do,
+        // and a move leaves what was moved in the trash.
         let there = if linking {
             std::fs::read_link(&target).is_ok_and(|says| says == src)
         } else {
-            builtin::same_tree(&src, &target, transfer.preserve_attributes(), self.ctx)
-                .unwrap_or(false)
+            builtin::same_tree(
+                &src,
+                &target,
+                transfer.preserve_attributes(),
+                transfer.moving(),
+                self.ctx,
+            )
+            .unwrap_or(false)
         };
         if there {
             if transfer.moving() {

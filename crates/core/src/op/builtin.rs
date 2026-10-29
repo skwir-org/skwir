@@ -1026,7 +1026,7 @@ impl super::Effect for Copy {
         if ctx.exists(&target) {
             // Only a finished copy of this very source is "already done": an
             // unrelated folder that happens to share the name is a conflict.
-            return match same_tree(&src, &target, self.preserve_attributes, ctx) {
+            return match same_tree(&src, &target, self.preserve_attributes, false, ctx) {
                 Ok(true) => StepStatus::AlreadyDone,
                 Ok(false) => conflict(format!("“{}” is already there", display_name(&target))),
                 Err(e) => conflict(format!("{e:#}")),
@@ -1421,48 +1421,173 @@ impl super::Effect for Unmove {
 }
 
 /// Whether an existing destination already holds the source, including
-/// what travels beside it. Size and time reject obvious differences; only
-/// reading the bytes proves content equality for unrelated files.
+/// what travels beside it. Size and time reject obvious differences; the
+/// bytes are read where [`proves_bytes`] says they must be, the only proof
+/// of content equality for unrelated files.
 ///
 /// A plan asks it as it settles names, in its dry run and as it runs: its
 /// bytes are read once a plan while nothing of either tree, nor of what
-/// goes with them, changed (`StepContext::compared`, by `compared_state`).
+/// goes with them, changed (`StepContext::compared`, by `compared_state`);
+/// a folder found different keeps what it found of its items, which a
+/// merge asks of next, and each tree's state is read once a comparison,
+/// or once a settling of the plan's names (`state_in`,
+/// `StepContext::keeping_states`).
 pub(super) fn same_tree(
     src: &Path,
     copy: &Path,
     preserve_attributes: bool,
+    moving: bool,
     ctx: &StepContext,
 ) -> anyhow::Result<bool> {
     let along = along(ctx, src, copy);
+    let bytes = proves_bytes(src, copy, moving);
     // Read before they are compared: a change meanwhile is a change since.
-    let state = compared_state(src, copy, &along);
+    let state = compared_state(ctx, src, copy, &along, bytes);
     let key = (src.to_path_buf(), copy.to_path_buf(), preserve_attributes);
     if let Some(state) = state
         && let Some(same) = ctx.compared().found(&key, state)
     {
+        ctx.compared_ended();
         return Ok(same);
     }
-    let same = same_trees(src, copy, preserve_attributes, &along, ctx)?;
-    if let Some(state) = state {
-        ctx.compared().note(key, state, same);
+    let same = same_trees(src, copy, preserve_attributes, bytes, &along, ctx);
+    ctx.compared_ended();
+    if let (Some(state), Ok(same)) = (state, &same) {
+        ctx.compared().note(key, state, *same);
     }
-    Ok(same)
+    same
+}
+
+/// Whether "already there" must be proven by reading the bytes of both
+/// sides, or is settled by kind, permissions, attributes, size and time
+/// (`finished_as`). Proven for a move, whose verdict puts the original
+/// in the trash, and for a copy between this machine's own folders.
+/// Not for a copy from or to a remote (`fs::reach`): proving it would
+/// bring every byte of both sides across the network, for a verdict that
+/// only leaves a copy undone and removes nothing.
+fn proves_bytes(src: &Path, copy: &Path, moving: bool) -> bool {
+    moving || (crate::fs::reach::of(src).is_none() && crate::fs::reach::of(copy).is_none())
 }
 
 /// What `src` and `copy` are, and each companion that goes with `src` and
-/// its place beside `copy` (`state_of`, whether there or not), in one
-/// digest: `None` where something of them cannot be read.
-fn compared_state(src: &Path, copy: &Path, along: &[Along]) -> Option<blake3::Hash> {
+/// its place beside `copy` (`state_in`, whether there or not), with
+/// whether bytes are proven, in one digest: `None` where something of
+/// them cannot be read.
+fn compared_state(
+    ctx: &StepContext,
+    src: &Path,
+    copy: &Path,
+    along: &[Along],
+    bytes: bool,
+) -> Option<blake3::Hash> {
+    let besides = along
+        .iter()
+        .flat_map(|a| [&a.from, &a.to])
+        .map(|path| state_in(ctx, path));
+    Some(pair_state(
+        state_in(ctx, src)?,
+        state_in(ctx, copy)?,
+        besides,
+        bytes,
+    ))
+}
+
+/// The state a comparison of two trees is kept under (`Compared`): theirs,
+/// their companions' (`None` for one not there), and whether bytes were
+/// proven.
+fn pair_state(
+    src: blake3::Hash,
+    copy: blake3::Hash,
+    besides: impl IntoIterator<Item = Option<blake3::Hash>>,
+    bytes: bool,
+) -> blake3::Hash {
     let mut digest = blake3::Hasher::new();
-    digest.update(state_of(src)?.as_bytes());
-    digest.update(state_of(copy)?.as_bytes());
-    for path in along.iter().flat_map(|a| [&a.from, &a.to]) {
-        match state_of(path) {
+    digest.update(&[u8::from(bytes)]);
+    digest.update(src.as_bytes());
+    digest.update(copy.as_bytes());
+    for state in besides {
+        match state {
             Some(state) => digest.update(state.as_bytes()),
             None => digest.update(&[0]),
         };
     }
-    Some(digest.finalize())
+    digest.finalize()
+}
+
+/// How many entries `state_in` stat-ed, for a test to count.
+#[cfg(test)]
+static STATED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// What the tree at `path` is, links not followed, as [`state_of`] tells
+/// it (each entry's name, kind, size, change and modification times), in
+/// a digest of its own made from its folders' up: each folder's state read
+/// whole is kept for the comparison, or the settling of a plan's names
+/// (`StepContext::keeping_states`), so the trees a merge compares level by
+/// level are read once, not once a level. A file is
+/// stat-ed when asked. `None` where something of it cannot be read, it
+/// is gone, or the plan was cancelled.
+fn state_in(ctx: &StepContext, path: &Path) -> Option<blake3::Hash> {
+    if let Some(known) = ctx.state_found(path) {
+        return Some(known);
+    }
+    if ctx.cancel_token().is_cancelled() {
+        return None;
+    }
+    #[cfg(test)]
+    STATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let meta = std::fs::symlink_metadata(path).ok()?;
+    node_state(ctx, path, &meta)
+}
+
+/// [`state_in`] of the entry at `path`, whose metadata is `meta`: a
+/// folder's from its entries', kept (`state_in`); another's from `meta`.
+fn node_state(ctx: &StepContext, path: &Path, meta: &std::fs::Metadata) -> Option<blake3::Hash> {
+    if meta.is_dir()
+        && let Some(known) = ctx.state_found(path)
+    {
+        return Some(known);
+    }
+    let real_changes =
+        crate::fs::reach::of(path).is_none_or(|remote| !remote.makes_up_change_times());
+    let mut digest = blake3::Hasher::new();
+    let kind = u8::from(meta.is_dir()) | u8::from(meta.is_symlink()) << 1;
+    digest.update(&[kind]);
+    digest.update(&meta.len().to_le_bytes());
+    for time in [
+        real_changes
+            .then(|| crate::fs::stat::changed(path, meta))
+            .flatten(),
+        meta.modified().ok(),
+    ] {
+        let (after, since) = match time.map(|t| t.duration_since(std::time::UNIX_EPOCH)) {
+            None => (2u8, std::time::Duration::ZERO),
+            Some(Ok(d)) => (1, d),
+            Some(Err(e)) => (0, e.duration()),
+        };
+        digest.update(&[after]);
+        digest.update(&since.as_nanos().to_le_bytes());
+    }
+    if !meta.is_dir() {
+        return Some(digest.finalize());
+    }
+    let state = (|| {
+        let mut names = std::fs::read_dir(path)
+            .ok()?
+            .map(|e| e.map(|e| e.file_name()))
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        names.sort();
+        for name in names {
+            digest.update(name.as_encoded_bytes());
+            digest.update(&[0]);
+            digest.update(state_in(ctx, &path.join(name))?.as_bytes());
+        }
+        Some(digest.finalize())
+    })();
+    if let Some(state) = state {
+        ctx.state_seen(path, state);
+    }
+    state
 }
 
 /// [`same_tree`], read.
@@ -1470,10 +1595,11 @@ fn same_trees(
     src: &Path,
     copy: &Path,
     preserve_attributes: bool,
+    bytes: bool,
     along: &[Along],
     ctx: &StepContext,
 ) -> anyhow::Result<bool> {
-    if !same_node(src, copy, preserve_attributes, ctx)? {
+    if !same_node(src, copy, preserve_attributes, bytes, ctx)?.0 {
         return Ok(false);
     }
     for companion in along {
@@ -1482,24 +1608,43 @@ fn same_trees(
         if companion.attributes {
             continue;
         }
-        if !exists(&companion.to) || !same_node(&companion.from, &companion.to, true, ctx)? {
+        if !exists(&companion.to) || !same_node(&companion.from, &companion.to, true, bytes, ctx)?.0
+        {
             return Ok(false);
         }
     }
     Ok(true)
 }
 
+/// Whether `copy` is `src` as a copy keeps it, bytes read where `bytes`
+/// says so ([`proves_bytes`]), and the two as they were stat-ed for it. A
+/// folder found different keeps what it found of each item compared
+/// (`Compared`, under the items' states): a merge asks of those next.
 fn same_node(
     src: &Path,
     copy: &Path,
     preserve_attributes: bool,
+    bytes: bool,
     ctx: &StepContext,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<(bool, [std::fs::Metadata; 2])> {
     ctx.check_cancelled()?;
     let (a, b) = (
         std::fs::symlink_metadata(src)?,
         std::fs::symlink_metadata(copy)?,
     );
+    let same = same_entries(src, copy, (&a, &b), preserve_attributes, bytes, ctx)?;
+    Ok((same, [a, b]))
+}
+
+/// [`same_node`] of `src` and `copy`, stat-ed as `a` and `b`.
+fn same_entries(
+    src: &Path,
+    copy: &Path,
+    (a, b): (&std::fs::Metadata, &std::fs::Metadata),
+    preserve_attributes: bool,
+    bytes: bool,
+    ctx: &StepContext,
+) -> anyhow::Result<bool> {
     if a.file_type() != b.file_type() {
         return Ok(false);
     }
@@ -1515,7 +1660,7 @@ fn same_node(
         return Ok(false);
     }
     if a.is_file() {
-        return Ok(finished_as(&b, &a) && same_bytes(src, copy, a.len(), ctx)?);
+        return Ok(finished_as(b, a) && (!bytes || same_bytes(src, copy, a.len(), ctx)?));
     }
     if !a.is_dir() {
         // Never open a pipe, socket or device to compare it.
@@ -1537,15 +1682,27 @@ fn same_node(
     if children != names(copy)? {
         return Ok(false);
     }
+    let mut found = Vec::new();
     for name in children {
-        if !same_node(
-            &src.join(&name),
-            &copy.join(&name),
-            preserve_attributes,
-            ctx,
-        )? {
-            return Ok(false);
+        let (from, to) = (src.join(&name), copy.join(&name));
+        let (same, stated) = same_node(&from, &to, preserve_attributes, bytes, ctx)?;
+        found.push((from, to, same, stated));
+        if same {
+            continue;
         }
+        // Different: each item compared is kept for the merge that asks
+        // of them next, as `same_tree` keeps it (with no companion: in
+        // the folder, they were compared as its items).
+        for (from, to, same, [a, b]) in found {
+            let state = node_state(ctx, &from, &a)
+                .zip(node_state(ctx, &to, &b))
+                .map(|(a, b)| pair_state(a, b, [], bytes));
+            if let Some(state) = state {
+                ctx.compared()
+                    .note((from, to, preserve_attributes), state, same);
+            }
+        }
+        return Ok(false);
     }
     Ok(true)
 }
@@ -1577,10 +1734,16 @@ fn same_attributes(src: &Path, copy: &Path, ctx: &StepContext) -> anyhow::Result
     Ok(source.iter().all(|attribute| there.contains(attribute)))
 }
 
+/// How many files `same_bytes` compared, for a test to count.
+#[cfg(test)]
+static BYTES_COMPARED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Read a bounded amount at a time, checking cancellation between reads.
 /// Reading exactly the expected length plus EOF also refuses truncated or
 /// growing files; a mount returning EOF early is not evidence of equality.
 fn same_bytes(src: &Path, copy: &Path, len: u64, ctx: &StepContext) -> anyhow::Result<bool> {
+    #[cfg(test)]
+    BYTES_COMPARED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let before = (state_of(src), state_of(copy));
     if before.0.is_none() || before.1.is_none() {
         return Ok(false);
@@ -4830,16 +4993,153 @@ mod tests {
         let file = std::fs::File::options().write(true).open(&copy).unwrap();
         file.set_modified(when).unwrap();
         drop(file);
-        let ctx = StepContext::detached();
-        assert!(same_tree(&src, &copy, true, &ctx).unwrap());
+        // The dry run and the run: a context each, what they compared shared.
+        let compared = std::sync::Arc::new(super::super::context::Compared::default());
+        let pass = || StepContext::detached().with_compared(std::sync::Arc::clone(&compared));
+        let ctx = pass();
+        assert!(same_tree(&src, &copy, true, false, &ctx).unwrap());
         let key = (src.clone(), copy.clone(), true);
-        let state = compared_state(&src, &copy, &[]).unwrap();
+        let state = compared_state(&ctx, &src, &copy, &[], true).unwrap();
         assert_eq!(ctx.compared().found(&key, state), Some(true), "kept");
         let file = std::fs::File::options().write(true).open(&copy).unwrap();
         std::os::unix::fs::FileExt::write_all_at(&file, b"X", 0).unwrap();
         file.set_modified(when).unwrap();
         drop(file);
-        assert!(!same_tree(&src, &copy, true, &ctx).unwrap(), "read again");
+        assert!(
+            !same_tree(&src, &copy, true, false, &pass()).unwrap(),
+            "read again"
+        );
+    }
+
+    /// A tree, and a copy of it there whose last file differs in its
+    /// bytes alone (its length and time kept).
+    #[cfg(unix)]
+    fn tree_and_copy(tmp: &Path) -> (PathBuf, PathBuf) {
+        let (src, dest) = (tmp.join("src"), tmp.join("dest"));
+        for folder in ["a", "b", "z"] {
+            for n in 0..10 {
+                let rel = format!("tree/{folder}/it's {n}.bin");
+                let bytes = format!("{folder}{n}").repeat(1000).into_bytes();
+                for side in [&src, &dest] {
+                    let path = side.join(&rel);
+                    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    std::fs::write(&path, &bytes).unwrap();
+                }
+                let when = std::fs::metadata(src.join(&rel))
+                    .unwrap()
+                    .modified()
+                    .unwrap();
+                let there = std::fs::File::options()
+                    .write(true)
+                    .open(dest.join(&rel))
+                    .unwrap();
+                if folder == "z" && n == 9 {
+                    std::os::unix::fs::FileExt::write_all_at(&there, b"X", 0).unwrap();
+                }
+                there.set_modified(when).unwrap();
+            }
+        }
+        (src, dest)
+    }
+
+    /// A folder merged into its copy, level by level, reads each file's
+    /// bytes once and stats each entry at most twice a side: what a
+    /// folder found of its items is what the merge asks of them next. It
+    /// settles as ever: what is there whole is kept to be found done, the
+    /// file that differs kept beside its namesake.
+    #[cfg(unix)]
+    #[test]
+    fn a_merge_reads_each_file_once() {
+        use std::sync::atomic::Ordering;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let (src, dest) = tree_and_copy(tmp.path());
+        let steps: Vec<Box<dyn Operation>> = vec![Box::new(Copy {
+            entry: EntryRef::from_path(src.join("tree")).unwrap(),
+            dest_dir: dest.clone(),
+            new_name: None,
+            preserve_attributes: false,
+        })];
+        let ctx = StepContext::detached();
+        let (read, stated) = (
+            BYTES_COMPARED.load(Ordering::Relaxed),
+            STATED.load(Ordering::Relaxed),
+        );
+        let settled =
+            super::super::clash::settle(&steps, &super::super::clash::Answer::default(), &ctx);
+        let read = BYTES_COMPARED.load(Ordering::Relaxed) - read;
+        let stated = STATED.load(Ordering::Relaxed) - stated;
+        assert_eq!(read, 30, "each file's bytes once");
+        // A side: the tree, its three folders and their 30 files.
+        let entries = 2 * 34;
+        assert!(stated <= 2 * entries, "{stated} stats of {entries} entries");
+        let copies: Vec<(PathBuf, PathBuf)> = settled
+            .steps
+            .iter()
+            .map(|step| match step.describe() {
+                Change::Copy { from, to } => (from, to),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        let item = |rel: &str, to: &str| (src.join(rel), dest.join(to));
+        let mut expected = vec![item("tree/a", "tree/a"), item("tree/b", "tree/b")];
+        expected.extend((0..9).map(|n| {
+            item(
+                &format!("tree/z/it's {n}.bin"),
+                &format!("tree/z/it's {n}.bin"),
+            )
+        }));
+        expected.push(item("tree/z/it's 9.bin", "tree/z/it's 9 (copy).bin"));
+        assert_eq!(copies, expected);
+        assert_eq!(settled.clashes.len(), 3, "the tree, z, and its last file");
+    }
+
+    /// A copy from or to a remote finds what is there whole by its
+    /// length, time, kind and permissions, its bytes unread; a move, and
+    /// a copy between this machine's folders, reads them.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_a_remote_copy_trusts_length_and_time() {
+        use std::sync::atomic::Ordering;
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let server = tmp.path().join("server");
+        crate::fs::reach::pretend_remote(&server);
+        let src = tmp.path().join("here/it's a.bin");
+        let (remote, local) = (
+            server.join("it's a.bin"),
+            tmp.path().join("there/it's a.bin"),
+        );
+        for path in [&src, &remote, &local] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"0123456789").unwrap();
+        }
+        let when = std::fs::metadata(&src).unwrap().modified().unwrap();
+        for path in [&remote, &local] {
+            let file = std::fs::File::options().write(true).open(path).unwrap();
+            std::os::unix::fs::FileExt::write_all_at(&file, b"X", 0).unwrap();
+            file.set_modified(when).unwrap();
+        }
+        let ctx = StepContext::detached();
+        let read = || BYTES_COMPARED.load(Ordering::Relaxed);
+        let before = read();
+        assert!(
+            same_tree(&src, &remote, false, false, &ctx).unwrap(),
+            "a copy"
+        );
+        assert_eq!(read() - before, 0, "its bytes unread");
+        assert!(
+            !same_tree(&src, &remote, false, true, &ctx).unwrap(),
+            "a move"
+        );
+        assert_eq!(read() - before, 1);
+        assert!(
+            !same_tree(&src, &local, false, false, &ctx).unwrap(),
+            "a copy here"
+        );
+        assert_eq!(read() - before, 2);
     }
 
     /// An item of a trash on another filesystem, a copy of `name` in
