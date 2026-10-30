@@ -941,9 +941,10 @@ impl App {
 
     /// Show `location` in `pane` as its own terms say its lens, the pane's
     /// not brought in (ADR-107): a search whose text says the whole lens
-    /// (typed in the address field, a pill's choice). In place of the step
-    /// shown with `in_place`, as `navigate_in_place`; a location the pane
-    /// shows already is then left as it is.
+    /// (typed in the address field, a pill's choice), anything else with
+    /// none (the folder a search's last term taken off leaves). In place
+    /// of the step shown with `in_place`, as `navigate_in_place`. A
+    /// location the pane shows already is left as it is (ADR-098).
     pub fn navigate_as_is(
         &self,
         pane: PaneId,
@@ -951,16 +952,17 @@ impl App {
         in_place: bool,
     ) -> anyhow::Result<()> {
         let location = &self.reached_in(pane, location)?;
+        if self.shows_as(pane, location, Lensing::AsIs) {
+            return Ok(());
+        }
+        let as_is = Opening::lensing(Lensing::AsIs);
         if in_place {
-            if self.pane_location(pane).as_ref() == Some(location) {
-                return Ok(());
-            }
-            return self.open_in(pane, location, Opening::as_is(), |p, shown| {
+            return self.open_in(pane, location, as_is, |p, shown| {
                 p.replace_here(shown.clone());
             });
         }
         let left = self.cursor_of(pane);
-        self.open_in(pane, location, Opening::as_is(), |p, shown| {
+        self.open_in(pane, location, as_is, |p, shown| {
             p.go_on(shown.clone(), left);
         })
     }
@@ -968,19 +970,33 @@ impl App {
     /// Show `location` in `pane` in place of the step it shows, with no
     /// step of its own: Back goes where the step before led (a search
     /// shown as its words are typed, ADR-098). A location the pane shows
-    /// already is left as it is.
+    /// already, as it would show it, is left as it is.
     pub fn navigate_in_place(&self, pane: PaneId, location: &Location) -> anyhow::Result<()> {
         let location = &self.reached_in(pane, location)?;
-        if self.pane_location(pane).as_ref() == Some(location) {
+        if self.shows(pane, location) {
             return Ok(());
         }
         self.show(pane, location, |p, shown| p.replace_here(shown.clone()))
     }
 
+    /// Whether `pane` shows `location` already, as it would show it with
+    /// its lens brought in (ADR-107): what a search asked again is
+    /// compared with, so one shown is left as it is.
+    pub fn shows(&self, pane: PaneId, location: &Location) -> bool {
+        self.shows_as(pane, location, Lensing::Brought)
+    }
+
+    /// Whether `pane` shows `location` already, as `lensing` shows it.
+    fn shows_as(&self, pane: PaneId, location: &Location, lensing: Lensing) -> bool {
+        let (shown, _) = self.lensed_in(pane, location, lensing);
+        self.pane_location(pane).as_ref() == Some(&shown)
+    }
+
     /// Take back the step `pane` shows, as if it had never been gone to:
     /// the step before is shown again, and the one taken back and those
     /// ahead of it go (Escape in the address field after a search shown as
-    /// it was typed), as it was: the lens the step brought goes with it.
+    /// it was typed), as it was: a search as its text says, anything else
+    /// with the pane's lens, which the field puts back as it found it.
     /// Nothing at the first step.
     pub fn take_step_back(&self, pane: PaneId) -> anyhow::Result<()> {
         let (from, before) = {
@@ -998,7 +1014,8 @@ impl App {
             return Ok(());
         };
         let left = self.cursor_of(pane);
-        self.open_in(pane, &location, Opening::as_is(), |p, _| {
+        let as_it_was = Opening::lensing(Lensing::AsItWas);
+        self.open_in(pane, &location, as_it_was, |p, _| {
             p.take_step_back(from, &location, left);
         })
     }
@@ -1084,29 +1101,56 @@ impl App {
         Ok(())
     }
 
+    /// Show a step of `pane`'s history again (Back, Forward), then let
+    /// `then` update its history with the location shown: as `show`, but
+    /// the lens a search's terms held then gives way to the pane's now
+    /// (ADR-107: the lens is the pane's, never a step's).
+    pub(crate) fn show_again(
+        &self,
+        pane: PaneId,
+        location: &Location,
+        then: impl FnOnce(&mut crate::workspace::Pane, &Location),
+    ) -> anyhow::Result<()> {
+        self.open_in(pane, location, Opening::lensing(Lensing::Again), then)
+    }
+
     /// `location` as it takes `pane`'s lens (ADR-107, `LocationProvider::
-    /// lensed`): a search holding it in its terms (`as_is`: its own), or
-    /// the pane filtered by it. Asked of its provider with no lock held.
+    /// lensed`), as `lensing` says: a search holding it in its terms, or
+    /// the pane filtered by it, read again. Asked of its provider and the
+    /// filter reader with no lock held.
     fn lensed_in(
         &self,
         pane: PaneId,
         location: &Location,
-        as_is: bool,
+        lensing: Lensing,
     ) -> (Location, crate::workspace::Lensed) {
-        use crate::workspace::Lensed;
+        use crate::workspace::{Bring, Lensed};
         let carried = self
             .workspace
             .read()
             .pane(pane)
             .and_then(|p| p.lens().cloned());
-        let brought = if as_is { None } else { carried.as_ref() };
-        match self
+        let bring = match lensing {
+            Lensing::Brought => Bring::Added,
+            Lensing::Again => Bring::InPlace,
+            Lensing::AsIs | Lensing::AsItWas => Bring::Nothing,
+        };
+        if let Some((shown, own)) = self
             .provider(&location.scheme)
-            .and_then(|provider| provider.lensed(location, brought))
+            .and_then(|provider| provider.lensed(location, carried.as_ref(), bring))
         {
-            Some((shown, own)) => (shown, Lensed::Holds(own)),
-            None => (location.clone(), Lensed::Filters(carried)),
+            return (shown, Lensed::Holds(own));
         }
+        // Its text says it has none; else the pane's, read as of now (a
+        // date says today), and gone with its reader.
+        let lens = match lensing {
+            Lensing::AsIs => None,
+            _ => carried.and_then(|lens| {
+                let reader = self.registry.filter_readers.all().into_iter().next()?;
+                (reader.0)(&lens.words)?.lens
+            }),
+        };
+        (location.clone(), Lensed::Filters(lens))
     }
 
     /// Open `location` in `pane`, as `how` says, then let `then` update its
@@ -1118,7 +1162,7 @@ impl App {
         how: Opening<'_>,
         then: impl FnOnce(&mut crate::workspace::Pane, &Location),
     ) -> anyhow::Result<()> {
-        let (location, lensed) = self.lensed_in(pane, location, how.as_is);
+        let (location, lensed) = self.lensed_in(pane, location, how.lensing);
         // A location kept open beside the pane is shown without opening it.
         self.agent_may_open(&location)?;
         let kept = self
@@ -2150,18 +2194,35 @@ struct Opening<'a> {
     /// Only while the pane still shows this (a redirect, which a
     /// navigation meanwhile overrides).
     from: Option<&'a Location>,
-    /// The location's own terms say its lens: the pane's is not brought
-    /// in (ADR-107).
-    as_is: bool,
+    /// What of the pane's lens it is shown with (ADR-107).
+    lensing: Lensing,
 }
 
 impl Opening<'_> {
-    fn as_is() -> Self {
+    fn lensing(lensing: Lensing) -> Self {
         Opening {
-            as_is: true,
+            lensing,
             ..Opening::default()
         }
     }
+}
+
+/// What of the pane's lens a location is shown with (ADR-107,
+/// `App::lensed_in`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Lensing {
+    /// Brought in: a search adds it to its terms, anything else is
+    /// filtered by it.
+    #[default]
+    Brought,
+    /// A step of the history shown again (Back, Forward): brought in, in
+    /// place of the lens a search's terms held then.
+    Again,
+    /// Its text says its lens whole: a search's terms, anything else none.
+    AsIs,
+    /// A step taken back, as it was: a search as its text says, anything
+    /// else with the pane's.
+    AsItWas,
 }
 
 /// A pane's filter text, and what the filter reader there is now reads in
@@ -2550,9 +2611,9 @@ mod builtin {
                         })
                     };
                     if let Some((pos, loc, left)) = target {
-                        app.show(pane, &loc, |p, shown| {
+                        app.show_again(pane, &loc, |p, shown| {
                             p.go_to(pos, &loc, left);
-                            // The step as shown, the lens brought in.
+                            // The step as shown, with the pane's lens.
                             p.replace_here(shown.clone());
                         })?;
                     }
@@ -3518,6 +3579,64 @@ mod tests {
         assert_eq!(app.pane_location(pane).as_ref(), Some(&c));
         let ws = app.workspace.read();
         assert_eq!(ws.pane(pane).unwrap().history.last(), Some(&c));
+    }
+
+    /// A lens is read again wherever a location is shown (ADR-107): a date
+    /// it holds (`modified:today`) says the day it is read on, in a folder
+    /// as in a search. Shown as it is, a folder has none.
+    #[test]
+    fn a_lens_is_read_again_where_a_location_is_shown() {
+        use crate::Location;
+        use crate::workspace::{Lens, ReadFilter};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let tmp = tempfile::tempdir().unwrap();
+        let [a, b, c] = ["a", "b", "c"].map(|name| {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir(&dir).unwrap();
+            Location::from_path(dir)
+        });
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        let reads = std::sync::Arc::new(AtomicUsize::new(0));
+        let counted = std::sync::Arc::clone(&reads);
+        let added = app.registry.filter_readers.add(
+            "test",
+            crate::registry::FilterReader(std::sync::Arc::new(move |text: &str| {
+                counted.fetch_add(1, Ordering::Relaxed);
+                let lens = Lens {
+                    words: text.into(),
+                    set: Vec::new(),
+                    keeps: std::sync::Arc::new(|_| true),
+                    metadata: false,
+                };
+                Some(ReadFilter {
+                    keeps: std::sync::Arc::new(|_| true),
+                    waits: Vec::new(),
+                    metadata: false,
+                    lens: Some(lens),
+                })
+            })),
+        );
+        assert!(added);
+        let pane = app.workspace.read().active_id();
+        let keeps = || {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            p.lens().map(|l| std::sync::Arc::clone(&l.keeps))
+        };
+        app.navigate(pane, &a).unwrap();
+        app.dispatch(&crate::command::Invocation::with_args(
+            "filter",
+            &serde_json::json!({ "text": "modified:today" }),
+        ))
+        .unwrap();
+        let first = keeps().expect("a lens");
+        assert_eq!(reads.load(Ordering::Relaxed), 1);
+        app.navigate(pane, &b).unwrap();
+        let again = keeps().expect("kept");
+        assert_eq!(reads.load(Ordering::Relaxed), 2, "read again");
+        assert!(!std::sync::Arc::ptr_eq(&first, &again), "its test anew");
+        app.navigate_as_is(pane, &c, false).unwrap();
+        assert!(keeps().is_none(), "shown as it is: none");
     }
 
     /// A search shown as it is typed: one step, each change in its place,

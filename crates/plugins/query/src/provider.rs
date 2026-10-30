@@ -96,25 +96,30 @@ impl LocationProvider for QueryProvider {
     }
 
     /// A search holds a lens in its own terms (ADR-107): one brought in is
-    /// added to them (`facets::with_lens`), and what of them the listing
-    /// can decide is the lens it then holds. A lens it holds already
-    /// leaves it as it is written.
+    /// added to them (`facets::with_lens`), or, for a step shown again,
+    /// takes the place of the one they held (`lens::in_place_of_lens`);
+    /// what of them the listing can decide is the lens it then holds. One
+    /// whose terms take nothing new is shown as it is written; one that
+    /// does not read says what is wrong, and the pane keeps its lens.
     fn lensed(
         &self,
         location: &Location,
         lens: Option<&skwir_core::workspace::Lens>,
+        bring: skwir_core::workspace::Bring,
     ) -> Option<(Location, Option<skwir_core::workspace::Lens>)> {
+        use skwir_core::workspace::Bring;
         let expr = &location.rest;
-        // One that does not read holds no lens: it says what is wrong.
-        let shown = match lens.map(|lens| {
-            (
-                crate::facets::with_lens(expr, ""),
-                crate::facets::with_lens(expr, &lens.words),
-            )
-        }) {
-            Some((Ok(as_written), Ok(brought))) if brought != as_written => {
-                Location::new(SCHEME, brought)
-            }
+        let Ok(as_written) = crate::facets::with_lens(expr, "") else {
+            return Some((location.clone(), lens.cloned()));
+        };
+        let words = lens.map_or("", |lens| &*lens.words);
+        let brought = match bring {
+            Bring::Nothing => Ok(as_written.clone()),
+            Bring::Added => crate::facets::with_lens(expr, words),
+            Bring::InPlace => crate::lens::in_place_of_lens(expr, words),
+        };
+        let shown = match brought {
+            Ok(brought) if brought != as_written => Location::new(SCHEME, brought),
             _ => location.clone(),
         };
         let own = crate::lens::lens_of(&shown.rest);

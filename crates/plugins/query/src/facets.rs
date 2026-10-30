@@ -176,7 +176,7 @@ struct Parts {
 }
 
 /// The terms a query ANDs together.
-fn items(q: &Query) -> Vec<&Expr> {
+pub(crate) fn items(q: &Query) -> Vec<&Expr> {
     match &q.expr {
         None => Vec::new(),
         Some(Expr::And(items)) => items.iter().collect(),
@@ -195,7 +195,7 @@ fn when_of(t: &Term) -> Option<usize> {
 }
 
 /// A term on its own, as a part of an AND prints it.
-fn print(e: &Expr) -> String {
+pub(crate) fn print(e: &Expr) -> String {
     match e {
         Expr::Or(_) => format!("({e})"),
         _ => e.to_string(),
@@ -287,6 +287,22 @@ impl Parts {
         self.not_tags.push(tag);
     }
 
+    /// Whether the facet `id` set to `value`, as a chip says it, is one of
+    /// these parts.
+    fn sets(&self, id: &str, value: &str) -> bool {
+        match id {
+            "kind" => !self.kinds.is_empty(),
+            "size" => self.size.is_some(),
+            "tag" => self.tags.iter().any(|t| same_tag(t, value)),
+            "not_tag" => self.not_tags.iter().any(|t| same_tag(t, value)),
+            "advanced" => self.advanced.iter().any(|a| a == value),
+            id => WHEN
+                .iter()
+                .zip(&self.when)
+                .any(|((facet, ..), term)| *facet == id && term.is_some()),
+        }
+    }
+
     /// The query text: these parts, then `options`' `in:`, `depth:`,
     /// `hidden:` and `case:`.
     fn write(&self, options: &Query) -> String {
@@ -313,6 +329,12 @@ impl Parts {
         out.retain(|s| !s.is_empty());
         out.join(" ")
     }
+}
+
+/// `q` written as `refine` writes a query back: names as typed, then
+/// where it looks and how.
+pub(crate) fn written(q: &Query) -> String {
+    Parts::of(q).write(q)
 }
 
 fn kind_term(kinds: &[Kind]) -> String {
@@ -926,18 +948,14 @@ pub fn describe_for(
             lens: false,
         });
     }
-    // What of it the pane keeps as it goes elsewhere: a set facet of the
-    // lens, or a part no facet holds that the lens takes.
+    // What of it the pane keeps as it goes elsewhere: a facet its lens's
+    // terms set (`lens::is_lens`), read as the search's are.
+    let lens = Parts::of(&crate::lens::part(&q, true));
     for chip in &mut chips {
-        chip.lens = chip.value.is_some()
-            && match chip.id.as_str() {
-                "kind" | "modified" | "created" | "accessed" | "size" | "tag" | "not_tag" => true,
-                "advanced" => chip.value.as_deref().is_some_and(|v| {
-                    crate::lens::lens_of(v).is_some()
-                        && crate::lens::without_lens(v).is_some_and(|rest| rest.is_empty())
-                }),
-                _ => false,
-            };
+        chip.lens = chip
+            .value
+            .as_deref()
+            .is_some_and(|value| lens.sets(&chip.id, value));
     }
     let text = without_root(&p, &q);
     Ok(Description {

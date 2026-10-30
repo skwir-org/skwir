@@ -458,6 +458,84 @@ impl Types {
     }
 }
 
+/// Types asked by name once per suffix (`.jpg`, `.tar.gz`), as
+/// [`by_names`] asks a large selection: what tests every name of a
+/// listing (a filter at each key, Quick filters' count) would ask a
+/// hundred thousand names one by one. A name is typed by the longest
+/// compound suffix the database knows that it ends with
+/// ([`compound_suffixes`]), else by its last extension: keyed by all
+/// after its first dot, every name of a camera's dated pictures
+/// (`2024.05.01 12.30.jpg`) was a suffix of its own, asked and kept. A
+/// name with no suffix is asked as it is; one only a whole-name pattern
+/// knows (`CMakeLists.txt`) takes its suffix's type. Kept by its asker
+/// (one filter, one count), let go of with it.
+#[derive(Default)]
+pub struct BySuffix(parking_lot::Mutex<Suffixes>);
+
+#[derive(Default)]
+struct Suffixes {
+    /// By suffix: a last extension as written (a few globs heed case:
+    /// `*.C`), or a compound suffix, lowercase.
+    types: HashMap<String, Option<Mime>>,
+    /// The compound suffixes ending in each last extension, lowercase.
+    compounds: HashMap<String, std::sync::Arc<[String]>>,
+}
+
+impl BySuffix {
+    /// The type `name` says, its suffix's.
+    pub fn of(&self, name: &OsStr) -> Option<Mime> {
+        let text = name.to_string_lossy();
+        let start = text.len() - text.trim_start_matches('.').len();
+        let Some((_, last)) = text[start..].rsplit_once('.') else {
+            return by_name(name);
+        };
+        let suffix = self.suffix(&text, last);
+        if let Some(known) = self.0.lock().types.get(suffix.as_ref()) {
+            return known.clone();
+        }
+        let found = by_name(OsStr::new(&format!("file.{suffix}")));
+        self.0
+            .lock()
+            .types
+            .insert(suffix.into_owned(), found.clone());
+        found
+    }
+
+    /// What `name`, whose last extension is `last`, is typed by: the
+    /// longest compound suffix it ends with, else `last`.
+    fn suffix<'a>(&self, name: &str, last: &'a str) -> std::borrow::Cow<'a, str> {
+        use std::borrow::Cow;
+        let lower = if last
+            .bytes()
+            .any(|b| !b.is_ascii_lowercase() && !b.is_ascii_digit())
+        {
+            Cow::Owned(last.to_lowercase())
+        } else {
+            Cow::Borrowed(last)
+        };
+        let known = self.0.lock().compounds.get(lower.as_ref()).cloned();
+        let compounds = known.unwrap_or_else(|| {
+            let found: std::sync::Arc<[String]> = compound_suffixes(&lower).into();
+            self.0
+                .lock()
+                .compounds
+                .insert(lower.into_owned(), std::sync::Arc::clone(&found));
+            found
+        });
+        let name = name.as_bytes();
+        compounds
+            .iter()
+            .filter(|c| {
+                let c = c.as_bytes();
+                name.len() > c.len()
+                    && name[name.len() - c.len() - 1] == b'.'
+                    && name[name.len() - c.len()..].eq_ignore_ascii_case(c)
+            })
+            .max_by_key(|c| c.len())
+            .map_or(Cow::Borrowed(last), |c| Cow::Owned(c.clone()))
+    }
+}
+
 /// The type of a file asked about (a preview's or a thumbnail's request):
 /// the one it was asked with, read from its bytes where its name is
 /// ambiguous (an `.otf` font or formula template), else its name's.
@@ -975,6 +1053,46 @@ fn head<S: FileSource + ?Sized>(file: &S) -> Option<std::borrow::Cow<'_, [u8]>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A name is typed by its last extension, or by the longest compound
+    /// suffix the database knows that it ends with: a camera's dated names
+    /// are one suffix, and a compressed tar is not a gzip.
+    #[test]
+    fn types_are_kept_by_last_extension_and_compound_suffix() {
+        let types = BySuffix::default();
+        let jpeg = by_name(OsStr::new("x.jpg"));
+        for i in 0..100_000 {
+            let name = format!("IMG.{i}.2024.jpg");
+            assert_eq!(types.of(OsStr::new(&name)), jpeg, "{name}");
+        }
+        assert!(
+            types.0.lock().types.len() <= 2,
+            "one suffix, not a name each"
+        );
+        // The free desktops' database names the compressed tar.
+        #[cfg(target_os = "linux")]
+        assert_eq!(
+            types.of(OsStr::new("a.TAR.GZ")).as_ref().map(Mime::as_str),
+            Some("application/x-compressed-tar")
+        );
+        for name in [
+            "a.TAR.GZ",
+            "it's b.tar.gz",
+            "c.gz",
+            "v1.2.tar.xz",
+            "notes.txt",
+            "x.C",
+            "y.c",
+            "Makefile",
+            ".bashrc",
+        ] {
+            assert_eq!(
+                types.of(OsStr::new(name)),
+                by_name(OsStr::new(name)),
+                "{name}"
+            );
+        }
+    }
 
     /// A literal `*.a.b` glob is a compound suffix; a plain extension, a
     /// wildcard or an empty part is not.

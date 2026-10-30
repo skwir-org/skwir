@@ -414,17 +414,17 @@ pub trait LocationProvider: Send + Sync {
         None
     }
 
-    /// `location` as it takes the lens a pane brings into it (ADR-107),
-    /// asked before it is opened, from its text as `title` is: `None` (the
-    /// default) when the pane filters what it lists by the lens (a folder,
-    /// the trash, a tag's place); a location whose own terms hold one (a
-    /// search) answers itself with the lens's terms in them, and the lens
-    /// it then holds (`None`: its terms are no lens). Without `lens`, the
-    /// lens its terms hold.
+    /// `location` as it takes `lens`, the pane's (ADR-107), as `bring`
+    /// says, asked before it is opened, from its text as `title` is:
+    /// `None` (the default) when the pane filters what it lists by the
+    /// lens (a folder, the trash, a tag's place); a location whose own
+    /// terms hold one (a search) answers itself with the lens's terms in
+    /// them, and the lens it then holds (`None`: its terms are no lens).
     fn lensed(
         &self,
         _location: &Location,
         _lens: Option<&crate::workspace::Lens>,
+        _bring: crate::workspace::Bring,
     ) -> Option<(Location, Option<crate::workspace::Lens>)> {
         None
     }

@@ -841,6 +841,19 @@ impl Lens {
     }
 }
 
+/// What of the pane's lens a location whose own terms hold one (a search)
+/// is asked to take (`LocationProvider::lensed`, ADR-107).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bring {
+    /// The pane's lens, added to its terms: a facet they set is their own.
+    Added,
+    /// Nothing: its terms say its lens whole.
+    Nothing,
+    /// A step of the pane's history shown again: the lens its terms held
+    /// was the pane's then, and the pane's now takes its place.
+    InPlace,
+}
+
 /// How a location takes the lens a pane brings into it
 /// (`LocationProvider::lensed`).
 #[derive(Clone, Debug)]
@@ -1189,15 +1202,20 @@ impl Pane {
 
     /// Filter the pane by `lens` alone (`None`: show everything): what a
     /// location that does not hold a lens is shown with, a tab or a split
-    /// opened from a pane with that pane's.
+    /// opened from a pane with that pane's. Its test is the one given,
+    /// even for the words the pane filters by already: read again where a
+    /// location is shown, a date says the day it is read on.
     pub(crate) fn carry(&mut self, lens: Option<Lens>) {
-        match lens {
-            Some(lens) => {
-                let words = Arc::clone(&lens.words);
-                self.set_filter(Some(&words), Some(ReadFilter::of_lens(lens)));
-            }
-            None => self.set_filter(None, None),
-        }
+        let Some(lens) = lens else {
+            self.set_filter(None, None);
+            // One a location held (a search's) goes too.
+            self.lens = None;
+            return;
+        };
+        self.filter = Some(Arc::clone(&lens.words));
+        self.read = Some(Arc::new(ReadFilter::of_lens(lens)));
+        self.lens = self.read.as_ref().and_then(|r| r.lens.clone());
+        self.filter_changed();
     }
 
     /// Open the location a dormant pane shows again (`suspend`): what it

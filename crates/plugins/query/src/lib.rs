@@ -303,41 +303,29 @@ fn pane_search(app: &App, pane: PaneId) -> anyhow::Result<String> {
     Ok(location_for("", Some(&dir)).rest)
 }
 
-/// `location` as the pane would show it, its lens brought in (ADR-107,
-/// `QueryProvider::lensed`): what a search asked again is compared with.
-fn with_pane_lens(app: &App, pane: PaneId, location: &Location) -> Location {
-    let words = app
-        .workspace
-        .read()
-        .pane(pane)
-        .and_then(|p| p.lens().map(|l| l.words.to_string()));
-    let Some(words) = words else {
-        return location.clone();
-    };
-    let written = facets::with_lens(&location.rest, "");
-    match facets::with_lens(&location.rest, &words) {
-        Ok(brought) if written.as_ref().ok() != Some(&brought) => Location::new(SCHEME, brought),
-        _ => location.clone(),
-    }
-}
-
 /// Change one facet of the pane's search, or start one in its folder with
-/// its lens: a change of the search's lens alone is made in place of it,
-/// as a folder's filter changes, any other is a step Back undoes; its last
-/// term taken away, the place it searched shows, filtered by nothing.
+/// its lens, and show it (`show_refined`).
 fn refine_search(app: &App, pane: PaneId, facet: &str, value: Option<&str>) -> anyhow::Result<()> {
     let shown = app
         .pane_location(pane)
         .is_some_and(|l| &*l.scheme == SCHEME);
     let expr = pane_search(app, pane)?;
     let refined = facets::refine(&expr, facet, value).map_err(|e| anyhow::anyhow!("query: {e}"))?;
-    let to = refined_location(&expr, &refined);
     if !shown {
-        return app.navigate(pane, &to);
+        return app.navigate(pane, &refined_location(&expr, &refined));
     }
+    show_refined(app, pane, &expr, &refined)
+}
+
+/// Show the pane's search `expr` as `refined`: a change of its lens alone
+/// in place of it, as a folder's filter changes, any other as a step Back
+/// undoes; its last term taken away, the place it searched, filtered by
+/// nothing. The search says its lens whole: the pane's is the one it has
+/// changed.
+fn show_refined(app: &App, pane: PaneId, expr: &str, refined: &str) -> anyhow::Result<()> {
+    let to = refined_location(expr, refined);
     let in_place = &*to.scheme == SCHEME
-        && lens::without_lens(&expr).is_some_and(|rest| Some(rest) == lens::without_lens(&refined));
-    // The search says its lens whole: the one it had changed.
+        && lens::without_lens(expr).is_some_and(|rest| Some(rest) == lens::without_lens(refined));
     app.navigate_as_is(pane, &to, in_place)
 }
 
@@ -671,7 +659,7 @@ impl Plugin for QueryPlugin {
                     app.navigate_as_is(pane, &location, a.in_place)?;
                 } else if a.in_place {
                     app.navigate_in_place(pane, &location)?;
-                } else if app.pane_location(pane) != Some(with_pane_lens(app, pane, &location)) {
+                } else if !app.shows(pane, &location) {
                     app.navigate(pane, &location)?;
                 }
                 if a.remember && skwir_core::permissions::agent_call().is_none() {
@@ -1032,8 +1020,8 @@ impl Plugin for QueryPlugin {
                     (Some(facet), false) => refine_filter(app, pane, &facet, a.value.as_deref())?,
                     (None, true) => {
                         let expr = pane_search(app, pane)?;
-                        let rest = lens::without_lens(&expr).unwrap_or(expr);
-                        app.navigate_as_is(pane, &Location::new(SCHEME, rest), true)?;
+                        let rest = lens::without_lens(&expr).unwrap_or_else(|| expr.clone());
+                        show_refined(app, pane, &expr, &rest)?;
                     }
                     (None, false) => {
                         let typed = app
@@ -2063,9 +2051,24 @@ mod tests {
             facets::with_lens("cat modified:2024 in:/x", "kind:image modified:2001 tag:a").unwrap(),
             "cat kind:image modified:2024 tag:a in:/x"
         );
+        // Without its lens, its words as typed.
         assert_eq!(
             lens::without_lens("cat kind:image in:/x").as_deref(),
-            Some("name:cat in:/x")
+            Some("cat in:/x")
+        );
+        // A step shown again takes the pane's lens in place of its own; one
+        // of the lens alone keeps it, as what it looks for.
+        assert_eq!(
+            lens::in_place_of_lens("cat kind:image tag:a in:/x", "kind:video").unwrap(),
+            "cat kind:video in:/x"
+        );
+        assert_eq!(
+            lens::in_place_of_lens("cat kind:image in:/x", "").unwrap(),
+            "cat in:/x"
+        );
+        assert_eq!(
+            lens::in_place_of_lens("modified:2024-05 in:/x", "kind:image").unwrap(),
+            "kind:image modified:2024-05 in:/x"
         );
     }
 
@@ -2135,6 +2138,166 @@ mod tests {
         app.dispatch(&Invocation::new("back")).unwrap();
         let search = lang::parse(&app.pane_location(pane).unwrap().rest).unwrap();
         assert_eq!(search.expr.unwrap().to_string(), "kind:image");
+    }
+
+    /// A search the pane shows already is left as it is (ADR-098), asked
+    /// as it is and as a step of its own: Enter over the search shown as
+    /// it was typed takes no step and lists nothing again.
+    #[test]
+    fn a_search_asked_again_as_it_is_is_left_as_it_is() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("it's here");
+        std::fs::create_dir(&root).unwrap();
+        tree(&root);
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        let search = |in_place: bool| {
+            app.dispatch(&Invocation::with_args(
+                "query.search",
+                &serde_json::json!({
+                    "expr": "cat", "root": PathArg::from(root.as_path()),
+                    "as_is": true, "in_place": in_place, "pane": pane,
+                }),
+            ))
+            .unwrap();
+            assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        };
+        let state = || {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            (p.history.clone(), p.history_pos, p.listing.id())
+        };
+        // The field's step, the search as typed shown in its place.
+        app.step_here(pane).unwrap();
+        search(true);
+        let typed = state();
+        assert_eq!((typed.0.len(), typed.1), (2, 1));
+        // Enter: the same search asked as a step of its own.
+        search(false);
+        assert_eq!(state(), typed, "left as it is");
+    }
+
+    /// A pill's × on a search's last term shows the place it searched,
+    /// filtered by nothing (ADR-107): the lens that term was goes with it.
+    #[test]
+    fn a_search_s_last_term_taken_off_shows_its_folder_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("it's here");
+        std::fs::create_dir(&root).unwrap();
+        tree(&root);
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&root)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        let filtered = || {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            (
+                p.filter().map(str::to_owned),
+                p.lens().map(|l| l.words.to_string()),
+            )
+        };
+        app.dispatch(&Invocation::with_args(
+            "query.refine",
+            &serde_json::json!({ "facet": "kind", "value": "image", "pane": pane }),
+        ))
+        .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        assert_eq!(filtered(), (None, Some("kind:image".to_owned())));
+        let chips = match app
+            .dispatch(&Invocation::with_args(
+                "query.describe",
+                &serde_json::json!({ "pane": pane }),
+            ))
+            .unwrap()
+        {
+            Outcome::Value(v) => v["chips"].as_array().unwrap().clone(),
+            other => panic!("{other:?}"),
+        };
+        let kind = chips.iter().find(|c| c["id"] == "kind").unwrap();
+        let clear: Invocation = serde_json::from_value(kind["clear"].clone()).unwrap();
+        app.dispatch(&clear.with("pane", pane)).unwrap();
+        assert_eq!(app.pane_location(pane), Some(Location::from_path(&root)));
+        assert_eq!(filtered(), (None, None), "nothing filters the folder");
+
+        // The lens taken off a search of the lens alone: its folder, whole,
+        // never an empty search of everything below it.
+        app.dispatch(&Invocation::new("back")).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        assert_eq!(filtered(), (None, Some("kind:image".to_owned())));
+        app.dispatch(&Invocation::with_args(
+            "query.narrow",
+            &serde_json::json!({ "pane": pane }),
+        ))
+        .unwrap();
+        assert_eq!(app.pane_location(pane), Some(Location::from_path(&root)));
+        assert_eq!(filtered(), (None, None));
+    }
+
+    /// The lens is the pane's, never a step's (ADR-107): a search shown
+    /// again by Back or Forward takes the pane's lens in place of the one
+    /// it was shown with, so a lens taken off meanwhile stays off.
+    #[test]
+    fn back_and_forward_bring_no_lens_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("it's here");
+        std::fs::create_dir(&root).unwrap();
+        tree(&root);
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        let run = |name: &str, args: serde_json::Value| {
+            app.dispatch(&Invocation::with_args(name, &args)).unwrap();
+            assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        };
+        let lens = || {
+            let ws = app.workspace.read();
+            ws.pane(pane).unwrap().lens().map(|l| l.words.to_string())
+        };
+        let names = || -> BTreeSet<String> {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            p.order()
+                .iter()
+                .filter_map(|id| p.entry(*id))
+                .map(|e| e.name_str().into_owned())
+                .collect()
+        };
+        app.navigate(pane, &Location::from_path(root.join("pics")))
+            .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        run(
+            "query.narrow",
+            serde_json::json!({ "facet": "kind", "value": "image", "pane": pane }),
+        );
+        let root_arg = PathArg::from(root.as_path());
+        run(
+            "query.search",
+            serde_json::json!({ "expr": "cat OR notes", "root": root_arg, "pane": pane }),
+        );
+        assert_eq!(names(), set(&["cat.png"]), "the lens brought in");
+        run("back", serde_json::json!({ "pane": pane }));
+        assert_eq!(lens().as_deref(), Some("kind:image"));
+        // Taken off; Forward shows the search with the pane's lens: none.
+        run("query.narrow", serde_json::json!({ "pane": pane }));
+        run("forward", serde_json::json!({ "pane": pane }));
+        assert_eq!(lens(), None);
+        assert_eq!(names(), set(&["cat.png", "notes.txt"]));
+        // Another lens put on meanwhile is the one it takes.
+        run("back", serde_json::json!({ "pane": pane }));
+        run(
+            "query.narrow",
+            serde_json::json!({ "facet": "kind", "value": "text", "pane": pane }),
+        );
+        run("forward", serde_json::json!({ "pane": pane }));
+        assert_eq!(lens().as_deref(), Some("kind:text"));
+        assert_eq!(names(), set(&["notes.txt"]));
+        let history = app.workspace.read().pane(pane).unwrap().history.clone();
+        assert_eq!(history.len(), 2, "{history:?}");
     }
 
     /// Answers `taken` from a text file holding the clock's digits.

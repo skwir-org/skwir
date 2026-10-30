@@ -26,26 +26,34 @@ fn reads_file(t: &Term) -> bool {
     )
 }
 
+/// Whether `t` asks what a file's metadata says (a size, a tag, a date):
+/// a name, an extension, a type or a kind is read from the name.
+fn reads_metadata(t: &Term) -> bool {
+    !matches!(
+        t,
+        Term::Name(_) | Term::Ext(_) | Term::Type(_) | Term::Mime(..) | Term::Kind(_)
+    )
+}
+
 /// Whether `item`, one of the terms a query ANDs, is a lens's: no word
-/// that finds names in it, nothing read from the file.
-fn is_lens(item: &Expr) -> bool {
+/// that finds names in it, nothing read from the file. What decides it
+/// everywhere: the lens a query holds, what a search is without it, and
+/// which of its chips stay as the pane goes elsewhere (`facets`).
+pub(crate) fn is_lens(item: &Expr) -> bool {
     !item.any_term(&|t| matches!(t, Term::Name(_)) || reads_file(t))
 }
 
-/// The terms a query ANDs together.
-fn items(q: &lang::Query) -> Vec<Expr> {
-    match q.expr.clone() {
-        Some(Expr::And(items)) => items,
-        Some(e) => vec![e],
-        None => Vec::new(),
-    }
-}
-
-/// A term on its own, as a part of an AND prints it.
-fn print(e: &Expr) -> String {
-    match e {
-        Expr::Or(_) => format!("({e})"),
-        _ => e.to_string(),
+/// `q` with only its terms of the lens (`keep`) or only the others: where
+/// it looks and how stay.
+pub(crate) fn part(q: &lang::Query, keep: bool) -> lang::Query {
+    let kept: Vec<Expr> = facets::items(q)
+        .into_iter()
+        .filter(|e| is_lens(e) == keep)
+        .cloned()
+        .collect();
+    lang::Query {
+        expr: and(kept),
+        ..q.clone()
     }
 }
 
@@ -58,21 +66,19 @@ pub fn lens_of(expr: &str) -> Option<Lens> {
 
 /// The lens of a query read already.
 fn lens_in(q: &lang::Query) -> Option<Lens> {
-    let lens: Vec<Expr> = items(q).into_iter().filter(is_lens).collect();
-    if lens.is_empty() {
+    let lens = part(q, true);
+    let items = facets::items(&lens);
+    if items.is_empty() {
         return None;
     }
-    let words = lens.iter().map(print).collect::<Vec<_>>().join(" ");
-    let metadata = lens.iter().any(|e| {
-        e.any_term(&|t| {
-            !matches!(
-                t,
-                Term::Ext(_) | Term::Type(_) | Term::Mime(..) | Term::Kind(_)
-            )
-        })
-    });
+    let words = items
+        .iter()
+        .map(|e| facets::print(e))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let metadata = items.iter().any(|e| e.any_term(&reads_metadata));
     let set = facets::set_facets(&words).unwrap_or_default();
-    let test = and(lens)?;
+    let test = lens.expr?;
     // Asked of every file at each redraw of the order, on the window's
     // thread: a type once per suffix (`lang::Types`).
     let types = lang::Types::default();
@@ -85,18 +91,26 @@ fn lens_in(q: &lang::Query) -> Option<Lens> {
 }
 
 /// `expr` without its lens: its words, what it reads from the files and
-/// where it looks, as a query writes them. Two queries with the same are
-/// the same search but for their lens.
+/// where it looks, written as `facets::refine` writes a query (names as
+/// typed). Two queries with the same are the same search but for their
+/// lens.
 pub fn without_lens(expr: &str) -> Option<String> {
     let q = lang::parse(expr).ok()?;
-    let rest: Vec<Expr> = items(&q).into_iter().filter(|e| !is_lens(e)).collect();
-    Some(
-        lang::Query {
-            expr: and(rest),
-            ..q
-        }
-        .to_string(),
-    )
+    Some(facets::written(&part(&q, false)))
+}
+
+/// The search `expr`, a step of a pane's history shown again, with the
+/// pane's lens (`lens`, its words) in place of the one its terms held
+/// (ADR-107: the lens is the pane's, never a step's). A search whose
+/// every term is of the lens keeps them, as what it looks for, and takes
+/// the pane's lens beside them, as any search brought one does.
+pub fn in_place_of_lens(expr: &str, lens: &str) -> Result<String, String> {
+    let q = lang::parse(expr).map_err(|e| e.to_string())?;
+    let rest = part(&q, false);
+    if rest.expr.is_none() {
+        return facets::with_lens(expr, lens);
+    }
+    facets::with_lens(&facets::written(&rest), lens)
 }
 
 /// Whether `entry` is what `test` asks, from what the listing knows of
@@ -131,7 +145,7 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
     let Some((q, _)) = longest_query(text) else {
         return Some(everything());
     };
-    let all = items(&q);
+    let all: Vec<Expr> = facets::items(&q).into_iter().cloned().collect();
     if all.is_empty() {
         return Some(everything());
     }
@@ -156,17 +170,10 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
         }
     }
     let lens = lens_in(&lang::Query {
-        expr: and(files.iter().filter(|e| is_lens(e)).cloned().collect()),
+        expr: and(files.clone()),
         ..q.clone()
     });
-    let metadata = files.iter().any(|e| {
-        e.any_term(&|t| {
-            !matches!(
-                t,
-                Term::Name(_) | Term::Ext(_) | Term::Type(_) | Term::Mime(..) | Term::Kind(_)
-            )
-        })
-    });
+    let metadata = files.iter().any(|e| e.any_term(&reads_metadata));
     let names = Names::of(names);
     let files = and(files);
     let types = lang::Types::default();
