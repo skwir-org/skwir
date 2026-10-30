@@ -60,10 +60,6 @@ pub struct PaneUi {
     pub loading: crate::loading::State,
     /// The address field while it is typed in (`omnibox.rs`).
     pub omni: Option<crate::omnibox::Omni>,
-    /// The listing and its names when a filter that reads metadata last
-    /// asked for what its files lack (`Shell::ask_filter_metadata`): each
-    /// key typed changes the filter, not what lacks it.
-    pub filter_hydrated: Option<(u64, u64)>,
     /// What the files it shows weigh, for its footer (`weight.rs`).
     pub weight: crate::weight::Weight,
     /// What Quick filters offer over what it shows.
@@ -981,7 +977,6 @@ impl Shell {
             usage: UsageState::default(),
             loading: crate::loading::State::default(),
             omni: None,
-            filter_hydrated: None,
             weight: crate::weight::Weight::default(),
             quick_filters: crate::quick_filters::QuickFilters::default(),
             chips: crate::search_bar::Chips::default(),

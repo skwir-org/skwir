@@ -113,10 +113,10 @@ fn as_of_said(as_of: &AsOf, now: &jiff::Zoned) -> (String, String) {
 pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let selection = shell.selection_ctx();
-    let (count, complete, error, is_query, sweep, total, as_of) = {
+    let (count, complete, error, is_query, sweep, total, as_of, reads) = {
         let ws = shell.app.workspace.read();
         let pane = ws.pane(shell.pane);
-        pane.map_or((0, true, None, false, None, None, None), |p| {
+        pane.map_or((0, true, None, false, None, None, None, false), |p| {
             (
                 shell.ui().list.sorted.len(),
                 p.listing.is_complete(),
@@ -126,6 +126,7 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
                 // Filtered (its lens, words typed): how many there are in all.
                 p.is_filtered().then(|| p.listing.sorted(p.sort).len()),
                 p.listing.as_of().cloned(),
+                p.read_filter().is_some_and(|r| r.metadata),
             )
         })
     };
@@ -157,13 +158,15 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
         Some(bytes) => format!("{items} · {}", format::size(bytes)),
         None => items,
     };
-    // A lens that reads what files' metadata says shows them as it comes
-    // (ADR-107): how many are still read.
-    let reading = shell.ui().quick_filters.files.unknown;
-    let items = if reading > 0 && total.is_some() {
-        format!("{items} · Reading {}…", format::count(reading, "file"))
-    } else {
-        items
+    // A filter that reads what files' metadata says shows them as it
+    // comes (ADR-107): how many are still read.
+    let reading = shell.ui().quick_filters.reading(reads && !is_query);
+    let items = match reading.filter(|_| total.is_some()) {
+        Some(crate::quick_filters::Reading::Files(n)) => {
+            format!("{items} · Reading {}…", format::count(n, "file"))
+        }
+        Some(crate::quick_filters::Reading::Counting) => format!("{items} · Reading…"),
+        None => items,
     };
     // An index's answer says as of when (ADR-050): what was made, renamed
     // or removed since is not in it.

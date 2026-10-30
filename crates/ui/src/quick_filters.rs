@@ -18,11 +18,14 @@
 //!
 //! What it offers is counted from the files the location lists, so it
 //! holds for every facet: once per change of the listing, never per frame,
-//! at most every `EVERY` while it streams. A count walks every file, so a
-//! worker does it (`count`), reading the pane a slice at a time and typing
-//! the files between the slices: the window's thread never waits for a
-//! walk. The same count asks for the metadata a lens needs of the files
-//! no view draws, bar or not.
+//! at most every `EVERY` while it streams, and a count under way answers
+//! before another is asked. A count walks every file, so a worker does it
+//! (`count`), reading the pane a slice at a time and typing the files
+//! between the slices, once per suffix: the window's thread never waits
+//! for a walk. The same count is the one asker of the metadata a filter
+//! needs of the files no view draws, bar or not: it hands them over once
+//! per change of the listing's names, and with the bar hidden it counts
+//! nothing else.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -47,8 +50,14 @@ const SLICE: usize = 1024;
 const RELATED: usize = 12;
 
 /// What a listing was counted for: its id and version, the pane's filter,
-/// and whether it was complete.
-type Key = (u64, u64, u64, bool);
+/// whether it was complete, and whether the bar showed (what it offers is
+/// counted only then).
+type Key = (u64, u64, u64, bool, bool);
+
+/// What the files without metadata were last handed over for: the
+/// listing's id and its names' version. Which filter needs them does not
+/// change which they are.
+type Handed = (u64, u64);
 
 /// A choice and how many of the files shown it keeps.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,6 +116,19 @@ pub struct QuickFilters {
     recount: Option<gpui::Task<()>>,
     /// The count a worker is doing.
     asked: crate::latest::Latest<Counted>,
+    /// What the files without metadata were last asked for: they are
+    /// asked again only for new names, or once nothing needed them.
+    handed: Option<Handed>,
+}
+
+/// What a filter that reads the files' metadata (a size, a tag) still
+/// waits for (ADR-107), for the footer and the empty state.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reading {
+    /// Not counted yet.
+    Counting,
+    /// This many files.
+    Files(usize),
 }
 
 /// How many files and folders the pane shows, how many files the location
@@ -127,9 +149,14 @@ struct Ask {
     /// The listing is complete.
     complete: bool,
     /// The pane filters what it lists (a folder, the trash, a tag's
-    /// place, not a search): its files without metadata are asked for,
+    /// place, not a search): its files without metadata are counted,
     /// those it hides too.
     filtered: bool,
+    /// The bar shows: what it offers is counted, else the files without
+    /// metadata alone.
+    shown: bool,
+    /// The files without metadata are handed over, for this.
+    hand: Option<Handed>,
     chosen: Chosen,
 }
 
@@ -143,13 +170,14 @@ struct Chosen {
     within: bool,
 }
 
-/// What a count found: what the bar offers, the files and folders, and
-/// the files it cannot tell yet, which no view draws, so the bar asks for
-/// them (`hydrate`).
+/// What a count found: what the bar offers, the files and folders, and,
+/// when handed over (`Ask::hand`), the files it cannot tell yet, which no
+/// view draws, so the bar asks for them (`hydrate`).
 struct Counted {
     offer: Offer,
     files: Files,
     unknown: Vec<EntryId>,
+    handed: Option<Handed>,
 }
 
 /// Each value's count, most first, then in the order met.
@@ -277,27 +305,42 @@ impl Shell {
             }
             return;
         }
-        let key = {
+        let (key, names) = {
             let ws = self.app.workspace.read();
             let Some(p) = ws.pane(pane) else { return };
             (
-                p.listing.id(),
-                p.listing.version(),
-                p.filter_version(),
-                p.listing.is_complete(),
+                (
+                    p.listing.id(),
+                    p.listing.version(),
+                    p.filter_version(),
+                    p.listing.is_complete(),
+                    shown,
+                ),
+                p.listing.names_version(),
             )
         };
         self.ui_mut().quick_filters.shown = shown;
-        if self.ui().quick_filters.key == Some(key) {
+        let before = self.ui().quick_filters.key;
+        if before == Some(key) {
+            return;
+        }
+        // A count under way for this listing, filter and bar answers
+        // first: asked again, it would be cancelled, and one longer than
+        // `EVERY` would never answer while the listing moves. Its answer
+        // wakes the window, which counts again.
+        let same =
+            before.is_some_and(|before| (before.0, before.2, before.4) == (key.0, key.2, key.4));
+        if same && self.ui().quick_filters.asked.is_pending() {
             return;
         }
         // Counted at most every `EVERY` while what it counts changes (a
         // search streaming, a folder's files hydrating, each batch moving
-        // the listing): a count walks every file. The listing completing
-        // counts at once; any other change put off is counted by a wake
-        // of its own.
-        let ended = key.3 && self.ui().quick_filters.key.is_some_and(|before| !before.3);
-        if !ended
+        // the listing): a count walks every file. The listing completing,
+        // another filter or the bar shown counts at once; any other change
+        // put off is counted by a wake of its own.
+        let ended = key.3 && before.is_some_and(|before| !before.3);
+        if same
+            && !ended
             && let Some(at) = self.ui().quick_filters.counted
             && at.elapsed() < EVERY
         {
@@ -320,11 +363,17 @@ impl Shell {
         };
         let chips = &self.ui().chips;
         let set = |facet: &str| chips.is_set(facet) || lens_set.iter().any(|s| s == facet);
+        // The files without metadata, asked for once per change of the
+        // names: the asker of what a filter needs, and of what the bar
+        // offers of their years.
+        let handed = (key.0, names);
         let ask = Ask {
             pane,
             tags,
             complete: key.3,
             filtered: !search,
+            shown,
+            hand: (self.ui().quick_filters.handed != Some(handed)).then_some(handed),
             chosen: Chosen {
                 kinds: set("kind"),
                 years: set("modified"),
@@ -337,7 +386,7 @@ impl Shell {
         let quick = &mut self.ui_mut().quick_filters;
         // Another listing: what was offered for the one before is not its
         // own, even while its count runs.
-        if quick.key.is_none_or(|before| before.0 != key.0) {
+        if before.is_none_or(|before| before.0 != key.0) {
             quick.offer = Offer::default();
             quick.files = Files::default();
             quick.answered = false;
@@ -365,7 +414,26 @@ impl Shell {
         quick.offer = counted.offer;
         quick.files = counted.files;
         quick.answered = true;
-        self.request_hydrate_off_screen(counted.unknown);
+        if let Some(handed) = counted.handed {
+            quick.handed = Some(handed);
+            self.request_hydrate_off_screen(counted.unknown);
+        }
+    }
+}
+
+impl QuickFilters {
+    /// What the pane's filter still waits for of its files' metadata, for
+    /// the footer and the empty state: `None` when it reads none (`reads`
+    /// false: a name, a kind; or the pane is a search) or every file's is
+    /// in.
+    pub fn reading(&self, reads: bool) -> Option<Reading> {
+        if !reads {
+            return None;
+        }
+        if !self.answered {
+            return Some(Reading::Counting);
+        }
+        (self.files.unknown > 0).then_some(Reading::Files(self.files.unknown))
     }
 }
 
@@ -379,13 +447,14 @@ fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
         offer: Offer::default(),
         files: Files::default(),
         unknown: Vec::new(),
+        handed: ask.hand,
     };
-    let Some((order, held)) = app
-        .workspace
-        .read()
-        .pane(ask.pane)
-        .map(|p| (p.order(), ask.filtered.then(|| p.unfiltered_order())))
-    else {
+    let Some((order, held)) = app.workspace.read().pane(ask.pane).map(|p| {
+        (
+            ask.shown.then(|| p.order()),
+            ask.filtered.then(|| p.unfiltered_order()),
+        )
+    }) else {
         return counted;
     };
     // What the pane filters is known once each of its files has its
@@ -404,14 +473,22 @@ fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
             }
             counted.files.listed += 1;
             if !e.metadata.is_hydrated() {
-                counted.unknown.push(e.id);
+                counted.files.unknown += 1;
+                if ask.hand.is_some() {
+                    counted.unknown.push(e.id);
+                }
             }
         }
     }
-    counted.files.unknown = counted.unknown.len();
+    // The bar hidden, the files without metadata were all it was for.
+    let Some(order) = order else {
+        return counted;
+    };
     let listed = ask.complete;
-    let known = listed && counted.unknown.is_empty();
+    let known = listed && counted.files.unknown == 0;
     let calendar = skwir_platform::calendar::Calendar::system();
+    // Typed once per suffix: a hundred thousand names are a few types.
+    let types = skwir_platform::mime::BySuffix::default();
     let mut files: Vec<File> = Vec::with_capacity(order.len());
     for slice in order.chunks(SLICE) {
         if cancel.is_cancelled() {
@@ -448,7 +525,10 @@ fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
                 tags: r.tags,
                 kinds: r
                     .typed
-                    .and_then(|(inode, name)| skwir_platform::mime::of_parts(inode, &name))
+                    .and_then(|(inode, name)| match inode {
+                        Some(inode) => Some(skwir_platform::mime::Mime(inode.to_owned())),
+                        None => types.of(&name),
+                    })
                     .map(|m| skwir_platform::mime::kinds(&m))
                     .unwrap_or_default(),
                 year: r.modified.map(|t| calendar.year_of(t)),
@@ -702,6 +782,22 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only a filter that reads the files' metadata waits for it: a name
+    /// or a kind never says "Reading"; before the first count it reads,
+    /// how many not said yet, and with every file's in, nothing.
+    #[test]
+    fn only_a_filter_that_reads_metadata_is_reading() {
+        let mut quick = QuickFilters::default();
+        assert_eq!(quick.reading(false), None);
+        assert_eq!(quick.reading(true), Some(Reading::Counting));
+        quick.answered = true;
+        quick.files.unknown = 3;
+        assert_eq!(quick.reading(false), None, "a name filter waits for none");
+        assert_eq!(quick.reading(true), Some(Reading::Files(3)));
+        quick.files.unknown = 0;
+        assert_eq!(quick.reading(true), None);
+    }
 
     fn file(tags: &[&str], kinds: &[Kind], year: i64) -> File {
         File {

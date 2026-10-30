@@ -1221,9 +1221,10 @@ impl Shell {
             .read()
             .pane(pane)
             .and_then(|p| p.filter().map(str::to_owned));
+        // A filter that reads the files' metadata has it asked for by
+        // Quick filters' count, the one asker (`quick_filters.rs`).
         if current.as_deref() != wanted {
             self.set_filter(wanted);
-            self.ask_filter_metadata();
         }
     }
 
@@ -1236,40 +1237,6 @@ impl Shell {
             &serde_json::json!({ "text": text, "pane": pane }),
         )) {
             tracing::warn!("filter: {error:#}");
-        }
-    }
-
-    /// A filter that asks what the files' metadata says (a kind, a size, a
-    /// tag) has every file's asked for, as a narrowing does: until it
-    /// comes, a file waits hidden.
-    ///
-    /// Asked once per listing and names: what the files lack does not
-    /// change with the words typed, and every key walked the whole listing.
-    fn ask_filter_metadata(&mut self) {
-        let (asked, unknown): ((u64, u64), Vec<skwir_core::EntryId>) = {
-            let ws = self.app.workspace.read();
-            let Some(pane) = ws.pane(self.pane) else {
-                return;
-            };
-            if !pane.read_filter().is_some_and(|r| r.metadata) {
-                return;
-            }
-            let asked = (pane.listing.id(), pane.listing.names_version());
-            if self.ui().filter_hydrated == Some(asked) {
-                return;
-            }
-            (
-                asked,
-                pane.listing
-                    .iter()
-                    .filter(|e| !e.is_dir() && !e.metadata.is_hydrated())
-                    .map(|e| e.id)
-                    .collect(),
-            )
-        };
-        self.ui_mut().filter_hydrated = Some(asked);
-        if !unknown.is_empty() {
-            self.request_hydrate_off_screen(unknown);
         }
     }
 

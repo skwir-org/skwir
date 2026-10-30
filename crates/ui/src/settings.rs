@@ -74,6 +74,8 @@ pub const UNFOLDED_KEY: &str = "ui.settings_unfolded";
 pub const VIEW_BUTTONS_KEY: &str = "ui.view_buttons";
 /// Whether Quick filters show above the files (`quick_filters.rs`).
 pub const QUICK_FILTERS_KEY: &str = "ui.quick_filters";
+/// What `QUICK_FILTERS_KEY` was named until Narrow by became Quick filters.
+const NARROW_FOLDERS_FORMER_KEY: &str = "ui.narrow_folders";
 /// Whether the tabs are listed for a window that has only one tab.
 pub const SINGLE_TAB_KEY: &str = "ui.single_tab";
 /// Where the tabs are listed: the strip above the files, or the sidebar
@@ -417,6 +419,9 @@ pub fn declare(app: &App) {
         .page(page::GENERAL)
         .section("Address"),
     );
+    // Narrow folders, as 0.2 named it, is Quick filters (ADR-107).
+    app.settings
+        .rename(NARROW_FOLDERS_FORMER_KEY, QUICK_FILTERS_KEY);
     app.settings.declare(
         SettingSpec::toggle(
             QUICK_FILTERS_KEY,
@@ -2441,6 +2446,24 @@ mod tests {
     /// order it lists them, each section's settings as they were declared:
     /// Theme first, the list's columns in the order they stand. Declared
     /// again, a setting keeps its place.
+    /// Narrow folders turned on in 0.2 is Quick filters turned on (ADR-107).
+    #[test]
+    fn narrow_folders_turned_on_is_quick_filters_turned_on() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.toml");
+        std::fs::write(&path, "[ui]\nnarrow_folders = true\n").unwrap();
+        let app = App::new(skwir_core::app::AppConfig {
+            settings_path: Some(path),
+            ..skwir_core::app::AppConfig::ephemeral(tmp.path())
+        })
+        .unwrap();
+        declare(&app);
+        assert_eq!(
+            app.settings.get::<bool>(super::QUICK_FILTERS_KEY),
+            Some(true)
+        );
+    }
+
     #[test]
     fn a_page_shows_its_settings_by_subject_as_declared() {
         let tmp = tempfile::tempdir().unwrap();

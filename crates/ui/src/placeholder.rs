@@ -113,14 +113,16 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
         .filter()
         .filter(|_| !state.unfiltered_order().is_empty())
     {
-        let reading = shell.ui().quick_filters.files.unknown;
-        if reading > 0 {
+        // Only a filter that reads the files' metadata waits for it.
+        let reads = !shell.ui().place.search && state.read_filter().is_some_and(|r| r.metadata);
+        if let Some(reading) = shell.ui().quick_filters.reading(reads) {
+            let files = match reading {
+                crate::quick_filters::Reading::Counting => "the files".to_owned(),
+                crate::quick_filters::Reading::Files(n) => crate::format::count(n, "file"),
+            };
             return Some(Placeholder {
                 icon: "search",
-                title: format!(
-                    "Reading the details of {}…",
-                    crate::format::count(reading, "file")
-                ),
+                title: format!("Reading the details of {files}…"),
                 detail: format!("The files “{filter}” keeps show as they are read."),
                 action: Some(("Show everything", "filter")),
                 problem: false,
