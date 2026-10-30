@@ -60,9 +60,12 @@ the reasoning.
   only says one is there. Never put a secret in any other kind of
   setting. Test the keyring only through
   `tools/test/private-keyring.sh`, never against the user's.
-- Renaming or moving a key: while no one uses skwir, outright, carrying
-  nothing of the old name. Once people do, call `Settings::rename(old,
-  new)` before declaring it, so the user's value follows.
+- Renaming or moving a key: people use skwir (0.1.0 and on), so call
+  `Settings::rename(old, new)` before declaring it, and the user's value
+  follows; `Settings::check` tells a file still saying the old name the
+  new one. A plugin given a new id names the ones it had
+  (`Plugin::former_ids`): its toggle follows it from each, and it moves
+  its own keys in `register` (the books plugin, once `epub`, ADR-106).
 
 ## Where a setting goes
 

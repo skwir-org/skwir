@@ -1200,6 +1200,9 @@ pub struct Settings {
     /// (`SettingSpec::order`): declared again, or by a plugin turned on
     /// again, a setting keeps its place.
     declared: Mutex<BTreeMap<String, u64>>,
+    /// Each key moved in this process (`rename`), old name to new: a file
+    /// still saying the old one is told where it went (`check`).
+    renamed: Mutex<BTreeMap<String, String>>,
     /// Serializes writers (readers never wait for file I/O), and holds the
     /// keys this process changed since its last save: what a save writes
     /// over the file as it stands.
@@ -1273,6 +1276,7 @@ impl Settings {
             values: RwLock::new(toml::Table::new()),
             schema: RwLock::new(BTreeMap::new()),
             declared: Mutex::new(BTreeMap::new()),
+            renamed: Mutex::new(BTreeMap::new()),
             writer: Mutex::new(BTreeSet::new()),
             followed: Mutex::new(Vec::new()),
             status: Mutex::new((0, SaveState::Idle)),
@@ -1299,6 +1303,7 @@ impl Settings {
             values: RwLock::new(values),
             schema: RwLock::new(BTreeMap::new()),
             declared: Mutex::new(BTreeMap::new()),
+            renamed: Mutex::new(BTreeMap::new()),
             writer: Mutex::new(BTreeSet::new()),
             followed: Mutex::new(Vec::new()),
             status: Mutex::new((0, SaveState::Idle)),
@@ -1504,10 +1509,10 @@ impl Settings {
     /// nothing is stored under the new name yet. The owner calls it before
     /// declaring the new key, so a moved preference keeps what the user
     /// chose; the file is rewritten at the next save, and until then the move
-    /// is made again at each start, to the same effect. Nothing calls it
-    /// while no one uses skwir (keys are renamed outright): it is for the
-    /// first rename after people do.
+    /// is made again at each start, to the same effect. A file that still
+    /// says the old name is told the new one (`check`).
     pub fn rename(&self, old: &str, new: &str) {
+        self.renamed.lock().insert(old.to_owned(), new.to_owned());
         let mut pending = self.writer.lock();
         let mut values = self.values.write();
         if Self::lookup(&values, new).is_some() {
@@ -1669,8 +1674,14 @@ impl Settings {
     /// owner nothing here declares (a plugin turned off, or from outside)
     /// is only noted. A key kept apart from the settings (the window's
     /// state, the user's data) is noted: read only until skwir keeps its
-    /// own.
+    /// own. A key's former name (`rename`) is noted with its new one.
     pub fn check(&self, table: &toml::Table, plugins: &[String]) -> Checked {
+        let renamed = self.renamed.lock().clone();
+        let moved = |key: &str| {
+            renamed
+                .get(key)
+                .map(|new| format!("now “{new}”: skwir moves it there"))
+        };
         let schema = self.schema.read();
         let owners: BTreeSet<&str> = schema.values().map(SettingSpec::owner).collect();
         let mut checked = Checked::default();
@@ -1682,6 +1693,10 @@ impl Settings {
                 } else {
                     format!("{prefix}.{name}")
                 };
+                if let Some(note) = moved(&key) {
+                    checked.notes.push((key, note));
+                    continue;
+                }
                 if let Some(spec) = schema.get(&key) {
                     // Kept apart, it is read from the settings only until
                     // skwir keeps its own, which then replaces it whole: a
@@ -1745,27 +1760,37 @@ impl Settings {
                             for (field, value) in plugin {
                                 match (field.as_str(), value) {
                                     ("enabled", toml::Value::Boolean(_)) => {}
-                                    ("enabled", _) => checked
-                                        .problems
-                                        .push((format!("{key}.enabled"), "expected true or false".into())),
+                                    ("enabled", _) => checked.problems.push((
+                                        format!("{key}.enabled"),
+                                        "expected true or false".into(),
+                                    )),
                                     _ => checked
                                         .problems
                                         .push((format!("{key}.{field}"), "no such setting".into())),
                                 }
                             }
                         }
-                        Some(_) => checked.notes.push((
-                            key,
-                            format!("no plugin “{id}” here: one from outside, or not built in, may take it"),
-                        )),
-                        None => checked.problems.push((key, "expected a table: enabled = true or false".into())),
+                        Some(_) => {
+                            let enabled = format!("{key}.enabled");
+                            checked.notes.push(match moved(&enabled) {
+                                Some(note) => (enabled, note),
+                                None => (
+                                    key,
+                                    format!("no plugin “{id}” here: one from outside, or not built in, may take it"),
+                                ),
+                            });
+                        }
+                        None => checked
+                            .problems
+                            .push((key, "expected a table: enabled = true or false".into())),
                     }
                     continue;
                 }
                 let within = format!("{key}.");
                 if let Some(inner) = value.as_table()
                     && (key == "plugins"
-                        || schema.keys().any(|declared| declared.starts_with(&within)))
+                        || schema.keys().any(|declared| declared.starts_with(&within))
+                        || renamed.keys().any(|old| old.starts_with(&within)))
                 {
                     walk.push((key, inner));
                     continue;

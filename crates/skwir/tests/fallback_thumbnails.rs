@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const THUMBNAILS: &str = "thumbnails";
-const FALLBACK_PLUGINS: [&str; 5] = ["documents", "media", "epub", "comics", "djvu"];
+const FALLBACK_PLUGINS: [&str; 5] = ["documents", "media", "books", "comics", "djvu"];
 
 /// The plugins with fallbacks first: the reverse of the binary's order.
 fn app(root: &Path) -> Arc<App> {
@@ -92,7 +92,7 @@ fn fallbacks_come_after_the_desktop_whoever_registers_first() {
     }
     for (key, value) in [
         ("documents.backend", "poppler"),
-        ("epub.backend", "mupdf"),
+        ("books.backend", "mupdf"),
         ("media.backend", "stills"),
         ("djvu.engine", "djvu-rs"),
         ("thumbnails.write_cache", "false"),

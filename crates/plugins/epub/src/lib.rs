@@ -22,10 +22,16 @@ mod fb2;
 mod mobi;
 mod pages;
 
+const ID: &str = "books";
+
 pub struct PreviewPlugin;
 impl Plugin for PreviewPlugin {
     fn id(&self) -> &'static str {
-        "epub"
+        ID
+    }
+    /// The EPUB plugin's, before it read other books (ADR-106).
+    fn former_ids(&self) -> &'static [&'static str] {
+        &["epub"]
     }
     fn title(&self) -> &'static str {
         "Books"
@@ -52,6 +58,7 @@ impl Plugin for PreviewPlugin {
         skwir_core::permissions::Capabilities::of(&[Capability::Read, Capability::Programs])
     }
     fn register(&self, app: &App) {
+        app.settings.rename("epub.backend", BACKEND);
         app.settings.declare(skwir_core::settings::SettingSpec::choice(
             BACKEND,
             "Book engine",
@@ -71,7 +78,7 @@ impl Plugin for PreviewPlugin {
 }
 
 /// Which engine reads books.
-const BACKEND: &str = "epub.backend";
+const BACKEND: &str = "books.backend";
 
 /// The books provider, with the engine the setting chooses.
 fn register_books(app: &App) {
@@ -80,7 +87,7 @@ fn register_books(app: &App) {
         _ => Engine::BuiltIn,
     };
     app.previews.register(
-        "epub",
+        ID,
         Arc::new(Provider {
             engine,
             ..Provider::default()
@@ -191,7 +198,7 @@ impl ThumbnailProvider for Cover {
     }
 }
 
-/// Which engine reads a book (`epub.backend`). Either one sizes
+/// Which engine reads a book (`books.backend`). Either one sizes
 /// what is read with the reader's text size, and zooms what is looked at.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Engine {
@@ -254,7 +261,7 @@ impl Provider {
 
 impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
-        "epub"
+        ID
     }
     /// A book, by type: EPUB, FB2 and Mobipocket, whichever engine reads
     /// it.

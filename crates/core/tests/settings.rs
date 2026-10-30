@@ -601,6 +601,77 @@ fn a_renamed_preference_keeps_its_value_and_the_file_forgets_the_old_name() {
     assert_eq!(settings.get::<String>("new.width").as_deref(), Some("wide"));
 }
 
+/// A plugin given a new id: its toggle follows it from the former one
+/// unless the new one is stored, its own setting moves when it registers,
+/// and a file still saying the former names is told the new ones.
+#[test]
+fn a_renamed_plugin_keeps_its_toggle_and_its_settings() {
+    struct Renamed;
+    impl Plugin for Renamed {
+        fn id(&self) -> &'static str {
+            "fresh"
+        }
+        fn former_ids(&self) -> &'static [&'static str] {
+            &["stale"]
+        }
+        fn title(&self) -> &'static str {
+            "Fresh"
+        }
+        fn category(&self) -> skwir_core::plugin::Category {
+            skwir_core::plugin::Category::Files
+        }
+        fn register(&self, app: &App) {
+            app.settings.rename("stale.engine", "fresh.engine");
+            app.settings.declare(SettingSpec::choice(
+                "fresh.engine",
+                "Engine",
+                "engine",
+                "first",
+                &[("first", "First"), ("second", "Second")],
+            ));
+        }
+    }
+    let start = |text: &str| {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("settings.toml");
+        std::fs::write(&path, text).unwrap();
+        let mut config = AppConfig::ephemeral(tmp.path());
+        config.settings_path = Some(path);
+        let app = App::new(config).unwrap();
+        app.plugins.add(Arc::new(Renamed), &app);
+        (tmp, app)
+    };
+    let stale = "[plugins.stale]\nenabled = false\n\n[stale]\nengine = \"second\"\n";
+    let (_tmp, app) = start(stale);
+    assert!(!app.plugins.is_enabled("fresh"), "turned off as it was");
+    assert!(app.plugins.set_enabled("fresh", true, &app));
+    assert_eq!(
+        app.settings.get::<String>("fresh.engine").as_deref(),
+        Some("second")
+    );
+    let checked = app
+        .settings
+        .check(&stale.parse().unwrap(), &["fresh".to_owned()]);
+    assert!(checked.problems.is_empty(), "{checked:?}");
+    assert_eq!(
+        checked.notes,
+        [
+            (
+                "plugins.stale.enabled".to_owned(),
+                "now “plugins.fresh.enabled”: skwir moves it there".to_owned()
+            ),
+            (
+                "stale.engine".to_owned(),
+                "now “fresh.engine”: skwir moves it there".to_owned()
+            ),
+        ]
+    );
+    // Stored under the new id, the former one is not read.
+    let (_tmp, app) =
+        start("[plugins.stale]\nenabled = false\n\n[plugins.fresh]\nenabled = true\n");
+    assert!(app.plugins.is_enabled("fresh"));
+}
+
 #[test]
 fn records_are_checked_field_by_field_and_never_hold_a_secret() {
     use skwir_core::settings::{RecordField, SettingSpec};

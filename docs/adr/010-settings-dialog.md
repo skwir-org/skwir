@@ -82,7 +82,9 @@ preference now goes where its subject is:
 A moved key keeps the user's value: the owner calls
 `Settings::rename(old, new)` before declaring it, which moves a stored value
 when the new name has none; the next save drops the old name. (2026-10-13:
-while no one uses skwir, keys are renamed outright, and nothing calls it.)
+while no one uses skwir, keys are renamed outright, and nothing calls it.
+2026-10-30: first called, for the books plugin's id, ADR-106; a plugin's
+toggle follows it from its former ids, `Plugin::former_ids`.)
 
 ### 2026-09-27: records, owners' checks, secrets
 

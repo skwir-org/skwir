@@ -103,6 +103,27 @@ fn the_player_reads_what_the_media_plugin_declares() {
     );
 }
 
+/// The books plugin was the EPUB plugin (ADR-106): what was set under
+/// `epub` (its toggle, its engine) follows it to `books`.
+#[test]
+fn what_was_set_for_the_epub_plugin_follows_the_books_plugin() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+    app.settings
+        .set("plugins.epub.enabled", toml::Value::Boolean(false));
+    app.settings
+        .set("epub.backend", toml::Value::String("mupdf".into()));
+    app.plugins
+        .add(Arc::new(skwir_plugin_epub::PreviewPlugin), &app);
+    assert!(!app.plugins.is_enabled("books"), "turned off as it was");
+    assert!(app.plugins.set_enabled("books", true, &app));
+    assert_eq!(
+        app.settings.get::<String>("books.backend").as_deref(),
+        Some("mupdf")
+    );
+    assert!(app.settings.get::<toml::Value>("epub.backend").is_none());
+}
+
 /// Every page of the dialog reads alike (`docs/invariants/settings.md`):
 /// a title in sentence case that is not its plugin's name, a description
 /// in sentences. Every plugin on, and the shell's own preferences.

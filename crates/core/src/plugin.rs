@@ -15,6 +15,12 @@ use crate::command::Topic;
 pub trait Plugin: Send + Sync {
     /// Stable identifier, used as the owner tag and the settings namespace.
     fn id(&self) -> &'static str;
+    /// The ids it was known by before, once people used them: its toggle
+    /// (`plugins.<id>.enabled`) follows it from each (`Settings::rename`),
+    /// and it moves its own settings itself, in `register`.
+    fn former_ids(&self) -> &'static [&'static str] {
+        &[]
+    }
     fn title(&self) -> &str;
     fn description(&self) -> &'static str {
         ""
@@ -241,9 +247,14 @@ impl PluginHost {
     }
 
     /// Add a plugin. It is enabled as `plugins.<id>.enabled` says in the
-    /// settings, else as the plugin says (`Plugin::enabled_by_default`).
+    /// settings (or, with none, as it said under a former id), else as the
+    /// plugin says (`Plugin::enabled_by_default`).
     pub fn add(&self, plugin: Arc<dyn Plugin>, app: &App) {
         let _lifecycle = self.lifecycle.lock();
+        for former in plugin.former_ids() {
+            app.settings
+                .rename(&Self::setting_key(former), &Self::setting_key(plugin.id()));
+        }
         let enabled = app
             .settings
             .get::<bool>(&Self::setting_key(plugin.id()))
