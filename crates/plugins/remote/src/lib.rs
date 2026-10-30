@@ -911,13 +911,22 @@ impl Remotes {
                 });
                 drop(app);
                 // Whether each server is near, for its thumbnails. A
-                // device is near, its name (a serial) never looked up.
-                // What is known of a host stays known.
+                // device is near, its name (a serial) never looked up. A
+                // remote of rclone's configuration is named, not addressed
+                // (as `automatic_cache` has it): its name is no host, and
+                // looked up it went to the network's resolvers and took
+                // the whole wait (`lan::RESOLVING`), one after another,
+                // before the servers were published. What is known of a
+                // host stays known.
                 let known = this.state.lock().local.clone();
                 let near: Vec<(String, Option<bool>)> = mounted
                     .iter()
                     .filter_map(|m| m.recognised.address.as_ref())
-                    .filter(|a| a.scheme.device().is_none() && !known.contains_key(&a.host))
+                    .filter(|a| {
+                        a.scheme.device().is_none()
+                            && a.scheme != Scheme::Rclone
+                            && !known.contains_key(&a.host)
+                    })
                     .map(|a| (a.host.clone(), lan::local(&a.host)))
                     .collect();
                 // Which of them connect at login: their manager's files.
