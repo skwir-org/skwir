@@ -44,14 +44,49 @@ const SENT_EVERY: usize = 256;
 /// hold the files of every other folder behind it. Sends
 /// `Updated` for what was found as it goes (under the ids given, which the
 /// location listed them by) and one `Removed` for what is gone, and
-/// returns the gone ids so the caller can forget their paths. Worker-only:
-/// this is I/O. Nothing more is sent once `cancel` fires.
+/// returns the gone ids so the caller can forget their paths. What cannot
+/// be read is not answered: its row stays as it was. Worker-only: this is
+/// I/O. Nothing more is sent once `cancel` fires.
 pub fn hydrate_paths(
     items: &[(EntryId, PathBuf)],
     metadata: &MetadataProviders,
     sink: &EventSink,
     cancel: &CancelToken,
 ) -> Vec<EntryId> {
+    let mut updated = Vec::with_capacity(items.len());
+    let mut gone = Vec::new();
+    let read = read_paths(items, metadata, cancel, |mut found, mut went| {
+        updated.append(&mut found);
+        gone.append(&mut went);
+        if updated.len() >= SENT_EVERY && !cancel.is_cancelled() {
+            sink.send(ListingEvent::Updated(std::mem::take(&mut updated)));
+        }
+    });
+    if !read {
+        return Vec::new();
+    }
+    if !updated.is_empty() {
+        sink.send(ListingEvent::Updated(updated));
+    }
+    if !gone.is_empty() {
+        sink.send(ListingEvent::Removed(gone.clone()));
+    }
+    gone
+}
+
+/// Read `items` as `hydrate_paths` does, one folder at a time, handing
+/// `read` each folder's: the entries found, under the ids given, and the
+/// ids of those gone. What is neither is there and cannot be read (a folder
+/// that cannot be opened, a stat refused): what was known of it stands.
+/// For a caller that tests what it reads instead of sending it (a search
+/// within a place). False once `cancel` fires: nothing more is read.
+/// Worker-only: this is I/O, in the lane of the items' paths.
+pub fn read_paths(
+    items: &[(EntryId, PathBuf)],
+    metadata: &MetadataProviders,
+    cancel: &CancelToken,
+    mut read: impl FnMut(Vec<Entry>, Vec<EntryId>),
+) -> bool {
     let mut by_dir: HashMap<&Path, Vec<(EntryId, OsString)>> = HashMap::new();
     let mut gone = Vec::new();
     for (id, path) in items {
@@ -63,10 +98,9 @@ pub fn hydrate_paths(
             _ => gone.push(*id),
         }
     }
-    let mut updated = Vec::with_capacity(items.len());
     for (dir, names) in by_dir {
         if cancel.is_cancelled() {
-            return Vec::new();
+            return false;
         }
         let folder = match Dir::open(dir) {
             Ok(folder) => folder,
@@ -79,7 +113,8 @@ pub fn hydrate_paths(
                 gone.extend(names.into_iter().map(|(id, _)| id));
                 continue;
             }
-            // A folder that cannot be read: its rows stay as they were.
+            // A folder that cannot be read: what was known of its entries
+            // stands.
             Err(_) => continue,
         };
         let mut found = Vec::with_capacity(names.len());
@@ -91,24 +126,15 @@ pub fn hydrate_paths(
                     found.push(e);
                 }
                 Stated::Gone => gone.push(id),
-                // There, unread: its row stays as it was.
+                // There, unread: what was known of it stands.
                 Stated::Unread => {}
             }
         }
         metadata.fill(dir, &mut found);
-        updated.append(&mut found);
-        if updated.len() >= SENT_EVERY && !cancel.is_cancelled() {
-            sink.send(ListingEvent::Updated(std::mem::take(&mut updated)));
-        }
-    }
-    if cancel.is_cancelled() {
-        return Vec::new();
-    }
-    if !updated.is_empty() {
-        sink.send(ListingEvent::Updated(updated));
+        read(found, std::mem::take(&mut gone));
     }
     if !gone.is_empty() {
-        sink.send(ListingEvent::Removed(gone.clone()));
+        read(Vec::new(), gone);
     }
-    gone
+    !cancel.is_cancelled()
 }
