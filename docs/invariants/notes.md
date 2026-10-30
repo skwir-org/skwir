@@ -127,6 +127,10 @@ registered in `App::notes` by its plugin); all share one model,
   network, FUSE). A folder checked once per run is checked again only on
   F5; between, the index follows what panes list and Skwir applies.
   `tags.counted` reports the state.
+- A tag location's places count the files the index knows within each
+  tag, never what the pane's lens keeps (ADR-107): another tag, a kind or
+  a year filtering a tag's place is the pane's, kept as it goes elsewhere,
+  and tested on each file's tags as the listing holds them.
 - A check compares with the folders seen by the count that covers it: a
   folder above's, whose count never walked a hidden folder below it, so
   a folder in one is read whole.

@@ -7420,3 +7420,86 @@ run); books made by Amazon's tools or by other FB2 writers; a book near
 the bounds (16 MiB FB2, 64 MiB of MOBI text); a KF8 book in fixed
 layout (no tool makes one, recorded under "What is left"); Wayland; a
 screen reader.
+
+### A lens stays until it is taken off (2026-10-30, ADR-107)
+
+The user found that `tag:test` typed over a folder went at the first
+folder opened, while the same tag chosen from Narrow by stayed below it:
+two filters, one look. Their choices: what of a filter the listing can
+decide of a file (a kind, an extension, a tag, a date, a size, a rating)
+is a lens, kept everywhere until taken off (folders, searches, the
+trash, tags' places), only the depth differing between a filter and a
+search; words that find names go; Back brings back nothing; tabs and
+splits take it; Narrow by becomes Quick filters, always saying why it
+offers nothing; filter pills wear their facet's icons. Built in a
+worktree of its own beside the FB2 and MOBI work.
+
+- One filter state: `Pane::lens` (the filter's, `ReadFilter::lens`, or a
+  search's own). `App::open_in` asks the location's provider how it takes
+  the lens (`LocationProvider::lensed`): the query plugin adds it to a
+  search's terms (`facets::with_lens`, a facet the search sets winning,
+  tags adding up); any other location is filtered by it
+  (`Pane::carry`). The address field's searches say their lens whole
+  (`query.search`'s `as_is`); begun on a path or on nothing it keeps the
+  lens before the words typed (`suggest::Ask::lens`), and over a folder
+  with Ctrl+F the folder keeps its filter until the search as typed
+  takes its place. A change of a search's lens alone is made in place.
+  `workspace::Narrowed`, `Pane::set_narrowed` and `location::Narrowing`
+  are gone; a tag's place is its tag and depth alone.
+- Quick filters (`quick_filters.rs`, `ui.quick_filters`): over any
+  location when on; "Counting the files…", "Reading the details of N
+  files…", "Every file here is hidden by the filters", "No files here,
+  only folders", "Nothing to filter: all 12 files are images from 2024";
+  kinds once listed, years once every file's metadata is in. Its count
+  asks for the metadata a lens needs of the files no view draws, bar or
+  not, and is taken before the empty state and the footer read it (drawn
+  after, a window rested on "Reading…" with every file read).
+- Two tests asserted the old behaviour and now assert the lens: Find
+  Similar keeps the tag the search chose (`search_tags`), and a timeline
+  bar's day changes the search in place, so Back leaves the search for
+  its folder with the day as its lens (`timeline_query`).
+
+What a lens costs on a remote: a folder of 1 000 files listed, then each
+file stat-ed and its `user.xdg.tags` read, as hydration does, counted on
+the serving side (servers of the test's own; GVfs and kio-fuse on private
+buses in user, mount and pid namespaces, as `tools/test/gvfs-afc.sh` sets
+GVfs up; the AFC stand-in logs every request it answers):
+
+| Mount | Listing | 1 000 stats | 1 000 tag reads |
+| --- | --- | --- | --- |
+| sshfs 3.7.6 | 26 SFTP requests | 0 | 0 |
+| rclone 1.75.2 over WebDAV | 1 PROPFIND | 0 | 0 |
+| kio-fuse 5.1.1 over SFTP | 28 SFTP requests | 0 | 0 |
+| GVfs 1.60.3 over AFC (the stand-in iPhone) | 1 003 requests | 1 808 | 1 814 |
+
+sshfs, rclone and kio-fuse answer from what they listed; sshfs and rclone
+serve no extended attributes, so a tag read there costs nothing and finds
+nothing. GVfs asks each file's details as it lists, and about twice again
+for each read after: on an iPhone, one USB round trip each. GVfs over SFTP
+refused the connection inside the namespaces while `ssh` by hand reached
+the same server, and said nothing more with `GVFS_DEBUG=1`: not counted
+(PLAN.md, "What is left").
+
+Checked: per commit, rustfmt, `just lint` (clippy `-D warnings`) and the
+tests of the crates touched. New tests: the lens across folders, a search
+and back, a tab, metadata waited for and the plugin turned off (query),
+the trash (`skwir::lens`, which waits for its own files: the trash lists
+every mounted volume's), a tag's place walked (`tags_location`), the
+words split and `ext:` keeping folders, the field's searches `as_is`,
+what files alike are said to be. A window on Xvfb (`:94`, a synthetic
+tree, then `bench-data/flat100k`): a tag filter kept into a subfolder
+("3 of 5 items"), Quick filters' offers and messages, a kind kept into a
+subfolder, a search holding it, the trash through it, words typed after
+Ctrl+L added to it ("Hidden by filters"), a split taking it, the pills'
+icons, the footer's "Reading 69,632 files…" over 100 000 files, then
+"0 of 100,000 items"; its screenshots stay out of the repository (they
+show the machine's drives and real files in the trash). At the final
+code: `just lint-all` (with the Windows and macOS cross checks) and
+`just bench-check` (47 budgets) passed; `just test-all` passed, 2524
+tests, before the trash test's last change, and after it the lens, remote
+and paste suites passed three runs together. Full runs under load stopped
+on `remote_folders::what_another_program_left_to_send_is_said_on_its_place_until_sent`
+(rclone's "Sending" not seen within the 4 s it is given), which fails at
+00181eec too: the suite run twice there and twice here, alternating,
+failed once on each side on an rclone test. Not run: `smoke`,
+`a11y-check`, the reader checks.

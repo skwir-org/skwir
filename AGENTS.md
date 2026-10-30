@@ -262,7 +262,7 @@ working in an area, also read that area's rules (see
   moves it: `names_version` for entries come, gone or renamed,
   `shown_version` for whether one is shown, `tree_members_version` for
   the entries of folders opened in place; `version` and `tree_version`
-  only where metadata matters. A test of every entry (a narrowing, the
+  only where metadata matters. A test of every entry (a filter's lens, the
   selection after a pump) is redone only for what `updated_since` names.
 - **Virtual locations.** A search or the shelf is not a directory: use
   `OpenLocation::path_of` or `App::selected_refs`. A command that works in
@@ -456,7 +456,7 @@ Binding. Read the file for the area before working in it.
 | --- | --- |
 | [shell.md](docs/invariants/shell.md) | the window: toolbars, popups and focus, the top rows and trail, layout, address field, search pills, context menu, drag and drop, feedback and footers, details and links, the sidebar, keys, tabs, what the window remembers, the terminal panel, the player |
 | [views.md](docs/invariants/views.md) | views: one look per entry, selection, cut entries, folders opened in place, the board, rubber band, grid, zoom, list columns, scrolling, plugin views, Usage |
-| [locations.md](docs/invariants/locations.md) | locations: what the shell asks of them, places, trails and verbs, tag locations, the trash as a place, searches and narrowing |
+| [locations.md](docs/invariants/locations.md) | locations: what the shell asks of them, places, trails and verbs, tag locations, the trash as a place, searches, the lens and Quick filters |
 | [notes.md](docs/invariants/notes.md) | tags, ratings and comments: stores, reading, writing, merging, categories, the tags index, companion files |
 | [operations.md](docs/invariants/operations.md) | plans and steps, running a plan, staging, copies, volumes, the trash's operations |
 | [commands.md](docs/invariants/commands.md) | declaring commands, agents and scripts, the permission layer, what leaves the machine, plugins from outside |

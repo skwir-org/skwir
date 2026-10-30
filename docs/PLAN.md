@@ -260,6 +260,21 @@ Encrypted books and KFX say what they are. Fixtures are synthetic,
 made by `tools/books/fixtures.py` with calibre. Detail in
 `docs/STATUS-LOG.md` (2026-10-30); what is left under "What is left".
 
+## A lens stays until it is taken off (2026-10-30)
+
+What of a pane's filter or search the listing can decide of a file (a
+kind, an extension, a tag, a date, a size, a rating) is its lens
+(ADR-107): kept wherever the pane goes until a pill's × or Escape takes
+it off, a folder, the trash and a tag's place filtered by it, a search
+holding it in its own terms, a tab or a split opened from the pane
+taking it; the words that find names go with the location. One filter
+state in the core (`Pane::lens`); the folder narrowing of 2026-10-03 is
+gone, and a tag's place is its tag and depth alone. Narrow by became
+Quick filters, shown over any location when asked for and saying why
+when it offers nothing; filter pills wear their facet's icons. Built on
+a branch beside the FB2 and MOBI work of the same night; checks in
+`docs/STATUS-LOG.md` (2026-10-30), what is left under "What is left".
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -288,6 +303,24 @@ leave (ADR-077).
   book made by Amazon's tools, no FB2 from another writer than calibre
   and the hand-written one, nothing near the 64 MiB text bound.
 - Windows and macOS not compiled for it (`just lint-all` not run).
+
+**From the lens (2026-10-30, ADR-107)**:
+- What a lens of tags, dates or sizes asks of a remote (counted:
+  `docs/STATUS-LOG.md`, 2026-10-30): nothing beyond the listing on sshfs,
+  rclone over WebDAV and kio-fuse over SFTP, but on GVfs over AFC two
+  requests a file of each folder shown, one USB round trip each on an
+  iPhone. To decide: read those facets on such a mount only when Quick
+  filters are opened there (a kind or an extension reads nothing), or
+  say in the footer that the lens reads the phone. GVfs over SFTP not
+  counted: its backend refused the connection inside the test's
+  namespaces while ssh by hand reached the server, and said nothing more
+  with `GVFS_DEBUG=1`; counted in a session of its own, outside
+  namespaces, it would close this.
+- On those mounts no tag is read (sshfs and rclone keep no extended
+  attributes): a tag lens shows a server's folders, and the files whose
+  tags are kept beside them.
+- Not checked: Wayland and the user's session (Xvfb only); a lens over a
+  remote folder in a window; Windows and macOS compiled only.
 
 **From the performance review (2026-10-29, ADR-104, ADR-105)**:
 - Dropped as not worth it: a folder copy walks its source three times

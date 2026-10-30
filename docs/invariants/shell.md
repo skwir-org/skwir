@@ -168,7 +168,7 @@ of bars, split or not.
   - The View menu hangs from the active pane's row: every view as a tile
     (Buttons… at the end of their title), the sort keys with the direction
     on the Sort by row in the key's words, what is shown (hidden files,
-    Narrow by, Fill thumbnails…), and the size on one row. More holds the
+    Quick filters, Fill thumbnails…), and the size on one row. More holds the
     panels without a button (Timeline, Terminal) and the layout's
     settings, one row each (`address::layout_values`).
   - Two `AdaptiveRow` variants: all buttons while the address keeps
@@ -254,8 +254,8 @@ of bars, split or not.
     words typed. Words no source answers (the query plugin off) offer no
     Go row: Enter keeps what they show.
   - Escape takes the field's step back (`App::take_step_back`, as if it
-    had never been gone to), puts back the filter and the narrowing the
-    folder had, and gives the files the keyboard. The pane's address is
+    had never been gone to), puts back the filter the folder had (its
+    lens with it), and gives the files the keyboard. The pane's address is
     never written into the field while it is typed in.
   - The field lets go when it loses the keyboard in a window still
     active (a click on a place or the files, Tab, F6; `omnibox_left`):
@@ -399,18 +399,21 @@ of bars, split or not.
   later.
 - **Words typed over a folder, looking in it alone, filter it at once**,
   as the core's `filter` reads them through the query plugin
-  (`narrow::read_filter`): the longest start that parses; words, `name:`
-  and `ext:` hold for folders too, other terms for files, every folder
-  staying; contents and a picture's date or place need a search below
-  it, which the footer says; a
+  (`lens::read_filter`): the longest start that parses; words and `name:`
+  hold for folders too, other terms (`ext:` among them) for files, every
+  folder staying; contents and a picture's date or place need a search
+  below it, which the footer says; a
   filter that reads metadata has every file's asked for. It runs at each
   key on the window's thread, so a type is asked once per suffix
   (`lang::Types`, as `mime::by_names` asks a selection): 6 to 13 ms a key
-  over 100 000 names in release. Showing another
-  location clears it; Escape (`filtered` key context) shows everything;
-  once the field lets go, its facets stay as pills after the trail
-  (below). Ctrl+Shift+F over a filtered folder edits its words, Ctrl+F
-  takes them below it. Over the folder alone, the search's row is none,
+  over 100 000 names in release. Showing another location keeps its lens
+  (ADR-107, locations.md) and lets go of its words; Escape (`filtered`
+  key context) shows everything; once the field lets go, its facets stay
+  as pills after the trail (below). Ctrl+Shift+F over a filtered folder
+  edits its words, the lens's among them, Ctrl+F takes them below it;
+  begun on a path or on nothing (Ctrl+L over a folder, Ctrl+J), the field
+  keeps the lens before the words typed (`suggest::Ask::lens`), which add
+  to it. Every search the field runs says its lens whole (`as_is`). Over the folder alone, the search's row is none,
   and a term completed or the words read as terms are written by Enter,
   as by Tab.
 - A search keeps the trail of the folder it looks in (the place it
@@ -419,18 +422,19 @@ of bars, split or not.
   `search` in the key context), as Escape in a folder filtered shows it
   whole. A tag location keeps its trail and is a place: Escape never
   leaves it, as it never leaves a folder (Backspace and Alt+G do).
-- What narrows the folder shown (a tag location's `with`, Narrow by's
-  choices, the words typed) is the search's own chips right after the
-  trail, read once per change (`query.describe_filter`, `search_bar::
-  Filters`): the same labels and menus, each choice changing it in place
-  (`query.narrow`, `query.filter`, or going where the location leads
-  without it), and "+ Filter", which adds to the words typed and offers
-  no facet that reads the files. Each wears a funnel (`filter`), a
-  search's pills their facet's icons: a funnel never stands for a
-  search, nor a facet's icon for a folder narrowed. The first pill says
-  how deep the words look, a dropdown: a folder's "This folder only"
+- What filters a location that is no search (a folder, the trash, a
+  tag's place: its lens and the words typed, a tag's sub-tags) is the
+  search's own chips right after the trail, read once per change
+  (`query.describe_filter`, `search_bar::Filters`): the same labels,
+  icons and menus, each choice changing it in place (`query.filter`, or
+  going where the location leads without it), and "+ Filter", which adds
+  to them and offers no facet that reads the files. A pill of the lens
+  (`Chip::lens`) says in its tooltip that it stays as the pane goes
+  elsewhere. Only the field's token and the depth pill wear a funnel: how
+  deep the words look says filter from search. The first pill says how
+  deep the words look, a dropdown: a folder's "This folder only"
   (`query.describe_filter`'s `depth`), its subfolders searched for its
-  narrowing and words (`query.below`); a search's "And subfolders" (or
+  lens and words (`query.below`); a search's "And subfolders" (or
   "This folder only", searched so), its folder filtered by its words
   when the folder alone can tell them, else searched alone
   (`query.here`). Its tooltip says the key that does the same from the
@@ -438,9 +442,8 @@ of bars, split or not.
 - The trail and the pills after it give way alike, each by its natural
   width (`adaptive::Fit`, drawn from its left edge): the trail wraps its
   first places out, the pills draw the richest of their fits that holds
-  (the depth pill its icon alone first), a folder's keeping their funnel
-  at the last, their × left to their menus. The room after them edits
-  the address.
+  (the depth pill its icon alone first), a folder's as a search's. The
+  room after them edits the address.
 
 ### Search pills (`search_bar.rs`)
 
@@ -703,7 +706,8 @@ of bars, split or not.
   (`Place::suggested`, their dots without the tint), then All Tags
   (`tags:/`). A home tag
   folder, not narrowed, is kept as its pin (`Keeper::keeps`).
-  Shift+click narrows to files that also have the tag; Alt+click shows its
+  Shift+click adds the tag to the pane's lens (files that also have it,
+  ADR-107); Alt+click shows its
   files in the folder shown (`tags.pill`). The tag editor offers pinned
   tags first.
 - **Drops:** a place takes what its location takes (`Verbs::drop`); one

@@ -84,8 +84,11 @@ and `notes.agree` are core `notes.*` commands.
 - It lists tags within as places, each counting its files, and its own
   files: those with the tag exactly, or everything within with `deep`
   (Include Sub-Tags, a `Trail::toggles`).
-- Narrowing (`with`, `without`, `kind`, `year`) is kept while walking its
-  trail, a pill each (`Verbs::narrow`, `tags.narrow`).
+- It is its tag and how deep it holds files (`deep`, `tags.narrow`), never
+  more: another tag, a kind or a year is the pane's lens (ADR-107), kept
+  as its trail is walked and beyond, and its address reads `with`,
+  `without`, `kind` and `year` as nothing. Its places count what the
+  index knows, not what the lens keeps.
 - Its listing is the tags index (`TagIndex::files_under`): at once where a
   count covered the folder, then checked; counted on a first visit. It
   lists again when the index changes; F5 checks. Counting: [notes.md](notes.md).
@@ -154,22 +157,48 @@ and `notes.agree` are core `notes.*` commands.
   (`remember`), never an agent's call; written on a worker, one change at
   a time, never on the window's thread. The rows of the same search
   elsewhere are of the words typed, never of the scope's own search.
-- **Narrowing.** Over a search with a tag, a bar (`narrow.rs`) offers
-  tags within, other tags its files have, kinds and years, with counts
-  from the results. A click refines (`query.refine`); Alt+click excludes a
-  tag. Over a folder the same bar appears with Narrow by
-  (`ui.narrow_folders`) or while narrowed (`query.narrow`), kept in the
-  folder and below it.
+- **The lens (ADR-107)** is what of a pane's filter or search the
+  listing can decide of a file: each term of its AND with no word that
+  finds names and nothing read from the file (`lens::is_lens`): a kind,
+  an extension, a tag, a date, a size, a rating, a comment. It stays
+  wherever the pane goes until taken off (a pill's ×, Quick filters,
+  `query.narrow` without a facet, Escape over a filtered location); Back
+  brings back nothing. The words that find names, and what only a search
+  tells, go with the location.
+  - `App::open_in`, where every location is shown, asks the location's
+    provider how it takes the pane's lens (`LocationProvider::lensed`,
+    with no lock held): a search holds it in its own terms (the query
+    plugin adds it, `facets::with_lens`: a facet the search sets is its
+    own, tags add up), and the history keeps the search as shown; any
+    other location is filtered by it (`Pane::carry`, the lens alone as
+    the filter, `ReadFilter::of_lens`). A navigation whose location says
+    its lens whole is shown as is (`App::navigate_as_is`: the address
+    field's words, a pill's choice, the field's step taken back).
+  - A change of a search's lens alone is made in place of it; a change
+    of its words is a step Back undoes.
+  - A tab or a split opened from a pane takes its lens (`new_tab`,
+    `Workspace::add_pane_from`). The lens goes with its reader: the query
+    plugin turned off leaves none (`App::read_filters_again`).
+- **Quick filters** (`quick_filters.rs`, ADR-107): a bar of the tags
+  within each tag the location has, the other tags its files have, their
+  kinds once it is listed and their years once every file's metadata is
+  in, each with how many files it keeps, what the lens sets already not
+  offered; a click changes the lens (`query.narrow`), Alt+click leaves a
+  tag out. Asked for (`ui.quick_filters`), over any location, it always
+  shows and says why it offers nothing; over a search with a tag and a
+  tag's place it shows by itself, with something to offer. Its count runs
+  on a worker once per change of the listing, at most every 500 ms while
+  it streams, and asks for the metadata a lens needs of the files no
+  view draws, bar or not (the footer's "Reading N files…").
 - A filter types names once per suffix: a name's last extension, or the
   longest compound suffix the type database knows that it ends with
   (`tar.gz`, `mime::compound_suffixes`); never once per name.
-- Narrowing is pane state (`workspace::Narrowed`, applied by
-  `Pane::order`), tested on what the listing knows, never by reading
-  files. Folders always show; files wait for their metadata (the bar's
-  count reads `Pane::unfiltered_order` on a worker) and stay hidden until
-  the test can tell. The core keeps its words, not what they read as:
-  its pills, and the words typed's, are the query plugin's chips
-  (`query.describe_filter`), as a search's are.
+- What filters a pane is pane state (`Pane::filter`, `read_filter`,
+  `lens`, applied by `Pane::order`), tested on what the listing knows,
+  never by reading files. Folders always show; a file the test cannot
+  tell yet (its metadata still to come) stays hidden until it can. The
+  core keeps its words, not what they read as: its pills are the query
+  plugin's chips (`query.describe_filter`), as a search's are.
 - A provider names its location (`LocationProvider::title`: `report in
   Papers`) for tabs and menus. A search's trail is the folder it looks in
   (the place it lists, `in:recent:`), then itself: the address draws the

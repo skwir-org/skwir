@@ -482,7 +482,7 @@ Moves proposed by what is already there, ending in a plan.
   `groups`), each group named without a model by its common name
   tokens, kinds and tags, or with the chat provider by a two-to-four
   word name from its names and snippets; a plan of `mkdir` and `move`
-  steps. The groups show first as a Narrow by facet ("Groups"), so the
+  steps. The groups show first as a Quick filters facet ("Groups"), so the
   user looks before anything moves.
 - `organize.tags {root}` [plans]: the same groups as tag suggestions, a
   plan of `set_notes`: an organization that moves nothing (tag places,
@@ -677,7 +677,7 @@ on and idle equal to the baseline.
   index: read 14:02, 1,230 words, 12 pages".
 - **Find Similar:** "by meaning" and "by looks" chips; a result's
   tooltip and the preview's header show the matching snippet.
-- **Narrow by:** "Groups" when asked, from `organize.propose`.
+- **Quick filters:** "Groups" when asked, from `organize.propose`.
 - **The review:** marked steps show a reason and a confidence bar and a
   checkbox; "Leave out the unsure" unchecks those under the threshold;
   Apply applies the kept.

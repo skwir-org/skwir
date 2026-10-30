@@ -84,11 +84,19 @@ work where the keyboard is, by topic.
   place highlighted, `Ctrl+F` searches in it.
 - **What words keep stays after the trail**, as pills: first how deep
   they look (a funnel, or a magnifier; pressed, it switches), then each
-  part ("Kind: Images"), as a Narrow by choice does: pressed, it offers
-  its other values, and `+ Filter` adds another. A folder's pills wear a
-  funnel, a search's their facet's icon. `Escape` with nothing selected
-  shows the folder whole, from a search too, and so does removing the
-  last pill. `Alt+Enter` searches the home folder.
+  part ("Kind: Images"), as a Quick filter does: pressed, it offers its
+  other values, and `+ Filter` adds another, each with its facet's icon.
+  `Escape` with nothing selected shows the folder whole, from a search
+  too, and so does removing the last pill. `Alt+Enter` searches the home
+  folder.
+- **What a file is stays as you go**: a kind, an extension, a tag, a
+  date, a size or a rating you filter by is kept as you open other
+  folders, searches, the Trash or a tag, until you take its pill off;
+  the words that find names stay with the folder they were typed in. A
+  pill that stays says so in its tooltip, the footer counts what is
+  shown ("12 of 340 items"), and a folder it hides everything in says
+  "Hidden by filters", with a button that shows everything. A tab or a
+  split opened from a pane keeps its filters too.
 - **Type the first letters of a name** in the file list to go to it.
 - **Jump** (`Ctrl+J`) is the address with nothing typed: the folders you
   go to most, from zoxide's list and the desktop's recent files, then
@@ -339,9 +347,10 @@ it, **+ Filter** adds one, and the text can be typed as is:
   in the sidebar. The address offers your last searches when you press
   `Ctrl+F`; `Shift+Delete` forgets one, and Settings › General › Remember
   recent searches turns that off.
-- Over a search with tags, a bar offers what it can narrow to (the tags
-  within, the files' kinds and years), each with a count. Over a folder,
-  View › Narrow by shows the same bar.
+- Over a search with tags, a bar of Quick filters offers what it can
+  narrow to (the tags within, the files' kinds and years), each with a
+  count; a choice is a filter that stays as you go. View › Quick filters
+  shows the bar everywhere, and says why when it has nothing to offer.
 - A search uses the desktop's indexes where they run (Baloo, plocate) to
   go faster, and always checks the files themselves. A search of `/` by
   name alone is plocate's answer where it is installed, as its database
@@ -515,7 +524,7 @@ Settings are grouped by subject, whichever plugin brings them:
 | --- | --- |
 | General | What Skwir does at startup, with tabs, the split and the path above the files, and with what you drag and drop |
 | Appearance | How it looks: theme, your desktop's colors and font, icons, dates |
-| Folders and views | The Narrow by bar, the grid, the list's columns, thumbnails |
+| Folders and views | Quick filters, the grid, the list's columns, thumbnails |
 | Tags and notes | The tags the sidebar suggests, tags kept when copying, companion files, and where tags, ratings and comments are read and written |
 | Reading | How documents, books, comics, Markdown, text and code read, and the engine that reads each kind |
 | Pictures and media | The slideshow, audio and video playback, 3D models, the maps' background |

@@ -28,8 +28,8 @@ around the views is in [shell.md](shell.md).
   order, so a tag is in the same place on every row and tile: those
   pinned to the sidebar first, in its order, then by name
   (`tags::entry_tags`). A tag the place shown says of every entry it
-  lists is left out (`LocationProvider::tags_shown`: a tag's own, the
-  tags it is narrowed to, a search's `tag:` terms; on the board, a
+  lists is left out (`LocationProvider::tags_shown`: a tag's own, a
+  search's `tag:` terms; on the board, a
   column's tag on its cards): only that tag exactly, never one within
   it. A dot, a "+N" and a chip whose tag is in a category say the whole
   name when pointed at.
@@ -59,7 +59,7 @@ around the views is in [shell.md](shell.md).
   A pane says the same of the folders opened in place: `tree_version`
   for anything, `tree_members_version` for their entries. A cache of
   what is shown keys on the membership versions, and on `version` only
-  when it reads metadata; the selection after a pump and a narrowing are
+  when it reads metadata; the selection after a pump and a filter are
   tested again only for what `updated_since` names.
 - An arrow or a click selects the item reached, and the selection then
   follows the cursor. Toggles, ranges and select all *pick*: the selection
