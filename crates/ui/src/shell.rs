@@ -3210,6 +3210,9 @@ impl Shell {
         crate::trail::sync(self);
         // After the trail's sync, which says whether it is a search.
         crate::search_bar::sync(self, window, cx);
+        // What Quick filters counted, taken before anything says it: the
+        // empty state and the footer read it in the same frame.
+        self.sync_quick_filters(cx);
         let address_bar = address::render_address(self, window, cx);
         // A view that draws its own empty states (Usage) keeps them.
         let draws_empty = self
@@ -3250,7 +3253,6 @@ impl Shell {
             .map(|banner| crate::loading::render(banner, self, cx));
         self.sync_sort_hydration();
         self.sync_selection_hydration();
-        self.sync_quick_filters(cx);
         let narrow = crate::quick_filters::render(self, cx);
         let file_area = self.pane_container(body, said, cx);
         let strip = if active {
