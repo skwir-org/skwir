@@ -59,6 +59,13 @@ pub struct AtLogin {
     pub leftovers: Vec<PathBuf>,
     /// It tells its manager once mounted (`sd_notify`: rclone does).
     pub notifies: bool,
+    /// What its program exits with, besides 0, when its manager's SIGTERM
+    /// stops it (its mount's unmount refused, a program holding it): a
+    /// stop, never a failure (systemd's `SuccessExitStatus`). rclone: 143,
+    /// 128 and the signal, once its own handler let go of the mount.
+    /// sshfs: none, it exits 1 then as when its connection is lost, which
+    /// must start it again.
+    pub stopped_with: &'static [u8],
     /// The login its remote control serves behind, kept beside the mounts
     /// as long as the entry is (`winfsp`: on Windows, where rclone is
     /// given nothing in its environment).
@@ -174,6 +181,7 @@ impl AtLogin {
                 .collect(),
             leftovers: control.into_iter().collect(),
             notifies: false,
+            stopped_with: &[],
             control: None,
         }
         .checked()
@@ -287,6 +295,7 @@ fn rclone_on_unix(
         folders,
         leftovers,
         notifies: true,
+        stopped_with: RCLONE_STOPPED,
         control: None,
     }
     .checked()
@@ -330,6 +339,7 @@ fn rclone_on_windows(
         point,
         leftovers: Vec::new(),
         notifies: false,
+        stopped_with: RCLONE_STOPPED,
         control: Some(crate::rc::Login::made()?),
     }
     .checked()
@@ -436,6 +446,10 @@ impl Helpers {
     }
 }
 
+/// What `rclone mount` exits with once SIGTERM stopped it: 128 and the
+/// signal (its handler unmounts, then exits so).
+const RCLONE_STOPPED: &[u8] = &[143];
+
 /// What lets go of what a run left, run by `/bin/sh` with the remover as
 /// `$0`, then the point, the unmounter, the folder remover and the
 /// leftovers. The point is removed where it is an empty folder. Where it
@@ -449,8 +463,10 @@ const GONE: &str = r#""$3" "$1" 2>/dev/null; [ -e "$1" ] && exit 0; "$2" -uz "$1
 /// mount command in the foreground (`Type=notify` where it tells once
 /// mounted, else `exec`), what a run that died left let go of first, the
 /// folders made, then on stopping its mount let go of and its point
-/// removed; started again when it fails, wanted by `default.target`.
-/// Every word is quoted as systemd reads it back exactly (`exec_word`).
+/// removed; started again when it fails, its program's exit once its
+/// manager's SIGTERM stopped it a stop (`AtLogin::stopped_with`), wanted by
+/// `default.target`. Every word is quoted as systemd reads it back exactly
+/// (`exec_word`).
 ///
 /// Most user managers have no `network-online.target`: wanting it orders
 /// the unit after the network where one does, and failing to reach its
@@ -473,6 +489,13 @@ pub fn systemd_unit(at: &AtLogin) -> String {
     made.extend(at.folders.iter().map(OsString::from));
     let plain = unit_text(&at.title);
     let title = plain.replace('%', "%%");
+    // Stopped by its manager's SIGTERM, where its unmount was refused.
+    let stopped = if at.stopped_with.is_empty() {
+        String::new()
+    } else {
+        let codes: Vec<String> = at.stopped_with.iter().map(u8::to_string).collect();
+        format!("SuccessExitStatus={}\n", codes.join(" "))
+    };
     let mut unit = String::new();
     let _ = writeln!(
         unit,
@@ -489,6 +512,7 @@ pub fn systemd_unit(at: &AtLogin) -> String {
          ExecStart={start}\n\
          ExecStop=-{stop}\n\
          ExecStopPost=-{gone}\n\
+         {stopped}\
          Restart=on-failure\n\
          RestartSec=10s\n\
          \n\
@@ -1302,6 +1326,7 @@ mod tests {
             folders: vec![PathBuf::from("/run/user/1000/skwir/rc")],
             leftovers: vec![PathBuf::from("/run/user/1000/skwir/rc/0123.sock")],
             notifies: true,
+            stopped_with: RCLONE_STOPPED,
             control: None,
         }
     }
@@ -1410,6 +1435,16 @@ mod tests {
             ["Connect my 100%% drive at login (Skwir)"]
         );
         assert_eq!(values(&unit, "WantedBy"), ["default.target"]);
+        // Its program stopped by its manager's SIGTERM, its unmount refused:
+        // rclone's exit then is a stop, its failures still started again.
+        assert_eq!(values(&unit, "SuccessExitStatus"), ["143"]);
+        assert_eq!(values(&unit, "Restart"), ["on-failure"]);
+        // sshfs's exit then is a lost connection's: none is a stop.
+        let sshfs = AtLogin {
+            stopped_with: &[],
+            ..hostile_at_login()
+        };
+        assert!(values(&systemd_unit(&sshfs), "SuccessExitStatus").is_empty());
     }
 
     /// systemd refuses a program's path holding a quote or a backslash: the

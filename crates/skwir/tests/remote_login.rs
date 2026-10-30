@@ -273,6 +273,7 @@ fn a_login_unit_is_read_by_systemd_as_written() {
             folders: vec![base.join("sockets 'q'")],
             leftovers: vec![base.join("sockets 'q'/a $x.sock")],
             notifies: false,
+            stopped_with: &[143],
             control: None,
         };
         let unit = login::systemd_unit(&at);
@@ -547,6 +548,7 @@ fn installing_sets_the_unit_up_and_takes_it_back_where_it_fails() {
         folders: Vec::new(),
         leftovers: Vec::new(),
         notifies: true,
+        stopped_with: &[143],
         control: None,
     };
     let name = login::unit_name(&at.id);
@@ -735,6 +737,42 @@ fn an_rclone_remote_mounts_at_login_as_its_unit_runs_it() {
     run_commands(&unit, "ExecStopPost");
     assert!(mounted_at(&at.point).is_none());
     assert!(!at.point.exists(), "its point removed");
+    assert!(at.leftovers.iter().all(|socket| !socket.exists()));
+    // Its unmount refused, a program holding the mount: its manager's
+    // SIGTERM stops it, and rclone ends with what the unit counts as a stop
+    // (`SuccessExitStatus`), never a failure; what it left goes after.
+    run_commands(&unit, "ExecStartPre");
+    let mut started = Started::start(&unit, Some(&base.join("notify.sock")), &at.point);
+    started.ready();
+    let holding = std::fs::File::open(&at.point).unwrap();
+    run_commands(&unit, "ExecStop");
+    assert!(
+        mounted_at(&at.point).is_some(),
+        "its unmount refused while held"
+    );
+    let pid = started.child.id().to_string();
+    assert!(
+        Command::new("kill")
+            .args(["-TERM", &pid])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let ended = started.ended();
+    drop(holding);
+    let code = ended.code().expect("rclone ends by itself on SIGTERM");
+    let stops: Vec<&str> = unit
+        .lines()
+        .filter_map(|line| line.strip_prefix("SuccessExitStatus="))
+        .flat_map(str::split_whitespace)
+        .collect();
+    assert!(
+        stops.contains(&code.to_string().as_str()),
+        "rclone ended {code} on its manager's SIGTERM; the unit's stops: {stops:?}"
+    );
+    run_commands(&unit, "ExecStopPost");
+    assert!(mounted_at(&at.point).is_none(), "let go of");
+    assert!(!at.point.exists());
     assert!(at.leftovers.iter().all(|socket| !socket.exists()));
     // Its program killed: what it left is let go of once it ended.
     run_commands(&unit, "ExecStartPre");
@@ -926,6 +964,9 @@ fn an_sftp_address_mounts_at_login_as_its_unit_runs_it() {
     );
     assert!(at.args.iter().any(|a| a == "-f"));
     let unit = login::systemd_unit(&at);
+    // sshfs ends 1 on its manager's SIGTERM, as when its connection is
+    // lost, which starts it again: none of its exits is a stop.
+    assert!(!unit.contains("SuccessExitStatus"), "{unit}");
     if let Some(verdict) = verified(&base, &login::unit_name(&at.id), &unit) {
         verdict.unwrap_or_else(|said| panic!("systemd refused it: {said}\n{unit}"));
     }
