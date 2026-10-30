@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     AnyElement, Context, ExternalPaths, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent,
-    Window, div, prelude::*,
+    Window, div, prelude::*, px,
 };
 use skwir_core::app::{HydrateArgs, SelectArgs, SelectMode};
 use skwir_core::workspace::PaneId;
@@ -88,12 +88,22 @@ const TYPING_PAUSE: Duration = Duration::from_secs(2);
 /// it was typed in: once the pane shows another (a folder opened with
 /// Enter, Back), the next character begins a new name, as after a pause.
 struct Typed {
-    /// What was typed, lowercase.
+    /// What was typed, as typed.
     text: String,
     /// The listing (`Listing::id`) it was typed in.
     listing: u64,
     /// When its last character was typed.
     at: Instant,
+    /// Where the look begins: the entry under the cursor when the last
+    /// character was typed (none: the order's first), and whether it is
+    /// passed over. A new name and a letter typed again go on past it, so
+    /// each press reaches the next name; a name typed on stays on the
+    /// entry while its name still begins so. Round the end after the last.
+    from: Option<EntryId>,
+    past: bool,
+    /// Whether the listing, whole, has no name beginning so: the label
+    /// says it.
+    missed: bool,
     /// The selection's revision while the listing may still bring an entry
     /// the name reaches first (none yet, or one sorted before the one
     /// selected): each order it brings is looked through again
@@ -112,6 +122,9 @@ impl Typed {
             text: String::new(),
             listing,
             at: now,
+            from: None,
+            past: false,
+            missed: false,
             waiting: None,
             looked: None,
         }
@@ -124,15 +137,73 @@ impl Typed {
     }
 
     fn push(&mut self, ch: &str, now: Instant) {
-        self.text.extend(ch.chars().flat_map(char::to_lowercase));
+        self.text.push_str(ch);
         self.at = now;
     }
 
-    /// Whether `name` begins with what was typed, case ignored.
-    fn begins(&self, name: &str) -> bool {
-        let mut name = name.chars().flat_map(char::to_lowercase);
-        self.text.chars().all(|c| name.next() == Some(c))
+    /// Whether one letter was typed again and again ("ddd", case
+    /// ignored): each press then reaches the next name beginning with it,
+    /// as in Dolphin and Explorer, never a name beginning "ddd".
+    fn repeats(&self) -> bool {
+        let mut letters = self.text.chars().flat_map(char::to_lowercase);
+        let Some(first) = letters.next() else {
+            return false;
+        };
+        let mut again = false;
+        for letter in letters {
+            if letter != first {
+                return false;
+            }
+            again = true;
+        }
+        again
     }
+
+    /// What a name must begin with: what was typed, or its letter once
+    /// when that one letter was typed again and again.
+    fn sought(&self) -> &str {
+        match self.text.chars().next() {
+            Some(first) if self.repeats() => &self.text[..first.len_utf8()],
+            _ => &self.text,
+        }
+    }
+
+    /// `sought`, folded once as the order folds names (`collate::Prefix`):
+    /// "ecole" reaches "École", which sorts beside it.
+    fn prefix(&self) -> skwir_core::collate::Prefix {
+        skwir_core::collate::Prefix::new(self.sought())
+    }
+}
+
+/// The first item of `order` that `holds`, going on from `from` (past it
+/// when `past`) and round the end. One walk, with no index of the order
+/// made: a folder streaming changes its order at every slice, and a name
+/// typed is looked for again at each.
+fn seek_from<T: Copy + PartialEq>(
+    order: &[T],
+    from: Option<T>,
+    past: bool,
+    holds: impl Fn(T) -> bool,
+) -> Option<usize> {
+    let mut passed = from.is_none();
+    // What holds before `from`: reached round the end.
+    let mut first = None;
+    for (ix, &item) in order.iter().enumerate() {
+        let here = !passed && Some(item) == from;
+        passed |= here;
+        // Before `from`, once one holds, only `from` is looked for.
+        if !passed && first.is_some() {
+            continue;
+        }
+        if !holds(item) {
+            continue;
+        }
+        if passed && !(here && past) {
+            return Some(ix);
+        }
+        first.get_or_insert(ix);
+    }
+    first
 }
 
 pub struct ListState {
@@ -172,6 +243,9 @@ pub struct ListState {
     /// first.
     pub visible_items: usize,
     typed: Option<Typed>,
+    /// The redraw that takes the name typed's label away once the pause
+    /// has ended: one, not a loop; the next character replaces it.
+    typed_label: Option<gpui::Task<()>>,
     /// The selection summary and the (selection revision, listing names,
     /// opened folders) it was computed for: read several times a frame,
     /// recomputed only when one of them moved.
@@ -205,6 +279,7 @@ impl Default for ListState {
             visible_rows: 20,
             visible_items: 0,
             typed: None,
+            typed_label: None,
             selection: Cell::new(None),
             selection_bytes: Cell::new(None),
         }
@@ -652,9 +727,25 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(target) = self.select_at(target, step, window, cx) {
+            self.with_view(|v, _| v.scroll_to(target));
+            cx.notify();
+        }
+    }
+
+    /// Move the cursor to `target` (clamped) as `step` says, and say
+    /// where it went (`None`: the order is empty); bringing it into view
+    /// is the caller's.
+    fn select_at(
+        &mut self,
+        target: isize,
+        step: Step,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<usize> {
         let len = self.ui().list.sorted.len();
         if len == 0 {
-            return;
+            return None;
         }
         let target = target.clamp(0, len as isize - 1) as usize;
         let id = self.ui().list.sorted[target];
@@ -669,8 +760,7 @@ impl Shell {
             ..SelectArgs::default()
         };
         self.run_args("select", args, window, cx);
-        self.with_view(|v, _| v.scroll_to(target));
-        cx.notify();
+        Some(target)
     }
 
     pub fn cursor_move(
@@ -906,18 +996,23 @@ impl Shell {
         let Some(ch) = ks.key_char.as_deref() else {
             return;
         };
-        if ch.is_empty() || ch == " " || ch.chars().any(char::is_control) {
+        // Space only goes on with a name: here when no binding took it.
+        if ch == " " {
+            self.type_space(window, cx);
+            return;
+        }
+        if ch.is_empty() || ch.chars().any(char::is_control) {
             return;
         }
         let now = Instant::now();
         // The listing shown now: one a key just opened, even before the
         // next sync adopts it.
-        let Some(listing) = self
+        let Some((listing, cursor)) = self
             .app
             .workspace
             .read()
             .pane(self.pane)
-            .map(|p| p.listing.id())
+            .map(|p| (p.listing.id(), p.selection.cursor))
         else {
             return;
         };
@@ -935,23 +1030,65 @@ impl Shell {
                 cx.notify();
                 return;
             }
-            l.typed
-                .get_or_insert_with(|| Typed::new(listing, now))
-                .push(ch, now);
+            let begun = l.typed.is_none();
+            let typed = l.typed.get_or_insert_with(|| Typed::new(listing, now));
+            typed.push(ch, now);
+            typed.from = cursor;
+            typed.past = begun || typed.repeats();
         }
         let Some((found, whole)) = self.seek_typed() else {
             return;
         };
-        if let Some(ix) = found {
-            self.cursor_to(ix as isize, Step::Select, window, cx);
+        self.typed_reached(found, whole, window, cx);
+    }
+
+    /// Space typed while a name is: it goes on with the name when a name in
+    /// the listing goes on so ("my f" reaching "My file.txt"), and says
+    /// whether it did. Else it is left to its binding (Peek): Space begins
+    /// no name, and ends none that no name goes on with. Asked before the
+    /// binding runs (`pane_container`).
+    fn type_space(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.keys.typeahead {
+            return false;
         }
-        self.typed_waits(whole);
+        let now = Instant::now();
+        let reached = {
+            let ws = self.app.workspace.read();
+            let Some(pane) = ws.pane(self.pane) else {
+                return false;
+            };
+            let list = &self.ui().list;
+            let Some(typed) = list.typed.as_ref().filter(|typed| {
+                typed.goes_on(pane.listing.id(), now) && list.listing == Some(typed.listing)
+            }) else {
+                return false;
+            };
+            let prefix = skwir_core::collate::Prefix::new(&format!("{} ", typed.text));
+            let cursor = pane.selection.cursor;
+            seek_from(&list.sorted, cursor, false, |id| {
+                pane.entry(id).is_some_and(|e| prefix.begins(&e.name))
+            })
+            .map(|ix| (ix, cursor))
+        };
+        let Some((ix, cursor)) = reached else {
+            return false;
+        };
+        if let Some(typed) = self.ui_mut().list.typed.as_mut() {
+            typed.push(" ", now);
+            typed.from = cursor;
+            typed.past = false;
+        }
+        let whole = self.typed_listing_whole();
+        self.typed_reached(Some(ix), whole, window, cx);
+        true
     }
 
     /// Where the name typed leads: the first entry in the order shown whose
-    /// name begins with it, and whether that order is the whole listing it
-    /// was typed in. A folder just opened is adopted at the next sync, and
-    /// streams: until it is whole, an entry the name reaches first may come.
+    /// name begins with it (`Typed::prefix`), going on from where its last
+    /// character was typed (`Typed::from`), and whether that order is the
+    /// whole listing it was typed in. A folder just opened is adopted at
+    /// the next sync, and streams: until it is whole, an entry the name
+    /// reaches first may come.
     fn seek_typed(&self) -> Option<(Option<usize>, bool)> {
         let ws = self.app.workspace.read();
         let pane = ws.pane(self.pane)?;
@@ -960,13 +1097,102 @@ impl Shell {
         if pane.listing.id() != typed.listing || list.listing != Some(typed.listing) {
             return Some((None, false));
         }
-        let found = list
-            .sorted
-            .iter()
-            .position(|id| pane.entry(*id).is_some_and(|e| typed.begins(&e.name_str())));
+        let prefix = typed.prefix();
+        let found = seek_from(&list.sorted, typed.from, typed.past, |id| {
+            pane.entry(id).is_some_and(|e| prefix.begins(&e.name))
+        });
         let whole = list.version() == Some(pane.listing.version())
             && (pane.listing.is_complete() || pane.listing.error().is_some());
         Some((found, whole))
+    }
+
+    /// The entry a name typed reached, selected and brought to the middle
+    /// of the view, so what is around it shows; "No match" when the listing
+    /// is whole and none was; the label kept until the pause ends.
+    fn typed_reached(
+        &mut self,
+        found: Option<usize>,
+        whole: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(ix) = found
+            && let Some(ix) = self.select_at(ix as isize, Step::Select, window, cx)
+        {
+            self.with_view(|view, _| view.scroll_to_middle(ix));
+        }
+        if let Some(typed) = self.ui_mut().list.typed.as_mut() {
+            typed.missed = found.is_none() && whole;
+        }
+        self.typed_waits(whole);
+        // The label goes once the pause has ended: one redraw then.
+        self.ui_mut().list.typed_label = Some(cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(TYPING_PAUSE).await;
+            this.update(cx, |_, cx| cx.notify()).ok();
+        }));
+        cx.notify();
+    }
+
+    /// What is being typed to reach a name, at the foot of the pane until
+    /// the pause ends: what names must begin with (`Typed::sought`), a
+    /// caret after it (a space typed shows), and "No match" once the
+    /// listing, whole, has none. A status line read when asked, never
+    /// announced: the entry reached is said as the cursor moves to it.
+    fn typed_label(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let list = &self.ui().list;
+        let typed = list.typed.as_ref()?;
+        if list.listing != Some(typed.listing) || !typed.goes_on(typed.listing, Instant::now()) {
+            return None;
+        }
+        let theme = cx.global::<Theme>();
+        let sought = typed.sought().to_owned();
+        let said = self.a11y.then(|| {
+            if typed.missed {
+                format!("{sought}: No match")
+            } else {
+                sought.clone()
+            }
+        });
+        let pill = div()
+            .id(("typed", self.pane.0 as usize))
+            .role(gpui::Role::Status)
+            .when_some(said, StatefulInteractiveElement::aria_label)
+            .h(px(28.))
+            .max_w_full()
+            .px(px(12.))
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .overflow_hidden()
+            .whitespace_nowrap()
+            .rounded_full()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.surface)
+            .shadow_md()
+            .text_color(theme.text)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .child(sought)
+                    .child(div().flex_none().w(px(2.)).h(px(16.)).bg(theme.accent)),
+            )
+            .when(typed.missed, |pill| {
+                pill.child(div().text_color(theme.text_muted).child("No match"))
+            });
+        Some(
+            div()
+                .absolute()
+                .bottom(px(12.))
+                .left_0()
+                .right_0()
+                .px(px(16.))
+                .flex()
+                .justify_center()
+                .child(pill)
+                .into_any_element(),
+        )
     }
 
     /// Whether the pane's listing is whole: the last look then settles.
@@ -1039,8 +1265,11 @@ impl Shell {
             }
             // Again when it was already selected: entries that arrived
             // before it moved it down.
-            self.with_view(|view, _| view.scroll_to(ix));
+            self.with_view(|view, _| view.scroll_to_middle(ix));
             cx.notify();
+        }
+        if let Some(typed) = self.ui_mut().list.typed.as_mut() {
+            typed.missed = found.is_none() && whole;
         }
         self.typed_waits(whole);
     }
@@ -1191,6 +1420,7 @@ impl Shell {
         let tint = cx.global::<Theme>().drop_target;
         let key_context = self.pane_key_context();
         let pane = self.pane;
+        let typed = self.typed_label(cx);
         let role = match &said {
             Some(_) => gpui::Role::Group,
             None => self
@@ -1223,6 +1453,20 @@ impl Shell {
             .key_context(key_context)
             .children(self.menu_area_marker(pane))
             .on_key_down(cx.listener(Shell::on_pane_key_down))
+            // Space goes on with a name being typed that a name goes on
+            // with, before its binding here (Peek) runs.
+            .capture_action(
+                cx.listener(move |this, _: &keymap::RunCommand, window, cx| {
+                    let space = window.key_down_event().is_some_and(|ev| {
+                        !ev.is_held
+                            && ev.keystroke.key == "space"
+                            && ev.keystroke.modifiers.number_of_modifiers() == 0
+                    });
+                    if space && this.with_pane(pane, |this| this.type_space(window, cx)) {
+                        cx.stop_propagation();
+                    }
+                }),
+            )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| this.activate_pane(pane, cx)),
@@ -1269,6 +1513,7 @@ impl Shell {
                 this.drop_external(paths.paths(), window, cx);
             }))
             .child(content)
+            .children(typed)
             .into_any_element()
     }
 }
@@ -1318,7 +1563,7 @@ mod tests {
 
     use std::time::{Duration, Instant};
 
-    use super::{Step, TYPING_PAUSE, Typed, find_matches};
+    use super::{Step, TYPING_PAUSE, Typed, find_matches, seek_from};
 
     #[test]
     fn a_find_ignores_case_until_the_pattern_has_a_capital() {
@@ -1342,20 +1587,65 @@ mod tests {
         assert!(!typed.goes_on(1, start + TYPING_PAUSE + Duration::from_millis(1)));
     }
 
-    #[test]
-    fn a_name_typed_begins_names_whatever_their_case() {
+    fn typed(text: &str) -> Typed {
         let now = Instant::now();
         let mut typed = Typed::new(1, now);
-        for ch in ["P", "i", "C"] {
-            typed.push(ch, now);
+        for ch in text.chars() {
+            typed.push(ch.encode_utf8(&mut [0; 4]), now);
         }
-        assert!(typed.begins("pictures"));
-        assert!(typed.begins("PICTURES"));
-        assert!(!typed.begins("pi"));
-        assert!(!typed.begins("papers"));
-        let mut accented = Typed::new(1, now);
-        accented.push("É", now);
-        assert!(accented.begins("été 2026"));
-        assert!(Typed::new(1, now).begins("anything"));
+        typed
+    }
+
+    #[test]
+    fn a_name_typed_begins_names_whatever_their_case_and_accents() {
+        let begins = |text: &str, name: &str| typed(text).prefix().begins(name.as_ref());
+        assert!(begins("PiC", "pictures"));
+        assert!(begins("PiC", "PICTURES"));
+        assert!(!begins("PiC", "pi"));
+        assert!(!begins("PiC", "papers"));
+        assert!(begins("É", "été 2026"));
+        assert!(begins("ecole", "École"));
+        assert!(begins("", "anything"));
+    }
+
+    /// One letter typed again and again looks for that letter, each press
+    /// reaching the next name; any other name typed is looked for whole.
+    #[test]
+    fn a_letter_typed_again_looks_for_itself_once() {
+        assert_eq!(typed("d").sought(), "d");
+        assert_eq!(typed("ddd").sought(), "d");
+        assert_eq!(typed("dD").sought(), "d");
+        assert!(typed("dd").repeats());
+        assert!(!typed("d").repeats());
+        assert_eq!(typed("ddo").sought(), "ddo");
+        assert!(!typed("ddo").repeats());
+        assert_eq!(typed("éé").sought(), "é");
+        assert_eq!(typed("my ").sought(), "my ");
+    }
+
+    /// The look goes on from where it began, past it or not, round the
+    /// end; with nothing to begin from, from the first.
+    #[test]
+    fn a_look_goes_on_from_where_it_began_and_round_the_end() {
+        let order = [10, 11, 12, 13, 14];
+        let d = |n: i32| n == 11 || n == 13;
+        assert_eq!(seek_from(&order, None, false, d), Some(1));
+        assert_eq!(seek_from(&order, None, true, d), Some(1));
+        // On a match: stays unless passed over.
+        assert_eq!(seek_from(&order, Some(11), false, d), Some(1));
+        assert_eq!(seek_from(&order, Some(11), true, d), Some(3));
+        // Past the last match: round the end.
+        assert_eq!(seek_from(&order, Some(13), true, d), Some(1));
+        assert_eq!(seek_from(&order, Some(14), false, d), Some(1));
+        // Between matches.
+        assert_eq!(seek_from(&order, Some(12), true, d), Some(3));
+        // One match, passed over: it again.
+        let one = |n: i32| n == 12;
+        assert_eq!(seek_from(&order, Some(12), true, one), Some(2));
+        // Begun from something no longer in the order: from the first.
+        assert_eq!(seek_from(&order, Some(99), true, d), Some(1));
+        // Nothing matches.
+        assert_eq!(seek_from(&order, Some(12), true, |_| false), None);
+        assert_eq!(seek_from(&[] as &[i32], None, false, d), None);
     }
 }

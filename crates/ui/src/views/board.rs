@@ -111,6 +111,22 @@ impl BoardView {
             .copied()
     }
 
+    /// The card at `ix` of the pane's order brought into view in its
+    /// column, as `strategy` says, and its column across.
+    fn scroll_card(&mut self, ix: usize, strategy: ScrollStrategy) {
+        let Some(&id) = self.order.get(ix) else {
+            return;
+        };
+        let Some((k, card)) = self.find(id) else {
+            return;
+        };
+        let (_, location, _) = &self.drawn[k];
+        if let (Some(card), Some(scroll)) = (card, self.scrolls.get(location)) {
+            scroll.scroll_to_item(card, strategy);
+        }
+        self.row.scroll_to_item(k);
+    }
+
     /// The columns of the place `shell` shows, and those not open yet;
     /// those it showed and that went, empty.
     fn columns(&mut self, shell: &Shell) -> (Vec<Column>, Vec<EntryId>, u64) {
@@ -562,17 +578,11 @@ impl PaneView for BoardView {
 
     /// The card at `ix` of the pane's order, in its column and across.
     fn scroll_to(&mut self, ix: usize) {
-        let Some(&id) = self.order.get(ix) else {
-            return;
-        };
-        let Some((k, card)) = self.find(id) else {
-            return;
-        };
-        let (_, location, _) = &self.drawn[k];
-        if let (Some(card), Some(scroll)) = (card, self.scrolls.get(location)) {
-            scroll.scroll_to_item(card, ScrollStrategy::Top);
-        }
-        self.row.scroll_to_item(k);
+        self.scroll_card(ix, ScrollStrategy::Nearest);
+    }
+
+    fn scroll_to_middle(&mut self, ix: usize) {
+        self.scroll_card(ix, ScrollStrategy::Center);
     }
 
     /// Every key is a move in the pane's order to the card it reaches: up

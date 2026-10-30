@@ -74,8 +74,18 @@ pub trait PaneView {
         window: &mut Window,
         cx: &mut Context<Shell>,
     ) -> AnyElement;
-    /// Bring index `ix` of the sorted order into view.
+    /// Bring index `ix` of the sorted order into view, scrolling the least
+    /// (nothing when it is wholly in view): a key stepping past an edge
+    /// moves the view by that step, not by a page.
     fn scroll_to(&mut self, ix: usize);
+    /// Bring index `ix` into the middle of the view, unless it is wholly
+    /// in view already (then nothing moves): a jump, such as a name typed,
+    /// so what is around it shows. Near an end of the order, as near the
+    /// middle as that end lets it be. A view that cannot brings it into
+    /// view.
+    fn scroll_to_middle(&mut self, ix: usize) {
+        self.scroll_to(ix);
+    }
     /// Where the view is scrolled: the index of the item at the top (the
     /// first of its row) and how many pixels into it the view begins.
     /// `None` for a view that does not scroll by items.

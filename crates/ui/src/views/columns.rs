@@ -698,7 +698,11 @@ impl PaneView for ColumnsView {
     }
 
     fn scroll_to(&mut self, ix: usize) {
-        self.scroll.scroll_to_item(ix, ScrollStrategy::Top);
+        self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+    }
+
+    fn scroll_to_middle(&mut self, ix: usize) {
+        self.scroll.scroll_to_item(ix, ScrollStrategy::Center);
     }
 
     fn kept_locations(&self, shown: Option<&Location>, trail: Option<&Trail>) -> Vec<Location> {

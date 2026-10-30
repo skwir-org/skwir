@@ -785,6 +785,10 @@ impl PaneView for GridView {
         self.scroll.scroll_to_item(ix);
     }
 
+    fn scroll_to_middle(&mut self, ix: usize) {
+        self.scroll.scroll_to_item_middle(ix);
+    }
+
     fn scroll_anchor(&self) -> Option<(usize, f32)> {
         Some(self.scroll.anchor())
     }

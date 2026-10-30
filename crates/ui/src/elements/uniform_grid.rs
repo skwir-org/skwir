@@ -30,6 +30,18 @@ use smallvec::SmallVec;
 
 /// Pure layout math, testable without a window.
 pub mod math {
+    /// Where an item's row brought into view goes.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Place {
+        /// Moved the least, unless it is wholly in view: from below at the
+        /// bottom, from above at the top.
+        Nearest,
+        /// At the top, wherever it was.
+        Top,
+        /// In the middle, unless it is wholly in view.
+        Middle,
+    }
+
     use std::ops::Range;
     use std::rc::Rc;
 
@@ -250,16 +262,16 @@ pub mod math {
             -(self.tops[row] + within.clamp(0., room))
         }
 
-        /// Offset that shows item `ix` (row at the top), or the current
-        /// offset when the item is already fully visible and `strict` is
-        /// false. Clamped to the content.
+        /// Offset that shows item `ix`'s row where `place` says, or the
+        /// current offset when the row is already fully visible and
+        /// `place` is not `Top`. Clamped to the content.
         pub fn offset_for_item(
             &self,
             ix: usize,
             viewport_h: f32,
             content_h: f32,
             current: f32,
-            strict: bool,
+            place: Place,
         ) -> f32 {
             if self.rows() == 0 {
                 return current;
@@ -269,14 +281,16 @@ pub mod math {
             let scroll_top = -current;
             let visible = top >= scroll_top && bottom <= scroll_top + viewport_h;
             let max_scroll = (content_h - viewport_h).max(0.0);
-            if !strict && visible {
+            if place != Place::Top && visible {
                 return current;
             }
-            let target = if !strict && bottom > scroll_top + viewport_h && top >= scroll_top {
+            let target = match place {
                 // Scroll the minimum: put the row at the bottom.
-                bottom - viewport_h
-            } else {
-                top
+                Place::Nearest if bottom > scroll_top + viewport_h && top >= scroll_top => {
+                    bottom - viewport_h
+                }
+                Place::Nearest | Place::Top => top,
+                Place::Middle => top + self.row_height(row) / 2. - viewport_h / 2.,
             };
             -target.clamp(0.0, max_scroll)
         }
@@ -363,8 +377,8 @@ pub struct GridLayout {
 /// A scroll asked for before the next prepaint, which has the real rows.
 #[derive(Clone, Copy, Debug)]
 enum Deferred {
-    /// Bring an item into view, its row at the top when `strict`.
-    Item { ix: usize, strict: bool },
+    /// Bring an item's row into view where `place` says.
+    Item { ix: usize, place: math::Place },
     /// Put an item's row at the top, `within` pixels scrolled into it.
     Anchor { ix: usize, within: f32 },
 }
@@ -389,12 +403,26 @@ impl UniformGridScrollHandle {
 
     /// Bring item `ix` into view with the minimum scroll.
     pub fn scroll_to_item(&self, ix: usize) {
-        self.0.borrow_mut().deferred = Some(Deferred::Item { ix, strict: false });
+        self.0.borrow_mut().deferred = Some(Deferred::Item {
+            ix,
+            place: math::Place::Nearest,
+        });
     }
 
     /// Put item `ix`'s row at the top.
     pub fn scroll_to_item_strict(&self, ix: usize) {
-        self.0.borrow_mut().deferred = Some(Deferred::Item { ix, strict: true });
+        self.0.borrow_mut().deferred = Some(Deferred::Item {
+            ix,
+            place: math::Place::Top,
+        });
+    }
+
+    /// Put item `ix`'s row in the middle, unless it is wholly in view.
+    pub fn scroll_to_item_middle(&self, ix: usize) {
+        self.0.borrow_mut().deferred = Some(Deferred::Item {
+            ix,
+            place: math::Place::Middle,
+        });
     }
 
     /// The first item of the row at the top of the last prepaint, and how
@@ -589,9 +617,9 @@ impl Element for UniformGrid {
                     y = slots.offset_for_anchor(before.anchor(y));
                 }
                 match deferred {
-                    Some(Deferred::Item { ix, strict }) => {
+                    Some(Deferred::Item { ix, place }) => {
                         let ix = ix.min(item_count.saturating_sub(1));
-                        y = slots.offset_for_item(ix, viewport_h, content_h, y, strict);
+                        y = slots.offset_for_item(ix, viewport_h, content_h, y, place);
                     }
                     Some(Deferred::Anchor { ix, within }) => {
                         y = slots.offset_for_anchor((ix.min(item_count.saturating_sub(1)), within));
@@ -806,16 +834,36 @@ mod tests {
         // viewport 400, 4 columns, 100 items -> 25 rows of 100
         let slots = Slots::new(Columns::fit(448., 100., 12., 40.), 0., 100, |_| 100.);
         assert_eq!(slots.columns.cols, 4);
-        let at = |ix, current, strict| slots.offset_for_item(ix, 400., 2500., current, strict);
+        let at = |ix, current, place| slots.offset_for_item(ix, 400., 2500., current, place);
         // Already visible: unchanged.
-        assert!((at(5, 0., false) - 0.).abs() < 1e-6);
+        assert!((at(5, 0., Place::Nearest) - 0.).abs() < 1e-6);
         // Below the viewport: the row lands at the bottom.
-        assert!((at(20, 0., false) - -200.).abs() < 1e-6);
+        assert!((at(20, 0., Place::Nearest) - -200.).abs() < 1e-6);
         // Above the viewport: the row lands at the top.
-        assert!((at(4, -500., false) - -100.).abs() < 1e-6);
-        // Strict: always the top.
-        assert!((at(20, 0., true) - -500.).abs() < 1e-6);
+        assert!((at(4, -500., Place::Nearest) - -100.).abs() < 1e-6);
+        // Top: always the top.
+        assert!((at(20, 0., Place::Top) - -500.).abs() < 1e-6);
         // Clamped to the content.
-        assert!((at(99, 0., true) - -2100.).abs() < 1e-6);
+        assert!((at(99, 0., Place::Top) - -2100.).abs() < 1e-6);
+    }
+
+    /// A row brought to the middle has as much above it as below, unless
+    /// it is in view already or an end of the content stops it.
+    #[test]
+    fn scroll_to_item_middle_centres_what_is_out_of_view() {
+        // viewport 400, 4 columns, 100 items -> 25 rows of 100
+        let slots = Slots::new(Columns::fit(448., 100., 12., 40.), 0., 100, |_| 100.);
+        let at = |ix, current| slots.offset_for_item(ix, 400., 2500., current, Place::Middle);
+        // Wholly in view: nothing moves.
+        assert!((at(5, 0.) - 0.).abs() < 1e-6);
+        // Below: row 10 (top 1000) with 150 above it and 150 below.
+        assert!((at(40, 0.) - -850.).abs() < 1e-6);
+        // Above: the same.
+        assert!((at(40, -2000.) - -850.).abs() < 1e-6);
+        // Partly in view: in the middle too.
+        assert!((at(16, 0.) - -250.).abs() < 1e-6);
+        // Near the ends: as near the middle as they let it.
+        assert!((at(0, -900.) - 0.).abs() < 1e-6);
+        assert!((at(99, 0.) - -2100.).abs() < 1e-6);
     }
 }
