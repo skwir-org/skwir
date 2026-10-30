@@ -18,6 +18,7 @@ use std::{path::Path, sync::Arc};
 
 mod book;
 mod epub;
+mod fb2;
 mod mobi;
 mod pages;
 
@@ -78,7 +79,13 @@ fn register_books(app: &App) {
         Some("mupdf") => Engine::Mupdf,
         _ => Engine::BuiltIn,
     };
-    app.previews.register("epub", Arc::new(Provider { engine }));
+    app.previews.register(
+        "epub",
+        Arc::new(Provider {
+            engine,
+            ..Provider::default()
+        }),
+    );
 }
 
 /// An EPUB, by type (AGENTS.md, "Types").
@@ -150,12 +157,23 @@ impl ThumbnailProvider for Cover {
     }
     fn accepts(&self, req: &ThumbRequest) -> bool {
         let path = || req.entry.resolve().ok();
-        Format::of(&req.entry.path, req.mime.as_deref(), path) == Some(Format::Epub)
+        matches!(
+            Format::of(&req.entry.path, req.mime.as_deref(), path),
+            Some(Format::Epub | Format::Fb2 | Format::Fb2Zip)
+        )
     }
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
         let path = req.entry.resolve()?;
+        let format = Format::of(&req.entry.path, req.mime.as_deref(), || Some(path.clone()));
         // Nothing for a cover the book encrypts, or names none.
-        let Some(bytes) = epub::cover_picture(&path, cancel)? else {
+        let cover = match format {
+            Some(Format::Epub) => epub::cover_picture(&path, cancel)?,
+            Some(format @ (Format::Fb2 | Format::Fb2Zip)) => {
+                fb2::Fb2::open(&path, format == Format::Fb2Zip, cancel)?.cover()
+            }
+            _ => None,
+        };
+        let Some(bytes) = cover else {
             return Ok(None);
         };
         let cover = inspection::picture(&bytes, req.size.pixels())?;
@@ -181,9 +199,24 @@ enum Engine {
 #[derive(Default)]
 struct Provider {
     engine: Engine,
+    /// The FB2 shown, read once.
+    fb2: book::Kept<fb2::Fb2>,
 }
 
 impl Provider {
+    /// The FB2 the preview `req` shows, read once while it is shown.
+    fn fb2(
+        &self,
+        req: &PreviewRequest,
+        format: Format,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Arc<fb2::Fb2>> {
+        let held = req.held()?;
+        self.fb2.get(&held, req.shown(), || {
+            fb2::Fb2::open(&held, format == Format::Fb2Zip, cancel)
+        })
+    }
+
     /// Whether `MuPDF` reads the book `format` names in `file`: when it is
     /// the engine chosen, and reads that kind of book (ADR-106). Told
     /// before the book opens, never from `MuPDF` failing on it.
@@ -207,19 +240,20 @@ impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         "epub"
     }
-    /// A book, by type. The built-in engine reads EPUB; FB2 and MOBI are
-    /// read by `MuPDF` when it is chosen and reads them.
+    /// A book, by type. The built-in engine reads EPUB and FB2; MOBI is
+    /// read by `MuPDF` when it is chosen and reads it.
     fn accepts(&self, req: &PreviewRequest) -> bool {
         match Format::of_request(req) {
-            Some(Format::Epub) => true,
+            Some(Format::Epub | Format::Fb2 | Format::Fb2Zip) => true,
             Some(format) => req
                 .held()
                 .is_ok_and(|held| self.mupdf_reads(format, &held, &CancelToken::new())),
             None => false,
         }
     }
-    /// A picture a chapter named, by its member: read through the same
-    /// bounded reader, and never outside the container.
+    /// A picture a chapter named, by its key: an EPUB's member, read
+    /// through the same bounded reader and never outside the container; an
+    /// FB2's binary.
     fn picture(
         &self,
         req: &PreviewRequest,
@@ -227,7 +261,12 @@ impl PreviewProvider for Provider {
         key: &str,
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<skwir_core::thumbs::Image>> {
-        let bytes = epub::picture(&req.held()?, key, cancel)?;
+        let bytes = match Format::of_request(req) {
+            Some(format @ (Format::Fb2 | Format::Fb2Zip)) => self
+                .fb2(req, format, cancel)?
+                .binary(key, skwir_platform::inspection::limits::BINARY_INPUT)?,
+            _ => epub::picture(&req.held()?, key, cancel)?,
+        };
         Ok(Some(inspection::image(&bytes)?))
     }
     /// A book of pages opens in the document reader: with `MuPDF`, every
@@ -288,7 +327,11 @@ impl PreviewProvider for Provider {
                 };
                 book::inspect(&mut book, view, cancel).map(Some)
             }
-            Format::Fb2 | Format::Fb2Zip | Format::Palm => Ok(None),
+            Format::Fb2 | Format::Fb2Zip => {
+                let book = self.fb2(req, format, cancel)?;
+                book::inspect(&mut fb2::Reading(&book), view, cancel).map(Some)
+            }
+            Format::Palm => Ok(None),
         }
     }
 }
@@ -357,6 +400,7 @@ mod tests {
     fn mupdf_reads_the_kinds_it_reads_well() {
         let mupdf = Provider {
             engine: Engine::Mupdf,
+            ..Provider::default()
         };
         let cancel = CancelToken::new();
         for (name, format, reads) in [
@@ -405,6 +449,7 @@ mod tests {
         assert_eq!(Format::of_request(&request), Some(Format::Palm));
         let mupdf = Provider {
             engine: Engine::Mupdf,
+            ..Provider::default()
         };
         assert!(!mupdf.mupdf_reads(Format::Palm, &request.held().unwrap(), &CancelToken::new()));
     }

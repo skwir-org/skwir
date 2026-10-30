@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::{Cover, Engine, Provider};
 use skwir_core::op::EntryRef;
@@ -136,6 +135,7 @@ fn each_engine_answers_through_its_own_surface() {
     // MuPDF's books are documents: the reader opens them, never inspect.
     let mupdf = Provider {
         engine: Engine::Mupdf,
+        ..Provider::default()
     };
     assert!(
         mupdf

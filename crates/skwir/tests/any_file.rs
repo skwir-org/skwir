@@ -156,6 +156,14 @@ fn samples() -> Vec<(&'static str, Vec<u8>)> {
             ),
         ),
         ("book.epub", epub()),
+        (
+            "book.fb2",
+            include_bytes!("../../plugins/epub/testdata/synthetic.fb2").to_vec(),
+        ),
+        (
+            "book.fb2.zip",
+            include_bytes!("../../plugins/epub/testdata/synthetic.fb2.zip").to_vec(),
+        ),
         ("letter.docx", docx()),
         ("letter.odt", odt()),
         (

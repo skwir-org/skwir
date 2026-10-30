@@ -3,11 +3,12 @@
 //! starts at the chapter asked and wraps, a link or a contents entry
 //! leading to its chapter however it is spelt, and the chapter's source.
 //! A format says how a chapter is read and what it names (`Book`).
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::SystemTime};
 
 use skwir_core::{
     CancelToken,
     inspection::{Inspection, InspectionKind, PrintedPage, Row},
+    preview::Held,
 };
 use skwir_platform::{
     inspection::{self, limits::Bounds},
@@ -271,4 +272,70 @@ impl Sections {
 pub(crate) fn parse_xml(text: &str) -> anyhow::Result<roxmltree::Document<'_>> {
     inspection::xml_depth(text.as_bytes())?;
     Ok(roxmltree::Document::parse(text)?)
+}
+
+/// What a format works out once from a book (its index, its text
+/// decompressed), kept while the preview shows that book and that version
+/// of it (`PreviewRequest::shown`, as ADR-105 keeps an archive's helper):
+/// a chapter turned, a search, a picture shown read the book once.
+pub(crate) struct Kept<T>(std::sync::Mutex<Option<KeptBook<T>>>);
+
+struct KeptBook<T> {
+    path: PathBuf,
+    version: (u64, Option<SystemTime>),
+    shown: CancelToken,
+    book: Arc<T>,
+}
+
+impl<T> Default for Kept<T> {
+    fn default() -> Self {
+        Self(std::sync::Mutex::new(None))
+    }
+}
+
+impl<T> Kept<T> {
+    /// The book `held` as `open` reads it: the one kept for it, or read now
+    /// (outside the lock: a remote's file may take long) and kept in its
+    /// place while `shown` lasts.
+    pub(crate) fn get(
+        &self,
+        held: &Held,
+        shown: &CancelToken,
+        open: impl FnOnce() -> anyhow::Result<T>,
+    ) -> anyhow::Result<Arc<T>> {
+        let version = held.version();
+        let kept = |slot: &Option<KeptBook<T>>| {
+            slot.as_ref()
+                .filter(|kept| {
+                    kept.path == held.path()
+                        && kept.version == version
+                        && !kept.shown.is_cancelled()
+                })
+                .map(|kept| Arc::clone(&kept.book))
+        };
+        if let Some(book) = kept(&self.lock()) {
+            return Ok(book);
+        }
+        let book = Arc::new(open()?);
+        let mut slot = self.lock();
+        if let Some(other) = kept(&slot) {
+            return Ok(other);
+        }
+        // Nothing is kept for a preview already gone.
+        if !shown.is_cancelled() {
+            *slot = Some(KeptBook {
+                path: held.path().to_owned(),
+                version,
+                shown: shown.clone(),
+                book: Arc::clone(&book),
+            });
+        }
+        Ok(book)
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<KeptBook<T>>> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 }

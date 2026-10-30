@@ -7855,6 +7855,8 @@ name = "skwir-plugin-epub"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
+ "encoding_rs",
  "percent-encoding",
  "rbook",
  "roxmltree 0.21.2",

@@ -419,6 +419,65 @@ fn epub_chapters_source_navigation_and_disable() {
     assert!(source.plain_text().contains("<h1>"));
 }
 
+/// An FB2, as the preview panel asks for it: its parts as chapters, its
+/// contents, a note in its body of notes, its source; zipped, the same.
+#[test]
+fn fb2_chapters_contents_notes_and_source() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let books = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins/epub/testdata");
+    let path = tmp.path().join("Synthetic reader's book.fb2");
+    std::fs::copy(books.join("synthetic.fb2"), &path).unwrap();
+    let first = inspect(&app, &path, &InspectRequest::default());
+    assert_eq!(first.kind, InspectionKind::Book);
+    assert_eq!(first.title, "FB2 · chapter 1 / 3");
+    assert!(first.plain_text().contains("The needle is here"));
+    let titles: Vec<&str> = first.rows.iter().map(|row| row.cells[0].as_str()).collect();
+    assert_eq!(
+        titles,
+        [
+            "Part One",
+            "The First Chapter",
+            "The Second Chapter",
+            "Part Two",
+            "The Third Chapter",
+            "Notes"
+        ]
+    );
+    let note = first
+        .blocks
+        .iter()
+        .flat_map(|block| &block.runs)
+        .find(|run| run.note)
+        .and_then(|run| run.link.clone())
+        .expect("a note reference");
+    let notes = inspect(
+        &app,
+        &path,
+        &InspectRequest {
+            target: Some(note),
+            ..InspectRequest::default()
+        },
+    );
+    assert_eq!(notes.position, 2);
+    assert!(notes.plain_text().contains("The note's own words."));
+    let source = inspect(
+        &app,
+        &path,
+        &InspectRequest {
+            source: true,
+            ..InspectRequest::default()
+        },
+    );
+    assert!(source.plain_text().contains("<section id=\"part1\">"));
+    let zipped = tmp.path().join("Synthetic reader's book.fb2.zip");
+    std::fs::copy(books.join("synthetic.fb2.zip"), &zipped).unwrap();
+    assert_eq!(
+        inspect(&app, &zipped, &InspectRequest::default()).plain_text(),
+        first.plain_text()
+    );
+}
+
 /// A type shown as its source (`SourceTypes`) opens on it wherever the file
 /// has one: text in the shared code view, a book's chapter as its provider
 /// writes it, though a book is no text. A file of the type that is no text

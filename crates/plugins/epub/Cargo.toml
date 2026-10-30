@@ -10,6 +10,10 @@ rust-version = "1.88"
 skwir-core.workspace = true
 skwir-platform.workspace = true
 anyhow.workspace = true
+# An FB2's pictures; the version already in the tree.
+base64 = "0.22"
+# The encoding an FB2 declares (Windows-1251 and others); the platform's.
+encoding_rs = "0.8"
 rbook = "0.7"
 # rbook already selects flate2 with zlib-rs; zopfli (a compressor) is never needed.
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
