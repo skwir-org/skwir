@@ -135,11 +135,12 @@ pub struct Omni {
     before: Option<Before>,
     /// The field showed a location of its own (a search as it is typed, a
     /// search's folder to filter, a place's other depth): one step of the
-    /// pane's history, which it shows in place and Escape takes back, and
-    /// what it shows there. The step is the field's only while the pane
-    /// shows that: gone elsewhere by other means (Back, Up: keys bound
-    /// anywhere run in the field too), it is a step of the pane's.
-    step: Option<Location>,
+    /// pane's history, which it shows in place and Escape takes back: where
+    /// it is in the history, and what it shows there. The step is the
+    /// field's only while the pane shows that, there: gone elsewhere by
+    /// other means (Back, Up: keys bound anywhere run in the field too),
+    /// even to a step showing the same location, it is a step of the pane's.
+    step: Option<(usize, Location)>,
     /// The words whose search the pane shows, shown as typed, and the
     /// scope it looks in: the same words in another scope are another
     /// search.
@@ -854,14 +855,19 @@ impl Shell {
         self.mark_step();
     }
 
-    /// Whether the pane shows the field's own step: one it took, still
-    /// showing what the field put there.
+    /// Whether the pane shows the field's own step: one it took, at the
+    /// place in the history it took it, still showing what the field put
+    /// there.
     fn own_step(&self) -> bool {
-        self.ui()
-            .omni
-            .as_ref()
-            .and_then(|o| o.step.as_ref())
-            .is_some_and(|step| self.app.pane_location(self.pane).as_ref() == Some(step))
+        let step = self.ui().omni.as_ref().and_then(|o| o.step.clone());
+        step.is_some_and(|step| self.pane_step() == Some(step))
+    }
+
+    /// The step of its history the pane shows, and what it shows there.
+    fn pane_step(&self) -> Option<(usize, Location)> {
+        let ws = self.app.workspace.read();
+        let p = ws.pane(self.pane)?;
+        Some((p.history_pos, p.location()?.clone()))
     }
 
     /// The field takes a step of the pane's history of its own, once: what
@@ -880,7 +886,7 @@ impl Shell {
 
     /// What the pane shows now is the field's step (shown in place of it).
     fn mark_step(&mut self) {
-        let shown = self.app.pane_location(self.pane);
+        let shown = self.pane_step();
         if let Some(omni) = self.ui_mut().omni.as_mut() {
             omni.step = shown;
         }
