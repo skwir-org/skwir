@@ -1674,13 +1674,18 @@ impl Settings {
     /// owner nothing here declares (a plugin turned off, or from outside)
     /// is only noted. A key kept apart from the settings (the window's
     /// state, the user's data) is noted: read only until skwir keeps its
-    /// own. A key's former name (`rename`) is noted with its new one.
+    /// own. A key's former name (`rename`) is noted with its new one, or,
+    /// where the file says the new one too, as not read.
     pub fn check(&self, table: &toml::Table, plugins: &[String]) -> Checked {
         let renamed = self.renamed.lock().clone();
         let moved = |key: &str| {
-            renamed
-                .get(key)
-                .map(|new| format!("now “{new}”: skwir moves it there"))
+            renamed.get(key).map(|new| {
+                if Self::lookup(table, new).is_some() {
+                    format!("not read: “{new}” is set, which skwir reads")
+                } else {
+                    format!("now “{new}”: skwir moves it there")
+                }
+            })
         };
         let schema = self.schema.read();
         let owners: BTreeSet<&str> = schema.values().map(SettingSpec::owner).collect();

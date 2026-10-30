@@ -19,8 +19,6 @@ use scraper::{
 };
 use std::{borrow::Cow, fmt::Write};
 
-/// Nodes one document may have, entity expansions included.
-const NODES: u32 = 1 << 20;
 const XLINK: &str = "http://www.w3.org/1999/xlink";
 const XML: &str = "http://www.w3.org/XML/1998/namespace";
 const OPS: &str = "http://www.idpf.org/2007/ops";
@@ -28,13 +26,7 @@ const OPS: &str = "http://www.idpf.org/2007/ops";
 /// The document, or `None` when it is not well-formed XML.
 pub fn parse(source: &str) -> Option<Html> {
     let source = entities(source);
-    crate::inspection::xml_depth(source.as_bytes()).ok()?;
-    let options = roxmltree::ParsingOptions {
-        allow_dtd: true,
-        nodes_limit: NODES,
-        ..roxmltree::ParsingOptions::default()
-    };
-    let doc = roxmltree::Document::parse_with_options(&source, options).ok()?;
+    let doc = crate::inspection::xml_document(&source).ok()?;
     let mut html = Html::new_document();
     let root = html.tree.root().id();
     // Depth first, children pushed last to first: each node is appended to
@@ -162,6 +154,34 @@ mod tests {
             image.attrs().find(|(name, _)| *name == "href"),
             Some(("href", "c.jpg"))
         );
+    }
+
+    /// A page's own entities read as what they stand for, a small one
+    /// however often it is named; entities that would grow the page past
+    /// what is parsed whole leave it to the HTML parser, unexpanded.
+    #[test]
+    fn a_page_s_entities_expand_within_bounds() {
+        let page = |entities: &str, body: &str| {
+            format!(
+                r#"<?xml version="1.0"?><!DOCTYPE html [{entities}]><html xmlns="http://www.w3.org/1999/xhtml"><body>{body}</body></html>"#
+            )
+        };
+        let small = parse(&page(
+            r#"<!ENTITY synthdash "—">"#,
+            &"<p>a&nbsp;b&synthdash;c</p>".repeat(10_000),
+        ))
+        .expect("read as XML");
+        let p = small
+            .select(&scraper::Selector::parse("p").unwrap())
+            .next()
+            .unwrap();
+        assert_eq!(p.text().collect::<String>(), "a\u{a0}b—c");
+        // Eight kilobytes named 4096 times: 32 MiB once expanded.
+        let large = page(
+            &format!(r#"<!ENTITY t "{}">"#, "x".repeat(8 * 1024)),
+            &format!("<p>{}</p>", "&t;".repeat(4096)),
+        );
+        assert!(parse(&large).is_none(), "the entities were expanded");
     }
 
     #[test]

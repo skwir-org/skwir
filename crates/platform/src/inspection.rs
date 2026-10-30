@@ -58,6 +58,9 @@ pub mod limits {
     /// (`scheduler::WORKER_STACK`) holds four times this in a release
     /// build, twice in a debug one; no document a person made comes near.
     pub const XML_PARSED_DEPTH: usize = 512;
+    /// Nodes of an XML text parsed whole (`xml_document`), what its
+    /// entities expand to included.
+    pub const XML_NODES: u32 = 1 << 20;
     /// Nesting of a stylesheet's functions and blocks that is read
     /// (`calc(var(--a, calc(…)))`, `:not(:is(…))`): the CSS parser and
     /// the selectors' recurse once a level, with no bound of their own,
@@ -309,6 +312,310 @@ fn nesting(text: &[u8], most: usize) -> usize {
         i = next;
     }
     deepest
+}
+
+/// An XML text that may declare entities in its document type (an FB2, a
+/// book's XHTML, a property list), parsed once it is known to stay within
+/// what is parsed whole: its elements nest at most
+/// `limits::XML_PARSED_DEPTH` deep, what its entities hold included; what
+/// naming its entities adds is at most `limits::TEXT_INPUT` bytes, counted
+/// before anything is expanded; it makes at most `limits::XML_NODES` nodes.
+/// roxmltree bounds how deep references nest and how many one reference
+/// makes, not how many a text makes: a megabyte named a million times was a
+/// terabyte, and the allocation that failed aborted the whole process.
+///
+/// # Errors
+/// When it is past one of those bounds, declares its entities in a way
+/// roxmltree does not read, or is not well-formed.
+pub fn xml_document(text: &str) -> anyhow::Result<roxmltree::Document<'_>> {
+    let declared = Declared::of(text.as_bytes())?;
+    let body = &text.as_bytes()[declared.end..];
+    let (added, deepest) = declared.named(body);
+    anyhow::ensure!(
+        nesting(body, limits::XML_PARSED_DEPTH).saturating_add(deepest) <= limits::XML_PARSED_DEPTH,
+        "it nests its elements deeper than {} levels",
+        limits::XML_PARSED_DEPTH
+    );
+    anyhow::ensure!(
+        added <= limits::TEXT_INPUT as u64,
+        "its entities expand past {}",
+        limits::describe(limits::TEXT_INPUT)
+    );
+    let options = roxmltree::ParsingOptions {
+        allow_dtd: true,
+        nodes_limit: limits::XML_NODES,
+        ..roxmltree::ParsingOptions::default()
+    };
+    Ok(roxmltree::Document::parse_with_options(text, options)?)
+}
+
+/// The entities a text's document type declares, as roxmltree reads them:
+/// each with what it expands to, and where the document type ends.
+struct Declared<'a> {
+    expanded: std::collections::HashMap<&'a [u8], Expansion>,
+    /// Where what follows the document type starts: 0 without one.
+    end: usize,
+}
+
+/// What an entity is, its own entities expanded: its bytes, and how deep
+/// its elements nest.
+#[derive(Clone, Copy)]
+struct Expansion {
+    bytes: u64,
+    depth: usize,
+}
+
+impl Expansion {
+    /// An entity that names itself, which roxmltree refuses where it is
+    /// named.
+    const ENDLESS: Expansion = Expansion {
+        bytes: u64::MAX,
+        depth: usize::MAX,
+    };
+}
+
+impl<'a> Declared<'a> {
+    fn of(text: &'a [u8]) -> anyhow::Result<Self> {
+        let unread = || anyhow::anyhow!("its document type is not read");
+        let none = |end| Declared {
+            expanded: std::collections::HashMap::new(),
+            end,
+        };
+        // Before it: a byte order mark, the declaration, comments,
+        // instructions.
+        let mut c = Cursor {
+            text,
+            at: if text.starts_with(b"\xEF\xBB\xBF") {
+                3
+            } else {
+                0
+            },
+        };
+        loop {
+            c.spaces();
+            if c.eat(b"<?") {
+                c.past(b"?>").ok_or_else(unread)?;
+            } else if c.eat(b"<!--") {
+                c.past(b"-->").ok_or_else(unread)?;
+            } else if c.eat(b"<!DOCTYPE") {
+                break;
+            } else {
+                return Ok(none(0));
+            }
+        }
+        // Its name, an identifier outside (quoted), then what it declares
+        // in brackets.
+        c.spaces();
+        c.word();
+        c.spaces();
+        if c.eat(b"SYSTEM") {
+            c.spaces();
+            c.quoted().ok_or_else(unread)?;
+        } else if c.eat(b"PUBLIC") {
+            c.spaces();
+            c.quoted().ok_or_else(unread)?;
+            c.spaces();
+            c.quoted().ok_or_else(unread)?;
+        }
+        c.spaces();
+        if c.eat(b">") {
+            return Ok(none(c.at));
+        }
+        anyhow::ensure!(c.eat(b"["), unread());
+        let mut values = std::collections::HashMap::new();
+        loop {
+            c.spaces();
+            if c.eat(b"<!ENTITY") {
+                c.spaces();
+                // A parameter entity, which roxmltree names with `&` too.
+                if c.eat(b"%") {
+                    c.spaces();
+                }
+                let name = c.word();
+                c.spaces();
+                if let Some(value) = c.quoted() {
+                    // The first declaration of a name binds.
+                    values.entry(name).or_insert(value);
+                } else {
+                    // An external entity: nothing resolves it, and it is
+                    // discarded.
+                    loop {
+                        c.spaces();
+                        if c.rest().starts_with(b">") {
+                            break;
+                        }
+                        if c.quoted().is_none() && c.word().is_empty() {
+                            return Err(unread());
+                        }
+                    }
+                }
+                c.spaces();
+                anyhow::ensure!(c.eat(b">"), unread());
+            } else if c.eat(b"<!--") {
+                c.past(b"-->").ok_or_else(unread)?;
+            } else if c.eat(b"<?") {
+                c.past(b"?>").ok_or_else(unread)?;
+            } else if c.eat(b"<!ELEMENT") || c.eat(b"<!ATTLIST") || c.eat(b"<!NOTATION") {
+                // As roxmltree reads them: up to the first `>`.
+                c.past(b">").ok_or_else(unread)?;
+            } else if c.eat(b"]") {
+                c.spaces();
+                anyhow::ensure!(c.eat(b">"), unread());
+                return Ok(Declared {
+                    expanded: expand(&values),
+                    end: c.at,
+                });
+            } else {
+                return Err(unread());
+            }
+        }
+    }
+
+    /// What naming its entities adds to `body`, in bytes, and how deep the
+    /// elements of the deepest one named nest.
+    fn named(&self, body: &[u8]) -> (u64, usize) {
+        references(body)
+            .filter_map(|name| Some((name, self.expanded.get(name)?)))
+            .fold((0u64, 0usize), |(added, deepest), (name, entity)| {
+                (
+                    added.saturating_add(entity.bytes.saturating_sub(name.len() as u64 + 2)),
+                    deepest.max(entity.depth),
+                )
+            })
+    }
+}
+
+/// Each entity `values` declares, expanded: each after those it names,
+/// once for each time it names them, so a chain or a tree of them is worked
+/// out in one pass.
+fn expand<'a>(
+    values: &std::collections::HashMap<&'a [u8], &'a [u8]>,
+) -> std::collections::HashMap<&'a [u8], Expansion> {
+    let declared: Vec<&[u8]> = values.keys().copied().collect();
+    let index: std::collections::HashMap<&[u8], usize> = declared
+        .iter()
+        .enumerate()
+        .map(|(i, name)| (*name, i))
+        .collect();
+    // What each holds of its own, the entities it names, and those naming it.
+    let mut own = Vec::with_capacity(declared.len());
+    let mut named = vec![Vec::new(); declared.len()];
+    let mut naming = vec![Vec::new(); declared.len()];
+    for (i, name) in declared.iter().enumerate() {
+        let value = values[name];
+        let mut bytes = value.len() as u64;
+        for reference in references(value) {
+            if let Some(&j) = index.get(reference) {
+                bytes -= reference.len() as u64 + 2;
+                named[i].push(j);
+                naming[j].push(i);
+            }
+        }
+        own.push(Expansion {
+            bytes,
+            depth: nesting(value, limits::XML_PARSED_DEPTH),
+        });
+    }
+    let mut waiting: Vec<usize> = named.iter().map(Vec::len).collect();
+    let mut ready: Vec<usize> = (0..declared.len()).filter(|&i| waiting[i] == 0).collect();
+    let mut done: Vec<Option<Expansion>> = vec![None; declared.len()];
+    while let Some(i) = ready.pop() {
+        let inner = named[i]
+            .iter()
+            .map(|&j| done[j].unwrap_or(Expansion::ENDLESS))
+            .fold(Expansion { bytes: 0, depth: 0 }, |sum, e| Expansion {
+                bytes: sum.bytes.saturating_add(e.bytes),
+                depth: sum.depth.max(e.depth),
+            });
+        done[i] = Some(Expansion {
+            bytes: own[i].bytes.saturating_add(inner.bytes),
+            depth: own[i].depth.saturating_add(inner.depth),
+        });
+        for &user in &naming[i] {
+            waiting[user] -= 1;
+            if waiting[user] == 0 {
+                ready.push(user);
+            }
+        }
+    }
+    declared
+        .into_iter()
+        .zip(done)
+        .map(|(name, done)| (name, done.unwrap_or(Expansion::ENDLESS)))
+        .collect()
+}
+
+/// The entities `text` names (`&name;`): not a character's number, nor
+/// XML's five, which roxmltree reads as their characters.
+fn references(text: &[u8]) -> impl Iterator<Item = &[u8]> {
+    memchr::memchr_iter(b'&', text).filter_map(move |at| {
+        let rest = &text[at + 1..];
+        let length = rest
+            .iter()
+            .take_while(|&&b| !is_space(b) && !b";&<>\"'#".contains(&b))
+            .count();
+        let name = &rest[..length];
+        (length > 0
+            && rest.get(length) == Some(&b';')
+            && !matches!(name, b"lt" | b"gt" | b"amp" | b"quot" | b"apos"))
+        .then_some(name)
+    })
+}
+
+/// XML's white space.
+fn is_space(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\r' | b'\n')
+}
+
+/// Where a document type is read.
+struct Cursor<'a> {
+    text: &'a [u8],
+    at: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn rest(&self) -> &'a [u8] {
+        &self.text[self.at..]
+    }
+
+    fn spaces(&mut self) {
+        self.at += self.rest().iter().take_while(|&&b| is_space(b)).count();
+    }
+
+    /// Past `what`, when it is next.
+    fn eat(&mut self, what: &[u8]) -> bool {
+        let next = self.rest().starts_with(what);
+        if next {
+            self.at += what.len();
+        }
+        next
+    }
+
+    /// Past the next `what`.
+    fn past(&mut self, what: &[u8]) -> Option<()> {
+        self.at += memchr::memmem::find(self.rest(), what)? + what.len();
+        Some(())
+    }
+
+    /// A name, or another word of a declaration.
+    fn word(&mut self) -> &'a [u8] {
+        let rest = self.rest();
+        let length = rest
+            .iter()
+            .take_while(|&&b| !is_space(b) && !b"[]>\"'".contains(&b))
+            .count();
+        self.at += length;
+        &rest[..length]
+    }
+
+    /// A quoted literal, when one is next: what it holds.
+    fn quoted(&mut self) -> Option<&'a [u8]> {
+        let rest = self.rest();
+        let quote = *rest.first().filter(|q| matches!(q, b'"' | b'\''))?;
+        let length = memchr::memchr(quote, &rest[1..])?;
+        self.at += length + 2;
+        Some(&rest[1..=length])
+    }
 }
 
 pub fn check(cancel: &CancelToken) -> anyhow::Result<()> {
@@ -1094,6 +1401,70 @@ mod tests {
         std::sync::Arc::new(
             skwir_core::preview::Held::open(path, skwir_core::preview::WHOLE).unwrap(),
         )
+    }
+
+    /// A text's own entities are expanded in a count before it is parsed:
+    /// small ones however often they are named, refused once naming them
+    /// would add more than is parsed whole, however they are spread over
+    /// declarations, and counted in how deep it nests.
+    #[test]
+    fn a_text_s_entities_are_bounded_before_they_expand() {
+        let declaring = |entities: &str, body: &str| {
+            format!("<?xml version=\"1.0\"?><!-- a --><!DOCTYPE r [{entities}]><r>{body}</r>")
+        };
+        // Small, named often, and declared as books and pages do.
+        let small = declaring(
+            "<!ENTITY nbsp \"&#160;\"><!ENTITY % p 'x'><!ELEMENT r ANY><!-- c --><!ATTLIST r a CDATA #IMPLIED><?pi ?><!ENTITY ext SYSTEM \"x.ent\" NDATA gif>",
+            &"a&nbsp;b&amp;&#60;".repeat(200_000),
+        );
+        let doc = xml_document(&small).unwrap();
+        assert!(doc.root_element().text().unwrap().starts_with("a\u{a0}b&<"));
+        let public = "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"><plist/>";
+        assert!(xml_document(public).is_ok());
+        assert!(xml_document("<r/>").is_ok());
+        // An entity adding a kilobyte each time it is named, named until
+        // what is parsed whole is past; a chain of ten entities each naming
+        // the next ten times (a hundred billion bytes, which roxmltree let
+        // through, its references few at a time).
+        let named = |times: usize| {
+            let kilobyte = "x".repeat(1024 + "&k;".len());
+            declaring(&format!("<!ENTITY k \"{kilobyte}\">"), &"&k;".repeat(times))
+        };
+        assert!(xml_document(&named(limits::TEXT_INPUT / 1024)).is_ok());
+        let refused = xml_document(&named(limits::TEXT_INPUT / 1024 + 1)).unwrap_err();
+        assert!(refused.to_string().contains("entities expand"), "{refused}");
+        let chain: String = (0..10)
+            .map(|i| format!("<!ENTITY e{i} \"{}\">", format!("&e{};", i + 1).repeat(10)))
+            .chain(std::iter::once("<!ENTITY e10 \"xxxxxxxxxx\">".to_owned()))
+            .collect();
+        assert!(xml_document(&declaring(&chain, "&e0;")).is_err());
+        assert!(xml_document(&declaring(&chain, "&e9;")).is_ok());
+        // One that names itself is refused where it is named.
+        let endless = "<!ENTITY a \"&b;\"><!ENTITY b \"&a;\">";
+        assert!(xml_document(&declaring(endless, "&a;")).is_err());
+        assert!(xml_document(&declaring(endless, "x")).is_ok());
+        // What its entities hold nests too.
+        let deep = |n: usize| {
+            declaring(
+                &format!("<!ENTITY d \"{}{}\">", "<a>".repeat(n), "</a>".repeat(n)),
+                "&d;",
+            )
+        };
+        assert!(xml_document(&deep(limits::XML_PARSED_DEPTH - 1)).is_ok());
+        assert!(xml_document(&deep(limits::XML_PARSED_DEPTH)).is_err());
+        // A bracket in a value hid the rest from `xml_depth`.
+        let hidden = declaring(
+            "<!ENTITY h \"[\">",
+            &format!("{}{}", "<a>".repeat(600), "</a>".repeat(600)),
+        );
+        assert!(xml_depth(hidden.as_bytes()).is_ok());
+        assert!(xml_document(&hidden).is_err());
+        // Nodes, as many as are parsed whole.
+        let wide = format!("<r>{}</r>", "<a/>".repeat(limits::XML_NODES as usize));
+        assert!(xml_document(&wide).is_err());
+        // A document type roxmltree does not read either.
+        assert!(xml_document("<!DOCTYPE r [<!FOO>]><r/>").is_err());
+        assert!(xml_document("<!DOCTYPE r [<!ENTITY a \"x\"").is_err());
     }
 
     #[test]

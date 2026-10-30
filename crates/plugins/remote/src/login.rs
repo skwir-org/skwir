@@ -1495,14 +1495,7 @@ mod tests {
     fn a_launch_agent_holds_the_mount_command_word_for_word() {
         let at = hostile_at_login();
         let plist = launch_agent(&at);
-        let document = roxmltree::Document::parse_with_options(
-            &plist,
-            roxmltree::ParsingOptions {
-                allow_dtd: true,
-                ..roxmltree::ParsingOptions::default()
-            },
-        )
-        .unwrap();
+        let document = skwir_platform::inspection::xml_document(&plist).unwrap();
         let dict = document
             .root_element()
             .children()

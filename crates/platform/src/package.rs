@@ -78,9 +78,17 @@ impl Package {
         self.index(name).is_some()
     }
 
-    /// Every member's normalized name (lowercased when folded).
+    /// Every member's normalized name (lowercased when folded), in the
+    /// archive's order: what takes the first of several (a zipped book's
+    /// document, a KMZ's) takes the same one each time.
     pub fn names(&self) -> impl Iterator<Item = &str> {
-        self.members.keys().map(String::as_str)
+        let mut names: Vec<(&str, usize)> = self
+            .members
+            .iter()
+            .map(|(name, &index)| (name.as_str(), index))
+            .collect();
+        names.sort_unstable_by_key(|&(_, index)| index);
+        names.into_iter().map(|(name, _)| name)
     }
 
     /// Member `name`, whole within `bound` bytes inflated; `what` names it

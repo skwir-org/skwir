@@ -666,10 +666,31 @@ fn a_renamed_plugin_keeps_its_toggle_and_its_settings() {
             ),
         ]
     );
-    // Stored under the new id, the former one is not read.
-    let (_tmp, app) =
-        start("[plugins.stale]\nenabled = false\n\n[plugins.fresh]\nenabled = true\n");
+    // Stored under the new id, the former one is not read, and the check
+    // says so.
+    let both = "[plugins.stale]\nenabled = false\n\n[plugins.fresh]\nenabled = true\n\n[stale]\nengine = \"second\"\n\n[fresh]\nengine = \"first\"\n";
+    let (_tmp, app) = start(both);
     assert!(app.plugins.is_enabled("fresh"));
+    assert_eq!(
+        app.settings.get::<String>("fresh.engine").as_deref(),
+        Some("first")
+    );
+    let checked = app
+        .settings
+        .check(&both.parse().unwrap(), &["fresh".to_owned()]);
+    assert_eq!(
+        checked.notes,
+        [
+            (
+                "plugins.stale.enabled".to_owned(),
+                "not read: “plugins.fresh.enabled” is set, which skwir reads".to_owned()
+            ),
+            (
+                "stale.engine".to_owned(),
+                "not read: “fresh.engine” is set, which skwir reads".to_owned()
+            ),
+        ]
+    );
 }
 
 #[test]
