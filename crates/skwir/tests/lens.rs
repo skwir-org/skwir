@@ -73,6 +73,32 @@ fn shown(s: &Setup) -> BTreeSet<String> {
         .collect()
 }
 
+/// Show the trash and wait for `names` in its listing: it lists every
+/// mounted volume's trash too (a disk asleep, another test's mounts), so
+/// what it lists of ours is waited for, never its whole listing.
+fn show_trash(s: &Setup, names: &[&str]) {
+    s.app.navigate(s.pane, &Location::parse("trash:")).unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        s.app.pump();
+        let listed = {
+            let ws = s.app.workspace.read();
+            let p = ws.pane(s.pane).unwrap();
+            names
+                .iter()
+                .all(|name| p.listing.iter().any(|e| e.name_str() == *name))
+        };
+        if listed {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the trash lists {names:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn lens(s: &Setup) -> Option<String> {
     let ws = s.app.workspace.read();
     ws.pane(s.pane).unwrap().lens().map(|l| l.words.to_string())
@@ -122,7 +148,7 @@ fn the_trash_is_seen_through_the_lens() {
         s.app.pump();
         std::thread::sleep(Duration::from_millis(20));
     }
-    go(&s, &Location::parse("trash:"));
+    show_trash(&s, &[&picture, &text]);
     assert_eq!(lens(&s).as_deref(), Some("kind:image"));
     let trashed = shown(&s);
     assert!(trashed.contains(&picture), "{trashed:?}");
@@ -132,7 +158,7 @@ fn the_trash_is_seen_through_the_lens() {
     assert_eq!(lens(&s).as_deref(), Some("kind:image"));
     // Taken off, the trash shows everything again.
     s.app.dispatch(&Invocation::new("query.narrow")).unwrap();
-    go(&s, &Location::parse("trash:"));
+    show_trash(&s, &[&picture, &text]);
     assert_eq!(lens(&s), None);
     let trashed = shown(&s);
     assert!(
