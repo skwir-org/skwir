@@ -830,7 +830,9 @@ impl Book for Reading<'_> {
         = Resources<'r>
     where
         Self: 'r;
-    const FORMAT: &'static str = "FB2";
+    fn format(&self) -> &'static str {
+        "FB2"
+    }
     const SOURCE: &'static str = "xml";
     fn chapters(&self) -> &[ChapterRef] {
         &self.0.refs

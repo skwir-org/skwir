@@ -66,7 +66,9 @@ impl EpubBook {
 
 impl Book for EpubBook {
     type Resources<'a> = Chapter<'a>;
-    const FORMAT: &'static str = "EPUB";
+    fn format(&self) -> &'static str {
+        "EPUB"
+    }
     const SOURCE: &'static str = "xhtml";
     fn chapters(&self) -> &[ChapterRef] {
         &self.chapters

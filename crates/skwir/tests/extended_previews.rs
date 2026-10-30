@@ -478,6 +478,52 @@ fn fb2_chapters_contents_notes_and_source() {
     );
 }
 
+/// Mobipocket books, as the preview panel asks for them: MOBI 6, a file
+/// holding MOBI 6 and KF8, AZW3 and a `PalmDOC` text, by the types their
+/// names and bytes say; each its chapters, contents and pictures.
+#[test]
+fn mobipocket_books_read_as_chapters() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(tmp.path());
+    let books = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins/epub/testdata");
+    for (fixture, name, title) in [
+        ("synthetic.mobi", "Synthetic reader's book.mobi", "MOBI"),
+        (
+            "synthetic-both.mobi",
+            "Synthetic reader's both.mobi",
+            "MOBI",
+        ),
+        ("synthetic.azw3", "Synthetic reader's book.azw3", "AZW3"),
+        ("synthetic.pdb", "Synthetic reader's text.pdb", "PalmDOC"),
+    ] {
+        let path = tmp.path().join(name);
+        std::fs::copy(books.join(fixture), &path).unwrap();
+        let first = inspect(&app, &path, &InspectRequest::default());
+        assert_eq!(first.kind, InspectionKind::Book, "{name}");
+        assert!(first.title.starts_with(title), "{name}: {}", first.title);
+        let all: String = (0..first.sections)
+            .map(|offset| {
+                inspect(
+                    &app,
+                    &path,
+                    &InspectRequest {
+                        offset,
+                        ..InspectRequest::default()
+                    },
+                )
+                .plain_text()
+            })
+            .collect();
+        assert!(all.contains("The needle is here"), "{name}: {all}");
+        if title != "PalmDOC" {
+            assert!(
+                first.rows.iter().any(|row| row.cells[0] == "Part Two"),
+                "{name}"
+            );
+        }
+    }
+}
+
 /// A type shown as its source (`SourceTypes`) opens on it wherever the file
 /// has one: text in the shared code view, a book's chapter as its provider
 /// writes it, though a book is no text. A file of the type that is no text

@@ -99,9 +99,17 @@ static MOBI: Types = Types::new(&[
     "application/x-mobipocket-ebook",
     "application/vnd.amazon.mobi8-ebook",
 ]);
-/// A Palm database, which is a book only when its type and creator say so
-/// (`mobi::is_book`).
-static PALM: Types = Types::new(&["application/vnd.palm"]);
+/// What a Palm database may be typed as, a book only when its type and
+/// creator say so (`mobi::is_book`): `.pdb` is a Palm database, a `PalmDOC`
+/// text (`AportisDoc`), a protein's structure and a Windows program
+/// database alike, and the database types it by its heaviest globs (the
+/// last two) before its bytes are read.
+static PALM: Types = Types::new(&[
+    "application/vnd.palm",
+    "application/x-aportisdoc",
+    "application/x-ms-pdb",
+    "chemical/x-pdb",
+]);
 
 /// The format of a book, by its type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,10 +165,7 @@ impl ThumbnailProvider for Cover {
     }
     fn accepts(&self, req: &ThumbRequest) -> bool {
         let path = || req.entry.resolve().ok();
-        matches!(
-            Format::of(&req.entry.path, req.mime.as_deref(), path),
-            Some(Format::Epub | Format::Fb2 | Format::Fb2Zip)
-        )
+        Format::of(&req.entry.path, req.mime.as_deref(), path).is_some()
     }
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
         let path = req.entry.resolve()?;
@@ -171,7 +176,8 @@ impl ThumbnailProvider for Cover {
             Some(format @ (Format::Fb2 | Format::Fb2Zip)) => {
                 fb2::Fb2::open(&path, format == Format::Fb2Zip, cancel)?.cover()
             }
-            _ => None,
+            Some(Format::Palm) => mobi::cover_picture(&path, cancel)?,
+            None => None,
         };
         let Some(bytes) = cover else {
             return Ok(None);
@@ -201,6 +207,8 @@ struct Provider {
     engine: Engine,
     /// The FB2 shown, read once.
     fb2: book::Kept<fb2::Fb2>,
+    /// The Mobipocket book shown, its text decompressed once.
+    mobi: book::Kept<mobi::Mobi>,
 }
 
 impl Provider {
@@ -215,6 +223,14 @@ impl Provider {
         self.fb2.get(&held, req.shown(), || {
             fb2::Fb2::open(&held, format == Format::Fb2Zip, cancel)
         })
+    }
+
+    /// The Mobipocket book the preview `req` shows, read once while it is
+    /// shown.
+    fn mobi(&self, req: &PreviewRequest, cancel: &CancelToken) -> anyhow::Result<Arc<mobi::Mobi>> {
+        let held = req.held()?;
+        self.mobi
+            .get(&held, req.shown(), || mobi::Mobi::open(&held, cancel))
     }
 
     /// Whether `MuPDF` reads the book `format` names in `file`: when it is
@@ -240,20 +256,14 @@ impl PreviewProvider for Provider {
     fn id(&self) -> &'static str {
         "epub"
     }
-    /// A book, by type. The built-in engine reads EPUB and FB2; MOBI is
-    /// read by `MuPDF` when it is chosen and reads it.
+    /// A book, by type: EPUB, FB2 and Mobipocket, whichever engine reads
+    /// it.
     fn accepts(&self, req: &PreviewRequest) -> bool {
-        match Format::of_request(req) {
-            Some(Format::Epub | Format::Fb2 | Format::Fb2Zip) => true,
-            Some(format) => req
-                .held()
-                .is_ok_and(|held| self.mupdf_reads(format, &held, &CancelToken::new())),
-            None => false,
-        }
+        Format::of_request(req).is_some()
     }
     /// A picture a chapter named, by its key: an EPUB's member, read
     /// through the same bounded reader and never outside the container; an
-    /// FB2's binary.
+    /// FB2's binary; a Mobipocket book's record, after its text.
     fn picture(
         &self,
         req: &PreviewRequest,
@@ -265,6 +275,12 @@ impl PreviewProvider for Provider {
             Some(format @ (Format::Fb2 | Format::Fb2Zip)) => self
                 .fb2(req, format, cancel)?
                 .binary(key, skwir_platform::inspection::limits::BINARY_INPUT)?,
+            Some(Format::Palm) => self.mobi(req, cancel)?.picture(
+                &req.held()?,
+                key,
+                skwir_platform::inspection::limits::BINARY_INPUT,
+                cancel,
+            )?,
             _ => epub::picture(&req.held()?, key, cancel)?,
         };
         Ok(Some(inspection::image(&bytes)?))
@@ -331,7 +347,14 @@ impl PreviewProvider for Provider {
                 let book = self.fb2(req, format, cancel)?;
                 book::inspect(&mut fb2::Reading(&book), view, cancel).map(Some)
             }
-            Format::Palm => Ok(None),
+            Format::Palm => {
+                let book = self.mobi(req, cancel)?;
+                let mut reading = mobi::Reading {
+                    book: &book,
+                    file: &held,
+                };
+                book::inspect(&mut reading, view, cancel).map(Some)
+            }
         }
     }
 }

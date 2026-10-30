@@ -35,8 +35,8 @@ pub(crate) trait Book {
     type Resources<'a>: Resources
     where
         Self: 'a;
-    /// What the title calls the format: "EPUB".
-    const FORMAT: &'static str;
+    /// What the title calls the book's format: "EPUB".
+    fn format(&self) -> &'static str;
     /// The language of a chapter's source, for the code view.
     const SOURCE: &'static str;
     /// Its chapters, in reading order.
@@ -88,7 +88,7 @@ pub(crate) fn inspect<B: Book>(
     anyhow::ensure!(
         !chapters.is_empty(),
         "{} has no readable chapters",
-        B::FORMAT
+        book.format()
     );
     // A chapter is found by the member it names, however a link spells
     // it (`Text/../Text/ch2.xhtml`, escaped, with a fragment).
@@ -169,7 +169,12 @@ pub(crate) fn inspect<B: Book>(
     details.push(("Chapters", inspection::count(chapters.len())));
     let frame = Inspection {
         details: inspection::details(details),
-        title: format!("{} · chapter {} / {}", B::FORMAT, index + 1, chapters.len()),
+        title: format!(
+            "{} · chapter {} / {}",
+            book.format(),
+            index + 1,
+            chapters.len()
+        ),
         previous: (index > 0).then(|| index as u64 - 1),
         next: (index + 1 < chapters.len()).then_some(index as u64 + 1),
         position: index as u64,

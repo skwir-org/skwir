@@ -7857,6 +7857,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "encoding_rs",
+ "memchr",
  "percent-encoding",
  "rbook",
  "roxmltree 0.21.2",
