@@ -1010,7 +1010,7 @@ impl Shell {
     /// Words typed over a folder (not a search: its text is the query),
     /// looking in it alone, show only what they keep, at once, in memory
     /// (the core's `filter`, read by the query plugin); looking below it,
-    /// they filter nothing.
+    /// they filter nothing, the folder shown as it was.
     fn filter_as_typed(&mut self, words: &str) {
         let pane = self.pane;
         let filters = self
@@ -1029,7 +1029,20 @@ impl Shell {
         let kept = self.omni_kept().unwrap_or_default();
         let text = format!("{kept} {words}");
         let text = text.trim();
-        let wanted = (here && !text.is_empty()).then_some(text);
+        // Looking below it, the words filter nothing: the folder shows as
+        // it did when the field began (its lens with it) until the search
+        // as typed takes its place.
+        let before = self
+            .ui()
+            .omni
+            .as_ref()
+            .and_then(|o| o.before.as_ref())
+            .and_then(|b| b.filter.clone());
+        let wanted = if here {
+            (!text.is_empty()).then_some(text)
+        } else {
+            before.as_deref()
+        };
         let current = self
             .app
             .workspace
