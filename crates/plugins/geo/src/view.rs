@@ -111,6 +111,8 @@ struct Scan {
     /// share the set as they start), and by itself. None is in both.
     before: Arc<HashSet<EntryId>>,
     looked: HashSet<EntryId>,
+    /// Files that can say where they are, those the scans it went on from
+    /// looked at (`before`) included: never fewer than it looked at.
     candidates: usize,
     listed: usize,
     /// The listing's removals when it started (`Listing::removed_version`):
@@ -486,7 +488,9 @@ impl Scanner {
             placed,
             before: Arc::clone(&skip),
             looked: HashSet::new(),
-            candidates: 0,
+            // What the scans before looked at were candidates, all of
+            // them: its own are added once its worker found them.
+            candidates: skip.len(),
             listed,
             removed,
             complete: false,
@@ -566,8 +570,15 @@ impl Scanner {
                 Some((Candidate { id, path, known }, kind))
             })
             .collect();
+        // Beside what the scans it goes on from looked at, which its worker
+        // skipped: a scan resumed after they had looked at the whole
+        // listing (their worker ran once all of it had arrived, though
+        // they began before) finds no candidate of its own, and still has
+        // as many as it counts looked at.
         let count = candidates.len();
-        let Some(shown) = self.update(pane, scan_id, |scan| scan.candidates = count) else {
+        let Some(shown) = self.update(pane, scan_id, |scan| {
+            scan.candidates = scan.before.len() + count;
+        }) else {
             return;
         };
         let candidates: Vec<(Candidate, Kind)> = candidates
@@ -951,5 +962,68 @@ mod tests {
             decide(Some(&rechecking), &folder(7, 3, true)),
             Decision::Defer
         );
+    }
+
+    /// A scan asked for before the folder arrived whose worker ran only
+    /// once all of it had (a machine under load): the scan that goes on
+    /// from it once the folder is complete finds nothing new, and counts
+    /// as candidates every file looked at, its own and those before it.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_scan_gone_on_from_counts_the_candidates_looked_at_before_it() {
+        use skwir_core::app::AppConfig;
+        use skwir_core::location::Location;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("Trip d'Example");
+        std::fs::create_dir(&dir).unwrap();
+        for name in ["Lake shore.jpg", "Pier.jpg", "Walk.gpx", "notes.txt"] {
+            std::fs::write(dir.join(name), "not read").unwrap();
+        }
+        let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&dir)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(60)));
+        let (source, removed, looked) = {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            let listing = &p.listing;
+            let looked: HashSet<EntryId> = listing
+                .iter()
+                .filter(|e| readable(&e.name).is_some())
+                .map(|e| e.id)
+                .collect();
+            let location = p.location().map(ToString::to_string).unwrap_or_default();
+            let source = (
+                location,
+                listing.id(),
+                listing.names_version(),
+                listing.rewritten_version(),
+                // Asked while the listing was still arriving.
+                false,
+            );
+            (source, listing.removed_version(), looked)
+        };
+        assert_eq!(looked.len(), 3, "the pictures and the track");
+        let scanner = Arc::new(Scanner::new(&app, Arc::default()));
+        let mut before = scan(source, true, false);
+        before.id = 0;
+        before.candidates = looked.len();
+        before.listed = 4;
+        before.removed = removed;
+        before.looked = looked;
+        scanner.scans.lock().insert(pane, scans(before, None));
+
+        scanner.scan(&app, pane).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let batch = loop {
+            let batch = scanner.batch(pane, 0, &HashSet::new()).unwrap();
+            if batch.complete {
+                break batch;
+            }
+            assert!(Instant::now() < deadline, "the scan never ended: {batch:?}");
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(batch.generation, 1, "gone on from: {batch:?}");
+        assert_eq!((batch.looked, batch.candidates), (3, 3), "{batch:?}");
     }
 }
