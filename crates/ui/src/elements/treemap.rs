@@ -1,20 +1,22 @@
 //! A treemap element: squarify runs in `prepaint` on the element's real
-//! bounds; `paint` draws rectangles and labels and installs mouse handlers on
+//! bounds; `paint` draws tiles and labels and installs mouse handlers on
 //! the element's hitbox for hover and click.
 //!
-//! An item with children is drawn open while its block has room for them:
-//! a band with its name and size on top, its children laid out below.
-//! Whether it has room is decided here, from the bounds prepaint was
-//! given, never from a size measured in `render`.
+//! Each block is a tile with rounded corners, a gap of the ground between
+//! it and the next. An item with children is drawn open while its tile
+//! has room for them: a tray, its name and size in a header on top, its
+//! children laid out below. Whether it has room is decided here, from the
+//! bounds prepaint was given, never from a size measured in `render`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, Corners, DispatchPhase, Edges, Element, ElementId, Font,
-    GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId,
-    MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, Pixels, ShapedLine, SharedString,
-    Style, TextRun, Window, pattern_slash, point, px, quad, relative, size,
+    FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement,
+    LayoutId, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent, Pixels, Point,
+    ShapedLine, SharedString, Style, TextRun, Window, pattern_slash, point, px, quad, relative,
+    size,
 };
 
 use crate::treemap::{Rect, squarify};
@@ -27,10 +29,12 @@ pub struct TreemapItem {
     pub weight: f64,
     pub label: SharedString,
     /// What it weighs, said after its name where there is room: beside it
-    /// in an open block's band, under it in a closed one.
+    /// in an open block's header, under it in a closed one.
     pub detail: SharedString,
     pub color: Hsla,
-    /// Its label's color, on `color`.
+    /// Its fill drawn open, its children laid on it.
+    pub tray: Hsla,
+    /// Its label's color, on `color` and on `tray`.
     pub text: Hsla,
     /// Striped: its size is a lower bound, still being counted.
     pub hatched: bool,
@@ -44,10 +48,11 @@ pub struct TreemapItem {
 /// The state colors a treemap draws with (`theme.rs`).
 #[derive(Clone, Copy)]
 pub struct TreemapStyle {
-    /// Between blocks.
+    /// The ground, between blocks and around a chosen one's ring.
     pub gap: Hsla,
-    /// Laid over the block under the pointer.
+    /// Laid over the block under the pointer, and the line inside its edge.
     pub hover: Hsla,
+    pub hover_edge: Hsla,
     /// The ring around a chosen block.
     pub selected: Hsla,
     /// The dashed line inside a block whose room can be had back.
@@ -106,7 +111,8 @@ impl Treemap {
     }
 }
 
-/// Where a block is, for hit-testing.
+/// Where a block is, for hit-testing: its tile and half the gaps around
+/// it, so the pointer between two tiles is on one of them.
 #[derive(Clone, Copy)]
 struct Block {
     key: usize,
@@ -116,13 +122,17 @@ struct Block {
 
 struct Laid {
     block: Block,
+    /// What is drawn, and its corners.
+    tile: Bounds<Pixels>,
+    radius: Pixels,
     color: Hsla,
     hatched: bool,
     dashed: bool,
     selected: bool,
-    /// Its name, and what it weighs: beside the name in a band, or under it.
-    name: Option<ShapedLine>,
-    detail: Option<(ShapedLine, gpui::Point<Pixels>)>,
+    /// Its name, and what it weighs: beside the name in a header, or
+    /// under it; each where it is drawn.
+    name: Option<(ShapedLine, Point<Pixels>)>,
+    detail: Option<(ShapedLine, Point<Pixels>)>,
 }
 
 pub struct TreemapPrepaint {
@@ -142,60 +152,98 @@ struct Kept {
     hits: Rc<Vec<Block>>,
 }
 
-/// Inside an open block: the margin around its children, and the band
-/// above them holding its name.
-const PAD: f64 = 3.0;
-const BAND: f64 = 16.0;
-const FONT: f32 = 11.0;
-/// A label's line, and its inset from its block's corner.
-const LINE: f64 = 14.0;
-const INSET: f64 = 4.0;
-/// Narrower than this, a block says nothing.
-const LABEL_MIN_W: f64 = 44.0;
-/// An open block's children need at least this much room.
-const OPEN_MIN_W: f64 = 32.0;
-const OPEN_MIN_H: f64 = 24.0;
-/// Room kept for a name before a size is said beside it in a band.
-const NAME_MIN_W: f32 = 24.0;
-/// The ring around a chosen block: over the gap around it (each block's
-/// edge is a line of the gap's color, so two blocks are two lines apart),
-/// then a line of the gap's color inside, clear of its labels (`INSET`).
+/// Between two tiles, and between a tray's edge and the tiles on it.
+const GAP: f64 = 3.0;
+/// A tray's header, above its children, holding its name and size.
+const HEADER: f64 = 22.0;
+/// A tile's corners, by depth: smaller inside.
+const RADII: [f32; 3] = [6., 5., 4.];
+/// A name, and what it weighs.
+const FONT: f32 = 11.5;
+const SMALL: f32 = 11.0;
+/// A label's line, and its inset from its tile's sides.
+const LINE: f64 = 15.0;
+const INSET: f64 = 7.0;
+/// Where a name's line begins below a tile's top, and a header's.
+const TOP: f64 = 5.0;
+const HEADER_TOP: f64 = 4.0;
+/// Narrower or lower than this, a tile says nothing.
+const LABEL_MIN_W: f64 = 40.0;
+const LABEL_MIN_H: f64 = 17.0;
+/// Lower than this, a tile says no size under its name.
+const DETAIL_MIN_H: f64 = 36.0;
+/// A name cut to fewer characters than this says nothing ("gar…g"), and
+/// is not drawn; a header's, beside its size, may be shorter.
+const LEAST: usize = 6;
+const LEAST_HEADER: usize = 4;
+/// A tray's children need at least this much room.
+const OPEN_MIN_W: f64 = 40.0;
+const OPEN_MIN_H: f64 = 28.0;
+/// Between a header's name and the size beside it.
+const BESIDE: f32 = 8.0;
+/// The ring around a chosen tile, outside it, a band of the ground
+/// between them as wide.
 const RING: f32 = 2.0;
 
-/// Shapes labels, cut in the middle to the width they get: the end of a
-/// name tells files apart.
+/// A name's weight: a closed tile's, or a header's, heavier.
+struct Weight {
+    font: Font,
+    wrapper: gpui::LineWrapperHandle,
+    least: usize,
+}
+
+/// Shapes labels, names cut in the middle to the width they get: the end
+/// of a name tells files apart.
 struct Labels<'a> {
     window: &'a Window,
-    wrapper: gpui::LineWrapperHandle,
+    tile: Weight,
+    header: Weight,
+    /// What a block weighs.
     font: Font,
 }
 
-impl Labels<'_> {
-    fn run(&self, len: usize, color: Hsla) -> TextRun {
-        TextRun {
-            len,
-            font: self.font.clone(),
-            color,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-            position: gpui::RunPosition::Baseline,
-        }
+fn run(font: &Font, len: usize, color: Hsla) -> TextRun {
+    TextRun {
+        len,
+        font: font.clone(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+        position: gpui::RunPosition::Baseline,
     }
+}
 
-    /// `text` shaped to fit `width`, if anything of it does.
-    fn line(&mut self, text: &SharedString, color: Hsla, width: f32) -> Option<ShapedLine> {
+impl Labels<'_> {
+    /// `text` shaped to fit `width`, in a header's weight or a tile's,
+    /// if enough of it does to say something.
+    fn name(
+        &mut self,
+        text: &SharedString,
+        color: Hsla,
+        width: f32,
+        header: bool,
+    ) -> Option<ShapedLine> {
         if text.is_empty() || width < FONT {
             return None;
         }
-        let runs = vec![self.run(text.len(), color)];
-        let (cut, runs) = self.wrapper.truncate_line(
+        let weight = if header {
+            &mut self.header
+        } else {
+            &mut self.tile
+        };
+        let runs = vec![run(&weight.font, text.len(), color)];
+        let (cut, runs) = weight.wrapper.truncate_line(
             text.clone(),
             px(width),
             "…",
             &runs,
             gpui::TruncateFrom::Middle,
         );
+        // What is left of a name cut is its characters but the ellipsis.
+        if cut != *text && cut.chars().count() <= weight.least {
+            return None;
+        }
         let runs = runs.into_owned();
         Some(
             self.window
@@ -211,8 +259,8 @@ impl Labels<'_> {
         }
         let line = self.window.text_system().shape_line(
             text.clone(),
-            px(FONT),
-            &[self.run(text.len(), color)],
+            px(SMALL),
+            &[run(&self.font, text.len(), color)],
             None,
         );
         (f32::from(line.width) <= width).then_some(line)
@@ -226,6 +274,17 @@ fn bounds(r: Rect) -> Bounds<Pixels> {
     )
 }
 
+/// `b` moved in by `by` on every side, out where `by` is less than none.
+fn inset(b: Bounds<Pixels>, by: Pixels) -> Bounds<Pixels> {
+    Bounds::new(
+        b.origin + point(by, by),
+        size(
+            (b.size.width - by * 2.).max(px(0.)),
+            (b.size.height - by * 2.).max(px(0.)),
+        ),
+    )
+}
+
 fn layout_level(
     items: &[TreemapItem],
     area: Rect,
@@ -234,52 +293,61 @@ fn layout_level(
     out: &mut Vec<Laid>,
 ) {
     let weights: Vec<f64> = items.iter().map(|i| i.weight).collect();
-    for (item, r) in items.iter().zip(squarify(&weights, area)) {
+    for (item, cell) in items.iter().zip(squarify(&weights, area)) {
+        // The tile: its cell, half a gap in on every side.
+        let r = Rect::new(
+            cell.x + GAP / 2.,
+            cell.y + GAP / 2.,
+            cell.w - GAP,
+            cell.h - GAP,
+        );
         if r.w <= 0.0 || r.h <= 0.0 {
             continue;
         }
-        let inner = Rect::new(r.x + PAD, r.y + BAND, r.w - 2.0 * PAD, r.h - BAND - PAD);
+        let inner = Rect::new(r.x + GAP, r.y + HEADER, r.w - 2.0 * GAP, r.h - HEADER - GAP);
         let open = !item.children.is_empty() && inner.w >= OPEN_MIN_W && inner.h >= OPEN_MIN_H;
         let room = (r.w - 2.0 * INSET) as f32;
+        let left = px((r.x + INSET) as f32);
         let (mut name, mut detail) = (None, None);
-        if r.w >= LABEL_MIN_W && r.h >= LINE {
-            if open {
-                // The band: the name, and its size at the right while the
-                // name keeps some room.
-                let size = labels
-                    .whole(&item.detail, item.text.opacity(0.8), room - NAME_MIN_W - 6.)
-                    .map(|line| {
-                        let at = point(
-                            px((r.x + r.w - INSET) as f32) - line.width,
-                            px((r.y + 1.0) as f32),
-                        );
-                        (line, at)
-                    });
-                let name_room = size
-                    .as_ref()
-                    .map_or(room, |(line, _)| room - f32::from(line.width) - 6.);
-                name = labels.line(&item.label, item.text, name_room);
-                detail = size;
-            } else {
-                name = labels.line(&item.label, item.text, room);
-                if r.h >= 2.0 * LINE + 4.0 {
-                    // A size is said whole or not at all.
-                    detail = labels
-                        .whole(&item.detail, item.text.opacity(0.8), room)
-                        .map(|line| {
-                            let at = point(px((r.x + INSET) as f32), px((r.y + 2.0 + LINE) as f32));
-                            (line, at)
-                        });
-                }
+        if open && r.w >= LABEL_MIN_W {
+            // The header: the name, and its size at the right where the
+            // whole name leaves room for it: a name is worth more than its
+            // size, which the line under the map says too.
+            let top = px((r.y + HEADER_TOP) as f32);
+            name = labels
+                .name(&item.label, item.text, room, true)
+                .map(|line| (line, point(left, top)));
+            if let Some((line, _)) = &name {
+                let rest = room - f32::from(line.width) - BESIDE;
+                detail = labels.whole(&item.detail, item.text, rest).map(|line| {
+                    let at = point(px((r.x + r.w - INSET) as f32) - line.width, top);
+                    (line, at)
+                });
+            }
+        } else if !open && r.w >= LABEL_MIN_W && r.h >= LABEL_MIN_H {
+            let top = px((r.y + TOP) as f32);
+            name = labels
+                .name(&item.label, item.text, room, false)
+                .map(|line| (line, point(left, top)));
+            if name.is_some() && r.h >= DETAIL_MIN_H {
+                // A size is said whole or not at all.
+                detail = labels
+                    .whole(&item.detail, item.text, room)
+                    .map(|line| (line, point(left, top + px(LINE as f32))));
             }
         }
+        let radius = RADII[depth.min(RADII.len() - 1)]
+            .min((r.w / 2.) as f32)
+            .min((r.h / 2.) as f32);
         out.push(Laid {
             block: Block {
                 key: item.key,
-                bounds: bounds(r),
+                bounds: bounds(cell),
                 depth,
             },
-            color: item.color,
+            tile: bounds(r),
+            radius: px(radius),
+            color: if open { item.tray } else { item.color },
             hatched: item.hatched,
             dashed: item.dashed,
             selected: item.selected,
@@ -293,7 +361,7 @@ fn layout_level(
 }
 
 /// The deepest block containing `p`.
-fn hit(blocks: &[Block], p: gpui::Point<Pixels>) -> Option<usize> {
+fn hit(blocks: &[Block], p: Point<Pixels>) -> Option<usize> {
     blocks
         .iter()
         .filter(|b| b.bounds.contains(&p))
@@ -352,18 +420,30 @@ impl Element for Treemap {
         );
         let lay_out = |window: &mut Window, cx: &mut App| {
             // Squarify against the real bounds: nothing here was guessed
-            // in render. A line inside them, so a block at the edge has
-            // the gap a ring is drawn over.
+            // in render. A gap inside them, so a tile at the edge has
+            // room for the ring around it.
             let area = Rect::new(
-                f64::from(f32::from(bounds.origin.x)) + 1.,
-                f64::from(f32::from(bounds.origin.y)) + 1.,
-                f64::from(f32::from(bounds.size.width)) - 2.,
-                f64::from(f32::from(bounds.size.height)) - 2.,
+                f64::from(f32::from(bounds.origin.x)) + GAP,
+                f64::from(f32::from(bounds.origin.y)) + GAP,
+                f64::from(f32::from(bounds.size.width)) - 2. * GAP,
+                f64::from(f32::from(bounds.size.height)) - 2. * GAP,
             );
             let mut blocks = Vec::new();
+            let weight = |weight, least| {
+                let font = Font {
+                    weight,
+                    ..font.clone()
+                };
+                Weight {
+                    wrapper: cx.text_system().line_wrapper(font.clone(), px(FONT)),
+                    font,
+                    least,
+                }
+            };
             let mut labels = Labels {
                 window,
-                wrapper: cx.text_system().line_wrapper(font.clone(), px(FONT)),
+                tile: weight(FontWeight::MEDIUM, LEAST),
+                header: weight(FontWeight::SEMIBOLD, LEAST_HEADER),
                 font: font.clone(),
             };
             layout_level(&self.items, area, 0, &mut labels, &mut blocks);
@@ -423,77 +503,60 @@ impl Element for Treemap {
         let style = self.style;
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             for b in prepaint.blocks.iter() {
-                let bounds = b.block.bounds;
+                let (tile, corners) = (b.tile, Corners::all(b.radius));
+                let none = Edges::default();
+                let clear = gpui::transparent_black();
                 window.paint_quad(quad(
-                    bounds,
-                    Corners::default(),
+                    tile,
+                    corners,
                     b.color,
-                    Edges::all(px(1.)),
-                    style.gap,
+                    none,
+                    clear,
                     BorderStyle::Solid,
                 ));
                 if b.hatched {
                     // Patterns have transparent gaps. Keep the solid base so
                     // labels retain their contrast in both light and dark themes.
                     window.paint_quad(quad(
-                        bounds,
-                        Corners::default(),
+                        tile,
+                        corners,
                         pattern_slash(gpui::black().opacity(0.2), 2.0, 8.0),
-                        Edges::all(px(1.)),
-                        style.gap,
+                        none,
+                        clear,
                         BorderStyle::Solid,
                     ));
                 }
                 if b.dashed {
-                    // Just inside the edge, clear of the labels (`INSET`)
-                    // and of what lies inside (`PAD`).
-                    let one = px(1.);
+                    // Just inside the edge, its corners following the
+                    // tile's, clear of the labels (`INSET`) and of what
+                    // lies inside (`GAP`).
+                    let two = px(2.);
                     window.paint_quad(quad(
-                        Bounds::new(
-                            bounds.origin + point(one, one),
-                            size(
-                                (bounds.size.width - one * 2.).max(px(0.)),
-                                (bounds.size.height - one * 2.).max(px(0.)),
-                            ),
-                        ),
-                        Corners::default(),
-                        gpui::transparent_black(),
+                        inset(tile, two),
+                        Corners::all((b.radius - two).max(px(0.))),
+                        clear,
                         Edges::all(px(1.)),
                         style.dashed,
                         BorderStyle::Dashed,
                     ));
                 }
-                // Labels stay inside their block, and a band's inside its band.
+                // Labels stay inside their tile.
                 let mask = ContentMask {
-                    bounds: Bounds::new(
-                        bounds.origin + point(px(2.), px(0.)),
-                        size(
-                            (bounds.size.width - px(4.)).max(px(0.)),
-                            bounds.size.height.min(px((BAND + LINE) as f32)),
-                        ),
-                    ),
+                    bounds: inset(tile, px(2.)),
                 };
                 window.with_content_mask(Some(mask), |window| {
                     let line_height = px(LINE as f32);
-                    if let Some(name) = &b.name {
-                        let origin = bounds.origin + point(px(INSET as f32), px(1.));
-                        if let Err(error) =
-                            name.paint(origin, line_height, gpui::TextAlign::Left, None, window, cx)
-                        {
-                            tracing::debug!(%error, "treemap label");
-                        }
-                    }
-                    if let Some((detail, origin)) = &b.detail
-                        && let Err(error) = detail.paint(
+                    for (line, origin) in [&b.name, &b.detail].into_iter().flatten() {
+                        if let Err(error) = line.paint(
                             *origin,
                             line_height,
                             gpui::TextAlign::Left,
                             None,
                             window,
                             cx,
-                        )
-                    {
-                        tracing::debug!(%error, "treemap label");
+                        ) {
+                            tracing::debug!(%error, "treemap label");
+                        }
                     }
                 });
             }
@@ -505,41 +568,27 @@ impl Element for Treemap {
                 .find(|b| Some(b.block.key) == self.hovered)
             {
                 window.paint_quad(quad(
-                    b.block.bounds,
-                    Corners::default(),
+                    b.tile,
+                    Corners::all(b.radius),
                     style.hover,
                     Edges::all(px(1.)),
-                    style.gap,
+                    style.hover_edge,
                     BorderStyle::Solid,
                 ));
             }
             for b in prepaint.blocks.iter().filter(|b| b.selected) {
-                let (o, s) = (b.block.bounds.origin, b.block.bounds.size);
-                let one = px(1.);
-                let ring = Bounds::new(o - point(one, one), s + size(one * 2., one * 2.));
-                window.paint_quad(quad(
-                    ring,
-                    Corners::default(),
-                    gpui::transparent_black(),
-                    Edges::all(px(RING)),
-                    style.selected,
-                    BorderStyle::Solid,
-                ));
-                let inside = Bounds::new(
-                    o + point(one, one),
-                    size(
-                        (s.width - one * 2.).max(px(0.)),
-                        (s.height - one * 2.).max(px(0.)),
-                    ),
-                );
-                window.paint_quad(quad(
-                    inside,
-                    Corners::default(),
-                    gpui::transparent_black(),
-                    Edges::all(one),
-                    style.gap,
-                    BorderStyle::Solid,
-                ));
+                // A band of the ground around the tile, then the ring.
+                let ring = px(RING);
+                for (out, color) in [(ring, style.gap), (ring * 2., style.selected)] {
+                    window.paint_quad(quad(
+                        inset(b.tile, -out),
+                        Corners::all(b.radius + out),
+                        gpui::transparent_black(),
+                        Edges::all(ring),
+                        color,
+                        BorderStyle::Solid,
+                    ));
+                }
             }
         });
 
@@ -547,8 +596,8 @@ impl Element for Treemap {
         let hitbox = prepaint.hitbox.clone();
         let blocks = Rc::clone(&prepaint.hits);
         let hit_blocks = Rc::clone(&blocks);
-        let hit_key = move |p: gpui::Point<Pixels>| hit(&hit_blocks, p);
-        let hit_move = move |p: gpui::Point<Pixels>| hit(&blocks, p);
+        let hit_key = move |p: Point<Pixels>| hit(&hit_blocks, p);
+        let hit_move = move |p: Point<Pixels>| hit(&blocks, p);
         let current = self.hovered;
         let on_hover = Rc::clone(&self.on_hover);
         let hb = hitbox.clone();

@@ -27,9 +27,9 @@
 //!   check), `handle` for an edge being dragged, `band` and
 //!   `band_edge` for the rubber band, `term` behind what the query
 //!   understood in the address field (a term's value, the scope's token),
-//!   `block_hover` and `block_selected`
-//!   for a block of the Usage map pointed at and chosen, over any fill,
-//!   `block_text` for what is written on one, `block_rest` for
+//!   `block_hover` and `block_hover_edge` for a block of the Usage map
+//!   pointed at, over any fill, `block_selected` for the ring around a
+//!   chosen one, `block_text` for what is written on one, `block_rest` for
 //!   a block that stands for several entries (the smaller ones, the
 //!   hidden ones), and `block_reclaim` for the line around a block whose
 //!   room can be had back (a cache, a trash); its fills are `block`,
@@ -162,9 +162,11 @@ pub struct Theme {
     pub picture_backdrop: Hsla,
     /// Bars of a chart; the one under the pointer is `accent`.
     pub chart: Hsla,
-    /// Laid over the Usage map's block under the pointer.
+    /// Laid over the Usage map's block under the pointer, and the line
+    /// inside its edge.
     pub block_hover: Hsla,
-    /// The ring around a chosen block of the Usage map.
+    pub block_hover_edge: Hsla,
+    /// The ring around a chosen block of the Usage map, on `bg`.
     pub block_selected: Hsla,
     /// The dashed line inside a block of the Usage map whose room can be
     /// had back, on any fill.
@@ -209,6 +211,79 @@ impl Global for Theme {}
 
 /// The steps of `Theme::block_age`.
 pub const AGES: usize = 5;
+
+/// The hues of `Theme::block`.
+pub const BLOCK_HUES: usize = 8;
+
+/// What a block of the Usage map is drawn in: closed, and open, what it
+/// holds laid on it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BlockFill {
+    pub closed: Hsla,
+    /// Paler, so the blocks laid on it stand out.
+    pub open: Hsla,
+}
+
+/// The Usage map's fills of a look, as Oklch's lightness and chroma: one
+/// lightness for every hue, so no entry looks heavier than another, and
+/// `block_text` reads on each.
+struct Blocks {
+    /// An open block: one of the folder shown's own entries, and one
+    /// inside it.
+    trays: [(f32, f32); 2],
+    folder: (f32, f32),
+    file: (f32, f32),
+    /// Newest to oldest, in one hue (`AGE_HUE`): the oldest fade into the
+    /// ground.
+    ages: [(f32, f32); AGES],
+    /// A file's kind, whole.
+    kind: (f32, f32),
+}
+
+const LIGHT_BLOCKS: Blocks = Blocks {
+    trays: [(0.945, 0.028), (0.905, 0.045)],
+    folder: (0.835, 0.075),
+    file: (0.875, 0.05),
+    ages: [
+        (0.68, 0.13),
+        (0.745, 0.105),
+        (0.805, 0.08),
+        (0.855, 0.05),
+        (0.90, 0.015),
+    ],
+    kind: (0.80, 0.105),
+};
+
+const DARK_BLOCKS: Blocks = Blocks {
+    trays: [(0.275, 0.022), (0.315, 0.032)],
+    folder: (0.445, 0.062),
+    file: (0.39, 0.045),
+    ages: [
+        (0.52, 0.12),
+        (0.46, 0.095),
+        (0.40, 0.07),
+        (0.345, 0.04),
+        (0.29, 0.012),
+    ],
+    kind: (0.49, 0.095),
+};
+
+/// The hues of the folder shown's entries, in degrees, around the whole
+/// wheel: two entries side by side are told apart by hue, not by a shade
+/// of one.
+const HUES: [f32; BLOCK_HUES] = [255., 30., 165., 75., 300., 120., 210., 345.];
+const AGE_HUE: f32 = 50.;
+
+/// The color of Oklch's `l`, `c` and `hue` (degrees).
+fn oklch(l: f32, c: f32, hue: f32) -> Hsla {
+    let (sin, cos) = hue.to_radians().sin_cos();
+    Oklab {
+        l,
+        a: c * cos,
+        b: c * sin,
+    }
+    .to_hsla(1.)
+}
 
 /// How much contrast the desktop asks for (ADR-071).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -408,7 +483,7 @@ struct Kept {
     picture_backdrop: Hsla,
     block_text: Hsla,
     block_hover: Hsla,
-    block_selected: Hsla,
+    block_hover_edge: Hsla,
     block_reclaim: Hsla,
     map_route: Hsla,
     map_land: Hsla,
@@ -432,10 +507,10 @@ impl Kept {
             .map(|value| rgb(value).into()),
             rating: rgb(0xe0a100).into(),
             picture_backdrop: gpui::white(),
-            block_text: gpui::white(),
-            block_hover: gpui::white().opacity(0.2),
-            block_selected: rgb(0x1f1f1f).into(),
-            block_reclaim: gpui::white().opacity(0.85),
+            block_text: rgb(0x1f1f1f).into(),
+            block_hover: gpui::black().opacity(0.045),
+            block_hover_edge: Hsla::from(rgb(0x1f1f1f)).opacity(0.35),
+            block_reclaim: Hsla::from(rgb(0x1f1f1f)).opacity(0.55),
             map_route: rgb(0x9333ea).into(),
             map_land: rgb(0xf3f1ec).into(),
             map_water: rgb(0xd5e3f0).into(),
@@ -461,10 +536,10 @@ impl Kept {
             .map(|value| rgb(value).into()),
             rating: rgb(0xf2c14b).into(),
             picture_backdrop: rgb(0xd8d8d8).into(),
-            block_text: gpui::white(),
-            block_hover: gpui::white().opacity(0.16),
-            block_selected: gpui::white(),
-            block_reclaim: gpui::white().opacity(0.75),
+            block_text: rgb(0xe6e6e6).into(),
+            block_hover: gpui::white().opacity(0.07),
+            block_hover_edge: Hsla::from(rgb(0xe6e6e6)).opacity(0.4),
+            block_reclaim: Hsla::from(rgb(0xe6e6e6)).opacity(0.55),
             map_route: rgb(0xc084fc).into(),
             map_land: rgb(0x2b2a27).into(),
             map_water: rgb(0x18212b).into(),
@@ -612,7 +687,8 @@ impl Theme {
             picture_backdrop: kept.picture_backdrop,
             chart: accent.opacity(0.6),
             block_hover: kept.block_hover,
-            block_selected: kept.block_selected,
+            block_hover_edge: kept.block_hover_edge,
+            block_selected: accent,
             block_reclaim: kept.block_reclaim,
             block_rest: step(steps.block_rest),
             map_grid: step(steps.map_grid),
@@ -634,61 +710,74 @@ impl Theme {
         }
     }
 
-    /// The fill of block `index` of a chart of folder contents (the Usage
-    /// map), `depth` folders inside the one shown: folders in shades of
-    /// the accent, files a greyer shade of the same, lighter the deeper
-    /// they lie. Neighbours differ in hue so their edges read; what is
-    /// inside a block keeps its hue (`index` is the outer block's).
-    pub fn block(&self, index: usize, folder: bool, depth: usize) -> Hsla {
-        let mut color = self.accent;
-        color.h = (color.h + (index % 7) as f32 * 0.04) % 1.;
-        color.s = if folder { 0.55 } else { 0.18 };
-        color.l = 0.40 + depth.min(3) as f32 * 0.035;
-        color.a = 1.;
-        color
+    /// The fills of block `index` of a chart of folder contents (the
+    /// Usage map), `depth` folders inside the one shown: a pale tint of
+    /// one of `HUES` for a folder, paler for a file, palest open. What
+    /// is inside a block keeps its hue (`index` is the outer block's).
+    pub fn block(&self, index: usize, folder: bool, depth: usize) -> BlockFill {
+        let blocks = self.blocks();
+        let hue = HUES[index % BLOCK_HUES];
+        let (l, c) = if folder { blocks.folder } else { blocks.file };
+        let (open, chroma) = blocks.trays[depth.min(1)];
+        BlockFill {
+            closed: oklch(l, c, hue),
+            open: oklch(open, chroma, hue),
+        }
     }
 
-    /// The fill of a block of the Usage map changed `age` steps ago
-    /// (`AGES`: within a day, a week, a month, a year, longer): warm and
-    /// bright when new, a grey slate when old, lighter the deeper it lies.
-    pub fn block_age(&self, age: usize, depth: usize) -> Hsla {
-        const RAMP: [(f32, f32); AGES] = [
-            (0.07, 0.80),
-            (0.10, 0.62),
-            (0.14, 0.45),
-            (0.55, 0.22),
-            (0.60, 0.06),
-        ];
-        let (h, s) = RAMP[age.min(AGES - 1)];
-        gpui::hsla(h, s, 0.40 + depth.min(3) as f32 * 0.035, 1.)
+    /// The fills of a block of the Usage map changed `age` steps ago
+    /// (`AGES`: within a day, a week, a month, a year, longer), `depth`
+    /// folders inside the one shown: a warm tint, strongest when new,
+    /// fading to the ground when old.
+    pub fn block_age(&self, age: usize, depth: usize) -> BlockFill {
+        let blocks = self.blocks();
+        let (l, c) = blocks.ages[age.min(AGES - 1)];
+        let (open, _) = blocks.trays[depth.min(1)];
+        BlockFill {
+            closed: oklch(l, c, AGE_HUE),
+            open: oklch(open, c * 0.45, AGE_HUE),
+        }
     }
 
-    /// The fill of a block of the Usage map whose files are mostly of
-    /// `kind` (`None`: of no kind the names say), `share` of its bytes:
-    /// a file wears its kind whole, a folder of mixed files greyer.
-    pub fn block_kind(&self, kind: Option<Kind>, share: f32, depth: usize) -> Hsla {
-        // Each hue, and how much darker it is drawn: green, cyan and
-        // amber look lighter than blue at one lightness, and white text
-        // must read on all of them.
-        let (hue, darker) = match kind {
-            Some(Kind::Image) => (0.39, 0.10),
-            Some(Kind::Video) => (0.92, 0.),
-            Some(Kind::Audio) => (0.07, 0.04),
-            Some(Kind::Document) => (0.60, 0.),
-            Some(Kind::Spreadsheet) => (0.45, 0.08),
-            Some(Kind::Presentation) => (0.12, 0.08),
-            Some(Kind::Text) => (0.74, 0.),
-            Some(Kind::Archive) => (0.03, 0.),
-            Some(Kind::Font) => (0.83, 0.),
-            Some(Kind::Program) => (0.53, 0.08),
-            Some(Kind::Folder) | None => (0., 0.),
+    /// The fills of a block of the Usage map whose files are mostly of
+    /// `kind` (`None`: of no kind the names say), `share` of its bytes,
+    /// `depth` folders inside the one shown: a file wears its kind whole,
+    /// a folder of mixed files greyer.
+    pub fn block_kind(&self, kind: Option<Kind>, share: f32, depth: usize) -> BlockFill {
+        let blocks = self.blocks();
+        let hue = match kind {
+            Some(Kind::Video) => 350.,
+            Some(Kind::Image) => 150.,
+            Some(Kind::Audio) => 55.,
+            Some(Kind::Document) => 255.,
+            Some(Kind::Spreadsheet) => 175.,
+            Some(Kind::Presentation) => 90.,
+            Some(Kind::Text) => 300.,
+            Some(Kind::Archive) => 25.,
+            Some(Kind::Font) => 325.,
+            Some(Kind::Program) => 215.,
+            Some(Kind::Folder) | None => 0.,
         };
-        let s = if kind.is_none_or(|k| k == Kind::Folder) {
+        let worn = if kind.is_none_or(|k| k == Kind::Folder) {
             0.
         } else {
-            0.12 + 0.48 * share.clamp(0., 1.)
+            0.3 + 0.7 * share.clamp(0., 1.)
         };
-        gpui::hsla(hue, s, 0.40 - darker + depth.min(3) as f32 * 0.035, 1.)
+        let (l, c) = blocks.kind;
+        let (open, _) = blocks.trays[depth.min(1)];
+        BlockFill {
+            closed: oklch(l, c * worn, hue),
+            open: oklch(open, 0.04 * worn, hue),
+        }
+    }
+
+    /// The Usage map's fills of this look.
+    fn blocks(&self) -> &'static Blocks {
+        if self.is_dark {
+            &DARK_BLOCKS
+        } else {
+            &LIGHT_BLOCKS
+        }
     }
 
     /// The tag color of palette index `index` (`metadata::TAG_COLORS`).
@@ -1103,6 +1192,45 @@ mod tests {
         let theme = Theme::derive(&base, Contrast::Normal);
         assert_eq!(theme.text_muted, muted);
         assert_eq!((theme.selection_bg, theme.selection_text), selection);
+    }
+
+    #[test]
+    fn what_is_written_on_a_block_reads_on_every_fill() {
+        let kinds = [
+            None,
+            Some(Kind::Folder),
+            Some(Kind::Video),
+            Some(Kind::Image),
+            Some(Kind::Audio),
+            Some(Kind::Document),
+            Some(Kind::Spreadsheet),
+            Some(Kind::Presentation),
+            Some(Kind::Text),
+            Some(Kind::Archive),
+            Some(Kind::Font),
+            Some(Kind::Program),
+        ];
+        for t in [Theme::light(), Theme::dark()] {
+            let mut fills = Vec::new();
+            for depth in 0..2 {
+                for index in 0..BLOCK_HUES {
+                    fills.push(t.block(index, true, depth));
+                    fills.push(t.block(index, false, depth));
+                }
+                fills.extend((0..AGES).map(|age| t.block_age(age, depth)));
+                for kind in kinds {
+                    fills.extend([0., 0.5, 1.].map(|share| t.block_kind(kind, share, depth)));
+                }
+            }
+            for ground in fills.iter().flat_map(|fill| [fill.closed, fill.open]) {
+                let ratio = color::ratio(t.block_text, ground);
+                assert!(
+                    ratio >= 4.5,
+                    "{ratio:.2}:1 on {ground:?}, dark: {}",
+                    t.is_dark
+                );
+            }
+        }
     }
 
     #[test]

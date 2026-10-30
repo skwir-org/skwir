@@ -31,7 +31,7 @@ use crate::treemap::{Toward, neighbour};
 use crate::{
     format,
     shell::Shell,
-    theme::{AGES, Theme},
+    theme::{AGES, BLOCK_HUES, BlockFill, Theme},
     toolbar::{self, Button},
     view::{Nav, PaneView, Weighs, Zooms},
 };
@@ -456,6 +456,45 @@ impl Gathered {
     }
 }
 
+/// One of `BLOCK_HUES` for the file numbered `ino`, its bits mixed
+/// (splitmix64's finalizer): a filesystem numbers files in steps, and a
+/// number taken as it is would give files made one after the other the
+/// same few hues.
+fn hue_of(ino: u64) -> usize {
+    let mut z = ino.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    ((z ^ (z >> 31)) % BLOCK_HUES as u64) as usize
+}
+
+/// The hues of the folder shown's entries, by their files' numbers
+/// (`None`: an entry not drawn): each its number's (`hue_of`), or the
+/// next none of the others took, so that up to `BLOCK_HUES` entries wear
+/// one each. They are served in the order of their numbers, not of their
+/// sizes, so a hue stays with its entry as the map reflows.
+fn hues(numbers: &[Option<u64>]) -> Vec<usize> {
+    let mut order: Vec<(u64, usize)> = numbers
+        .iter()
+        .enumerate()
+        .filter_map(|(at, number)| number.map(|number| (number, at)))
+        .collect();
+    order.sort_unstable();
+    let mut hues = vec![0; numbers.len()];
+    let mut taken = [false; BLOCK_HUES];
+    for (served, (number, at)) in order.into_iter().enumerate() {
+        if served % BLOCK_HUES == 0 {
+            taken = [false; BLOCK_HUES];
+        }
+        let mut hue = hue_of(number);
+        while taken[hue] {
+            hue = (hue + 1) % BLOCK_HUES;
+        }
+        taken[hue] = true;
+        hues[at] = hue;
+    }
+    hues
+}
+
 /// The blocks of a breakdown, and what each stands for.
 struct Build<'a> {
     theme: &'a Theme,
@@ -496,9 +535,9 @@ impl Build<'_> {
         (modified > 0).then(|| format::friendly_time(t, self.zoned))
     }
 
-    /// The fill of a block: its outer entry's hue, its last change, or
+    /// The fills of a block: its outer entry's hue, its last change, or
     /// the kind of what fills it.
-    fn color(&self, node: &Node, hue: usize, depth: usize) -> gpui::Hsla {
+    fn color(&self, node: &Node, hue: usize, depth: usize) -> BlockFill {
         match self.mode {
             Mode::Size | Mode::Files => self.theme.block(hue, node.is_dir, depth),
             Mode::Age => self.theme.block_age(age(node.modified, &self.ages), depth),
@@ -598,8 +637,25 @@ impl Build<'_> {
         };
         let mut items = Vec::new();
         let mut hidden = Gathered::default();
+        let show_hidden = self.show_hidden;
+        let shown = |child: &Node| show_hidden || !child.name.starts_with('.');
+        // Colored by identity, so a block keeps its color as the map
+        // reflows.
+        let hues = match outer {
+            Some(_) => Vec::new(),
+            None => hues(
+                &node
+                    .children
+                    .iter()
+                    .enumerate()
+                    .map(|(index, child)| {
+                        shown(child).then(|| child.id.map_or(index as u64, |id| id.file.ino))
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        };
         for (index, child) in node.children.iter().enumerate() {
-            if !self.show_hidden && child.name.starts_with('.') {
+            if !shown(child) {
                 hidden.add(child);
                 continue;
             }
@@ -609,12 +665,7 @@ impl Build<'_> {
                     outer.hue,
                     format!("{} › {}", outer.trail, child.name),
                 ),
-                // Colored by identity, so a block keeps its color as the map reflows.
-                None => (
-                    child.id,
-                    child.id.map_or(index, |id| (id.file.ino % 7) as usize),
-                    child.name.clone(),
-                ),
+                None => (child.id, hues[index], child.name.clone()),
             };
             let key = self.blocks.len();
             self.blocks.push(Block {
@@ -635,12 +686,14 @@ impl Build<'_> {
             } else {
                 Vec::new()
             };
+            let fill = self.color(child, hue, depth);
             items.push(TreemapItem {
                 key,
                 weight: (child.measure(self.mode) as f64).max(floor),
                 label: child.name.clone().into(),
                 detail: self.detail(child).into(),
-                color: self.color(child, hue, depth),
+                color: fill.closed,
+                tray: fill.open,
                 text: self.theme.block_text,
                 hatched: child.incomplete,
                 dashed: child.reclaim.is_some(),
@@ -731,6 +784,7 @@ impl Build<'_> {
             }
             .into(),
             color: self.theme.block_rest,
+            tray: self.theme.block_rest,
             text: self.theme.text,
             hatched: incomplete,
             dashed: false,
@@ -946,6 +1000,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
     let style = TreemapStyle {
         gap: theme.bg,
         hover: theme.block_hover,
+        hover_edge: theme.block_hover_edge,
         selected: theme.block_selected,
         dashed: theme.block_reclaim,
     };
@@ -1191,7 +1246,7 @@ fn deleting_frees(shell: &Shell) -> Option<String> {
 fn legend(shell: &Shell, theme: &Theme, mode: Mode) -> Option<gpui::Div> {
     let entries: Vec<(gpui::Hsla, String)> = match mode {
         Mode::Age => (0..AGES)
-            .map(|step| (theme.block_age(step, 0), AGE_NAMES[step].to_owned()))
+            .map(|step| (theme.block_age(step, 0).closed, AGE_NAMES[step].to_owned()))
             .collect(),
         Mode::Types => {
             let tree = shell.ui().usage.status.as_ref()?.tree.as_ref()?;
@@ -1199,7 +1254,7 @@ fn legend(shell: &Shell, theme: &Theme, mode: Mode) -> Option<gpui::Div> {
                 .into_iter()
                 .map(|(kind, bytes)| {
                     (
-                        theme.block_kind(kind, 1., 0),
+                        theme.block_kind(kind, 1., 0).closed,
                         format!("{} {}", kind_title(kind), format::size(bytes)),
                     )
                 })
@@ -1308,6 +1363,29 @@ mod tests {
             alloc,
             children,
             ..Node::default()
+        }
+    }
+
+    #[test]
+    fn entries_wear_a_hue_each_whatever_their_order() {
+        // Eight files made one after the other, numbered one or eight
+        // apart as a filesystem numbers them, a hidden one among them.
+        for step in [1, 8] {
+            let mut numbers: Vec<Option<u64>> = (0..8).map(|k| Some(1000 + k * step)).collect();
+            numbers.insert(3, None);
+            let given = hues(&numbers);
+            let mut worn: Vec<usize> = numbers
+                .iter()
+                .zip(&given)
+                .filter_map(|(number, hue)| number.map(|_| *hue))
+                .collect();
+            worn.sort_unstable();
+            assert_eq!(worn, (0..BLOCK_HUES).collect::<Vec<_>>(), "step {step}");
+            // Sized otherwise, the map reorders them: each keeps its hue.
+            numbers.reverse();
+            let mut again = hues(&numbers);
+            again.reverse();
+            assert_eq!(again, given, "step {step}");
         }
     }
 
@@ -1531,10 +1609,13 @@ mod tests {
         let tree = node("/r", 1000, true, vec![film]);
         let theme = Theme::light();
         let (items, blocks) = build_in(&tree, true, 1, Mode::Types);
-        assert_eq!(items[0].color, theme.block_kind(Some(Kind::Video), 0.62, 0));
+        assert_eq!(
+            items[0].color,
+            theme.block_kind(Some(Kind::Video), 0.62, 0).closed
+        );
         assert!(blocks[0].hint.ends_with("Videos 62% · Images 30%"));
         let (items, blocks) = build_in(&tree, true, 1, Mode::Age);
-        assert_eq!(items[0].color, theme.block_age(0, 0));
+        assert_eq!(items[0].color, theme.block_age(0, 0).closed);
         assert!(blocks[0].hint.contains(" · changed "), "{}", blocks[0].hint);
     }
 
