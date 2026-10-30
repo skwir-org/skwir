@@ -255,6 +255,9 @@ pub struct App {
     pub(crate) closed_tabs: parking_lot::Mutex<crate::tabs::Closed>,
     /// Self reference so background work can keep a `Weak<App>`.
     weak: std::sync::Weak<App>,
+    /// The one waiter reading the panes' filters again when the first of
+    /// them reads otherwise (`roll_filters_over`): when, and its token.
+    filter_rollover: parking_lot::Mutex<Option<(std::time::SystemTime, CancelToken)>>,
     providers: RwLock<HashMap<Arc<str>, (Arc<str>, Arc<dyn LocationProvider>)>>,
     /// Shared with every `waker_handle`, so a handle taken before the UI
     /// installs its hook still reaches it.
@@ -293,6 +296,7 @@ impl App {
         let gate = registry.gate();
         let app = Arc::new_cyclic(|weak| App {
             weak: weak.clone(),
+            filter_rollover: parking_lot::Mutex::new(None),
             notifications: parking_lot::Mutex::new(Vec::new()),
             closed_tabs: parking_lot::Mutex::default(),
             executor: Executor::new(scheduler.clone()),
@@ -672,6 +676,7 @@ impl App {
             .map(|p| (p.id, p.filter().map(Arc::from)))
             .collect();
         if filters.is_empty() {
+            self.roll_filters_over();
             return;
         }
         // Read before the workspace's lock: the reader is a plugin's.
@@ -696,7 +701,61 @@ impl App {
             }
         }
         drop(ws);
+        self.roll_filters_over();
         self.wake();
+    }
+
+    /// Read the panes' filters again when the first of them reads
+    /// otherwise (`ReadFilter::next_change`: `modified:today` at midnight,
+    /// in a folder kept open as in one the lens is carried to): one waiter,
+    /// for the earliest change any pane's filter says, set again whenever a
+    /// filter is set and after each reading, and gone with the app. A
+    /// search holds its own (the query plugin lists it again).
+    fn roll_filters_over(&self) {
+        /// How often the waiter looks at the clock: one set forward or back
+        /// meanwhile moves the change.
+        const CHECK: std::time::Duration = std::time::Duration::from_secs(600);
+        let when = self
+            .workspace
+            .read()
+            .panes()
+            .iter()
+            .filter_map(|p| p.read_filter().and_then(|r| r.next_change))
+            .min();
+        let mut waiting = self.filter_rollover.lock();
+        if waiting.as_ref().map(|(at, _)| *at) == when {
+            return;
+        }
+        if let Some((_, cancel)) = waiting.take() {
+            cancel.cancel();
+        }
+        let Some(when) = when else {
+            return;
+        };
+        let cancel = self.lifetime.child();
+        *waiting = Some((when, cancel.clone()));
+        drop(waiting);
+        let app = self.weak.clone();
+        let spawned = std::thread::Builder::new()
+            .name("skwir-filter-rollover".into())
+            .spawn(move || {
+                let signal = cancel.subscribe();
+                while let Ok(left) = when.duration_since(std::time::SystemTime::now()) {
+                    match signal.receiver().recv_timeout(left.min(CHECK)) {
+                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                        _ => return,
+                    }
+                }
+                if let Some(app) = app.upgrade()
+                    && !cancel.is_cancelled()
+                {
+                    app.filter_rollover.lock().take();
+                    app.read_filters_again();
+                }
+            });
+        if let Err(error) = spawned {
+            tracing::warn!("filter rollover: {error}");
+        }
     }
 
     /// Let go of what panes show and keep of `schemes`, which nothing opens
@@ -1194,6 +1253,7 @@ impl App {
         }
         then(p, &location);
         drop(ws);
+        self.roll_filters_over();
         self.wake();
         Ok(())
     }
@@ -2831,6 +2891,7 @@ mod builtin {
                 if let Some(p) = app.workspace.write().pane_mut(pane) {
                     p.set_filter(text, read);
                 }
+                app.roll_filters_over();
                 app.wake();
                 Ok(Outcome::Done)
             },
@@ -3607,12 +3668,14 @@ mod tests {
                     set: Vec::new(),
                     keeps: std::sync::Arc::new(|_| true),
                     metadata: false,
+                    next_change: None,
                 };
                 Some(ReadFilter {
                     keeps: std::sync::Arc::new(|_| true),
                     waits: Vec::new(),
                     metadata: false,
                     lens: Some(lens),
+                    next_change: None,
                 })
             })),
         );
@@ -3637,6 +3700,61 @@ mod tests {
         assert!(!std::sync::Arc::ptr_eq(&first, &again), "its test anew");
         app.navigate_as_is(pane, &c, false).unwrap();
         assert!(keeps().is_none(), "shown as it is: none");
+    }
+
+    /// A filter whose words read otherwise later (`modified:today` at
+    /// midnight) is read again then, in a folder kept open: no location
+    /// need be shown again for its day to move on.
+    #[test]
+    fn a_filter_is_read_again_when_its_words_read_otherwise() {
+        use crate::workspace::{Lens, ReadFilter};
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::{Duration, Instant, SystemTime};
+        let tmp = tempfile::tempdir().unwrap();
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&reads);
+        let added = app.registry.filter_readers.add(
+            "test",
+            crate::registry::FilterReader(Arc::new(move |text: &str| {
+                // The first reading reads otherwise soon; the next never.
+                let first = counted.fetch_add(1, Ordering::Relaxed) == 0;
+                let next_change = first.then(|| SystemTime::now() + Duration::from_millis(200));
+                let lens = Lens {
+                    words: text.into(),
+                    set: Vec::new(),
+                    keeps: Arc::new(|_| true),
+                    metadata: false,
+                    next_change,
+                };
+                Some(ReadFilter {
+                    keeps: Arc::new(|_| true),
+                    waits: Vec::new(),
+                    metadata: false,
+                    lens: Some(lens),
+                    next_change,
+                })
+            })),
+        );
+        assert!(added);
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &crate::Location::from_path(tmp.path()))
+            .unwrap();
+        app.dispatch(&crate::command::Invocation::with_args(
+            "filter",
+            &serde_json::json!({ "text": "modified:today" }),
+        ))
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while reads.load(Ordering::Relaxed) < 2 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(reads.load(Ordering::Relaxed), 2, "read again, once");
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        assert_eq!(p.filter(), Some("modified:today"), "its words kept");
+        assert_eq!(p.read_filter().and_then(|r| r.next_change), None);
     }
 
     /// A search shown as it is typed: one step, each change in its place,

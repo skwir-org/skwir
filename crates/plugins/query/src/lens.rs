@@ -78,6 +78,7 @@ fn lens_in(q: &lang::Query) -> Option<Lens> {
         .join(" ");
     let metadata = items.iter().any(|e| e.any_term(&reads_metadata));
     let set = facets::set_facets(&words).unwrap_or_default();
+    let next_change = lens.next_change();
     let test = lens.expr?;
     // Asked of every file at each redraw of the order, on the window's
     // thread: a type once per suffix (`lang::Types`).
@@ -87,6 +88,7 @@ fn lens_in(q: &lang::Query) -> Option<Lens> {
         set,
         keeps: Arc::new(move |entry| keeps(&test, entry, &types)),
         metadata,
+        next_change,
     })
 }
 
@@ -148,6 +150,7 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
         waits: Vec::new(),
         metadata: false,
         lens: None,
+        next_change: None,
     };
     let Some((q, _)) = longest_query(text) else {
         return Some(everything());
@@ -204,6 +207,7 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
         waits: waits.into_iter().map(str::to_owned).collect(),
         metadata,
         lens,
+        next_change: q.next_change(),
     })
 }
 

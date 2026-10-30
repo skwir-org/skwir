@@ -824,6 +824,9 @@ pub struct Lens {
     /// Whether it asks what the files' metadata says (a tag, a size): a
     /// kind or an extension is read from the name.
     pub metadata: bool,
+    /// When its words read otherwise (`modified:today` at midnight): it
+    /// is read again then (`App::read_filters_again`).
+    pub next_change: Option<std::time::SystemTime>,
 }
 
 impl std::fmt::Debug for Lens {
@@ -884,6 +887,9 @@ pub struct ReadFilter {
     /// What of it is a lens (ADR-107), kept when the pane shows another
     /// location; the rest (words that find names) goes.
     pub lens: Option<Lens>,
+    /// When its words read otherwise (`modified:today` at midnight): it
+    /// is read again then (`App::read_filters_again`).
+    pub next_change: Option<std::time::SystemTime>,
 }
 
 impl std::fmt::Debug for ReadFilter {
@@ -904,6 +910,7 @@ impl ReadFilter {
             keeps: Arc::new(move |entry| entry.is_dir() || keeps(entry)),
             waits: Vec::new(),
             metadata: lens.metadata,
+            next_change: lens.next_change,
             lens: Some(lens),
         }
     }
@@ -3260,6 +3267,7 @@ mod tests {
             waits: Vec::new(),
             metadata,
             lens: None,
+            next_change: None,
         }
     }
 
@@ -3324,6 +3332,7 @@ mod tests {
                 size_of(e).is_some_and(|size| size % 2 == 0)
             }),
             metadata: true,
+            next_change: None,
         }));
         tested();
         assert!(p.order().is_empty(), "none known yet");
