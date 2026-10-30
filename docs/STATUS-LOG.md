@@ -7410,6 +7410,11 @@ unmounted by hand), `remote_folders`'
 query plugin's `a_place_is_searched_as_it_lists_contents_and_all` (no
 file found where two were).
 
+At 11d12731, `just lint && just test && just mupdf-check` passed in a
+memory-capped scope: lint, 2496 tests of 2496 (30 skipped), and the
+MuPDF check with its FB2, MOBI and PalmDOC books. No test mount was
+left behind.
+
 **Not checked:** Windows and macOS (not compiled for it: `lint-all` not
 run); books made by Amazon's tools or by other FB2 writers; a book near
 the bounds (16 MiB FB2, 64 MiB of MOBI text); a KF8 book in fixed
