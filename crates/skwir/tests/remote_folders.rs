@@ -234,6 +234,18 @@ fn an_address_opens_its_mounted_folder_and_the_window_keeps_it_by_its_address() 
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// What lets go of a FUSE mount the test left: the system's setuid wrapper
+/// where it has one (NixOS: the store's `fusermount3` may not unmount),
+/// else the one on the `PATH`.
+fn fusermount() -> PathBuf {
+    let wrapper = Path::new("/run/wrappers/bin/fusermount3");
+    if wrapper.exists() {
+        wrapper.to_path_buf()
+    } else {
+        PathBuf::from("fusermount3")
+    }
+}
+
 /// A mount point let go of when dropped, if the test left it mounted.
 struct Unmounted(PathBuf);
 
@@ -241,7 +253,7 @@ impl Drop for Unmounted {
     fn drop(&mut self) {
         if skwir_core::fs::reach::of(&self.0).is_some_and(|r| r.point == self.0) {
             // Lazily: what the app still holds open there lets go after.
-            let _ = Command::new("fusermount3").arg("-uz").arg(&self.0).status();
+            let _ = Command::new(fusermount()).arg("-uz").arg(&self.0).status();
         }
     }
 }
@@ -1757,13 +1769,18 @@ fn what_another_program_left_to_send_is_said_on_its_place_until_sent() {
     };
     assert_eq!(said(), None);
 
-    // Another program writes there: rclone sends it 5 s after its close.
+    // Another program writes there: rclone sends it 5 s after its close,
+    // here once the test lets it go (`held_in_queue`), however long the
+    // window takes to say so on a machine under load.
     std::fs::write(mounted.join("l'été — written aside.txt"), "aside").unwrap();
+    let at = skwir_plugin_remote::uploads::control_of(&point).expect("its remote control");
+    let waiting = held_in_queue(&at);
     app.refresh_remote();
-    until(&app, 4, "said on its place", || {
+    until(&app, 60, "said on its place", || {
         said().as_deref() == Some("Sending 1 file to the server…")
     });
-    until(&app, 30, "no more said once sent", || said().is_none());
+    let_go_in_queue(&at, waiting);
+    until(&app, 60, "no more said once sent", || said().is_none());
     assert_eq!(
         std::fs::read_to_string(served_root.join("l'été — written aside.txt")).unwrap(),
         "aside"
@@ -1780,6 +1797,33 @@ fn what_another_program_left_to_send_is_said_on_its_place_until_sent() {
     drop(left);
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// The upload rclone queued last at the mount whose remote control is
+/// `at`, held there an hour on (`vfs/queue-set-expiry`, as a server slow to
+/// take it would keep it): its id. Queued once rclone has the file's
+/// release, which the kernel sends after `close` returns, on its own time;
+/// held well within the 5 s rclone waits before sending it.
+fn held_in_queue(at: &skwir_plugin_remote::rc::At) -> u64 {
+    use skwir_plugin_remote::rc::call;
+    let cancel = CancelToken::new();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let queue = call(at, "vfs/queue", &serde_json::json!({}), &cancel).unwrap();
+        if let Some(id) = queue["queue"][0]["id"].as_u64() {
+            let later = serde_json::json!({ "id": id, "expiry": 3600, "relative": false });
+            call(at, "vfs/queue-set-expiry", &later, &cancel).unwrap();
+            return id;
+        }
+        assert!(Instant::now() < deadline, "never queued to be sent");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// The upload `id` held (`held_in_queue`) sent now.
+fn let_go_in_queue(at: &skwir_plugin_remote::rc::At, id: u64) {
+    let now = serde_json::json!({ "id": id, "expiry": 0, "relative": false });
+    skwir_plugin_remote::rc::call(at, "vfs/queue-set-expiry", &now, &CancelToken::new()).unwrap();
 }
 
 /// A text file on a mount that keeps nothing it reads (rclone's `minimal`,
@@ -2236,18 +2280,38 @@ fn a_copy_down_proves_its_server_fast() {
     let remote = skwir_core::fs::reach::of(&mounted).unwrap();
     let left = Unmounted(remote.point.clone());
     assert_eq!(skwir_core::fs::reach::proved_fast(&remote), None);
-    let down = base.join("down");
-    std::fs::create_dir(&down).unwrap();
-    let r = app
-        .executor
-        .execute_blocking(&copies(&[mounted.join("large.bin")], &down), app.lifetime());
-    assert!(r.error.is_none(), "{:?}", r.error);
-    same_bytes(&served.join("large.bin"), &down.join("large.bin"));
-    assert_eq!(
-        skwir_core::fs::reach::proved_fast(&remote),
-        Some(true),
-        "32 MiB from this machine's own server"
-    );
+    // This machine's own server reads faster than `FAST` where nothing
+    // else runs; under load, a copy may read slower and prove it slow.
+    // Copied down again until one reads that fast (from the server, or
+    // the kernel's cache of the mount, as the user's second read would):
+    // a copy the test timed at `FAST` or more (the copy itself, which the
+    // core times, took no longer) proves it fast at once.
+    let deadline = Instant::now() + Duration::from_secs(180);
+    for n in 0.. {
+        let down = base.join(format!("down {n}"));
+        std::fs::create_dir(&down).unwrap();
+        let began = Instant::now();
+        let r = app
+            .executor
+            .execute_blocking(&copies(&[mounted.join("large.bin")], &down), app.lifetime());
+        let took = began.elapsed();
+        assert!(r.error.is_none(), "{:?}", r.error);
+        same_bytes(&served.join("large.bin"), &down.join("large.bin"));
+        std::fs::remove_dir_all(&down).unwrap();
+        let proved = skwir_core::fs::reach::proved_fast(&remote);
+        if proved == Some(true) {
+            break;
+        }
+        let speed = f64::from(32u32 << 20) / took.as_secs_f64();
+        assert!(
+            speed < skwir_core::fs::reach::FAST,
+            "32 MiB from this machine's own server at {speed:.0} B/s, proved {proved:?}"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "never read fast enough to prove it: {speed:.0} B/s last"
+        );
+    }
 
     app.dispatch(&Invocation::with_args(
         "remote.disconnect",
@@ -3464,7 +3528,7 @@ impl Drop for PrivateGvfs {
         let _ = self.bus.kill();
         let _ = self.bus.wait();
         // Its daemon goes with its bus; its bridge, if it lingers, too.
-        let _ = Command::new("fusermount3")
+        let _ = Command::new(fusermount())
             .arg("-uz")
             .arg(self.runtime.join("gvfs"))
             .stderr(Stdio::null())
@@ -3819,7 +3883,7 @@ impl Drop for PrivateKio {
             .flatten()
         {
             if root.file_name().to_string_lossy().starts_with("kio-fuse-") {
-                let _ = Command::new("fusermount3")
+                let _ = Command::new(fusermount())
                     .arg("-uz")
                     .arg(root.path())
                     .stderr(Stdio::null())

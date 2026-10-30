@@ -70,6 +70,53 @@ fn free_port() -> u16 {
         .port()
 }
 
+/// What lets go of a FUSE mount here: the system's setuid wrapper where
+/// it has one (NixOS: the store's `fusermount3` may not unmount), else
+/// the one on the `PATH`.
+fn fusermount() -> PathBuf {
+    let wrapper = Path::new("/run/wrappers/bin/fusermount3");
+    if wrapper.exists() {
+        wrapper.to_path_buf()
+    } else {
+        PathBuf::from("fusermount3")
+    }
+}
+
+/// Whether the mount table names a mount at `point`, its spaces as the
+/// table writes them.
+fn mounted_at(point: &Path) -> bool {
+    let written = point.to_string_lossy().replace(' ', "\\040");
+    std::fs::read_to_string("/proc/self/mountinfo").is_ok_and(|table| {
+        table
+            .lines()
+            .any(|line| line.split(' ').nth(4) == Some(written.as_str()))
+    })
+}
+
+/// A mount the test made at `point`: let go of when dropped, whether the
+/// test ended or failed midway (a mount whose program is gone holds
+/// whatever looks into it, the next tests included), the `rclone mount`
+/// the test started there (`child`) stopped after.
+struct Mounted {
+    child: Option<Child>,
+    point: PathBuf,
+}
+
+impl Drop for Mounted {
+    fn drop(&mut self) {
+        if mounted_at(&self.point) {
+            let _ = Command::new(fusermount())
+                .arg("-uz")
+                .arg(&self.point)
+                .status();
+        }
+        if let Some(child) = &mut self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
 /// A folder of the test's on the home's file system, never `/tmp`.
 fn fixture(name: &str) -> PathBuf {
     let base = dirs::home_dir()
@@ -100,6 +147,10 @@ fn an_address_rclone_opens_is_a_folder_and_a_copy_is_on_the_server_once_done() {
         .connect(&address, &ask, &cancel)
         .expect("connect");
     let point = connected.point.clone();
+    let left = Mounted {
+        child: None,
+        point: point.clone(),
+    };
     let remote = skwir_core::fs::reach::of(&point).expect("a network mount");
     assert_eq!(remote.point, point);
     assert_eq!(remote.fstype, "fuse.rclone");
@@ -131,6 +182,7 @@ fn an_address_rclone_opens_is_a_folder_and_a_copy_is_on_the_server_once_done() {
         .expect("disconnect");
     assert!(skwir_core::fs::reach::of(&point).is_none_or(|r| r.point != point));
     assert!(!point.exists(), "its mount point goes with it");
+    drop(left);
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }
@@ -156,12 +208,14 @@ fn what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback() {
     std::fs::create_dir_all(&point).unwrap();
     let at = At::loopback().unwrap();
     let (serving, login) = at.serving();
-    let mut mount = Command::new("rclone")
+    let child = Command::new("rclone")
         .arg("mount")
         .arg(format!(":webdav,url='http://127.0.0.1:{}/':", served.port))
         .arg(&point)
         .args(["--vfs-cache-mode", "full", "--cache-dir"])
         .arg(base.join("cache"))
+        // Kept until sent now: never sent by itself while the test looks.
+        .args(["--vfs-write-back", "10m"])
         .arg("--config")
         .arg(base.join("rclone.conf"))
         .arg("--rc")
@@ -171,22 +225,32 @@ fn what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback() {
         .stderr(Stdio::null())
         .spawn()
         .expect("start rclone mount");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let mounted = || {
-        std::fs::read_to_string("/proc/self/mountinfo")
-            .is_ok_and(|table| table.contains(point.to_str().unwrap()))
+    let mount = Mounted {
+        child: Some(child),
+        point: point.clone(),
     };
-    while !(at.answers() && mounted()) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while !(at.answers() && mounted_at(&point)) {
         assert!(Instant::now() < deadline, "never mounted");
         std::thread::sleep(Duration::from_millis(50));
     }
     let cancel = CancelToken::new();
     assert_eq!(uploads::cache_mode(&at, &cancel).unwrap(), "full");
 
-    // Kept on this disk, sent after its close (5 s on): waiting, until sent
-    // now.
+    // Kept on this disk, sent after its close: waiting, until sent now.
+    // Queued once rclone has the file's release, which the kernel sends
+    // after `close` returns, on its own time.
     std::fs::write(point.join("l'été — a note.txt"), "sent").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while uploads::waiting(&at, &cancel).unwrap() == 0 {
+        assert!(Instant::now() < deadline, "never waiting to be sent");
+        std::thread::sleep(Duration::from_millis(20));
+    }
     assert_eq!(uploads::waiting(&at, &cancel).unwrap(), 1);
+    assert!(
+        !served_root.join("l'été — a note.txt").exists(),
+        "not sent by itself"
+    );
     let mut told = Vec::new();
     uploads::send_now(&at, &cancel, &|| {}, &mut |left| told.push(left)).unwrap();
     assert_eq!(
@@ -197,9 +261,8 @@ fn what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback() {
     assert_eq!(told.last(), Some(&0), "said as it went: {told:?}");
     assert_eq!(uploads::waiting(&at, &cancel).unwrap(), 0);
 
-    let _ = Command::new("fusermount3").arg("-uz").arg(&point).status();
-    let _ = mount.kill();
-    let _ = mount.wait();
+    drop(mount);
+    assert!(!mounted_at(&point), "let go of");
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }

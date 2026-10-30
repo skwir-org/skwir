@@ -53,6 +53,18 @@ fn find(program: &str) -> Option<PathBuf> {
     skwir_core::os_path::find_program(program)
 }
 
+/// What lets go of a FUSE mount the test left: the system's setuid wrapper
+/// where it has one (NixOS: the store's `fusermount3` may not unmount),
+/// else the one on the `PATH`.
+fn fusermount() -> PathBuf {
+    let wrapper = Path::new("/run/wrappers/bin/fusermount3");
+    if wrapper.exists() {
+        wrapper.to_path_buf()
+    } else {
+        PathBuf::from("fusermount3")
+    }
+}
+
 /// Words that read differently in every grammar a unit passes through.
 const HOSTILE: &[&str] = &[
     "plain",
@@ -326,14 +338,18 @@ impl Drop for Served {
 }
 
 /// A unit's mount command, started as systemd starts it: its environment
-/// told where to say it is ready (`NOTIFY_SOCKET`). Killed when dropped.
+/// told where to say it is ready (`NOTIFY_SOCKET`). When dropped, its mount
+/// at `point` let go of if it is still there (the test failed midway: a
+/// mount whose program is gone holds whatever looks into it, the next
+/// tests included), and the program killed.
 struct Started {
     child: Child,
     notify: Option<UnixDatagram>,
+    point: PathBuf,
 }
 
 impl Started {
-    fn start(unit: &str, notify: Option<&Path>) -> Started {
+    fn start(unit: &str, notify: Option<&Path>, point: &Path) -> Started {
         let start = commands(unit, "ExecStart");
         assert_eq!(start.len(), 1, "{unit}");
         let words = &start[0].1;
@@ -351,6 +367,7 @@ impl Started {
         Started {
             child: command.spawn().unwrap(),
             notify,
+            point: point.to_path_buf(),
         }
     }
 
@@ -376,7 +393,7 @@ impl Started {
 
     /// Until it ends, as its manager waits once it is stopped.
     fn ended(&mut self) -> std::process::ExitStatus {
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = Instant::now() + Duration::from_secs(60);
         loop {
             if let Some(status) = self.child.try_wait().unwrap() {
                 return status;
@@ -385,10 +402,40 @@ impl Started {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
+
+    /// Stopped by its unit's `ExecStop`, until its program ends once its
+    /// mount is let go of. The unmount, not lazy, is refused while another
+    /// process holds the mount at that moment: the tests share the runtime
+    /// folder Skwir mounts in, and what looks at every mount (a test's
+    /// sidebar asking a volume's space, another's mount table read) holds
+    /// it while it asks. Asked again while the mount is there and its
+    /// program runs, as one stopping it by hand would.
+    fn stopped(&mut self, unit: &str) -> std::process::ExitStatus {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        run_commands(unit, "ExecStop");
+        let mut asked = Instant::now();
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                return status;
+            }
+            assert!(Instant::now() < deadline, "it never ended");
+            if asked.elapsed() >= Duration::from_millis(200) && mounted_at(&self.point).is_some() {
+                run_commands(unit, "ExecStop");
+                asked = Instant::now();
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
 }
 
 impl Drop for Started {
     fn drop(&mut self) {
+        if mounted_at(&self.point).is_some() {
+            let _ = Command::new(fusermount())
+                .arg("-uz")
+                .arg(&self.point)
+                .status();
+        }
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
@@ -628,7 +675,7 @@ fn an_rclone_remote_mounts_at_login_as_its_unit_runs_it() {
     }
     run_commands(&unit, "ExecStartPre");
     assert!(at.point.is_dir());
-    let mut started = Started::start(&unit, Some(&base.join("notify.sock")));
+    let mut started = Started::start(&unit, Some(&base.join("notify.sock")), &at.point);
     started.ready();
     let remote = mounted_at(&at.point).expect("mounted once it said it was ready");
     assert_eq!(remote.fstype, "fuse.rclone");
@@ -681,15 +728,17 @@ fn an_rclone_remote_mounts_at_login_as_its_unit_runs_it() {
         ]
     );
     // Stopped as its manager stops it.
-    run_commands(&unit, "ExecStop");
-    assert!(started.ended().success(), "rclone ends once let go of");
+    assert!(
+        started.stopped(&unit).success(),
+        "rclone ends once let go of"
+    );
     run_commands(&unit, "ExecStopPost");
     assert!(mounted_at(&at.point).is_none());
     assert!(!at.point.exists(), "its point removed");
     assert!(at.leftovers.iter().all(|socket| !socket.exists()));
     // Its program killed: what it left is let go of once it ended.
     run_commands(&unit, "ExecStartPre");
-    let mut started = Started::start(&unit, Some(&base.join("notify.sock")));
+    let mut started = Started::start(&unit, Some(&base.join("notify.sock")), &at.point);
     started.ready();
     assert!(mounted_at(&at.point).is_some());
     let _ = started.child.kill();
@@ -881,8 +930,8 @@ fn an_sftp_address_mounts_at_login_as_its_unit_runs_it() {
         verdict.unwrap_or_else(|said| panic!("systemd refused it: {said}\n{unit}"));
     }
     run_commands(&unit, "ExecStartPre");
-    let mut started = Started::start(&unit, None);
-    let remote = until_mounted(&at.point, 30);
+    let mut started = Started::start(&unit, None, &at.point);
+    let remote = until_mounted(&at.point, 60);
     assert_eq!(remote.fstype, "fuse.sshfs");
     let recognised = sshfs.recognises(&remote).unwrap();
     assert!(recognised.ours, "Skwir's own mount");
@@ -892,8 +941,10 @@ fn an_sftp_address_mounts_at_login_as_its_unit_runs_it() {
         .join(base.strip_prefix("/").unwrap())
         .join("hello.txt");
     assert_eq!(std::fs::read_to_string(there).unwrap(), "over sftp");
-    run_commands(&unit, "ExecStop");
-    assert!(started.ended().success(), "sshfs ends once let go of");
+    assert!(
+        started.stopped(&unit).success(),
+        "sshfs ends once let go of"
+    );
     run_commands(&unit, "ExecStopPost");
     assert!(mounted_at(&at.point).is_none());
     assert!(!at.point.exists());
@@ -1029,7 +1080,7 @@ impl Drop for TakenOut<'_> {
     fn drop(&mut self) {
         let cancel = CancelToken::new();
         if mounted_at(&self.at.point).is_some() {
-            let _ = Command::new("fusermount3")
+            let _ = Command::new(fusermount())
                 .arg("-uz")
                 .arg(&self.at.point)
                 .status();

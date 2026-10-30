@@ -60,10 +60,14 @@ fn setup() -> Setup {
     }
 }
 
+/// Within a deadline a loaded machine meets: the trash lists every item
+/// the tests' shared trash holds, each record read.
+const LISTED_WITHIN: Duration = Duration::from_secs(60);
+
 fn go(s: &Setup, location: &Location) {
     s.app.navigate(s.pane, location).unwrap();
     assert!(
-        s.app.pump_until_complete(s.pane, Duration::from_secs(10)),
+        s.app.pump_until_complete(s.pane, LISTED_WITHIN),
         "{location} listed"
     );
 }
@@ -91,7 +95,7 @@ fn listed(s: &Setup) -> Vec<String> {
 
 /// Wait for `f` to hold, pumping the app.
 fn until(app: &App, what: &str, mut f: impl FnMut() -> bool) {
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + LISTED_WITHIN;
     while !f() {
         app.pump();
         assert!(Instant::now() < deadline, "waited for {what}");

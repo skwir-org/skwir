@@ -550,7 +550,9 @@ fn rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password() 
 
     // Its remotes are still listed, opened with the keyring's password.
     app.dispatch(&Invocation::new("remote.refresh")).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(30);
+    // rclone run twice (the password asked of the keyring the second
+    // time), on a machine under load.
+    let deadline = Instant::now() + Duration::from_secs(60);
     while app
         .registry
         .places
@@ -597,6 +599,77 @@ fn rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password() 
     std::fs::remove_dir_all(&base).unwrap();
 }
 
+/// The port of this machine every sign-in of rclone's through a browser
+/// waits on (the redirect its clients are registered with).
+const SIGN_IN_PORT: u16 = 53682;
+
+/// Whether nothing holds `SIGN_IN_PORT`: no sign-in of rclone's waits.
+fn sign_in_port_free() -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", SIGN_IN_PORT)).is_ok()
+}
+
+/// Until no sign-in of rclone's holds its port, by `deadline`.
+fn until_sign_in_port_free(deadline: Instant) {
+    while !sign_in_port_free() {
+        assert!(
+            Instant::now() < deadline,
+            "127.0.0.1:{SIGN_IN_PORT} still taken: a sign-in of rclone's never ended"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// The port of rclone's sign-ins, the test's while it lives: two sign-ins
+/// at once, the second fails ("bind: address already in use"). Taken in
+/// turn by the tests of every process and run (a lock on a file of the
+/// tests' folder, let go of by the system should a test die), once the
+/// port is free; given back once it is free again, rclone's sign-in
+/// stopped. Taken before the test's app, so given back after it.
+struct SignInPort(std::fs::File);
+
+impl SignInPort {
+    fn take() -> SignInPort {
+        let lock = dirs::home_dir()
+            .unwrap()
+            .join(".cache/skwir-tests/rclone-sign-in.lock");
+        std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock)
+            .unwrap();
+        // Another test's whole sign-in, on a machine under load.
+        let deadline = Instant::now() + Duration::from_secs(300);
+        loop {
+            match file.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(std::fs::TryLockError::Error(error)) => panic!("{}: {error}", lock.display()),
+            }
+            assert!(
+                Instant::now() < deadline,
+                "another test's sign-in never ended"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        until_sign_in_port_free(deadline);
+        SignInPort(file)
+    }
+}
+
+impl Drop for SignInPort {
+    fn drop(&mut self) {
+        // Given back free, at most a minute on: the next test waits for
+        // the port too.
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !sign_in_port_free() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = self.0.unlock();
+    }
+}
+
 /// A browser of the test's own, first on the `PATH` rclone is run with: it
 /// notes the page it is asked to open, and opens nothing.
 fn fake_browser(base: &Path) -> PathBuf {
@@ -639,6 +712,7 @@ fn a_browser_s_sign_in_waits_with_its_page_and_is_cancelled() {
         eprintln!("skipped: {why}");
         return;
     }
+    let _port = SignInPort::take();
     let base = fixture("sign-in");
     let opened = fake_browser(&base);
     let config = base.join("rclone.conf");
@@ -711,7 +785,9 @@ fn a_browser_s_sign_in_waits_with_its_page_and_is_cancelled() {
         }
     };
     window.cancel(&waiting);
-    std::thread::sleep(Duration::from_millis(500));
+    // Its rclone stopped (which lets go of the port it waited on), nothing
+    // more can be written.
+    until_sign_in_port_free(Instant::now() + Duration::from_secs(60));
     let kept = section(&config, "drive-2").unwrap();
     assert!(
         kept.contains(&format!("token = {token}")),
@@ -731,6 +807,7 @@ fn a_remote_left_half_made_is_said_so_and_removed() {
         eprintln!("skipped: {why}");
         return;
     }
+    let _port = SignInPort::take();
     let base = fixture("half-made");
     let _opened = fake_browser(&base);
     // Settings kept in files, as a run of Skwir keeps them.
@@ -1065,13 +1142,21 @@ fn a_remote_stands_on_the_remotes_picked_in_its_form() {
 }
 
 /// Lets go of a FUSE mount the test made, should it fail midway: a mount
-/// whose program is gone holds whatever looks into it.
+/// whose program is gone holds whatever looks into it. Through the
+/// system's setuid wrapper where it has one (NixOS: the store's
+/// `fusermount3` may not unmount).
 struct Unmounted(PathBuf);
 
 impl Drop for Unmounted {
     fn drop(&mut self) {
         if skwir_core::fs::reach::of(&self.0).is_some_and(|r| r.point == self.0) {
-            let _ = Command::new("fusermount3").arg("-uz").arg(&self.0).status();
+            let wrapper = Path::new("/run/wrappers/bin/fusermount3");
+            let fusermount = if wrapper.exists() {
+                wrapper
+            } else {
+                Path::new("fusermount3")
+            };
+            let _ = Command::new(fusermount).arg("-uz").arg(&self.0).status();
         }
     }
 }
