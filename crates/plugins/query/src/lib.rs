@@ -1252,6 +1252,7 @@ mod tests {
                 ListingEvent::Complete => break,
                 ListingEvent::Error(e) => panic!("{expr}: {e}"),
                 ListingEvent::Removed(_)
+                | ListingEvent::Unreadable(_)
                 | ListingEvent::Renamed(_)
                 | ListingEvent::Changed
                 | ListingEvent::AsOf(_)

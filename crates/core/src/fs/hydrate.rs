@@ -43,10 +43,11 @@ const SENT_EVERY: usize = 256;
 /// (`reach::by_lane`, ADR-077): one remote that stopped answering would
 /// hold the files of every other folder behind it. Sends
 /// `Updated` for what was found as it goes (under the ids given, which the
-/// location listed them by) and one `Removed` for what is gone, and
-/// returns the gone ids so the caller can forget their paths. What cannot
-/// be read is not answered: its row stays as it was. Worker-only: this is
-/// I/O. Nothing more is sent once `cancel` fires.
+/// location listed them by), one `Removed` for what is gone and one
+/// `Unreadable` for what is there and cannot be read: every id given is
+/// answered, so nothing waits for one. Returns the gone ids so the caller
+/// can forget their paths. Worker-only: this is I/O. Nothing more is sent
+/// once `cancel` fires.
 pub fn hydrate_paths(
     items: &[(EntryId, PathBuf)],
     metadata: &MetadataProviders,
@@ -55,7 +56,9 @@ pub fn hydrate_paths(
 ) -> Vec<EntryId> {
     let mut updated = Vec::with_capacity(items.len());
     let mut gone = Vec::new();
+    let mut answered = crate::hashing::Set::default();
     let read = read_paths(items, metadata, cancel, |mut found, mut went| {
+        answered.extend(found.iter().map(|e| e.id).chain(went.iter().copied()));
         updated.append(&mut found);
         gone.append(&mut went);
         if updated.len() >= SENT_EVERY && !cancel.is_cancelled() {
@@ -70,6 +73,14 @@ pub fn hydrate_paths(
     }
     if !gone.is_empty() {
         sink.send(ListingEvent::Removed(gone.clone()));
+    }
+    let unreadable: Vec<EntryId> = items
+        .iter()
+        .map(|(id, _)| *id)
+        .filter(|id| !answered.contains(id))
+        .collect();
+    if !unreadable.is_empty() {
+        sink.send(ListingEvent::Unreadable(unreadable));
     }
     gone
 }

@@ -216,6 +216,12 @@ pub enum ListingEvent {
     Updated(Vec<Entry>),
     /// Entries that no longer exist here.
     Removed(Vec<EntryId>),
+    /// Entries asked for (`OpenLocation::hydrate`) that are there and
+    /// cannot be read: a folder that cannot be opened, a stat refused. They
+    /// are answered, so nothing waits for them: what was known of each
+    /// stands, and one known nothing of is read without facts
+    /// (`keys::UNREAD`). Ids the listing does not hold are ignored.
+    Unreadable(Vec<EntryId>),
     /// Entries renamed: each the entry an id now is, under its new name
     /// (a file's name changed, its file the same). The listing tells its
     /// holders the old id is the new one (`Listing::take_renamed`), so a
@@ -1307,6 +1313,25 @@ impl Listing {
                     self.removed_version = stamp();
                 }
             }
+            ListingEvent::Unreadable(ids) => {
+                use crate::entry::{Provenance, Value, keys};
+                for id in ids {
+                    let Some(slot) = self.entries.get_mut(&id) else {
+                        continue;
+                    };
+                    // What was known of it stands.
+                    if slot.entry.metadata.is_hydrated() {
+                        continue;
+                    }
+                    slot.entry.metadata.set(
+                        keys::UNREAD,
+                        Value::Bool(true),
+                        Provenance::Filesystem,
+                    );
+                    delta.touched.push(id);
+                    delta.any = true;
+                }
+            }
             ListingEvent::Renamed(pairs) => {
                 let (olds, news): (Vec<EntryId>, Vec<Entry>) = pairs.into_iter().unzip();
                 let held: Vec<(EntryId, EntryId)> = olds
@@ -1591,16 +1616,17 @@ impl Listing {
     }
 
     /// What an entry is sorted by under `spec`: files after directories,
-    /// then whether its key is still unknown (not stat-ed yet: after the
-    /// rest, whichever the direction), then the size or date (0 for a
-    /// name sort, or when the entry has none), then the name's collation
-    /// key, then the id, so that no two entries tie: the order is one
-    /// order, whether made whole or by placing arrivals, and equal names do
-    /// not trade places from one sort to the next.
+    /// then whether its key is still unknown (not stat-ed yet, or not to be
+    /// read: after the rest, whichever the direction), then the size or
+    /// date (0 for a name sort, or when the entry has none), then the
+    /// name's collation key, then the id, so that no two entries tie: the
+    /// order is one order, whether made whole or by placing arrivals, and
+    /// equal names do not trade places from one sort to the next.
     fn sort_key(spec: SortSpec, slot: &Slot) -> SortKeyOf<'_> {
         use crate::entry::{Value, keys};
         let e = &slot.entry;
-        let unknown = spec.key.needs_metadata() && !e.metadata.is_hydrated();
+        let unknown =
+            spec.key.needs_metadata() && (!e.metadata.is_hydrated() || e.metadata.is_unread());
         let num = match spec.key {
             SortKey::Name => 0,
             // A place by how many files it holds.
@@ -2230,6 +2256,38 @@ mod tests {
         e.metadata
             .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
         e
+    }
+
+    /// What cannot be read is answered without facts: an entry known
+    /// nothing of is read, unread; one known before keeps what was known;
+    /// a re-listing keeps it answered, and a stat that succeeds replaces it.
+    #[test]
+    fn what_cannot_be_read_is_hydrated_without_facts() {
+        let file = |ino, name: &str| {
+            Entry::new(
+                EntryId {
+                    file: crate::FileId::new(1, ino),
+                    at: 0,
+                },
+                name,
+                EntryKind::File,
+            )
+        };
+        let mut listing = Listing::default();
+        listing.apply(ListingEvent::Added(vec![file(1, "a"), file(2, "b")]));
+        listing.apply(ListingEvent::Updated(vec![stat(file(1, "a"), 7)]));
+        let (a, b) = (file(1, "a").id, file(2, "b").id);
+        let version = listing.version();
+        assert!(!listing.apply(ListingEvent::Unreadable(vec![a])), "known");
+        assert_eq!(listing.version(), version);
+        assert!(listing.apply(ListingEvent::Unreadable(vec![b])));
+        let unread = |listing: &Listing| listing.get(b).unwrap().metadata.is_unread();
+        assert!(listing.get(b).unwrap().metadata.is_hydrated() && unread(&listing));
+        assert!(!listing.get(a).unwrap().metadata.is_unread());
+        listing.apply(ListingEvent::Added(vec![file(2, "b")]));
+        assert!(unread(&listing), "a re-listing keeps it answered");
+        listing.apply(ListingEvent::Updated(vec![stat(file(2, "b"), 3)]));
+        assert!(!unread(&listing));
     }
 
     #[test]

@@ -34,6 +34,10 @@ syntect.workspace = true
 two-face.workspace = true
 smallvec = "1"
 
+[dev-dependencies]
+# A test's stand-in location sends its listing as core's do.
+crossbeam-channel.workspace = true
+
 [features]
 # Dev-only PNG/JPEG decoder registered as a thumbnail provider, for testing
 # the views before the platform providers exist. Off by default.

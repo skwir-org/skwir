@@ -799,6 +799,168 @@ mod tests {
         assert_eq!(quick.reading(true), None);
     }
 
+    /// A place of files from many folders (the shelf, a search), each
+    /// hydrated as such a place hydrates them (`fs::hydrate_paths`).
+    #[cfg(unix)]
+    struct Files(Vec<std::path::PathBuf>);
+
+    #[cfg(unix)]
+    struct OpenFiles {
+        location: skwir_core::location::Location,
+        rx: crossbeam_channel::Receiver<skwir_core::location::ListingEvent>,
+        sink: skwir_core::location::EventSink,
+        ctx: skwir_core::location::OpenContext,
+        paths: Vec<(EntryId, std::path::PathBuf)>,
+    }
+
+    #[cfg(unix)]
+    impl skwir_core::location::LocationProvider for Files {
+        fn scheme(&self) -> &'static str {
+            "files"
+        }
+
+        fn open(
+            &self,
+            location: &skwir_core::location::Location,
+            ctx: skwir_core::location::OpenContext,
+        ) -> anyhow::Result<Arc<dyn skwir_core::location::OpenLocation>> {
+            use skwir_core::location::ListingEvent;
+            let (sink, rx) = ctx.channel();
+            let paths: Vec<(EntryId, std::path::PathBuf)> = (1..)
+                .zip(&self.0)
+                .map(|(ino, path)| {
+                    let file = skwir_core::FileId::new(0, ino);
+                    (EntryId { file, at: 0 }, path.clone())
+                })
+                .collect();
+            sink.send(ListingEvent::Added(
+                paths
+                    .iter()
+                    .map(|(id, path)| {
+                        let name = path.file_name().unwrap_or_default();
+                        skwir_core::Entry::new(*id, name, skwir_core::EntryKind::File)
+                    })
+                    .collect(),
+            ));
+            sink.send(ListingEvent::Complete);
+            Ok(Arc::new(OpenFiles {
+                location: location.clone(),
+                rx,
+                sink,
+                ctx,
+                paths,
+            }))
+        }
+    }
+
+    #[cfg(unix)]
+    impl skwir_core::location::OpenLocation for OpenFiles {
+        fn location(&self) -> &skwir_core::location::Location {
+            &self.location
+        }
+        fn events(&self) -> &crossbeam_channel::Receiver<skwir_core::location::ListingEvent> {
+            &self.rx
+        }
+        fn hydrate(&self, ids: &[EntryId], _: skwir_core::scheduler::Priority) {
+            let items: Vec<(EntryId, std::path::PathBuf)> = self
+                .paths
+                .iter()
+                .filter(|(id, _)| ids.contains(id))
+                .cloned()
+                .collect();
+            skwir_core::fs::hydrate_paths(&items, &self.ctx.metadata, &self.sink, &self.ctx.cancel);
+        }
+        fn path_of(&self, id: EntryId) -> Option<std::path::PathBuf> {
+            self.paths
+                .iter()
+                .find(|(i, _)| *i == id)
+                .map(|(_, p)| p.clone())
+        }
+        fn refresh(&self) {}
+        fn close(&self) {}
+    }
+
+    /// A file in a folder that cannot be opened is answered once asked
+    /// for (`ListingEvent::Unreadable`): the count no longer says it is
+    /// read, where it waited for it forever.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_cannot_be_read_is_not_read_forever() {
+        use skwir_core::location::Location;
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::home_dir()
+            .expect("home")
+            .join(".cache")
+            .join("skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("quick-")
+            .tempdir_in(base)
+            .unwrap();
+        let shut = tmp.path().join("it's shut");
+        std::fs::create_dir(&shut).unwrap();
+        let note = shut.join("a note.txt");
+        std::fs::write(&note, b"read me").unwrap();
+        let open = tmp.path().join("an open one.txt");
+        std::fs::write(&open, b"read me too").unwrap();
+        let mode = |mode| {
+            std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        // Passed through, never opened.
+        mode(0o300);
+        if std::fs::read_dir(&shut).is_ok() {
+            // Whoever reads every folder (root) cannot be refused one.
+            mode(0o700);
+            return;
+        }
+        let app = Arc::new(
+            App::new(skwir_core::app::AppConfig::ephemeral(
+                tmp.path().join("state"),
+            ))
+            .unwrap(),
+        );
+        app.register_provider("test", Arc::new(Files(vec![note, open])));
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::new("files", "")).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        let ask = Ask {
+            pane,
+            tags: Vec::new(),
+            complete: true,
+            filtered: true,
+            shown: false,
+            hand: Some((0, 0)),
+            chosen: Chosen {
+                kinds: false,
+                years: false,
+                within: false,
+            },
+        };
+        let counted = count(&app, &ask, &CancelToken::new());
+        assert_eq!(counted.files.unknown, 2, "none asked for yet");
+        app.dispatch_args(
+            "hydrate",
+            skwir_core::app::HydrateArgs {
+                ids: counted.unknown,
+                pane: Some(pane),
+                off_screen: true,
+            },
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let answered = loop {
+            app.pump();
+            let counted = count(&app, &ask, &CancelToken::new());
+            if counted.files.unknown == 0 || Instant::now() > deadline {
+                break counted;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        mode(0o700);
+        assert_eq!(answered.files.unknown, 0, "answered, and read no more");
+        assert_eq!(answered.files.listed, 2);
+    }
+
     fn file(tags: &[&str], kinds: &[Kind], year: i64) -> File {
         File {
             tags: tags.iter().map(|t| (*t).to_owned()).collect(),

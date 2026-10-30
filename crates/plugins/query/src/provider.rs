@@ -1626,6 +1626,7 @@ mod tests {
                 ListingEvent::Complete => return (added, removed),
                 ListingEvent::Error(e) => panic!("{e}"),
                 ListingEvent::Updated(_)
+                | ListingEvent::Unreadable(_)
                 | ListingEvent::Renamed(_)
                 | ListingEvent::Changed
                 | ListingEvent::AsOf(_)

@@ -228,6 +228,13 @@ fn as_now(names: &Names, event: ListingEvent) -> Vec<ListingEvent> {
                 .into_iter()
                 .collect()
         }
+        ListingEvent::Unreadable(mut ids) => {
+            ids.retain(current);
+            let empty = ids.is_empty();
+            some(ListingEvent::Unreadable(ids), empty)
+                .into_iter()
+                .collect()
+        }
         ListingEvent::Renamed(pairs) => {
             let (mut renamed, mut added, mut removed) = (Vec::new(), Vec::new(), Vec::new());
             for (old, new) in pairs {
@@ -572,7 +579,7 @@ impl Shared {
 
     fn hydrate(&self, ids: &[EntryId]) {
         let mut stated = Vec::with_capacity(ids.len());
-        let mut gone = Vec::new();
+        let (mut gone, mut unread) = (Vec::new(), Vec::new());
         for &id in ids {
             if self.ctx.cancel.is_cancelled() {
                 return;
@@ -584,8 +591,8 @@ impl Shared {
             match stat_entry_as(&self.folder, &mut e) {
                 Stated::Found => stated.push((id, e)),
                 Stated::Gone => gone.push(id),
-                // There, unread: its row stays as listed.
-                Stated::Unread => {}
+                // There, unread: answered, its row as listed.
+                Stated::Unread => unread.push(id),
             }
         }
         let (mut updated, mut rekeyed): (Vec<Entry>, Vec<Entry>) = (Vec::new(), Vec::new());
@@ -616,6 +623,9 @@ impl Shared {
         }
         if !gone.is_empty() {
             self.send_as_now(ListingEvent::Removed(gone));
+        }
+        if !unread.is_empty() {
+            self.send_as_now(ListingEvent::Unreadable(unread));
         }
         // The row under the name is the file found there, in its place
         // and its selection.

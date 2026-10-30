@@ -8361,6 +8361,7 @@ name = "skwir-ui"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "crossbeam-channel",
  "flume",
  "gpui",
  "gpui_platform",

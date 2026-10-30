@@ -832,6 +832,82 @@ fn virtual_locations_hydrate_by_path_in_one_batch() {
     assert!(matches!(rx.try_recv().unwrap(), ListingEvent::Removed(ids) if ids == [id(3)]));
 }
 
+/// What is there and cannot be read (a folder that cannot be opened) is
+/// answered too, `Unreadable`: the listing then holds it hydrated and
+/// unread, so nothing waits for it, and a stat that succeeds later says
+/// what it is.
+#[cfg(unix)]
+#[test]
+fn what_cannot_be_read_is_answered_unreadable() {
+    use skwir_core::location::{Listing, OpenContext};
+    use skwir_core::{Entry, EntryKind};
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = home_tempdir();
+    let locked = tmp.path().join("it's locked");
+    std::fs::create_dir(&locked).unwrap();
+    let note = locked.join("a note.txt");
+    std::fs::write(&note, b"read me").unwrap();
+    let mode = |mode| {
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(mode)).unwrap();
+    };
+    // Passed through, never read.
+    mode(0o300);
+    if std::fs::read_dir(&locked).is_ok() {
+        // Whoever reads every folder (root) cannot be refused one.
+        mode(0o700);
+        return;
+    }
+    let app = app(tmp.path());
+    let ctx = OpenContext {
+        scheduler: app.scheduler.clone(),
+        cancel: app.lifetime().child(),
+        batch_size: 64,
+        waker: None,
+        metadata: std::sync::Arc::clone(&app.metadata),
+        fields: std::sync::Arc::clone(&app.fields),
+        hints: std::sync::Arc::clone(&app.hints),
+        companions: std::sync::Arc::clone(&app.companions),
+    };
+    let (sink, rx) = ctx.channel();
+    let id = skwir_core::EntryId {
+        file: skwir_core::FileId::new(0, 1),
+        at: 0,
+    };
+    let mut listing = Listing::default();
+    listing.apply(ListingEvent::Added(vec![Entry::new(
+        id,
+        "a note.txt",
+        EntryKind::File,
+    )]));
+    let items = [(id, note.clone())];
+    let gone = skwir_core::fs::hydrate_paths(&items, &app.metadata, &sink, &ctx.cancel);
+    assert!(gone.is_empty());
+    let answered = rx.try_recv().expect("answered");
+    assert!(
+        matches!(&answered, ListingEvent::Unreadable(ids) if ids == &[id]),
+        "{answered:?}"
+    );
+    let before = listing.version();
+    assert!(listing.apply(answered));
+    let entry = listing.get(id).unwrap();
+    assert!(entry.metadata.is_hydrated(), "nothing waits for it");
+    assert!(entry.metadata.is_unread());
+    assert!(
+        listing
+            .updated_since(before)
+            .is_some_and(|mut ids| ids.any(|changed| changed == id)),
+        "a filter tests it again"
+    );
+    // Readable again, a stat says what it is.
+    mode(0o700);
+    skwir_core::fs::hydrate_paths(&items, &app.metadata, &sink, &ctx.cancel);
+    let stated = rx.try_recv().expect("stat-ed");
+    assert!(matches!(&stated, ListingEvent::Updated(_)), "{stated:?}");
+    listing.apply(stated);
+    let entry = listing.get(id).unwrap();
+    assert!(entry.metadata.is_hydrated() && !entry.metadata.is_unread());
+}
+
 /// A location the pane keeps beside the one it shows (a column of the
 /// columns view) is adopted when the pane goes there: its listing, complete
 /// and the same, rather than the folder listed again. The folder left

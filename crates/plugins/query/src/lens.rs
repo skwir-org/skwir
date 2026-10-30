@@ -113,12 +113,19 @@ pub fn in_place_of_lens(expr: &str, lens: &str) -> Result<String, String> {
     facets::with_lens(&facets::written(&rest), lens)
 }
 
+/// Whether the listing knows what `entry`'s metadata says: not before it
+/// comes, nor for a file that could not be read (`Metadata::is_unread`),
+/// whose size, dates and tags stay unknown, never taken for none.
+fn knows_metadata(entry: &Entry) -> bool {
+    entry.metadata.is_hydrated() && !entry.metadata.is_unread()
+}
+
 /// Whether `entry` is what `test` asks, from what the listing knows of
 /// it: until its metadata comes, what depends on it is not known, and
 /// the file is not shown.
 fn keeps(test: &Expr, entry: &Entry, types: &lang::Types) -> bool {
     let mut c = Candidate::of_entry(entry, Path::new(&entry.name)).with_types(types);
-    if !entry.metadata.is_hydrated() {
+    if !knows_metadata(entry) {
         c.metadata = None;
     }
     test.eval(&c, false) == Verdict::Yes
@@ -189,7 +196,7 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
                 return true;
             };
             let mut c = Candidate::of_entry(entry, Path::new(&entry.name)).with_types(&types);
-            if !entry.metadata.is_hydrated() {
+            if !knows_metadata(entry) {
                 c.metadata = None;
             }
             files.eval(&c, false) == Verdict::Yes

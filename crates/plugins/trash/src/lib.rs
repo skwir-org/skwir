@@ -800,8 +800,21 @@ impl OpenLocation for TrashLocation {
                     }
                     updated.append(&mut entries);
                 }
-                if !updated.is_empty() && !cancel.is_cancelled() {
+                if cancel.is_cancelled() {
+                    return;
+                }
+                // What was not read is answered too: nothing waits for it.
+                let read: HashSet<EntryId> = updated.iter().map(|e| e.id).collect();
+                let unread: Vec<EntryId> = items
+                    .iter()
+                    .map(|item| item.entry.id)
+                    .filter(|id| !read.contains(id))
+                    .collect();
+                if !updated.is_empty() {
                     sink.send(ListingEvent::Updated(updated));
+                }
+                if !unread.is_empty() {
+                    sink.send(ListingEvent::Unreadable(unread));
                 }
             });
     }

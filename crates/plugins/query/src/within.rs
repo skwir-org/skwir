@@ -170,6 +170,19 @@ impl Shared {
                     Shared::test(this, &inner, entries);
                 }
                 ListingEvent::Removed(ids) => this.forget(ids),
+                // A match asked for again (`hydrate`) that the place cannot
+                // read: answered here too, so its row waits for nothing.
+                ListingEvent::Unreadable(ids) => {
+                    let held: Vec<EntryId> = {
+                        let shown = this.shown.lock();
+                        ids.into_iter()
+                            .filter(|id| shown.paths.contains_key(id))
+                            .collect()
+                    };
+                    if !held.is_empty() {
+                        this.tx.send(ListingEvent::Unreadable(held));
+                    }
+                }
                 ListingEvent::Complete => {
                     this.listed.store(true, Ordering::Release);
                     this.complete_if_done();

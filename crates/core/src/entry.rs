@@ -431,6 +431,11 @@ pub mod keys {
     /// The folder a file of the trash was put there from, where restoring
     /// it puts it back: `Value::Text`, its path, for showing.
     pub const TRASHED_FROM: &str = "trashed_from";
+    /// Asked for and not read (`ListingEvent::Unreadable`: a folder that
+    /// cannot be opened, a stat refused), `Value::Bool(true)`: the entry
+    /// is answered, so nothing waits for it, and nothing is known of it.
+    /// A stat that succeeds later replaces it with what it read.
+    pub const UNREAD: &str = "unread";
 }
 
 /// `key` as one shared `Arc`: the same few keys are set on every entry
@@ -490,10 +495,21 @@ impl Metadata {
         self.fields.is_empty()
     }
 
-    /// Whether a stat has populated this bag (size is always set by stat),
-    /// or, for a place, its provider (which counts its files).
+    /// Whether it was asked for and answered: a stat populated it (size
+    /// is always set by stat), or, for a place, its provider (which counts
+    /// its files), or it could not be read (`is_unread`). Nothing waits
+    /// for an entry hydrated.
     pub fn is_hydrated(&self) -> bool {
-        self.fields.contains_key(keys::SIZE) || self.fields.contains_key(keys::FILES)
+        self.fields.contains_key(keys::SIZE)
+            || self.fields.contains_key(keys::FILES)
+            || self.is_unread()
+    }
+
+    /// Whether it was asked for and could not be read (`keys::UNREAD`):
+    /// hydrated, yet nothing is known of the file: what a test of its
+    /// size, dates or tags asks stays unknown.
+    pub fn is_unread(&self) -> bool {
+        self.fields.contains_key(keys::UNREAD)
     }
 }
 
