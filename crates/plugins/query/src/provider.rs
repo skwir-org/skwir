@@ -2019,6 +2019,32 @@ mod tests {
         assert_eq!(provider.icon(&location), Some("search"));
     }
 
+    /// A search whose text does not read keeps the pane's lens (ADR-107):
+    /// it says what is wrong where it is shown, and the next location the
+    /// pane shows is filtered as before.
+    #[test]
+    fn a_search_that_does_not_read_keeps_the_pane_s_lens() {
+        use skwir_core::workspace::Bring;
+        let provider = QueryProvider::new(CancelToken::new(), Searches::default(), Weak::new());
+        let lens = crate::lens::lens_of("kind:image").expect("a lens");
+        let broken = Location::new(SCHEME, "kind:imagedunes in:/x");
+        assert!(
+            crate::lang::parse(&broken.rest).is_err(),
+            "it does not read"
+        );
+        for bring in [Bring::Added, Bring::InPlace, Bring::Nothing] {
+            let (shown, held) = provider
+                .lensed(&broken, Some(&lens), bring)
+                .expect("a search answers");
+            assert_eq!(shown, broken, "shown as it is written ({bring:?})");
+            assert_eq!(
+                held.map(|held| held.words.to_string()),
+                Some("kind:image".to_owned()),
+                "the pane's lens kept ({bring:?})"
+            );
+        }
+    }
+
     /// A search whose period moves on (`today` at midnight) lists again
     /// then, by itself; one whose walk ended first does not.
     #[test]

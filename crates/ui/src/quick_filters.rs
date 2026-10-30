@@ -961,6 +961,55 @@ mod tests {
         assert_eq!(answered.files.listed, 2);
     }
 
+    /// With the bar hidden the count only counts what is still to read:
+    /// it offers nothing and types no name; shown, it offers the kinds of
+    /// what is listed.
+    #[test]
+    fn a_hidden_bar_counts_only_what_is_still_to_read() {
+        use skwir_core::location::Location;
+        let base = std::env::home_dir()
+            .expect("home")
+            .join(".cache")
+            .join("skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::Builder::new()
+            .prefix("quick-")
+            .tempdir_in(base)
+            .unwrap();
+        let files = tmp.path().join("files");
+        std::fs::create_dir(&files).unwrap();
+        for name in ["a photo.jpg", "a note.txt", "l'été.pdf"] {
+            std::fs::write(files.join(name), b"some bytes").unwrap();
+        }
+        let app = Arc::new(
+            App::new(skwir_core::app::AppConfig::ephemeral(
+                tmp.path().join("state"),
+            ))
+            .unwrap(),
+        );
+        let pane = app.workspace.read().active_id();
+        app.navigate(pane, &Location::from_path(&files)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        let ask = |shown| Ask {
+            pane,
+            tags: Vec::new(),
+            complete: true,
+            filtered: true,
+            shown,
+            hand: None,
+            chosen: Chosen {
+                kinds: false,
+                years: false,
+                within: false,
+            },
+        };
+        let hidden = count(&app, &ask(false), &CancelToken::new());
+        assert!(hidden.offer.is_empty(), "nothing offered, bar hidden");
+        assert_eq!(hidden.files.listed, 3);
+        let shown = count(&app, &ask(true), &CancelToken::new());
+        assert_eq!(shown.offer.kinds.len(), 3, "a photo, a text, a document");
+    }
+
     fn file(tags: &[&str], kinds: &[Kind], year: i64) -> File {
         File {
             tags: tags.iter().map(|t| (*t).to_owned()).collect(),
