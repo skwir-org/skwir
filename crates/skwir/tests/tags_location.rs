@@ -1,7 +1,8 @@
 //! Tags browsed as folders (ADR-032): a `tags:` location lists the tags
 //! inside its tag as places and its own files, Up walks its trail back to
-//! the folder it is of, a lens over it stays while it is walked, files
-//! dropped on a tag are given it, and Delete takes it off them.
+//! the folder it is of, a lens over it stays while it is walked, words
+//! filter it at both its depths and search it as it is shown (ADR-108),
+//! files dropped on a tag are given it, and Delete takes it off them.
 // Tags kept in the files' extended attributes: Unix's (Windows keeps
 // none, ADR-027).
 #![cfg(unix)]
@@ -297,6 +298,71 @@ fn a_lens_over_a_tag_stays_while_it_is_walked() {
     assert_eq!(lens(), None);
     go(&s, &tag_location(&s.root, Some("Places/France")));
     assert_eq!(shown_files(), names(&["france.jpg"]));
+}
+
+/// Words over a tag's place filter it at either depth the field's switch
+/// shows, the tag alone or with its sub-tags (ADR-108); what only a search
+/// tells searches it as the pane shows it, as Enter runs it: what it finds
+/// is what the place lists.
+#[test]
+fn a_tag_s_place_is_filtered_at_both_depths_and_searched_as_it_is_shown() {
+    let s = setup();
+    let france = tag_location(&s.root, Some("Places/France"));
+    let depths = s.app.depths(&france).expect("a tag's place has depths");
+    let filter = |text: &str| {
+        s.app
+            .dispatch(&Invocation::with_args(
+                "filter",
+                &serde_json::json!({ "text": text, "pane": s.pane }),
+            ))
+            .unwrap();
+        s.app.pump();
+    };
+    let shown_files = || -> BTreeSet<String> {
+        let ws = s.app.workspace.read();
+        let p = ws.pane(s.pane).unwrap();
+        p.order()
+            .iter()
+            .filter_map(|id| p.entry(*id))
+            .filter(|e| !e.is_place() && !e.is_dir())
+            .map(|e| e.name_str().into_owned())
+            .collect()
+    };
+    go(&s, &depths.here);
+    filter("lyon");
+    assert!(shown_files().is_empty(), "France's own: none named so");
+    filter("fran");
+    assert_eq!(shown_files(), names(&["france.jpg"]));
+    go(&s, &depths.below);
+    filter("lyon");
+    assert_eq!(shown_files(), names(&["lyon.jpg"]), "with its sub-tags");
+
+    // Enter on words only a search tells: the place as it is shown.
+    let words = "lyon";
+    let ask = skwir_core::suggest::Ask {
+        text: words.to_owned(),
+        caret: words.len(),
+        typed: skwir_core::suggest::Typed::Words,
+        scope: Some(depths.below.clone()),
+        shown: Some(depths.below.clone()),
+        dir: None,
+        pane: Some(s.pane),
+        lens: None,
+    };
+    let run = skwir_core::suggest::gather(&s.app, &ask, &skwir_core::cancel::CancelToken::new())
+        .rows
+        .into_iter()
+        .find(|row| row.section == skwir_core::suggest::Section::Run)
+        .and_then(|row| row.run)
+        .expect("Enter searches");
+    filter("");
+    s.app.dispatch(&run).unwrap();
+    until(&s.app, "the search shown", || {
+        s.app.pane_location(s.pane).filter(|l| s.app.is_search(l))
+    });
+    // Complete once each of the place's files was tested.
+    assert!(s.app.pump_until_complete(s.pane, Duration::from_secs(10)));
+    assert_eq!(shown_files(), names(&["lyon.jpg"]), "what the place lists");
 }
 
 #[test]

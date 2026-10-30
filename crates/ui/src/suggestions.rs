@@ -62,7 +62,7 @@ pub fn said(location: &Location) -> String {
 
 /// Where Ctrl+F on a row of `location` searches: itself, where its
 /// provider says words can search it (`App::searchable`: a folder, a tag,
-/// Recent); `None` for what words cannot search in (every tag, the trash).
+/// every tag, Recent); `None` for what words cannot search in (the trash).
 pub fn scope_of(app: &App, location: &Location) -> Option<Location> {
     app.searchable(location).then(|| location.clone())
 }

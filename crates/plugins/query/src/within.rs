@@ -170,16 +170,20 @@ impl Shared {
 
     /// Test `entries` of the place, those whose metadata has come, a job
     /// for each lane; ask for the others' metadata, and test them when it
-    /// comes (`Updated`).
+    /// comes (`Updated`, with what came: the place answers each, or says
+    /// it gone). Until then the search is not complete.
     fn test(this: &Arc<Self>, inner: &Arc<dyn OpenLocation>, entries: Vec<Entry>) {
+        // Counted while they are sorted: an entry taken off `asked` is not
+        // yet a check under way.
+        this.pending.fetch_add(1, Ordering::AcqRel);
         let mut ready = Vec::new();
         let mut unknown = Vec::new();
         for entry in entries {
             let Some(path) = inner.path_of(entry.id) else {
                 continue;
             };
-            if entry.metadata.is_hydrated() || entry.is_place() {
-                this.asked.lock().remove(&entry.id);
+            let answered = this.asked.lock().remove(&entry.id);
+            if entry.metadata.is_hydrated() || entry.is_place() || answered {
                 let check = {
                     let mut shown = this.shown.lock();
                     shown.asked += 1;
@@ -188,7 +192,8 @@ impl Shared {
                     check
                 };
                 ready.push((entry, path, check));
-            } else if this.asked.lock().insert(entry.id) {
+            } else {
+                this.asked.lock().insert(entry.id);
                 unknown.push(entry.id);
             }
         }
@@ -212,6 +217,8 @@ impl Shared {
                 },
             );
         }
+        this.pending.fetch_sub(1, Ordering::AcqRel);
+        this.complete_if_done();
     }
 
     /// Decide each entry, and show what holds, take back what no longer
@@ -262,9 +269,11 @@ impl Shared {
     /// their checks under way would say.
     fn forget(&self, ids: Vec<EntryId>) {
         let gone: Vec<EntryId> = {
+            let mut asked = self.asked.lock();
             let mut shown = self.shown.lock();
             ids.into_iter()
                 .filter(|id| {
+                    asked.remove(id);
                     shown.checking.remove(id);
                     shown.paths.remove(id).is_some()
                 })
@@ -273,13 +282,16 @@ impl Shared {
         if !gone.is_empty() {
             self.tx.send(ListingEvent::Removed(gone));
         }
+        self.complete_if_done();
     }
 
-    /// Say the search complete once the place is listed and every check
-    /// ran; what changes after still follows.
+    /// Say the search complete once the place is listed and every entry it
+    /// listed was tested (none still waits for its metadata, no check
+    /// runs); what changes after still follows.
     fn complete_if_done(&self) {
         if self.listed.load(Ordering::Acquire)
             && self.pending.load(Ordering::Acquire) == 0
+            && self.asked.lock().is_empty()
             && !self.completed.swap(true, Ordering::AcqRel)
         {
             self.tx.send(ListingEvent::Complete);
@@ -332,24 +344,31 @@ mod tests {
     use skwir_core::app::{App, AppConfig};
     use skwir_core::entry::{Entry, EntryId, EntryKind, FileId, Provenance, Value, keys};
     use skwir_core::location::{
-        ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
+        EventSink, ListingEvent, Location, LocationProvider, OpenContext, OpenLocation,
     };
     use skwir_core::scheduler::Priority;
 
     use crate::{QueryPlugin, lang};
 
-    /// A place that lists files from anywhere, as Recent does.
-    struct Listed(Vec<PathBuf>);
+    /// A place that lists files from anywhere, as Recent does; `late`,
+    /// without their metadata, sent a while after it is asked for, as a
+    /// tag's place does.
+    struct Listed {
+        paths: Vec<PathBuf>,
+        late: bool,
+    }
 
     struct ListedOpen {
         location: Location,
         rx: Receiver<ListingEvent>,
         paths: HashMap<EntryId, PathBuf>,
+        /// Each entry with its metadata, sent when asked for.
+        late: Option<(EventSink, HashMap<EntryId, Entry>)>,
     }
 
     impl LocationProvider for Listed {
         fn scheme(&self) -> &'static str {
-            "listed"
+            if self.late { "late" } else { "listed" }
         }
 
         fn open(
@@ -359,18 +378,25 @@ mod tests {
         ) -> anyhow::Result<Arc<dyn OpenLocation>> {
             let (tx, rx) = ctx.channel();
             let mut paths = HashMap::new();
+            let mut hydrated = HashMap::new();
             let entries: Vec<Entry> = self
-                .0
+                .paths
                 .iter()
                 .enumerate()
                 .map(|(i, path)| {
                     let id = EntryId::at_path(FileId::new(9, i as u64 + 1), path);
-                    let mut e = Entry::new(id, path.file_name().unwrap(), EntryKind::File);
+                    let bare = Entry::new(id, path.file_name().unwrap(), EntryKind::File);
+                    let mut e = bare.clone();
                     let size = std::fs::metadata(path).unwrap().len();
                     e.metadata
                         .set(keys::SIZE, Value::UInt(size), Provenance::Filesystem);
                     paths.insert(id, path.clone());
-                    e
+                    if self.late {
+                        hydrated.insert(id, e);
+                        bare
+                    } else {
+                        e
+                    }
                 })
                 .collect();
             tx.send(ListingEvent::Added(entries));
@@ -379,6 +405,7 @@ mod tests {
                 location: location.clone(),
                 rx,
                 paths,
+                late: self.late.then_some((tx, hydrated)),
             }))
         }
     }
@@ -390,7 +417,21 @@ mod tests {
         fn events(&self) -> &Receiver<ListingEvent> {
             &self.rx
         }
-        fn hydrate(&self, _: &[EntryId], _: Priority) {}
+        fn hydrate(&self, ids: &[EntryId], _: Priority) {
+            let Some((tx, hydrated)) = &self.late else {
+                return;
+            };
+            let answer: Vec<Entry> = ids
+                .iter()
+                .filter_map(|id| hydrated.get(id))
+                .cloned()
+                .collect();
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(50));
+                tx.send(ListingEvent::Updated(answer));
+            });
+        }
         fn path_of(&self, id: EntryId) -> Option<PathBuf> {
             self.paths.get(&id).cloned()
         }
@@ -438,7 +479,13 @@ mod tests {
         let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
         app.plugins.add(Arc::new(QueryPlugin::default()), &app);
         let listed = ["filter.txt", "notes.md", "deep/well.txt"].map(|n| dir.join(n));
-        app.register_provider("test", Arc::new(Listed(listed.to_vec())));
+        app.register_provider(
+            "test",
+            Arc::new(Listed {
+                paths: listed.to_vec(),
+                late: false,
+            }),
+        );
 
         let set = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<_>>();
         assert_eq!(
@@ -452,6 +499,27 @@ mod tests {
             app.open_location(&Location::new(crate::SCHEME, r#"x in:"query:y""#))
                 .is_err()
         );
+    }
+
+    /// A place whose files come without their metadata (a tag's) is
+    /// searched complete once each was tested with what it was asked for,
+    /// never before: what is found comes before the end.
+    #[test]
+    fn a_place_s_files_are_tested_with_their_metadata_before_it_completes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("files");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("l'été.jpg"), "x").unwrap();
+        std::fs::write(dir.join("notes.md"), "nothing here").unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let paths = ["l'été.jpg", "notes.md"].map(|n| dir.join(n)).to_vec();
+        app.register_provider("test", Arc::new(Listed { paths, late: true }));
+
+        let set = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<_>>();
+        assert_eq!(found(&app, "été in:late:", &dir), set(&["l'été.jpg"]));
+        assert_eq!(found(&app, "size<1k in:late:", &dir).len(), 2);
+        assert_eq!(found(&app, "size>1k in:late:", &dir), set(&[]));
     }
 
     #[test]

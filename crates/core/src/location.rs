@@ -395,13 +395,23 @@ pub trait LocationProvider: Send + Sync {
 
     /// Whether words typed in the address field can search what `location`
     /// lists, with it as their scope (ADR-098): a folder and its
-    /// subfolders, a tag's files, Recent's. The field offers it as one:
-    /// Ctrl+F there and on its row, its Search button, the scopes listed
-    /// (`App::searchable`). Not a place that lists places (every tag), nor
-    /// one words cannot look in (the trash); a search is edited, not
-    /// searched within. Answered from the text alone, like `title`.
+    /// subfolders, a tag's place and every tag's (ADR-108), Recent's. The
+    /// field offers it as one: Ctrl+F there and on its row, its Search
+    /// button, the scopes listed (`App::searchable`). Not one words cannot
+    /// look in (the trash); a search is edited, not searched within.
+    /// Answered from the text alone, like `title`.
     fn searchable(&self, _location: &Location) -> bool {
         false
+    }
+
+    /// How deep words typed in the address field look in `location`, a
+    /// place that is no folder (ADR-108): the place holding its own
+    /// entries, and the same place holding everything within it, each a
+    /// location of its provider, both filtered by the words as a folder
+    /// is. `None` (the default): a folder's, below which words search its
+    /// subfolders. Answered from the text alone, as `title` is.
+    fn depths(&self, _location: &Location) -> Option<Depths> {
+        None
     }
 
     /// `location` as it takes the lens a pane brings into it (ADR-107),
@@ -708,6 +718,21 @@ impl Tool {
             pane,
         }
     }
+}
+
+/// A place's two depths (`LocationProvider::depths`, ADR-108): what the
+/// address field's switch shows for each, and says of it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Depths {
+    /// The place holding its own entries (a tag's: the files tagged with
+    /// it exactly, and the tags within it).
+    pub here: Location,
+    /// The place holding everything within it (a tag's: every file of
+    /// every tag within it too).
+    pub below: Location,
+    /// What the switch says of each (`This tag`, `With sub-tags`).
+    pub here_label: String,
+    pub below_label: String,
 }
 
 /// What Quick filters offer within a location by itself (a tag's place):

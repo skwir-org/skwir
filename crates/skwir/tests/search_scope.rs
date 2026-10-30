@@ -1,8 +1,9 @@
 //! Where words typed in the address field search (ADR-098), with the
 //! plugins the binary registers: a place is a scope where its provider says
 //! words can search it (`LocationProvider::searchable`), never by its
-//! scheme, and the field's Search button is offered while a source
-//! searches words (`SuggestSource::searches`), never by a command's name.
+//! scheme, as deep as it says (`LocationProvider::depths`, ADR-108), and
+//! the field's Search button is offered while a source searches words
+//! (`SuggestSource::searches`), never by a command's name.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -11,7 +12,7 @@ use std::time::{Duration, Instant};
 use skwir_core::app::{App, AppConfig};
 use skwir_core::cancel::CancelToken;
 use skwir_core::location::Location;
-use skwir_core::suggest::{Ask, Typed};
+use skwir_core::suggest::{Ask, Section, Typed};
 use skwir_plugin_tags::location::Address;
 use skwir_ui::address::search_title;
 use skwir_ui::suggestions::scope_of;
@@ -40,7 +41,7 @@ fn tag(name: &str) -> Location {
     .location()
 }
 
-/// A folder, a tag and Recent are searched; every tag, the trash and the
+/// A folder, a tag, every tag and Recent are searched; the trash and the
 /// shelf are no scope, nor is a search, which is edited; with the query
 /// plugin off nothing searches words, and the button goes, though Ctrl+F
 /// still takes a folder as the scope.
@@ -62,10 +63,16 @@ fn a_place_is_a_scope_where_its_provider_says_words_search_it() {
         title(&Location::parse("recent:")).as_deref(),
         Some("Search Recent")
     );
+    // Every tag, the scheme's own row (`tags:` typed) too: called as its
+    // provider calls it, or the sidebar's place once it is shown.
+    for tags in [all_tags.clone(), Location::new("tags", "")] {
+        assert!(
+            title(&tags).is_some_and(|t| t.starts_with("Search ") && t.ends_with("Tags")),
+            "{tags}"
+        );
+        assert_eq!(scope_of(&app, &tags), Some(tags.clone()));
+    }
     for none in [
-        all_tags.clone(),
-        // The scheme's own row (`tags:` typed), every tag too.
-        Location::new("tags", ""),
         Location::parse("trash:"),
         Location::parse("shelf:"),
         Location::new("query", "dunes"),
@@ -88,8 +95,8 @@ fn a_place_is_a_scope_where_its_provider_says_words_search_it() {
 }
 
 /// The sidebar's places the field offers for words carry a scope where
-/// words can search them (Ctrl+F on the row): Recent's, never every tag's
-/// nor the trash's.
+/// words can search them (Ctrl+F on the row): Recent's and every tag's,
+/// never the trash's.
 #[test]
 fn the_sidebars_places_offered_carry_a_scope_only_where_words_search() {
     let tmp = tempfile::tempdir().unwrap();
@@ -128,6 +135,85 @@ fn the_sidebars_places_offered_carry_a_scope_only_where_words_search() {
         scope_of_row("recen", "Recent"),
         Some(Location::parse("recent:"))
     );
-    assert_eq!(scope_of_row("all tag", "All Tags"), None);
+    assert_eq!(
+        scope_of_row("all tag", "All Tags"),
+        Some(Address::default().location())
+    );
     assert_eq!(scope_of_row("tras", "Trash"), None);
+}
+
+/// A tag's place, the top's too, has the two depths the field's switch
+/// shows (ADR-108): the tag alone, or with its sub-tags, both filtered by
+/// the words. What only a search tells is searched in the place as the
+/// pane shows it, its trail kept; chosen from elsewhere, with everything
+/// within it.
+#[test]
+fn a_tag_s_place_has_two_depths_and_is_searched_as_it_is_shown() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = app(&tmp.path().join("state"));
+    let france = tag("Places/l'Été");
+    let deep = Address {
+        tag: Some("Places/l'Été".to_owned()),
+        deep: true,
+        ..Address::default()
+    }
+    .location();
+    let depths = app.depths(&france).expect("a tag's place has depths");
+    assert_eq!((&depths.here, &depths.below), (&france, &deep));
+    assert_eq!(app.depths(&deep).as_ref(), Some(&depths), "from either");
+    assert_eq!(
+        (depths.here_label.as_str(), depths.below_label.as_str()),
+        ("This tag", "With sub-tags")
+    );
+    let top = app
+        .depths(&Address::default().location())
+        .expect("every tag's place has depths");
+    assert_eq!(
+        (top.here_label.as_str(), top.below_label.as_str()),
+        ("These tags", "Every tagged file")
+    );
+    assert_ne!(top.here, top.below);
+    for none in [
+        Location::from_path(tmp.path().join("it's ünder")),
+        Location::parse("recent:"),
+        Location::parse("trash:"),
+    ] {
+        assert_eq!(app.depths(&none), None, "{none}");
+    }
+
+    let searched = |scope: &Location, shown: Option<&Location>| -> String {
+        let words = "dunes";
+        let ask = Ask {
+            text: words.to_owned(),
+            caret: words.len(),
+            typed: Typed::Words,
+            scope: Some(scope.clone()),
+            shown: shown.cloned(),
+            dir: None,
+            pane: None,
+            lens: None,
+        };
+        let answer = skwir_core::suggest::gather(&app, &ask, &CancelToken::new());
+        let row = answer
+            .rows
+            .into_iter()
+            .find(|row| row.section == Section::Run)
+            .expect("Enter searches");
+        let run = row.run.expect("the search runs");
+        assert_eq!(&*run.name, "query.search");
+        run.args["expr"].as_str().unwrap().to_owned()
+    };
+    let within = |place: &Location| {
+        format!(
+            "dunes in:{}",
+            skwir_plugin_query::lang::quote(&place.to_string())
+        )
+    };
+    assert_eq!(searched(&france, Some(&france)), within(&france));
+    assert_eq!(searched(&deep, Some(&deep)), within(&deep));
+    assert_eq!(
+        searched(&france, Some(&Location::parse("recent:"))),
+        within(&deep),
+        "chosen from elsewhere, everything within it"
+    );
 }

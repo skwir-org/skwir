@@ -823,6 +823,12 @@ impl App {
             .is_some_and(|provider| provider.searchable(location))
     }
 
+    /// How deep words look in `location`, a place that is no folder
+    /// (`LocationProvider::depths`, ADR-108): `None` for a folder.
+    pub fn depths(&self, location: &Location) -> Option<crate::location::Depths> {
+        self.provider(&location.scheme)?.depths(location)
+    }
+
     /// What a pane showing `location` says when it lists nothing
     /// (`LocationProvider::empty_state`).
     pub fn empty_state(&self, location: &Location) -> Option<crate::location::EmptyState> {

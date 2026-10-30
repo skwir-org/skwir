@@ -1300,7 +1300,7 @@ fn pane_row(
 /// What the field's Search button says over `location`, as Ctrl+F does
 /// it: a search shown (`editing`) edited, a folder searched with its
 /// subfolders, another place words can search (`App::searchable`: a tag,
-/// Recent) searched. `None` where words cannot look (every tag, the
+/// every tag, Recent) searched. `None` where words cannot look (the
 /// trash), or while no source searches them (`suggest::searched`: the
 /// query plugin off).
 pub fn search_title(

@@ -391,6 +391,11 @@ and the comment.
   - Pin the tags you use to the sidebar. `Shift+click` a pinned tag to
     narrow what is shown to files that have it; `Alt+click` to show its
     files in the folder shown.
+  - Find in a tag as in a folder: `Ctrl+Shift+F` filters the tag's own
+    files and the tags within it, `Ctrl+F` every file within it too
+    ("With sub-tags"; at the top, every tagged file). Words filter as
+    you type; `content:` and other terms that read the files search the
+    tag when you press `Enter`.
 - **Copies keep them**: tags, rating, comment and where a download came
   from, even onto a drive without attributes (Settings › Tags and
   notes). A move always keeps them.

@@ -84,10 +84,12 @@ fn scope_said(app: &App, scope: &Location) -> String {
 }
 
 /// The search of `expr` in `scope`, as the field runs it: a folder is its
-/// root; a place of tags (a tag's) adds each tag it says of all it lists
-/// (`LocationProvider::tags_shown`) as a term every match has, searched
-/// from the folder it is of, else home; any other place (Recent) is
-/// searched as what it lists (`in:recent:`).
+/// root; a place with depths (a tag's, ADR-108) is searched as what it
+/// lists, as the pane shows it or, from elsewhere, with everything within
+/// it; a place of tags without (`LocationProvider::tags_shown`) adds each
+/// tag it says of all it lists as a term every match has, searched from
+/// the folder it is of, else home; any other place (Recent) is searched as
+/// what it lists (`in:recent:`).
 ///
 /// It says its lens whole (`as_is`, ADR-107): the words typed, after the
 /// pane's lens kept when the field began without it (`Ask::lens`).
@@ -103,6 +105,26 @@ pub fn search(app: &App, expr: &str, scope: &Location, ask: &Ask) -> Invocation 
     let (expr, root) = if let Some(path) = scope.path() {
         (expr.to_owned(), Some(path))
     } else {
+        // A place with depths (a tag's, ADR-108) is searched as what it
+        // lists, keeping its trail: as the pane shows it (its sub-tags or
+        // not), else with everything within it.
+        if let Some(depths) = app.depths(scope) {
+            let place = if ask.shown.as_ref() == Some(scope) {
+                scope.clone()
+            } else {
+                depths.below
+            };
+            let expr = format!("{expr} in:{}", lang::quote(&place.to_string()));
+            return Invocation::with_args(
+                "query.search",
+                &serde_json::json!({
+                    "expr": expr.trim(),
+                    "pane": ask.pane,
+                    "remember": true,
+                    "as_is": true,
+                }),
+            );
+        }
         let Some((tags, base)) = tagged(app, scope) else {
             let expr = format!("{expr} in:{}", lang::quote(&scope.to_string()));
             return Invocation::with_args(

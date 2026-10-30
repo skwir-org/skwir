@@ -7528,3 +7528,66 @@ clippy on the books plugin and skwir, the same tests (41, 30), and
 2026-10-27); a settings file of 0.2.0 opened in a window (the tests
 start from one in memory and on disk); Windows and macOS (not
 compiled).
+
+### A tag's place is filtered at its depths (2026-10-30, ADR-108)
+
+The user found that a tag's place could not be searched or filtered from
+the address field, though a lens set before applied there: every tag's
+place had no magnifier and Ctrl+F or Ctrl+Shift+F opened the field as
+Ctrl+J does; a tag's place said "This folder | And subfolders", the
+second leaving it for a search of its tag from its folder. They chose
+the proposal: every tag's place a scope, its two depths Include
+Sub-Tags off and on, words filtering both, a search only for what only
+a search tells, on Enter, generic through the location.
+
+- `LocationProvider::depths` (`App::depths`, `location::Depths`): the
+  place holding its own entries, the place holding everything within
+  it, and the switch's words for each. The tags plugin answers for every
+  tag's place ("This tag | With sub-tags", at the top "These tags |
+  Every tagged file") and says every one searchable.
+- The address field (`omnibox.rs`): a place with depths (`Before::depths`,
+  `Shell::place_depths`) shows the depth chosen in place of the field's
+  step (`show_depth`), filters it as typed at both, never shows a search
+  as typed; the token keeps its funnel; the switch, its accessible names,
+  the placeholder, "As you type: n of m" and the footer say the place's
+  words. Ctrl+F opens it with everything within; the other ways in keep
+  the depth shown. Enter with terms the filter leaves out
+  (`ReadFilter::waits`) searches the place as shown (`search_place`:
+  the query plugin's run row, `in:` the place), from where the pane was,
+  filtered as it was. Over a search of such a place the switch reads
+  its depths; words edited filter the place again.
+- The query plugin (`field.rs`): a scope with depths is searched as what
+  it lists, as shown, or with everything within it when chosen from
+  elsewhere; `tags_shown` stays for a place of tags without depths.
+- Found on the way: a search within a place (`within.rs`) said it was
+  complete while entries listed without their metadata (a tag's place
+  lists its files before stat-ing them) were still to be tested, so the
+  pane's banner ended before its matches. It now completes once none
+  waits for its metadata and no check runs; an entry answered is tested
+  with what came. A test of it fails without the change.
+
+**Checked:** rustfmt (`cargo fmt --all --check`); clippy with
+`-D warnings` on skwir-core, the tags and query plugins, skwir-ui and
+skwir, every target: none. The four crates' tests (1185 passed). skwir's
+tests but the remote folders' (121: 120 passed; one failed,
+`remote_configs::a_remote_left_half_made_is_said_so_and_removed`, the
+run's last at 34.9 s, which passed alone in 1.7 s: it touches nothing
+changed here). New: `search_scope::a_tag_s_place_has_two_depths_and_is_searched_as_it_is_shown`
+(depths, labels, the search Enter runs from either depth and from
+elsewhere), `tags_location::a_tag_s_place_is_filtered_at_both_depths_and_searched_as_it_is_shown`
+(the `filter` command at each depth, then the field's run row
+dispatched and the search complete with the place's file), three runs
+each, and `within::a_place_s_files_are_tested_with_their_metadata_before_it_completes`,
+which fails with the completion check taken out. In a window on Xvfb
+(debug build, lavapipe), on a synthetic tagged folder: the magnifier on
+a tag's place and on the top; Ctrl+Shift+F on Places said "This tag |
+With sub-tags" and filtered "pla" to 1 of 2; Ctrl+F showed it with its
+sub-tags, 1 of 7, "jpg" 3 of 7; `content:x` and Enter searched it, 6
+results under "In Places"; Ctrl+L over that search read "With
+sub-tags", words added filtered the place again (5 of 7, "Contents need
+a search. Enter searches"), Escape went back to the search; the top
+said "These tags | Every tagged file", "fam" 1 of 2, "jpg" 3 of 8.
+
+**Not checked:** Wayland and the user's session (Xvfb only); `lint-all`
+(Windows and macOS not compiled for it) and the whole suite, by the
+user's rule of 2026-10-27; the remote folders' tests.

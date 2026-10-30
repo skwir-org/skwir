@@ -15,6 +15,7 @@ the others with no UI branch.
 | --- | --- |
 | whether it is a search | `LocationProvider::searches` |
 | whether words can search in it, as the address field's scope | `LocationProvider::searchable`, `App::searchable` |
+| how deep words look in it, a place that is no folder (ADR-108) | `LocationProvider::depths`, `App::depths` |
 | its name, glyph, empty text | `title`, `icon`, `empty_state` |
 | its trail | `LocationProvider::trail` |
 | what gestures mean there | `LocationProvider::verbs` |
@@ -139,18 +140,24 @@ and `notes.agree` are core `notes.*` commands.
   `quote` writes a name that would read otherwise (`"#3"`).
 - **Scopes (ADR-098).** A place is a scope where its provider says
   words can search it (`LocationProvider::searchable`, from its text): a
-  folder, a tag's place, Recent; never every tag (`tags:/`, which lists
-  tags), the trash or the shelf, and a search is edited, not searched
-  within. The shell keeps no list of schemes: Ctrl+F, the Search button,
-  a row's scope and the scopes listed all ask `App::searchable`.
+  folder, a tag's place and every tag's, Recent; never the trash or the
+  shelf, and a search is edited, not searched within. The shell keeps no
+  list of schemes: Ctrl+F, the Search button, a row's scope and the
+  scopes listed all ask `App::searchable`, and how deep words look there
+  `App::depths` (ADR-108).
   Words search where the scope says: a folder is the search's root; a
-  place that says the tags of all it lists (a tag's,
-  `LocationProvider::tags_shown`) is searched as those tags every match
+  place with depths (a tag's: `deep` off and on, the top's too) is
+  filtered at both and searched as it is shown (`in:` the place), or,
+  chosen from elsewhere, with everything within it; a place that says
+  the tags of all it lists and no depths
+  (`LocationProvider::tags_shown`) is searched as those tags every match
   has, from the folder it is of (`Trail::base`), else home, never by
   reading its text; another place (Recent) is searched as what it lists
   (`in:recent:`, `within.rs`): opened through its provider, each entry
   tested as the walk tests a file, what it contains read in its lane,
-  nothing below an entry reached; a search within a search is refused.
+  nothing below an entry reached, complete once each entry was tested
+  (one listed without its metadata once that came); a search within a
+  search is refused.
   The whole disk is `/`, which plocate may answer (below).
 - **Recent searches** are the query plugin's, kept in the cache (never in
   the settings or the logs): only what the address field ran

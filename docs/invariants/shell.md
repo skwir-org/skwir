@@ -234,6 +234,16 @@ of bars, split or not.
   token wears a funnel for the folder alone, a magnifier below it (a
   place searched as it lists, its own glyph). Another scope chosen is
   searched; none, words filter the folder shown.
+  - A place that says depths of its own (`App::depths`, ADR-108: a
+    tag's, `deep` off and on) is filtered at both: the switch reads its
+    words ("This tag | With sub-tags", at the top "These tags | Every
+    tagged file"), the depth chosen is shown in place of the field's
+    step, nothing is searched as typed, and the token keeps its funnel.
+    Ctrl+F opens it with everything within; the other ways in keep the
+    depth shown. What only a search tells (`ReadFilter::waits`) waits
+    for Enter, then searches the place as shown (`in:`), from what the
+    pane showed. Over a search of such a place the switch reads its
+    depths; words edited filter the place again.
   - The folder alone is the folder's own listing, filtered at each key
     (below): still a folder to paste into, drop on or make things in.
   - Below it is the search Enter runs, shown as the words are typed
@@ -278,14 +288,14 @@ of bars, split or not.
     Recent) makes it the scope and clears the text for words; with none,
     words look below the folder shown, its scope.
   - What is a scope is its provider's answer (`App::searchable`,
-    `LocationProvider::searchable`): a folder, a tag, Recent; never every
-    tag, the trash or the shelf. Ctrl+F, the rows, the scopes listed and
+    `LocationProvider::searchable`): a folder, a tag, every tag, Recent;
+    never the trash or the shelf. Ctrl+F, the rows, the scopes listed and
     the Search button ask it, never a scheme.
 - **The Search button** (`address::search_title`) ends the field, as
   Ctrl+F (`ui.search`): nothing else in sight says the field searches.
   "Search this folder and its subfolders" on a folder, "Search" and the
-  place's title where words can search it (a tag, Recent), "Edit this
-  search" over one; none where words cannot look (every tag, the
+  place's title where words can search it (a tag, every tag, Recent),
+  "Edit this search" over one; none where words cannot look (the
   trash), while the field is typed in (its token wears the magnifier),
   or while no source searches words (`suggest::searched`, a source's
   `SuggestSource::searches`: the query plugin off). It names no

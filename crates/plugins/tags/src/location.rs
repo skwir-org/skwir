@@ -1179,10 +1179,38 @@ impl LocationProvider for Provider {
         Address::parse(&location.rest).tags_shown()
     }
 
-    /// A tag's place is searched as the tags it says of all it lists; the
-    /// top, every tag, lists tags and is no scope.
-    fn searchable(&self, location: &Location) -> bool {
-        !Address::parse(&location.rest).tags_shown().is_empty()
+    /// Every tag's place is a scope, the top too (ADR-108): words filter
+    /// what it lists, its tags and its files, or with its sub-tags every
+    /// file within it (`depths`).
+    fn searchable(&self, _location: &Location) -> bool {
+        true
+    }
+
+    /// A tag's place holds the files tagged with it exactly and the tags
+    /// within it; with its sub-tags (`deep`, Include Sub-Tags), every file
+    /// within it too: the address field's two depths (ADR-108). The top
+    /// holds the tags; with them, every tagged file.
+    fn depths(&self, location: &Location) -> Option<skwir_core::location::Depths> {
+        let address = Address::parse(&location.rest);
+        let (here_label, below_label) = if address.tag.is_some() {
+            ("This tag", "With sub-tags")
+        } else {
+            ("These tags", "Every tagged file")
+        };
+        Some(skwir_core::location::Depths {
+            here: Address {
+                deep: false,
+                ..address.clone()
+            }
+            .location(),
+            below: Address {
+                deep: true,
+                ..address
+            }
+            .location(),
+            here_label: here_label.to_owned(),
+            below_label: below_label.to_owned(),
+        })
     }
 
     /// A folder's tags, first in its menu of what it holds, as its trail

@@ -275,6 +275,16 @@ when it offers nothing; filter pills wear their facet's icons. Built on
 a branch beside the FB2 and MOBI work of the same night; checks in
 `docs/STATUS-LOG.md` (2026-10-30), what is left under "What is left".
 
+## A tag's place is filtered at its depths (2026-10-30)
+
+Every tag's place is a scope, the top too (ADR-108): the address field's
+switch reads its depths ("This tag | With sub-tags", "These tags | Every
+tagged file", Include Sub-Tags off and on), words filter it at both,
+and what only a search tells searches the place as it is shown on
+Enter. The field asks the location its depths (`LocationProvider::depths`);
+a folder has none. A search within a place now completes once each entry
+was tested. Checks in `docs/STATUS-LOG.md` (2026-10-30).
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -321,6 +331,13 @@ leave (ADR-077).
   tags are kept beside them.
 - Not checked: Wayland and the user's session (Xvfb only); a lens over a
   remote folder in a window; Windows and macOS compiled only.
+
+**From a tag's place filtered at its depths (2026-10-30, ADR-108)**:
+- The sidebar's All Tags is the top's place of the home folder: its
+  "Every tagged file" lists every tagged file under home, which the tags
+  index answers; not tried on a large home.
+- Not checked: Wayland and the user's session (Xvfb only); Windows and
+  macOS not compiled for it.
 
 **From the performance review (2026-10-29, ADR-104, ADR-105)**:
 - Dropped as not worth it: a folder copy walks its source three times
