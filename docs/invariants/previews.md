@@ -518,6 +518,54 @@ A text document is read as its structure, or laid out as pages.
   - In a book of pages, a page that states no size and is one picture is
     that picture; any other takes the size the first pages state.
 
+### FB2 and Mobipocket (ADR-106)
+
+- **A book is EPUB, FB2 or Mobipocket, read on one path**
+  (`book::inspect` over the `Book` a format implements): every rule
+  above holds for each. A format says how a chapter's text is read, what
+  it names (`Resources`) and what its contents are; chapters, the search
+  that wraps, links led to their chapter, rows knowing their chapter and
+  the source view are written once. A format never answers by walking
+  its chapters per request: what it works out once (FB2's chapters, a
+  Mobipocket book's text) is kept while the book is shown
+  (`book::Kept`, keyed by path and version, let go with
+  `PreviewRequest::shown`), built outside the lock.
+- **One engine choice for every book** (`epub.backend`): Automatic is
+  the built-in engine. MuPDF, chosen, reads only the kinds it reads well,
+  told from the file before anything opens it (`Provider::mupdf_reads`,
+  `mobi::mupdf_reads`: a zipped FB2, KF8, Huffman-coded or encrypted
+  text are the built-in engine's). Never fall back to the other engine
+  because one failed.
+- **An FB2 is translated, not read as foreign XML.** FB2's elements keep
+  their namespace, so the reader's sheet would read none of them: each
+  chapter is written as XHTML once (`fb2::Writer`), an element as the
+  HTML that means the same, what HTML lacks a class of the book's own
+  sheet (`fb2.css`, through `Resources`: still the cascade, never a tag
+  check in the reader). Notes are `endnote`s in their own chapter, a
+  reference `noteref`; a link names the chapter holding its id. Below
+  `limits::NESTING` levels a subtree is its text: reading mode passes
+  over elements deeper than `limits::HTML_DEPTH`. The document is read
+  whole up to `limits::BINARY_INPUT`, in the encoding its declaration
+  names; a picture's size comes from its decoded head.
+- **A Mobipocket book's places are bytes.** MOBI 6 names a place by its
+  byte in the decompressed text (`filepos`), KF8 by a fragment and an
+  offset (`kindle:pos:fid`): each place named becomes an empty anchor
+  put before the tag it would cut (after `<body>` in KF8), and each link
+  is rewritten in one pass over its chapter to the chapter holding it.
+  Never search the text once per link. Contents come from the NCX
+  index as a tree (parent and child tags), as KF8 lists a level at a
+  time. Pictures are records after the text (`recindex`,
+  `kindle:embed`, counted from the first header's first picture), never
+  a text record. A file holding MOBI 6 and KF8 is read through KF8.
+- **Decompression is bounded**: a record's trailing entries removed by
+  its flags, PalmDOC's copies checked against what was written, a
+  Huffman phrase decoded once and one that leads back to itself
+  refused, a record at most 1 MiB and the text 64 MiB.
+- **Never read**: encrypted text (DRM) says the book is protected; KFX
+  says it is Amazon's own format. A Palm database is a book only when
+  its type and creator say so (`mobi::is_book`), whatever its type
+  name.
+
 ## Markdown and blocks
 
 - Markdown events become semantic blocks directly

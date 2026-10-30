@@ -7329,3 +7329,75 @@ skwir-ui, platform and the tags, xmp, epub and thumbnails plugins (847
 passed, 21 skipped) and of skwir's tag, notes, thumbnail and plugin
 toggle tests (35 passed, 3 skipped); the Windows and macOS cross checks
 of the crates touched. Not run again: the whole release check.
+
+### Books beyond EPUB: FB2 and MOBI (2026-10-30)
+
+Built (ADR-106), on main, not pushed: 9dca6986 (the books plugin's one
+reading path, `book::inspect` over `Book`; MuPDF for FB2, MOBI 6 and
+PalmDOC, chosen from the file's first record; the fixtures), 263b4c2c
+(FB2 and `.fb2.zip` in the built-in engine), af29be1c (MOBI 6, KF8/AZW3,
+combined files through their KF8 part, PalmDOC texts, HUFF/CDIC), and
+the docs. The plugin keeps its id `epub` (a new id would reset
+`epub.backend` and its toggle), its title is "Books"; the cover
+provider is `book-covers`.
+
+- **Fixtures** (`crates/plugins/epub/testdata`, 10 files, 130 KiB): an
+  EPUB and three FB2s (one in Windows-1251, one zipped) written by
+  `tools/books/fixtures.py`, and calibre 9.17's conversions of the EPUB
+  (MOBI 6 PalmDOC and uncompressed, MOBI 6 + KF8, AZW3, FB2) and of a
+  text (PalmDOC). The script refuses an output naming this machine's
+  user, host or home. calibre 9.16 from the system's nixpkgs did not
+  build (a dependency's test, `pyopenjtalk-plus`, failed); 9.17 came
+  from nixos-unstable's cache.
+- **MuPDF on the fixtures** (its worker, `--layout=420,595,12`): FB2 3
+  pages with its outline, the Windows-1251 FB2 2 pages, the zipped FB2
+  "cannot find document handler", each MOBI 6 (and the combined file)
+  9 pages without an outline, the AZW3 one page with no text, the
+  PalmDOC text one page. Hence the rule: MuPDF reads FB2, MOBI 6 and
+  PalmDOC, not stored with Huffman coding and not encrypted; the built-in
+  engine the rest.
+- **Found while building**: KF8 skeleton entries carry their numbers
+  twice (`[0, 418, 0, 418]`); KF8 contents are listed a level at a time
+  (parent and child tags make the tree); a combined file's KF8 header
+  counts its indexes from its own record, but its pictures are the MOBI
+  6 part's; a `.pdb` is typed `application/x-ms-pdb` or `chemical/x-pdb`
+  by its heaviest globs before its bytes are read, so a Palm database
+  is recognised by its type and creator whatever its type name. A first
+  KF8 link rewrite ran every link of the book over every file
+  (quadratic); it is one pass over each file.
+- **Window** (Xvfb :95, debug build, a folder of the FB2, MOBI and AZW3
+  under synthetic names with an apostrophe): FB2 read with its title,
+  epigraph, parts and two-line chapter title as headings, its picture,
+  centred subtitle; the note reference opened its note, read from the
+  notes chapter. MOBI read with its note reference and picture, its
+  chapter titles bold paragraphs (calibre's `<font size>`). AZW3 read
+  with headings; Contents showed the nested tree with the chapter shown
+  marked, and an entry opened chapter 4 where the book's own stylesheet
+  sets the quotation in italics. The grid showed each book's cover.
+  Idle CPU 1.3 % over 3 s (X11 polls at the display's rate).
+
+**Checked:** the books plugin's tests (41: EPUB's 22 unchanged, FB2 8,
+Mobipocket 9 with books built in the tests for Huffman coding, trailing
+entries, DRM and KFX, the engine choice 2), skwir's preview, mutation,
+fallback thumbnail and plugin toggle tests with FB2, MOBI, AZW3 and
+PalmDOC samples (24), `just mupdf-check` with the FB2, MOBI and PalmDOC
+fixtures (passed at 9dca6986). The whole of `just lint && just test` in
+a memory-capped scope, three times: at the MOBI commit as first made,
+rustfmt refused its new preview test's layout (the commit amended,
+af29be1c); at af29be1c lint passed and the tests stopped at four rclone
+remote tests (`remote_configs`, `remote_folders`) waiting past their
+deadline while another session's whole suite ran (load average near
+80), all four passing alone in 1.5 to 5.5 s; again at af29be1c, lint
+passed and the tests stopped at `plugins_toggle`'s
+`every_plugin_disables_without_a_trace_and_re_enables`, the remote
+plugin's snapshot before disabling holding no remote and after
+re-enabling one (load average near 45, the other session building),
+passing 5 times out of 5 alone. Neither failure is in what this work
+touched; the run after this entry's commit is in the night's report.
+No release-check (the user's rule of 2026-10-27).
+
+**Not checked:** Windows and macOS (not compiled for it: `lint-all` not
+run); books made by Amazon's tools or by other FB2 writers; a book near
+the bounds (16 MiB FB2, 64 MiB of MOBI text); a KF8 book in fixed
+layout (no tool makes one, recorded under "What is left"); Wayland; a
+screen reader.

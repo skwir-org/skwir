@@ -40,7 +40,8 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   phones listed before they are mounted and KDE's reached through kmtpd
   (ADR-096, ADR-097), the address field as one field for filtering and
   searching (ADR-098), menus with submenus (ADR-099), F1 by topic
-  (ADR-100); on 2026-10-28 gpui from Zed's main of that week, Rust
+  (ADR-100), FB2 and Mobipocket books (ADR-106); on 2026-10-28 gpui
+  from Zed's main of that week, Rust
   1.99.1, PDFium chromium/8125, and a whole review fixed (below). Phases 0 to
   4, 5a and 6 pass their gates. Maps and Notes everywhere are built,
   their gates not closed, as is much that no phase planned
@@ -243,6 +244,22 @@ gained a Scale rule.
 | `delete_tail_us`: 10,000 of 20,000 files deleted for good | 15.2 s | 0.20 s |
 | `tags_forget_us`: a folder of 100,000 tagged files moved away | 4.6 s | 1 to 6 ms |
 
+## Books beyond EPUB: FB2 and MOBI (2026-10-30)
+
+The books plugin (id `epub`, now titled "Books") reads FictionBook 2 and
+Mobipocket books as it reads EPUB (ADR-106): one reading path for every
+book, one engine choice. An FB2, plain or zipped, is translated chapter
+by chapter into XHTML for reading mode, its notes opening under their
+references; MOBI 6, KF8 (AZW3, and the KF8 part of a file holding both)
+and PalmDOC texts are read by Skwir's own code (PalmDOC's and the
+Huffman decompression, the contents, skeleton and fragment indexes),
+with their contents, pictures and covers. Automatic is the built-in
+engine; MuPDF, chosen, reads the kinds it reads well, told from the
+file before it opens, and leaves the others to the built-in engine.
+Encrypted books and KFX say what they are. Fixtures are synthetic,
+made by `tools/books/fixtures.py` with calibre. Detail in
+`docs/STATUS-LOG.md` (2026-10-30); what is left under "What is left".
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -255,6 +272,27 @@ closes an item removes its line; work that leaves one adds it here.
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
+
+**From books beyond EPUB (2026-10-30, ADR-106)**:
+- A KF8 book laid out in fixed pages (a comic) reads as chapters of
+  pictures, not as pages in the document reader: calibre 9.17 marks no
+  book fixed (no EXTH 122) and kindlegen is withdrawn, so no tool makes
+  one to test with.
+- MOBI 6 headings written as `<font size>` (calibre's way) read as bold
+  paragraphs: reading mode reads `align` but no `<font size>`.
+- With MuPDF a MOBI book shows no contents (it reads no NCX index).
+  calibre's MOBI 6 contents keep one entry for each place: an entry at
+  the same place as its parent is not in the file.
+- `.azw`, Kindle's older name, has no type in the database: not read.
+- Tried on calibre's output and on books built in the tests only: no
+  book made by Amazon's tools, no FB2 from another writer than calibre
+  and the hand-written one, nothing near the 64 MiB text bound.
+- Windows and macOS not compiled for it (`just lint-all` not run).
+- `plugins_toggle`'s `every_plugin_disables_without_a_trace_and_re_enables`
+  failed once under load (2026-10-30): the remote plugin's snapshot held
+  no remote before it was disabled and one after it was enabled again
+  (likely taken before its remote was registered); it passed 5 times
+  out of 5 alone. Not looked into.
 
 **From the performance review (2026-10-29, ADR-104, ADR-105)**:
 - Dropped as not worth it: a folder copy walks its source three times

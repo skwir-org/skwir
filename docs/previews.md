@@ -212,6 +212,11 @@ The player, in the panel or pinned at its foot:
 
 ### Books (`epub`)
 
+- EPUB, **FB2** (also zipped, `.fb2.zip`) and Kindle's **MOBI** and
+  **AZW3**, and PalmDOC texts, all read the same way, below. A Kindle
+  book whose text is protected (DRM) and Amazon's **KFX** books say so
+  and are not read. A KF8 book laid out in fixed pages (a comic) reads
+  as chapters of pictures.
 - EPUB in reading mode, not a browser: chapters reflow, with contents,
   embedded images, links, text size, selection and copy, source, and
   search through the book. Chapters follow each other: scroll past the
@@ -245,9 +250,12 @@ The player, in the panel or pinned at its foot:
   in the book's fonts, sharper as it is zoomed. Floats, tables and
   columns on such pages are approximate, and a drawn page has no
   selectable text: search finds the pages without marking the words.
-- **Book engine**: MuPDF (optional helper) can lay every book out into
-  pages in the document reader instead; the size keys then lay it out
-  again at a larger or smaller text size, keeping the place.
+- **Book engine**: MuPDF (optional helper) can lay books out into pages
+  in the document reader instead; the size keys then lay it out again at
+  a larger or smaller text size, keeping the place. It reads EPUB, FB2,
+  MOBI and PalmDOC texts (without a MOBI's contents); the built-in
+  engine still reads what MuPDF does not: zipped FB2, AZW3, and MOBI
+  compressed its other way.
 
 ### Comics (`comics`)
 
