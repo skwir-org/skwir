@@ -107,6 +107,11 @@ type Stamp = Option<(u64, Option<SystemTime>)>;
 struct Listed {
     file: Option<PathBuf>,
     said: Option<(Stamp, Vec<Server>)>,
+    /// What it last said, the file settled or not, F5 or not: what a
+    /// listing that fails (a run timed out, a configuration it could not
+    /// open) gives meanwhile, the sidebar keeping its servers until the
+    /// next refresh asks again.
+    last: Option<Vec<Server>>,
 }
 
 /// What `rclone listremotes` said, by rclone and configuration: the last
@@ -120,16 +125,21 @@ const LISTED_KEPT: usize = 4;
 /// granularity, its stamp the same: what it names then is not kept.
 const SETTLED: Duration = Duration::from_secs(2);
 
-/// Forget what rclone listed: the next refresh asks it again.
+/// Forget what rclone listed: the next refresh asks it again (what it last
+/// said stays, for a listing that fails then).
 pub(crate) fn forget_listed() {
-    LISTED.lock().clear();
+    for (_, listed) in LISTED.lock().iter_mut() {
+        listed.file = None;
+        listed.said = None;
+    }
 }
 
 /// The servers of the configuration `key` names: kept while its file is
 /// as it was when listed, else `list`ed and kept. Its file is found once
 /// (`file`, which may ask rclone). A listing that failed is not kept, nor
 /// one of a file written just now; one of a file rclone cannot place is
-/// asked every time, as before.
+/// asked every time, as before. A listing that fails gives the servers
+/// last listed (`Listed::last`): asked again at the next refresh.
 fn servers_listed(
     key: &ListedKey,
     file: impl FnOnce() -> Option<PathBuf>,
@@ -145,7 +155,7 @@ fn servers_listed(
         with_listed(key, |listed| listed.file = Some(found.clone()));
         Some(found)
     }) else {
-        return list().unwrap_or_default();
+        return or_last(key, list());
     };
     let (stamp, settled) = match std::fs::metadata(&path) {
         Ok(meta) => {
@@ -174,7 +184,26 @@ fn servers_listed(
             .filter(|_| settled)
             .map(|servers| (stamp, servers.clone()));
     });
-    servers.unwrap_or_default()
+    or_last(key, servers)
+}
+
+/// The servers `listed` named for the configuration `key`, kept as what it
+/// last said; where the listing failed, what it last said.
+fn or_last(key: &ListedKey, listed: Option<Vec<Server>>) -> Vec<Server> {
+    let mut all = LISTED.lock();
+    let kept = all.iter_mut().find(|(k, _)| k == key).map(|(_, l)| l);
+    match (listed, kept) {
+        (Some(servers), Some(kept)) => {
+            kept.last = Some(servers.clone());
+            servers
+        }
+        (Some(servers), None) => {
+            drop(all);
+            with_listed(key, |kept| kept.last = Some(servers.clone()));
+            servers
+        }
+        (None, kept) => kept.and_then(|kept| kept.last.clone()).unwrap_or_default(),
+    }
 }
 
 /// Change what is kept of the configuration `key` names, made if none is.
@@ -1055,7 +1084,7 @@ mod tests {
         assert_eq!(ask(Some("nas: sftp\nbox: s3")), 2);
         assert_eq!(listed.get(), 2, "the file changed: asked once more");
         write("[nas]\ntype = sftp\n", 40);
-        assert_eq!(ask(None), 0);
+        assert_eq!(ask(None), 2, "a failure gives what was last listed");
         assert_eq!(ask(Some("nas: sftp")), 1);
         assert_eq!(listed.get(), 4, "a failure is not kept");
         write("[box]\ntype = s3\n", 0);
@@ -1073,6 +1102,48 @@ mod tests {
             (2, 8),
             "forgotten: placed and asked again"
         );
+    }
+
+    /// A listing that fails (rclone timed out, its configuration could not
+    /// be opened) keeps the servers last listed, F5 or not, until one
+    /// succeeds: asked again each time, never kept as said. A listing that
+    /// says none is none.
+    #[test]
+    fn a_listing_that_fails_keeps_the_servers_last_listed() {
+        let folder = tempfile::tempdir().unwrap();
+        let config = folder.path().join("rclone.conf");
+        std::fs::write(&config, "[nas]\ntype = sftp\n[box]\ntype = s3\n").unwrap();
+        let placed = (
+            PathBuf::from("/stand-in/rclone-fails"),
+            Some(config.clone()),
+        );
+        // One whose file rclone cannot place, asked every time.
+        let unplaced = (PathBuf::from("/stand-in/rclone-fails-unplaced"), None);
+        for (key, file) in [(&placed, Some(config.clone())), (&unplaced, None)] {
+            let listed = std::cell::Cell::new(0);
+            let ask = |answer: Option<&str>| -> Vec<String> {
+                servers_listed(
+                    key,
+                    || file.clone(),
+                    || {
+                        listed.set(listed.get() + 1);
+                        answer.map(remotes)
+                    },
+                )
+                .into_iter()
+                .map(|server| server.address.host)
+                .collect()
+            };
+            assert!(ask(None).is_empty(), "none listed yet: {key:?}");
+            assert_eq!(ask(Some("nas: sftp\nbox: s3")), ["nas", "box"]);
+            forget_listed();
+            assert_eq!(ask(None), ["nas", "box"], "timed out: {key:?}");
+            assert_eq!(ask(None), ["nas", "box"], "again: {key:?}");
+            assert_eq!(listed.get(), 4, "asked each time: {key:?}");
+            forget_listed();
+            assert_eq!(ask(Some("")), Vec::<String>::new(), "none: {key:?}");
+            assert!(ask(None).is_empty(), "{key:?}");
+        }
     }
 
     /// A password command whose path holds spaces and a quote is run
