@@ -10,6 +10,34 @@ set -eu
 root="${HOME}/.cache/skwir-tests/xdg"
 mkdir -p "$root/data" "$root/config" "$root/cache" "$root/state" "$root/runtime"
 chmod 700 "$root/runtime"
+# The tests' trash, which every run shares and every trash listing reads
+# whole: what was trashed more than a day ago (its record's date) goes,
+# its file and its record, so it holds what the day's runs left; another
+# run's of today stays. Within the tests' folder alone: a record's name
+# holds no `/`, and a link trashed is removed, never followed.
+trash="$root/data/Trash"
+if [ -d "$trash/info" ]; then
+    find "$trash/info" -mindepth 1 -maxdepth 1 -type f -name '*.trashinfo' -mmin +1440 \
+        -exec sh -c '
+            files=$1/files
+            shift
+            for info do
+                name=${info##*/}
+                name=${name%.trashinfo}
+                case $name in "" | . | ..) continue ;; esac
+                file=$files/$name
+                # A folder kept unreadable or unwritable by a test.
+                if [ -d "$file" ] && [ ! -L "$file" ]; then
+                    chmod -R u+rwX -- "$file" 2>/dev/null
+                fi
+                if [ -e "$file" ] || [ -L "$file" ]; then
+                    rm -rf -- "$file" || continue
+                fi
+                rm -f -- "$info"
+            done
+        ' sh "$trash" {} + ||
+        echo "isolate-xdg: the tests' trash was not all pruned" >&2
+fi
 # Nor the user's session bus, where a test window would register a player
 # (MPRIS) or read the desktop's portal: an address nothing listens at, as
 # a session without a bus. A bus a harness made for its tests (a keyring's,
