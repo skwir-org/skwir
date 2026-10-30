@@ -371,8 +371,7 @@ leave (ADR-077).
 - Disconnect still sends only what waits when asked, not what a plan
   just wrote and rclone has not queued yet. launchd and Windows' logon
   tasks have no counterpart of `SuccessExitStatus`: a refused stop there
-  is as before. A written name that is not UTF-8 is matched against
-  rclone's records approximately.
+  is as before.
 
 **From a tag's place filtered at its depths (2026-10-30, ADR-108)**:
 - The sidebar's All Tags is the top's place of the home folder: its

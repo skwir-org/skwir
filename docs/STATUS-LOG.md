@@ -7778,3 +7778,26 @@ up to 17; no test mount left.
 session; a real rclone remote other than the tests' loopback server.
 What is left (Disconnect, launchd and Windows' tasks, names not UTF-8)
 is in PLAN.md.
+
+### A name not UTF-8 found in rclone's queue (2026-10-30)
+
+A file written through an rclone mount was looked for in rclone's queue
+by its name made lossy in Rust's way (one U+FFFD per sequence cut
+short), where rclone's answer, Go's JSON, has one per byte: a name such
+as `\xe9\x80` never matched, so its file was not hurried, and an upload
+over 60 s failed the write-out though rclone sent it. rclone 1.75.2's
+`vfs/queue`, asked of each case through the loopback server (`\xe9`,
+`\xc3`, `\xe9\x80`, `\xf0\x9f\x98`, `\xed\xa0\x80`, a folder's), gave one
+U+FFFD per invalid byte and kept the bytes otherwise; `queued_as` now
+does the same (9b9ecf00), the files waited for kept by path since two
+such names are one in the queue.
+
+**Checked:** the unit test of each byte case fails with the old naming;
+the loopback test (names `\xe9`, `\xe8`, `\xe9\x80`, a `\xff` folder)
+failed before after 61.3 s ("never reached rclone's queue") and passes
+in 0.83 s; the four sending tests, 10 runs each at load 5 to 10;
+rustfmt, clippy with `-D warnings` on the remote plugin (also for
+Windows), its 131 tests.
+
+**Not checked:** on Windows, what rclone's queue says of a name that is
+not Unicode (judged by its record alone there); macOS not compiled.

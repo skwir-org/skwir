@@ -633,25 +633,29 @@ ADR-077 (which revises ADR-021).
   (`process::run_leaving`): cancelled, it and what it started are stopped;
   mounted, nothing it left running is touched.
 - A copy onto a remote is done when the server has it (ADR-102), whatever
-  the mount's cache: a copy is done once its close said so (operations.md):
-  a FUSE program sends there what it held and tells there what its server
-  refused; and a mount that sends a file only after it is closed
-  (rclone's `writes` and `full`: `Transfer::sends_later`, asked of its
-  remote control once a mount) is written out as a removable drive is:
+  the mount's cache: a copy is done once its close said so
+  (operations.md): a FUSE program sends there what it held and tells there
+  what its server refused; and a mount that sends a file only after it is
+  closed (rclone's `writes` and `full`: `Transfer::sends_later`, asked of
+  its remote control once a mount) is written out as a removable drive is:
   before the plan ends, and before a move removes its originals, it is
-  asked to send what the plan wrote there (`vfs/queue-set-expiry`),
-  waited for by rclone's record of each written file in its cache
-  (`vfs/stats`' `pathMeta`, dirty until sent: `uploads::send_written`),
-  queued or not yet (rclone queues one at its release, after `close`):
-  one not queued within 60 s fails the write-out. The plan's progress
-  says how many files the server still takes. An upload tried three
-  times fails the write-out: the file stays in rclone's cache, which goes
-  on trying, and a move's original stays. Disconnect sends what waits first (a
-  refusal keeps it connected); a forced one, or one of a server that
+  asked to send what the plan wrote there (`vfs/queue-set-expiry`), waited
+  for by rclone's record of each written file in its cache (`vfs/stats`'
+  `pathMeta`, dirty until sent: `uploads::send_written`), queued or not
+  yet (rclone queues one at its release, after `close`): one not queued
+  within 60 s fails the write-out. A file is found in rclone's queue by
+  its name there, Go's JSON of its bytes: each byte that is not UTF-8 one
+  U+FFFD, so names differing only there are one name
+  (`uploads::queued_as`); one that cannot be told so (on Windows, a name
+  that is not Unicode) is judged by its record alone. The plan's progress
+  says how many files the server still takes. An upload tried three times
+  fails the write-out: the file stays in rclone's cache, which goes on
+  trying, and a move's original stays. Disconnect sends what waits first
+  (a refusal keeps it connected); a forced one, or one of a server that
   stopped answering, says what stays in the cache, which the next mount
   with that cache sends. What other programs left waiting is said on the
-  mount's place, asked when the window comes back (`Known::looked_at`)
-  and every 2 s while some waits, never otherwise; a count that changed
+  mount's place, asked when the window comes back (`Known::looked_at`) and
+  every 2 s while some waits, never otherwise; a count that changed
   publishes the place again, and nothing else is read. A mount's remote
   control is reached where it answers on each system
   (`uploads::control_of`: Unix's socket, Windows' loopback behind its
