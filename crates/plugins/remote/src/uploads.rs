@@ -238,23 +238,54 @@ fn record_of(records: &Path, name: &Path) -> Record {
     }
 }
 
-/// The name rclone gives in its queue to the file at `name` on its mount.
-fn queued_as(name: &Path) -> String {
-    name.components()
-        .map(|part| part.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/")
+/// The name rclone's queue gives the file at `name` on its mount: its
+/// parts joined by `/`, as Go's JSON writes the bytes rclone holds, each
+/// byte of what is not UTF-8 one U+FFFD (Latin-1's `é` one, a sequence cut
+/// short one for each of its bytes), where Rust's lossy conversion makes one
+/// of a sequence cut short: as rclone 1.75.2's `vfs/queue` answered. Two
+/// names that differ only there are one name in the queue.
+#[cfg(unix)]
+#[allow(clippy::unnecessary_wraps)] // `None` on Windows: one signature for both.
+fn queued_as(name: &Path) -> Option<String> {
+    let mut queued = String::new();
+    for (n, part) in name.components().enumerate() {
+        if n > 0 {
+            queued.push('/');
+        }
+        for chunk in part.as_os_str().as_encoded_bytes().utf8_chunks() {
+            queued.push_str(chunk.valid());
+            queued.extend(std::iter::repeat_n(
+                char::REPLACEMENT_CHARACTER,
+                chunk.invalid().len(),
+            ));
+        }
+    }
+    Some(queued)
+}
+
+/// On Windows a name is UTF-16, and what rclone's queue says of one that
+/// is not Unicode (a lone surrogate, through `WinFsp`) was never seen:
+/// `None`, its record alone saying when it is sent (never hurried, and
+/// never said to be missing from the queue).
+#[cfg(not(unix))]
+fn queued_as(name: &Path) -> Option<String> {
+    let parts: Option<Vec<&str>> = name
+        .components()
+        .map(|part| part.as_os_str().to_str())
+        .collect();
+    Some(parts?.join("/"))
 }
 
 /// Of `written` (copies made on the mount at `point`: files, folders with
-/// all they hold), the files the mount holds unsent, by their name in its
-/// queue: read from rclone's records (`records`), on this disk. `None`
-/// where a record is not as rclone writes them.
+/// all they hold), the files the mount holds unsent, by their path there,
+/// each with its name in the queue ([`queued_as`]): read from rclone's
+/// records (`records`), on this disk. `None` where a record is not as
+/// rclone writes them.
 fn unsent_of(
     records: &Path,
     point: &Path,
     written: &[PathBuf],
-) -> Option<BTreeMap<String, PathBuf>> {
+) -> Option<BTreeMap<PathBuf, Option<String>>> {
     let mut unsent = BTreeMap::new();
     let mut looked: Vec<PathBuf> = written
         .iter()
@@ -271,7 +302,8 @@ fn unsent_of(
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             _ => match record_of(records, &name) {
                 Record::Unsent => {
-                    unsent.insert(queued_as(&name), name);
+                    let queued = queued_as(&name);
+                    unsent.insert(name, queued);
                 }
                 Record::Sent => {}
                 Record::Unknown => return None,
@@ -314,36 +346,49 @@ pub fn send_written(
         return send_now(at, cancel, pause, left);
     };
     let began = std::time::Instant::now();
-    // Seen in the queue once: its release came, and it is sent once its
-    // record says so, however long the server takes it.
-    let mut queued: HashSet<String> = HashSet::new();
+    // Seen in the queue once, or one whose name there cannot be told
+    // (`queued_as`): its release came, or its record alone is the judge,
+    // and it is sent once its record says so, however long the server
+    // takes it.
+    let mut queued: HashSet<PathBuf> = unsent
+        .iter()
+        .filter(|(_, name)| name.is_none())
+        .map(|(file, _)| file.clone())
+        .collect();
     let cancelled = cancel.subscribe();
     loop {
         pause();
         if cancel.is_cancelled() {
             return Err(Cancelled.into());
         }
-        let waiting: HashMap<String, Waiting> = queue(at, cancel)?
-            .into_iter()
-            .map(|w| (w.name.clone(), w))
-            .collect();
+        // By name, several to one where names differed only in what is not
+        // UTF-8 (`queued_as`): each of them is ours, hurried alike.
+        let mut waiting: HashMap<String, Vec<Waiting>> = HashMap::new();
+        for w in queue(at, cancel)? {
+            waiting.entry(w.name.clone()).or_default().push(w);
+        }
+        let in_queue =
+            |name: &Option<String>| name.as_ref().is_some_and(|n| waiting.contains_key(n));
         queued.extend(
             unsent
-                .keys()
-                .filter(|name| waiting.contains_key(*name))
-                .cloned(),
+                .iter()
+                .filter(|(_, name)| in_queue(name))
+                .map(|(file, _)| file.clone()),
         );
         // Out of the queue, a file is sent once its record says so: before
         // its release, it is unsent and not queued yet.
-        unsent.retain(|name, file| {
-            waiting.contains_key(name) || record_of(&records, file) != Record::Sent
-        });
+        unsent.retain(|file, name| in_queue(name) || record_of(&records, file) != Record::Sent);
         left(unsent.len());
         if unsent.is_empty() {
             return Ok(());
         }
-        let ours = || unsent.keys().filter_map(|name| waiting.get(name));
-        if let Some(refused) = ours().find(|w| w.tries >= REFUSED && !w.uploading) {
+        let names: HashSet<&String> = unsent.values().flatten().collect();
+        let ours: Vec<&Waiting> = names
+            .into_iter()
+            .filter_map(|name| waiting.get(name))
+            .flatten()
+            .collect();
+        if let Some(refused) = ours.iter().find(|w| w.tries >= REFUSED && !w.uploading) {
             anyhow::bail!(
                 "the server refused “{}” {} times: rclone keeps it on this disk and tries again",
                 refused.name,
@@ -351,15 +396,16 @@ pub fn send_written(
             );
         }
         if began.elapsed() >= RELEASED_WITHIN
-            && let Some(name) = unsent.keys().find(|name| !queued.contains(*name))
+            && let Some(file) = unsent.keys().find(|file| !queued.contains(*file))
         {
             anyhow::bail!(
-                "“{name}” never reached rclone's queue: a program still holds it open there, and the server does not have it"
+                "“{}” never reached rclone's queue: a program still holds it open there, and the server does not have it",
+                file.display()
             );
         }
         // Each waits out rclone's delay (`--vfs-write-back`), and its delay
         // before trying again: asked to go now.
-        for w in ours().filter(|w| !w.uploading) {
+        for w in ours.iter().filter(|w| !w.uploading) {
             let now = serde_json::json!({ "id": w.id, "expiry": 0, "relative": false });
             if let Err(error) = asked(at, "vfs/queue-set-expiry", &now, cancel) {
                 // Gone meanwhile: sent, which the next look sees.
@@ -541,21 +587,61 @@ mod tests {
         .collect();
         let unsent = unsent_of(&records, point, &written).unwrap();
         assert_eq!(
-            unsent.keys().map(String::as_str).collect::<Vec<_>>(),
+            unsent
+                .values()
+                .flatten()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
             [
                 "a folder/inner \"q\"/two.txt",
                 "a folder/one.txt",
                 "l'été — a note.txt"
             ]
         );
-        assert_eq!(
-            unsent["a folder/one.txt"],
-            Path::new("a folder").join("one.txt")
-        );
+        assert!(unsent.contains_key(&Path::new("a folder").join("one.txt")));
         assert_eq!(record_of(&records, Path::new("sent.txt")), Record::Sent);
         assert_eq!(record_of(&records, Path::new("gone.txt")), Record::Sent);
         record("other.txt", None);
         assert_eq!(record_of(&records, Path::new("other.txt")), Record::Unknown);
         assert!(unsent_of(&records, point, &[point.join("other.txt")]).is_none());
+    }
+
+    /// A name is named in rclone's queue as Go's JSON writes its bytes,
+    /// each byte of what is not UTF-8 one U+FFFD, as rclone 1.75.2's
+    /// `vfs/queue` answered for each of these.
+    #[cfg(unix)]
+    #[test]
+    fn a_name_is_queued_as_go_writes_its_bytes() {
+        let queued = |bytes: &[u8]| {
+            queued_as(&PathBuf::from(skwir_core::os_path::from_bytes(
+                bytes.to_vec(),
+            )))
+            .unwrap()
+        };
+        for (bytes, said) in [
+            (&b"ok \xc3\xa9.txt"[..], "ok é.txt"),
+            (b"three \xe9\x80\x80.txt", "three \u{9000}.txt"),
+            (b"lat1 \xe9.txt", "lat1 \u{fffd}.txt"),
+            (b"lone \xc3.txt", "lone \u{fffd}.txt"),
+            (b"two \xe9\x80.txt", "two \u{fffd}\u{fffd}.txt"),
+            (
+                b"four \xf0\x9f\x98.txt",
+                "four \u{fffd}\u{fffd}\u{fffd}.txt",
+            ),
+            (
+                b"surrogate \xed\xa0\x80.txt",
+                "surrogate \u{fffd}\u{fffd}\u{fffd}.txt",
+            ),
+            (
+                b"mixed \xe9\x80\xc3\xa9\xff.txt",
+                "mixed \u{fffd}\u{fffd}é\u{fffd}.txt",
+            ),
+            (
+                b"dir \xff/inner \xfe.txt",
+                "dir \u{fffd}/inner \u{fffd}.txt",
+            ),
+        ] {
+            assert_eq!(queued(bytes), said, "{}", bytes.escape_ascii());
+        }
     }
 }

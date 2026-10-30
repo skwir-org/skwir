@@ -361,3 +361,73 @@ fn what_was_written_is_sent_though_rclone_had_not_queued_it() {
     drop(served);
     std::fs::remove_dir_all(&base).unwrap();
 }
+
+/// A name that is not UTF-8 (Latin-1's `é` from an old archive, two such
+/// names that differ only there, a sequence cut short, a folder's) is
+/// named in rclone's queue as Go's JSON writes it, each byte that is not
+/// UTF-8 one U+FFFD: matched by that name, each file written is hurried and
+/// on the server within the wait, never said to be missing from the queue.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_name_that_is_not_utf8_is_sent_as_rclone_queues_it() {
+    use skwir_core::os_path::from_bytes;
+    use skwir_plugin_remote::uploads;
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("sends-bytes");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    let served = Served::start(&served_root);
+    let (at, mount) = mounted_full(&base, &served);
+    let point = mount.point.clone();
+    let name = |bytes: &[u8]| PathBuf::from(from_bytes(bytes.to_vec()));
+    let files = [
+        name(b"latin-1 \xe9.txt"),
+        name(b"latin-1 \xe8.txt"),
+        name(b"cut \xe9\x80 short.txt"),
+        name(b"a folder \xff").join(name(b"inner \xc3 \xf0\x9f\x98.txt")),
+    ];
+    std::fs::create_dir_all(point.join(name(b"a folder \xff"))).unwrap();
+    for file in &files {
+        std::fs::write(point.join(file), file.as_os_str().as_encoded_bytes()).unwrap();
+    }
+    let written: Vec<PathBuf> = files[..3]
+        .iter()
+        .map(|file| point.join(file))
+        .chain([point.join(name(b"a folder \xff"))])
+        .collect();
+    let (done, finished) = std::sync::mpsc::channel();
+    {
+        let (at, point) = (at.clone(), point.clone());
+        std::thread::spawn(move || {
+            let sent = uploads::send_written(
+                &at,
+                &point,
+                &written,
+                &CancelToken::new(),
+                &|| {},
+                &mut |_| {},
+            );
+            let _ = done.send(sent);
+        });
+    }
+    finished
+        .recv_timeout(Duration::from_secs(180))
+        .expect("the wait never ended")
+        .expect("each found in rclone's queue by its name there, and sent");
+    for file in &files {
+        assert_eq!(
+            std::fs::read(served_root.join(file)).ok().as_deref(),
+            Some(file.as_os_str().as_encoded_bytes()),
+            "{} on the server once the wait ended",
+            file.display()
+        );
+    }
+    assert_eq!(uploads::waiting(&at, &CancelToken::new()).unwrap(), 0);
+    drop(mount);
+    assert!(!mounted_at(&point), "let go of");
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
