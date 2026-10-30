@@ -3,15 +3,23 @@
 //! starts at the chapter asked and wraps, a link or a contents entry
 //! leading to its chapter however it is spelt, and the chapter's source.
 //! A format says how a chapter is read and what it names (`Book`).
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::SystemTime};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    time::SystemTime,
+};
 
 use skwir_core::{
     CancelToken,
-    inspection::{Inspection, InspectionKind, PrintedPage, Row},
+    inspection::{Inspection, InspectionKind, Picture, PrintedPage, Row},
     preview::Held,
 };
 use skwir_platform::{
-    inspection::{self, limits::Bounds},
+    inspection::{
+        self,
+        limits::{self, Bounds},
+    },
     package::normalize,
     rich_preview::{self, Markup, Resources},
 };
@@ -279,11 +287,55 @@ pub(crate) fn parse_xml(text: &str) -> anyhow::Result<roxmltree::Document<'_>> {
     Ok(roxmltree::Document::parse(text)?)
 }
 
+/// The size each picture of a book is shown at, read once: a chapter
+/// naming one picture a thousand times reads it once, not a thousand times,
+/// and all of it only when its first bytes do not say.
+#[derive(Default)]
+pub(crate) struct Sizes(Mutex<HashMap<String, Option<(u32, u32)>>>);
+
+impl Sizes {
+    /// The picture `key` names, for the view to decode when it shows it,
+    /// with the size it is shown at: read from its first bytes
+    /// (`read(key, limits::PICTURE_HEADER)`), else, when there is more of
+    /// it, from all of it (`limits::BINARY_INPUT`). Each picture is read
+    /// once however often the book shows it; one whose read was cancelled
+    /// is read again.
+    pub(crate) fn picture(
+        &self,
+        key: String,
+        cancel: &CancelToken,
+        mut read: impl FnMut(&str, usize) -> Option<Vec<u8>>,
+    ) -> Option<Picture> {
+        let known = lock(&self.0).get(&key).copied();
+        let size = known.unwrap_or_else(|| {
+            let size = read(&key, limits::PICTURE_HEADER).and_then(|head| {
+                inspection::picture_size(&head).or_else(|| {
+                    // Shorter, its first bytes were all of it.
+                    let whole = (head.len() >= limits::PICTURE_HEADER)
+                        .then(|| read(&key, limits::BINARY_INPUT))??;
+                    inspection::picture_size(&whole)
+                })
+            });
+            if !cancel.is_cancelled() {
+                lock(&self.0).insert(key.clone(), size);
+            }
+            size
+        });
+        let (width, height) = size?;
+        Some(Picture::Later { key, width, height })
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// What a format works out once from a book (its index, its text
 /// decompressed), kept while the preview shows that book and that version
 /// of it (`PreviewRequest::shown`, as ADR-105 keeps an archive's helper):
-/// a chapter turned, a search, a picture shown read the book once.
-pub(crate) struct Kept<T>(std::sync::Mutex<Option<KeptBook<T>>>);
+/// a chapter turned, a search, a picture shown read the book once. Once
+/// the preview ends, a thread that waited for it lets go of the book.
+pub(crate) struct Kept<T>(Arc<Mutex<Option<KeptBook<T>>>>);
 
 struct KeptBook<T> {
     path: PathBuf,
@@ -294,11 +346,11 @@ struct KeptBook<T> {
 
 impl<T> Default for Kept<T> {
     fn default() -> Self {
-        Self(std::sync::Mutex::new(None))
+        Self(Arc::new(Mutex::new(None)))
     }
 }
 
-impl<T> Kept<T> {
+impl<T: Send + Sync + 'static> Kept<T> {
     /// The book `held` as `open` reads it: the one kept for it, or read now
     /// (outside the lock: a remote's file may take long) and kept in its
     /// place while `shown` lasts.
@@ -318,29 +370,148 @@ impl<T> Kept<T> {
                 })
                 .map(|kept| Arc::clone(&kept.book))
         };
-        if let Some(book) = kept(&self.lock()) {
+        if let Some(book) = kept(&lock(&self.0)) {
             return Ok(book);
         }
         let book = Arc::new(open()?);
-        let mut slot = self.lock();
+        let mut slot = lock(&self.0);
         if let Some(other) = kept(&slot) {
             return Ok(other);
         }
-        // Nothing is kept for a preview already gone.
-        if !shown.is_cancelled() {
-            *slot = Some(KeptBook {
+        // Nothing is kept for a preview already gone, nor without the
+        // thread that lets go of it.
+        if !shown.is_cancelled() && self.let_go_with(shown, &book) {
+            let before = slot.replace(KeptBook {
                 path: held.path().to_owned(),
                 version,
                 shown: shown.clone(),
                 book: Arc::clone(&book),
             });
+            drop(slot);
+            drop(before);
         }
         Ok(book)
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, Option<KeptBook<T>>> {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    /// Let go of `book` once `shown` ends, if it is still the one kept: on
+    /// a thread that lives as long as the preview, as `held_before`'s lives
+    /// while a file is kept. What it frees was built on a worker, which is
+    /// asked to give it back.
+    fn let_go_with(&self, shown: &CancelToken, book: &Arc<T>) -> bool {
+        let ended = shown.subscribe();
+        let slot = Arc::downgrade(&self.0);
+        let book = Arc::downgrade(book);
+        std::thread::Builder::new()
+            .name("skwir-book-kept".into())
+            .spawn(move || {
+                let _ = ended.receiver().recv();
+                let Some(slot) = slot.upgrade() else {
+                    return;
+                };
+                let mut kept = lock(&slot);
+                let gone = kept
+                    .as_ref()
+                    .is_some_and(|kept| std::ptr::eq(Arc::as_ptr(&kept.book), book.as_ptr()))
+                    .then(|| kept.take())
+                    .flatten();
+                drop(kept);
+                if gone.is_some() {
+                    drop(gone);
+                    skwir_core::scheduler::release_on_workers();
+                }
+            })
+            .is_ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// A 2 × 3 picture.
+    const PNG: &[u8] = b"\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x02\x00\x00\x00\x03\x08\x06\x00\x00\x00\xb9\xea\xde\x81\x00\x00\x00\x11\x49\x44\x41\x54\x78\x9c\x63\xf8\xcf\xc0\xf0\x1f\x84\x19\x30\x18\x00\xa1\x79\x0b\xf5\x4d\xc4\x9a\x07\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
+
+    /// A book kept while its preview shows it is let go of once the preview
+    /// ends, though nothing asks for a book again; nothing is kept for a
+    /// preview already gone.
+    #[test]
+    fn a_kept_book_goes_with_its_preview() {
+        let kept = Kept::<String>::default();
+        let held = Held::of_bytes("/nowhere/Synthetic book.fb2", b"words".to_vec());
+        let shown = CancelToken::new();
+        let book = kept.get(&held, &shown, || Ok("read".to_owned())).unwrap();
+        let again = kept
+            .get(&held, &shown, || anyhow::bail!("read again"))
+            .unwrap();
+        assert!(Arc::ptr_eq(&book, &again));
+        let gone = Arc::downgrade(&book);
+        drop((book, again));
+        assert!(gone.upgrade().is_some(), "kept while it is shown");
+        shown.cancel();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while gone.upgrade().is_some() {
+            assert!(Instant::now() < deadline, "kept after its preview ended");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let late = Arc::downgrade(&kept.get(&held, &shown, || Ok("late".to_owned())).unwrap());
+        assert!(late.upgrade().is_none(), "kept for a preview gone");
+    }
+
+    /// A picture a book names again and again is read once; all of it only
+    /// when its first bytes do not say its size and there is more of it.
+    #[test]
+    fn a_picture_is_sized_once() {
+        let sizes = Sizes::default();
+        let cancel = CancelToken::new();
+        let mut reads = Vec::new();
+        for _ in 0..1000 {
+            let picture = sizes.picture("cover".into(), &cancel, |key, limit| {
+                reads.push((key.to_owned(), limit));
+                Some(PNG.to_vec())
+            });
+            assert!(matches!(
+                picture,
+                Some(Picture::Later {
+                    width: 2,
+                    height: 3,
+                    ..
+                })
+            ));
+        }
+        assert_eq!(reads, [("cover".to_owned(), limits::PICTURE_HEADER)]);
+        // Unreadable: short, its first bytes were all of it; long, all of it
+        // is read once.
+        let mut reads = Vec::new();
+        for _ in 0..1000 {
+            for (key, length) in [("short", 16), ("long", limits::PICTURE_HEADER)] {
+                let picture = sizes.picture(key.into(), &cancel, |_, limit| {
+                    reads.push((key, limit));
+                    Some(vec![0; length.min(limit)])
+                });
+                assert!(picture.is_none());
+            }
+        }
+        assert_eq!(
+            reads,
+            [
+                ("short", limits::PICTURE_HEADER),
+                ("long", limits::PICTURE_HEADER),
+                ("long", limits::BINARY_INPUT)
+            ]
+        );
+        // A read cancelled is not one the book lacks.
+        let cancelled = CancelToken::new();
+        cancelled.cancel();
+        assert!(
+            sizes
+                .picture("later".into(), &cancelled, |_, _| None)
+                .is_none()
+        );
+        assert!(
+            sizes
+                .picture("later".into(), &cancel, |_, _| Some(PNG.to_vec()))
+                .is_some()
+        );
     }
 }

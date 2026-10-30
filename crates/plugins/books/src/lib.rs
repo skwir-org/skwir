@@ -137,7 +137,19 @@ impl Format {
         file: impl FnOnce() -> Option<S>,
     ) -> Option<Self> {
         let mime = skwir_platform::mime::of_request(path, mime)?;
-        let mime = mime.as_str();
+        Self::of_type(mime.as_str()).or_else(|| {
+            let file = PALM.contains(mime.as_str()).then(file)??;
+            mobi::is_book(&file.first_bytes().ok()?).then_some(Self::Palm)
+        })
+    }
+
+    /// The format of a file its type alone calls a book, nothing read: a
+    /// Palm database is not one.
+    fn named(path: &Path, mime: Option<&str>) -> Option<Self> {
+        Self::of_type(skwir_platform::mime::of_request(path, mime)?.as_str())
+    }
+
+    fn of_type(mime: &str) -> Option<Self> {
         if EPUB.contains(mime) {
             Some(Self::Epub)
         } else if FB2.contains(mime) {
@@ -146,9 +158,6 @@ impl Format {
             Some(Self::Fb2Zip)
         } else if MOBI.contains(mime) {
             Some(Self::Palm)
-        } else if PALM.contains(mime) {
-            let file = file()?;
-            mobi::is_book(&file.first_bytes().ok()?).then_some(Self::Palm)
         } else {
             None
         }
@@ -160,8 +169,11 @@ impl Format {
     }
 }
 
-/// A book's cover for the grid: the picture its book names. A fallback: a
-/// thumbnailer the desktop installed for books comes first.
+/// A book's cover for the grid: the picture its book names, for a file its
+/// type calls a book. The grid asks on its own thread before the file is
+/// read, so a Palm database (`.pdb`), a book only when its bytes say so,
+/// has none; its preview reads it. A fallback: a thumbnailer the desktop
+/// installed for books comes first.
 struct Cover;
 impl ThumbnailProvider for Cover {
     fn id(&self) -> &'static str {
@@ -171,20 +183,18 @@ impl ThumbnailProvider for Cover {
         Stage::Fallback
     }
     fn accepts(&self, req: &ThumbRequest) -> bool {
-        let path = || req.entry.resolve().ok();
-        Format::of(&req.entry.path, req.mime.as_deref(), path).is_some()
+        Format::named(&req.entry.path, req.mime.as_deref()).is_some()
     }
     fn thumbnail(&self, req: &ThumbRequest, cancel: &CancelToken) -> anyhow::Result<Option<Image>> {
+        let Some(format) = Format::named(&req.entry.path, req.mime.as_deref()) else {
+            return Ok(None);
+        };
         let path = req.entry.resolve()?;
-        let format = Format::of(&req.entry.path, req.mime.as_deref(), || Some(path.clone()));
         // Nothing for a cover the book encrypts, or names none.
         let cover = match format {
-            Some(Format::Epub) => epub::cover_picture(&path, cancel)?,
-            Some(format @ (Format::Fb2 | Format::Fb2Zip)) => {
-                fb2::Fb2::open(&path, format == Format::Fb2Zip, cancel)?.cover()
-            }
-            Some(Format::Palm) => mobi::cover_picture(&path, cancel)?,
-            None => None,
+            Format::Epub => epub::cover_picture(&path, cancel)?,
+            Format::Fb2 | Format::Fb2Zip => fb2::cover(&path, format == Format::Fb2Zip, cancel)?,
+            Format::Palm => mobi::cover_picture(&path, cancel)?,
         };
         let Some(bytes) = cover else {
             return Ok(None);
@@ -454,6 +464,46 @@ mod tests {
                 "{name}: the built-in engine reads it unless MuPDF is chosen"
             );
         }
+    }
+
+    /// A cover is asked for by the file's type alone, on the window's
+    /// thread before the file is read (a name that leads nowhere is
+    /// enough): a Palm database (`.pdb`), a book only when its bytes say
+    /// so, has none, and its preview still reads it.
+    #[test]
+    fn a_cover_is_a_book_s_by_its_type_alone() {
+        use skwir_core::thumbs::ThumbSize;
+        let asked = |path: &Path, mime: Option<&str>| ThumbRequest {
+            entry: EntryRef {
+                id: skwir_core::FileId::new(0, 0),
+                path: path.to_owned(),
+                only_name: false,
+            },
+            mime: mime.map(Arc::from),
+            mtime: None,
+            size: ThumbSize::Normal,
+        };
+        for name in [
+            "Synthetic.epub",
+            "Synthetic.fb2",
+            "Synthetic.fb2.zip",
+            "Synthetic.mobi",
+            "Synthetic.azw3",
+        ] {
+            let nowhere = Path::new("/nowhere").join(name);
+            assert!(Cover.accepts(&asked(&nowhere, None)), "{name}");
+        }
+        let text = fixture("synthetic.pdb");
+        for mime in ["application/vnd.palm", "application/x-aportisdoc"] {
+            let palm = ThumbRequest {
+                entry: EntryRef::from_path(&text).unwrap(),
+                ..asked(&text, Some(mime))
+            };
+            assert!(!Cover.accepts(&palm), "{mime}");
+        }
+        let mut preview = request(&text);
+        preview.mime = Some("application/vnd.palm".into());
+        assert_eq!(Format::of_request(&preview), Some(Format::Palm));
     }
 
     /// A Palm database is a book only when it says it is one; a KFX book is

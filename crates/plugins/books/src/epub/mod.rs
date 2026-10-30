@@ -18,7 +18,7 @@ use skwir_platform::{
     rich_preview::{self, Markup},
 };
 
-use crate::book::{Book, ChapterRef, Sections, Sheets, member_key, parse_xml, resolve};
+use crate::book::{Book, ChapterRef, Sections, Sheets, Sizes, member_key, parse_xml, resolve};
 
 #[cfg(test)]
 mod tests;
@@ -29,6 +29,8 @@ pub(crate) struct EpubBook {
     container: Container,
     book: rbook::Epub,
     chapters: Vec<ChapterRef>,
+    /// The size each picture is shown at, read once.
+    sizes: Sizes,
 }
 
 impl EpubBook {
@@ -60,6 +62,7 @@ impl EpubBook {
             container,
             book,
             chapters,
+            sizes: Sizes::default(),
         }))
     }
 }
@@ -93,7 +96,7 @@ impl Book for EpubBook {
             container: &mut self.container,
             base,
             cancel,
-            images,
+            pictures: images.then_some(&self.sizes),
             sheets,
         }
     }
@@ -194,7 +197,9 @@ pub(crate) struct Chapter<'a> {
     pub(crate) container: &'a mut Container,
     pub(crate) base: &'a str,
     pub(crate) cancel: &'a CancelToken,
-    pub(crate) images: bool,
+    /// The size each picture is shown at, read once; `None` when only the
+    /// text is wanted.
+    pub(crate) pictures: Option<&'a Sizes>,
     /// The book's stylesheets parsed, by member and the folder their URLs
     /// are found at: a search parses each once, not once a chapter.
     pub(crate) sheets: &'a mut Sheets,
@@ -202,24 +207,16 @@ pub(crate) struct Chapter<'a> {
 
 impl rich_preview::Resources for Chapter<'_> {
     /// Named by its member for the view to decode when it shows it, with
-    /// the size it will be shown at, read from its header.
+    /// the size it will be shown at, read once; nothing for one the book
+    /// encrypts.
     fn picture(&mut self, src: &str) -> Option<Picture> {
-        if !self.images || src.contains(':') {
-            return None;
-        }
-        let key = member_key(&resolve(self.base, src))?;
-        let head = self
-            .container
-            .read_head(&key, limits::PICTURE_HEADER, self.cancel)
-            .ok()?;
-        let (width, height) = inspection::picture_size(&head).or_else(|| {
-            let whole = self
-                .container
-                .read(&key, "Embedded image", self.cancel)
-                .ok()?;
-            inspection::picture_size(&whole)
-        })?;
-        Some(Picture::Later { key, width, height })
+        let sizes = self.pictures.filter(|_| !src.contains(':'))?;
+        let key =
+            member_key(&resolve(self.base, src)).filter(|key| !self.container.protected(key))?;
+        let (container, cancel) = (&mut *self.container, self.cancel);
+        sizes.picture(key, cancel, |key, limit| {
+            container.read_head(key, limit, cancel).ok()
+        })
     }
     fn file(&mut self, href: &str) -> Option<Vec<u8>> {
         if href.contains(':') {
@@ -386,6 +383,13 @@ impl Container {
             .and_then(|name| self.package.head(&name, limit))
             .ok_or_else(|| anyhow::anyhow!("Missing EPUB resource {href}"))
     }
+    /// Whether `encryption.xml` lists the member `name` as encrypted, not
+    /// only obfuscated.
+    fn protected(&self, name: &str) -> bool {
+        self.encrypted.get(name).is_some_and(|algorithm| {
+            ![IDPF_OBFUSCATION, ADOBE_OBFUSCATION].contains(&algorithm.as_str())
+        })
+    }
     /// Read one resource by container href (absolute or root-relative, percent-encoded or not).
     /// One `encryption.xml` lists as encrypted (a protected book's
     /// chapters) is refused, saying so: read raw, it showed as garbage. A
@@ -399,9 +403,7 @@ impl Container {
         let name =
             member_key(href).ok_or_else(|| anyhow::anyhow!("Missing EPUB resource {href}"))?;
         anyhow::ensure!(self.package.has(&name), "Missing EPUB resource {href}");
-        if self.encrypted.get(&name).is_some_and(|algorithm| {
-            ![IDPF_OBFUSCATION, ADOBE_OBFUSCATION].contains(&algorithm.as_str())
-        }) {
+        if self.protected(&name) {
             anyhow::bail!(
                 "This EPUB is protected: its {} is encrypted",
                 what.to_lowercase()

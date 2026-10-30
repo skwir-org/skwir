@@ -8,7 +8,7 @@
 //! for reading mode: FB2's elements become the HTML that means the same,
 //! what has no HTML element of its own a class the book's stylesheet
 //! (`STYLESHEET`) sets, so the reader's cascade decides how it reads.
-use std::{collections::HashMap, fmt::Write, ops::Range, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, fmt::Write, ops::Range, sync::Arc};
 
 use base64::Engine as _;
 use roxmltree::{Node, NodeId};
@@ -22,7 +22,7 @@ use skwir_platform::{
     rich_preview::{self, Markup},
 };
 
-use crate::book::{Book, ChapterRef, Sheets, member_key};
+use crate::book::{Book, ChapterRef, Sheets, Sizes, member_key};
 
 /// The stylesheet every chapter links: what FB2 sets apart that HTML has no
 /// element for.
@@ -57,14 +57,94 @@ pub(crate) struct Fb2 {
     binaries: HashMap<String, Range<usize>>,
     contents: Vec<Row>,
     details: Vec<(&'static str, Option<String>)>,
-    /// The cover's binary.
-    cover: Option<String>,
+    /// The size each picture is shown at, read once.
+    sizes: Sizes,
 }
 
 struct Chapter {
     xhtml: String,
+    /// Whether it holds more than reading mode reads, which is left out.
+    cut: bool,
     /// Where it is in the document, for its source.
     source: Range<usize>,
+}
+
+/// The document in `file`, or the first FB2 in it when it is `zipped`
+/// (in the archive's order), decoded: with how, when not as UTF-8.
+fn read<S: FileSource + ?Sized>(
+    file: &S,
+    zipped: bool,
+    cancel: &CancelToken,
+) -> anyhow::Result<(String, Option<String>)> {
+    let bytes = if zipped {
+        let mut package =
+            skwir_platform::package::Package::open(file, "This zipped FB2", false, cancel)?;
+        let names: Vec<String> = package.names().map(str::to_owned).collect();
+        let name = names
+            .iter()
+            .find(|name| name.to_lowercase().ends_with(".fb2"))
+            .or_else(|| names.first().filter(|_| names.len() == 1))
+            .ok_or_else(|| anyhow::anyhow!("This zipped FB2 holds no FB2"))?
+            .clone();
+        Cow::Owned(package.read(&name, limits::BINARY_INPUT, "FB2 document", cancel)?)
+    } else {
+        file.read_whole(limits::BINARY_INPUT as u64, cancel)?
+            .ok_or_else(|| anyhow::anyhow!("This FB2 is too large to read"))?
+    };
+    inspection::check(cancel)?;
+    Ok(decode(&bytes))
+}
+
+/// The cover of the FB2 in `file` (the one in it when it is `zipped`), if
+/// it names one it holds: its description and that binary read, its
+/// chapters left as they are, as a thumbnail needs.
+pub(crate) fn cover<S: FileSource + ?Sized>(
+    file: &S,
+    zipped: bool,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<Vec<u8>>> {
+    let (text, _) = read(file, zipped, cancel)?;
+    let doc = inspection::xml_document(&text)?;
+    let root = doc.root_element();
+    anyhow::ensure!(is(root, "FictionBook"), "This is not an FB2 document");
+    let Some(id) = child(root, "description").and_then(cover_id) else {
+        return Ok(None);
+    };
+    Ok(root
+        .children()
+        .find_map(|node| binary_text(node).filter(|(of, _)| *of == id))
+        .and_then(|(_, data)| from_base64(&text[data], limits::BINARY_INPUT).ok()))
+}
+
+/// A `binary` element's id and where its base64 text is.
+fn binary_text<'a>(node: Node<'a, '_>) -> Option<(&'a str, Range<usize>)> {
+    let data = node
+        .first_child()
+        .filter(|data| is(node, "binary") && data.is_text())?;
+    Some((node.attribute("id")?, data.range()))
+}
+
+/// At most `limit` bytes of what `base64` encodes, white space aside: what
+/// is past them is not decoded.
+fn from_base64(base64: &str, limit: usize) -> anyhow::Result<Vec<u8>> {
+    // Four characters of base64 for each three bytes.
+    let wanted = limit.div_ceil(3).saturating_mul(4);
+    let base64: Vec<u8> = base64
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace())
+        .take(wanted)
+        .collect();
+    let engine = base64::engine::GeneralPurpose::new(
+        &base64::alphabet::STANDARD,
+        base64::engine::GeneralPurposeConfig::new()
+            .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent)
+            .with_decode_allow_trailing_bits(true),
+    );
+    let mut bytes = engine
+        .decode(&base64)
+        .map_err(|_| anyhow::anyhow!("damaged"))?;
+    bytes.truncate(limit);
+    Ok(bytes)
 }
 
 impl Fb2 {
@@ -74,34 +154,12 @@ impl Fb2 {
         zipped: bool,
         cancel: &CancelToken,
     ) -> anyhow::Result<Self> {
-        let bytes = if zipped {
-            let mut package =
-                skwir_platform::package::Package::open(file, "This zipped FB2", false, cancel)?;
-            let names: Vec<String> = package.names().map(str::to_owned).collect();
-            let name = names
-                .iter()
-                .find(|name| name.to_lowercase().ends_with(".fb2"))
-                .or_else(|| names.first().filter(|_| names.len() == 1))
-                .ok_or_else(|| anyhow::anyhow!("This zipped FB2 holds no FB2"))?
-                .clone();
-            package.read(&name, limits::BINARY_INPUT, "FB2 document", cancel)?
-        } else {
-            file.read_whole(limits::BINARY_INPUT as u64, cancel)?
-                .ok_or_else(|| anyhow::anyhow!("This FB2 is too large to read"))?
-                .into_owned()
-        };
-        inspection::check(cancel)?;
-        let (text, decoded) = decode(&bytes);
+        let (text, decoded) = read(file, zipped, cancel)?;
         Self::parse(text, decoded, cancel)
     }
 
     fn parse(text: String, decoded: Option<String>, cancel: &CancelToken) -> anyhow::Result<Self> {
-        inspection::xml_depth(text.as_bytes())?;
-        let options = roxmltree::ParsingOptions {
-            allow_dtd: true,
-            ..roxmltree::ParsingOptions::default()
-        };
-        let doc = roxmltree::Document::parse_with_options(&text, options)?;
+        let doc = inspection::xml_document(&text)?;
         let root = doc.root_element();
         anyhow::ensure!(is(root, "FictionBook"), "This is not an FB2 document");
         let mut groups = Vec::new();
@@ -117,11 +175,9 @@ impl Fb2 {
                     groups.push(Group::Notes(child));
                 }
                 first = false;
-            } else if is(child, "binary")
-                && let (Some(id), Some(data)) = (child.attribute("id"), child.first_child())
-                && data.is_text()
-            {
-                binaries.insert(id.to_owned(), data.range());
+            } else if let Some((id, data)) = binary_text(child) {
+                // The first of an id is the one, as the cover finds it.
+                binaries.entry(id.to_owned()).or_insert(data);
             }
         }
         anyhow::ensure!(!groups.is_empty(), "This FB2 has no body");
@@ -131,18 +187,30 @@ impl Fb2 {
             limits::BLOCKS
         );
         let description = child(root, "description");
-        let (details, cover) = description.map(describe).unwrap_or_default();
-        // Every id, and the anchor given to each section that has none, by
-        // the chapter that holds it: a link leads to its chapter wherever it
-        // points, before or after it.
+        let details = description.map(describe).unwrap_or_default();
+        // Every id by the chapter that holds it, then an anchor for each
+        // section that has none, named apart from every id: a link leads to
+        // its chapter wherever it points, before or after it.
         let mut ids = HashMap::new();
-        let mut anchors = HashMap::new();
         for (index, group) in groups.iter().enumerate() {
             for node in group.written() {
                 if let Some(id) = node.attribute("id") {
                     ids.entry(id.to_owned()).or_insert(index);
-                } else if is(node, "section") {
-                    let anchor = format!("section-{}", anchors.len() + 1);
+                }
+            }
+        }
+        let mut anchors = HashMap::new();
+        let mut number = 0;
+        for (index, group) in groups.iter().enumerate() {
+            for node in group.written() {
+                if is(node, "section") && node.attribute("id").is_none() {
+                    let anchor = loop {
+                        number += 1;
+                        let anchor = format!("section-{number}");
+                        if !ids.contains_key(&anchor) {
+                            break anchor;
+                        }
+                    };
                     ids.insert(anchor.clone(), index);
                     anchors.insert(node.id(), anchor);
                 }
@@ -159,6 +227,9 @@ impl Fb2 {
                 out: String::new(),
                 rows: &mut contents,
                 nest: 0,
+                // The frame's: `html`, `head`, its `link`, `body`.
+                nodes: 4,
+                cut: false,
             };
             writer.out.push_str(concat!(
                 r#"<?xml version="1.0" encoding="utf-8"?>"#,
@@ -179,6 +250,7 @@ impl Fb2 {
             }
             writer.out.push_str("</body></html>");
             chapters.push(Chapter {
+                cut: writer.cut,
                 xhtml: writer.out,
                 source: group.source(),
             });
@@ -199,7 +271,7 @@ impl Fb2 {
             binaries,
             contents,
             details,
-            cover,
+            sizes: Sizes::default(),
         })
     }
 
@@ -209,34 +281,8 @@ impl Fb2 {
             .binaries
             .get(id.strip_prefix('#').unwrap_or(id))
             .ok_or_else(|| anyhow::anyhow!("Missing FB2 picture {id}"))?;
-        // Four characters of base64 for each three bytes, white space aside.
-        let wanted = limit.div_ceil(3).saturating_mul(4);
-        let mut base64: Vec<u8> = self.text[range.clone()]
-            .bytes()
-            .filter(|b| !b.is_ascii_whitespace())
-            .take(wanted)
-            .collect();
-        if base64.len() == wanted {
-            // A head only: whole groups of four, no padding to expect.
-            base64.truncate(wanted - wanted % 4);
-        }
-        let engine = base64::engine::GeneralPurpose::new(
-            &base64::alphabet::STANDARD,
-            base64::engine::GeneralPurposeConfig::new()
-                .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent)
-                .with_decode_allow_trailing_bits(true),
-        );
-        let mut bytes = engine
-            .decode(&base64)
-            .map_err(|_| anyhow::anyhow!("This FB2's picture {id} is damaged"))?;
-        bytes.truncate(limit);
-        Ok(bytes)
-    }
-
-    /// The cover's picture, decoded, if the book names one it holds.
-    pub(crate) fn cover(&self) -> Option<Vec<u8>> {
-        self.binary(self.cover.as_deref()?, limits::BINARY_INPUT)
-            .ok()
+        from_base64(&self.text[range.clone()], limit)
+            .map_err(|_| anyhow::anyhow!("This FB2's picture {id} is damaged"))
     }
 
     fn chapter(&self, href: &str) -> anyhow::Result<&Chapter> {
@@ -423,14 +469,34 @@ struct Writer<'w> {
     /// passes over elements deeper than `limits::HTML_DEPTH`), and no
     /// writer's stack goes as deep as the parser does.
     nest: usize,
+    /// The nodes written: elements, and texts (each counted, though
+    /// reading mode's parser joins texts that follow each other).
+    nodes: usize,
+    /// Whether the chapter holds more than reading mode reads of it.
+    cut: bool,
 }
 
 impl Writer<'_> {
+    /// Whether one more node of the book is written: what it writes
+    /// before what it holds is two nodes at most (a picture's paragraph and
+    /// the picture), and a chapter is at most what reading mode parses as
+    /// XML (`limits::XML_NODES`, its document's root one of them). Past it,
+    /// the rest is left out, or the chapter would go to the HTML parser
+    /// whole.
+    fn room(&mut self) -> bool {
+        let room = self.nodes + 2 < limits::XML_NODES as usize;
+        self.cut |= !room;
+        room
+    }
+
     /// `node`, its titles headings of `level`, its sections rows of the
     /// contents at `depth`.
     fn node(&mut self, node: Node<'_, '_>, level: usize, depth: usize) {
+        if !self.room() {
+            return;
+        }
         if node.is_text() {
-            escape(&mut self.out, node.text().unwrap_or_default());
+            self.text(node.text().unwrap_or_default());
             return;
         }
         if !node.is_element() {
@@ -445,13 +511,21 @@ impl Writer<'_> {
         self.nest -= 1;
     }
 
+    fn text(&mut self, text: &str) {
+        self.nodes += 1;
+        escape(&mut self.out, text);
+    }
+
     /// What `node` holds, as text alone.
     fn flat(&mut self, node: Node<'_, '_>) {
         for text in node
             .descendants()
             .filter_map(|n| n.is_text().then(|| n.text()).flatten())
         {
-            escape(&mut self.out, text);
+            if !self.room() {
+                return;
+            }
+            self.text(text);
         }
     }
 
@@ -473,7 +547,10 @@ impl Writer<'_> {
             "cite" | "annotation" => self.wrap("blockquote", node, "", level + 1, depth),
             "poem" => self.wrap("div", node, "poem", level + 1, depth),
             "stanza" => self.wrap("div", node, "stanza", level + 1, depth),
-            "empty-line" => self.out.push_str("<p>\u{a0}</p>"),
+            "empty-line" => {
+                self.nodes += 2;
+                self.out.push_str("<p>\u{a0}</p>");
+            }
             "image" => self.image(node),
             "emphasis" => self.wrap("em", node, "", level, depth),
             "strong" => self.wrap("strong", node, "", level, depth),
@@ -500,9 +577,7 @@ impl Writer<'_> {
             // and its id as an anchor.
             _ => {
                 if let Some(id) = node.attribute("id") {
-                    self.out.push_str("<span");
-                    self.id(id);
-                    self.out.push_str("></span>");
+                    self.span(id);
                 }
                 self.children(node, level, depth);
             }
@@ -518,6 +593,7 @@ impl Writer<'_> {
     /// `node` as the element `tag`, of `class`, its id kept: the start tag
     /// left open for attributes.
     fn open(&mut self, tag: &str, node: Node<'_, '_>, class: &str) {
+        self.nodes += 1;
         let _ = write!(self.out, "<{tag}");
         if !class.is_empty() {
             let _ = write!(self.out, r#" class="{class}""#);
@@ -533,6 +609,14 @@ impl Writer<'_> {
         self.out.push('"');
     }
 
+    /// An empty element that is a place, `id`.
+    fn span(&mut self, id: &str) {
+        self.nodes += 1;
+        self.out.push_str("<span");
+        self.id(id);
+        self.out.push_str("></span>");
+    }
+
     fn wrap(&mut self, tag: &str, node: Node<'_, '_>, class: &str, level: usize, depth: usize) {
         self.open(tag, node, class);
         self.out.push('>');
@@ -546,7 +630,11 @@ impl Writer<'_> {
         let mut first = true;
         for line in title.children().filter(Node::is_element) {
             if is(line, "p") {
+                if !self.room() {
+                    return;
+                }
                 if !first {
+                    self.nodes += 1;
                     self.out.push_str("<br/>");
                 }
                 first = false;
@@ -559,6 +647,7 @@ impl Writer<'_> {
     /// sections' titles a level down.
     fn section(&mut self, node: Node<'_, '_>, level: usize, depth: usize) {
         let (anchor, inner) = self.row(node, depth);
+        self.nodes += 1;
         self.out.push_str("<section");
         if let Some(anchor) = &anchor {
             self.id(anchor);
@@ -575,6 +664,9 @@ impl Writer<'_> {
     }
 
     fn node_section(&mut self, node: Node<'_, '_>, level: usize, depth: usize) {
+        if !self.room() {
+            return;
+        }
         if self.nest >= limits::NESTING {
             self.flat(node);
             return;
@@ -589,9 +681,7 @@ impl Writer<'_> {
     fn head(&mut self, part: Node<'_, '_>, level: usize, depth: usize) {
         let (anchor, inner) = self.row(part, depth);
         if let Some(anchor) = &anchor {
-            self.out.push_str("<span");
-            self.id(anchor);
-            self.out.push_str("></span>");
+            self.span(anchor);
         }
         for child in part.children().filter(|c| !is(*c, "section")) {
             self.node(child, level, inner);
@@ -633,18 +723,24 @@ impl Writer<'_> {
             target: Some(href(self.chapter)),
             ..Row::default()
         });
+        self.nodes += 1;
         self.out.push_str("<h1>");
-        escape(&mut self.out, &title);
+        self.text(&title);
         self.out.push_str("</h1>");
         for child in body.children() {
+            if !self.room() {
+                return;
+            }
             if is(child, "section") {
+                self.nodes += 1;
                 self.out.push_str(r#"<div epub:type="endnote""#);
                 if let Some(id) = child.attribute("id") {
                     self.id(id);
                 }
                 self.out.push('>');
                 for part in child.children() {
-                    if is(part, "title") {
+                    if is(part, "title") && self.room() {
+                        self.nodes += 1;
                         self.out.push_str(r#"<p class="title""#);
                         self.lines(part);
                         self.out.push_str("</p>");
@@ -673,6 +769,7 @@ impl Writer<'_> {
             },
             None => target.to_owned(),
         };
+        self.nodes += 1;
         self.out.push_str("<a");
         if node.attribute("type") == Some("note") {
             self.out.push_str(r#" epub:type="noteref""#);
@@ -700,12 +797,14 @@ impl Writer<'_> {
                 .any(|name| is(parent, name))
         });
         if !inline {
+            self.nodes += 1;
             self.out.push_str(r#"<p class="image""#);
             if let Some(id) = node.attribute("id") {
                 self.id(id);
             }
             self.out.push('>');
         }
+        self.nodes += 1;
         self.out.push_str(r#"<img src=""#);
         escape(&mut self.out, source);
         self.out.push_str(r#"" alt=""#);
@@ -754,9 +853,8 @@ fn escape(out: &mut String, text: &str) {
     }
 }
 
-/// What the description says of the book, for Properties, and its cover's
-/// binary.
-fn describe(description: Node<'_, '_>) -> (Vec<(&'static str, Option<String>)>, Option<String>) {
+/// What the description says of the book, for Properties.
+fn describe(description: Node<'_, '_>) -> Vec<(&'static str, Option<String>)> {
     let text = |node: Option<Node<'_, '_>>| {
         node.map(|n| {
             n.descendants()
@@ -800,17 +898,8 @@ fn describe(description: Node<'_, '_>) -> (Vec<(&'static str, Option<String>)>, 
                 None => name.to_owned(),
             })
         });
-    let cover = title
-        .and_then(|info| child(info, "coverpage"))
-        .and_then(|page| child(page, "image"))
-        .and_then(|image| {
-            image
-                .attribute((XLINK, "href"))
-                .or_else(|| image.attribute("href"))
-        })
-        .map(|href| href.trim_start_matches('#').to_owned());
     let field = |info: Option<Node<'_, '_>>, name: &str| text(info.and_then(|i| child(i, name)));
-    let details = vec![
+    vec![
         ("Title", field(title, "book-title")),
         ("Author", (!authors.is_empty()).then(|| authors.join(", "))),
         ("Series", series),
@@ -818,8 +907,19 @@ fn describe(description: Node<'_, '_>) -> (Vec<(&'static str, Option<String>)>, 
         ("Language", field(title, "lang")),
         ("Publisher", field(publish, "publisher")),
         ("Year", field(publish, "year")),
-    ];
-    (details, cover)
+    ]
+}
+
+/// The binary the description names as the book's cover.
+fn cover_id<'a>(description: Node<'a, '_>) -> Option<&'a str> {
+    let image = child(
+        child(child(description, "title-info")?, "coverpage")?,
+        "image",
+    )?;
+    let href = image
+        .attribute((XLINK, "href"))
+        .or_else(|| image.attribute("href"))?;
+    Some(href.trim_start_matches('#'))
 }
 
 /// An FB2 as reading mode reads it.
@@ -842,7 +942,15 @@ impl Book for Reading<'_> {
         href: &str,
         _cancel: &CancelToken,
     ) -> anyhow::Result<(String, Option<String>)> {
-        Ok((self.0.chapter(href)?.xhtml.clone(), self.0.decoded.clone()))
+        let chapter = self.0.chapter(href)?;
+        let cut = chapter
+            .cut
+            .then(|| String::from("The chapter is cut: it holds more than reading mode reads"));
+        let notice: Vec<String> = self.0.decoded.clone().into_iter().chain(cut).collect();
+        Ok((
+            chapter.xhtml.clone(),
+            (!notice.is_empty()).then(|| notice.join(" · ")),
+        ))
     }
     fn source(
         &mut self,
@@ -860,11 +968,12 @@ impl Book for Reading<'_> {
         _base: &'r str,
         images: bool,
         _sheets: &'r mut Sheets,
-        _cancel: &'r CancelToken,
+        cancel: &'r CancelToken,
     ) -> Resources<'r> {
         Resources {
             book: self.0,
             images,
+            cancel,
         }
     }
     fn contents(&mut self) -> Vec<Row> {
@@ -879,22 +988,20 @@ impl Book for Reading<'_> {
 pub(crate) struct Resources<'a> {
     book: &'a Fb2,
     images: bool,
+    cancel: &'a CancelToken,
 }
 
 impl rich_preview::Resources for Resources<'_> {
     /// Named by its binary's id for the view to decode when it shows it,
-    /// with the size read from its first bytes.
+    /// with the size it is shown at, read once.
     fn picture(&mut self, src: &str) -> Option<Picture> {
         if !self.images {
             return None;
         }
         let key = src.strip_prefix('#').unwrap_or(src).to_owned();
-        let head = self.book.binary(&key, limits::PICTURE_HEADER).ok()?;
-        let (width, height) = inspection::picture_size(&head).or_else(|| {
-            let whole = self.book.binary(&key, limits::BINARY_INPUT).ok()?;
-            inspection::picture_size(&whole)
-        })?;
-        Some(Picture::Later { key, width, height })
+        let book = self.book;
+        book.sizes
+            .picture(key, self.cancel, |key, limit| book.binary(key, limit).ok())
     }
     fn stylesheet(&mut self, href: &str) -> Option<String> {
         (href == STYLESHEET).then(|| CSS.to_owned())

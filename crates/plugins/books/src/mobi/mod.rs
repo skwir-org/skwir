@@ -19,7 +19,7 @@ use skwir_platform::{
     rich_preview::{self, Markup},
 };
 
-use crate::book::{Book, ChapterRef, Sheets, member_key};
+use crate::book::{Book, ChapterRef, Sheets, Sizes, member_key};
 
 mod huffcdic;
 mod index;
@@ -113,6 +113,8 @@ pub(crate) struct Mobi {
     /// The first picture's record: what `recindex` and `kindle:embed`
     /// count from (in a file holding both, the MOBI 6 part's).
     pictures: Option<usize>,
+    /// The size each picture is shown at, read once per book.
+    sizes: Sizes,
 }
 
 impl Mobi {
@@ -163,6 +165,7 @@ impl Mobi {
             contents: Vec::new(),
             details,
             pictures,
+            sizes: Sizes::default(),
         };
         if let Some((base, header)) = kf8 {
             let raw = text(&book.database, file, base, &header, cancel)?;
@@ -186,7 +189,14 @@ impl Mobi {
             let fdst = record(mobi.fdst)
                 .map(|r| book.database.record(file, r, cancel))
                 .transpose()?;
-            let built = kf8::build(&raw, fdst.as_deref(), &skeletons, &fragments, ncx.as_ref())?;
+            let built = kf8::build(
+                &raw,
+                fdst.as_deref(),
+                &skeletons,
+                &fragments,
+                ncx.as_ref(),
+                cancel,
+            )?;
             book.text = Text::Kf8;
             book.refs = (0..built.parts.len())
                 .map(|index| ChapterRef {
@@ -350,6 +360,7 @@ fn text<S: FileSource + ?Sized>(
 ) -> anyhow::Result<Vec<u8>> {
     let mobi = header.mobi.as_ref();
     let flags = mobi.map_or(0, |mobi| mobi.extra_flags);
+    let limit = (header.text_length as usize).min(TEXT);
     let mut huffman = match header.compression {
         Compression::HuffCdic => {
             let (first, count) = mobi
@@ -360,14 +371,16 @@ fn text<S: FileSource + ?Sized>(
             let cdics = (1..count as usize)
                 .map(|k| database.record(file, first + k, cancel))
                 .collect::<anyhow::Result<Vec<_>>>()?;
+            // The dictionary keeps no more than the text bound: the length
+            // the book declares is the file's word, no bound of its own.
             Some(huffcdic::Huffman::new(
                 &huff,
                 cdics.iter().map(AsRef::as_ref),
+                TEXT,
             )?)
         }
         _ => None,
     };
-    let limit = (header.text_length as usize).min(TEXT);
     let mut out = Vec::with_capacity(limit.min(limits::BINARY_INPUT));
     for k in 1..=usize::from(header.text_records) {
         inspection::check(cancel)?;
@@ -378,7 +391,7 @@ fn text<S: FileSource + ?Sized>(
         let body = &record[..record.len() - trailing(&record, flags)];
         let room = (limit - out.len()).min(RECORD);
         let decoded = match (&mut huffman, header.compression) {
-            (Some(huffman), _) => huffman.decode(body, room)?,
+            (Some(huffman), _) => huffman.decode(body, room, cancel)?,
             (None, Compression::PalmDoc) => palmdoc::decompress(body, room)?,
             _ => body[..body.len().min(room)].to_vec(),
         };
@@ -506,24 +519,16 @@ pub(crate) struct Resources<'a, S: FileSource + ?Sized> {
 
 impl<S: FileSource + ?Sized> rich_preview::Resources for Resources<'_, S> {
     /// Named by its record for the view to decode when it shows it, with
-    /// the size read from its first bytes.
+    /// the size read once per book, from its first bytes where they say it.
     fn picture(&mut self, src: &str) -> Option<Picture> {
         if !self.images {
             return None;
         }
-        let key = self.book.picture_record(src)?.to_string();
-        let head = self
-            .book
-            .picture(self.file, &key, limits::PICTURE_HEADER, self.cancel)
-            .ok()?;
-        let (width, height) = inspection::picture_size(&head).or_else(|| {
-            let whole = self
-                .book
-                .picture(self.file, &key, limits::BINARY_INPUT, self.cancel)
-                .ok()?;
-            inspection::picture_size(&whole)
-        })?;
-        Some(Picture::Later { key, width, height })
+        let (book, file, cancel) = (self.book, self.file, self.cancel);
+        let key = book.picture_record(src)?.to_string();
+        book.sizes.picture(key, cancel, |key, limit| {
+            book.picture(file, key, limit, cancel).ok()
+        })
     }
     fn stylesheet(&mut self, href: &str) -> Option<String> {
         let number = href

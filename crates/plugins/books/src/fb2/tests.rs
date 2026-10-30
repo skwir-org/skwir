@@ -6,7 +6,7 @@ use crate::{
 use skwir_core::{
     inspection::{InspectRequest, Inspection},
     op::EntryRef,
-    preview::PreviewProvider,
+    preview::{Held, PreviewProvider, PreviewRequest},
     thumbs::{ThumbRequest, ThumbnailProvider},
 };
 use std::path::Path;
@@ -392,6 +392,62 @@ fn a_damaged_book_fails_or_shows_less() {
     );
 }
 
+/// A book's own entities read as what they stand for, a small one however
+/// often it is named; entities that would grow the book past what is parsed
+/// whole refuse it before anything is expanded. Expanded, a megabyte named a
+/// million times was a terabyte, and the allocation that failed aborted the
+/// process, the grid's cover reading it unasked.
+#[test]
+fn a_book_s_entities_expand_within_bounds() {
+    let book = |entities: &str, body: &str| {
+        fb2(body).replacen("?>", &format!("?><!DOCTYPE FictionBook [{entities}]>"), 1)
+    };
+    let read = |text: &str| {
+        Provider::default()
+            .inspect(
+                &PreviewRequest::holding(
+                    "/nowhere/Synthetic entities.fb2",
+                    text.as_bytes().to_vec(),
+                    None,
+                ),
+                &InspectRequest::default(),
+                &CancelToken::new(),
+            )
+            .map(Option::unwrap)
+    };
+    let small = book(
+        r#"<!ENTITY nbsp "&#160;"><!ENTITY dash "—">"#,
+        &format!(
+            "<body><section><p>One&nbsp;two&dash;three</p>{}</section></body>",
+            "<p>&nbsp;&dash;</p>".repeat(100_000)
+        ),
+    );
+    let shown = read(&small).unwrap();
+    assert!(
+        text(&shown).contains("One\u{a0}two—three"),
+        "{}",
+        text(&shown).chars().take(200).collect::<String>()
+    );
+    // Eight kilobytes named 4096 times: 32 MiB once expanded.
+    let large = book(
+        &format!(r#"<!ENTITY t "{}">"#, "x".repeat(8 * 1024)),
+        &format!(
+            "<body><section><p>{}</p></section></body>",
+            "&t;".repeat(4096)
+        ),
+    );
+    assert!(read(&large).is_err(), "the entities were expanded");
+    // The cover reads it as the preview does.
+    let held = Arc::new(Held::of_bytes(
+        "/nowhere/Synthetic entities.fb2",
+        large.into_bytes(),
+    ));
+    assert!(
+        Fb2::open(&held, false, &CancelToken::new()).is_err(),
+        "the cover expanded them"
+    );
+}
+
 /// The book read is kept while it is shown, and read again once it
 /// changes.
 #[test]
@@ -422,4 +478,116 @@ fn a_changed_book_is_read_again() {
     )
     .unwrap();
     assert_eq!(read(&provider), "After, longer.");
+}
+
+/// A book's cover is read from its description and the binary that names,
+/// its chapters left as they are: a book with more chapters than are read
+/// still gives the cover it names.
+#[test]
+fn the_cover_is_read_without_the_chapters() {
+    let book = std::fs::read_to_string(fixture("synthetic.fb2")).unwrap();
+    let many = book.replacen(
+        "<body>",
+        &format!(
+            "<body>{}",
+            "<section><p>x</p></section>".repeat(limits::BLOCKS + 1)
+        ),
+        1,
+    );
+    let held = |text: &str| {
+        Arc::new(Held::of_bytes(
+            "/nowhere/Synthetic.fb2",
+            text.as_bytes().to_vec(),
+        ))
+    };
+    let cancel = CancelToken::new();
+    assert!(Fb2::open(&held(&many), false, &cancel).is_err());
+    let size = |text: &str| {
+        let bytes = cover(&held(text), false, &cancel).unwrap().unwrap();
+        let picture = inspection::picture(&bytes, 128).unwrap();
+        (picture.width, picture.height)
+    };
+    assert_eq!(size(&many), size(&book));
+}
+
+/// A zipped book holding several FB2s reads the first in the archive's
+/// order, each time it is opened.
+#[test]
+fn a_zip_of_several_books_reads_its_first() {
+    use std::io::Write as _;
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (name, words) in [
+        ("later.fb2", "First in the archive."),
+        ("early.fb2", "Second."),
+    ] {
+        zip.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(fb2(&format!("<body><section><p>{words}</p></section></body>")).as_bytes())
+            .unwrap();
+    }
+    let bytes = zip.finish().unwrap().into_inner();
+    for _ in 0..16 {
+        let held = Arc::new(Held::of_bytes("/nowhere/Synthetic.fb2.zip", bytes.clone()));
+        let book = Fb2::open(&held, true, &CancelToken::new()).unwrap();
+        let (text, _) = Reading(&book)
+            .text("chapter-1", &CancelToken::new())
+            .unwrap();
+        assert!(text.contains("First in the archive."), "{text}");
+    }
+}
+
+/// A chapter holding more than reading mode parses as XML is cut, saying
+/// so, rather than handed to the HTML parser whole.
+#[test]
+fn a_chapter_past_what_is_read_is_cut() {
+    let book = fb2(&format!(
+        "<body><section><p>Start.</p>{}</section></body>",
+        "<empty-line/>".repeat(600_000)
+    ));
+    let held = Arc::new(Held::of_bytes("/nowhere/Synthetic.fb2", book.into_bytes()));
+    let book = Fb2::open(&held, false, &CancelToken::new()).unwrap();
+    let (xhtml, notice) = Reading(&book)
+        .text("chapter-1", &CancelToken::new())
+        .unwrap();
+    assert!(inspection::xml_document(&xhtml).is_ok());
+    assert!(notice.is_some_and(|notice| notice.contains("cut")));
+    let small = fb2("<body><section><p>Start.</p></section></body>");
+    let held = Arc::new(Held::of_bytes("/nowhere/Synthetic.fb2", small.into_bytes()));
+    let book = Fb2::open(&held, false, &CancelToken::new()).unwrap();
+    let (_, notice) = Reading(&book)
+        .text("chapter-1", &CancelToken::new())
+        .unwrap();
+    assert_eq!(notice, None);
+}
+
+/// An anchor given to a section without an id is named apart from the
+/// book's own ids: a link to `section-1` leads where the book put it.
+#[test]
+fn a_section_s_anchor_takes_no_id_of_the_book() {
+    let book = fb2(
+        r##"<body><section><p>Words <a l:href="#section-1">there</a>.</p><section><title><p>Inner</p></title><p>In.</p></section></section><section id="section-1"><p>There.</p></section></body>"##,
+    );
+    let shown = Provider::default()
+        .inspect(
+            &PreviewRequest::holding("/nowhere/Synthetic anchors.fb2", book.into_bytes(), None),
+            &InspectRequest::default(),
+            &CancelToken::new(),
+        )
+        .unwrap()
+        .unwrap();
+    let links: Vec<_> = shown
+        .blocks
+        .iter()
+        .flat_map(|block| &block.runs)
+        .filter_map(|run| run.link.as_deref())
+        .collect();
+    assert_eq!(links, ["/chapter-2#section-1"]);
+    assert!(
+        shown
+            .rows
+            .iter()
+            .all(|row| row.target.as_deref() != Some("chapter-1#section-1")),
+        "{:?}",
+        shown.rows
+    );
 }

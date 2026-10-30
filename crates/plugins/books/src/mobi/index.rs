@@ -142,15 +142,18 @@ pub(crate) fn read<S: FileSource + ?Sized>(
         let record = database.record(file, first + i, cancel)?;
         anyhow::ensure!(record.get(..4) == Some(b"INDX"), damaged());
         let start = u32_at(&record, 20).ok_or_else(damaged)? as usize;
-        let count = u32_at(&record, 24).ok_or_else(damaged)? as usize;
         anyhow::ensure!(record.get(start..start + 4) == Some(b"IDXT"), damaged());
+        // One 2-byte offset per entry follows the IDXT marker: a count the
+        // record cannot hold is damage, never gigabytes of capacity reserved.
+        let count = (u32_at(&record, 24).ok_or_else(damaged)? as usize)
+            .min(record.len().saturating_sub(start + 4) / 2);
         let mut positions = Vec::with_capacity(count);
         for j in 0..count {
             positions.push(usize::from(
                 u16_at(&record, start + 4 + 2 * j).ok_or_else(damaged)?,
             ));
         }
-        for &at in &positions[..count] {
+        for &at in &positions {
             let length = usize::from(*record.get(at).ok_or_else(damaged)?);
             let name = record
                 .get(at + 1..at + 1 + length)

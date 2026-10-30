@@ -8,8 +8,8 @@
 use std::collections::BTreeMap;
 
 use memchr::memmem;
-use skwir_core::inspection::Row;
-use skwir_platform::inspection::limits;
+use skwir_core::{CancelToken, inspection::Row};
+use skwir_platform::inspection::{self, limits};
 
 use super::{index::Index, part_href};
 
@@ -88,6 +88,7 @@ pub(crate) fn build(
     skeletons: &Index,
     fragments: &Index,
     ncx: Option<&Index>,
+    cancel: &CancelToken,
 ) -> anyhow::Result<Built> {
     let damaged = || anyhow::anyhow!("This book's KF8 text is damaged");
     let flows = flows(raw, fdst);
@@ -106,36 +107,59 @@ pub(crate) fn build(
     let mut parts: Vec<(Vec<u8>, usize, usize)> = Vec::new();
     let mut next = 0;
     for skeleton in &skeletons.entries {
+        inspection::check(cancel)?;
         // A skeleton's numbers may come twice: the first are its own.
         let count = skeleton.first(1).ok_or_else(damaged)? as usize;
         let &[start, length, ..] = skeleton.all(6) else {
             anyhow::bail!(damaged());
         };
         let (start, length) = (start as usize, length as usize);
-        let mut file = text
-            .get(start..start + length)
-            .ok_or_else(damaged)?
-            .to_vec();
+        let skeleton_bytes = text.get(start..start + length).ok_or_else(damaged)?;
+        // A fragment goes at its insert point in the file as it grows. The
+        // file is the bytes put together so far and the skeleton's rest:
+        // while each fragment goes at or after the end of what is put
+        // together, as books write them, one ordered pass appends the
+        // skeleton up to it, then the fragment. One that goes back puts the
+        // skeleton's rest in, and each from then on is inserted where it
+        // goes, as calibre's reader does, cancellation checked each time.
+        let mut file = Vec::with_capacity(length);
         let mut base = start + length;
+        // Where the skeleton's bytes not yet in `file` start; `None` once
+        // all of it is.
+        let mut rest = Some(0);
         for entry in fragments
             .entries
             .get(next..next + count)
             .ok_or_else(damaged)?
         {
-            let fragment = &frags[next];
             let &[_, length, ..] = entry.all(6) else {
                 anyhow::bail!(damaged());
             };
             let length = length as usize;
             let piece = text.get(base..base + length).ok_or_else(damaged)?;
-            let at = fragment
-                .insert
-                .checked_sub(start)
-                .filter(|&at| at <= file.len())
-                .ok_or_else(damaged)?;
-            file.splice(at..at, piece.iter().copied());
+            let at = frags[next].insert.checked_sub(start).ok_or_else(damaged)?;
+            match rest {
+                Some(from) if at >= file.len() => {
+                    let to = from + (at - file.len());
+                    let skipped = skeleton_bytes.get(from..to).ok_or_else(damaged)?;
+                    file.extend_from_slice(skipped);
+                    file.extend_from_slice(piece);
+                    rest = Some(to);
+                }
+                _ => {
+                    if let Some(from) = rest.take() {
+                        file.extend_from_slice(&skeleton_bytes[from..]);
+                    }
+                    inspection::check(cancel)?;
+                    anyhow::ensure!(at <= file.len(), damaged());
+                    file.splice(at..at, piece.iter().copied());
+                }
+            }
             base += length;
             next += 1;
+        }
+        if let Some(from) = rest {
+            file.extend_from_slice(&skeleton_bytes[from..]);
         }
         parts.push((file, start, base));
         anyhow::ensure!(parts.len() <= limits::BLOCKS, damaged());
@@ -155,6 +179,7 @@ pub(crate) fn build(
     };
     let mut anchors: Vec<BTreeMap<usize, String>> = vec![BTreeMap::new(); parts.len()];
     for (file, _, _) in &parts {
+        inspection::check(cancel)?;
         for (_, fid, offset) in positions(file) {
             if let Some((part, local)) = place(fid, offset) {
                 anchors[part].insert(local, anchor(fid, offset));

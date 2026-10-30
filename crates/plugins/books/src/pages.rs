@@ -23,7 +23,7 @@ use skwir_platform::{
 };
 
 use crate::{
-    book::{Sections, Sheets, base, member_key},
+    book::{Sections, Sheets, Sizes, base, member_key},
     epub::{Chapter, Container, package, printed_pages, table_of_contents},
 };
 
@@ -40,6 +40,8 @@ pub(crate) struct FixedBook {
     /// The size a page that states none is drawn at: the book's own.
     size: (f32, f32),
     info: DocumentInfo,
+    /// The size each picture is shown at, read once.
+    sizes: Sizes,
 }
 
 struct Page {
@@ -129,6 +131,7 @@ impl FixedBook {
             held,
             pages,
             size,
+            sizes: Sizes::default(),
         }))
     }
 
@@ -150,7 +153,7 @@ impl FixedBook {
             &source,
             markup,
             cancel,
-            chapter(&mut container, base, cancel, &mut sheets),
+            chapter(&mut container, base, cancel, &mut sheets, &self.sizes),
             side,
             None,
         )? {
@@ -161,7 +164,7 @@ impl FixedBook {
             markup,
             limits::Bounds::QUICK,
             cancel,
-            chapter(&mut container, base, cancel, &mut sheets),
+            chapter(&mut container, base, cancel, &mut sheets, &self.sizes),
         )?;
         if let [only] = read.blocks.as_slice()
             && let Some(Picture::Later { key, .. }) = &only.picture
@@ -173,7 +176,7 @@ impl FixedBook {
             &source,
             markup,
             cancel,
-            chapter(&mut container, base, cancel, &mut sheets),
+            chapter(&mut container, base, cancel, &mut sheets, &self.sizes),
             side,
             Some(self.size),
         )?
@@ -186,12 +189,13 @@ fn chapter<'a>(
     base: &'a str,
     cancel: &'a CancelToken,
     sheets: &'a mut Sheets,
+    sizes: &'a Sizes,
 ) -> Chapter<'a> {
     Chapter {
         container,
         base,
         cancel,
-        images: true,
+        pictures: Some(sizes),
         sheets,
     }
 }
@@ -256,7 +260,7 @@ impl DocumentSession for FixedBook {
                 container: &mut container,
                 base: base(&page.href),
                 cancel,
-                images: false,
+                pictures: None,
                 sheets: &mut sheets,
             };
             let found = rich_preview::html(
