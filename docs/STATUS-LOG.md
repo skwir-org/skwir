@@ -7801,3 +7801,33 @@ Windows), its 131 tests.
 
 **Not checked:** on Windows, what rclone's queue says of a name that is
 not Unicode (judged by its record alone there); macOS not compiled.
+
+### The Usage map in soft tiles (2026-10-30)
+
+The user asked for a gentler Usage map, pastel colors perhaps, and chose
+the third of four mockups (a canvas of the map as shipped, pastel colors
+alone, pastel tiles, neutral tiles), drawn over a synthetic tree with
+skwir's own squarify: "let's go with B". ADR-007 records the look
+(2026-10-30: soft tiles), ADR-071 the tokens that moved. The map's
+blocks are now rounded tiles 3 px apart, open folders pale trays with a
+header, in Oklch tints of one lightness, dark text on the light look;
+names cut to a stub are left out; the chosen block is ringed in the
+accent. The shipped hues, the accent turned through 86°, made
+neighbours a shade apart; the eight now span the wheel, and the
+folder's entries wear one each up to eight (`usage::hues`): their file
+numbers taken as they were, then hashed alone, gave neighbours one hue
+in each capture.
+
+**Checked:** a test of `block_text` at 4.5:1 on every fill of both
+looks (Size's eight hues, folders, files and trays at two depths; the
+five ages; every kind at three shares), which failed for a size drawn
+at 80 % (4.03:1 light, 3.55:1 dark), so a size is drawn in full; a test
+that eight entries numbered one or eight apart wear the eight hues, and
+keep them in either order. rustfmt; clippy with `-D warnings` on
+skwir-ui, all targets; skwir-ui's tests. In windows (debug build, Xvfb
+with lavapipe, a synthetic home of 500 MB): Size, Files, Age and Types
+in both looks, a chosen folder and a block under the pointer.
+
+**Not checked:** the user's session (Wayland); a desktop's scheme or
+More contrast on the new fills (`block_text` is kept, not guarded: its
+test is of Skwir's own looks).

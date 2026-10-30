@@ -335,3 +335,8 @@ around the views is in [shell.md](shell.md).
 - A finished scan's chart stays through refreshes and is replaced
   atomically; it may still be incomplete (read errors). Revalidation never
   brings back unknown blocks or busy flashes.
+- A block's hue follows its entry, never its rank by size or its place
+  (`usage::hues`): the map reflows as a scan goes on. Its fills and what
+  is written on them are the theme's (`Theme::block`, `block_age`,
+  `block_kind`, `block_text`), and a test holds that text at 4.5:1 on
+  every fill of both looks: a fill added is added to it.

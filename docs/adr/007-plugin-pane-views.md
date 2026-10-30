@@ -180,3 +180,32 @@ switched between all the time.
   folder says how much it holds of these; the header sums it.
 - With a selection, the line under the map says what Delete does to its
   room: the Trash keeps it on disk until emptied.
+
+### 2026-10-30: soft tiles
+
+- The user, shown mockups of the map (the current one, pastel colors
+  alone, pastel tiles, neutral tiles with a dot of color): "let's go with
+  B", the pastel tiles.
+- Each block is a tile with rounded corners (6, 5 and 4 px by depth), a
+  3 px gap of the ground between tiles. An open block is a tray paler
+  than what lies on it, its name (semibold) and size in a 22 px header;
+  its size only where its whole name leaves room, a name being worth
+  more. A name cut to fewer than six characters (four in a header) is not
+  drawn: "gar…g" said nothing. A size is drawn in the name's color, never
+  fainter: it is the data.
+- Fills are Oklch, one lightness for every hue (`theme::Blocks`): pale
+  tints under dark text in the light look, deep muted ones under light
+  text in the dark; a test holds the text at 4.5:1 on every fill of
+  both. Size and Files spread eight hues around the wheel (the accent's
+  shades, before, were 86° wide: neighbours differed by a shade); Age is
+  one warm hue, strongest when new, fading to the ground when old; Types
+  keeps a hue per kind.
+- A hue follows its entry, never its rank by size: each of the folder
+  shown's entries takes its file number's, mixed (`usage::hue_of`), or
+  the next one free, served in the order of their numbers
+  (`usage::hues`), so up to eight entries wear one each, and keep it as
+  the map reflows.
+- The block under the pointer is tinted with a line inside its edge; a
+  chosen one is ringed in the accent, outside it, a band of the ground
+  between. The pointer between two tiles is on one of them: a block is
+  hit by its tile and half the gaps around it.

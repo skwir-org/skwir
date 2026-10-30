@@ -333,3 +333,8 @@ laid over).
     `surface`; Skwir's dark `text_muted` moved from #9a9a9a to #9e9e9e
     for it. Where it must hide what is under it (Properties' actions
     over a row's words) it is laid on its ground first.
+- 2026-10-30, ADR-007's soft tiles: the Usage map's fills are pale or deep
+  tints of eight hues of Skwir's own, still kept, and what is written on
+  them is the look's own dark or light text (`block_text`), no longer
+  white. The ring around a chosen block is drawn on the ground around
+  it, so it is the accent, which is guarded at 3:1 there.
