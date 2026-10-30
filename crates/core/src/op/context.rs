@@ -264,8 +264,10 @@ pub struct StepContext {
     batched_states: RefCell<HashMap<PathBuf, CopiedAs>>,
     /// Where each reference was found ([`StepContext::resolve`]): by a
     /// batch, or ahead of a dry run, on a remote where each look is a
-    /// round trip.
+    /// round trip. Only for the steps looked at ([`Self::looking_ahead`]).
     resolved: RefCell<HashMap<(crate::FileId, PathBuf), PathBuf>>,
+    /// The step past those [`Self::resolved`] was found for.
+    resolved_until: std::cell::Cell<usize>,
     /// A dry run's: whether a name is in a remote's folder is read from
     /// the folder's names, listed once ([`StepContext::listing_remotes`]).
     lists_remotes: bool,
@@ -601,6 +603,7 @@ impl StepContext {
             batched: RefCell::default(),
             batched_states: RefCell::default(),
             resolved: RefCell::default(),
+            resolved_until: std::cell::Cell::new(0),
             lists_remotes: false,
             listed: RefCell::default(),
             known: RefCell::default(),
@@ -705,11 +708,16 @@ impl StepContext {
         kept.downcast::<T>().ok().map(|kept| *kept)
     }
 
-    /// Another step begins: what the last one's check kept is not its own,
-    /// and the trees the last one applied to may have changed.
-    pub(super) fn step_begins(&self) {
+    /// The step `step` begins: what the last one's check kept is not its
+    /// own, and the trees the last one applied to may have changed. Past
+    /// the steps a look ahead found references for, where it found them is
+    /// let go of: the steps since may have put another file there (a swap).
+    pub(super) fn step_begins(&self, step: usize) {
         self.checked.borrow_mut().take();
         self.states.borrow_mut().clear();
+        if step >= self.resolved_until.get() {
+            self.resolved.borrow_mut().clear();
+        }
     }
 
     /// The state of the folder `path` found since the last step began
@@ -1591,8 +1599,8 @@ impl StepContext {
         self
     }
 
-    /// Where `entry` is: as a batch or a look ahead found it in this plan
-    /// ([`Self::resolved_as`]), else as it resolves now.
+    /// Where `entry` is: as a batch or a look ahead found it for the steps
+    /// it looks at ([`Self::resolved_as`]), else as it resolves now.
     ///
     /// # Errors
     /// What resolving it says.
@@ -1640,7 +1648,19 @@ impl StepContext {
         Some(listed)
     }
 
-    /// `entry` was found at `path`, a moment ago.
+    /// A look ahead at the steps before `end` begins (a batch, a removal
+    /// ahead, a dry run's sources): where an earlier one found references
+    /// is let go of, and what this one finds ([`Self::resolved_as`]) is
+    /// kept for its steps, until the step `end` begins
+    /// ([`Self::step_begins`]). A later step naming the same reference
+    /// resolves it afresh.
+    pub(super) fn looking_ahead(&self, end: usize) {
+        self.resolved.borrow_mut().clear();
+        self.resolved_until.set(end);
+    }
+
+    /// `entry` was found at `path`, a moment ago, for a step the look ahead
+    /// looks at ([`Self::looking_ahead`]).
     pub(super) fn resolved_as(&self, entry: &super::EntryRef, path: PathBuf) {
         self.resolved
             .borrow_mut()
@@ -1842,5 +1862,37 @@ mod tests {
             .unwrap();
         assert_eq!(ctx.resolve(&refs[99]).unwrap(), renamed);
         assert_eq!(READ.load(Ordering::Relaxed) - before, 2, "listed again");
+    }
+
+    /// Where a look ahead found a reference holds for the steps it looked
+    /// at, and no further: a step after them finds the file where the
+    /// steps between put it (two names swapped), never the other file now
+    /// at its name.
+    #[cfg(unix)]
+    #[test]
+    fn a_reference_found_ahead_holds_only_for_the_steps_looked_at() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let a = tmp.path().join("it's a.txt");
+        let b = tmp.path().join("it's b.txt");
+        std::fs::write(&a, b"a").unwrap();
+        std::fs::write(&b, b"b").unwrap();
+        let entry = super::super::EntryRef::from_path(&a).unwrap();
+        let ctx = StepContext::detached();
+        ctx.looking_ahead(1);
+        ctx.resolved_as(&entry, a.clone());
+        ctx.step_begins(0);
+        assert_eq!(
+            ctx.resolve(&entry).unwrap(),
+            a,
+            "as the look ahead found it"
+        );
+        let parked = tmp.path().join("parked");
+        std::fs::rename(&a, &parked).unwrap();
+        std::fs::rename(&b, &a).unwrap();
+        std::fs::rename(&parked, &b).unwrap();
+        ctx.step_begins(1);
+        assert_eq!(ctx.resolve(&entry).unwrap(), b, "where the swap put it");
     }
 }

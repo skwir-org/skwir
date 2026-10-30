@@ -2371,7 +2371,7 @@ impl Executor {
             let change = step.describe();
             // What a toast names: read before the step takes the record.
             let mut named = if i == 0 { self::named(&change) } else { None };
-            ctx.step_begins();
+            ctx.step_begins(i);
             // A step that panics fails, as one that errs: the plan ends
             // and says so, and what was applied before it stays undoable.
             // Unwound, it would take the plans' thread with it.

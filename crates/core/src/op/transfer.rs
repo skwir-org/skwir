@@ -426,6 +426,7 @@ pub(super) fn batch_ahead(
         .map_while(|s| batchable(s.as_ref()).filter(|b| b.dest_dir == dest))
         .collect();
     ctx.batched_up_to(i + run.len());
+    ctx.looking_ahead(i + run.len());
     // A drive written through keeps its own pace (`pace`).
     if crate::fs::volume::is_removable(&dest) {
         return Ok(());
@@ -437,7 +438,12 @@ pub(super) fn batch_ahead(
         if let Ok(src) = ctx.resolve(step.entry)
             && let Some(parent) = src.parent()
         {
-            ctx.resolved_as(step.entry, src.clone());
+            // Where a batch may take it (an end on a remote), kept for its
+            // step, which finds it where the batch did; on this machine,
+            // its step finds it itself.
+            if dest_remote || crate::fs::reach::of(parent).is_some() {
+                ctx.resolved_as(step.entry, src.clone());
+            }
             groups
                 .entry(parent.to_path_buf())
                 .or_default()
@@ -485,8 +491,10 @@ fn is_alone(taken: &[Taken]) -> bool {
 /// Resolve ahead, [`AT_ONCE`] at a time, the sources of `steps` (copies
 /// and moves) and what they remove (`removal`) that are on a remote, where
 /// each look is a round trip: a dry run then checks each step from what
-/// was found (`StepContext::resolve`).
+/// was found (`StepContext::resolve`): a dry run applies nothing, so what
+/// is found holds for every step.
 pub(super) fn resolve_ahead(steps: &[Box<dyn Operation>], ctx: &StepContext) {
+    ctx.looking_ahead(steps.len());
     let entries: Vec<&super::EntryRef> = steps
         .iter()
         .filter_map(|step| {
@@ -604,6 +612,7 @@ pub(super) fn remove_ahead(
         .take_while(|step| removal(*step).is_some())
         .collect();
     ctx.removed_up_to(i + run.len());
+    ctx.looking_ahead(i + run.len());
     let Some(transfers) = ctx.transfers() else {
         return Ok(());
     };

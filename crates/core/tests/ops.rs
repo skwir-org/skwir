@@ -265,6 +265,55 @@ proptest! {
     }
 }
 
+/// The seed `8168ec6a…` the property found, by itself: the copy's source
+/// was found ahead of it, at `f0`; the swap then put the other file there;
+/// the rename after it names the file the copy copied. It renames that
+/// file, where the swap put it, with its companion, and Undo puts every
+/// name back.
+// Windows swaps no two names in one step.
+#[cfg(unix)]
+#[test]
+fn a_rename_after_a_swap_renames_the_file_it_names_and_undoes() {
+    let tmp = Scratch::new();
+    let root: PathBuf = tmp.path().join("tree");
+    std::fs::create_dir(&root).unwrap();
+    let t = Tree { dirs: 1, files: 2 };
+    build(&root, &t);
+    let app = app(tmp.path());
+    app.companions
+        .register("test", std::sync::Arc::new(Aside { holds: false }));
+    let before = snapshot(&root);
+    let plan = make_plan(
+        &root,
+        &t,
+        &[
+            Step::Copy { file: 0, dir: 0 },
+            Step::Swap { a: 0, b: 1 },
+            Step::Rename {
+                file: 0,
+                to: "r_aaa".into(),
+            },
+        ],
+    );
+    assert_eq!(apply(&app, &plan).applied, 3);
+    let read = |name: &str| std::fs::read_to_string(root.join(name)).unwrap();
+    assert_eq!(read("r_aaa"), "content 0", "the file the rename names");
+    assert_eq!(read("._r_aaa"), "aside 0", "its companion with it");
+    assert_eq!(read("f0"), "content 1", "the other, where the swap put it");
+    assert!(!root.join("f1").exists());
+    let after = snapshot(&root);
+
+    let undo = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(undo.error.is_none(), "undo failed: {:?}", undo.error);
+    assert_eq!(snapshot(&root), before, "undo restores the tree");
+    let redo = app.executor.redo_blocking(app.lifetime()).unwrap();
+    assert!(redo.error.is_none(), "redo failed: {:?}", redo.error);
+    assert_eq!(snapshot(&root), after, "redo applies it again");
+    let undo = app.executor.undo_blocking(app.lifetime()).unwrap();
+    assert!(undo.error.is_none(), "second undo failed: {:?}", undo.error);
+    assert_eq!(snapshot(&root), before, "a second undo restores the tree");
+}
+
 fn steps_share_an_entry(plan: &skwir_core::op::PlanData) -> bool {
     let mut ids: Vec<String> = plan
         .steps
