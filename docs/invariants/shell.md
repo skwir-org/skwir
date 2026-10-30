@@ -274,10 +274,11 @@ of bars, split or not.
     lens with it), and gives the files the keyboard. The pane's address is
     never written into the field while it is typed in.
   - The field's step is its own only while the pane shows what the field
-    put there (`Omni::step`). Gone elsewhere by other means (Back, Up and
-    Forward run in the field too), Escape and Enter take no step back and
-    cut no history, and the filter the field began with is put back only
-    where the pane shows what it showed then.
+    put there, at the place in the history it took it (`Omni::step`).
+    Gone elsewhere by other means (Back, Up and Forward run in the field
+    too), even to a step showing the same location, Escape and Enter take
+    no step back and cut no history, and the filter the field began with
+    is put back only where the pane shows what it showed then.
   - The field lets go when it loses the keyboard in a window still
     active (a click on a place or the files, Tab, F6; `omnibox_left`):
     what its words show stays, as Enter keeps it, the search waiting for

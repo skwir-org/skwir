@@ -168,6 +168,11 @@ ADR-077 (which revises ADR-021).
   looked up on a network (`lan`), nothing of it is kept as a server's
   (passwords, mount options, login), and the user sees its volume's name
   (`Remotes::label_of`), never the address's.
+- **An rclone remote is named, not addressed** (`rclone://name/`): its
+  name is its configuration's, never looked up as a host (`lan`) to say
+  whether it is near (`Remotes::automatic_cache` has it so): looked up,
+  each name went to the network's resolvers and waited, one after
+  another, before the servers were published.
 - **What GVfs offers is listed before it is mounted** (ADR-096): its
   volume monitors on the session bus, asked and followed
   (`Connector::device_signals`, `devices`: one listener for every tool,

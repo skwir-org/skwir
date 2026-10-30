@@ -176,7 +176,11 @@ and `notes.agree` are core `notes.*` commands.
   brings back nothing. The words that find names, and what only a search
   tells, go with the location. It is read again by its reader wherever a
   location is shown, so a date says the day it is read on
-  (`modified:today`); a search text that does not read keeps the pane's.
+  (`modified:today`), and when its words read otherwise
+  (`ReadFilter::next_change`, midnight for a folder kept open): one
+  waiter in the core, for the earliest change any pane's filter says
+  (`App::roll_filters_over`); a search lists itself again. A search text
+  that does not read keeps the pane's.
   - `App::open_in`, where every location is shown, asks the location's
     provider how it takes the pane's lens (`LocationProvider::lensed`,
     with no lock held): a search holds it in its own terms (the query

@@ -20,7 +20,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   made ahead, a dry run's: `StepContext::looking_ahead`, ADR-078) is
   kept only on a remote, and only for the steps it looked at: a step
   after them resolves its reference afresh, since a step between may
-  have put another file at its name (a swap).
+  have put another file at its name (a swap). What a batch found of a
+  step's source holds for that step alone: a later step of the run
+  naming the same file, which that step moved, finds it where it went.
 - A step that changes metadata states its words (`op::Words`: what it
   will do, for the review; what it did, for the toast). What a plan left
   out goes in its note (`Plan::with_note`), never in its title.

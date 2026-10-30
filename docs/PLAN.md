@@ -297,6 +297,12 @@ search within a place could never complete, and an undo after a swap
 renamed the wrong file. ADR-107 and ADR-108 are amended; the rules are in
 the invariants and AGENTS.md (a hydration answers every id). Checks in
 `docs/STATUS-LOG.md` (2026-10-30, "Review fixes").
+The same evening four gaps it left were closed: tests that failed under
+load wait for what they mean (two product defects found on the way: a
+map scan's count, rclone names looked up as hosts), the field's step is
+known by its place in the history, a relative date's filter rolls over
+at midnight, and a batch's answer holds for its step alone
+(`docs/STATUS-LOG.md`, "Known gaps closed").
 
 ## What is left
 
@@ -352,34 +358,24 @@ leave (ADR-077).
   lens comes back with that step (ADR-107's amendment); the other way,
   showing its folder, would leave Back showing what the pane shows
   already. Kept as built until the user chooses.
-- A folder kept open past midnight keeps a relative date's day
-  (`modified:today`) until another location is shown: the lens is read
-  again where a location is shown, not at the date's next change.
-- The address field knows its step by the location it put there, not by
-  its place in the history: right after it takes a step showing what the
-  step before shows, Back by other means is not told apart. Two odd
-  spellings of a place's two depths are not known as one place.
-- Inside one batch run on a remote, a source no batch took, which its own
-  step moves, is found at its old path by a later step of the same run
-  naming it; no plan on this machine reaches it.
+- Two odd spellings of a place's two depths are not known as one place
+  (a provider would have to say a location's one spelling).
 - `in:trash:` (no scope offers it) tests trashed files with their stat,
   without the trash's own fields; no query term reads them.
 - The folder provider's `Unreadable` answer (a stat refused in a folder
   it lists) has no test: only an I/O error makes it.
-- Tests that failed once in a full run on a loaded machine (load
-  average 9 to 13), then passed alone and in another full run
-  (2026-10-30): skwir-plugin-geo's
-  `map_view::a_folder_s_pictures_and_tracks_are_placed_once_each` (a
-  count read 0 where 3 were placed), skwir-plugin-remote's
-  `rclone::what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback`,
-  and skwir's `remote_login::an_sftp_address_mounts_at_login_as_its_unit_runs_it`,
-  `remote_login::an_rclone_remote_mounts_at_login_as_its_unit_runs_it`,
-  `remote_configs::rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password`
-  (skwir's after 30 to 35 s; three of them left their mount behind),
-  `paste_on_places::files_cut_are_pasted_in_the_trash` and
-  `remote_folders::a_copy_down_proves_its_server_fast`. Each waits on
-  something the load delays: to be made to wait for what it means, not
-  for a time.
+- rclone queues a file a plan wrote through its mount for upload only
+  at the kernel's release, after `close` returns: `uploads::send_now`
+  can miss the last files of a plan, which then ends before the server
+  has them. A fix needs core: `Transfer::send` to receive the files the
+  plan wrote there (rclone's control interface says nothing sooner).
+- A remote listing that fails (an rclone run timing out) empties the
+  servers listed until the next refresh.
+- A login unit whose stop is refused (its mount busy) ends "failed":
+  systemd's SIGTERM ends rclone with 143.
+- The tests' shared trash (`~/.cache/skwir-tests/xdg`) keeps what every
+  run trashed (2,262 items, 7.2 GB on 2026-10-30), which each trash
+  listing reads: nothing prunes it.
 
 **From a tag's place filtered at its depths (2026-10-30, ADR-108)**:
 - The sidebar's All Tags is the top's place of the home folder: its

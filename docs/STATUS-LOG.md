@@ -7690,3 +7690,55 @@ Windows compiled only (`just lint-all`), not run; the rest of
 `release-check` (smoke, a11y, the PDF and DjVu checks, bench), by the
 user's rule of 2026-10-27; a real book from Amazon's tools; the folder
 provider's `Unreadable` answer (only an I/O error makes it).
+
+### Known gaps closed (2026-10-30)
+
+The user asked which of the review round's known gaps could be closed
+without downside, and chose four:
+
+- Tests that failed on a loaded machine and passed alone now wait for
+  what they assert, a generous deadline the only time (e8da0a6e): rclone
+  queues a file at the kernel's release, after close; two login units'
+  stop was refused while another test's statvfs held their mount; the
+  two browser sign-ins share rclone's port and now take turns
+  (`SignInPort`); "left to send" holds its upload queued until its text
+  is seen; the copy-down speed test copies again until a copy proves the
+  server fast. Their guards unmount lazily through the setuid
+  `fusermount3`, so a failure leaves no mount behind. Two were product
+  defects: a resumed map scan counted only the candidates it found
+  itself, saying 3 looked at, 0 candidates when the scan before it had
+  seen the whole folder (5c4185a2); the servers' refresh looked up each
+  rclone remote's name as a host, sending it to the network's resolvers
+  and waiting for each before the servers were published (d037fb18).
+- The address field knows its step by its place in the history as well
+  as by what it shows (b260434f).
+- A relative date's filter is read again when its day moves on, in a
+  folder kept open: `ReadFilter::next_change` and one waiter in the core
+  (`App::roll_filters_over`, 5d35b3e2).
+- What a remote batch found of a step's source holds for that step alone
+  (2ae05fd7).
+
+**Checked:** rustfmt on every file changed; clippy with `-D warnings` on
+skwir-core, the query, geo and remote plugins, skwir-ui and skwir, every
+target: none. The whole default suite (`just test`) after the last
+commit: 2535 passed, the machine at load 6 to 9. The new tests of the
+filter's rollover and of the batch's answer fail with their fix taken
+out (one reading only, after 10 s; the old path) and pass with it; the
+map scan's (`a_scan_gone_on_from_counts_the_candidates_looked_at_before_it`)
+fails without its fix with exactly the suite's (3, 0). The ten tests that
+had failed under load, and the sign-in test that shares their port: 10
+runs each at load 7 to 20, then 60 runs of the 11 beside the whole suite
+(660 runs, all passed; the suite 2535). In a window on Xvfb (debug
+build of e8da0a6e): a search kept with Enter, Back to its folder,
+Forward to it; Ctrl+F over it, the new words shown, Back in the field,
+Escape: the step Back reached stays, Forward lit; Ctrl+F on a tag's
+place then a click away: "This tag" again.
+
+**Not checked:** the case the field's step now tells apart (a step of
+the pane's at the same location as the field's) is reached only between
+the field taking its step and showing its search, too briefly to drive in
+a window: its rule is read in the code. Wayland and the user's session;
+macOS and Windows not compiled for it (`just lint-all` not run, by the
+user's rule of 2026-10-27). What these leave is in PLAN.md (rclone's
+upload at release, a failed listing emptying the servers, a refused stop,
+the tests' trash never pruned).
