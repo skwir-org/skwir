@@ -250,8 +250,12 @@ working in an area, also read that area's rules (see
   has open.
 - **Entries arrive before metadata.** Treat missing fields as unknown,
   request hydration in batches, and react to `Updated` events; never stat
-  rows while rendering. A fact too costly for every listing (a picture's
-  position) is a field read on demand (`App::fields`, ADR-023): a plugin
+  rows while rendering. A hydration answers every id it is given:
+  `Updated`, `Removed`, or `Unreadable` for what is there and cannot be
+  read, marked `keys::UNREAD` (hydrated, so nothing waits for it; nothing
+  known, so a test of its size or tags stays unknown). A fact too costly
+  for every listing (a picture's position) is a field read on demand
+  (`App::fields`, ADR-023): a plugin
   registers a `FieldProvider`, a caller on a worker asks `Fields::get`,
   answers are kept by file identity, and a labelled key shows in
   Properties. A remembered field also belongs to its provider id/version

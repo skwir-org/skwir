@@ -63,7 +63,9 @@ the reasoning.
 - Renaming or moving a key: people use skwir (0.1.0 and on), so call
   `Settings::rename(old, new)` before declaring it, and the user's value
   follows; `Settings::check` tells a file still saying the old name the
-  new one. A plugin given a new id names the ones it had
+  new one, or, where it says the new one too, that the old is not read
+  (`ui.narrow_folders` is `ui.quick_filters`). A plugin given a new id
+  names the ones it had
   (`Plugin::former_ids`): its toggle follows it from each, and it moves
   its own keys in `register` (the books plugin, once `epub`, ADR-106).
 

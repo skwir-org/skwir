@@ -242,8 +242,12 @@ of bars, split or not.
     Ctrl+F opens it with everything within; the other ways in keep the
     depth shown. What only a search tells (`ReadFilter::waits`) waits
     for Enter, then searches the place as shown (`in:`), from what the
-    pane showed. Over a search of such a place the switch reads its
-    depths; words edited filter the place again.
+    pane showed, or, at a depth that lists no file of its own (the top's
+    tags), with everything within it, the Run row saying so. Over a
+    search of such a place the switch reads its depths; words edited
+    filter the place again, and the scope taken away or chosen keeps the
+    depth. Whether words filter here is one answer
+    (`Shell::filters_here`), asked wherever the field decides it.
   - The folder alone is the folder's own listing, filtered at each key
     (below): still a folder to paste into, drop on or make things in.
   - Below it is the search Enter runs, shown as the words are typed
@@ -262,16 +266,24 @@ of bars, split or not.
     field's step is taken back first, and a source's row runs over the
     folder filtered as it was (as Escape puts it back), never by the
     words typed. Words no source answers (the query plugin off) offer no
-    Go row: Enter keeps what they show.
+    Go row: Enter keeps what they show. Enter on an empty field shows the
+    location again with the lens kept beside the text (Ctrl+J, Ctrl+L);
+    only a text that held the lens, emptied, takes it off.
   - Escape takes the field's step back (`App::take_step_back`, as if it
     had never been gone to), puts back the filter the folder had (its
     lens with it), and gives the files the keyboard. The pane's address is
     never written into the field while it is typed in.
+  - The field's step is its own only while the pane shows what the field
+    put there (`Omni::step`). Gone elsewhere by other means (Back, Up and
+    Forward run in the field too), Escape and Enter take no step back and
+    cut no history, and the filter the field began with is put back only
+    where the pane shows what it showed then.
   - The field lets go when it loses the keyboard in a window still
     active (a click on a place or the files, Tab, F6; `omnibox_left`):
     what its words show stays, as Enter keeps it, the search waiting for
-    its pause is dropped, and the field shows where the pane is. No state
-    of the field outlives its focus to act on what the pane shows later.
+    its pause is dropped, and the field shows where the pane is; nothing
+    typed, its step is taken back, as Enter does. No state of the field
+    outlives its focus to act on what the pane shows later.
   - A search shown after the pause replaces only what the pane showed
     when it was asked (a place clicked meanwhile stays), and is known by
     its words and its scope (`Omni::shown`): another scope chosen with
@@ -412,10 +424,11 @@ of bars, split or not.
   (`lens::read_filter`): the longest start that parses; words and `name:`
   hold for folders too, other terms (`ext:` among them) for files, every
   folder staying; contents and a picture's date or place need a search
-  below it, which the footer says; a
-  filter that reads metadata has every file's asked for. It runs at each
+  below it, which the footer says; what a
+  filter that reads metadata needs of the files no view draws, Quick
+  filters' count asks for (locations.md). It runs at each
   key on the window's thread, so a type is asked once per suffix
-  (`lang::Types`, as `mime::by_names` asks a selection): 6 to 13 ms a key
+  (`mime::BySuffix`, as `mime::by_names` asks a selection): 6 to 13 ms a key
   over 100 000 names in release. Showing another location keeps its lens
   (ADR-107, locations.md) and lets go of its words; Escape (`filtered`
   key context) shows everything; once the field lets go, its facets stay

@@ -148,16 +148,19 @@ and `notes.agree` are core `notes.*` commands.
   Words search where the scope says: a folder is the search's root; a
   place with depths (a tag's: `deep` off and on, the top's too) is
   filtered at both and searched as it is shown (`in:` the place), or,
-  chosen from elsewhere, with everything within it; a place that says
-  the tags of all it lists and no depths
-  (`LocationProvider::tags_shown`) is searched as those tags every match
-  has, from the folder it is of (`Trail::base`), else home, never by
-  reading its text; another place (Recent) is searched as what it lists
+  chosen from elsewhere or shown at a depth that lists no file of its
+  own (the top's tags, a tag of sub-tags only), with everything within
+  it, the Run row saying so: what the pane lists decides, never the
+  scheme. Any other place (Recent) is searched as what it lists
   (`in:recent:`, `within.rs`): opened through its provider, each entry
   tested as the walk tests a file, what it contains read in its lane,
-  nothing below an entry reached, complete once each entry was tested
-  (one listed without its metadata once that came); a search within a
-  search is refused.
+  nothing below an entry reached; a search within a search is refused.
+  An entry listed without its metadata is read by the search itself, as
+  the walk reads a file (`fs::read_paths`, in the file's lane), never
+  waited for from the place, whose hydration answers what it can: one
+  gone is no match, one that cannot be read is tested with what the
+  place listed. The search is complete once the place is and no check
+  runs; one drain of the place's events at a time takes them in order.
   The whole disk is `/`, which plocate may answer (below).
 - **Recent searches** are the query plugin's, kept in the cache (never in
   the settings or the logs): only what the address field ran
@@ -171,7 +174,9 @@ and `notes.agree` are core `notes.*` commands.
   wherever the pane goes until taken off (a pill's ×, Quick filters,
   `query.narrow` without a facet, Escape over a filtered location); Back
   brings back nothing. The words that find names, and what only a search
-  tells, go with the location.
+  tells, go with the location. It is read again by its reader wherever a
+  location is shown, so a date says the day it is read on
+  (`modified:today`); a search text that does not read keeps the pane's.
   - `App::open_in`, where every location is shown, asks the location's
     provider how it takes the pane's lens (`LocationProvider::lensed`,
     with no lock held): a search holds it in its own terms (the query
@@ -180,7 +185,17 @@ and `notes.agree` are core `notes.*` commands.
     other location is filtered by it (`Pane::carry`, the lens alone as
     the filter, `ReadFilter::of_lens`). A navigation whose location says
     its lens whole is shown as is (`App::navigate_as_is`: the address
-    field's words, a pill's choice, the field's step taken back).
+    field's words, a pill's choice): a search with its own terms,
+    anything else filtered by nothing, so a search's last term taken off
+    shows its folder whole, never an empty search (`show_refined`). The
+    field's step taken back is shown as it was.
+  - Whether a pane shows a location already is one check, as it would
+    show it (`App::shows`, on `lensed_in`): a search asked again where it
+    is shown is left as it is.
+  - Back and Forward show a search's step with the pane's lens in place
+    of the one its terms held then (`App::show_again`, `Bring::InPlace`);
+    a search made of the lens alone keeps its terms, else it would walk
+    the whole tree.
   - A change of a search's lens alone is made in place of it; a change
     of its words is a step Back undoes.
   - A tab or a split opened from a pane takes its lens (`new_tab`,
@@ -195,8 +210,15 @@ and `notes.agree` are core `notes.*` commands.
   shows and says why it offers nothing; over a search with a tag and a
   tag's place it shows by itself, with something to offer. Its count runs
   on a worker once per change of the listing, at most every 500 ms while
-  it streams, and asks for the metadata a lens needs of the files no
-  view draws, bar or not (the footer's "Reading N files…").
+  it streams, a count under way answering before another is asked;
+  another filter, the bar shown or hidden, or the listing complete counts
+  at once. With the bar hidden it counts only the files without their
+  metadata. It is the one asker of the metadata a filter needs of the
+  files no view draws, handed over once per change of the listing's
+  names. "Reading N files…" (the footer, the empty state) is said only
+  for a filter that reads what files' metadata says, and ends for a
+  file that cannot be read: its hydration answers it `Unreadable`
+  (`keys::UNREAD`), never nothing.
 - A filter types names once per suffix: a name's last extension, or the
   longest compound suffix the type database knows that it ends with
   (`tar.gz`, `mime::compound_suffixes`); never once per name.

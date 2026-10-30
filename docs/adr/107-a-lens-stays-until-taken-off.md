@@ -99,3 +99,35 @@ and retires the folder narrowing of 2026-10-03 (`workspace::Narrowed`).
   reads nothing. Whether a mount answers that from what it listed is to
   be counted (PLAN.md).
 - The place counts of a tag's place no longer follow what narrows it.
+
+## Amendments
+
+### 2026-10-30: the review of the lens and its Quick filters
+
+A review of the night's work found the lens could come back where rule 2
+says it never does, and stay where it was taken off:
+
+- **Shown as its text says** (`navigate_as_is`), a location that holds
+  no lens is filtered by nothing: a search's last term taken off (a
+  pill's ×, `query.narrow` without a facet) shows the place it searched
+  whole, never filtered by the term just taken off, nor as an empty
+  search walking the tree (rules 2 and 5).
+- **Back and Forward show a search's step with the pane's lens** in
+  place of the one its terms held when it was gone to (`App::show_again`,
+  `Bring::InPlace`, rule 2). A search made of the lens alone (a month
+  the timeline chose, `kind:image` typed) keeps its terms: without them
+  it would walk the whole tree. Whether such a step should rather show
+  its folder is left to the user (PLAN.md).
+- **A lens is read again wherever a location is shown**, by its reader:
+  a date it holds says the day it is read on. A search text that does
+  not read keeps the pane's lens.
+- **A search shown is left as it is** when asked again, compared as the
+  pane would show it (`App::shows`): Enter over a search shown as typed
+  opened it again and left it twice in the history.
+- **"Reading N files…"** (rule 10) is said only for a filter that reads
+  what files' metadata says; Quick filters' count (rule 11) is the one
+  asker of that metadata, once per change of the listing's names, and
+  counts only what is still to read while the bar is hidden.
+- **`ui.narrow_folders`**, released in 0.2.0, is renamed
+  `ui.quick_filters` (`Settings::rename`): rule 11's key keeps what was
+  set.

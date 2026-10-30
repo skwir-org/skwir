@@ -285,6 +285,19 @@ Enter. The field asks the location its depths (`LocationProvider::depths`);
 a folder has none. A search within a place now completes once each entry
 was tested. Checks in `docs/STATUS-LOG.md` (2026-10-30).
 
+## Review fixes (2026-10-30)
+
+A review of the day's work (books, the lens, a tag's depths, from
+ca394b1a) made 39 findings, fixed the same day with an older defect the
+property tests found on the way: a crafted FB2 or MOBI could abort skwir
+or take gigabytes (entities, an index count, the Huffman dictionary), the
+grid read every `.pdb` on the window's thread, Enter over a search shown
+as typed opened it again, a lens came back where it was taken off, a
+search within a place could never complete, and an undo after a swap
+renamed the wrong file. ADR-107 and ADR-108 are amended; the rules are in
+the invariants and AGENTS.md (a hydration answers every id). Checks in
+`docs/STATUS-LOG.md` (2026-10-30, "Review fixes").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -312,7 +325,8 @@ leave (ADR-077).
 - Tried on calibre's output and on books built in the tests only: no
   book made by Amazon's tools, no FB2 from another writer than calibre
   and the hand-written one, nothing near the 64 MiB text bound.
-- Windows and macOS not compiled for it (`just lint-all` not run).
+- Windows and macOS compiled only (`just lint-all`, with the review
+  fixes of 2026-10-30), not run.
 
 **From the lens (2026-10-30, ADR-107)**:
 - What a lens of tags, dates or sizes asks of a remote (counted:
@@ -332,12 +346,47 @@ leave (ADR-077).
 - Not checked: Wayland and the user's session (Xvfb only); a lens over a
   remote folder in a window; Windows and macOS compiled only.
 
+**From the review fixes (2026-10-30)**:
+- For the user: Back or Forward to a search made of the lens alone (a
+  month the timeline chose, `kind:image` typed) keeps its terms, so the
+  lens comes back with that step (ADR-107's amendment); the other way,
+  showing its folder, would leave Back showing what the pane shows
+  already. Kept as built until the user chooses.
+- A folder kept open past midnight keeps a relative date's day
+  (`modified:today`) until another location is shown: the lens is read
+  again where a location is shown, not at the date's next change.
+- The address field knows its step by the location it put there, not by
+  its place in the history: right after it takes a step showing what the
+  step before shows, Back by other means is not told apart. Two odd
+  spellings of a place's two depths are not known as one place.
+- Inside one batch run on a remote, a source no batch took, which its own
+  step moves, is found at its old path by a later step of the same run
+  naming it; no plan on this machine reaches it.
+- `in:trash:` (no scope offers it) tests trashed files with their stat,
+  without the trash's own fields; no query term reads them.
+- The folder provider's `Unreadable` answer (a stat refused in a folder
+  it lists) has no test: only an I/O error makes it.
+- Tests that failed once in a full run on a loaded machine (load
+  average 9 to 13), then passed alone and in another full run
+  (2026-10-30): skwir-plugin-geo's
+  `map_view::a_folder_s_pictures_and_tracks_are_placed_once_each` (a
+  count read 0 where 3 were placed), skwir-plugin-remote's
+  `rclone::what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback`,
+  and skwir's `remote_login::an_sftp_address_mounts_at_login_as_its_unit_runs_it`,
+  `remote_login::an_rclone_remote_mounts_at_login_as_its_unit_runs_it`,
+  `remote_configs::rclone_s_configuration_is_encrypted_and_opened_with_the_keyring_s_password`
+  (skwir's after 30 to 35 s; three of them left their mount behind),
+  `paste_on_places::files_cut_are_pasted_in_the_trash` and
+  `remote_folders::a_copy_down_proves_its_server_fast`. Each waits on
+  something the load delays: to be made to wait for what it means, not
+  for a time.
+
 **From a tag's place filtered at its depths (2026-10-30, ADR-108)**:
 - The sidebar's All Tags is the top's place of the home folder: its
   "Every tagged file" lists every tagged file under home, which the tags
   index answers; not tried on a large home.
 - Not checked: Wayland and the user's session (Xvfb only); Windows and
-  macOS not compiled for it.
+  macOS compiled only (`just lint-all`, 2026-10-30).
 
 **From the performance review (2026-10-29, ADR-104, ADR-105)**:
 - Dropped as not worth it: a folder copy walks its source three times

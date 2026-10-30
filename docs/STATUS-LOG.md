@@ -7591,3 +7591,102 @@ said "These tags | Every tagged file", "fam" 1 of 2, "jpg" 3 of 8.
 **Not checked:** Wayland and the user's session (Xvfb only); `lint-all`
 (Windows and macOS not compiled for it) and the whole suite, by the
 user's rule of 2026-10-27; the remote folders' tests.
+
+### Review fixes (2026-10-30)
+
+The user asked for a review of the day's work (ca394b1a..77a1d332: books
+beyond EPUB, the lens and Quick filters, a tag's depths) and then for
+every finding fixed, minor ones included. Four reviewers read it, each an
+area; fixed by four fixers at once, each owning its files, with one
+more for an older defect the property tests found on the way; each fix
+committed by the integrator after reading it. The user decided: no cover
+for a `.pdb`; Enter over a depth that lists no file of its own searches
+everything within it; the round closes with `just lint-all` and `just
+test`.
+
+- Books (`49d2a3fe`, `3de991dd`): an XML text that may declare entities
+  is parsed only through `inspection::xml_document` (its entities'
+  expansion counted before parsing, at most `TEXT_INPUT`; at most
+  `XML_NODES` nodes): an FB2 of 16 MiB naming a 1 MiB entity five
+  million times asked for terabytes and aborted the process, from the
+  grid's cover alone. Mobipocket: an index's count bounded by its record
+  (a count from the file reserved gigabytes), the CDIC records held once
+  with phrases as spans (a million phrases on one region were a million
+  copies), the dictionary decoded within the text bound (nested phrases
+  were kept whole at each of 32 levels), KF8 put together in one ordered
+  pass (a fragment going back inserted as calibre does), cancellation
+  checked. The cover provider decides by type alone, on the window's
+  thread: a `.pdb` was opened and read there at each draw. A kept book is
+  let go of when its preview ends; a picture is sized once per book; the
+  FB2 cover reads no chapter; a zip of several FB2s opens its first; an
+  FB2 chapter is cut within `XML_NODES`; a section's anchor takes no id
+  of the book; `Settings::check` says a former key is not read where the
+  new one is set.
+- The lens (`ec5dd3ae`, `047615c4`): Enter over a search shown as typed
+  opened it again and left it twice in the history (`App::shows`); a
+  search's last lens term taken off left its folder filtered by that
+  term (a location shown as is, holding no lens, is filtered by
+  nothing); Back and Forward brought back a lens taken off (a step's
+  lens gives way to the pane's, `App::show_again`); a relative date kept
+  the day it was read on; `query.narrow` without a facet could leave an
+  empty search walking the tree; a search that does not read dropped the
+  lens. "Reading N files…" is said only for a filter that reads
+  metadata; Quick filters' count, with the bar hidden, counts only what
+  is to read, types names once per suffix (`mime::BySuffix`), and is not
+  cancelled by each batch; it is the one asker of that metadata (the
+  field's asker, which walked the listing on the window's thread, is
+  gone). `ui.narrow_folders` (0.2.0) is renamed `ui.quick_filters`.
+- A hydration answers every id (`21aa4a80`): what is there and cannot be
+  read is sent `ListingEvent::Unreadable`, marked `keys::UNREAD` (so
+  "Reading 1 file…" no longer stays for good, nor a row waiting).
+- The address field (`94fa4092`, `f8939fa5`): a search within a place
+  reads what it tests itself (`fs::read_paths`) and completes even where
+  a file cannot be read (it waited for good); one drain at a time. The
+  field takes back only its own step (after Back run in the field,
+  Escape cut the history); one way of showing in place clears what was
+  shown as typed; one "words filter here"; Enter on an empty field keeps
+  the lens; focus lost with nothing typed takes the step back; a scope
+  taken away or chosen keeps the depth; another spelling of a place is
+  one of its depths; a depth that lists no file is searched with
+  everything within it; the unreachable `tagged()` path is gone.
+- Older (`0c496154`): the property test found a plan (copy, swap,
+  rename) whose undo renamed the wrong file: a copy's source looked up
+  ahead was kept for the whole plan; it now holds for the steps looked at.
+
+**Checked:** each commit checked out alone in a worktree: rustfmt, clippy
+with `-D warnings` on the crates it touches and those that depend on a
+core change (their tests included), and their tests, all passing:
+f8939fa5 676, ec5dd3ae 1645, 94fa4092 1350 (a first run beside another
+test run failed two that passed alone), 047615c4 433, 3de991dd 1032,
+49d2a3fe 215, 0c496154 569, 21aa4a80 1380, 9eb96f18 the whole suite
+(below). Tests shown to fail
+without their fix: the FB2 and XHTML entity bounds, the cover by type,
+the index count, the dictionary held once (544 MB of peak memory before)
+and within its bound, Enter over a search shown (history [F,S,S]), the
+pill's × (the folder filtered by `kind:image`), a search within a place
+over a file that cannot be read (timed out), and the plan whose undo
+renamed the wrong file. In a window on Xvfb (debug build, lavapipe),
+synthetic folders and the bench's 100,000 files: Enter over a search
+shown, then one Back to the folder; a pill's × to the folder whole; Back,
+the lens taken off, Forward without it; "Hidden by filters" for a name
+filter with Quick filters on, no "Reading"; Enter on an empty field
+keeping a lens; Escape after Back in the field cutting nothing; a scope
+chosen, taken away and chosen again showing its search; `content:x` on
+All Tags searching every tagged file; Ctrl+F then a click away leaving
+"This tag"; the Run row by "words filter here" at both depths; the depth
+kept with the scope taken away. The whole suite with the last code
+(9eb96f18): `just lint-all` passed (rustfmt, clippy for Linux, Windows
+and macOS) and `just test` 2532 passed. On the way, `just lint-all` had
+found the stand-in place of a ui test that runs on Unix only built for
+Windows too, code no test reached (gated to Unix in 21aa4a80); later
+full runs on a loaded machine failed tests against servers on this
+machine that time out, each passing alone (PLAN.md lists them). The
+eight severe items' tests were run again by the integrator with each
+fix taken out at its commit: each failed, then passed with the fix. The
+window checks were done again on a build of the final code: each held.
+
+**Not checked:** Wayland and the user's session (Xvfb only); macOS and
+Windows compiled only (`just lint-all`), not run; the rest of
+`release-check` (smoke, a11y, the PDF and DjVu checks, bench), by the
+user's rule of 2026-10-27; a real book from Amazon's tools; the folder
+provider's `Unreadable` answer (only an I/O error makes it).

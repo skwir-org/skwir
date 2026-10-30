@@ -16,6 +16,11 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   listing of its folder (`StepContext::listed`, `op::listed`), kept
   while the folder's times are unchanged and following the plan's own
   renames; what it finds is stat-ed, so a stale listing only says gone.
+  Where a look ahead found a reference (a batch's sources, a removal
+  made ahead, a dry run's: `StepContext::looking_ahead`, ADR-078) is
+  kept only on a remote, and only for the steps it looked at: a step
+  after them resolves its reference afresh, since a step between may
+  have put another file at its name (a swap).
 - A step that changes metadata states its words (`op::Words`: what it
   will do, for the review; what it did, for the toast). What a plan left
   out goes in its note (`Plan::with_note`), never in its title.

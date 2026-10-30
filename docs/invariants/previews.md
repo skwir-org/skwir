@@ -416,6 +416,14 @@ A text document is read as its structure, or laid out as pages.
 - XHTML (book chapters, `.xhtml`) is parsed as XML first
   (`rich_preview/xml.rs`) into the same tree, so `<title/>` cannot
   swallow a page.
+- **An XML text that may declare entities is parsed only through
+  `inspection::xml_document`**: its document type read first as
+  roxmltree reads it, what naming its entities adds counted before
+  anything expands (at most `limits::TEXT_INPUT`), what they hold
+  counted in its depth, at most `limits::XML_NODES` nodes. roxmltree
+  bounds how deep references nest, not how many a text makes: a
+  megabyte named a million times aborted the process. Nowhere else
+  `allow_dtd`.
 - **A page's own styling is kept where it says how text reads**
   (`rich_preview/style.rs`, ADR-012): which elements make blocks or are
   hidden; emphasis, underline, strike; alignment (`Block::align`);
@@ -528,8 +536,15 @@ A text document is read as its structure, or laid out as pages.
   the source view are written once. A format never answers by walking
   its chapters per request: what it works out once (FB2's chapters, a
   Mobipocket book's text) is kept while the book is shown
-  (`book::Kept`, keyed by path and version, let go with
-  `PreviewRequest::shown`), built outside the lock.
+  (`book::Kept`, keyed by path and version), built outside the lock,
+  and let go of when `PreviewRequest::shown` ends, by a thread waiting
+  for it, never at the next request. A picture is sized once per book
+  (`book::Sizes`), read whole only when its full head says nothing.
+- **A book's cover is asked for by its type alone**, on the window's
+  thread (the cover provider's `accepts`, `Format::named`): a Palm
+  database (`.pdb`), a book only by its bytes, has none; its preview
+  reads it. An FB2's cover reads its description and the picture it
+  names, no chapter.
 - **One engine choice for every book** (`books.backend`): Automatic is
   the built-in engine. MuPDF, chosen, reads only the kinds it reads well,
   told from the file before anything opens it (`Provider::mupdf_reads`,
@@ -544,9 +559,13 @@ A text document is read as its structure, or laid out as pages.
   check in the reader). Notes are `endnote`s in their own chapter, a
   reference `noteref`; a link names the chapter holding its id. Below
   `limits::NESTING` levels a subtree is its text: reading mode passes
-  over elements deeper than `limits::HTML_DEPTH`. The document is read
-  whole up to `limits::BINARY_INPUT`, in the encoding its declaration
-  names; a picture's size comes from its decoded head.
+  over elements deeper than `limits::HTML_DEPTH`. A chapter is written
+  within `limits::XML_NODES` nodes, what is past cut and said so, so
+  reading mode never parses it whole as HTML; a section's anchor takes
+  no id of the book's. The document is read whole up to
+  `limits::BINARY_INPUT`, in the encoding its declaration names, and
+  parsed through `inspection::xml_document`; a zip of several reads its
+  first member (`Package::names` is in the archive's order).
 - **A Mobipocket book's places are bytes.** MOBI 6 names a place by its
   byte in the decompressed text (`filepos`), KF8 by a fragment and an
   offset (`kindle:pos:fid`): each place named becomes an empty anchor
@@ -560,7 +579,13 @@ A text document is read as its structure, or laid out as pages.
 - **Decompression is bounded**: a record's trailing entries removed by
   its flags, PalmDOC's copies checked against what was written, a
   Huffman phrase decoded once and one that leads back to itself
-  refused, a record at most 1 MiB and the text 64 MiB.
+  refused, a record at most 1 MiB and the text 64 MiB. The HUFF and
+  CDIC records are held once, a phrase a span into them, and the
+  dictionary decoded keeps no more than the text bound (never the
+  length the file declares). An index's entry count is bounded by the
+  record it is in. A KF8 file is put together in one ordered pass, a
+  fragment that goes back inserted where it goes in the growing file,
+  as calibre does; cancellation is checked in each.
 - **Never read**: encrypted text (DRM) says the book is protected; KFX
   says it is Amazon's own format. A Palm database is a book only when
   its type and creator say so (`mobi::is_book`), whatever its type

@@ -64,3 +64,24 @@ with depths.
   other depth.
 - Words that find names filter the place's tags as well as its files, as
   they filter a folder's folders.
+
+## Amendments
+
+### 2026-10-30: the review of the night's work
+
+- **Rule 4: a depth that lists no file of its own** (the top's tags, a
+  tag holding only sub-tags) is searched with everything within it, the
+  Run row saying so ("among every file within"): searched as shown, it
+  found nothing. What the pane lists decides, never the scheme.
+- **Rule 6: a search within a place reads what it tests itself**, as
+  the walk reads a file, in the file's lane (`fs::read_paths`), never
+  waiting for the place's hydration, which answers what it can: waiting
+  for each answer, a search over a file in a folder that cannot be
+  listed never completed. One that cannot be read is tested with what the
+  place listed; the search is complete once the place is and no check
+  runs.
+- **The field's step is its own only while the pane shows what the
+  field put there** (rule 3): gone elsewhere by other means (Back, Up),
+  Escape and Enter take no step back; focus lost with nothing typed
+  takes it back, as Enter does. Removing or choosing the scope keeps the
+  depth shown, and a place written another way is one of its depths.
