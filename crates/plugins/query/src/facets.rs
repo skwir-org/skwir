@@ -86,6 +86,10 @@ pub struct Chip {
     /// A tag's chip: its categories, each going up to it, then itself.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub segments: Vec<Segment>,
+    /// It is set and of the lens (ADR-107): kept as the pane shows other
+    /// locations, until taken off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lens: bool,
 }
 
 /// A part of a tag's chip.
@@ -106,11 +110,11 @@ pub struct Choice {
 }
 
 /// What a chip's choices change, each through its own command: a search
-/// (`query.refine`, which shows the search refined), what a folder is
-/// narrowed to (`query.narrow`), or the words typed over it that filter it
-/// (`query.filter`). The folder's two say nothing of where (the trail
-/// does) and offer no facet that reads the files (what they contain, when
-/// a picture was taken): only a search reads them.
+/// (`query.refine`, which shows the search refined), or what filters a
+/// pane (`query.filter`: its lens and the words typed over it, ADR-107),
+/// which says nothing of where (the trail does) and offers no facet that
+/// reads the files (what they contain, when a picture was taken): only a
+/// search reads them.
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
@@ -118,7 +122,6 @@ pub struct Choice {
 pub enum Refines {
     #[default]
     Search,
-    Narrowing,
     Filter,
 }
 
@@ -126,7 +129,6 @@ impl Refines {
     fn command(self) -> &'static str {
         match self {
             Refines::Search => "query.refine",
-            Refines::Narrowing => "query.narrow",
             Refines::Filter => "query.filter",
         }
     }
@@ -135,7 +137,7 @@ impl Refines {
     fn accept(self) -> &'static str {
         match self {
             Refines::Search => "Search",
-            Refines::Narrowing | Refines::Filter => "Filter",
+            Refines::Filter => "Filter",
         }
     }
 }
@@ -552,6 +554,7 @@ fn preset_chip(
         choices,
         clear: term.map(|_| refine_invocation(r, id, None)),
         segments: Vec::new(),
+        lens: false,
     }
 }
 
@@ -590,11 +593,49 @@ fn tag_chip(r: Refines, tag: &str) -> Chip {
         choices,
         clear: Some(refine_invocation(r, "drop_tag", Some(tag))),
         segments,
+        lens: false,
     }
 }
 
-/// The facets a narrowing sets (`kind`, `modified`…), which the Narrow by
-/// bar does not offer again.
+/// The search `expr` with the lens `lens` brought into it (ADR-107): a
+/// facet the search sets is its own (a date the timeline chose replaces
+/// the lens's), any other the lens's; tags add up, and the lens's other
+/// terms join the search's but for one it has already. Its words, what it
+/// reads from the files and where it looks stay the search's.
+pub fn with_lens(expr: &str, lens: &str) -> Result<String, String> {
+    let q = lang::parse(expr).map_err(|e| e.to_string())?;
+    let mut p = Parts::of(&q);
+    let l = Parts::of(&lang::parse(lens).map_err(|e| e.to_string())?);
+    if p.kinds.is_empty() {
+        p.kinds = l.kinds;
+    }
+    for (mine, theirs) in p.when.iter_mut().zip(l.when) {
+        if mine.is_none() {
+            *mine = theirs;
+        }
+    }
+    if p.size.is_none() {
+        p.size = l.size;
+    }
+    for tag in &l.tags {
+        p.add_tag(tag);
+    }
+    for tag in &l.not_tags {
+        // A tag the search asks for is not one the lens leaves out.
+        if !p.tags.iter().any(|t| same_tag(t, tag)) {
+            p.exclude_tag(tag);
+        }
+    }
+    for term in l.advanced {
+        if !p.advanced.contains(&term) {
+            p.advanced.push(term);
+        }
+    }
+    Ok(p.write(&q))
+}
+
+/// The facets a lens sets (`kind`, `modified`…), which Quick filters do
+/// not offer again.
 pub fn set_facets(expr: &str) -> Result<Vec<String>, String> {
     let q = lang::parse(expr).map_err(|e| e.to_string())?;
     let p = Parts::of(&q);
@@ -690,6 +731,7 @@ pub fn describe_for(
         }],
         clear: (!words.is_empty()).then(|| refine_invocation(r, "words", None)),
         segments: Vec::new(),
+        lens: false,
     });
 
     chips.push(Chip {
@@ -713,6 +755,7 @@ pub fn describe_for(
             .collect(),
         clear: (!p.kinds.is_empty()).then(|| refine_invocation(r, "kind", None)),
         segments: Vec::new(),
+        lens: false,
     });
 
     for ((facet, title, offered), term) in WHEN.iter().zip(&p.when) {
@@ -761,6 +804,7 @@ pub fn describe_for(
             }],
             clear: Some(refine_invocation(r, "not_tag", Some(tag))),
             segments: Vec::new(),
+            lens: false,
         });
     }
     chips.push(Chip {
@@ -789,6 +833,7 @@ pub fn describe_for(
         }],
         clear: None,
         segments: Vec::new(),
+        lens: false,
     });
 
     let content = p
@@ -815,6 +860,7 @@ pub fn describe_for(
             }],
             clear: content.map(|_| refine_invocation(r, "content", None)),
             segments: Vec::new(),
+            lens: false,
         });
     }
 
@@ -859,6 +905,7 @@ pub fn describe_for(
             },
             clear: None,
             segments: Vec::new(),
+            lens: false,
         });
     }
 
@@ -876,7 +923,21 @@ pub fn describe_for(
             }],
             clear: Some(refine_invocation(r, "advanced", Some(&index))),
             segments: Vec::new(),
+            lens: false,
         });
+    }
+    // What of it the pane keeps as it goes elsewhere: a set facet of the
+    // lens, or a part no facet holds that the lens takes.
+    for chip in &mut chips {
+        chip.lens = chip.value.is_some()
+            && match chip.id.as_str() {
+                "kind" | "modified" | "created" | "accessed" | "size" | "tag" | "not_tag" => true,
+                "advanced" => chip.value.as_deref().is_some_and(|v| {
+                    crate::lens::lens_of(v).is_some()
+                        && crate::lens::without_lens(v).is_some_and(|rest| rest.is_empty())
+                }),
+                _ => false,
+            };
     }
     let text = without_root(&p, &q);
     Ok(Description {
@@ -895,13 +956,13 @@ mod tests {
         d.chips.iter().find(|c| c.id == id).unwrap()
     }
 
-    /// What narrows a folder reads as a search's chips, its tags as tags,
+    /// A lens over a folder reads as a search's chips, its tags as tags,
     /// and its choices change it: no where, nothing read from the files
     /// offered.
     #[test]
-    fn a_folder_s_narrowing_reads_as_a_search_s_chips_and_changes_itself() {
+    fn a_folder_s_lens_reads_as_a_search_s_chips_and_changes_itself() {
         let expr = "kind:image tag:Places/France NOT tag:draft";
-        let d = describe_for(Refines::Narrowing, expr, false, None).unwrap();
+        let d = describe_for(Refines::Filter, expr, false, None).unwrap();
         let set: Vec<(&str, &str, &str)> = d
             .chips
             .iter()
@@ -929,11 +990,11 @@ mod tests {
         }
         assert!(ids.contains(&"modified"));
         let kind = chip(&d, "kind");
-        assert_eq!(kind.clear.as_ref().unwrap().name.as_ref(), "query.narrow");
+        assert_eq!(kind.clear.as_ref().unwrap().name.as_ref(), "query.filter");
         assert!(
             kind.choices
                 .iter()
-                .all(|c| c.command.name.as_ref() == "query.narrow")
+                .all(|c| c.command.name.as_ref() == "query.filter")
         );
 
         // The words typed over it: their own command, a value typed applied
@@ -1156,9 +1217,9 @@ mod tests {
         // A second period of one time is text; so is a time ORed.
         let d = describe("taken:2023 taken:2024 in:/d", false, None).unwrap();
         assert_eq!(chip(&d, "advanced").value.as_deref(), Some("taken:2024"));
-        // A folder narrowed by when its files were created reads so.
+        // A lens of when its files were created reads so.
         let expr = "created:2026 accessed:this-week";
-        let d = describe_for(Refines::Narrowing, expr, false, None).unwrap();
+        let d = describe_for(Refines::Filter, expr, false, None).unwrap();
         assert_eq!(chip(&d, "created").value.as_deref(), Some("2026"));
         assert_eq!(chip(&d, "accessed").value.as_deref(), Some("This week"));
         assert_eq!(set_facets(expr).unwrap(), ["created", "accessed"]);

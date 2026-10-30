@@ -114,6 +114,7 @@ fn the_sidebars_places_offered_carry_a_scope_only_where_words_search() {
             shown: None,
             dir: None,
             pane: None,
+            lens: None,
         };
         let answer = skwir_core::suggest::gather(&app, &ask, &CancelToken::new());
         answer

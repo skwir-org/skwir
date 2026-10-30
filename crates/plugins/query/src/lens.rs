@@ -1,46 +1,102 @@
-//! A folder narrowed: the Narrow by bar's choices over a folder ("images
-//! only", "2024"), kept while the pane shows it or a folder under it, as
-//! a locked filter is. Its words are a query's, written by
-//! [`facets::refine`]; the core keeps them (`workspace::Narrowed`) with a
-//! test of each file, which reads what the listing knows of the file,
-//! never the file: what needs it read (what it contains, where and when it
-//! was taken) is a search's. Its pills, and the filter's, are the search's
-//! chips (`query.describe_filter`).
+//! The lens (ADR-107) and the words typed over a folder: the core's
+//! filter reader. A lens is what of a filter or a search the listing can
+//! decide of a file (a kind, an extension, a tag, a date, a size, a
+//! rating, a comment), kept by the pane as it shows other locations until
+//! taken off; words that find names go with the location, and what only a
+//! search can tell (what files contain, where and when they were taken)
+//! is a search's. Its words are a query's, written by [`facets::refine`];
+//! the core keeps them (`workspace::Lens`) with a test of each file, which
+//! reads what the listing knows of the file, never the file. Its pills,
+//! and the filter's, are the search's chips (`query.describe_filter`).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use skwir_core::entry::Entry;
-use skwir_core::workspace::{Narrowed, ReadFilter};
+use skwir_core::workspace::{Lens, ReadFilter};
 
 use crate::facets;
 use crate::lang::{self, Candidate, Expr, Term, Verdict};
 
-/// What `expr` narrows a folder to, set in `root`; `None` when it says
-/// nothing, so the folder shows everything again.
-pub fn narrowed(expr: &str, root: PathBuf) -> Result<Option<Narrowed>, String> {
-    let q = lang::parse(expr).map_err(|e| e.to_string())?;
-    let Some(test) = q.expr.clone() else {
-        return Ok(None);
-    };
-    if q.reads_files() {
-        return Err(
-            "a folder is narrowed by what is known of its files: search for what is read from them (what they contain, where or when they were taken)"
-                .into(),
-        );
+/// Whether `t` is read from the file itself: only a search tells it.
+fn reads_file(t: &Term) -> bool {
+    matches!(
+        t,
+        Term::Content(_) | Term::Near { .. } | Term::Inside { .. } | Term::Taken { .. }
+    )
+}
+
+/// Whether `item`, one of the terms a query ANDs, is a lens's: no word
+/// that finds names in it, nothing read from the file.
+fn is_lens(item: &Expr) -> bool {
+    !item.any_term(&|t| matches!(t, Term::Name(_)) || reads_file(t))
+}
+
+/// The terms a query ANDs together.
+fn items(q: &lang::Query) -> Vec<Expr> {
+    match q.expr.clone() {
+        Some(Expr::And(items)) => items,
+        Some(e) => vec![e],
+        None => Vec::new(),
     }
-    let set = facets::set_facets(expr)?;
-    Ok(Some(Narrowed {
-        root,
-        expr: expr.to_owned(),
+}
+
+/// A term on its own, as a part of an AND prints it.
+fn print(e: &Expr) -> String {
+    match e {
+        Expr::Or(_) => format!("({e})"),
+        _ => e.to_string(),
+    }
+}
+
+/// The lens the query `expr` holds: its terms the listing can decide,
+/// tested as a file's; `None` when it holds none (or does not read).
+pub fn lens_of(expr: &str) -> Option<Lens> {
+    let q = lang::parse(expr).ok()?;
+    lens_in(&q)
+}
+
+/// The lens of a query read already.
+fn lens_in(q: &lang::Query) -> Option<Lens> {
+    let lens: Vec<Expr> = items(q).into_iter().filter(is_lens).collect();
+    if lens.is_empty() {
+        return None;
+    }
+    let words = lens.iter().map(print).collect::<Vec<_>>().join(" ");
+    let metadata = lens.iter().any(|e| {
+        e.any_term(&|t| {
+            !matches!(
+                t,
+                Term::Ext(_) | Term::Type(_) | Term::Mime(..) | Term::Kind(_)
+            )
+        })
+    });
+    let set = facets::set_facets(&words).unwrap_or_default();
+    let test = and(lens)?;
+    // Asked of every file at each redraw of the order, on the window's
+    // thread: a type once per suffix (`lang::Types`).
+    let types = lang::Types::default();
+    Some(Lens {
+        words: words.into(),
         set,
-        keeps: {
-            // Asked of every file at each redraw of the order, on the
-            // window's thread: a type once per suffix (`lang::Types`).
-            let types = lang::Types::default();
-            Arc::new(move |entry| keeps(&test, entry, &types))
-        },
-    }))
+        keeps: Arc::new(move |entry| keeps(&test, entry, &types)),
+        metadata,
+    })
+}
+
+/// `expr` without its lens: its words, what it reads from the files and
+/// where it looks, as a query writes them. Two queries with the same are
+/// the same search but for their lens.
+pub fn without_lens(expr: &str) -> Option<String> {
+    let q = lang::parse(expr).ok()?;
+    let rest: Vec<Expr> = items(&q).into_iter().filter(|e| !is_lens(e)).collect();
+    Some(
+        lang::Query {
+            expr: and(rest),
+            ..q
+        }
+        .to_string(),
+    )
 }
 
 /// Whether `entry` is what `test` asks, from what the listing knows of
@@ -60,34 +116,28 @@ fn keeps(test: &Expr, entry: &Entry, types: &lang::Types) -> bool {
 /// at work; when nothing reads, every entry stays (the address field says
 /// what is wrong), never names that hold the text.
 ///
-/// A word, `name:` and `ext:` hold for folders too; any other term holds
-/// for files, and every folder stays, as a narrowing keeps them. What only
-/// a search can tell (what files contain, where and when they were taken)
-/// is left out, and said, until Enter.
+/// A word and `name:` hold for folders too; any other term holds for
+/// files, and every folder stays, as a lens keeps them: those of them
+/// alone in their part are its lens (ADR-107). What only a search can tell
+/// (what files contain, where and when they were taken) is left out, and
+/// said, until Enter.
 pub fn read_filter(text: &str) -> Option<ReadFilter> {
     let everything = || ReadFilter {
         keeps: Arc::new(|_| true),
         waits: Vec::new(),
         metadata: false,
+        lens: None,
     };
     let Some((q, _)) = longest_query(text) else {
         return Some(everything());
     };
-    let items: Vec<Expr> = match q.expr.clone() {
-        Some(Expr::And(items)) => items,
-        Some(e) => vec![e],
-        None => return Some(everything()),
-    };
-    let reads_file = |t: &Term| {
-        matches!(
-            t,
-            Term::Content(_) | Term::Near { .. } | Term::Inside { .. } | Term::Taken { .. }
-        )
-    };
-    let of_names = |t: &Term| matches!(t, Term::Name(_) | Term::Ext(_));
+    let all = items(&q);
+    if all.is_empty() {
+        return Some(everything());
+    }
     let mut waits = Vec::new();
     let (mut names, mut files) = (Vec::new(), Vec::new());
-    for item in items {
+    for item in all {
         if item.any_term(&reads_file) {
             let what = if item.any_term(&|t| matches!(t, Term::Content(_))) {
                 "contents"
@@ -99,13 +149,24 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
             if !waits.contains(&what) {
                 waits.push(what);
             }
-        } else if item.any_term(&|t| !of_names(t)) {
+        } else if item.any_term(&|t| !matches!(t, Term::Name(_))) {
             files.push(item);
         } else {
             names.push(item);
         }
     }
-    let metadata = !files.is_empty();
+    let lens = lens_in(&lang::Query {
+        expr: and(files.iter().filter(|e| is_lens(e)).cloned().collect()),
+        ..q.clone()
+    });
+    let metadata = files.iter().any(|e| {
+        e.any_term(&|t| {
+            !matches!(
+                t,
+                Term::Name(_) | Term::Ext(_) | Term::Type(_) | Term::Mime(..) | Term::Kind(_)
+            )
+        })
+    });
     let names = Names::of(names);
     let files = and(files);
     let types = lang::Types::default();
@@ -128,6 +189,7 @@ pub fn read_filter(text: &str) -> Option<ReadFilter> {
         }),
         waits: waits.into_iter().map(str::to_owned).collect(),
         metadata,
+        lens,
     })
 }
 
@@ -358,14 +420,12 @@ mod tests {
             .collect();
         // The type database is loaded once in a process: not a key's cost.
         let _ = skwir_platform::mime::by_name(OsStr::new("warm.jpg"));
-        let narrowed = super::narrowed("kind:image", std::path::PathBuf::from("/x"))
-            .expect("narrowed")
-            .expect("set");
+        let lens = super::lens_of("kind:image").expect("a lens");
         let start = std::time::Instant::now();
-        let kept = names.iter().filter(|e| narrowed.shows(e)).count();
+        let kept = names.iter().filter(|e| lens.shows(e)).count();
         eprintln!(
             "{:>24}: {kept:>6} kept in {:?}",
-            "Narrow by kind:image",
+            "Lens kind:image",
             start.elapsed()
         );
         for text in [
@@ -392,6 +452,23 @@ mod tests {
         );
         assert_eq!(applied("dunes kind:im").as_deref(), Some("dunes"));
         assert_eq!(applied("kind:im"), None);
-        assert!(read_filter("dunes kind:image").expect("read").metadata);
+        // A kind is read from the name; a size from the file's metadata.
+        assert!(!read_filter("dunes kind:image").expect("read").metadata);
+        assert!(read_filter("dunes size>1k").expect("read").metadata);
+    }
+
+    /// An extension is a lens's (ADR-107): it holds for files, and every
+    /// folder stays, as a kind does.
+    #[test]
+    fn an_extension_keeps_the_folders() {
+        assert_eq!(
+            kept("ext:jpg", &folder()),
+            ["Maps", "dunes", "dunes.jpg", "pines.jpg"]
+        );
+        let read = read_filter("dunes ext:jpg").expect("read");
+        assert_eq!(
+            read.lens.map(|l| l.words.to_string()).as_deref(),
+            Some("ext:jpg")
+        );
     }
 }

@@ -88,7 +88,18 @@ fn scope_said(app: &App, scope: &Location) -> String {
 /// (`LocationProvider::tags_shown`) as a term every match has, searched
 /// from the folder it is of, else home; any other place (Recent) is
 /// searched as what it lists (`in:recent:`).
+///
+/// It says its lens whole (`as_is`, ADR-107): the words typed, after the
+/// pane's lens kept when the field began without it (`Ask::lens`).
 pub fn search(app: &App, expr: &str, scope: &Location, ask: &Ask) -> Invocation {
+    let kept;
+    let expr = match ask.lens.as_deref().map(str::trim) {
+        Some(lens) if !lens.is_empty() => {
+            kept = format!("{lens} {expr}");
+            kept.trim()
+        }
+        _ => expr,
+    };
     let (expr, root) = if let Some(path) = scope.path() {
         (expr.to_owned(), Some(path))
     } else {
@@ -96,7 +107,12 @@ pub fn search(app: &App, expr: &str, scope: &Location, ask: &Ask) -> Invocation 
             let expr = format!("{expr} in:{}", lang::quote(&scope.to_string()));
             return Invocation::with_args(
                 "query.search",
-                &serde_json::json!({ "expr": expr.trim(), "pane": ask.pane, "remember": true }),
+                &serde_json::json!({
+                    "expr": expr.trim(),
+                    "pane": ask.pane,
+                    "remember": true,
+                    "as_is": true,
+                }),
             );
         };
         let terms: Vec<String> = tags
@@ -115,6 +131,7 @@ pub fn search(app: &App, expr: &str, scope: &Location, ask: &Ask) -> Invocation 
             "root": root.as_deref().map(PathArg::from),
             "pane": ask.pane,
             "remember": true,
+            "as_is": true,
         }),
     )
 }
@@ -543,6 +560,7 @@ mod tests {
             shown: None,
             dir: Some(PathBuf::from("/data/guide")),
             pane: None,
+            lens: None,
         }
     }
 
@@ -566,6 +584,16 @@ mod tests {
         assert_eq!(live.args["expr"], "dunes jpg");
         assert_eq!(live.args["in_place"], true);
         assert_eq!(live.args["remember"], false);
+        // Its words say the whole lens (ADR-107); begun without the pane's
+        // (Ctrl+L, Ctrl+J), they add to it.
+        assert_eq!(run.args["as_is"], true);
+        assert_eq!(live.args["as_is"], true);
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        let mut kept = ask("dunes");
+        kept.lens = Some("kind:image".into());
+        let run = search(&app, "dunes", &Location::from_path("/data/guide"), &kept);
+        assert_eq!(run.args["expr"], "kind:image dunes");
         let r = rows("kind:pix");
         assert!(r[0].error && r[0].run.is_none());
         assert!(r[0].title.contains("pix"), "{}", r[0].title);

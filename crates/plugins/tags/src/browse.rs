@@ -22,7 +22,6 @@ use skwir_core::op::EntryRef;
 use skwir_core::os_path::PathArg;
 use skwir_core::registry::{ChoiceLook, MenuItem};
 use skwir_core::workspace::PaneId;
-use skwir_platform::mime::Kind;
 
 use crate::location::{Address, SCHEME};
 use crate::vocabulary::Vocabulary;
@@ -80,8 +79,7 @@ pub struct NarrowArgs {
     pub location: Option<String>,
     #[serde(default)]
     pub pane: Option<PaneId>,
-    /// `also_tag` (files that also have the tag), `not_tag` (none that
-    /// have it), `kind`, `modified` (a year), `deep` (every file within).
+    /// `deep` (every file within the tag).
     pub facet: String,
     #[serde(default)]
     pub value: Option<String>,
@@ -406,7 +404,7 @@ pub fn export(
         app.lifetime().child(),
         move || {
             let Some(app) = weak.upgrade() else { return };
-            let files = places.tagged(&address, &root, &mut crate::location::Years::new());
+            let files = places.tagged(&address, &root);
             let Some(made) = crate::location::export(&address, &files, &dest, Path::exists) else {
                 return;
             };
@@ -442,56 +440,20 @@ pub fn export(
     Ok(Outcome::Done)
 }
 
-/// `address` narrowed by `facet` (`value`), or not any more: `on` says
-/// which, else it switches.
+/// `address` narrowed by `facet`: `deep`, every file within its tag, or
+/// not (`on`; switched when omitted). What else narrows a tag's place
+/// (another tag, a kind, a year) is the pane's lens (ADR-107).
 pub fn narrowed(
     mut address: Address,
     facet: &str,
-    value: Option<&str>,
+    _value: Option<&str>,
     on: Option<bool>,
 ) -> anyhow::Result<Address> {
-    fn switch<T: PartialEq>(
-        list: &mut Vec<T>,
-        value: T,
-        on: Option<bool>,
-        same: impl Fn(&T, &T) -> bool,
-    ) {
-        let at = list.iter().position(|v| same(v, &value));
-        match (at, on) {
-            (Some(i), None | Some(false)) => {
-                list.remove(i);
-            }
-            (None, None | Some(true)) => list.push(value),
-            _ => {}
-        }
-    }
-    let value = value.map(str::trim).unwrap_or_default();
     match facet {
-        "also_tag" | "with" => {
-            let tag = clean_tag(value);
-            anyhow::ensure!(!tag.is_empty(), "which tag?");
-            address.without.retain(|t| !same_tag(t, &tag));
-            switch(&mut address.with, tag, on, |a, b| same_tag(a, b));
-        }
-        "not_tag" | "without" => {
-            let tag = clean_tag(value);
-            anyhow::ensure!(!tag.is_empty(), "which tag?");
-            address.with.retain(|t| !same_tag(t, &tag));
-            switch(&mut address.without, tag, on, |a, b| same_tag(a, b));
-        }
-        "kind" => {
-            let kind =
-                Kind::from_name(value).ok_or_else(|| anyhow::anyhow!("no kind “{value}”"))?;
-            switch(&mut address.kinds, kind, on, PartialEq::eq);
-        }
-        "modified" | "year" => {
-            let year: i64 = value
-                .parse()
-                .map_err(|_| anyhow::anyhow!("a year, as four digits"))?;
-            switch(&mut address.years, year, on, PartialEq::eq);
-        }
         "deep" => address.deep = on.unwrap_or(!address.deep),
-        other => anyhow::bail!("tag locations are not narrowed by `{other}`"),
+        other => anyhow::bail!(
+            "a tag's place is narrowed by `deep`; `{other}` is the pane's lens (query.narrow)"
+        ),
     }
     Ok(address)
 }
@@ -536,7 +498,13 @@ pub fn pill(app: &App, a: &PillArgs) -> anyhow::Result<Outcome> {
         ));
     }
     let address = match (shown.as_ref().and_then(address_of), a.how.as_str()) {
-        (Some(here), "also") => narrowed(here, "also_tag", Some(&tag), None)?,
+        // One more tag the files shown have: the pane's lens (ADR-107).
+        (Some(_), "also") => {
+            return app.dispatch(&Invocation::with_args(
+                "query.narrow",
+                &serde_json::json!({ "facet": "also_tag", "value": tag, "pane": pane }),
+            ));
+        }
         (Some(here), _) => Address {
             tag: Some(tag),
             scope: here.scope,
@@ -593,7 +561,7 @@ pub fn keepable(location: &skwir_core::Location) -> bool {
 }
 
 fn pinned_tag(address: &crate::location::Address) -> Option<&str> {
-    let plain = address.scope.is_none() && !address.narrowed() && !address.deep;
+    let plain = address.scope.is_none() && !address.deep;
     address.tag.as_deref().filter(|_| plain)
 }
 
@@ -1037,24 +1005,23 @@ pub fn tag_items(
 mod tests {
     use super::*;
 
+    /// A tag's place is narrowed by how deep it holds files alone: what
+    /// else narrows it is the pane's lens.
     #[test]
-    fn narrowing_switches_and_a_tag_is_with_or_without_never_both() {
+    fn a_tag_s_place_narrows_by_depth_alone() {
         let a = Address::parse("/Places");
-        let a = narrowed(a, "also_tag", Some("family"), None).unwrap();
-        assert_eq!(a.with, ["family"]);
-        let a = narrowed(a, "not_tag", Some("Family"), None).unwrap();
-        assert!(a.with.is_empty() && a.without == ["Family"]);
-        let a = narrowed(a, "kind", Some("image"), None).unwrap();
-        let a = narrowed(a, "modified", Some("2024"), None).unwrap();
-        assert_eq!(
-            (a.kinds.as_slice(), a.years.as_slice()),
-            (&[Kind::Image][..], &[2024][..])
-        );
-        let a = narrowed(a, "kind", Some("image"), Some(true)).unwrap();
-        assert_eq!(a.kinds.len(), 1, "on keeps it on");
         let a = narrowed(a, "deep", None, None).unwrap();
         assert!(a.deep);
-        assert!(narrowed(a, "size", Some("1"), None).is_err());
+        let a = narrowed(a, "deep", None, Some(true)).unwrap();
+        assert!(a.deep, "on keeps it on");
+        for facet in ["also_tag", "not_tag", "kind", "modified"] {
+            assert!(narrowed(a.clone(), facet, Some("x"), None).is_err());
+        }
+        assert_eq!(
+            Address::parse("/Places?with=family&kind=image&year=2024"),
+            Address::parse("/Places"),
+            "what was its own narrowing is no part of its address"
+        );
     }
 
     #[test]

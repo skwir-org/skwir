@@ -84,7 +84,8 @@ fn timeline_selection_preserves_paths_and_filters_the_period() {
 }
 
 /// A bar of a search's timeline narrows that search: a month of a folder,
-/// then a day of that month, its root and depth kept.
+/// then a day of that month, its root and depth kept; a change of its
+/// lens (ADR-107), made in place, which Back does not undo.
 #[test]
 fn a_bar_of_a_search_refines_it() {
     let tmp = tempfile::tempdir().unwrap();
@@ -160,12 +161,17 @@ fn a_bar_of_a_search_refines_it() {
         "{}",
         location.rest
     );
-    // Back is the month again.
+    // Back leaves the search for the folder, the day its lens still.
     app.dispatch(&Invocation::new("back")).unwrap();
     assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
-    assert_eq!(
-        names(),
-        BTreeSet::from(["first.jpg".into(), "second.jpg".into()])
+    assert_eq!(app.pane_location(pane), Some(Location::from_path(&root)));
+    let ws = app.workspace.read();
+    let p = ws.pane(pane).unwrap();
+    assert!(
+        p.lens()
+            .is_some_and(|l| l.words.contains("modified:2026-07-01")),
+        "{:?}",
+        p.lens()
     );
 }
 

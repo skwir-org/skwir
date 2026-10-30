@@ -95,6 +95,32 @@ impl LocationProvider for QueryProvider {
         SCHEME
     }
 
+    /// A search holds a lens in its own terms (ADR-107): one brought in is
+    /// added to them (`facets::with_lens`), and what of them the listing
+    /// can decide is the lens it then holds. A lens it holds already
+    /// leaves it as it is written.
+    fn lensed(
+        &self,
+        location: &Location,
+        lens: Option<&skwir_core::workspace::Lens>,
+    ) -> Option<(Location, Option<skwir_core::workspace::Lens>)> {
+        let expr = &location.rest;
+        // One that does not read holds no lens: it says what is wrong.
+        let shown = match lens.map(|lens| {
+            (
+                crate::facets::with_lens(expr, ""),
+                crate::facets::with_lens(expr, &lens.words),
+            )
+        }) {
+            Some((Ok(as_written), Ok(brought))) if brought != as_written => {
+                Location::new(SCHEME, brought)
+            }
+            _ => location.clone(),
+        };
+        let own = crate::lens::lens_of(&shown.rest);
+        Some((shown, own))
+    }
+
     /// What the search looks for and where, as a saved one is named.
     fn title(&self, location: &Location) -> Option<String> {
         Some(crate::suggested_name(

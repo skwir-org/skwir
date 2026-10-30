@@ -105,7 +105,7 @@ impl MapView {
     /// Take what the scan found since the last batch.
     fn receive(&mut self, shell: &mut Shell) {
         let pane = shell.pane;
-        // The pane shows other files (a filter, a narrowing): the places
+        // The pane shows other files (a filter, a lens): the places
         // drawn follow, with nothing asked again. The same files sorted
         // again (a sort by date, as dates come in) draw nothing again.
         if !Arc::ptr_eq(&shell.ui().list.sorted, &self.shown) {
@@ -121,7 +121,9 @@ impl MapView {
                             p.filter_version(),
                             p.tree_members_version(),
                         )),
-                        p.narrowed().is_some(),
+                        // A lens that reads metadata shows files as it
+                        // comes.
+                        p.read_filter().is_some_and(|r| r.metadata),
                     )
                 })
             };

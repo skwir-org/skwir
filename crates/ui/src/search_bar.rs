@@ -17,12 +17,14 @@
 //! truth, which the address field edits as it is (Ctrl+L, or a click
 //! beside the pills).
 //!
-//! What narrows a folder is the same chips after its trail
-//! (`query.describe_filter`), each with a funnel, as no search's has: how
-//! deep its words look (this folder only, or its subfolders searched), the
-//! location's own (a tag's `with`), Narrow by's, then the words typed over
-//! it, each opening its choices, which change it in place; "+ Filter"
-//! adds to the words typed.
+//! What filters a location that is no search (a folder, the trash, a
+//! tag's place) is the same chips after its trail
+//! (`query.describe_filter`), each with its facet's icon, as a search's:
+//! how deep its words look (this folder only, or its subfolders searched,
+//! the one with a funnel), the location's own (a tag's sub-tags), then its
+//! lens and the words typed over it (ADR-107), each opening its choices,
+//! which change it in place; "+ Filter" adds to them. A pill of the lens
+//! says in its tooltip that it stays as the pane goes elsewhere.
 
 use gpui::{AnyElement, Context, SharedString, Window, div, prelude::*, px};
 use serde::Deserialize;
@@ -48,6 +50,9 @@ pub struct Chip {
     /// A tag's: its categories, each going up to it, then itself.
     #[serde(default)]
     pub segments: Vec<Segment>,
+    /// Of the lens (ADR-107): kept as the pane goes elsewhere.
+    #[serde(default)]
+    pub lens: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -132,26 +137,23 @@ impl Chips {
     }
 }
 
-/// What narrows the folder a pane shows, as the search's chips, read when
-/// it changed: the location's own (a tag's `with`), Narrow by's, then the
-/// words typed over it, set and not ("+ Filter" lists those not). None
-/// over a search, whose chips are its own.
+/// What filters the location a pane shows, as the search's chips, read
+/// when it changed: the location's own (a tag's sub-tags), then its lens
+/// and the words typed over it, set and not ("+ Filter" lists those not).
+/// None over a search, whose chips are its own.
 #[derive(Default)]
 pub struct Filters {
-    /// The location, words and narrowing they were read for.
+    /// The location and words they were read for.
     key: String,
     pub chips: Vec<Chip>,
-    /// What Narrow by's say, for the words of a folder narrowed to nothing.
-    pub narrowing: Vec<String>,
 }
 
-/// What the query plugin says of what narrows a folder.
+/// What the query plugin says of what filters a pane.
 #[derive(Default, Deserialize)]
 struct FolderDescription {
     /// How deep its words look: a folder's.
     #[serde(default)]
     depth: Option<Chip>,
-    narrowing: Vec<Chip>,
     filter: Vec<Chip>,
 }
 
@@ -273,21 +275,17 @@ fn sync_search(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
     }
 }
 
-/// Read what narrows the folder the pane being rendered shows, when it,
-/// the words typed over it or its narrowing changed; not while the field
-/// is typed in, which shows the text.
+/// Read what filters the location the pane being rendered shows, when it
+/// or what filters it changed; not while the field is typed in, which
+/// shows the text.
 fn sync_filters(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
     let pane = shell.pane;
     if shell.ui().address.read(cx).is_focused(window) {
         return;
     }
-    let (typed, narrowed) = {
+    let typed = {
         let ws = shell.app.workspace.read();
-        let p = ws.pane(pane);
-        (
-            p.and_then(|p| p.filter().map(str::to_owned)),
-            p.and_then(|p| p.narrowed().map(|n| n.expr.clone())),
-        )
+        ws.pane(pane).and_then(|p| p.filter().map(str::to_owned))
     };
     let search = !shell.ui().chips.chips.is_empty();
     let own = shell
@@ -305,7 +303,7 @@ fn sync_filters(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
             .pane_location(pane)
             .map(|l| l.to_string())
             .unwrap_or_default();
-        format!("{location}\0{typed:?}\0{narrowed:?}")
+        format!("{location}\0{typed:?}")
     };
     if shell.ui().filters.key == key {
         return;
@@ -315,8 +313,7 @@ fn sync_filters(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
     } else {
         own.iter().map(own_chip).collect()
     };
-    let mut narrowing = Vec::new();
-    if !search && (typed.is_some() || narrowed.is_some()) {
+    if !search && typed.is_some() {
         let described: FolderDescription = shell
             .app
             .commands
@@ -332,29 +329,24 @@ fn sync_filters(shell: &mut Shell, window: &mut Window, cx: &mut gpui::App) {
                 }
             })
             .unwrap_or_default();
-        narrowing = described.narrowing.iter().map(Chip::label).collect();
         let read = described.filter.iter().any(Chip::is_pill);
         chips.extend(described.depth);
-        chips.extend(described.narrowing);
         chips.extend(described.filter);
         if let Some(text) = typed.filter(|_| !read) {
             chips.push(typed_chip(&text));
         }
     }
-    shell.ui_mut().filters = Filters {
-        key,
-        chips,
-        narrowing,
-    };
+    shell.ui_mut().filters = Filters { key, chips };
     // A menu belongs to what it was opened on.
     if !search && shell.search_menu.as_ref().is_some_and(|m| m.pane == pane) {
         shell.close_search_chip(window, cx);
     }
 }
 
-/// A location's own narrowing (a tag's `with`) as a chip: a tag's as that
-/// tag, one left out as not tagged, the rest as the location says it;
-/// taking it off goes where the location leads without it.
+/// A location's own narrowing (a tag's sub-tags) as a chip: a tag's as
+/// that tag, one left out as not tagged, the rest as the location says it,
+/// with a funnel (how deep it holds files); taking it off goes where the
+/// location leads without it.
 fn own_chip(crumb: &Crumb) -> Chip {
     let (id, title, value, segments) = match &crumb.tag {
         Some(tag) if !tag.lacks => (
@@ -376,10 +368,11 @@ fn own_chip(crumb: &Crumb) -> Chip {
         id: id.to_owned(),
         title: title.to_owned(),
         value: Some(value),
-        icon: "filter".to_owned(),
+        icon: if crumb.tag.is_some() { "tag" } else { "filter" }.to_owned(),
         choices: Vec::new(),
         clear: Some(Invocation::navigate(&crumb.location)),
         segments,
+        lens: false,
     }
 }
 
@@ -391,7 +384,7 @@ fn typed_chip(text: &str) -> Chip {
         id: "typed".to_owned(),
         title: String::new(),
         value: Some(format!("“{text}”")),
-        icon: "filter".to_owned(),
+        icon: "search".to_owned(),
         choices: vec![Choice {
             label: "Edit…".to_owned(),
             command: Invocation::with_args("ui.filter", &serde_json::json!({ "text": text })),
@@ -399,6 +392,7 @@ fn typed_chip(text: &str) -> Chip {
         }],
         clear: Some(Invocation::new("filter")),
         segments: Vec::new(),
+        lens: false,
     }
 }
 
@@ -426,8 +420,7 @@ enum Fit {
     /// tooltip.
     Compact,
     /// The facets alone, each its value without icon (`rapport` for
-    /// "Name: rapport"), a folder's keeping its funnel, each said in full
-    /// in its tooltip. How deep and the facets to add are the field's,
+    /// "Name: rapport"), each said in full in its tooltip. How deep and the facets to add are the field's,
     /// with Ctrl+F or a click beside.
     Tight,
 }
@@ -455,9 +448,9 @@ fn rest(shell: &Shell, folder: bool, least: f32, cx: &mut Context<Shell>) -> Any
         .into_any_element()
 }
 
-/// What follows a trail: a search's pills, or what narrows a folder, each
-/// with a funnel; then room that edits the address (that room alone when
-/// nothing narrows it). The pills know their natural width
+/// What follows a trail: a search's pills, or what filters a folder;
+/// then room that edits the address (that room alone when nothing filters
+/// it). The pills know their natural width
 /// (`adaptive::Fit`), so they and the trail give way alike, each by its
 /// width, and they draw the richest that fits what they got (`Fit`),
 /// right after the trail.
@@ -499,8 +492,8 @@ pub fn after_trail(
 }
 
 /// The pills of what the pane shows (`shown_chips`) as `fit` says, then
-/// "+ Filter" while a facet is not set. A folder's (`folder`) wear a
-/// funnel whatever the fit, a search's their facet's icon.
+/// "+ Filter" while a facet is not set, each wearing its facet's icon, a
+/// folder's (`folder`) as a search's: only how deep it looks says which.
 fn pill_row(
     shell: &Shell,
     anchor: &PopoverAnchor,
@@ -566,6 +559,11 @@ fn pill_row(
         };
         let tip = if chip.is_scope() {
             depth_tip(shell, chip, folder)
+        } else if chip.lens {
+            format!(
+                "{} · kept as you go to other folders and searches, until taken off",
+                chip.label()
+            )
         } else if folder {
             format!("{} · this folder only, not a search", chip.label())
         } else if chip.title.is_empty() {
@@ -577,13 +575,10 @@ fn pill_row(
             chip.title.clone()
         };
         let icon = match (chip.is_scope(), fit) {
-            _ if folder => "filter".to_owned(),
             (false, Fit::Tight) => String::new(),
             _ => chip.icon.clone(),
         };
-        // Its ×, but on a folder's at the last fit: the funnel stays, and
-        // what is left goes to the value (its menu removes it).
-        let crossed = chip.clear.is_some() && !(folder && fit == Fit::Tight);
+        let crossed = chip.clear.is_some();
         // Known by what it holds: one removed, the next that comes under
         // the pointer is not given its tooltip.
         let known = crate::elements::key_of((&chip.id, &chip.value, &chip.title, i));
@@ -620,8 +615,7 @@ fn pill_row(
             // first facet (the words typed, usually) stays readable.
             .when(fit == Fit::Tight, |mut d| {
                 d.style().flex_shrink = Some(1. + 3. * shown as f32);
-                // A funnel besides what is left of the value.
-                d.min_w(px(if folder { 48. } else { 32. }))
+                d.min_w(px(32.))
             });
         // A tag's categories go back up to them; the tag itself opens the
         // pill's choices, as the rest of it does.

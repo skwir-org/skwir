@@ -151,8 +151,20 @@ fn the_tag_chip_offers_the_tags_found_and_find_similar_shares_them() {
         &serde_json::json!({ "names": ["b.txt"] }),
     ))
     .unwrap();
+    // The tags chosen are the pane's lens (ADR-107): a search found as
+    // similar keeps them, until they are taken off.
     assert_eq!(
         similar("kind"),
-        BTreeSet::from(["a.txt".into(), "b.txt".into(), "c.txt".into()])
+        BTreeSet::from(["a.txt".into(), "b.txt".into()])
+    );
+    let lens = app
+        .workspace
+        .read()
+        .pane(pane)
+        .and_then(|p| p.lens().map(|l| l.words.to_string()))
+        .unwrap_or_default();
+    assert!(
+        lens.contains("kind:text") && lens.contains("tag:work"),
+        "{lens}"
     );
 }

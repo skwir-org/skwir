@@ -3,9 +3,9 @@
 //! `Places/France`: its tags are places (`EntryId::place`), listed as
 //! folders, each counting the files within it; its own files are those
 //! tagged with it exactly, or everything within it with `deep` ("Include
-//! Sub-Tags"). What narrows it stays while its trail is walked: files that
-//! also have a tag (`with`), none that have one (`without`), a kind of
-//! file, a year. It is of a folder (`in`, the home folder when omitted),
+//! Sub-Tags"). What else narrows what it shows (another tag, a kind of
+//! file, a year) is the pane's lens (ADR-107), never its own: it is of a
+//! folder (`in`, the home folder when omitted),
 //! whose tagged files the index knows (`index.rs`): shown at once where a
 //! count covered the folder, then checked; a first visit counts it, the
 //! listing complete once it is counted.
@@ -29,7 +29,7 @@ use skwir_core::entry::{Entry, EntryId, EntryKind, Provenance, Value, keys};
 use skwir_core::fs::reach;
 use skwir_core::location::{
     Completion, Completions, Crumb, EmptyState, EventSink, ListingEvent, Location,
-    LocationProvider, Narrowing, OpenContext, OpenLocation, Toggle, Trail, Verb, Verbs, escape,
+    LocationProvider, OpenContext, OpenLocation, QuickFilters, Toggle, Trail, Verb, Verbs, escape,
     unescape,
 };
 use skwir_core::metadata::{
@@ -50,23 +50,10 @@ pub struct Address {
     pub tag: Option<String>,
     /// The folder whose tags these are; the home folder when `None`.
     pub scope: Option<PathBuf>,
-    /// Only files that also have a tag within each.
-    pub with: Vec<String>,
-    /// Only files that have no tag within any.
-    pub without: Vec<String>,
-    /// Only files of one of these kinds (by their names).
-    pub kinds: Vec<Kind>,
-    /// Only files modified in one of these years.
-    pub years: Vec<i64>,
     /// Every file within the tag, not only those tagged with it exactly.
+    /// What else narrows it (other tags, kinds, years) is the pane's lens
+    /// (ADR-107), never its own.
     pub deep: bool,
-}
-
-fn push_tag(list: &mut Vec<String>, tag: &str) {
-    let tag = clean_tag(tag);
-    if !tag.is_empty() && !list.iter().any(|t| same_tag(t, &tag)) {
-        list.push(tag);
-    }
 }
 
 impl Address {
@@ -85,22 +72,6 @@ impl Address {
                     let path = PathBuf::from(skwir_core::os_path::from_bytes(unescape(value)));
                     address.scope = scope_of(path);
                 }
-                "with" => push_tag(&mut address.with, &text(value)),
-                "without" => push_tag(&mut address.without, &text(value)),
-                "kind" => {
-                    if let Some(kind) = Kind::from_name(&text(value))
-                        && !address.kinds.contains(&kind)
-                    {
-                        address.kinds.push(kind);
-                    }
-                }
-                "year" => {
-                    if let Ok(year) = text(value).parse::<i64>()
-                        && !address.years.contains(&year)
-                    {
-                        address.years.push(year);
-                    }
-                }
                 "deep" => address.deep = true,
                 _ => {}
             }
@@ -109,11 +80,10 @@ impl Address {
     }
 
     /// The tags it says of every file it lists
-    /// (`LocationProvider::tags_shown`): its own, and those it is
-    /// narrowed to (files that also have one). A file has each, or a tag
+    /// (`LocationProvider::tags_shown`): its own. A file has it, or a tag
     /// within it.
     pub fn tags_shown(&self) -> Vec<String> {
-        self.tag.iter().chain(&self.with).cloned().collect()
+        self.tag.iter().cloned().collect()
     }
 
     /// What follows `tags:`.
@@ -130,18 +100,6 @@ impl Address {
                 escape(scope.as_os_str().as_encoded_bytes())
             ));
         }
-        params.extend(
-            self.with
-                .iter()
-                .map(|t| format!("with={}", escape(t.as_bytes()))),
-        );
-        params.extend(
-            self.without
-                .iter()
-                .map(|t| format!("without={}", escape(t.as_bytes()))),
-        );
-        params.extend(self.kinds.iter().map(|k| format!("kind={}", k.name())));
-        params.extend(self.years.iter().map(|y| format!("year={y}")));
         if self.deep {
             params.push("deep".into());
         }
@@ -165,8 +123,8 @@ impl Address {
         }
     }
 
-    /// The tag `tag` (the top when `None`) of the same folder, narrowed the
-    /// same way: where a step along the trail goes.
+    /// The tag `tag` (the top when `None`) of the same folder, as deep:
+    /// where a step along the trail goes.
     pub fn at(&self, tag: Option<String>) -> Address {
         Address {
             tag,
@@ -179,16 +137,9 @@ impl Address {
         self.scope.clone().or_else(std::env::home_dir)
     }
 
-    /// Whether it narrows by anything but its tag.
-    pub fn narrowed(&self) -> bool {
-        !self.with.is_empty()
-            || !self.without.is_empty()
-            || !self.kinds.is_empty()
-            || !self.years.is_empty()
-    }
-
     /// Its trail: the folder it is of, Tags, the categories and the tag,
-    /// then what narrows it, each pill leading where it does not.
+    /// then whether it holds the files of the tags within, a pill leading
+    /// where it does not.
     pub fn trail(&self) -> Trail {
         let mut crumbs = vec![Crumb::new("Tags", self.at(None).location())];
         if let Some(tag) = &self.tag {
@@ -205,36 +156,6 @@ impl Address {
             }
         }
         let mut filters = Vec::new();
-        for (i, tag) in self.with.iter().enumerate() {
-            let mut without = self.clone();
-            without.with.remove(i);
-            filters.push(
-                Crumb::new(format!("with {}", tag_leaf(tag)), without.location())
-                    .of_tag(TagRef::of(tag)),
-            );
-        }
-        for (i, tag) in self.without.iter().enumerate() {
-            let mut without = self.clone();
-            without.without.remove(i);
-            filters.push(
-                Crumb::new(format!("not {}", tag_leaf(tag)), without.location())
-                    .of_tag(TagRef::lacking(tag)),
-            );
-        }
-        for (i, kind) in self.kinds.iter().enumerate() {
-            let mut without = self.clone();
-            without.kinds.remove(i);
-            // Said as a search's facets are (`Kind: Images`).
-            filters.push(Crumb::new(
-                format!("Kind: {}", kind.title()),
-                without.location(),
-            ));
-        }
-        for (i, year) in self.years.iter().enumerate() {
-            let mut without = self.clone();
-            without.years.remove(i);
-            filters.push(Crumb::new(format!("Modified: {year}"), without.location()));
-        }
         let switched = Address {
             deep: !self.deep,
             ..self.clone()
@@ -259,19 +180,9 @@ impl Address {
     }
 
     /// What it says when it lists nothing: the top of a folder's tags,
-    /// that no file there has one; a tag, how to give it; narrowed, that
-    /// nothing is what it is narrowed to.
+    /// that no file there has one; a tag, how to give it.
     pub fn empty_state(&self) -> EmptyState {
-        let narrowed = !(self.with.is_empty()
-            && self.without.is_empty()
-            && self.kinds.is_empty()
-            && self.years.is_empty());
-        if narrowed {
-            EmptyState::new(
-                "No file here is what it is narrowed to",
-                "Take a narrowing off in the address.",
-            )
-        } else if self.tag.is_none() {
+        if self.tag.is_none() {
             EmptyState::new(
                 "No file here has a tag",
                 "Give files tags with Tags… in their menu, or drop them on a tag in the sidebar.",
@@ -308,13 +219,6 @@ impl Address {
                 }),
             )
         };
-        let mut set = Vec::new();
-        if !self.kinds.is_empty() {
-            set.push("kind".to_owned());
-        }
-        if !self.years.is_empty() {
-            set.push("modified".to_owned());
-        }
         Verbs {
             // At the top, tags dropped come out of their categories.
             drop: Some(Invocation::with_args(
@@ -360,17 +264,8 @@ impl Address {
                     ),
                 )
             }),
-            narrow: Some(Narrowing {
-                command: Invocation::with_args(
-                    "tags.narrow",
-                    &serde_json::json!({ "location": location }),
-                ),
-                tags: here
-                    .map(str::to_owned)
-                    .into_iter()
-                    .chain(self.with.iter().cloned())
-                    .collect(),
-                set,
+            quick_filters: Some(QuickFilters {
+                tags: here.map(str::to_owned).into_iter().collect(),
             }),
             // A tag copied into a folder: a folder of its files there.
             export: here.map(|_| {
@@ -504,8 +399,6 @@ fn scope_of(path: PathBuf) -> Option<PathBuf> {
 pub struct Tagged {
     pub path: PathBuf,
     pub tags: Vec<String>,
-    /// The year it was modified, when a filter asks for it.
-    pub year: Option<i64>,
 }
 
 /// What a tag location lists.
@@ -573,21 +466,6 @@ impl Types {
     }
 }
 
-/// Whether `file` passes what narrows `address`.
-fn passes(address: &Address, file: &Tagged, types: &mut Types) -> bool {
-    let within = |category: &String| file.tags.iter().any(|t| tag_within(t, category));
-    address.with.iter().all(within)
-        && !address.without.iter().any(within)
-        && (address.kinds.is_empty()
-            || types.of(&file.path).is_some_and(|m| {
-                address
-                    .kinds
-                    .iter()
-                    .any(|k| skwir_platform::mime::is_kind(&m, *k))
-            }))
-        && (address.years.is_empty() || file.year.is_some_and(|y| address.years.contains(&y)))
-}
-
 /// What `address` lists of `files` (each with a tag within its tag, or
 /// any tag at the top), and `drafts`, tags made and not given yet.
 pub fn contents(address: &Address, files: &[Tagged], drafts: &[String]) -> Contents {
@@ -603,9 +481,6 @@ pub fn contents(address: &Address, files: &[Tagged], drafts: &[String]) -> Conte
         None => !file.tags.is_empty(),
     };
     for file in files.iter().filter(inside) {
-        if !passes(address, file, &mut types) {
-            continue;
-        }
         let mut seen: Vec<String> = Vec::new();
         let mut here = false;
         for tag in &file.tags {
@@ -888,13 +763,13 @@ impl Places {
     }
 
     /// The tagged files under `root` within `address`'s tag (every one
-    /// at the top), with their years when it is narrowed by one: those
-    /// `years` knows as it knows them, the others stat-ed and kept there.
-    /// Reads the index and stats: on a worker.
-    pub fn tagged(&self, address: &Address, root: &Path, years: &mut Years) -> Vec<Tagged> {
-        let calendar = (!address.years.is_empty()).then(skwir_platform::calendar::Calendar::system);
-        let files = self.index.files_under(root, address.tag.as_deref());
-        with_years(files, calendar.as_ref(), years)
+    /// at the top). Reads the index: on a worker.
+    pub fn tagged(&self, address: &Address, root: &Path) -> Vec<Tagged> {
+        self.index
+            .files_under(root, address.tag.as_deref())
+            .into_iter()
+            .map(|(path, tags)| Tagged { path, tags })
+            .collect()
     }
 
     fn drafts_of(&self, root: &Path) -> Vec<String> {
@@ -914,45 +789,6 @@ impl Places {
     }
 }
 
-/// The year each file was modified in, as a tag location narrowed by one
-/// read it (`None`: it could not be): a file is stat-ed once while the
-/// location is open, not at each relist; a year changed outside skwir
-/// shows after F5.
-pub type Years = HashMap<PathBuf, Option<i64>>;
-
-/// `files` with their years in `calendar` when it is given, `years`
-/// answering for those it knows and keeping the others, read now; it is
-/// left holding the files listed alone.
-fn with_years(
-    files: Vec<(PathBuf, Vec<String>)>,
-    calendar: Option<&skwir_platform::calendar::Calendar>,
-    years: &mut Years,
-) -> Vec<Tagged> {
-    let Some(calendar) = calendar else {
-        years.clear();
-        return files
-            .into_iter()
-            .map(|(path, tags)| Tagged {
-                path,
-                tags,
-                year: None,
-            })
-            .collect();
-    };
-    let mut known = std::mem::take(years);
-    files
-        .into_iter()
-        .map(|(path, tags)| {
-            let year = known.remove(&path).unwrap_or_else(|| {
-                let modified = std::fs::symlink_metadata(&path).ok()?.modified().ok()?;
-                Some(calendar.year_of(modified))
-            });
-            years.insert(path.clone(), year);
-            Tagged { path, tags, year }
-        })
-        .collect()
-}
-
 /// What an open tag location sent: its places and files, by identity,
 /// each file with the tags the index knew it by.
 #[derive(Default)]
@@ -967,10 +803,6 @@ struct Sent {
     /// read at once, as views may have asked already.
     ever: HashSet<EntryId>,
     complete: bool,
-    /// The files' years, when a year narrows it.
-    years: Years,
-    /// F5 asked: the years are read again.
-    years_stale: bool,
 }
 
 /// Its relisting: one at a time, again once if asked meanwhile.
@@ -1037,19 +869,10 @@ impl Open {
     }
 
     /// What the index says it holds now, sent as what changed since the
-    /// last time. Reads the index and stats new files: on a worker.
+    /// last time. Reads the index: on a worker.
     fn relist(&self) {
         let index = &self.places.index;
-        // Relistings run one at a time: the years are taken and put back.
-        let mut years = {
-            let mut sent = self.sent.lock();
-            if std::mem::take(&mut sent.years_stale) {
-                sent.years.clear();
-            }
-            std::mem::take(&mut sent.years)
-        };
-        let tagged = self.places.tagged(&self.address, &self.root, &mut years);
-        self.sent.lock().years = years;
+        let tagged = self.places.tagged(&self.address, &self.root);
         let drafts = self.places.drafts_of(&self.root);
         let contents = contents(&self.address, &tagged, &drafts);
         self.places.forget_given(&self.root, &contents.places);
@@ -1266,7 +1089,6 @@ impl OpenLocation for Open {
     /// F5: what changed since the last count is read again.
     fn refresh(&self) {
         self.places.ensure(&self.root, true);
-        self.sent.lock().years_stale = true;
         self.relist_soon();
     }
 
@@ -1337,17 +1159,9 @@ impl LocationProvider for Provider {
         let found = self.places.index.files_under(&root, address.tag.as_deref());
         let tagged: Vec<Tagged> = found
             .into_iter()
-            .map(|(path, tags)| Tagged {
-                path,
-                tags,
-                year: None,
-            })
+            .map(|(path, tags)| Tagged { path, tags })
             .collect();
-        let narrowed = Address {
-            years: Vec::new(),
-            ..address.clone()
-        };
-        let mut places = contents(&narrowed, &tagged, &self.places.drafts_of(&root)).places;
+        let mut places = contents(&address, &tagged, &self.places.drafts_of(&root)).places;
         places.sort_by_cached_key(|(tag, _)| {
             skwir_core::collate::sort_key(std::ffi::OsStr::new(tag_leaf(tag)))
         });
@@ -1372,8 +1186,8 @@ impl LocationProvider for Provider {
     }
 
     /// A folder's tags, first in its menu of what it holds, as its trail
-    /// goes on into them (`Photos › Tags`): narrowed as the trail shown
-    /// has them, when it goes on into them.
+    /// goes on into them (`Photos › Tags`): as deep as the trail shown has
+    /// them, when it goes on into them.
     fn places_of(&self, folder: &Path, along: Option<&Location>) -> Vec<Crumb> {
         let plain = Address::of_folder(folder);
         let tags = along
@@ -1385,8 +1199,7 @@ impl LocationProvider for Provider {
     }
 
     /// A tag's tags, for the name typed after it (`tags:/Places/Fr`): what
-    /// `places` lists of the tag before it, in its folder and narrowed as
-    /// the text says.
+    /// `places` lists of the tag before it, in its folder as the text says.
     fn complete(&self, rest: &str) -> Option<Completions> {
         let (range, parent) = completing(rest);
         let items = self
@@ -1423,7 +1236,6 @@ mod tests {
         Tagged {
             path: PathBuf::from(path),
             tags: tags.iter().map(|t| (*t).to_owned()).collect(),
-            year: None,
         }
     }
 
@@ -1465,50 +1277,14 @@ mod tests {
         }
     }
 
-    /// Narrowed by a year, a tag place stats a file once while it lists
-    /// it: a year it knows stands, and it keeps those of the files listed
-    /// alone.
     #[test]
-    fn a_files_year_is_read_once_and_kept_while_it_is_listed() {
-        let base = std::env::home_dir().unwrap().join(".cache/skwir-tests");
-        std::fs::create_dir_all(&base).unwrap();
-        let tmp = tempfile::tempdir_in(base).unwrap();
-        let shown = tmp.path().join("it's shown.jpg");
-        std::fs::write(&shown, b"x").unwrap();
-        // 2019-06-15 at noon: the same year in every time zone.
-        let june = std::time::UNIX_EPOCH + std::time::Duration::from_hours(18_062 * 24 + 12);
-        std::fs::File::options()
-            .write(true)
-            .open(&shown)
-            .unwrap()
-            .set_modified(june)
-            .unwrap();
-        // Never made: a stat would find no year.
-        let known = tmp.path().join("known.jpg");
-        let unlisted = tmp.path().join("unlisted.jpg");
-        let calendar = skwir_platform::calendar::Calendar::system();
-        let mut years = Years::from([(known.clone(), Some(2001)), (unlisted, Some(1999))]);
-        let files = vec![
-            (shown.clone(), vec!["x".to_owned()]),
-            (known.clone(), vec!["x".to_owned()]),
-        ];
-        let listed = with_years(files.clone(), Some(&calendar), &mut years);
-        assert_eq!(listed[0].year, Some(2019), "read");
-        assert_eq!(listed[1].year, Some(2001), "known: not read again");
-        assert_eq!(
-            years,
-            Years::from([(shown, Some(2019)), (known, Some(2001))]),
-            "the files listed alone"
-        );
-        let listed = with_years(files, None, &mut years);
-        assert!(listed.iter().all(|t| t.year.is_none()));
-        assert!(years.is_empty(), "not narrowed: none kept");
-    }
-
-    #[test]
-    fn a_tag_location_says_its_tag_and_what_narrows_it_of_every_file() {
+    fn a_tag_location_says_its_tag_of_every_file() {
         let address = Address::parse("/Places/France?with=family&without=old&deep");
-        assert_eq!(address.tags_shown(), ["Places/France", "family"]);
+        assert_eq!(
+            address.tags_shown(),
+            ["Places/France"],
+            "another tag is the lens's"
+        );
         assert!(Address::parse("/").tags_shown().is_empty(), "every tag");
     }
 
@@ -1627,21 +1403,13 @@ mod tests {
     }
 
     /// Empty, the top of a folder's tags says no file there has one, a
-    /// tag how to give it, and either narrowed that nothing is what it is
-    /// narrowed to.
+    /// tag how to give it; what a lens hides, the pane says.
     #[test]
     fn an_empty_tag_location_says_why() {
         let said = |text: &str| Address::parse(text).empty_state().title;
         assert_eq!(said("/"), "No file here has a tag");
         assert_eq!(said("/Places/France"), "No file here has this tag");
-        assert_eq!(
-            said("/Places?with=family"),
-            "No file here is what it is narrowed to"
-        );
-        assert_eq!(
-            said("/?year=2024"),
-            "No file here is what it is narrowed to"
-        );
+        assert_eq!(said("/Places?with=family"), "No file here has this tag");
     }
 
     // Unix's paths.
@@ -1651,23 +1419,18 @@ mod tests {
         let address = Address {
             tag: Some("Places/Été & co?".into()),
             scope: Some("/media/stick/Photos 100%".into()),
-            with: vec!["family".into(), "a=b".into()],
-            without: vec!["Status/Draft".into()],
-            kinds: vec![Kind::Image],
-            years: vec![2024],
             deep: true,
         };
         let text = address.text();
         assert!(text.starts_with("/Places/Été %26 co%3F?in=/media/stick/Photos 100%25"));
         assert_eq!(Address::parse(&text), address);
         assert_eq!(
-            Address::parse("/ Places / France /?with=Family&with=family&bogus"),
+            Address::parse("/ Places / France /?with=Family&kind=image&bogus"),
             Address {
                 tag: Some("Places/France".into()),
-                with: vec!["Family".into()],
                 ..Address::default()
             },
-            "a tag cleaned, a filter once whatever its case"
+            "a tag cleaned; what narrowed it once is the pane's lens"
         );
         assert_eq!(Address::parse("/").tag, None);
         if let Some(home) = std::env::home_dir() {
@@ -1743,37 +1506,6 @@ mod tests {
         assert_eq!(lieux.files, [PathBuf::from("/p/b.jpg")]);
     }
 
-    #[test]
-    fn what_narrows_a_tag_narrows_its_places_and_its_files() {
-        let files = [
-            file("/p/paris.jpg", &["Places/France/Paris", "family"]),
-            file("/p/lyon.jpg", &["Places/France/Lyon"]),
-            file("/p/tokyo.jpg", &["Places/Japan", "family"]),
-        ];
-        let family = Address {
-            with: vec!["family".into()],
-            ..at(Some("Places"))
-        };
-        assert_eq!(
-            contents(&family, &files, &[]).places,
-            [("Places/France".into(), 1), ("Places/Japan".into(), 1)]
-        );
-        let not_family = Address {
-            without: vec!["family".into()],
-            ..at(Some("Places/France"))
-        };
-        assert_eq!(
-            contents(&not_family, &files, &[]).places,
-            [("Places/France/Lyon".into(), 1)],
-            "Paris has no file left, so it is not listed"
-        );
-        let pictures = Address {
-            kinds: vec![Kind::Video],
-            ..at(Some("Places"))
-        };
-        assert!(contents(&pictures, &files, &[]).places.is_empty());
-    }
-
     // Types from the free desktops' database (step E, ADR-035).
     #[cfg(target_os = "linux")]
     #[test]
@@ -1841,9 +1573,8 @@ mod tests {
     }
 
     #[test]
-    fn its_trail_keeps_what_narrows_it_and_each_pill_leads_without_it() {
+    fn its_trail_keeps_how_deep_it_is_and_its_pill_leads_without_it() {
         let address = Address {
-            with: vec!["family".into()],
             deep: true,
             ..at(Some("Places/France"))
         };
@@ -1866,16 +1597,11 @@ mod tests {
                 tag: Some("Places".into()),
                 ..address.clone()
             },
-            "going up keeps what narrows it"
+            "going up keeps how deep it is"
         );
         let pills: Vec<&str> = trail.filters.iter().map(|c| c.label.as_str()).collect();
-        assert_eq!(pills, ["with family", "With sub-tags"]);
-        let tags: Vec<Option<TagRef>> = trail.filters.iter().map(|c| c.tag.clone()).collect();
-        assert_eq!(tags, [Some(TagRef::of("family")), None]);
-        assert_eq!(
-            Address::parse(&trail.filters[0].location.rest).with,
-            Vec::<String>::new()
-        );
+        assert_eq!(pills, ["With sub-tags"]);
+        assert!(!Address::parse(&trail.filters[0].location.rest).deep);
         assert!(trail.toggles[0].on);
         assert_eq!(trail.parent(), Some(trail.crumbs[1].location.clone()));
     }

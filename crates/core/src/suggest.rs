@@ -72,6 +72,11 @@ pub struct Ask {
     pub dir: Option<PathBuf>,
     #[serde(default)]
     pub pane: Option<PaneId>,
+    /// The words of the pane's lens the text does not hold, kept before
+    /// it (ADR-107): the field begun on a path or on nothing (Ctrl+L,
+    /// Ctrl+J), where words typed add to the lens, not take its place.
+    #[serde(default)]
+    pub lens: Option<String>,
 }
 
 impl Ask {

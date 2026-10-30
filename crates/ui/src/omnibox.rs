@@ -213,7 +213,10 @@ struct Before {
     /// shown looks in (the place it lists).
     folder: Option<Location>,
     filter: Option<String>,
-    narrowed: Option<skwir_core::workspace::Narrowed>,
+    /// The words of the pane's lens when the field began without them (on
+    /// a path, Ctrl+L, or on nothing, Ctrl+J): words typed add to the lens
+    /// (ADR-107), they never take its place.
+    kept: Option<String>,
 }
 
 impl Drop for Omni {
@@ -624,6 +627,13 @@ impl Shell {
             }
         };
         let given = !initial.is_empty() && !select;
+        // The text holds the lens where it is the filter's or the search's
+        // words; begun on a path or on nothing, the lens is kept beside it.
+        let holds_lens = match how {
+            Begin::Search | Begin::Filter => true,
+            Begin::Path => over_search,
+            Begin::Jump => false,
+        };
         let before = {
             let ws = self.app.workspace.read();
             let p = ws.pane(pane);
@@ -631,7 +641,10 @@ impl Shell {
                 location: p.and_then(|p| p.location().cloned()),
                 folder,
                 filter: p.and_then(|p| p.filter().map(str::to_owned)),
-                narrowed: p.and_then(|p| p.narrowed().cloned()),
+                kept: p
+                    .and_then(|p| p.lens())
+                    .filter(|_| !holds_lens)
+                    .map(|l| l.words.to_string()),
             }
         };
         let mut omni = Omni::default();
@@ -746,7 +759,7 @@ impl Shell {
     }
 
     /// The field's step taken back: the pane shows what it showed when the
-    /// field took the keyboard, narrowed as it was.
+    /// field took the keyboard; its filter is put back by the caller.
     fn take_back(&mut self, cx: &mut Context<Self>) {
         let pane = self.pane;
         let Some(omni) = self.ui_mut().omni.as_mut() else {
@@ -757,17 +770,8 @@ impl Shell {
         if !std::mem::take(&mut omni.stepped) {
             return;
         }
-        let narrowed = omni.before.as_ref().and_then(|b| b.narrowed.clone());
         if let Err(error) = self.app.take_step_back(pane) {
             tracing::warn!("address: {error:#}");
-        }
-        // Showing the search let go of the narrowing; showing the folder
-        // again puts it back.
-        if let Some(narrowed) = narrowed
-            && let Some(p) = self.app.workspace.write().pane_mut(pane)
-            && p.narrowed().is_none()
-        {
-            p.set_narrowed(Some(narrowed));
         }
         cx.notify();
     }
@@ -1021,7 +1025,11 @@ impl Shell {
             .omni
             .as_ref()
             .is_none_or(|o| o.depth == Depth::Here);
-        let wanted = (here && !words.is_empty()).then_some(words);
+        // The lens kept beside the words, they after it (ADR-107).
+        let kept = self.omni_kept().unwrap_or_default();
+        let text = format!("{kept} {words}");
+        let text = text.trim();
+        let wanted = (here && !text.is_empty()).then_some(text);
         let current = self
             .app
             .workspace
@@ -1081,6 +1089,16 @@ impl Shell {
     }
 
     /// What the sources are asked for the field's text as it is.
+    /// The words of the pane's lens the field keeps beside its text: begun
+    /// without them (Ctrl+L, Ctrl+J), words typed add to the lens.
+    fn omni_kept(&self) -> Option<String> {
+        self.ui()
+            .omni
+            .as_ref()
+            .and_then(|o| o.before.as_ref())
+            .and_then(|b| b.kept.clone())
+    }
+
     fn ask_now(&self, cx: &gpui::App) -> Ask {
         let text = self.omni_text(cx);
         let input = self.ui().address.read(cx);
@@ -1095,6 +1113,7 @@ impl Shell {
             shown: self.app.pane_location(self.pane),
             dir: self.app.pane_dir(self.pane).ok(),
             pane: Some(self.pane),
+            lens: self.omni_kept(),
         }
     }
 

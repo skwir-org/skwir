@@ -14,7 +14,7 @@ pub mod assist;
 pub mod facets;
 pub mod field;
 pub mod lang;
-pub mod narrow;
+pub mod lens;
 pub mod plocate;
 pub mod provider;
 pub mod saved;
@@ -72,6 +72,11 @@ struct SearchArgs {
     /// own: a search shown as its words are typed (ADR-098).
     #[serde(default)]
     in_place: bool,
+    /// Its words say the whole lens (ADR-107): the pane's is not added to
+    /// them, as it is to a search run from anywhere else (what the
+    /// address field runs from the words typed).
+    #[serde(default)]
+    as_is: bool,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -144,8 +149,8 @@ struct PaneOnly {
 struct TagChoicesArgs {
     #[serde(default)]
     pane: Option<PaneId>,
-    /// What a tag picked changes: `search` (the pane's, the default),
-    /// `narrowing` (`query.narrow`) or `filter` (`query.filter`).
+    /// What a tag picked changes: `search` (the pane's, the default) or
+    /// `filter` (`query.filter`).
     #[serde(default)]
     refines: facets::Refines,
 }
@@ -153,8 +158,8 @@ struct TagChoicesArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct NarrowArgs {
     /// A facet as `query.refine` takes it (`kind`, `modified`, `created`,
-    /// `accessed`, `also_tag`, `not_tag`, `drop_tag`…); omitted, the
-    /// folder shows everything again.
+    /// `accessed`, `size`, `also_tag`, `not_tag`, `drop_tag`…); omitted,
+    /// the lens is taken off.
     #[serde(default)]
     facet: Option<String>,
     /// What to set it to, as `query.refine` takes it; omitted, the facet
@@ -236,16 +241,6 @@ pub fn location_for(expr: &str, root: Option<&std::path::Path>) -> Location {
     Location::new(SCHEME, rest)
 }
 
-/// `expr` as one part of a search that also holds another: in brackets
-/// when its terms are joined by an OR, which binds looser than the AND
-/// between the parts (`kind:image (dunes OR pines)`).
-fn grouped(expr: &str) -> String {
-    match lang::parse(expr) {
-        Ok(query) if matches!(query.expr, Some(lang::Expr::Or(_))) => format!("({expr})"),
-        _ => expr.to_owned(),
-    }
-}
-
 /// Where a search refined from `before` to `after` is shown: the search,
 /// unless the change took its last term away, which leaves the place it
 /// looked in (its trail's: the folder, or what it lists), as Escape goes
@@ -306,6 +301,70 @@ fn pane_search(app: &App, pane: PaneId) -> anyhow::Result<String> {
         .pane_dir(pane)
         .map_err(|_| anyhow::anyhow!("the pane shows no search and no folder"))?;
     Ok(location_for("", Some(&dir)).rest)
+}
+
+/// `location` as the pane would show it, its lens brought in (ADR-107,
+/// `QueryProvider::lensed`): what a search asked again is compared with.
+fn with_pane_lens(app: &App, pane: PaneId, location: &Location) -> Location {
+    let words = app
+        .workspace
+        .read()
+        .pane(pane)
+        .and_then(|p| p.lens().map(|l| l.words.to_string()));
+    let Some(words) = words else {
+        return location.clone();
+    };
+    let written = facets::with_lens(&location.rest, "");
+    match facets::with_lens(&location.rest, &words) {
+        Ok(brought) if written.as_ref().ok() != Some(&brought) => Location::new(SCHEME, brought),
+        _ => location.clone(),
+    }
+}
+
+/// Change one facet of the pane's search, or start one in its folder with
+/// its lens: a change of the search's lens alone is made in place of it,
+/// as a folder's filter changes, any other is a step Back undoes; its last
+/// term taken away, the place it searched shows, filtered by nothing.
+fn refine_search(app: &App, pane: PaneId, facet: &str, value: Option<&str>) -> anyhow::Result<()> {
+    let shown = app
+        .pane_location(pane)
+        .is_some_and(|l| &*l.scheme == SCHEME);
+    let expr = pane_search(app, pane)?;
+    let refined = facets::refine(&expr, facet, value).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+    let to = refined_location(&expr, &refined);
+    if !shown {
+        return app.navigate(pane, &to);
+    }
+    let in_place = &*to.scheme == SCHEME
+        && lens::without_lens(&expr).is_some_and(|rest| Some(rest) == lens::without_lens(&refined));
+    // The search says its lens whole: the one it had changed.
+    app.navigate_as_is(pane, &to, in_place)
+}
+
+/// Change one facet of what filters the pane (its lens, the words typed
+/// over it): the location stays shown.
+fn refine_filter(app: &App, pane: PaneId, facet: &str, value: Option<&str>) -> anyhow::Result<()> {
+    let typed = app
+        .workspace
+        .read()
+        .pane(pane)
+        .and_then(|p| p.filter().map(str::to_owned))
+        .unwrap_or_default();
+    // What it applies: a part that does not read is no facet.
+    let applied = lens::applied(&typed).unwrap_or_default();
+    let refined =
+        facets::refine(&applied, facet, value).map_err(|e| anyhow::anyhow!("query: {e}"))?;
+    set_filter(app, pane, &refined)
+}
+
+/// Filter the pane by `text` (empty: show everything), through the core.
+fn set_filter(app: &App, pane: PaneId, text: &str) -> anyhow::Result<()> {
+    let text = text.trim();
+    app.dispatch(&Invocation::with_args(
+        "filter",
+        &serde_json::json!({ "text": (!text.is_empty()).then_some(text), "pane": pane }),
+    ))?;
+    Ok(())
 }
 
 /// Saved searches from settings.
@@ -537,10 +596,8 @@ impl Plugin for QueryPlugin {
         if let Some(lifetime) = self.lifetime.lock().take() {
             lifetime.cancel();
         }
-        // A folder narrowed by its words shows everything again.
-        for pane in app.workspace.write().panes_mut() {
-            pane.set_narrowed(None);
-        }
+        // A pane's lens goes with the reader the core asks
+        // (`App::read_filters_again`, once the reader is withdrawn).
         app.wake();
     }
 
@@ -596,7 +653,7 @@ impl Plugin for QueryPlugin {
             ID, Topic::Find,
             "query.search",
             "Search",
-            "Search, shown in the pane (then `entries` lists what it found; a search the pane shows already is left as it is, `refresh` lists it again): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`; `created`, `accessed`, and `taken` for a picture's camera clock), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `depth:2` bounds it. `root` (or `in:`) is where it looks",
+            "Search, shown in the pane, the pane's lens added unless `as_is` (ADR-107: the terms of a filter or a search the listing can decide, kept as the pane goes elsewhere until taken off; then `entries` lists what it found; a search the pane shows already is left as it is, `refresh` lists it again): words match names; `name:`, `ext:pdf,md`, `kind:image,video` (document, text, audio, archive…), `type:dir`, `tag:x`, `content:words` or `content:/regex/`, `comment:`, `size>10M`, `modified<7d` (also `today`, `this-week`, `2026-05`; `created`, `accessed`, and `taken` for a picture's camera clock), `rating>=4`, `near:lat,lon~5km`; `OR`, `NOT` or `-`, parentheses; `hidden:yes` looks in hidden folders, `depth:2` bounds it. `root` (or `in:`) is where it looks",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 lang::parse(&a.expr).map_err(|e| anyhow::anyhow!("query: {e}"))?;
@@ -610,9 +667,11 @@ impl Plugin for QueryPlugin {
                     None => app.pane_dir(pane).ok(),
                 };
                 let location = location_for(&a.expr, root.as_deref());
-                if a.in_place {
+                if a.as_is {
+                    app.navigate_as_is(pane, &location, a.in_place)?;
+                } else if a.in_place {
                     app.navigate_in_place(pane, &location)?;
-                } else if app.pane_location(pane).as_ref() != Some(&location) {
+                } else if app.pane_location(pane) != Some(with_pane_lens(app, pane, &location)) {
                     app.navigate(pane, &location)?;
                 }
                 if a.remember && skwir_core::permissions::agent_call().is_none() {
@@ -652,7 +711,7 @@ impl Plugin for QueryPlugin {
             .add(ID, skwir_core::suggest::Suggester::new(field::Field));
         app.registry.filter_readers.add(
             ID,
-            skwir_core::registry::FilterReader(Arc::new(narrow::read_filter)),
+            skwir_core::registry::FilterReader(Arc::new(lens::read_filter)),
         );
 
         let editor = Editor {
@@ -889,13 +948,10 @@ impl Plugin for QueryPlugin {
             ID, Topic::Find,
             "query.refine",
             "Refine search",
-            "Change one facet of the pane's search (or start one in its folder) and show the result; its last term taken away, the pane shows the place it searched",
+            "Change one facet of the pane's search (or start one in its folder, its lens added) and show the result: a change of its lens alone in place of it, any other as a step Back undoes; its last term taken away, the pane shows the place it searched",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                let expr = pane_search(app, pane)?;
-                let refined = facets::refine(&expr, &a.facet, a.value.as_deref())
-                    .map_err(|e| anyhow::anyhow!("query: {e}"))?;
-                app.navigate(pane, &refined_location(&expr, &refined))?;
+                refine_search(app, pane, &a.facet, a.value.as_deref())?;
                 Ok(Outcome::Done)
             },
         )
@@ -934,10 +990,10 @@ impl Plugin for QueryPlugin {
             ID, Topic::Find,
             "query.below",
             "This folder and its subfolders",
-            "Search the pane's folder and its subfolders for what narrows it: its narrowing, then the words typed over it",
+            "Search the pane's folder and its subfolders for what filters it: its lens and the words typed over it",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                let (folder, typed, narrowed) = {
+                let (folder, typed) = {
                     let ws = app.workspace.read();
                     let p = ws
                         .pane(pane)
@@ -945,16 +1001,11 @@ impl Plugin for QueryPlugin {
                     let folder = p.location().and_then(Location::path).ok_or_else(|| {
                         anyhow::anyhow!("only a folder's subfolders are searched")
                     })?;
-                    (
-                        folder,
-                        p.filter().map(str::to_owned).unwrap_or_default(),
-                        p.narrowed().map(|n| n.expr.clone()).unwrap_or_default(),
-                    )
+                    (folder, p.filter().map(str::to_owned).unwrap_or_default())
                 };
-                let applied = narrow::applied(&typed).unwrap_or_default();
-                // Both hold: an OR typed stays within its own words.
-                let expr = format!("{} {}", grouped(&narrowed), grouped(&applied));
-                app.navigate(pane, &location_for(expr.trim(), Some(&folder)))?;
+                // Its lens is in its words: they say it whole.
+                let applied = lens::applied(&typed).unwrap_or_default();
+                app.navigate_as_is(pane, &location_for(applied.trim(), Some(&folder)), false)?;
                 Ok(Outcome::Done)
             },
         )
@@ -962,33 +1013,40 @@ impl Plugin for QueryPlugin {
         app.commands.register::<NarrowArgs, _>(
             ID, Topic::Find,
             "query.narrow",
-            "Narrow folder",
-            "Change one facet of what the pane's folder is narrowed to (its files of a kind, a year, with or without a tag), kept while it shows that folder or one under it; without `facet`, show everything again",
+            "Change the lens",
+            "Change one facet of the pane's lens (ADR-107: what of its filter or its search the listing can decide, its files of a kind, a year, with or without a tag), kept as the pane shows other locations until taken off: a search's in place of it, anything else's filter; without `facet`, take the lens off",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                let (folder, current) = {
-                    let ws = app.workspace.read();
-                    let p = ws
-                        .pane(pane)
-                        .ok_or_else(|| anyhow::anyhow!("no pane {}", pane.0))?;
-                    let folder = p.location().and_then(Location::path).ok_or_else(|| {
-                        anyhow::anyhow!("only a folder is narrowed; a search is refined")
-                    })?;
-                    (folder, p.narrowed().map(|n| (n.root.clone(), n.expr.clone())))
-                };
-                let narrowed = match a.facet {
-                    None => None,
-                    Some(facet) => {
-                        let (root, expr) = current.unwrap_or((folder, String::new()));
-                        let expr = facets::refine(&expr, &facet, a.value.as_deref())
-                            .map_err(|e| anyhow::anyhow!("query: {e}"))?;
-                        narrow::narrowed(&expr, root).map_err(|e| anyhow::anyhow!("query: {e}"))?
-                    }
-                };
-                if let Some(p) = app.workspace.write().pane_mut(pane) {
-                    p.set_narrowed(narrowed);
+                let search = app
+                    .pane_location(pane)
+                    .is_some_and(|l| &*l.scheme == SCHEME);
+                if let Some(facet) = a.facet.as_deref()
+                    && matches!(facet, "content" | "taken" | "words")
+                {
+                    anyhow::bail!(
+                        "a lens is what is known of the files: `{facet}` is a search's (what they contain, when a picture was taken, the names)"
+                    );
                 }
-                app.wake();
+                match (a.facet, search) {
+                    (Some(facet), true) => refine_search(app, pane, &facet, a.value.as_deref())?,
+                    (Some(facet), false) => refine_filter(app, pane, &facet, a.value.as_deref())?,
+                    (None, true) => {
+                        let expr = pane_search(app, pane)?;
+                        let rest = lens::without_lens(&expr).unwrap_or(expr);
+                        app.navigate_as_is(pane, &Location::new(SCHEME, rest), true)?;
+                    }
+                    (None, false) => {
+                        let typed = app
+                            .workspace
+                            .read()
+                            .pane(pane)
+                            .and_then(|p| p.filter().map(str::to_owned))
+                            .unwrap_or_default();
+                        let applied = lens::applied(&typed).unwrap_or_default();
+                        let rest = lens::without_lens(&applied).unwrap_or_default();
+                        set_filter(app, pane, &rest)?;
+                    }
+                }
                 Ok(Outcome::Done)
             },
         )
@@ -997,24 +1055,10 @@ impl Plugin for QueryPlugin {
             ID, Topic::Find,
             "query.filter",
             "Filter folder",
-            "Change one facet of the words filtering the pane's folder (typed over it in the address field), as `query.refine` changes a search's; the folder stays shown",
+            "Change one facet of what filters the pane (the words typed over it in the address field, its lens), as `query.refine` changes a search's; the location stays shown",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                let typed = app
-                    .workspace
-                    .read()
-                    .pane(pane)
-                    .and_then(|p| p.filter().map(str::to_owned))
-                    .unwrap_or_default();
-                // What it applies: a part that does not read is no facet.
-                let applied = narrow::applied(&typed).unwrap_or_default();
-                let refined = facets::refine(&applied, &a.facet, a.value.as_deref())
-                    .map_err(|e| anyhow::anyhow!("query: {e}"))?;
-                let text = refined.trim();
-                app.dispatch(&Invocation::with_args(
-                    "filter",
-                    &serde_json::json!({ "text": (!text.is_empty()).then_some(text), "pane": pane }),
-                ))?;
+                refine_filter(app, pane, &a.facet, a.value.as_deref())?;
                 Ok(Outcome::Done)
             },
         )
@@ -1023,39 +1067,25 @@ impl Plugin for QueryPlugin {
             .register::<PaneOnly, _>(
                 ID, Topic::Find,
                 "query.describe_filter",
-                "Describe folder filter",
-                "`{ depth, narrowing, filter }`: what narrows the pane's folder as a search's chips (`query.describe`), each choice changing it: how deep it looks (a folder's: this folder only, or its subfolders searched, `query.below`), the narrowing's set facets (`query.narrow`), then the words typed over it, set and not (`query.filter`), no facet the narrowing sets offered again but a tag",
+                "Describe filter",
+                "`{ depth, filter }`: what filters the pane (its lens and the words typed over it, ADR-107) as a search's chips (`query.describe`), each choice changing it (`query.filter`): how deep it looks (a folder's: this folder only, or its subfolders searched, `query.below`), then each facet, set and not",
                 |a, app| {
                     let pane = app.pane_or_active(a.pane);
-                    let (typed, narrowed, folder) = {
+                    let (typed, folder) = {
                         let ws = app.workspace.read();
                         let p = ws
                             .pane(pane)
                             .ok_or_else(|| anyhow::anyhow!("no pane {}", pane.0))?;
                         (
                             p.filter().map(str::to_owned).unwrap_or_default(),
-                            p.narrowed().map(|n| n.expr.clone()),
                             p.location().is_some_and(Location::is_path),
                         )
                     };
                     let tags_known = app.commands.get("tags.list").is_some();
-                    let chips = |r, expr: &str| {
-                        facets::describe_for(r, expr, tags_known, Some(app))
-                            .map(|d| d.chips)
-                            .map_err(|e| anyhow::anyhow!("query: {e}"))
-                    };
-                    let narrowing: Vec<facets::Chip> = match narrowed {
-                        Some(expr) => chips(facets::Refines::Narrowing, &expr)?
-                            .into_iter()
-                            .filter(|c| c.value.is_some())
-                            .collect(),
-                        None => Vec::new(),
-                    };
-                    let applied = narrow::applied(&typed).unwrap_or_default();
-                    let mut filter = chips(facets::Refines::Filter, &applied)?;
-                    filter.retain(|c| {
-                        c.value.is_some() || c.id == "tag" || !narrowing.iter().any(|n| n.id == c.id)
-                    });
+                    let applied = lens::applied(&typed).unwrap_or_default();
+                    let filter = facets::describe_for(facets::Refines::Filter, &applied, tags_known, Some(app))
+                        .map(|d| d.chips)
+                        .map_err(|e| anyhow::anyhow!("query: {e}"))?;
                     // How deep the words look: a folder's alone, its
                     // subfolders searched for them (ADR-098).
                     let depth = folder.then(|| facets::Chip {
@@ -1077,10 +1107,10 @@ impl Plugin for QueryPlugin {
                         ],
                         clear: None,
                         segments: Vec::new(),
+                        lens: false,
                     });
                     Ok(Outcome::Value(serde_json::json!({
                         "depth": depth,
-                        "narrowing": narrowing,
                         "filter": filter,
                     })))
                 },
@@ -1763,9 +1793,12 @@ mod tests {
         assert_eq!(steps(), before);
     }
 
-    /// A folder narrowed shows its folders and the files the narrowing
-    /// keeps, stays narrowed below where it was set and no further, and
-    /// waits for what a file's metadata says before showing it.
+    /// A lens (ADR-107) shows a folder's folders and the files it keeps,
+    /// stays wherever the pane goes until it is taken off (below the
+    /// folder it was set in, above it, into a search, which holds it in
+    /// its terms, back out of it, a tab opened from the pane), while the
+    /// words that find names go with the folder; it waits for what a
+    /// file's metadata says before showing it, and goes with the plugin.
     // Types from the free desktops' database (step E, ADR-035).
     #[cfg(target_os = "linux")]
     #[test]
@@ -1773,7 +1806,7 @@ mod tests {
         clippy::duration_suboptimal_units,
         reason = "a time since 1970 is written as the seconds or days it is"
     )]
-    fn a_folder_narrowed_stays_so_below_it_and_no_further() {
+    fn a_lens_stays_wherever_the_pane_goes_until_taken_off() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("it's here");
         std::fs::create_dir(&root).unwrap();
@@ -1805,11 +1838,26 @@ mod tests {
                 .map(|e| e.name_str().into_owned())
                 .collect()
         };
+        let lens = |pane| {
+            let ws = app.workspace.read();
+            ws.pane(pane).unwrap().lens().map(|l| l.words.to_string())
+        };
+        let filter = || {
+            let ws = app.workspace.read();
+            ws.pane(pane).unwrap().filter().map(str::to_owned)
+        };
         let narrow = |facet: &str, value: &str| {
             app.dispatch(&Invocation::with_args(
                 "query.narrow",
                 &serde_json::json!({ "facet": facet, "value": value }),
             ))
+        };
+        let typed = |text: &str| {
+            app.dispatch(&Invocation::with_args(
+                "filter",
+                &serde_json::json!({ "text": text }),
+            ))
+            .unwrap();
         };
         // Its pills, as the address draws them: the search's chips.
         let chips = || -> Vec<serde_json::Value> {
@@ -1817,7 +1865,13 @@ mod tests {
                 .dispatch(&Invocation::new("query.describe_filter"))
                 .unwrap()
             {
-                Outcome::Value(v) => v["narrowing"].as_array().unwrap().clone(),
+                Outcome::Value(v) => v["filter"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|c| !c["value"].is_null())
+                    .cloned()
+                    .collect(),
                 _ => unreachable!(),
             }
         };
@@ -1842,18 +1896,78 @@ mod tests {
             "folders, and no file is a picture"
         );
         assert_eq!(pills(), ["Kind: Images"]);
+        assert!(chips()[0]["lens"].as_bool().unwrap(), "said to stay");
         go(&pics);
         assert_eq!(shown(), set(&["cat.png", "dog.JPG"]), "kept below");
         go(tmp.path());
-        assert!(pills().is_empty(), "let go of above where it was set");
+        assert_eq!(pills(), ["Kind: Images"], "and above where it was set");
 
+        // Words typed find names here, and go with the folder.
+        go(&pics);
+        typed("kind:image dog");
+        assert_eq!(shown(), set(&["dog.JPG"]));
+        go(&root.join("docs"));
+        assert_eq!(filter().as_deref(), Some("kind:image"), "the word went");
+        assert_eq!(shown(), set(&["deep"]));
+
+        // A search holds the lens in its terms; a folder opened from its
+        // results keeps the lens, not the search's words.
+        app.dispatch(&Invocation::with_args(
+            "query.search",
+            &serde_json::json!({ "expr": "cat", "root": PathArg::from(root.as_path()) }),
+        ))
+        .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        let searched = app.pane_location(pane).unwrap();
+        assert!(searched.rest.starts_with("cat kind:image"), "{searched}");
+        assert_eq!(lens(pane).as_deref(), Some("kind:image"));
+        assert_eq!(
+            filter(),
+            None,
+            "the search holds it, the pane filters nothing"
+        );
+        go(&pics);
+        assert_eq!(filter().as_deref(), Some("kind:image"));
+        // Searched as typed, the words say the whole lens.
+        app.dispatch(&Invocation::with_args(
+            "query.search",
+            &serde_json::json!({
+                "expr": "cat", "root": PathArg::from(root.as_path()), "as_is": true,
+            }),
+        ))
+        .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        assert_eq!(lens(pane), None, "its words had none");
+        go(&pics);
+        assert_eq!(shown(), set(&["cat.png", "dog.JPG", "list.txt"]));
+
+        // A tab opened from the pane takes its lens.
+        narrow("kind", "image").unwrap();
+        let (_, other) = app.new_tab(Some(pane), None, true).unwrap();
+        assert_eq!(lens(other).as_deref(), Some("kind:image"));
+        app.dispatch(&Invocation::with_args(
+            "tab.select",
+            &serde_json::json!({ "index": 0 }),
+        ))
+        .ok();
+
+        // What a file's metadata says is waited for.
+        app.dispatch(&Invocation::with_args(
+            "query.narrow",
+            &serde_json::json!({ "pane": pane }),
+        ))
+        .unwrap();
         go(&pics);
         app.dispatch(&Invocation::with_args(
             "select",
-            &serde_json::json!({ "names": ["list.txt"] }),
+            &serde_json::json!({ "names": ["list.txt"], "pane": pane }),
         ))
         .unwrap();
-        narrow("modified", "2001").unwrap();
+        app.dispatch(&Invocation::with_args(
+            "query.narrow",
+            &serde_json::json!({ "facet": "modified", "value": "2001", "pane": pane }),
+        ))
+        .unwrap();
         assert!(
             app.workspace
                 .read()
@@ -1885,12 +1999,18 @@ mod tests {
             app.pump();
             std::thread::sleep(Duration::from_millis(5));
         }
+        let narrow = |facet: &str, value: &str| {
+            app.dispatch(&Invocation::with_args(
+                "query.narrow",
+                &serde_json::json!({ "facet": facet, "value": value, "pane": pane }),
+            ))
+        };
         narrow("kind", "image").unwrap();
         assert_eq!(shown(), set(&["dog.JPG"]));
         assert_eq!(pills(), ["Kind: Images", "Modified: 2001"]);
         // A pill's own command takes it off.
         let remove: Invocation = serde_json::from_value(chips()[0]["clear"].clone()).unwrap();
-        app.dispatch(&remove).unwrap();
+        app.dispatch(&remove.with("pane", pane)).unwrap();
         assert_eq!(shown(), set(&["dog.JPG", "list.txt"]));
         assert!(
             narrow("content", "needle").is_err(),
@@ -1900,8 +2020,53 @@ mod tests {
             narrow("taken", "2001").is_err(),
             "so is when a picture was taken"
         );
-        app.dispatch(&Invocation::new("query.narrow")).unwrap();
+        app.dispatch(&Invocation::with_args(
+            "query.narrow",
+            &serde_json::json!({ "pane": pane }),
+        ))
+        .unwrap();
         assert_eq!(shown(), set(&["cat.png", "dog.JPG", "list.txt"]));
+        assert_eq!(lens(pane), None, "taken off");
+
+        // The lens goes with the plugin.
+        narrow("kind", "image").unwrap();
+        assert!(app.plugins.set_enabled(ID, false, &app));
+        assert_eq!((lens(pane), filter()), (None, None));
+        assert_eq!(shown(), set(&["cat.png", "dog.JPG", "list.txt"]));
+    }
+
+    /// What words typed over a folder keep is cut in two (ADR-107): a lens
+    /// of what the listing can decide of a file, kept as the pane goes on;
+    /// words that find names, and what only a search can tell, go.
+    #[test]
+    fn typed_words_split_into_a_lens_and_what_goes() {
+        let lens_of = |text: &str| {
+            lens::read_filter(text)
+                .and_then(|r| r.lens)
+                .map(|l| l.words.to_string())
+        };
+        assert_eq!(lens_of("dunes kind:image").as_deref(), Some("kind:image"));
+        assert_eq!(
+            lens_of("report ext:pdf size>1M -tag:draft").as_deref(),
+            Some("ext:pdf size>1M NOT tag:draft")
+        );
+        assert_eq!(lens_of("dunes name:x*"), None, "names alone");
+        assert_eq!(lens_of(r#"content:"water" taken:2001"#), None, "a search's");
+        // An OR of a name and a kind finds names too: it goes.
+        assert_eq!(lens_of("dunes OR kind:image"), None);
+        assert_eq!(
+            lens_of("(kind:image OR kind:video) dunes").as_deref(),
+            Some("(kind:image OR kind:video)")
+        );
+        // A search's own facet replaces the lens's; tags add up.
+        assert_eq!(
+            facets::with_lens("cat modified:2024 in:/x", "kind:image modified:2001 tag:a").unwrap(),
+            "cat kind:image modified:2024 tag:a in:/x"
+        );
+        assert_eq!(
+            lens::without_lens("cat kind:image in:/x").as_deref(),
+            Some("name:cat in:/x")
+        );
     }
 
     /// The designer's path: a chip on a folder starts a search there, each
@@ -2465,11 +2630,22 @@ mod tests {
             let p = ws.pane(pane).unwrap();
             (p.filter().map(str::to_owned), p.read_filter().is_some())
         };
+        // A lens only its reader could tell goes with it (ADR-107).
         assert_eq!(read(), (Some("kind:image".to_owned()), true));
         assert!(app.plugins.set_enabled(ID, false, &app));
-        assert_eq!(read(), (Some("kind:image".to_owned()), false));
+        assert_eq!(read(), (None, false));
         assert!(app.plugins.set_enabled(ID, true, &app));
-        assert_eq!(read(), (Some("kind:image".to_owned()), true));
+        // Words that find names are names without it, read again with it.
+        app.dispatch(&Invocation::with_args(
+            "filter",
+            &serde_json::json!({ "text": "dunes", "pane": pane }),
+        ))
+        .unwrap();
+        assert_eq!(read(), (Some("dunes".to_owned()), true));
+        assert!(app.plugins.set_enabled(ID, false, &app));
+        assert_eq!(read(), (Some("dunes".to_owned()), false));
+        assert!(app.plugins.set_enabled(ID, true, &app));
+        assert_eq!(read(), (Some("dunes".to_owned()), true));
     }
 
     /// An agent's search never looks in a private folder, however its
@@ -2510,19 +2686,5 @@ mod tests {
             &serde_json::json!({ "expr": format!("x in:{}", quoted(&keys)), "pane": pane }),
         );
         app.dispatch(&user).unwrap();
-    }
-
-    /// A part joined by an OR keeps it within its own words once another
-    /// part is added: AND binds tighter.
-    #[test]
-    fn an_or_typed_stays_within_its_words() {
-        assert_eq!(grouped("dunes OR pines"), "(dunes OR pines)");
-        assert_eq!(grouped("kind:image"), "kind:image");
-        assert_eq!(grouped(""), "");
-        let both = format!("{} {}", grouped("kind:image"), grouped("dunes OR pines"));
-        assert!(matches!(
-            lang::parse(&both).unwrap().expr,
-            Some(lang::Expr::And(_))
-        ));
     }
 }

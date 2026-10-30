@@ -1,32 +1,28 @@
-//! "Narrow by": a search of tags walked like folders. Over a pane showing
-//! a search with a tag every match has, a bar offers where it can go:
-//! the tags within each of its tags (`Places` → `France`), the other tags
-//! its files have, with how many files have each, and, once the search has
-//! ended, their kinds and years when the search does not choose them yet.
-//! A click narrows the search to it (`query.refine`: a tag within one
-//! takes its place, another is one more every match has), Alt+click leaves
-//! a tag out; Back undoes either, and the tag's pill in the address goes
-//! back up.
+//! Quick filters: a bar of what the files shown can be filtered to, each
+//! with how many files it keeps, a choice changing the pane's lens
+//! (ADR-107, the query plugin's `query.narrow`), kept as the pane shows
+//! other locations until taken off. Shown when asked for
+//! (`ui.quick_filters`, the View menu's Quick filters) over any location,
+//! and by itself over a search with a tag every match has and over a
+//! tag's place: there it walks the tags as folders are walked.
 //!
-//! Over a tag location (ADR-032) it offers the same, but the tags within
-//! its tag, which it lists as places: a choice narrows it as it says
-//! (`Verbs::narrow`, the tags plugin's `tags.narrow`), kept while its
-//! trail is walked.
+//! It offers the tags within each tag the location has (`Places` →
+//! `France`), the other tags its files have, their kinds once the listing
+//! is complete, and the years they were modified once every file's
+//! metadata is in, what the lens sets already not offered again; Alt+click
+//! leaves a tag out. Asked for, it always shows, and says why it offers
+//! nothing: the files' details still read, no file there, or every file
+//! alike. What it offers needs what each file's metadata says, so every
+//! file is asked for, as the timeline does, and a file the lens cannot
+//! tell yet waits hidden; the footer says how many are still read.
 //!
-//! Over a folder, when asked for (`ui.narrow_folders`, the View menu's
-//! Narrow by) or while it is narrowed, it offers its files' kinds, years
-//! and tags: a choice narrows the folder (`query.narrow`, a
-//! `workspace::Narrowed`), kept while the pane shows it or a folder
-//! under it. Its folders always show. What it offers needs what each
-//! file's metadata says, so every file is asked for, as the timeline
-//! does, and a file the narrowing cannot tell yet waits hidden.
-//!
-//! What it offers is counted from the search's own results, so it holds
-//! for every facet the search has: once per change of the listing, never
-//! per frame, at most every `EVERY` while the search streams. A count
-//! walks every file, so a worker does it (`count`), reading the pane a
-//! slice at a time and typing the files between the slices: the window's
-//! thread never waits for a walk.
+//! What it offers is counted from the files the location lists, so it
+//! holds for every facet: once per change of the listing, never per frame,
+//! at most every `EVERY` while it streams. A count walks every file, so a
+//! worker does it (`count`), reading the pane a slice at a time and typing
+//! the files between the slices: the window's thread never waits for a
+//! walk. The same count asks for the metadata a lens needs of the files
+//! no view draws, bar or not.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -70,6 +66,18 @@ pub struct Offer {
     pub related: Vec<Count<String>>,
     pub kinds: Vec<Count<Kind>>,
     pub years: Vec<Count<i64>>,
+    /// Nothing offered, every file known: what they all are.
+    pub alike: Option<String>,
+}
+
+impl Offer {
+    /// Whether it offers no choice.
+    pub fn is_empty(&self) -> bool {
+        self.within.is_empty()
+            && self.related.is_empty()
+            && self.kinds.is_empty()
+            && self.years.is_empty()
+    }
 }
 
 /// One file as the bar counts it.
@@ -79,20 +87,37 @@ pub struct File {
     pub year: Option<i64>,
 }
 
-/// A pane's bar: what it offers, what that was counted for, and what a
-/// choice runs: the location's own narrowing (a tag location's,
-/// `Verbs::narrow`), else the query plugin's.
+/// A pane's bar: what it offers, what that was counted for, and whether
+/// it shows.
 #[derive(Default)]
-pub struct Narrow {
+pub struct QuickFilters {
     /// What was last asked to be counted, and when.
     key: Option<Key>,
     counted: Option<Instant>,
     pub offer: Offer,
-    command: Option<skwir_core::command::Invocation>,
+    /// What the last count found of the files, for what the bar says when
+    /// it offers nothing and the footer's "Reading…".
+    pub files: Files,
+    /// The bar shows (asked for, or by itself), else the count only reads
+    /// what a lens needs.
+    shown: bool,
+    /// A count of this listing came back: what `files` says holds.
+    answered: bool,
     /// A count put off (`EVERY`), done by a wake of its own.
     recount: Option<gpui::Task<()>>,
     /// The count a worker is doing.
     asked: crate::latest::Latest<Counted>,
+}
+
+/// How many files and folders the pane shows, how many files the location
+/// lists in all (`listed`, those its filter hides too), and of those how
+/// many have no metadata yet (`unknown`): read, they may be shown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Files {
+    pub files: usize,
+    pub folders: usize,
+    pub listed: usize,
+    pub unknown: usize,
 }
 
 /// What a count is asked for, read on the window's thread.
@@ -101,9 +126,10 @@ struct Ask {
     tags: Vec<String>,
     /// The listing is complete.
     complete: bool,
-    /// A folder narrowed: its folders are not counted, and its files
-    /// without metadata are asked for.
-    folder: bool,
+    /// The pane filters what it lists (a folder, the trash, a tag's
+    /// place, not a search): its files without metadata are asked for,
+    /// those it hides too.
+    filtered: bool,
     chosen: Chosen,
 }
 
@@ -117,11 +143,12 @@ struct Chosen {
     within: bool,
 }
 
-/// What a count found: what the bar offers, and in a folder narrowed the
-/// files it cannot tell yet, which no view draws, so the bar asks for them
-/// (`hydrate`).
+/// What a count found: what the bar offers, the files and folders, and
+/// the files it cannot tell yet, which no view draws, so the bar asks for
+/// them (`hydrate`).
 struct Counted {
     offer: Offer,
+    files: Files,
     unknown: Vec<EntryId>,
 }
 
@@ -153,8 +180,10 @@ fn narrowing<T>(counts: Vec<Count<T>>, all: usize) -> Vec<Count<T>> {
 }
 
 /// What `files` (a search's results, every one with each of `tags`) can
-/// be narrowed to. A choice on every file narrows nothing and is left out.
-pub fn offer(files: &[File], tags: &[String], complete: bool) -> Offer {
+/// be filtered to: their kinds once `listed` (every name in), their years
+/// once `known` (every file's metadata in). A choice on every file
+/// filters nothing and is left out.
+pub fn offer(files: &[File], tags: &[String], listed: bool, known: bool) -> Offer {
     let all = files.len();
     let within = tags
         .iter()
@@ -193,48 +222,61 @@ pub fn offer(files: &[File], tags: &[String], complete: bool) -> Offer {
         all,
     );
     related.truncate(RELATED);
-    // Kinds and years once every file is in: a part of them says little.
-    let (kinds, years) = if complete {
-        let kinds = narrowing(ranked(files.iter().flat_map(|f| f.kinds.clone())), all);
+    // Kinds once every name is in, years once every file's metadata: a
+    // part of them says little.
+    let kinds = if listed {
+        narrowing(ranked(files.iter().flat_map(|f| f.kinds.clone())), all)
+    } else {
+        Vec::new()
+    };
+    let years = if known {
         let mut years = narrowing(ranked(files.iter().filter_map(|f| f.year)), all);
         years.sort_by_key(|c| std::cmp::Reverse(c.value));
-        (kinds, years)
+        years
     } else {
-        (Vec::new(), Vec::new())
+        Vec::new()
     };
     Offer {
         within,
         related,
         kinds,
         years,
+        alike: None,
     }
 }
 
 impl Shell {
-    /// Count again what the pane being rendered's search can be narrowed
-    /// to, when its listing changed.
-    pub(crate) fn sync_narrow(&mut self, cx: &mut Context<Self>) {
-        self.take_narrow_count();
-        // A search's tags, or what a location that narrows itself (a tag
-        // location) says its files all have.
-        let (mut tags, _) = self.ui().chips.tags();
-        let mut own = self.ui().place.verbs.narrow.clone();
-        // A folder narrows through the query plugin, when asked for or
-        // while it is narrowed.
-        let folder = self.folder_narrowing();
-        if let Some(narrowing) = &folder {
-            own = Some(narrowing.clone());
-        }
-        if let Some(own) = &own {
-            tags.clone_from(&own.tags);
-        }
-        if tags.is_empty() && own.is_none() {
-            if self.ui().narrow.key.is_some() {
-                self.ui_mut().narrow = Narrow::default();
+    /// Count again what Quick filters offer over the pane being rendered,
+    /// and what of its files its lens needs read, when its listing changed.
+    pub(crate) fn sync_quick_filters(&mut self, cx: &mut Context<Self>) {
+        self.take_quick_count();
+        let pane = self.pane;
+        let search = self.ui().place.search;
+        // A search's tags, or those a place that offers by itself (a
+        // tag's) says its files all have.
+        let own = self.ui().place.verbs.quick_filters.clone();
+        let tags = match &own {
+            Some(own) => own.tags.clone(),
+            None => self.ui().chips.tags().0,
+        };
+        let (lens_set, reads) = {
+            let ws = self.app.workspace.read();
+            let Some(p) = ws.pane(pane) else { return };
+            (
+                p.lens().map(|l| l.set.clone()).unwrap_or_default(),
+                // A lens that reads metadata, over what the pane filters:
+                // the files no view draws are asked for, bar or not.
+                !search && p.read_filter().is_some_and(|r| r.metadata),
+            )
+        };
+        let shown = self.app.commands.get("query.narrow").is_some()
+            && (self.prefs.quick_filters || !tags.is_empty() || own.is_some());
+        if !shown && !reads {
+            if self.ui().quick_filters.key.is_some() {
+                self.ui_mut().quick_filters = QuickFilters::default();
             }
             return;
         }
-        let pane = self.pane;
         let key = {
             let ws = self.app.workspace.read();
             let Some(p) = ws.pane(pane) else { return };
@@ -245,7 +287,8 @@ impl Shell {
                 p.listing.is_complete(),
             )
         };
-        if self.ui().narrow.key == Some(key) {
+        self.ui_mut().quick_filters.shown = shown;
+        if self.ui().quick_filters.key == Some(key) {
             return;
         }
         // Counted at most every `EVERY` while what it counts changes (a
@@ -253,17 +296,17 @@ impl Shell {
         // the listing): a count walks every file. The listing completing
         // counts at once; any other change put off is counted by a wake
         // of its own.
-        let ended = key.3 && self.ui().narrow.key.is_some_and(|before| !before.3);
+        let ended = key.3 && self.ui().quick_filters.key.is_some_and(|before| !before.3);
         if !ended
-            && let Some(at) = self.ui().narrow.counted
+            && let Some(at) = self.ui().quick_filters.counted
             && at.elapsed() < EVERY
         {
-            if self.ui().narrow.recount.is_none() {
+            if self.ui().quick_filters.recount.is_none() {
                 let wait = EVERY.saturating_sub(at.elapsed());
-                self.ui_mut().narrow.recount = Some(cx.spawn(async move |this, cx| {
+                self.ui_mut().quick_filters.recount = Some(cx.spawn(async move |this, cx| {
                     cx.background_executor().timer(wait).await;
                     let _ = this.update(cx, |shell, cx| {
-                        shell.ui_mut().narrow.recount = None;
+                        shell.ui_mut().quick_filters.recount = None;
                         cx.notify();
                     });
                 }));
@@ -276,17 +319,12 @@ impl Shell {
             p.location_lifetime()
         };
         let chips = &self.ui().chips;
-        let set = |facet: &str| {
-            chips.is_set(facet)
-                || own
-                    .as_ref()
-                    .is_some_and(|own| own.set.iter().any(|s| s == facet))
-        };
+        let set = |facet: &str| chips.is_set(facet) || lens_set.iter().any(|s| s == facet);
         let ask = Ask {
             pane,
             tags,
             complete: key.3,
-            folder: folder.is_some(),
+            filtered: !search,
             chosen: Chosen {
                 kinds: set("kind"),
                 years: set("modified"),
@@ -296,56 +334,62 @@ impl Shell {
         let app = Arc::clone(&self.app);
         let worker = Arc::clone(&self.app);
         let lane = self.pane_lane(pane);
-        let narrow = &mut self.ui_mut().narrow;
+        let quick = &mut self.ui_mut().quick_filters;
         // Another listing: what was offered for the one before is not its
         // own, even while its count runs.
-        if narrow.key.is_none_or(|before| before.0 != key.0) {
-            narrow.offer = Offer::default();
+        if quick.key.is_none_or(|before| before.0 != key.0) {
+            quick.offer = Offer::default();
+            quick.files = Files::default();
+            quick.answered = false;
         }
-        narrow.key = Some(key);
-        narrow.counted = Some(Instant::now());
-        narrow.command = own.map(|own| own.command);
-        narrow.recount = None;
-        narrow.asked.ask(
+        quick.key = Some(key);
+        quick.counted = Some(Instant::now());
+        quick.recount = None;
+        quick.asked.ask(
             &app,
             lane,
             &lifetime,
             skwir_core::scheduler::Priority::Visible,
-            "narrow-count",
+            "quick-filters-count",
             move |cancel| count(&worker, &ask, cancel),
         );
     }
 
     /// Take what a worker counted for the pane being rendered, and ask for
-    /// the metadata of the files a folder's narrowing cannot tell yet.
-    fn take_narrow_count(&mut self) {
-        let Some(counted) = self.ui_mut().narrow.asked.take() else {
+    /// the metadata of the files the lens cannot tell yet.
+    fn take_quick_count(&mut self) {
+        let Some(counted) = self.ui_mut().quick_filters.asked.take() else {
             return;
         };
-        self.ui_mut().narrow.offer = counted.offer;
+        let quick = &mut self.ui_mut().quick_filters;
+        quick.offer = counted.offer;
+        quick.files = counted.files;
+        quick.answered = true;
         self.request_hydrate_off_screen(counted.unknown);
     }
 }
 
-/// What the files of `ask.pane` can be narrowed to, on a worker. The pane
-/// is read `SLICE` entries at a time, each slice under a hold of the lock
-/// of its own, and what a file is (its type, its year) is worked out
+/// What the files of `ask.pane` can be filtered to, on a worker. The
+/// pane is read `SLICE` entries at a time, each slice under a hold of the
+/// lock of its own, and what a file is (its type, its year) is worked out
 /// after the slice lets the lock go. A file taken out meanwhile is left
 /// out; a count of a listing that changed is asked again.
 fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
     let mut counted = Counted {
         offer: Offer::default(),
+        files: Files::default(),
         unknown: Vec::new(),
     };
     let Some((order, held)) = app
         .workspace
         .read()
         .pane(ask.pane)
-        .map(|p| (p.order(), ask.folder.then(|| p.unfiltered_order())))
+        .map(|p| (p.order(), ask.filtered.then(|| p.unfiltered_order())))
     else {
         return counted;
     };
-    // A folder's files are complete once each has its metadata.
+    // What the pane filters is known once each of its files has its
+    // metadata, those it hides included.
     for slice in held.iter().flat_map(|held| held.chunks(SLICE)) {
         if cancel.is_cancelled() {
             return counted;
@@ -354,12 +398,19 @@ fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
         let Some(p) = ws.pane(ask.pane) else {
             return counted;
         };
-        counted.unknown.extend(slice.iter().copied().filter(|id| {
-            p.entry(*id)
-                .is_some_and(|e| !e.is_dir() && !e.is_place() && !e.metadata.is_hydrated())
-        }));
+        for e in slice.iter().filter_map(|id| p.entry(*id)) {
+            if e.is_dir() || e.is_place() {
+                continue;
+            }
+            counted.files.listed += 1;
+            if !e.metadata.is_hydrated() {
+                counted.unknown.push(e.id);
+            }
+        }
     }
-    let complete = ask.complete && counted.unknown.is_empty();
+    counted.files.unknown = counted.unknown.len();
+    let listed = ask.complete;
+    let known = listed && counted.unknown.is_empty();
     let calendar = skwir_platform::calendar::Calendar::system();
     let mut files: Vec<File> = Vec::with_capacity(order.len());
     for slice in order.chunks(SLICE) {
@@ -371,15 +422,20 @@ fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
             let Some(p) = ws.pane(ask.pane) else {
                 return counted;
             };
-            slice
+            let entries: Vec<&skwir_core::Entry> =
+                slice.iter().filter_map(|id| p.entry(*id)).collect();
+            counted.files.folders += entries
                 .iter()
-                .filter_map(|id| p.entry(*id))
-                // A place (a tag's) is no file; a folder narrowed shows
-                // its folders whatever it offers.
-                .filter(|e| !(e.is_place() || ask.folder && e.is_dir()))
+                .filter(|e| e.is_dir() && !e.is_place())
+                .count();
+            entries
+                .into_iter()
+                // A place (a tag's) is no file; a lens shows the folders
+                // whatever it keeps.
+                .filter(|e| !(e.is_place() || ask.filtered && e.is_dir()))
                 .map(|e| Read {
                     tags: crate::tags::tags_of(e),
-                    typed: complete.then(|| (e.inode_type(), e.type_name().to_owned())),
+                    typed: listed.then(|| (e.inode_type(), e.type_name().to_owned())),
                     modified: e
                         .metadata
                         .value(skwir_core::entry::keys::MODIFIED)
@@ -399,8 +455,9 @@ fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
             }
         }));
     }
-    let mut offer = offer(&files, &ask.tags, complete);
-    // What the search chooses already is not offered again.
+    counted.files.files = files.len();
+    let mut offer = offer(&files, &ask.tags, listed, known);
+    // What the search or the lens chooses already is not offered again.
     if ask.chosen.kinds {
         offer.kinds.clear();
     }
@@ -410,8 +467,45 @@ fn count(app: &App, ask: &Ask, cancel: &CancelToken) -> Counted {
     if ask.chosen.within {
         offer.within.clear();
     }
+    if offer.is_empty() && known {
+        offer.alike = alike(&files);
+    }
     counted.offer = offer;
     counted
+}
+
+/// What `files` all are, when nothing tells them apart: `all 12 files are
+/// images from 2024`, `one file (image, 2024)`.
+fn alike(files: &[File]) -> Option<String> {
+    let first = files.first()?;
+    let kind = first
+        .kinds
+        .first()
+        .copied()
+        .filter(|k| files.iter().all(|f| f.kinds.contains(k)));
+    let year = first
+        .year
+        .filter(|y| files.iter().all(|f| f.year == Some(*y)));
+    if files.len() == 1 {
+        let said: Vec<String> = kind
+            .map(|k| k.name().to_owned())
+            .into_iter()
+            .chain(year.map(|y| y.to_string()))
+            .collect();
+        return Some(if said.is_empty() {
+            "one file".to_owned()
+        } else {
+            format!("one file ({})", said.join(", "))
+        });
+    }
+    let all = format!("all {} files are", crate::format::thousands(files.len()));
+    let kind = kind.map(|k| k.title().to_lowercase());
+    Some(match (kind, year) {
+        (Some(kind), Some(year)) => format!("{all} {kind} from {year}"),
+        (Some(kind), None) => format!("{all} {kind}"),
+        (None, Some(year)) => format!("{all} from {year}"),
+        (None, None) => format!("{all} alike"),
+    })
 }
 
 /// What a count reads of a file under the lock: its type is told after.
@@ -421,46 +515,43 @@ struct Read {
     modified: Option<SystemTime>,
 }
 
-impl Shell {
-    /// How the folder the pane being rendered shows is narrowed, when it
-    /// is or the bar is asked for over folders, and the query plugin is
-    /// there to do it.
-    fn folder_narrowing(&self) -> Option<skwir_core::Narrowing> {
-        if !self.ui().place.folder || self.app.commands.get("query.narrow").is_none() {
-            return None;
+/// What the bar asked for says when it offers nothing: what it waits for,
+/// or why there is nothing to choose.
+fn why_empty(quick: &QuickFilters) -> String {
+    let files = quick.files;
+    if !quick.answered {
+        "Counting the files…".to_owned()
+    } else if files.unknown > 0 {
+        format!(
+            "Reading the details of {}…",
+            crate::format::count(files.unknown, "file")
+        )
+    } else if files.files == 0 && files.listed > 0 {
+        "Every file here is hidden by the filters".to_owned()
+    } else if files.files == 0 && files.folders > 0 {
+        "No files here, only folders".to_owned()
+    } else if files.files == 0 {
+        "No files here".to_owned()
+    } else {
+        match &quick.offer.alike {
+            Some(alike) => format!("Nothing to filter: {alike}"),
+            None => "Nothing to filter".to_owned(),
         }
-        let set = {
-            let ws = self.app.workspace.read();
-            let p = ws.pane(self.pane)?;
-            p.location()?.path()?;
-            p.narrowed().map(|n| n.set.clone())
-        };
-        (self.prefs.narrow_folders || set.is_some()).then(|| skwir_core::Narrowing {
-            command: skwir_core::command::Invocation::new("query.narrow"),
-            tags: Vec::new(),
-            set: set.unwrap_or_default(),
-        })
     }
 }
 
-/// The bar of the pane being rendered, when its search can be narrowed.
+/// The bar of the pane being rendered: asked for, it always shows, saying
+/// why it offers nothing; by itself (a search's tags, a tag's place), only
+/// with something to offer.
 pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    let offer = &shell.ui().narrow.offer;
-    if offer.within.is_empty()
-        && offer.related.is_empty()
-        && offer.kinds.is_empty()
-        && offer.years.is_empty()
-    {
+    let quick = &shell.ui().quick_filters;
+    let offer = &quick.offer;
+    if !quick.shown || (offer.is_empty() && !shell.prefs.quick_filters) {
         return None;
     }
     let theme = cx.global::<Theme>().clone();
     let pane = shell.pane;
-    let command = shell
-        .ui()
-        .narrow
-        .command
-        .clone()
-        .unwrap_or_else(|| skwir_core::command::Invocation::new("query.refine"));
+    let command = skwir_core::command::Invocation::new("query.narrow");
     let label = |text: String| {
         div()
             .flex_none()
@@ -469,7 +560,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             .child(text)
     };
     let mut row = div()
-        .id(("narrow", pane.0 as usize))
+        .id(("quick-filters", pane.0 as usize))
         .flex_none()
         .h(px(30.))
         .px_2()
@@ -503,7 +594,7 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
         div()
             // Known by what it narrows by: one taken away, the next that
             // comes under the pointer is not given its tooltip.
-            .id(crate::elements::known_by("narrow-pill", (facet, &value)))
+            .id(crate::elements::known_by("quick-filter", (facet, &value)))
             .flex_none()
             .h(px(22.))
             .px(px(8.))
@@ -596,6 +687,15 @@ pub fn render(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
             ));
         }
     }
+    if offer.is_empty() {
+        row = row.child(label(why_empty(quick)));
+    } else if quick.files.unknown > 0 {
+        // What the details still read may offer more.
+        row = row.child(label(format!(
+            "Reading the details of {}…",
+            crate::format::count(quick.files.unknown, "file")
+        )));
+    }
     Some(row.into_any_element())
 }
 
@@ -611,6 +711,29 @@ mod tests {
         }
     }
 
+    /// Nothing to offer, the bar says what every file is.
+    #[test]
+    fn files_alike_are_said_so() {
+        let images = [
+            file(&[], &[Kind::Image], 2024),
+            file(&[], &[Kind::Image], 2024),
+        ];
+        assert_eq!(
+            alike(&images).as_deref(),
+            Some("all 2 files are images from 2024")
+        );
+        assert_eq!(
+            alike(&images[..1]).as_deref(),
+            Some("one file (image, 2024)")
+        );
+        let mixed = [
+            file(&[], &[Kind::Image], 2023),
+            file(&[], &[Kind::Image], 2024),
+        ];
+        assert_eq!(alike(&mixed).as_deref(), Some("all 2 files are images"));
+        assert_eq!(alike(&[]), None);
+    }
+
     #[test]
     fn a_search_of_tags_offers_what_is_within_and_beside_them() {
         let files = [
@@ -619,7 +742,7 @@ mod tests {
             file(&["Places/Japan", "work"], &[Kind::Video], 2024),
             file(&["Places", "family"], &[Kind::Image], 2024),
         ];
-        let o = offer(&files, &["Places".into()], true);
+        let o = offer(&files, &["Places".into()], true, true);
         assert_eq!(
             o.within,
             [(
@@ -665,7 +788,7 @@ mod tests {
         );
         assert_eq!(o.years[0].value, 2024, "the latest first");
         // What every file has narrows nothing; while it streams, no kinds.
-        let o = offer(&files[..2], &["Places/France".into()], false);
+        let o = offer(&files[..2], &["Places/France".into()], false, false);
         assert!(o.related.is_empty(), "both have family");
         assert!(o.kinds.is_empty() && o.years.is_empty());
         assert_eq!(o.within[0].1.len(), 2);

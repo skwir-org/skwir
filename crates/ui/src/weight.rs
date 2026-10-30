@@ -166,9 +166,10 @@ impl Shell {
                 return;
             }
             // A folder sorted by size or date (another location is not
-            // weighed), or any narrowed.
+            // weighed), or any filtered by what the files' metadata says.
             let folder = p.location().is_some_and(|l| l.path().is_some());
-            let from_listing = p.narrowed().is_some() || folder && p.sort.key.needs_metadata();
+            let reads = p.read_filter().is_some_and(|r| r.metadata);
+            let from_listing = reads || folder && p.sort.key.needs_metadata();
             Key {
                 listing: p.listing.id(),
                 names: p.listing.names_version(),

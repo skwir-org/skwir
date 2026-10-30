@@ -66,8 +66,8 @@ pub struct PaneUi {
     pub filter_hydrated: Option<(u64, u64)>,
     /// What the files it shows weigh, for its footer (`weight.rs`).
     pub weight: crate::weight::Weight,
-    /// What its search of tags can be narrowed to.
-    pub narrow: crate::narrow::Narrow,
+    /// What Quick filters offer over what it shows.
+    pub quick_filters: crate::quick_filters::QuickFilters,
     /// The chips of the search it shows (`search_bar`).
     pub chips: crate::search_bar::Chips,
     /// What narrows the folder it shows, as the same chips (`search_bar`).
@@ -197,8 +197,8 @@ pub struct Preferences {
     pub friendly_dates: bool,
     /// `ui.grid_fill`: thumbnails cropped to their box.
     pub grid_fill: bool,
-    /// `ui.narrow_folders`: the Narrow by bar over a folder.
-    pub narrow_folders: bool,
+    /// `ui.quick_filters`: Quick filters above the files.
+    pub quick_filters: bool,
     /// `ui.single_tab`: the tab of a window that has only one is drawn.
     pub single_tab: bool,
     /// `ui.tabs_at`: the tabs are listed in the sidebar, not the strip.
@@ -235,7 +235,7 @@ impl Default for Preferences {
         Self {
             friendly_dates: true,
             grid_fill: false,
-            narrow_folders: false,
+            quick_filters: false,
             single_tab: false,
             tabs_in_sidebar: false,
             full_path: false,
@@ -983,7 +983,7 @@ impl Shell {
             omni: None,
             filter_hydrated: None,
             weight: crate::weight::Weight::default(),
-            narrow: crate::narrow::Narrow::default(),
+            quick_filters: crate::quick_filters::QuickFilters::default(),
             chips: crate::search_bar::Chips::default(),
             filters: crate::search_bar::Filters::default(),
             place: crate::trail::Shown::default(),
@@ -1553,9 +1553,9 @@ impl Shell {
             let ws = self.app.workspace.read();
             ws.pane(self.pane).and_then(|p| p.location().cloned())
         };
-        // A split shows the same folder, in the same view: showing it in
-        // another view as well would be a second surprise.
-        let id = self.app.workspace.write().add_pane();
+        // A split shows the same folder, in the same view, through the
+        // same lens (ADR-107): showing it otherwise would be a surprise.
+        let id = self.app.workspace.write().add_pane_from(self.pane);
         self.sync_tabs(window, cx);
         if let Some(loc) = here
             && let Err(e) = self.app.navigate(id, &loc)
@@ -1790,13 +1790,13 @@ impl Shell {
         crate::settings::remember(self, crate::settings::GRID_FILL_KEY, on, cx);
     }
 
-    /// `ui.narrow_folders`: the Narrow by bar over folders, a preference
+    /// `ui.quick_filters`: Quick filters above the files, a preference
     /// like Fill thumbnails.
-    fn toggle_narrow_folders(&mut self, cx: &mut Context<Self>) {
-        self.prefs.narrow_folders = !self.prefs.narrow_folders;
+    fn toggle_quick_filters(&mut self, cx: &mut Context<Self>) {
+        self.prefs.quick_filters = !self.prefs.quick_filters;
         cx.notify();
-        let on = self.prefs.narrow_folders.to_string();
-        crate::settings::remember(self, crate::settings::NARROW_FOLDERS_KEY, on, cx);
+        let on = self.prefs.quick_filters.to_string();
+        crate::settings::remember(self, crate::settings::QUICK_FILTERS_KEY, on, cx);
     }
 
     /// `ui.printed_pages`: count a book by chapters or by printed pages. A
@@ -2578,7 +2578,7 @@ impl Shell {
                 self.save_view_buttons(crate::address::ViewButtons::default(), cx);
             }
             "grid_fill" => self.toggle_grid_fill(cx),
-            "narrow_folders" => self.toggle_narrow_folders(cx),
+            "quick_filters" => self.toggle_quick_filters(cx),
             "full_width" => self.toggle_full_width(cx),
             "printed_pages" => {
                 let on = args
@@ -2940,7 +2940,7 @@ impl Shell {
             // What the window saves itself is read as it stands, a change
             // still waiting its turn included (`settings::remember`).
             self.prefs.grid_fill = self.switch(crate::settings::GRID_FILL_KEY, false);
-            self.prefs.narrow_folders = self.switch(crate::settings::NARROW_FOLDERS_KEY, false);
+            self.prefs.quick_filters = self.switch(crate::settings::QUICK_FILTERS_KEY, false);
             self.prefs.single_tab = self
                 .app
                 .settings
@@ -3250,8 +3250,8 @@ impl Shell {
             .map(|banner| crate::loading::render(banner, self, cx));
         self.sync_sort_hydration();
         self.sync_selection_hydration();
-        self.sync_narrow(cx);
-        let narrow = crate::narrow::render(self, cx);
+        self.sync_quick_filters(cx);
+        let narrow = crate::quick_filters::render(self, cx);
         let file_area = self.pane_container(body, said, cx);
         let strip = if active {
             timeline::render(self, window, cx)

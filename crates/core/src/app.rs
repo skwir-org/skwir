@@ -659,32 +659,38 @@ impl App {
 
     /// Read every pane's filter again with the filter reader there is now
     /// (`Registry::filter_readers`), its text kept: a plugin that reads
-    /// filters turned off leaves nothing of its reading in a pane, names
-    /// filtered instead, and turned on reads them (`PluginHost`).
+    /// filters turned off leaves nothing of its reading in a pane, its
+    /// lens gone (ADR-107) and names filtered instead, and turned on reads
+    /// them (`PluginHost`).
     pub(crate) fn read_filters_again(&self) {
-        let filters: Vec<(PaneId, Arc<str>)> = self
+        let filters: Vec<(PaneId, Option<Arc<str>>)> = self
             .workspace
             .read()
             .panes()
             .iter()
-            .filter_map(|p| Some((p.id, Arc::from(p.filter()?))))
+            .filter(|p| p.filter().is_some() || p.lens().is_some())
+            .map(|p| (p.id, p.filter().map(Arc::from)))
             .collect();
         if filters.is_empty() {
             return;
         }
         // Read before the workspace's lock: the reader is a plugin's.
         let reader = self.registry.filter_readers.all().into_iter().next();
-        let read: Vec<(PaneId, Arc<str>, Option<crate::workspace::ReadFilter>)> = filters
+        let read: Vec<ReadAgain> = filters
             .into_iter()
             .map(|(pane, text)| {
-                let read = reader.as_ref().and_then(|reader| (reader.0)(&text));
+                let read = text
+                    .as_deref()
+                    .zip(reader.as_ref())
+                    .and_then(|(text, reader)| (reader.0)(text));
                 (pane, text, read)
             })
             .collect();
         let mut ws = self.workspace.write();
         for (pane, text, read) in read {
             if let Some(p) = ws.pane_mut(pane)
-                && p.filter() == Some(&*text)
+                && p.filter() == text.as_deref()
+                && (text.is_some() || reader.is_none())
             {
                 p.read_filter_again(read);
             }
@@ -875,9 +881,9 @@ impl App {
 
     /// What is inside `location`, for the trail's menus: a folder's
     /// folders (hidden ones with `hidden`), after the places the
-    /// providers keep of it (`LocationProvider::places_of`: its tags,
-    /// narrowed as the trail shown has them when it goes on into them,
-    /// `along`), else the places its provider says. One answer for both,
+    /// providers keep of it (`LocationProvider::places_of`: its tags, as
+    /// the trail shown has them when it goes on into them, `along`), else
+    /// the places its provider says. One answer for both,
     /// so the menus list them one way. Reads: on a worker.
     ///
     /// # Errors
@@ -918,12 +924,39 @@ impl App {
             .unwrap_or_default())
     }
 
-    /// Open a location in a pane, replacing what it showed. Returns immediately;
-    /// entries arrive through `pump`.
+    /// Open a location in a pane, replacing what it showed, the pane's lens
+    /// brought in (ADR-107). Returns immediately; entries arrive through
+    /// `pump`.
     pub fn navigate(&self, pane: PaneId, location: &Location) -> anyhow::Result<()> {
         let location = &self.reached_in(pane, location)?;
         let left = self.cursor_of(pane);
-        self.show(pane, location, |p| p.go_on(location.clone(), left))
+        self.show(pane, location, |p, shown| p.go_on(shown.clone(), left))
+    }
+
+    /// Show `location` in `pane` as its own terms say its lens, the pane's
+    /// not brought in (ADR-107): a search whose text says the whole lens
+    /// (typed in the address field, a pill's choice). In place of the step
+    /// shown with `in_place`, as `navigate_in_place`; a location the pane
+    /// shows already is then left as it is.
+    pub fn navigate_as_is(
+        &self,
+        pane: PaneId,
+        location: &Location,
+        in_place: bool,
+    ) -> anyhow::Result<()> {
+        let location = &self.reached_in(pane, location)?;
+        if in_place {
+            if self.pane_location(pane).as_ref() == Some(location) {
+                return Ok(());
+            }
+            return self.open_in(pane, location, Opening::as_is(), |p, shown| {
+                p.replace_here(shown.clone());
+            });
+        }
+        let left = self.cursor_of(pane);
+        self.open_in(pane, location, Opening::as_is(), |p, shown| {
+            p.go_on(shown.clone(), left);
+        })
     }
 
     /// Show `location` in `pane` in place of the step it shows, with no
@@ -935,13 +968,14 @@ impl App {
         if self.pane_location(pane).as_ref() == Some(location) {
             return Ok(());
         }
-        self.show(pane, location, |p| p.replace_here(location.clone()))
+        self.show(pane, location, |p, shown| p.replace_here(shown.clone()))
     }
 
     /// Take back the step `pane` shows, as if it had never been gone to:
     /// the step before is shown again, and the one taken back and those
     /// ahead of it go (Escape in the address field after a search shown as
-    /// it was typed). Nothing at the first step.
+    /// it was typed), as it was: the lens the step brought goes with it.
+    /// Nothing at the first step.
     pub fn take_step_back(&self, pane: PaneId) -> anyhow::Result<()> {
         let (from, before) = {
             let ws = self.workspace.read();
@@ -958,7 +992,9 @@ impl App {
             return Ok(());
         };
         let left = self.cursor_of(pane);
-        self.show(pane, &location, |p| p.take_step_back(from, &location, left))
+        self.open_in(pane, &location, Opening::as_is(), |p, _| {
+            p.take_step_back(from, &location, left);
+        })
     }
 
     /// `location` as `pane` reaches it: a relative path (`./`, `../`) is
@@ -1010,7 +1046,8 @@ impl App {
         self.workspace.read().pane(pane)?.selection.cursor
     }
 
-    /// Show `location` in `pane`, then let `then` update its history. A
+    /// Show `location` in `pane`, the pane's lens brought in (ADR-107),
+    /// then let `then` update its history with the location shown. A
     /// location the pane keeps (a column of its view, the folder it just
     /// left) is adopted with its listing as it stands, kept current by its
     /// watcher, instead of listing it anew.
@@ -1018,47 +1055,76 @@ impl App {
         &self,
         pane: PaneId,
         location: &Location,
-        then: impl FnOnce(&mut crate::workspace::Pane),
+        then: impl FnOnce(&mut crate::workspace::Pane, &Location),
     ) -> anyhow::Result<()> {
-        self.open_in(pane, location, false, None, then)
+        self.open_in(pane, location, Opening::default(), then)
     }
 
     /// Open again what a dormant pane showed (its tab shown again): as
     /// `show`, but what the pane kept while it slept stays, the folders
-    /// opened in place (opened again) and its filter and narrowing.
+    /// opened in place (opened again) and its filter.
     pub(crate) fn wake_pane(
         &self,
         pane: PaneId,
         location: &Location,
-        then: impl FnOnce(&mut crate::workspace::Pane),
+        then: impl FnOnce(&mut crate::workspace::Pane, &Location),
     ) -> anyhow::Result<()> {
-        self.open_in(pane, location, true, None, then)?;
+        let waking = Opening {
+            waking: true,
+            ..Opening::default()
+        };
+        self.open_in(pane, location, waking, then)?;
         self.open_expanded(pane);
         Ok(())
     }
 
-    /// Open `location` in `pane`; with `from`, only while the pane still
-    /// shows that (a redirect, which a navigation meanwhile overrides).
+    /// `location` as it takes `pane`'s lens (ADR-107, `LocationProvider::
+    /// lensed`): a search holding it in its terms (`as_is`: its own), or
+    /// the pane filtered by it. Asked of its provider with no lock held.
+    fn lensed_in(
+        &self,
+        pane: PaneId,
+        location: &Location,
+        as_is: bool,
+    ) -> (Location, crate::workspace::Lensed) {
+        use crate::workspace::Lensed;
+        let carried = self
+            .workspace
+            .read()
+            .pane(pane)
+            .and_then(|p| p.lens().cloned());
+        let brought = if as_is { None } else { carried.as_ref() };
+        match self
+            .provider(&location.scheme)
+            .and_then(|provider| provider.lensed(location, brought))
+        {
+            Some((shown, own)) => (shown, Lensed::Holds(own)),
+            None => (location.clone(), Lensed::Filters(carried)),
+        }
+    }
+
+    /// Open `location` in `pane`, as `how` says, then let `then` update its
+    /// history with the location shown.
     fn open_in(
         &self,
         pane: PaneId,
         location: &Location,
-        waking: bool,
-        from: Option<&Location>,
-        then: impl FnOnce(&mut crate::workspace::Pane),
+        how: Opening<'_>,
+        then: impl FnOnce(&mut crate::workspace::Pane, &Location),
     ) -> anyhow::Result<()> {
+        let (location, lensed) = self.lensed_in(pane, location, how.as_is);
         // A location kept open beside the pane is shown without opening it.
-        self.agent_may_open(location)?;
+        self.agent_may_open(&location)?;
         let kept = self
             .workspace
             .write()
             .pane_mut(pane)
             .ok_or_else(|| anyhow::anyhow!("no such pane"))?
-            .take_kept(location);
+            .take_kept(&location);
         let (open, listing) = match kept {
             Some(kept) => kept,
             None => (
-                self.open_admitted(location)?,
+                self.open_admitted(&location)?,
                 crate::Listing::with_companions(Arc::clone(&self.companions)),
             ),
         };
@@ -1066,17 +1132,17 @@ impl App {
         let p = ws
             .pane_mut(pane)
             .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-        if from.is_some_and(|from| p.location() != Some(from)) {
+        if how.from.is_some_and(|from| p.location() != Some(from)) {
             drop(ws);
             open.close();
             return Ok(());
         }
-        if waking {
-            p.reopen(open, listing);
+        if how.waking {
+            p.reopen(open, listing, lensed);
         } else {
-            p.replace_open(open, listing);
+            p.replace_open(open, listing, lensed);
         }
-        then(p);
+        then(p, &location);
         drop(ws);
         self.wake();
         Ok(())
@@ -1123,8 +1189,12 @@ impl App {
         let report = self.workspace.write().pump_report();
         for redirect in &report.redirects {
             let to = &redirect.to;
-            let shown = self.open_in(redirect.pane, to, false, Some(&redirect.from), |p| {
-                p.replace_here(to.clone());
+            let redirected = Opening {
+                from: Some(&redirect.from),
+                ..Opening::default()
+            };
+            let shown = self.open_in(redirect.pane, to, redirected, |p, shown| {
+                p.replace_here(shown.clone());
             });
             if let Err(error) = shown {
                 tracing::warn!(%to, "cannot show where a location leads: {error:#}");
@@ -2066,6 +2136,36 @@ pub struct EntriesArgs {
 /// batch; one that takes longer answers `complete: false`.
 const LISTED_WITHIN: std::time::Duration = std::time::Duration::from_secs(3);
 
+/// How `App::open_in` shows a location.
+#[derive(Clone, Copy, Default)]
+struct Opening<'a> {
+    /// A dormant pane woken: what it kept while it slept stays.
+    waking: bool,
+    /// Only while the pane still shows this (a redirect, which a
+    /// navigation meanwhile overrides).
+    from: Option<&'a Location>,
+    /// The location's own terms say its lens: the pane's is not brought
+    /// in (ADR-107).
+    as_is: bool,
+}
+
+impl Opening<'_> {
+    fn as_is() -> Self {
+        Opening {
+            as_is: true,
+            ..Opening::default()
+        }
+    }
+}
+
+/// A pane's filter text, and what the filter reader there is now reads in
+/// it (`App::read_filters_again`).
+type ReadAgain = (
+    PaneId,
+    Option<Arc<str>>,
+    Option<crate::workspace::ReadFilter>,
+);
+
 /// What an undo or a redo did, for a script or an agent: the plan's
 /// title under `what`, and how its steps went.
 /// Where `id` is in `order`: at `at` when the caller said so rightly (a
@@ -2444,7 +2544,11 @@ mod builtin {
                         })
                     };
                     if let Some((pos, loc, left)) = target {
-                        app.show(pane, &loc, |p| p.go_to(pos, &loc, left))?;
+                        app.show(pane, &loc, |p, shown| {
+                            p.go_to(pos, &loc, left);
+                            // The step as shown, the lens brought in.
+                            p.replace_here(shown.clone());
+                        })?;
                     }
                     Ok(Outcome::Done)
                 },
@@ -2650,7 +2754,7 @@ mod builtin {
             "core", Topic::Find,
             "filter",
             "Filter",
-            "Show only the entries `text` keeps, until the pane shows another location: as the filter's reader reads it (the query plugin: words find names, terms the listing can decide such as kind:image or size>1M hold for files, every folder staying), else those whose name holds it (case ignored unless it has a capital); without `text`, all of them",
+            "Show only the entries `text` keeps: as the filter's reader reads it (the query plugin: words find names, terms the listing can decide such as kind:image, ext:pdf or size>1M hold for files, every folder staying), else those whose name holds it (case ignored unless it has a capital); without `text`, all of them. Its terms that hold for files are the pane's lens, kept as it shows other locations until taken off; its words go with the location",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let text = a.text.as_deref().map(str::trim).filter(|t| !t.is_empty());
@@ -3393,13 +3497,17 @@ mod tests {
         });
         let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
         let pane = app.workspace.read().active_id();
+        let from = |from| super::Opening {
+            from: Some(from),
+            ..super::Opening::default()
+        };
         app.navigate(pane, &a).unwrap();
         app.navigate(pane, &b).unwrap();
         // `a` said it is reached at `c`, as the pane went on to `b`.
-        app.open_in(pane, &c, false, Some(&a), |p| p.replace_here(c.clone()))
+        app.open_in(pane, &c, from(&a), |p, _| p.replace_here(c.clone()))
             .unwrap();
         assert_eq!(app.pane_location(pane).as_ref(), Some(&b));
-        app.open_in(pane, &c, false, Some(&b), |p| p.replace_here(c.clone()))
+        app.open_in(pane, &c, from(&b), |p, _| p.replace_here(c.clone()))
             .unwrap();
         assert_eq!(app.pane_location(pane).as_ref(), Some(&c));
         let ws = app.workspace.read();

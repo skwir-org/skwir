@@ -1297,7 +1297,7 @@ impl Plugin for TagsPlugin {
             ID, Topic::Notes,
             "tags.narrow",
             "Narrow a tag location",
-            "Show, in the tag location the pane shows, only the files that also have a tag (`facet` `also_tag`), none that have one (`not_tag`), of a `kind`, `modified` a year, or every file within the tag (`deep`); `on` false takes it back, omitted it switches",
+            "Show, in the tag location the pane shows, every file within the tag (`facet` `deep`), not only those tagged with it exactly; `on` false takes it back, omitted it switches. Other tags, kinds and years are the pane's lens (`query.narrow`)",
             |a, app| browse::narrow(app, &a),
         )
         .shows();
@@ -1599,6 +1599,7 @@ mod tests {
             shown: None,
             dir: None,
             pane: None,
+            lens: None,
         };
         let titles = |text: &str| {
             let ask = ask(text);

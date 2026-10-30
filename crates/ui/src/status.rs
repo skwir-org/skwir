@@ -123,7 +123,7 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
                 p.listing.error().map(str::to_owned),
                 shell.ui().place.search,
                 p.selection.sweeping(),
-                // Filtered by name or narrowed: how many there are in all.
+                // Filtered (its lens, words typed): how many there are in all.
                 p.is_filtered().then(|| p.listing.sorted(p.sort).len()),
                 p.listing.as_of().cloned(),
             )
@@ -156,6 +156,14 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
     let items = match listed {
         Some(bytes) => format!("{items} · {}", format::size(bytes)),
         None => items,
+    };
+    // A lens that reads what files' metadata says shows them as it comes
+    // (ADR-107): how many are still read.
+    let reading = shell.ui().quick_filters.files.unknown;
+    let items = if reading > 0 && total.is_some() {
+        format!("{items} · Reading {}…", format::count(reading, "file"))
+    } else {
+        items
     };
     // An index's answer says as of when (ADR-050): what was made, renamed
     // or removed since is not in it.

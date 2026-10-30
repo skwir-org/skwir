@@ -698,25 +698,26 @@ pub struct Pane {
     /// The order `order` last gave, what is shown: where a cursor whose
     /// entry leaves the view goes from (`Selection::retain_near`).
     shown: parking_lot::Mutex<Option<Arc<[EntryId]>>>,
-    /// What is typed in the address field before Enter searches: only
-    /// the entries it keeps are shown (`Pane::order`). The pane's like its
-    /// sort; showing another location clears it.
+    /// What is typed in the address field before Enter searches, or what
+    /// Quick filters chose: only the entries it keeps are shown
+    /// (`Pane::order`). Showing another location keeps its lens (ADR-107)
+    /// and lets go of the rest.
     filter: Option<Arc<str>>,
     /// The filter as the filter's reader read it (ADR-098), a test of
     /// what the listing knows; `None`: names that hold the text.
     read: Option<Arc<ReadFilter>>,
     /// Changes with the filter.
     filter_version: u64,
-    /// What the folder's files are narrowed to, kept below the folder it
-    /// was set in.
-    narrowed: Option<Narrowed>,
+    /// The pane's lens (ADR-107): its filter's, or the one the location
+    /// holds in its own terms (a search's).
+    lens: Option<Lens>,
     /// The agent's call that put its location in a dormant pane (a tab
     /// opened behind, `tab.new`): opened later, on the window's thread, it
     /// is opened as that call (`permissions::as_agent`), so a location
     /// that asks before it acts for an agent (a server connected) asks.
     asked_by: Option<crate::permissions::Privacy>,
     /// The filtered order, the order it filtered (by identity), the
-    /// filter's version and, while narrowed, the listings' (a file's
+    /// filter's version and, while it reads metadata, the listings' (a file's
     /// metadata arriving decides whether it is shown), and the order.
     filter_cache: parking_lot::Mutex<Option<FilterCache>>,
 }
@@ -801,48 +802,61 @@ struct Retained {
     at: Vec<(u64, u64)>,
 }
 
-/// What a folder's files are narrowed to (a locked filter): kept while
-/// the pane shows the folder it was set in or one under it
-/// (`Pane::replace_open`), let go of anywhere else. What it means is its
-/// setter's, the query plugin's `query.narrow`: the core keeps its words
-/// and asks it of each file; its pills are what the setter says of its
-/// words (`query.describe_filter`). Every folder is shown whatever it
-/// says, so what is under it can be reached.
+/// A pane's lens (ADR-107): what filters it that the listing can decide
+/// of a file (a kind, an extension, a tag, a date, a size, a rating),
+/// kept as the pane shows other locations until it is taken off (a
+/// pill's ×, Escape). A folder, the trash or a tag's place is filtered
+/// by it (`Pane::carry`); a search holds it in its own terms
+/// (`LocationProvider::lensed`). What it means is its reader's (the query
+/// plugin's): the core keeps its words and asks its test of each file.
+/// Every folder is shown whatever it says, so what is under it can be
+/// reached.
 #[derive(Clone)]
-pub struct Narrowed {
-    /// The folder it was set in.
-    pub root: PathBuf,
-    /// Its words, in its setter's language (`kind:image modified:2024`),
-    /// what a further choice changes.
-    pub expr: String,
-    /// The facets it narrows by already (`kind`, `modified`), which the
-    /// Narrow by bar does not offer again.
+pub struct Lens {
+    /// Its words, in its reader's language (`kind:image modified:2024`).
+    pub words: Arc<str>,
+    /// The facets it sets (`kind`, `modified`), which Quick filters do
+    /// not offer again.
     pub set: Vec<String>,
     /// Whether a file is shown. One it cannot tell yet (its metadata is
     /// still to come) is not, until it can.
     pub keeps: Arc<dyn Fn(&Entry) -> bool + Send + Sync>,
+    /// Whether it asks what the files' metadata says (a tag, a size): a
+    /// kind or an extension is read from the name.
+    pub metadata: bool,
 }
 
-impl std::fmt::Debug for Narrowed {
+impl std::fmt::Debug for Lens {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Narrowed")
-            .field("root", &self.root)
-            .field("expr", &self.expr)
+        f.debug_struct("Lens")
+            .field("words", &self.words)
             .finish_non_exhaustive()
     }
 }
 
-impl Narrowed {
+impl Lens {
     /// Whether `entry` is shown: a folder always is.
     pub fn shows(&self, entry: &Entry) -> bool {
         entry.is_dir() || (self.keeps)(entry)
     }
 }
 
+/// How a location takes the lens a pane brings into it
+/// (`LocationProvider::lensed`).
+#[derive(Clone, Debug)]
+pub enum Lensed {
+    /// The pane filters what it lists by the lens (a folder, the trash, a
+    /// tag's place): the lens's words are its filter.
+    Filters(Option<Lens>),
+    /// The location's own terms hold it (a search): the pane filters
+    /// nothing, and this is its lens.
+    Holds(Option<Lens>),
+}
+
 /// What words typed over a folder keep, as the filter's reader read them
 /// (ADR-098, the query plugin's): a test of what the listing knows, never
 /// of the file. A word finds names, of folders too; any other term holds
-/// for files, and every folder stays, as a narrowing keeps them.
+/// for files, and every folder stays, as a lens keeps them.
 #[derive(Clone)]
 pub struct ReadFilter {
     /// Whether an entry is shown. A file it cannot tell yet (its metadata
@@ -854,26 +868,43 @@ pub struct ReadFilter {
     /// Whether it asks what the files' metadata says: the pane asks for
     /// every file's.
     pub metadata: bool,
+    /// What of it is a lens (ADR-107), kept when the pane shows another
+    /// location; the rest (words that find names) goes.
+    pub lens: Option<Lens>,
 }
 
 impl std::fmt::Debug for ReadFilter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ReadFilter")
             .field("waits", &self.waits)
+            .field("lens", &self.lens)
             .finish_non_exhaustive()
+    }
+}
+
+impl ReadFilter {
+    /// The filter a lens is alone: what a pane brings into a location
+    /// that does not hold it.
+    pub fn of_lens(lens: Lens) -> Self {
+        let keeps = Arc::clone(&lens.keeps);
+        ReadFilter {
+            keeps: Arc::new(move |entry| entry.is_dir() || keeps(entry)),
+            waits: Vec::new(),
+            metadata: lens.metadata,
+            lens: Some(lens),
+        }
     }
 }
 
 /// Whether a pane shows an entry, by its id: listed by `listing` or one
 /// opened in place (`kept`, `expanded`), shown by its listing (hidden
-/// files, companions), and kept by the filter and the narrowing.
+/// files, companions), and kept by the filter (its lens with it).
 fn shows<'a>(
     listing: &'a Listing,
     kept: &'a [Kept],
     expanded: &'a [Opened],
     filter: Option<&'a str>,
     read: Option<&'a ReadFilter>,
-    narrowed: Option<&'a Narrowed>,
     sort: SortSpec,
 ) -> impl Fn(EntryId) -> bool + 'a {
     let filter = TextFilter::of(filter, read);
@@ -890,9 +921,7 @@ fn shows<'a>(
             )
             .find_map(|(l, shows)| l.get(id).map(|e| (e, shows(id))));
         match found {
-            Some((e, true)) => {
-                filter.as_ref().is_none_or(|f| f.keeps(e)) && narrowed.is_none_or(|n| n.shows(e))
-            }
+            Some((e, true)) => filter.as_ref().is_none_or(|f| f.keeps(e)),
             _ => false,
         }
     }
@@ -922,10 +951,9 @@ impl<'a> TextFilter<'a> {
     }
 }
 
-/// Whether the pane shows `entry`: its name holds the filter, and the
-/// narrowing keeps it.
-fn shown(filter: Option<&TextFilter>, narrowed: Option<&Narrowed>, entry: &Entry) -> bool {
-    filter.is_none_or(|f| f.keeps(entry)) && narrowed.is_none_or(|n| n.shows(entry))
+/// Whether the pane shows `entry`: the filter keeps it.
+fn shown(filter: Option<&TextFilter>, entry: &Entry) -> bool {
+    filter.is_none_or(|f| f.keeps(entry))
 }
 
 /// Whether `name` holds `filter`: anywhere in it, case ignored unless the
@@ -1001,7 +1029,7 @@ impl Pane {
             filter: None,
             read: None,
             filter_version: 0,
-            narrowed: None,
+            lens: None,
             asked_by: None,
             filter_cache: parking_lot::Mutex::new(None),
         }
@@ -1119,9 +1147,15 @@ impl Pane {
     }
 
     /// Show `open` with `listing` (a new one, or a kept one going on as it
-    /// was). The location shown before waits in `left` for the view to keep
-    /// it or let it go (`App::keep_locations`); whatever waited there goes.
-    pub(crate) fn replace_open(&mut self, open: Arc<dyn OpenLocation>, listing: Listing) {
+    /// was), and the lens as it takes it (`lensed`, ADR-107). The location
+    /// shown before waits in `left` for the view to keep it or let it go
+    /// (`App::keep_locations`); whatever waited there goes.
+    pub(crate) fn replace_open(
+        &mut self,
+        open: Arc<dyn OpenLocation>,
+        listing: Listing,
+        lensed: Lensed,
+    ) {
         self.location_lifetime.cancel();
         self.location_lifetime = CancelToken::new();
         let old_listing = std::mem::replace(&mut self.listing, listing);
@@ -1137,22 +1171,40 @@ impl Pane {
             self.expanded.clear();
             self.expanded_changed();
         }
-        self.set_filter(None, None);
-        // A narrowing stays below the folder it was set in.
-        let below = |n: &Narrowed| {
-            let open = self.location().and_then(Location::path);
-            open.is_some_and(|path| path.starts_with(&n.root))
-        };
-        if self.narrowed.as_ref().is_some_and(|n| !below(n)) {
-            self.set_narrowed(None);
+        // The words that found names go; the lens stays, as a filter or
+        // in the location's own terms.
+        self.take_lens(lensed);
+    }
+
+    /// The lens as the location shown takes it: its filter, or its own.
+    fn take_lens(&mut self, lensed: Lensed) {
+        match lensed {
+            Lensed::Filters(lens) => self.carry(lens),
+            Lensed::Holds(lens) => {
+                self.set_filter(None, None);
+                self.lens = lens;
+            }
+        }
+    }
+
+    /// Filter the pane by `lens` alone (`None`: show everything): what a
+    /// location that does not hold a lens is shown with, a tab or a split
+    /// opened from a pane with that pane's.
+    pub(crate) fn carry(&mut self, lens: Option<Lens>) {
+        match lens {
+            Some(lens) => {
+                let words = Arc::clone(&lens.words);
+                self.set_filter(Some(&words), Some(ReadFilter::of_lens(lens)));
+            }
+            None => self.set_filter(None, None),
         }
     }
 
     /// Open the location a dormant pane shows again (`suspend`): what it
     /// kept while it slept stays (the folders opened in place, which the
-    /// caller opens again, the filter, the narrowing), the selection comes
-    /// back through `set_restore`.
-    pub(crate) fn reopen(&mut self, open: Arc<dyn OpenLocation>, listing: Listing) {
+    /// caller opens again, the filter), the selection comes back through
+    /// `set_restore`; a location holding its lens (a search) holds it again.
+    pub(crate) fn reopen(&mut self, open: Arc<dyn OpenLocation>, listing: Listing, lensed: Lensed) {
         self.location_lifetime.cancel();
         self.location_lifetime = CancelToken::new();
         self.listing = listing;
@@ -1163,6 +1215,9 @@ impl Pane {
         self.restore = None;
         if !self.expanded.is_empty() {
             self.expanded_changed();
+        }
+        if let Lensed::Holds(_) = lensed {
+            self.take_lens(lensed);
         }
     }
 
@@ -1194,40 +1249,41 @@ impl Pane {
         }
         self.filter = text.map(Arc::from);
         self.read = text.and(read).map(Arc::new);
+        self.lens = self.read.as_ref().and_then(|r| r.lens.clone());
         self.filter_changed();
     }
 
     /// The filter's text read again by `read`, the reader there is now
     /// (a plugin that reads filters turned on or off): `None` filters by
-    /// names. Its text stays.
+    /// names, its text kept, unless the pane has a lens, which only its
+    /// reader could tell: then nothing is filtered, and a lens the location
+    /// held goes too.
     pub(crate) fn read_filter_again(&mut self, read: Option<ReadFilter>) {
+        if read.is_none() && self.lens.is_some() {
+            self.lens = None;
+            if self.filter.take().is_some() {
+                self.read = None;
+                self.filter_changed();
+            }
+            return;
+        }
         if self.filter.is_none() {
             return;
         }
         self.read = read.map(Arc::new);
+        self.lens = self.read.as_ref().and_then(|r| r.lens.clone());
         self.filter_changed();
     }
 
-    /// What the files are narrowed to, if anything.
-    pub fn narrowed(&self) -> Option<&Narrowed> {
-        self.narrowed.as_ref()
+    /// The pane's lens (ADR-107), if it has one: its filter's, or the one
+    /// the location shown holds (a search's terms).
+    pub fn lens(&self) -> Option<&Lens> {
+        self.lens.as_ref()
     }
 
-    /// Whether some of the entries are not shown: filtered by name or
-    /// narrowed.
+    /// Whether some of the entries are not shown: the pane is filtered.
     pub fn is_filtered(&self) -> bool {
-        self.filter.is_some() || self.narrowed.is_some()
-    }
-
-    /// Narrow the files to what `narrowed` keeps (`None`: show them all
-    /// again). What is selected and no longer shown is deselected, as the
-    /// filter does.
-    pub fn set_narrowed(&mut self, narrowed: Option<Narrowed>) {
-        if narrowed.is_none() && self.narrowed.is_none() {
-            return;
-        }
-        self.narrowed = narrowed;
-        self.filter_changed();
+        self.filter.is_some()
     }
 
     fn filter_changed(&mut self) {
@@ -1600,11 +1656,6 @@ impl Pane {
                     o.within = Some(at);
                 }
             }
-            if let Some(n) = &mut self.narrowed
-                && let Some(root) = moved_path(&n.root, &from, &to)
-            {
-                n.root = root;
-            }
         }
         self.expanded_changed();
     }
@@ -1655,7 +1706,6 @@ impl Pane {
             &self.expanded,
             self.filter.as_deref(),
             self.read.as_deref(),
-            self.narrowed.as_ref(),
             self.sort,
         );
         let hidden: crate::hashing::Set<EntryId> =
@@ -1695,7 +1745,6 @@ impl Pane {
             &self.expanded,
             self.filter.as_deref(),
             self.read.as_deref(),
-            self.narrowed.as_ref(),
             self.sort,
         );
         match shown {
@@ -1744,7 +1793,7 @@ impl Pane {
             return self.retain_shown();
         }
         let at = self.listings_at();
-        let metadata = self.narrowed.is_some() || self.read.as_ref().is_some_and(|r| r.metadata);
+        let metadata = self.read.as_ref().is_some_and(|r| r.metadata);
         if at == retained.at || !metadata {
             self.retained = Some(Retained {
                 key: retained.key,
@@ -1788,7 +1837,6 @@ impl Pane {
             &self.expanded,
             self.filter.as_deref(),
             self.read.as_deref(),
-            self.narrowed.as_ref(),
             self.sort,
         )(id)
     }
@@ -2148,8 +2196,8 @@ impl Pane {
             return all;
         }
         let filter = TextFilter::of(self.filter.as_deref(), self.read.as_deref());
-        let (filter, narrowed) = (filter.as_ref(), self.narrowed.as_ref());
-        let keeps = |e: &Entry| shown(filter, narrowed, e);
+        let filter = filter.as_ref();
+        let keeps = |e: &Entry| shown(filter, e);
         let listings: Vec<&Listing> = self.listings().collect();
         let mut cache = self.filter_cache.lock();
         if let Some(c) = cache.as_mut()
@@ -2360,6 +2408,17 @@ impl Workspace {
         self.panes.push(Pane::new(id));
         self.tabs[self.active_tab].panes.push(id);
         self.revision += 1;
+        id
+    }
+
+    /// A new pane in the tab shown with `from`'s lens (ADR-107): the
+    /// other side of a split made from it, which then shows what it shows.
+    pub fn add_pane_from(&mut self, from: PaneId) -> PaneId {
+        let lens = self.pane(from).and_then(|p| p.lens().cloned());
+        let id = self.add_pane();
+        if let Some(p) = self.pane_mut(id) {
+            p.carry(lens);
+        }
         id
     }
 
@@ -3182,6 +3241,7 @@ mod tests {
             }),
             waits: Vec::new(),
             metadata,
+            lens: None,
         }
     }
 
@@ -3230,22 +3290,22 @@ mod tests {
         assert_eq!(p.selection.len(), n as usize - 2);
     }
 
-    /// A narrowing tests again only the entries that arrived or changed
-    /// since it last made the order, and makes the order a fresh test of
-    /// every entry makes.
+    /// A lens tests again only the entries that arrived or changed since
+    /// it last made the order, and makes the order a fresh test of every
+    /// entry makes.
     #[test]
-    fn a_narrowing_tests_again_only_what_changed() {
+    fn a_lens_tests_again_only_what_changed() {
         use crate::location::ListingEvent;
         let n = 10_000;
         let (mut p, _tx) = pane_with("/", (0..n).map(file).collect());
-        p.set_narrowed(Some(Narrowed {
-            root: PathBuf::from("/"),
-            expr: "size:even".into(),
+        p.carry(Some(Lens {
+            words: "size:even".into(),
             set: Vec::new(),
             keeps: Arc::new(|e: &Entry| {
                 TESTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 size_of(e).is_some_and(|size| size % 2 == 0)
             }),
+            metadata: true,
         }));
         tested();
         assert!(p.order().is_empty(), "none known yet");

@@ -105,33 +105,45 @@ pub fn of(shell: &Shell, pane: PaneId) -> Option<Placeholder> {
         return None;
     }
     // Filtered down to nothing: say so, and the way back. Read by the
-    // query plugin, the words are more than names (ADR-098).
-    if let Some(filter) = state.filter() {
-        let title = if state.read_filter().is_some() {
-            format!("Nothing here is “{filter}”")
+    // query plugin, the words are more than names (ADR-098), and its lens
+    // stays as the pane goes elsewhere (ADR-107). A file whose details
+    // are still read may yet be shown.
+    // A location with nothing to hide says what it says empty.
+    if let Some(filter) = state
+        .filter()
+        .filter(|_| !state.unfiltered_order().is_empty())
+    {
+        let reading = shell.ui().quick_filters.files.unknown;
+        if reading > 0 {
+            return Some(Placeholder {
+                icon: "search",
+                title: format!(
+                    "Reading the details of {}…",
+                    crate::format::count(reading, "file")
+                ),
+                detail: format!("The files “{filter}” keeps show as they are read."),
+                action: Some(("Show everything", "filter")),
+                problem: false,
+            });
+        }
+        let detail = if state.lens().is_some() {
+            format!(
+                "Nothing here is “{filter}”. The filters stay as you go to other folders and searches, until you take them off in the address."
+            )
+        } else if state.read_filter().is_some() {
+            format!(
+                "Nothing here is “{filter}”. Press Enter in the address field to search the folders inside too."
+            )
         } else {
-            format!("No name here holds “{filter}”")
+            format!(
+                "No name here holds “{filter}”. Press Enter in the address field to search the folders inside too."
+            )
         };
         return Some(Placeholder {
             icon: "search",
-            title,
-            detail: "Press Enter in the address field to search the folders inside too.".to_owned(),
+            title: "Hidden by filters".to_owned(),
+            detail,
             action: Some(("Show everything", "filter")),
-            problem: false,
-        });
-    }
-    // Narrowed down to nothing (`query.narrow`): say to what, and the way
-    // back.
-    if state.narrowed().is_some() {
-        let to = &shell.ui().filters.narrowing;
-        return Some(Placeholder {
-            icon: "sliders",
-            title: "No file here is what the folder is narrowed to".to_owned(),
-            detail: format!(
-                "Narrowed to {}. Take one off in the address, or search the folders inside.",
-                to.join(", ")
-            ),
-            action: Some(("Show everything", "query.narrow")),
             problem: false,
         });
     }

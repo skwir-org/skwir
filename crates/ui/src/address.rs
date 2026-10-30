@@ -362,17 +362,18 @@ fn view_options(shell: &Shell) -> Vec<MenuPart> {
             ));
         }
     }
-    // A folder narrowed by its files' kinds, years and tags (`narrow.rs`).
-    if shell.ui().place.folder {
+    // The kinds, years and tags of the files shown, to filter by
+    // (`quick_filters.rs`), wherever the query plugin can.
+    if shell.app.commands.get("query.narrow").is_some() {
         show.push(menu_item(
             Button::new(
-                "menu-narrow-folders",
+                "menu-quick-filters",
                 "",
-                "Offer the kinds, years and tags of a folder's files above them, to show only those",
-                "ui.narrow_folders",
+                "Offer the kinds, years and tags of the files above them, each with how many files, to show only those until taken off",
+                "ui.quick_filters",
             )
-            .active(shell.prefs.narrow_folders),
-            "Narrow by",
+            .active(shell.prefs.quick_filters),
+            "Quick filters",
         ));
     }
     // Only the grid draws thumbnails in a box.

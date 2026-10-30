@@ -1,6 +1,6 @@
 //! Tags browsed as folders (ADR-032): a `tags:` location lists the tags
 //! inside its tag as places and its own files, Up walks its trail back to
-//! the folder it is of, what narrows it stays while it is walked, files
+//! the folder it is of, a lens over it stays while it is walked, files
 //! dropped on a tag are given it, and Delete takes it off them.
 // Tags kept in the files' extended attributes: Unix's (Windows keeps
 // none, ADR-027).
@@ -201,41 +201,102 @@ fn tags_are_browsed_as_folders_and_up_walks_back_to_the_folder_they_are_of() {
     );
 }
 
+/// What else narrows a tag's place than its tag and how deep it holds
+/// files (another tag, a kind) is the pane's lens (ADR-107): kept while
+/// its trail is walked and beyond it, never part of its address.
 #[test]
-fn what_narrows_a_tag_stays_while_it_is_walked() {
+fn a_lens_over_a_tag_stays_while_it_is_walked() {
     let s = setup();
     go(&s, &tag_location(&s.root, Some("Places")));
-    let narrow = |facet: &str, value: Option<&str>| {
+    let dispatch = |command: &str, args: serde_json::Value| {
         s.app
-            .dispatch(&Invocation::with_args(
-                "tags.narrow",
-                &serde_json::json!({ "facet": facet, "value": value }),
-            ))
+            .dispatch(&Invocation::with_args(command, &args))
             .unwrap();
         assert!(s.app.pump_until_complete(s.pane, Duration::from_secs(10)));
     };
-    narrow("also_tag", Some("family"));
-    assert_eq!(
-        listed(&s).0,
-        set(&[("France", 1), ("Japan", 1)]),
-        "only the family's files are counted"
+    // A tag is what a file's metadata says: every file's is read, as Quick
+    // filters ask for it.
+    let shown_files = || -> BTreeSet<String> {
+        let ids: Vec<skwir_core::EntryId> = {
+            let ws = s.app.workspace.read();
+            let p = ws.pane(s.pane).unwrap();
+            p.listing
+                .iter()
+                .filter(|e| !e.is_place() && !e.is_dir() && !e.metadata.is_hydrated())
+                .map(|e| e.id)
+                .collect()
+        };
+        if !ids.is_empty() {
+            s.app
+                .dispatch(&Invocation::with_args(
+                    "hydrate",
+                    &serde_json::json!({ "ids": ids, "pane": s.pane }),
+                ))
+                .unwrap();
+            until(&s.app, "every file's metadata", || {
+                let ws = s.app.workspace.read();
+                let p = ws.pane(s.pane).unwrap();
+                p.listing
+                    .iter()
+                    .all(|e| e.is_place() || e.is_dir() || e.metadata.is_hydrated())
+                    .then_some(())
+            });
+        }
+        let ws = s.app.workspace.read();
+        let p = ws.pane(s.pane).unwrap();
+        p.order()
+            .iter()
+            .filter_map(|id| p.entry(*id))
+            .filter(|e| !e.is_place() && !e.is_dir())
+            .map(|e| e.name_str().into_owned())
+            .collect()
+    };
+    let lens = || {
+        let ws = s.app.workspace.read();
+        ws.pane(s.pane).unwrap().lens().map(|l| l.words.to_string())
+    };
+    dispatch(
+        "query.narrow",
+        serde_json::json!({ "facet": "also_tag", "value": "family" }),
     );
+    assert_eq!(lens().as_deref(), Some("tag:family"));
     enter(&s, "France");
-    let shown = Address::parse(&shows(&s).rest);
-    assert_eq!(shown.with, ["family"], "kept while going down");
-    assert_eq!(listed(&s), (set(&[("Paris", 1)]), BTreeSet::new()));
-    narrow("deep", None);
     assert_eq!(
-        listed(&s).1,
+        shows(&s),
+        tag_location(&s.root, Some("Places/France")),
+        "the place is its tag alone"
+    );
+    assert_eq!(lens().as_deref(), Some("tag:family"), "kept going down");
+    assert!(
+        shown_files().is_empty(),
+        "France's own files: none the family's"
+    );
+    dispatch("tags.narrow", serde_json::json!({ "facet": "deep" }));
+    assert_eq!(
+        shown_files(),
         names(&["paris.jpg"]),
         "everything within France that the family has"
     );
-    narrow("also_tag", Some("family"));
-    assert_eq!(
-        listed(&s).1,
-        names(&["paris.jpg", "lyon.jpg", "france.jpg"]),
-        "its pill's × takes it away"
+    assert!(
+        s.app
+            .dispatch(&Invocation::with_args(
+                "tags.narrow",
+                &serde_json::json!({ "facet": "also_tag", "value": "work" }),
+            ))
+            .is_err(),
+        "another tag is the lens's, not the place's"
     );
+    // Off its trail too: the folder it is of.
+    go(&s, &Location::from_path(&s.root));
+    assert_eq!(shown_files(), names(&["paris.jpg", "tokyo.jpg"]));
+    // Its pill's × takes it off.
+    dispatch(
+        "query.narrow",
+        serde_json::json!({ "facet": "also_tag", "value": "family" }),
+    );
+    assert_eq!(lens(), None);
+    go(&s, &tag_location(&s.root, Some("Places/France")));
+    assert_eq!(shown_files(), names(&["france.jpg"]));
 }
 
 #[test]
@@ -372,13 +433,12 @@ fn a_folder_s_tags_are_one_step_from_it() {
     let labels: Vec<&str> = inside.iter().map(|c| c.label.as_str()).collect();
     assert_eq!(labels, ["Tags", "trips"]);
     assert_eq!(inside[0].location, tag_location(&s.root, None));
-    // Shown narrowed, the trail goes on into its tags narrowed: the menu
+    // Shown with sub-tags, the trail goes on into its tags so: the menu
     // has them so (marked, and kept when chosen).
     let narrowed = Address {
         tag: Some("Places/France".into()),
         scope: Some(s.root.clone()),
-        with: vec!["family".into()],
-        ..Address::default()
+        deep: true,
     }
     .location();
     let trail = s.app.trail(&narrowed).unwrap();

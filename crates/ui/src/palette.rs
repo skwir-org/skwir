@@ -69,11 +69,7 @@ pub const UI_COMMANDS: &[(&str, &str, &str)] = &[
         "Sidebar: show every group in its place",
     ),
     ("ui.grid_fill", "{}", "Toggle filled thumbnails"),
-    (
-        "ui.narrow_folders",
-        "{}",
-        "Toggle the Narrow by bar over folders",
-    ),
+    ("ui.quick_filters", "{}", "Toggle Quick filters"),
     ("ui.full_width", "{}", "Toggle full-width reading"),
     (
         "ui.usage_mode",

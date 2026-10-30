@@ -501,7 +501,7 @@ const SHOWS: &[&str] = &[
     "ui.view_buttons_reset",
     "ui.zoom",
     "ui.grid_fill",
-    "ui.narrow_folders",
+    "ui.quick_filters",
     "ui.peek",
     "ui.peek_close",
     "ui.usage_refresh",
@@ -1295,6 +1295,8 @@ fn declare_suggest(app: &App) {
                     shown: app.pane_location(pane),
                     dir,
                     pane: Some(pane),
+                    // The text says the lens whole, as an agent writes it.
+                    lens: None,
                 };
                 let cancel = app.lifetime().child();
                 let mut answer = skwir_core::suggest::gather(app, &ask, &cancel);
@@ -1417,9 +1419,9 @@ pub fn declare_all(app: &App) {
     );
     none(
         Topic::Find,
-        "ui.narrow_folders",
-        "Toggle the Narrow by bar over folders",
-        "Offer the Narrow by bar over folders too",
+        "ui.quick_filters",
+        "Toggle Quick filters",
+        "Show Quick filters above the files of any location: their kinds, years and tags, each with how many files, a choice filtering the pane until taken off",
     );
     none(
         Topic::Preview,

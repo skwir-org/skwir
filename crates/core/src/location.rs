@@ -404,9 +404,23 @@ pub trait LocationProvider: Send + Sync {
         false
     }
 
+    /// `location` as it takes the lens a pane brings into it (ADR-107),
+    /// asked before it is opened, from its text as `title` is: `None` (the
+    /// default) when the pane filters what it lists by the lens (a folder,
+    /// the trash, a tag's place); a location whose own terms hold one (a
+    /// search) answers itself with the lens's terms in them, and the lens
+    /// it then holds (`None`: its terms are no lens). Without `lens`, the
+    /// lens its terms hold.
+    fn lensed(
+        &self,
+        _location: &Location,
+        _lens: Option<&crate::workspace::Lens>,
+    ) -> Option<(Location, Option<crate::workspace::Lens>)> {
+        None
+    }
+
     /// The tags `location` says of every entry it lists, each of which has
-    /// them or a tag within them: a tag's place, its tag (and those it is
-    /// narrowed to: files that also have one); a search, the `tag:` terms
+    /// them or a tag within them: a tag's place, its tag; a search, the `tag:` terms
     /// every match meets. The views leave them out of each entry's tags,
     /// that tag exactly, never one within it: the place already says it.
     /// Answered from the text alone, like `title`.
@@ -634,8 +648,9 @@ pub struct Verbs {
     /// Renaming the place this location is, for its entry where it is
     /// listed (F2): run with the new name as `to`.
     pub rename: Option<Verb>,
-    /// Narrowing it, for the Narrow by bar.
-    pub narrow: Option<Narrowing>,
+    /// What Quick filters offer within it (a tag's place: the tags within
+    /// its tag), shown by themselves there.
+    pub quick_filters: Option<QuickFilters>,
     /// Copying the place this location is into a folder, for its entry
     /// dropped or pasted there: run with `dest`. A tag's makes a folder of
     /// its files there.
@@ -695,18 +710,13 @@ impl Tool {
     }
 }
 
-/// What narrowing a location runs (the Narrow by bar's choices), and what
-/// it narrows by already, which is not offered again.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Narrowing {
-    /// Run with `facet` and `value`: `also_tag` (files that also have the
-    /// tag `value`), `not_tag` (none that have it), `kind` (of that kind,
-    /// by its name), `modified` (modified that year).
-    pub command: crate::command::Invocation,
+/// What Quick filters offer within a location by itself (a tag's place):
+/// the tags every file listed has, whose tags within are offered. A choice
+/// changes the pane's lens (ADR-107), as anywhere.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct QuickFilters {
     /// The tags every file listed has.
     pub tags: Vec<String>,
-    /// The facets it narrows by already (`kind`, `modified`).
-    pub set: Vec<String>,
 }
 
 /// What to sort a listing by. Directories always come first.

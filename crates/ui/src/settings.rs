@@ -72,8 +72,8 @@ pub const UNFOLDED_KEY: &str = "ui.settings_unfolded";
 /// The views given a button beside the address, or whose button was
 /// taken away (`address::ViewButtons`): made from the buttons' own menu.
 pub const VIEW_BUTTONS_KEY: &str = "ui.view_buttons";
-/// Whether a folder has the Narrow by bar above its files (`narrow.rs`).
-pub const NARROW_FOLDERS_KEY: &str = "ui.narrow_folders";
+/// Whether Quick filters show above the files (`quick_filters.rs`).
+pub const QUICK_FILTERS_KEY: &str = "ui.quick_filters";
 /// Whether the tabs are listed for a window that has only one tab.
 pub const SINGLE_TAB_KEY: &str = "ui.single_tab";
 /// Where the tabs are listed: the strip above the files, or the sidebar
@@ -419,9 +419,9 @@ pub fn declare(app: &App) {
     );
     app.settings.declare(
         SettingSpec::toggle(
-            NARROW_FOLDERS_KEY,
-            "Narrow folders",
-            "Show the Narrow by bar above a folder's files: their kinds, the years they were modified and their tags, each with how many files, to show only those. The choice stays while you browse the folders inside. A search and a tag's folder offer it whatever this says.",
+            QUICK_FILTERS_KEY,
+            "Quick filters",
+            "Show Quick filters above the files: their kinds, the years they were modified and their tags, each with how many files, to show only those. A choice stays as you go to other folders and searches, until you take it off. A search with a tag and a tag's folder offer them whatever this says.",
             false,
         )
         .page(page::VIEWS)
@@ -879,7 +879,7 @@ static BUILTIN: [Builtin; 12] = [
         owner: None,
         title: "Folders and views",
         icon: "grid",
-        intro: "How a folder shows its files: the Narrow by bar above them, the grid, the list's columns, and the thumbnails drawn for them.",
+        intro: "How a folder shows its files: Quick filters above them, the grid, the list's columns, and the thumbnails drawn for them.",
         when_used: true,
         sections: &["Folders", "Grid", "List columns", "Thumbnails"],
     },

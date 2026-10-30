@@ -264,7 +264,14 @@ impl App {
         let wake = || {
             self.wake_pane(pane, &location, {
                 let restore = restore.clone();
-                move |p| p.set_restore(restore)
+                move |p, shown| {
+                    p.set_restore(restore);
+                    // A search shown with the lens the tab was opened with
+                    // (ADR-107) is its step as shown.
+                    if p.history.get(p.history_pos) != Some(shown) {
+                        p.replace_here(shown.clone());
+                    }
+                }
             })
         };
         let shown = match asked_by.clone() {
@@ -281,8 +288,8 @@ impl App {
     }
 
     /// A new tab showing `location`, or what `from` (the active pane when
-    /// `None`) shows, with its sort. Shown at once and put last, or opened
-    /// behind the shown tab, beside it.
+    /// `None`) shows, with its sort and its lens (ADR-107). Shown at once
+    /// and put last, or opened behind the shown tab, beside it.
     pub fn new_tab(
         &self,
         from: Option<PaneId>,
@@ -294,6 +301,7 @@ impl App {
             let from = from.unwrap_or_else(|| ws.active_id());
             let source = ws.pane(from);
             let sort = source.map(|p| p.sort).unwrap_or_default();
+            let lens = source.and_then(|p| p.lens().cloned());
             let location = match location {
                 Some(location) => location,
                 None => source
@@ -307,6 +315,9 @@ impl App {
                 ws.beside_position()
             };
             let (tab, panes) = ws.add_dormant_tab(at, vec![(location, sort)]);
+            if let Some(p) = ws.pane_mut(panes[0]) {
+                p.carry(lens);
+            }
             if !show {
                 ws.opened_beside(tab);
             }
