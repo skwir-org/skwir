@@ -158,9 +158,20 @@ fn every_plugin_disables_without_a_trace_and_re_enables() {
             "{id} left something behind after disable"
         );
         assert!(app.plugins.set_enabled(id, true, &app), "{id}: toggle on");
+        // The remotes the remote plugin knows are the machine's mounts as it
+        // finds them, any it did not make included, and other tests mount
+        // and unmount servers while this one runs: an owner with none is
+        // not listed. Re-enabled, only it may know of them; the disable
+        // above stays strict.
+        let mut again = snapshot(&app);
+        assert!(
+            again.remotes.iter().all(|owner| &**owner == id),
+            "{id}: remotes known by another owner: {:?}",
+            again.remotes
+        );
+        again.remotes.clone_from(&enabled.remotes);
         assert_eq!(
-            snapshot(&app),
-            enabled,
+            again, enabled,
             "{id} re-enable must restore its contributions"
         );
     }

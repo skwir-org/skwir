@@ -7393,8 +7393,22 @@ passed and the tests stopped at `plugins_toggle`'s
 plugin's snapshot before disabling holding no remote and after
 re-enabling one (load average near 45, the other session building),
 passing 5 times out of 5 alone. Neither failure is in what this work
-touched; the run after this entry's commit is in the night's report.
-No release-check (the user's rule of 2026-10-27).
+touched. No release-check (the user's rule of 2026-10-27).
+
+Then `plugins_toggle` failed in 3 full runs of 4 after the docs commit,
+on a quiet machine too: the remote plugin publishes every remote mount
+on the machine (`registry.remotes`), and an owner with none is not
+listed, so its snapshot changed whenever another test mounted or
+unmounted a server between the plugin's enable and its re-enable. The
+test now compares a re-enable apart from those mounts (only the plugin
+may know of them; the disable stays strict); run with the remote tests
+beside it, it passed twice. Seen once each in those runs, passing
+alone: `remote_login`'s `an_sftp_address_mounts_at_login_as_its_unit_runs_it`
+(fusermount3 "Device or resource busy", its sshfs mount left behind,
+unmounted by hand), `remote_folders`'
+`a_mount_let_go_of_elsewhere_is_disconnected_all_the_same` and the
+query plugin's `a_place_is_searched_as_it_lists_contents_and_all` (no
+file found where two were).
 
 **Not checked:** Windows and macOS (not compiled for it: `lint-all` not
 run); books made by Amazon's tools or by other FB2 writers; a book near

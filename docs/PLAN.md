@@ -288,11 +288,6 @@ leave (ADR-077).
   book made by Amazon's tools, no FB2 from another writer than calibre
   and the hand-written one, nothing near the 64 MiB text bound.
 - Windows and macOS not compiled for it (`just lint-all` not run).
-- `plugins_toggle`'s `every_plugin_disables_without_a_trace_and_re_enables`
-  failed once under load (2026-10-30): the remote plugin's snapshot held
-  no remote before it was disabled and one after it was enabled again
-  (likely taken before its remote was registered); it passed 5 times
-  out of 5 alone. Not looked into.
 
 **From the performance review (2026-10-29, ADR-104, ADR-105)**:
 - Dropped as not worth it: a folder copy walks its source three times
