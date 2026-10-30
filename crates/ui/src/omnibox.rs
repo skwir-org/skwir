@@ -125,7 +125,7 @@ pub enum Depth {
 }
 
 /// A pane's field while it is being typed in.
-#[allow(clippy::struct_excessive_bools)] // Independent states of the field: its token, its list, edited, a row chosen, a step taken.
+#[allow(clippy::struct_excessive_bools)] // Independent states of the field: its token, its list, edited, a row chosen.
 #[derive(Default)]
 pub struct Omni {
     /// How deep words look.
@@ -134,9 +134,12 @@ pub struct Omni {
     /// took the keyboard: what Escape shows again.
     before: Option<Before>,
     /// The field showed a location of its own (a search as it is typed, a
-    /// search's folder to filter): one step of the pane's history, which
-    /// it shows in place and Escape takes back.
-    stepped: bool,
+    /// search's folder to filter, a place's other depth): one step of the
+    /// pane's history, which it shows in place and Escape takes back, and
+    /// what it shows there. The step is the field's only while the pane
+    /// shows that: gone elsewhere by other means (Back, Up: keys bound
+    /// anywhere run in the field too), it is a step of the pane's.
+    step: Option<Location>,
     /// The words whose search the pane shows, shown as typed, and the
     /// scope it looks in: the same words in another scope are another
     /// search.
@@ -591,14 +594,20 @@ impl Shell {
         // A place with depths (a tag's, ADR-108), shown or searched: its
         // words filter it, as deep as it is shown, or searched within;
         // Ctrl+F (`ui.search`) over it goes with everything within it.
+        // Any other way in keeps the depth it is shown at (searched at,
+        // over a search of it).
         let depths = folder.as_ref().and_then(|l| self.app.depths(l));
-        let depth = match (how, &depths) {
-            (Begin::Search, Some(_)) if !over_search => Depth::Below,
-            (_, Some(depths)) if folder.as_ref() == Some(&depths.below) => Depth::Below,
-            (Begin::Search, None) => Depth::Below,
-            // Over a search, words are its, looking where it looks.
-            (Begin::Path | Begin::Jump, None) if over_search => Depth::Below,
-            (_, Some(_)) | (Begin::Filter | Begin::Path | Begin::Jump, None) => Depth::Here,
+        let depth = match &depths {
+            Some(depths)
+                if (how == Begin::Search && !over_search)
+                    || folder.as_ref() == Some(&depths.below) =>
+            {
+                Depth::Below
+            }
+            // Over a search, words are its, looking where it looks, but
+            // for Ctrl+Shift+F's folder alone.
+            None if how == Begin::Search || (over_search && how != Begin::Filter) => Depth::Below,
+            Some(_) | None => Depth::Here,
         };
         // A search's words over the folder alone filter it at once.
         let filters_search = how == Begin::Filter && over_search;
@@ -644,11 +653,8 @@ impl Shell {
         let given = !initial.is_empty() && !select;
         // The text holds the lens where it is the filter's or the search's
         // words; begun on a path or on nothing, the lens is kept beside it.
-        let holds_lens = match how {
-            Begin::Search | Begin::Filter => true,
-            Begin::Path => over_search,
-            Begin::Jump => false,
-        };
+        let holds_lens =
+            matches!(how, Begin::Search | Begin::Filter) || (how == Begin::Path && over_search);
         let before = {
             let ws = self.app.workspace.read();
             let p = ws.pane(pane);
@@ -682,15 +688,14 @@ impl Shell {
             input.focus(window, cx);
         });
         // A place with depths shows the one asked for, its words filtering
-        // it; over a search of it, once they are edited, or at once on
-        // Ctrl+F.
-        match self.place_depths() {
-            Some(depths) if !over_search || filters_search => {
-                self.show_depth(depth, &depths, cx);
+        // it (over a search of it, once they are edited); over a search,
+        // the folder alone shows the folder it looks in.
+        if !over_search || filters_search {
+            match self.place_depths() {
+                Some(depths) => self.show_depth(depth, &depths, cx),
+                None if filters_search => self.show_here(cx),
+                None => {}
             }
-            // Over a search, this folder only: the folder it looks in shows.
-            None if filters_search => self.show_here(window, cx),
-            Some(_) | None => {}
         }
         if given || filters_search {
             self.omnibox_changed_keep_edit(window, cx);
@@ -727,7 +732,7 @@ impl Shell {
         if let Some(depths) = self.place_depths() {
             self.show_depth(depth, &depths, cx);
         } else if depth == Depth::Here {
-            self.show_here(window, cx);
+            self.show_here(cx);
         }
         let placeholder = self.placeholder();
         let address = self.ui().address.clone();
@@ -746,109 +751,180 @@ impl Shell {
         let omni = self.ui().omni.as_ref()?;
         let depths = omni.before.as_ref()?.depths.clone()?;
         match &omni.scope {
-            None => Some(depths),
-            Some(scope) if *scope == depths.here || *scope == depths.below => Some(depths),
-            Some(_) => None,
+            Some(scope) if self.depth_of(scope, &depths).is_none() => None,
+            _ => Some(depths),
         }
     }
 
+    /// Which of a place's `depths` `location` is, however it is written:
+    /// its provider answers the location asked among its depths and the
+    /// other as it writes it (`LocationProvider::depths`), so another
+    /// spelling of the place shares one of them. `None`: another place.
+    fn depth_of(
+        &self,
+        location: &Location,
+        depths: &skwir_core::location::Depths,
+    ) -> Option<Depth> {
+        if *location == depths.here {
+            return Some(Depth::Here);
+        }
+        if *location == depths.below {
+            return Some(Depth::Below);
+        }
+        let its = self.app.depths(location)?;
+        (its.here == depths.here || its.below == depths.below).then(|| {
+            if *location == its.below {
+                Depth::Below
+            } else {
+                Depth::Here
+            }
+        })
+    }
+
+    /// Whether words filter what the pane shows, at each key: over the
+    /// folder alone, or a place with depths at either (ADR-108); else
+    /// they search below the folder.
+    pub(crate) fn filters_here(&self) -> bool {
+        self.place_depths().is_some()
+            || self
+                .ui()
+                .omni
+                .as_ref()
+                .is_none_or(|o| o.depth == Depth::Here)
+    }
+
     /// Show `depth` of a place with depths in place of the field's step,
-    /// the token naming it; back to where the field began, the step is
-    /// taken back. The words are filtered there by the caller.
+    /// the token naming it. The words are filtered there by the caller.
     fn show_depth(
         &mut self,
         depth: Depth,
         depths: &skwir_core::location::Depths,
         cx: &mut Context<Self>,
     ) {
-        let pane = self.pane;
         let target = match depth {
             Depth::Here => depths.here.clone(),
             Depth::Below => depths.below.clone(),
         };
-        let Some(omni) = self.ui_mut().omni.as_mut() else {
-            return;
-        };
-        if omni.scope.is_some() {
+        if let Some(omni) = self.ui_mut().omni.as_mut()
+            && omni.scope.is_some()
+        {
             omni.scope = Some(target.clone());
         }
-        let began = omni.before.as_ref().and_then(|b| b.location.clone());
-        let back = omni.stepped && began.as_ref() == Some(&target);
-        if self.app.pane_location(pane).as_ref() == Some(&target) {
-            return;
-        }
-        if back {
-            self.take_back(cx);
-            return;
-        }
-        self.step(cx);
-        if let Err(error) = self.app.navigate_in_place(pane, &target) {
-            tracing::warn!("address: {error:#}");
-        }
+        self.show_in_place(&target, cx);
     }
 
     /// The words look in the folder alone: it shows, the search shown as
     /// they were typed taken back, or, over a search, the folder it looks
     /// in shown in place of the field's step.
-    fn show_here(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    fn show_here(&mut self, cx: &mut Context<Self>) {
+        let folder = self
+            .ui()
+            .omni
+            .as_ref()
+            .and_then(|o| o.before.as_ref())
+            .and_then(|b| b.folder.clone());
+        if let Some(folder) = folder {
+            self.show_in_place(&folder, cx);
+        }
+    }
+
+    /// Show `target` in place of the field's own step, taken once; what
+    /// the pane showed when the field began is shown by taking that step
+    /// back. What showed as typed goes, and what waits to show.
+    fn show_in_place(&mut self, target: &Location, cx: &mut Context<Self>) {
         let pane = self.pane;
+        let own = self.own_step();
         let Some(omni) = self.ui_mut().omni.as_mut() else {
             return;
         };
         omni.pending = None;
         omni.shown = None;
-        let Some(before) = &omni.before else {
-            return;
-        };
-        let Some(folder) = before.folder.clone() else {
-            return;
-        };
-        let back = omni.stepped && before.location.as_ref() == Some(&folder);
-        if self.app.pane_location(pane).as_ref() == Some(&folder) {
+        let began = omni.before.as_ref().and_then(|b| b.location.clone());
+        if self.app.pane_location(pane).as_ref() == Some(target) {
             return;
         }
-        if back {
+        if own && began.as_ref() == Some(target) {
             self.take_back(cx);
             return;
         }
         self.step(cx);
-        if let Err(error) = self.app.navigate_in_place(pane, &folder) {
+        if let Err(error) = self.app.navigate_in_place(pane, target) {
             tracing::warn!("address: {error:#}");
         }
+        self.mark_step();
+    }
+
+    /// Whether the pane shows the field's own step: one it took, still
+    /// showing what the field put there.
+    fn own_step(&self) -> bool {
+        self.ui()
+            .omni
+            .as_ref()
+            .and_then(|o| o.step.as_ref())
+            .is_some_and(|step| self.app.pane_location(self.pane).as_ref() == Some(step))
     }
 
     /// The field takes a step of the pane's history of its own, once: what
-    /// it shows goes in its place, and Escape takes it back.
+    /// it shows goes in its place, and Escape takes it back. A step it took
+    /// that the pane left by other means is the pane's: another is taken.
     fn step(&mut self, _cx: &mut Context<Self>) {
-        let pane = self.pane;
-        let Some(omni) = self.ui_mut().omni.as_mut() else {
-            return;
-        };
-        if omni.stepped {
+        if self.own_step() {
             return;
         }
-        omni.stepped = true;
+        let pane = self.pane;
         if let Err(error) = self.app.step_here(pane) {
             tracing::warn!("address: {error:#}");
         }
+        self.mark_step();
     }
 
-    /// The field's step taken back: the pane shows what it showed when the
-    /// field took the keyboard; its filter is put back by the caller.
+    /// What the pane shows now is the field's step (shown in place of it).
+    fn mark_step(&mut self) {
+        let shown = self.app.pane_location(self.pane);
+        if let Some(omni) = self.ui_mut().omni.as_mut() {
+            omni.step = shown;
+        }
+    }
+
+    /// The field's own step taken back: the pane shows what it showed when
+    /// the field took the keyboard; its filter is put back by the caller
+    /// (`put_back`). A step the pane left by other means stays its own.
     fn take_back(&mut self, cx: &mut Context<Self>) {
         let pane = self.pane;
+        let own = self.own_step();
         let Some(omni) = self.ui_mut().omni.as_mut() else {
             return;
         };
         omni.pending = None;
         omni.shown = None;
-        if !std::mem::take(&mut omni.stepped) {
+        if omni.step.take().is_none() || !own {
             return;
         }
         if let Err(error) = self.app.take_step_back(pane) {
             tracing::warn!("address: {error:#}");
         }
         cx.notify();
+    }
+
+    /// Put back the filter the pane had when the field began (`before`),
+    /// where it shows what it showed then (the field's step taken back
+    /// first): a pane gone elsewhere by other means keeps its own. A field
+    /// that knew nothing of before lets go of what was typed.
+    fn put_back(&mut self, before: Option<(Option<String>, Option<Location>)>) {
+        match before {
+            Some((filter, began)) => {
+                if self.app.pane_location(self.pane) == began {
+                    self.set_filter(filter.as_deref());
+                }
+            }
+            None => self.set_filter(None),
+        }
+    }
+
+    /// The filter the pane had when the field began, and what it showed.
+    fn before_filter(&self) -> Option<(Option<String>, Option<Location>)> {
+        let before = self.ui().omni.as_ref()?.before.as_ref()?;
+        Some((before.filter.clone(), before.location.clone()))
     }
 
     /// Words looking below the folder: what they find is shown once the
@@ -859,13 +935,14 @@ impl Shell {
         // What the pane shows now: shown another way since (a place
         // clicked, Back), it is not the field's to replace.
         let shown = self.app.pane_location(pane);
-        // A place with depths shows them filtered, never a search as typed.
-        let depths = self.place_depths().is_some();
+        // Words filtering what is shown (a place with depths at either)
+        // never search as typed.
+        let filters = self.filters_here();
         let Some(omni) = self.ui_mut().omni.as_mut() else {
             return;
         };
         omni.pending = None;
-        if omni.depth != Depth::Below || depths {
+        if filters {
             return;
         }
         let task = cx.spawn_in(window, async move |this, cx| {
@@ -893,8 +970,9 @@ impl Shell {
     /// in place of the field's step. Words whose search waits for Enter
     /// leave the pane as it is; no words, what it showed before.
     fn show_live(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        // A place with depths shows them filtered (ADR-108).
-        if self.place_depths().is_some() {
+        // Words filtering what is shown (a place with depths at either,
+        // ADR-108) show no search.
+        if self.filters_here() {
             return;
         }
         let raw = self.omni_text(cx);
@@ -910,7 +988,7 @@ impl Shell {
         };
         omni.pending = None;
         let searched = (words, omni.scope.clone());
-        if omni.depth != Depth::Below || omni.shown.as_ref() == Some(&searched) {
+        if omni.shown.as_ref() == Some(&searched) {
             return;
         }
         if searched.0.is_empty() || typed != Typed::Words {
@@ -928,6 +1006,7 @@ impl Shell {
         // Dispatched directly, as the filter is: what is typed is not traced.
         match self.app.dispatch(&live) {
             Ok(_) => {
+                self.mark_step();
                 if let Some(omni) = self.ui_mut().omni.as_mut() {
                     omni.shown = Some(searched);
                 }
@@ -958,24 +1037,17 @@ impl Shell {
 
     /// What the empty field says: where words search, or what it takes.
     fn placeholder(&self) -> String {
-        let omni = self.ui().omni.as_ref();
-        // A place with depths is filtered at both (ADR-108).
-        let depths = self.place_depths().is_some();
-        match omni.and_then(|o| o.scope.as_ref().map(|s| (s, o.depth))) {
-            Some((scope, _)) if depths => {
+        let here = self.filters_here();
+        match self.ui().omni.as_ref().and_then(|o| o.scope.as_ref()) {
+            Some(scope) if here => {
                 format!("Filter {}, or type a path", scope_name(&self.app, scope))
             }
-            Some((scope, Depth::Here)) => {
-                format!("Filter {}, or type a path", scope_name(&self.app, scope))
-            }
-            Some((scope, Depth::Below)) => format!(
+            Some(scope) => format!(
                 "Search {} and below, or type a path",
                 scope_name(&self.app, scope)
             ),
-            None if !depths && omni.is_some_and(|o| o.depth == Depth::Below) => {
-                "A path, a place, or words to search".to_owned()
-            }
-            None => "A path, a place, or words to filter".to_owned(),
+            None if here => "A path, a place, or words to filter".to_owned(),
+            None => "A path, a place, or words to search".to_owned(),
         }
     }
 
@@ -1007,6 +1079,16 @@ impl Shell {
     /// are asked again.
     fn scope_changed(&mut self, clear: bool, window: &mut Window, cx: &mut Context<Self>) {
         let typed = !clear && !self.omni_text(cx).trim().is_empty();
+        // A place with depths (ADR-108), its own or none: the depth it is,
+        // or the one shown, as the other ways in keep it.
+        let depths = self.place_depths();
+        let at = self
+            .ui()
+            .omni
+            .as_ref()
+            .and_then(|o| o.scope.as_ref())
+            .zip(depths.as_ref())
+            .and_then(|(scope, depths)| self.depth_of(scope, depths));
         // Another place than the one words filter is searched; no scope,
         // words filter the folder shown.
         if let Some(omni) = self.ui_mut().omni.as_mut() {
@@ -1015,18 +1097,17 @@ impl Shell {
             omni.edited |= typed;
             let folder = omni.before.as_ref().and_then(|b| b.folder.clone());
             omni.depth = match &omni.scope {
+                _ if depths.is_some() => at.unwrap_or(omni.depth),
                 None => Depth::Here,
                 Some(scope) if Some(scope) != folder.as_ref() => Depth::Below,
                 Some(_) => omni.depth,
             };
         }
-        if self
-            .ui()
-            .omni
-            .as_ref()
-            .is_some_and(|o| o.depth == Depth::Here)
-        {
-            self.show_here(window, cx);
+        let depth = self.ui().omni.as_ref().map_or(Depth::Here, |o| o.depth);
+        match depths {
+            Some(depths) => self.show_depth(depth, &depths, cx),
+            None if depth == Depth::Here => self.show_here(cx),
+            None => {}
         }
         let placeholder = self.placeholder();
         let address = self.ui().address.clone();
@@ -1115,13 +1196,7 @@ impl Shell {
         if !filters {
             return;
         }
-        // A place with depths is filtered at both (ADR-108).
-        let here = self.place_depths().is_some()
-            || self
-                .ui()
-                .omni
-                .as_ref()
-                .is_none_or(|o| o.depth == Depth::Here);
+        let here = self.filters_here();
         // The lens kept beside the words, they after it (ADR-107).
         let kept = self.omni_kept().unwrap_or_default();
         let text = format!("{kept} {words}");
@@ -1769,13 +1844,11 @@ impl Shell {
     ) {
         let raw = self.omni_text(cx);
         let text = raw.trim().to_owned();
-        let (edited, highlighted, depth, scoped) = self
-            .ui()
-            .omni
-            .as_ref()
-            .map_or((false, None, Depth::Here, false), |o| {
-                (o.edited, o.highlighted, o.depth, o.scope.is_some())
+        let (edited, highlighted, scoped) =
+            self.ui().omni.as_ref().map_or((false, None, false), |o| {
+                (o.edited, o.highlighted, o.scope.is_some())
             });
+        let here = self.filters_here();
         let typed = self.typed_of(&raw, edited);
         let on_run = highlighted
             .and_then(|i| self.suggestions().get(i))
@@ -1791,7 +1864,7 @@ impl Shell {
                 if self.filter_waits() {
                     return self.search_place(&raw, &depths, window, cx);
                 }
-            } else if depth == Depth::Below && !self.keep_search(&raw, window, cx) {
+            } else if !here && !self.keep_search(&raw, window, cx) {
                 return;
             }
             self.omnibox_end(cx);
@@ -1827,11 +1900,11 @@ impl Shell {
                 let clear = typed == Typed::Scope;
                 return self.scope_changed(clear, window, cx);
             }
-            // Over the folder alone, a term completed or the words read as
-            // terms filter it: Enter writes them, as Tab does.
+            // Words filtering what is shown, a term completed or the words
+            // read as terms filter it: Enter writes them, as Tab does.
             Some(Row::Source(s))
                 if s.run.is_none()
-                    || (depth == Depth::Here
+                    || (here
                         && matches!(s.section, Section::Complete | Section::Reading)
                         && s.completion.is_some()) =>
             {
@@ -1850,12 +1923,8 @@ impl Shell {
         let named = complete::is_path(&text)
             .then(|| self.typed_folder(raw.trim_start()))
             .flatten();
-        let filter = self
-            .ui()
-            .omni
-            .as_ref()
-            .and_then(|o| o.before.as_ref())
-            .and_then(|b| b.filter.clone());
+        let before = self.before_filter();
+        let kept = self.omni_kept();
         // A row goes from what the pane showed: the search shown as typed
         // was the field's, never a step of its own.
         self.take_back(cx);
@@ -1863,10 +1932,12 @@ impl Shell {
         window.focus(&self.ui().focus, cx);
         match chosen {
             // Nothing typed, nothing chosen: what the text says, the
-            // location shown again. A row offered before anything is typed
-            // (a place one goes to, a tab, a recent search) runs below.
+            // location shown again, with the lens kept beside the text when
+            // it began without it (ADR-107: Ctrl+J, Ctrl+L). A row offered
+            // before anything is typed (a place one goes to, a tab, a
+            // recent search) runs below.
             None | Some(Row::Go) if text.is_empty() => {
-                self.set_filter(None);
+                self.set_filter(kept.as_deref());
                 let shown = self.ui().address_shown.clone();
                 let address = self.ui().address.clone();
                 address.update(cx, |input, cx| input.set_text(shown, cx));
@@ -1928,7 +1999,7 @@ impl Shell {
                 // It runs over the pane as it was, filtered as it was (as
                 // Escape puts it back): the words typed were the field's.
                 // A row that goes elsewhere leaves the filter behind.
-                self.set_filter(filter.as_deref());
+                self.put_back(before);
                 if let Some(run) = run {
                     self.run(&run.name, run.args, window, cx);
                 }
@@ -1962,7 +2033,7 @@ impl Shell {
         let shown = self
             .app
             .pane_location(self.pane)
-            .filter(|l| *l == depths.here || *l == depths.below);
+            .filter(|l| self.depth_of(l, depths).is_some());
         if let (Some(omni), Some(shown)) = (self.ui_mut().omni.as_mut(), shown) {
             omni.scope = Some(shown);
         }
@@ -1974,16 +2045,11 @@ impl Shell {
             self.set_status(row.title.clone(), true, cx);
             return;
         };
-        let filter = self
-            .ui()
-            .omni
-            .as_ref()
-            .and_then(|o| o.before.as_ref())
-            .and_then(|b| b.filter.clone());
+        let before = self.before_filter();
         self.take_back(cx);
         self.omnibox_end(cx);
         window.focus(&self.ui().focus, cx);
-        self.set_filter(filter.as_deref());
+        self.put_back(before);
         self.run(&run.name, run.args, window, cx);
         cx.notify();
     }
@@ -2019,8 +2085,9 @@ impl Shell {
             match row.live {
                 Some(live) => {
                     self.step(cx);
-                    if let Err(error) = self.app.dispatch(&live) {
-                        tracing::warn!("{}: {error:#}", live.name);
+                    match self.app.dispatch(&live) {
+                        Ok(_) => self.mark_step(),
+                        Err(error) => tracing::warn!("{}: {error:#}", live.name),
                     }
                 }
                 // It goes from what the pane showed.
@@ -2194,9 +2261,20 @@ impl Shell {
         let Some(ui) = self.pane_ui_mut(pane) else {
             return;
         };
-        if ui.omni.take().is_none() {
+        if ui.omni.is_none() {
             return;
         }
+        // Nothing typed shows nothing of its own: the field's step (a
+        // place's other depth Ctrl+F showed) is taken back, as Enter takes
+        // it back.
+        let nothing = ui.address.read(cx).text().trim().is_empty();
+        if nothing {
+            self.with_pane(pane, |shell| shell.take_back(cx));
+        }
+        let Some(ui) = self.pane_ui_mut(pane) else {
+            return;
+        };
+        ui.omni = None;
         let (address, shown) = (ui.address.clone(), ui.address_shown.clone());
         address.update(cx, |input, cx| {
             input.set_hint(None, cx);
@@ -2219,15 +2297,10 @@ impl Shell {
             self.refresh_rows(cx);
             return;
         }
-        let filter = self
-            .ui()
-            .omni
-            .as_ref()
-            .and_then(|o| o.before.as_ref())
-            .and_then(|b| b.filter.clone());
+        let before = self.before_filter();
         self.take_back(cx);
         self.omnibox_end(cx);
-        self.set_filter(filter.as_deref());
+        self.put_back(before);
         let shown = self.ui().address_shown.clone();
         let address = self.ui().address.clone();
         address.update(cx, |input, cx| input.set_text(shown, cx));
@@ -2298,13 +2371,15 @@ impl Shell {
         let typed = self.typed_of(text, omni.edited);
         let scope = omni.scope.clone();
         // The search Enter runs with words is no row while they show what
-        // they keep as typed: over the folder alone, or below it as typed.
-        // It is one while it waits for Enter, or cannot run.
+        // they keep as typed: filtering what is shown, or below it as typed.
+        // It is one while it waits for Enter (a place with depths searched
+        // for what only a search tells), or cannot run.
+        let here = self.filters_here() && !(self.place_depths().is_some() && self.filter_waits());
         let quiet = |r: &Suggestion| {
             typed == Typed::Words
                 && r.section == Section::Run
                 && !r.error
-                && (omni.depth == Depth::Here || r.live.is_some())
+                && (here || r.live.is_some())
         };
         // Each source's rows, until its answer to this text comes: a key
         // never takes rows away before the next answer, so the card neither
@@ -2685,7 +2760,7 @@ pub fn scope_token(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement>
     // How deep words look: a funnel over the folder alone, or a place
     // filtered at both its depths (ADR-108), a magnifier below a folder; a
     // place searched as it lists wears its own glyph.
-    let filters = omni.depth == Depth::Here || shell.place_depths().is_some();
+    let filters = shell.filters_here();
     let glyph = if filters {
         "filter"
     } else if scope.path().is_some() {
@@ -2857,7 +2932,7 @@ fn footer(shell: &Shell, typed: Typed, listing_scopes: bool) -> String {
     // A place with depths is filtered at both (ADR-108); Enter searches it
     // for what only a search can tell.
     let depths = shell.place_depths().is_some();
-    let here = depths || omni.is_none_or(|o| o.depth == Depth::Here);
+    let here = shell.filters_here();
     let key = |command: &str, args: serde_json::Value, does: &str| {
         shell
             .keys_for(command, &args)
@@ -2976,7 +3051,7 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
         .shown
         .as_ref()
         .is_some_and(|(shown, scope)| shown == words && *scope == omni.scope);
-    let say = if depths.is_some() || omni.depth == Depth::Here {
+    let say = if shell.filters_here() {
         let ws = shell.app.workspace.read();
         ws.pane(pane).filter(|p| p.filter().is_some()).map(|p| {
             format!(

@@ -1189,7 +1189,9 @@ impl LocationProvider for Provider {
     /// A tag's place holds the files tagged with it exactly and the tags
     /// within it; with its sub-tags (`deep`, Include Sub-Tags), every file
     /// within it too: the address field's two depths (ADR-108). The top
-    /// holds the tags; with them, every tagged file.
+    /// holds the tags; with them, every tagged file. The location asked is
+    /// one of them as it is written (`/Places/France/` too), the other as
+    /// an address writes it: another spelling of the place shares one.
     fn depths(&self, location: &Location) -> Option<skwir_core::location::Depths> {
         let address = Address::parse(&location.rest);
         let (here_label, below_label) = if address.tag.is_some() {
@@ -1197,17 +1199,19 @@ impl LocationProvider for Provider {
         } else {
             ("These tags", "Every tagged file")
         };
+        let other = Address {
+            deep: !address.deep,
+            ..address.clone()
+        }
+        .location();
+        let (here, below) = if address.deep {
+            (other, location.clone())
+        } else {
+            (location.clone(), other)
+        };
         Some(skwir_core::location::Depths {
-            here: Address {
-                deep: false,
-                ..address.clone()
-            }
-            .location(),
-            below: Address {
-                deep: true,
-                ..address
-            }
-            .location(),
+            here,
+            below,
             here_label: here_label.to_owned(),
             below_label: below_label.to_owned(),
         })

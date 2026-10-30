@@ -209,8 +209,14 @@ fn a_tag_s_place_has_two_depths_and_is_searched_as_it_is_shown() {
             skwir_plugin_query::lang::quote(&place.to_string())
         )
     };
-    assert_eq!(searched(&france, Some(&france)), within(&france));
+    // As it is shown only where the pane is known to list files of its
+    // own there (`tags_location.rs`); no pane said, everything within it.
+    assert_eq!(searched(&france, Some(&france)), within(&deep));
     assert_eq!(searched(&deep, Some(&deep)), within(&deep));
+    // Another spelling of the place is one of its depths as it is written.
+    let spelled = Location::new("tags", format!("{}/", france.rest));
+    let other = app.depths(&spelled).expect("depths");
+    assert_eq!((other.here, other.below), (spelled, deep.clone()));
     assert_eq!(
         searched(&france, Some(&Location::parse("recent:"))),
         within(&deep),

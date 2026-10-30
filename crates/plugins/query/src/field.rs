@@ -71,25 +71,55 @@ fn scope_of(ask: &Ask) -> Option<Location> {
         .or_else(|| skwir_core::os_path::home().map(Location::from_path))
 }
 
-/// What a scope is called in a row.
-fn scope_said(app: &App, scope: &Location) -> String {
+/// What a scope is called in a row: a place with depths searched with
+/// everything within it says so (`searched_place`).
+fn scope_said(app: &App, scope: &Location, ask: &Ask) -> String {
     match scope.path() {
         Some(path) if path.parent().is_none() => "on the whole disk".to_owned(),
         Some(path) if Some(&path) == skwir_core::os_path::home().as_ref() => {
             "everywhere in Home".to_owned()
         }
         Some(_) => format!("in {} and its folders", app.location_title(scope)),
+        None if searched_place(app, scope, ask).is_some_and(|(_, within)| within) => {
+            format!("among every file within {}", app.location_title(scope))
+        }
         None => format!("among the files in {}", app.location_title(scope)),
     }
 }
 
+/// The place a place with depths (a tag's, ADR-108) is searched as, and
+/// whether that is with everything within it: as the pane shows it, if
+/// what it lists there holds files of its own; else (the top of the tags,
+/// a tag holding only sub-tags) and from elsewhere, with everything within
+/// it. What the pane lists says it, never the place's scheme. `None`: no
+/// place with depths.
+fn searched_place(app: &App, scope: &Location, ask: &Ask) -> Option<(Location, bool)> {
+    let depths = app.depths(scope)?;
+    let shown = ask.shown.as_ref() == Some(scope) && lists_files(app, ask.pane);
+    let place = if shown {
+        scope.clone()
+    } else {
+        depths.below.clone()
+    };
+    let within = place == depths.below;
+    Some((place, within))
+}
+
+/// Whether `pane` lists an entry of its own, not a place within it (a
+/// file, a folder tagged): the first one found says it.
+fn lists_files(app: &App, pane: Option<skwir_core::workspace::PaneId>) -> bool {
+    pane.is_some_and(|pane| {
+        app.workspace
+            .read()
+            .pane(pane)
+            .is_some_and(|p| p.listing.iter().any(|e| !e.is_place()))
+    })
+}
+
 /// The search of `expr` in `scope`, as the field runs it: a folder is its
-/// root; a place with depths (a tag's, ADR-108) is searched as what it
-/// lists, as the pane shows it or, from elsewhere, with everything within
-/// it; a place of tags without (`LocationProvider::tags_shown`) adds each
-/// tag it says of all it lists as a term every match has, searched from
-/// the folder it is of, else home; any other place (Recent) is searched as
-/// what it lists (`in:recent:`).
+/// root; a place is searched as what it lists (`in:recent:`), one with
+/// depths (a tag's, ADR-108) as the pane shows it or with everything
+/// within it (`searched_place`).
 ///
 /// It says its lens whole (`as_is`, ADR-107): the words typed, after the
 /// pane's lens kept when the field began without it (`Ask::lens`).
@@ -102,72 +132,30 @@ pub fn search(app: &App, expr: &str, scope: &Location, ask: &Ask) -> Invocation 
         }
         _ => expr,
     };
-    let (expr, root) = if let Some(path) = scope.path() {
-        (expr.to_owned(), Some(path))
-    } else {
-        // A place with depths (a tag's, ADR-108) is searched as what it
-        // lists, keeping its trail: as the pane shows it (its sub-tags or
-        // not), else with everything within it.
-        if let Some(depths) = app.depths(scope) {
-            let place = if ask.shown.as_ref() == Some(scope) {
-                scope.clone()
-            } else {
-                depths.below
-            };
-            let expr = format!("{expr} in:{}", lang::quote(&place.to_string()));
-            return Invocation::with_args(
-                "query.search",
-                &serde_json::json!({
-                    "expr": expr.trim(),
-                    "pane": ask.pane,
-                    "remember": true,
-                    "as_is": true,
-                }),
-            );
-        }
-        let Some((tags, base)) = tagged(app, scope) else {
-            let expr = format!("{expr} in:{}", lang::quote(&scope.to_string()));
-            return Invocation::with_args(
-                "query.search",
-                &serde_json::json!({
-                    "expr": expr.trim(),
-                    "pane": ask.pane,
-                    "remember": true,
-                    "as_is": true,
-                }),
-            );
-        };
-        let terms: Vec<String> = tags
-            .iter()
-            .map(|tag| format!("tag:{}", lang::quote(tag)))
-            .collect();
-        (
-            format!("{} {expr}", terms.join(" ")).trim().to_owned(),
-            base.or_else(skwir_core::os_path::home),
-        )
-    };
+    if let Some(path) = scope.path() {
+        return Invocation::with_args(
+            "query.search",
+            &serde_json::json!({
+                "expr": expr,
+                "root": PathArg::from(path),
+                "pane": ask.pane,
+                "remember": true,
+                "as_is": true,
+            }),
+        );
+    }
+    // A place keeps its trail, searched as what it lists.
+    let place = searched_place(app, scope, ask).map_or_else(|| scope.clone(), |(place, _)| place);
+    let expr = format!("{expr} in:{}", lang::quote(&place.to_string()));
     Invocation::with_args(
         "query.search",
         &serde_json::json!({
-            "expr": expr,
-            "root": root.as_deref().map(PathArg::from),
+            "expr": expr.trim(),
             "pane": ask.pane,
             "remember": true,
             "as_is": true,
         }),
     )
-}
-
-/// The tags `scope` says of everything it lists, as its provider says
-/// them (a tag's place: its tag and those it is narrowed to), and the
-/// folder it is of (`Trail::base`); `None` for a place that says none.
-fn tagged(app: &App, scope: &Location) -> Option<(Vec<String>, Option<PathBuf>)> {
-    let provider = app.provider(&scope.scheme)?;
-    if provider.searches(scope) {
-        return None;
-    }
-    let tags = provider.tags_shown(scope);
-    (!tags.is_empty()).then(|| (tags, provider.trail(scope).and_then(|t| t.base)))
 }
 
 /// The search of `expr` in `scope` shown as its words are typed (ADR-098):
@@ -255,7 +243,7 @@ fn typed(app: &App, ask: &Ask) -> Answer {
         rows.push(row);
     } else {
         let mut row = Suggestion::new(Section::Run, format!("Search “{expr}”"))
-            .detail(scope_said(app, &scope))
+            .detail(scope_said(app, &scope, ask))
             .icon("search")
             .runs(search(app, &expr, &scope, ask));
         if let Some(home) = skwir_core::os_path::home().map(Location::from_path)
@@ -388,7 +376,7 @@ fn at_words(app: &App, ask: &Ask) -> Suggestion {
     let expr = lang::quote(words);
     let scope = scope_of(ask).unwrap_or_else(|| Location::from_path(PathBuf::from("/")));
     Suggestion::new(Section::Run, format!("Search for “{words}”"))
-        .detail(scope_said(app, &scope))
+        .detail(scope_said(app, &scope, ask))
         .icon("search")
         .rank(1)
         .runs(search(app, &expr, &scope, ask))
@@ -677,52 +665,19 @@ mod tests {
         assert!(r.iter().any(|s| s.section == Section::SearchIn));
     }
 
-    /// A place of tags, as a tags plugin answers for one narrowed and in a
-    /// folder: what it says of everything it lists, and that folder.
-    struct Tagged;
-
-    impl skwir_core::location::LocationProvider for Tagged {
-        fn scheme(&self) -> &'static str {
-            "tagged"
-        }
-        fn open(
-            &self,
-            _: &Location,
-            _: skwir_core::location::OpenContext,
-        ) -> anyhow::Result<std::sync::Arc<dyn skwir_core::location::OpenLocation>> {
-            anyhow::bail!("never opened here")
-        }
-        fn tags_shown(&self, location: &Location) -> Vec<String> {
-            match location.rest.as_str() {
-                "/" => Vec::new(),
-                _ => vec!["Places/France".to_owned(), "C#".to_owned()],
-            }
-        }
-        fn trail(&self, _: &Location) -> Option<skwir_core::location::Trail> {
-            Some(skwir_core::location::Trail {
-                base: Some(PathBuf::from("/data/it's photos")),
-                ..skwir_core::location::Trail::default()
-            })
-        }
-    }
-
-    /// A tag's place adds its tags, as its provider says them, never as its
-    /// text is written (escaped, narrowed), searched from the folder it is
-    /// of; a place that says no tag is searched as what it lists.
+    /// A place is searched as what it lists, whatever tags it says of
+    /// everything it lists; a folder is the search's root.
     #[test]
-    fn a_tag_scope_searches_for_the_tags_its_provider_says() {
+    fn a_place_is_searched_as_what_it_lists_and_a_folder_from_its_root() {
         let tmp = tempfile::tempdir().unwrap();
         let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
-        app.register_provider("test", std::sync::Arc::new(Tagged));
         let a = ask("dunes");
-        let tag = Location::new("tagged", "/Places/France?with=C%23");
-        let run = search(&app, "dunes", &tag, &a);
-        assert_eq!(run.args["expr"], "tag:Places/France tag:C# dunes");
-        assert_eq!(run.args["root"], "/data/it's photos");
-        let all = search(&app, "dunes", &Location::new("tagged", "/"), &a);
-        assert_eq!(all.args["expr"], "dunes in:tagged:/");
-        let folder = search(&app, "dunes", &Location::from_path("/data/guide"), &a);
+        let place = search(&app, "dunes", &Location::new("tagged", "/"), &a);
+        assert_eq!(place.args["expr"], "dunes in:tagged:/");
+        assert!(place.args.get("root").is_none());
+        let folder = search(&app, "dunes", &Location::from_path("/data/it's photos"), &a);
         assert_eq!(folder.args["expr"], "dunes");
+        assert_eq!(folder.args["root"], "/data/it's photos");
         assert_eq!(folder.args["remember"], true);
     }
 

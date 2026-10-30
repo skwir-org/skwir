@@ -409,7 +409,9 @@ pub trait LocationProvider: Send + Sync {
     /// entries, and the same place holding everything within it, each a
     /// location of its provider, both filtered by the words as a folder
     /// is. `None` (the default): a folder's, below which words search its
-    /// subfolders. Answered from the text alone, as `title` is.
+    /// subfolders. `location` itself is one of the two, as it is written,
+    /// the other as the provider writes it, so another spelling of the
+    /// place shares one. Answered from the text alone, as `title` is.
     fn depths(&self, _location: &Location) -> Option<Depths> {
         None
     }

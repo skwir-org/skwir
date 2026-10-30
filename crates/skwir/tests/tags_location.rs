@@ -365,6 +365,76 @@ fn a_tag_s_place_is_filtered_at_both_depths_and_searched_as_it_is_shown() {
     assert_eq!(shown_files(), names(&["lyon.jpg"]), "what the place lists");
 }
 
+/// Enter over a depth that lists no file of its own (the top of the tags,
+/// a tag holding only sub-tags) searches everything within it, and its row
+/// says so; a depth that lists files is searched as it is shown. What the
+/// pane lists says it (ADR-108).
+#[test]
+fn a_depth_that_lists_no_files_is_searched_with_everything_within_it() {
+    let s = setup();
+    // The Run row for "lyon" over what the pane shows: its search, and
+    // what the row says it looks among.
+    let run = |shown: &Location| -> (String, String) {
+        let words = "lyon";
+        let ask = skwir_core::suggest::Ask {
+            text: words.to_owned(),
+            caret: words.len(),
+            typed: skwir_core::suggest::Typed::Words,
+            scope: Some(shown.clone()),
+            shown: Some(shown.clone()),
+            dir: None,
+            pane: Some(s.pane),
+            lens: None,
+        };
+        let row =
+            skwir_core::suggest::gather(&s.app, &ask, &skwir_core::cancel::CancelToken::new())
+                .rows
+                .into_iter()
+                .find(|row| row.section == skwir_core::suggest::Section::Run)
+                .expect("Enter searches");
+        let expr = row.run.as_ref().expect("the search runs").args["expr"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        (expr, row.detail.unwrap_or_default())
+    };
+    let within = |place: &Location| {
+        format!(
+            "lyon in:{}",
+            skwir_plugin_query::lang::quote(&place.to_string())
+        )
+    };
+    for tag in [None, Some("Places")] {
+        let place = tag_location(&s.root, tag);
+        let depths = s.app.depths(&place).expect("depths");
+        go(&s, &place);
+        assert!(listed(&s).1.is_empty(), "{place}: no file of its own");
+        let (expr, said) = run(&place);
+        assert_eq!(expr, within(&depths.below), "{place}");
+        assert!(said.starts_with("among every file within"), "{said}");
+    }
+    let france = tag_location(&s.root, Some("Places/France"));
+    go(&s, &france);
+    let (expr, said) = run(&france);
+    assert_eq!(expr, within(&france), "its own files, as shown");
+    assert!(said.starts_with("among the files in"), "{said}");
+
+    // Run from the tag of sub-tags only: what is within it is found.
+    go(&s, &tag_location(&s.root, Some("Places")));
+    let (expr, _) = run(&tag_location(&s.root, Some("Places")));
+    s.app
+        .dispatch(&Invocation::with_args(
+            "query.search",
+            &serde_json::json!({ "expr": expr, "pane": s.pane, "as_is": true }),
+        ))
+        .unwrap();
+    until(&s.app, "the search shown", || {
+        s.app.pane_location(s.pane).filter(|l| s.app.is_search(l))
+    });
+    assert!(s.app.pump_until_complete(s.pane, Duration::from_secs(10)));
+    assert_eq!(listed(&s).1, names(&["lyon.jpg"]));
+}
+
 #[test]
 fn a_tag_gives_itself_to_what_is_dropped_and_delete_takes_it_off() {
     let s = setup();
