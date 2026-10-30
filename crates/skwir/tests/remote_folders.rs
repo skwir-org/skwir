@@ -1635,9 +1635,11 @@ fn rclone_copies_within_its_mount_on_the_server() {
 /// A copy onto a mount that sends what is written after it is closed
 /// (rclone's `full` cache, chosen in the server's Mount Options) is done
 /// when the server has it (ADR-102): the plan ends after the server has
-/// every file, a move's original goes only then, and Disconnect sends what
-/// another program wrote there before letting go. Read on the server the
-/// moment each ends: on `full`, rclone sends a file 5 s after its close.
+/// every file it wrote, its last ones too (queued by rclone only once their
+/// release reaches it, after `close` returned), a move's original goes only
+/// then, and Disconnect sends what another program wrote there before
+/// letting go. Read on the server the moment each ends: on `full`, rclone
+/// sends a file 5 s after its close.
 #[test]
 fn a_copy_onto_a_mount_that_sends_later_ends_once_the_server_has_it() {
     if let Some(why) = Rclone::default().unavailable() {
@@ -1652,6 +1654,12 @@ fn a_copy_onto_a_mount_that_sends_later_ends_once_the_server_has_it() {
     std::fs::write(local.join("a note’s draft.txt"), "a note").unwrap();
     std::fs::write(local.join("a folder/l'été/two.txt"), "two").unwrap();
     std::fs::write(local.join("moved away.txt"), "moved").unwrap();
+    // Several, each its own step: the plan's last close comes just before
+    // it ends.
+    let several: Vec<String> = (0..12).map(|n| format!("several {n}’s.txt")).collect();
+    for name in &several {
+        std::fs::write(local.join(name), name).unwrap();
+    }
     let served = Served::start("webdav", &served_root, &[]);
     let app = App::new(AppConfig::ephemeral(base.join("app"))).unwrap();
     let remotes = Remotes::with(vec![Arc::new(Rclone::default())]);
@@ -1679,13 +1687,11 @@ fn a_copy_onto_a_mount_that_sends_later_ends_once_the_server_has_it() {
     );
     let read = |path: &Path| std::fs::read_to_string(path).unwrap_or_default();
 
-    let r = app.executor.execute_blocking(
-        &copies(
-            &[local.join("a note’s draft.txt"), local.join("a folder")],
-            &mounted.join("copies"),
-        ),
-        app.lifetime(),
-    );
+    let mut entries = vec![local.join("a note’s draft.txt"), local.join("a folder")];
+    entries.extend(several.iter().map(|name| local.join(name)));
+    let r = app
+        .executor
+        .execute_blocking(&copies(&entries, &mounted.join("copies")), app.lifetime());
     assert!(r.error.is_none(), "{:?}", r.error);
     assert_eq!(
         read(&served_root.join("copies/a note’s draft.txt")),
@@ -1695,6 +1701,13 @@ fn a_copy_onto_a_mount_that_sends_later_ends_once_the_server_has_it() {
         read(&served_root.join("copies/a folder/l'été/two.txt")),
         "two"
     );
+    for name in &several {
+        assert_eq!(
+            &read(&served_root.join("copies").join(name)),
+            name,
+            "on the server once the plan ended"
+        );
+    }
 
     let r = app.executor.execute_blocking(
         &moves(&[local.join("moved away.txt")], &mounted.join("copies")),
@@ -1707,8 +1720,10 @@ fn a_copy_onto_a_mount_that_sends_later_ends_once_the_server_has_it() {
         "its original went once the server had the copy"
     );
 
-    // Written by another program, waiting to be sent: sent first.
+    // Written by another program, waiting to be sent (queued once rclone
+    // has its release): sent first.
     std::fs::write(mounted.join("copies/written aside.txt"), "aside").unwrap();
+    until_queued(&control);
     app.dispatch(&Invocation::with_args(
         "remote.disconnect",
         &serde_json::json!({ "path": point }),
@@ -1815,6 +1830,17 @@ fn held_in_queue(at: &skwir_plugin_remote::rc::At) -> u64 {
             call(at, "vfs/queue-set-expiry", &later, &cancel).unwrap();
             return id;
         }
+        assert!(Instant::now() < deadline, "never queued to be sent");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Until rclone's queue at the mount whose remote control is `at` holds an
+/// upload: a file closed there reaches it with its release, which the
+/// kernel sends after `close` returned, on its own time.
+fn until_queued(at: &skwir_plugin_remote::rc::At) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while skwir_plugin_remote::uploads::waiting(at, &CancelToken::new()).unwrap() == 0 {
         assert!(Instant::now() < deadline, "never queued to be sent");
         std::thread::sleep(Duration::from_millis(20));
     }

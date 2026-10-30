@@ -7,8 +7,14 @@
 //! behind its login on Windows), sent now (`vfs/queue-set-expiry`) and
 //! waited for, so a copy is done when the server has it ([`RcloneSends`])
 //! and a Disconnect loses nothing.
+//!
+//! A file joins the queue only once rclone has its release, which the
+//! kernel sends after `close` returned, on its own time: what a plan wrote
+//! is waited for by rclone's record of each file in its cache
+//! ([`send_written`]), unsent from its first write until the server has
+//! it, never by what waits when asked.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -192,6 +198,181 @@ pub fn send_now(
     }
 }
 
+/// How long a file written may take to reach rclone's queue after it was
+/// closed (the kernel's release of it, which rclone queues it at): longer,
+/// a program still holds it open there, and the write-out fails (a move's
+/// original stays) rather than end before the server has it.
+const RELEASED_WITHIN: Duration = Duration::from_secs(60);
+
+/// The most rclone's record of one file in its cache takes: what it holds
+/// and was read of it, a few ranges.
+const RECORD_MOST: u64 = 1 << 20;
+
+/// How a file stands in a mount's cache, by rclone's record of it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Record {
+    /// Written and not on the server yet (`"Dirty": true`), whether or not
+    /// rclone has queued it.
+    Unsent,
+    /// On the server: its record says so, or there is none (rclone lets go
+    /// of nothing it has not sent).
+    Sent,
+    /// Not as rclone writes its records.
+    Unknown,
+}
+
+/// rclone's record of the file `name` (its path on the mount) in the
+/// folder of records `records` (`vfs/stats`' `pathMeta`).
+fn record_of(records: &Path, name: &Path) -> Record {
+    match skwir_core::fs::file::read_regular(&records.join(name), RECORD_MOST) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Record::Sent,
+        Err(_) => Record::Unknown,
+        Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes)
+            .ok()
+            .and_then(|record| record["Dirty"].as_bool())
+        {
+            Some(true) => Record::Unsent,
+            Some(false) => Record::Sent,
+            None => Record::Unknown,
+        },
+    }
+}
+
+/// The name rclone gives in its queue to the file at `name` on its mount.
+fn queued_as(name: &Path) -> String {
+    name.components()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+/// Of `written` (copies made on the mount at `point`: files, folders with
+/// all they hold), the files the mount holds unsent, by their name in its
+/// queue: read from rclone's records (`records`), on this disk. `None`
+/// where a record is not as rclone writes them.
+fn unsent_of(
+    records: &Path,
+    point: &Path,
+    written: &[PathBuf],
+) -> Option<BTreeMap<String, PathBuf>> {
+    let mut unsent = BTreeMap::new();
+    let mut looked: Vec<PathBuf> = written
+        .iter()
+        .filter_map(|path| path.strip_prefix(point).ok())
+        .map(Path::to_path_buf)
+        .collect();
+    while let Some(name) = looked.pop() {
+        let at = records.join(&name);
+        match std::fs::symlink_metadata(&at) {
+            Ok(meta) if meta.is_dir() => {
+                let held = std::fs::read_dir(&at).ok()?;
+                looked.extend(held.flatten().map(|entry| name.join(entry.file_name())));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            _ => match record_of(records, &name) {
+                Record::Unsent => {
+                    unsent.insert(queued_as(&name), name);
+                }
+                Record::Sent => {}
+                Record::Unknown => return None,
+            },
+        }
+    }
+    Some(unsent)
+}
+
+/// Have the server take now what was `written` on the mount at `point`
+/// (each copy a plan made there: a file, or a folder and all it holds)
+/// whose remote control is at `at`, and return once it has: a file not
+/// queued yet (its release has not reached rclone) is waited for, then
+/// sent now with the others. `left` is told how many files the server
+/// still takes; `pause` is called between looks, to hold while a plan is
+/// paused. What waits of other programs' is not waited for. Where the
+/// mount's records cannot be read as rclone writes them, what waits when
+/// asked is sent ([`send_now`]).
+///
+/// # Errors
+/// When an upload was tried `REFUSED` times (it stays in rclone's cache,
+/// which goes on trying), a file written never reached the queue within
+/// `RELEASED_WITHIN`, the remote control stops answering, or the wait was
+/// cancelled.
+pub fn send_written(
+    at: &At,
+    point: &Path,
+    written: &[PathBuf],
+    cancel: &CancelToken,
+    pause: &dyn Fn(),
+    left: &mut dyn FnMut(usize),
+) -> anyhow::Result<()> {
+    let stats = asked(at, "vfs/stats", &serde_json::json!({}), cancel)?;
+    let records = stats["diskCache"]["pathMeta"].as_str().map(PathBuf::from);
+    let Some((records, mut unsent)) = records.and_then(|records| {
+        let unsent = unsent_of(&records, point, written)?;
+        Some((records, unsent))
+    }) else {
+        tracing::debug!("rclone's records of its cache are not read: what waits is sent");
+        return send_now(at, cancel, pause, left);
+    };
+    let began = std::time::Instant::now();
+    // Seen in the queue once: its release came, and it is sent once its
+    // record says so, however long the server takes it.
+    let mut queued: HashSet<String> = HashSet::new();
+    let cancelled = cancel.subscribe();
+    loop {
+        pause();
+        if cancel.is_cancelled() {
+            return Err(Cancelled.into());
+        }
+        let waiting: HashMap<String, Waiting> = queue(at, cancel)?
+            .into_iter()
+            .map(|w| (w.name.clone(), w))
+            .collect();
+        queued.extend(
+            unsent
+                .keys()
+                .filter(|name| waiting.contains_key(*name))
+                .cloned(),
+        );
+        // Out of the queue, a file is sent once its record says so: before
+        // its release, it is unsent and not queued yet.
+        unsent.retain(|name, file| {
+            waiting.contains_key(name) || record_of(&records, file) != Record::Sent
+        });
+        left(unsent.len());
+        if unsent.is_empty() {
+            return Ok(());
+        }
+        let ours = || unsent.keys().filter_map(|name| waiting.get(name));
+        if let Some(refused) = ours().find(|w| w.tries >= REFUSED && !w.uploading) {
+            anyhow::bail!(
+                "the server refused “{}” {} times: rclone keeps it on this disk and tries again",
+                refused.name,
+                refused.tries
+            );
+        }
+        if began.elapsed() >= RELEASED_WITHIN
+            && let Some(name) = unsent.keys().find(|name| !queued.contains(*name))
+        {
+            anyhow::bail!(
+                "“{name}” never reached rclone's queue: a program still holds it open there, and the server does not have it"
+            );
+        }
+        // Each waits out rclone's delay (`--vfs-write-back`), and its delay
+        // before trying again: asked to go now.
+        for w in ours().filter(|w| !w.uploading) {
+            let now = serde_json::json!({ "id": w.id, "expiry": 0, "relative": false });
+            if let Err(error) = asked(at, "vfs/queue-set-expiry", &now, cancel) {
+                // Gone meanwhile: sent, which the next look sees.
+                tracing::debug!("rclone did not hurry “{}”: {error:#}", w.name);
+            }
+        }
+        crossbeam_channel::select! {
+            recv(cancelled.receiver()) -> _ => {}
+            default(POLL) => {}
+        }
+    }
+}
+
 /// What a mount Skwir made sends to its server after a file is closed,
 /// written out before a plan ends, as onto a drive the user can unplug
 /// (ADR-102): a transfer that copies nothing, on every system.
@@ -258,22 +439,32 @@ impl Transfer for RcloneSends {
         sends
     }
 
-    /// What waits on the mount is sent now, and waited for.
+    /// What the plan wrote on the mount is sent now, and waited for
+    /// ([`send_written`]).
     fn send(
         &self,
         folder: &Path,
+        written: &[PathBuf],
         control: &Control,
         left: &mut dyn FnMut(usize),
     ) -> anyhow::Result<()> {
-        let Some(at) =
-            skwir_core::fs::reach::of(folder).and_then(|remote| control_of(&remote.point))
-        else {
+        let Some((point, at)) = skwir_core::fs::reach::of(folder).and_then(|remote| {
+            let at = control_of(&remote.point)?;
+            Some((remote.point.clone(), at))
+        }) else {
             anyhow::bail!(
                 "rclone's mount of “{}” is gone before its server had what was written",
                 folder.display()
             );
         };
-        send_now(&at, control.cancel(), &|| control.wait_while_paused(), left)
+        send_written(
+            &at,
+            &point,
+            written,
+            control.cancel(),
+            &|| control.wait_while_paused(),
+            left,
+        )
     }
 }
 
@@ -311,5 +502,60 @@ mod tests {
         assert!(waiting_in(&serde_json::json!({})).is_empty());
         assert!(sends_later("full") && sends_later("writes"));
         assert!(!sends_later("minimal") && !sends_later("off"));
+    }
+
+    /// What a plan wrote is unsent while rclone's record of it says so,
+    /// queued or not (its release not come yet): a file, or each file of
+    /// a folder, by the name the queue gives it. None recorded is sent; a
+    /// record rclone would not write leaves the plan to what waits.
+    #[test]
+    fn what_was_written_is_unsent_while_rclone_s_record_says_so() {
+        let tmp = tempfile::tempdir().unwrap();
+        let records = tmp.path().join("vfsMeta").join(":webdav{Ab12}");
+        let point = Path::new("/example/mounts/rclone dav:%2F%2F127.0.0.1:8080%2F");
+        let record = |name: &str, dirty: Option<bool>| {
+            let at = records.join(name);
+            std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+            let text = match dirty {
+                Some(dirty) => {
+                    format!(r#"{{"Size": 5, "Rs": null, "Fingerprint": "", "Dirty": {dirty}}}"#)
+                }
+                None => r#"{"Size": 5}"#.to_owned(),
+            };
+            std::fs::write(at, text).unwrap();
+        };
+        record("l'été — a note.txt", Some(true));
+        record("sent.txt", Some(false));
+        record("a folder/one.txt", Some(true));
+        record("a folder/inner \"q\"/two.txt", Some(true));
+        record("a folder/inner \"q\"/sent.txt", Some(false));
+        let written: Vec<PathBuf> = [
+            "l'été — a note.txt",
+            "sent.txt",
+            "a folder",
+            "never kept.txt",
+        ]
+        .iter()
+        .map(|name| point.join(name))
+        .chain([PathBuf::from("/elsewhere/not on it.txt")])
+        .collect();
+        let unsent = unsent_of(&records, point, &written).unwrap();
+        assert_eq!(
+            unsent.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "a folder/inner \"q\"/two.txt",
+                "a folder/one.txt",
+                "l'été — a note.txt"
+            ]
+        );
+        assert_eq!(
+            unsent["a folder/one.txt"],
+            Path::new("a folder").join("one.txt")
+        );
+        assert_eq!(record_of(&records, Path::new("sent.txt")), Record::Sent);
+        assert_eq!(record_of(&records, Path::new("gone.txt")), Record::Sent);
+        record("other.txt", None);
+        assert_eq!(record_of(&records, Path::new("other.txt")), Record::Unknown);
+        assert!(unsent_of(&records, point, &[point.join("other.txt")]).is_none());
     }
 }

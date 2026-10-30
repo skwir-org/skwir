@@ -187,9 +187,10 @@ pub struct StepContext {
     paces: RefCell<Vec<(Option<u64>, Rc<super::pace::Pace>)>>,
     /// The mounts this plan wrote into that send it to their server only
     /// after it is closed ([`Transfer::sends_later`](super::transfer::Transfer::sends_later),
-    /// ADR-102), by their point: each written out with the drives
-    /// ([`Self::write_out`]), its server having what was written.
-    sends: RefCell<Vec<(PathBuf, Arc<dyn super::transfer::Transfer>)>>,
+    /// ADR-102), by their point, with what it wrote there since the last
+    /// write-out ([`Self::written_later`]): each written out with the
+    /// drives ([`Self::write_out`]), its server having what was written.
+    sends: RefCell<Vec<Sending>>,
     /// What waits until a write-out has put on the drive what this plan
     /// wrote through (a move's removal of what it copied), done at the
     /// next one ([`Self::after_write_out`]).
@@ -335,6 +336,15 @@ const LISTINGS_KEPT: usize = 8;
 fn folder_times(dir: &Path) -> Option<(Option<SystemTime>, Option<SystemTime>)> {
     let meta = std::fs::metadata(dir).ok()?;
     Some((meta.modified().ok(), crate::fs::stat::changed(dir, &meta)))
+}
+
+/// A mount this plan wrote into that sends to its server only after a file
+/// is closed (`StepContext::sends_later`): what sends there, and what the
+/// plan wrote there since the last write-out.
+struct Sending {
+    point: PathBuf,
+    transfer: Arc<dyn super::transfer::Transfer>,
+    written: Vec<PathBuf>,
 }
 
 /// A folder listed for a plan's steps, and its times then
@@ -1035,7 +1045,7 @@ impl StepContext {
         let Some(point) = crate::fs::reach::of(dest_dir).map(|remote| remote.point.clone()) else {
             return false;
         };
-        if self.sends.borrow().iter().any(|(p, _)| *p == point) {
+        if self.sends.borrow().iter().any(|s| s.point == point) {
             return true;
         }
         let Some(transfer) = self
@@ -1044,8 +1054,33 @@ impl StepContext {
         else {
             return false;
         };
-        self.sends.borrow_mut().push((point, transfer));
+        self.sends.borrow_mut().push(Sending {
+            point,
+            transfer,
+            written: Vec::new(),
+        });
         true
+    }
+
+    /// `written` (a copy made in `dest_dir`, and what it placed beside
+    /// it) is for the server of the mount there to take before the plan
+    /// ends ([`Self::sends_later`], [`Self::write_out`]).
+    pub(super) fn written_later(
+        &self,
+        dest_dir: &Path,
+        written: impl IntoIterator<Item = PathBuf>,
+    ) {
+        let Some(point) = crate::fs::reach::of(dest_dir).map(|remote| remote.point.clone()) else {
+            return;
+        };
+        if let Some(sending) = self
+            .sends
+            .borrow_mut()
+            .iter_mut()
+            .find(|s| s.point == point)
+        {
+            sending.written.extend(written);
+        }
     }
 
     /// Wait until the drives this plan's copies were written through to
@@ -1081,10 +1116,21 @@ impl StepContext {
         for (_, pace) in self.paces.borrow().iter() {
             pace.write_out().map_err(stays)?;
         }
-        let sends: Vec<_> = self.sends.borrow().clone();
-        for (point, transfer) in sends {
+        // What each mount was given since the last write-out: a failure
+        // fails this one, and the plan's end says it again.
+        let sends: Vec<_> = self
+            .sends
+            .borrow_mut()
+            .iter_mut()
+            .filter(|s| !s.written.is_empty())
+            .map(|s| {
+                let written = std::mem::take(&mut s.written);
+                (s.point.clone(), Arc::clone(&s.transfer), written)
+            })
+            .collect();
+        for (point, transfer, written) in sends {
             let mut left = |files| self.meter.sending(Some(files));
-            let sent = transfer.send(&point, &self.control(), &mut left);
+            let sent = transfer.send(&point, &written, &self.control(), &mut left);
             self.meter.sending(None);
             sent.map_err(stays)?;
         }

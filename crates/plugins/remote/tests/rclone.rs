@@ -187,23 +187,13 @@ fn an_address_rclone_opens_is_a_folder_and_a_copy_is_on_the_server_once_done() {
     std::fs::remove_dir_all(&base).unwrap();
 }
 
-/// What a mount keeps and sends after a file is closed (`full`) is sent now
-/// and waited for through its remote control on the loopback, behind a
-/// login of its own, as Windows' mounts serve theirs (ADR-102): the calls
-/// a socket takes on Unix, checked here on a mount of this machine.
+/// `served`'s folder mounted at `base/mounted` with rclone's `full` cache,
+/// its remote control on the loopback behind a login of its own, as
+/// Windows' mounts serve theirs: what is written kept until sent now, never
+/// sent by itself while the test looks (`--vfs-write-back`).
 #[cfg(target_os = "linux")]
-#[test]
-fn what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback() {
+fn mounted_full(base: &Path, served: &Served) -> (skwir_plugin_remote::rc::At, Mounted) {
     use skwir_plugin_remote::rc::At;
-    use skwir_plugin_remote::uploads;
-    if let Some(why) = Rclone::default().unavailable() {
-        eprintln!("skipped: {why}");
-        return;
-    }
-    let base = fixture("sends-loopback");
-    let served_root = base.join("served");
-    std::fs::create_dir_all(&served_root).unwrap();
-    let served = Served::start(&served_root);
     let point = base.join("mounted");
     std::fs::create_dir_all(&point).unwrap();
     let at = At::loopback().unwrap();
@@ -214,7 +204,6 @@ fn what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback() {
         .arg(&point)
         .args(["--vfs-cache-mode", "full", "--cache-dir"])
         .arg(base.join("cache"))
-        // Kept until sent now: never sent by itself while the test looks.
         .args(["--vfs-write-back", "10m"])
         .arg("--config")
         .arg(base.join("rclone.conf"))
@@ -234,6 +223,27 @@ fn what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback() {
         assert!(Instant::now() < deadline, "never mounted");
         std::thread::sleep(Duration::from_millis(50));
     }
+    (at, mount)
+}
+
+/// What a mount keeps and sends after a file is closed (`full`) is sent now
+/// and waited for through its remote control on the loopback, behind a
+/// login of its own, as Windows' mounts serve theirs (ADR-102): the calls
+/// a socket takes on Unix, checked here on a mount of this machine.
+#[cfg(target_os = "linux")]
+#[test]
+fn what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback() {
+    use skwir_plugin_remote::uploads;
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("sends-loopback");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    let served = Served::start(&served_root);
+    let (at, mount) = mounted_full(&base, &served);
+    let point = mount.point.clone();
     let cancel = CancelToken::new();
     assert_eq!(uploads::cache_mode(&at, &cancel).unwrap(), "full");
 
@@ -261,6 +271,91 @@ fn what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback() {
     assert_eq!(told.last(), Some(&0), "said as it went: {told:?}");
     assert_eq!(uploads::waiting(&at, &cancel).unwrap(), 0);
 
+    drop(mount);
+    assert!(!mounted_at(&point), "let go of");
+    drop(served);
+    std::fs::remove_dir_all(&base).unwrap();
+}
+
+/// What a plan wrote is waited for, not what waits when asked (ADR-102): a
+/// file whose release has not reached rclone is in no queue yet (held open
+/// here, as the kernel holds a release it has not sent), and the wait ends
+/// only once the server has it too, with the others: a file, a folder's.
+#[cfg(target_os = "linux")]
+#[test]
+fn what_was_written_is_sent_though_rclone_had_not_queued_it() {
+    use skwir_plugin_remote::uploads;
+    use std::io::Write;
+    if let Some(why) = Rclone::default().unavailable() {
+        eprintln!("skipped: {why}");
+        return;
+    }
+    let base = fixture("sends-written");
+    let served_root = base.join("served");
+    std::fs::create_dir_all(&served_root).unwrap();
+    let served = Served::start(&served_root);
+    let (at, mount) = mounted_full(&base, &served);
+    let point = mount.point.clone();
+    std::fs::write(point.join("l'été — one.txt"), "one").unwrap();
+    std::fs::create_dir_all(point.join("a \"folder\"/inner")).unwrap();
+    std::fs::write(point.join("a \"folder\"/inner/two.txt"), "two").unwrap();
+    let mut held = std::fs::File::create(point.join("held open.txt")).unwrap();
+    held.write_all(b"held").unwrap();
+    held.flush().unwrap();
+    let written = vec![
+        point.join("l'été — one.txt"),
+        point.join("a \"folder\""),
+        point.join("held open.txt"),
+    ];
+    let (told, heard) = std::sync::mpsc::channel();
+    let sending = {
+        let (at, point) = (at.clone(), point.clone());
+        std::thread::spawn(move || {
+            uploads::send_written(
+                &at,
+                &point,
+                &written,
+                &CancelToken::new(),
+                &|| {},
+                &mut |left| {
+                    let _ = told.send(left);
+                },
+            )
+        })
+    };
+    // The others sent, the one held open waits, unsent, not queued.
+    loop {
+        let left = heard
+            .recv_timeout(Duration::from_secs(60))
+            .expect("the wait ended with a file written still unsent");
+        if left == 1 {
+            break;
+        }
+    }
+    assert!(!sending.is_finished(), "waiting for the file held open");
+    assert!(!served_root.join("held open.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(served_root.join("a \"folder\"/inner/two.txt")).unwrap(),
+        "two"
+    );
+    // Closed: its release reaches rclone, which queues it, and it is sent.
+    drop(held);
+    sending.join().unwrap().unwrap();
+    assert_eq!(heard.try_iter().last(), Some(0), "said as it went");
+    for (name, text) in [
+        ("l'été — one.txt", "one"),
+        ("a \"folder\"/inner/two.txt", "two"),
+        ("held open.txt", "held"),
+    ] {
+        assert_eq!(
+            std::fs::read_to_string(served_root.join(name))
+                .ok()
+                .as_deref(),
+            Some(text),
+            "{name} on the server once the wait ended"
+        );
+    }
+    assert_eq!(uploads::waiting(&at, &CancelToken::new()).unwrap(), 0);
     drop(mount);
     assert!(!mounted_at(&point), "let go of");
     drop(served);

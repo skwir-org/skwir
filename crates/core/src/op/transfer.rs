@@ -178,21 +178,28 @@ pub trait Transfer: Send + Sync {
         false
     }
 
-    /// Have the server of the mount holding `folder` take now what waits
-    /// there to be sent, and return once it has: `left` told how many
-    /// files wait, as they go. Blocking, on the plan's thread; stopped
-    /// when the plan is cancelled ([`Control`]).
+    /// Have the server of the mount holding `folder` take now what this
+    /// plan wrote there since its last write-out (`written`: each copy
+    /// made there, a file or a folder with all it holds, and what it placed
+    /// beside it), and return once it has: `left` told how many files the
+    /// server still takes, as they go. A file closed may reach the mount's
+    /// program a moment after its `close` returned (FUSE's release comes
+    /// on its own time): what was written, not what waits when asked, is
+    /// what is waited for. Blocking, on the plan's thread; stopped when the
+    /// plan is cancelled ([`Control`]).
     ///
     /// # Errors
-    /// When the server refused what waits (it stays, to be sent again), or
-    /// the wait was cancelled.
+    /// When the server refused what was written (it stays, to be sent
+    /// again), it never reached the mount's program, or the wait was
+    /// cancelled.
     fn send(
         &self,
         folder: &Path,
+        written: &[PathBuf],
         control: &Control,
         left: &mut dyn FnMut(usize),
     ) -> anyhow::Result<()> {
-        let _ = (folder, control, left);
+        let _ = (folder, written, control, left);
         Ok(())
     }
 }

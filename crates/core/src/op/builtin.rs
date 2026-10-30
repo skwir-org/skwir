@@ -1798,8 +1798,8 @@ fn copy_entry(
     };
     // Written out before the plan ends, as onto a drive: onto one the user
     // can unplug, and onto a mount that sends to its server only after a
-    // file is closed (ADR-102).
-    let through = removable || ctx.sends_later(dest_dir);
+    // file is closed (ADR-102), told what it is to send.
+    let sends_later = !removable && ctx.sends_later(dest_dir);
     let beside = copy_staged(
         src,
         target,
@@ -1809,7 +1809,16 @@ fn copy_entry(
         &pace,
         ctx,
     )?;
-    Ok(CopyMade { through, beside })
+    if sends_later {
+        ctx.written_later(
+            dest_dir,
+            std::iter::once(target.to_path_buf()).chain(beside.iter().cloned()),
+        );
+    }
+    Ok(CopyMade {
+        through: removable || sends_later,
+        beside,
+    })
 }
 
 /// What [`copy_entry`] did.
