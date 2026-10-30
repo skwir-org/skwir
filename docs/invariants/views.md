@@ -268,6 +268,13 @@ around the views is in [shell.md](shell.md).
 
 ## Scrolling
 
+- **An entry brought into view:** a key moving the cursor scrolls the
+  least (`PaneView::scroll_to`: nothing when the entry is wholly in view,
+  else it stops at the edge it came in by), so a step past an edge moves
+  the view by that step, never by a page. A jump (a name typed) brings it
+  to the middle unless it is wholly in view (`scroll_to_middle`), as near
+  the middle as the order's ends let it be, so what is around it shows.
+  A view that cannot falls back on `scroll_to`.
 - Every scrolling view has a scrollbar (`elements/scrollbar.rs`) on its
   right edge, and on its bottom edge when it scrolls sideways
   (`scrollbar::horizontal`). The view hands it the handle it scrolls with;

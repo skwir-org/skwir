@@ -149,6 +149,7 @@ like `AGENTS.md`.
 | the media player | group; its seek bar a slider of seconds | "Player: ‹file›"; "Position", "0:02 of 0:03" |
 | terminal | terminal: its screen as text, the cursor as the caret | "Terminal"; the program's title |
 | footer | status line, never announced | what it shows: the count, the selection |
+| a name being typed (type-ahead) | status line, never announced: the entry reached is said as the cursor moves | what names must begin with; "No match" after it |
 | timeline | list box of its bars, the keys' bar the active descendant | "Timeline", described by what it counts and its keys; each bar its period ("Week of 9 March 2026"), described by what it holds |
 | search chips | buttons; a tag's category a link | their titles |
 

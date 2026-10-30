@@ -922,6 +922,28 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   it without one in a place.
 - Type-ahead is on only while no binding takes an unmodified character in
   the file list (`Keymap::typeahead`).
+- **A name typed** (`list.rs`, `Typed`) goes on until a pause of
+  `TYPING_PAUSE` or another listing shown, and goes forward:
+  - A new name, and one letter typed again and again ("d d d", which
+    looks for "d", never "ddd"), look past the entry under the cursor, so
+    each press reaches the next name; a name typed on stays on the entry
+    while its name still begins so. Round the end after the last.
+  - A name begins with it as the order folds names
+    (`collate::Prefix`: case, the accents of Latin letters), so "ecole"
+    reaches "École", which sorts beside it.
+  - One walk of the order shown per character (`seek_from`), no index
+    made: a folder streaming changes its order at every slice, and the
+    name is looked for again as it brings names (`seek_typed_again`).
+  - The entry reached is brought to the middle of the view
+    (`PaneView::scroll_to_middle`), unless it is wholly in view.
+  - **Space** goes on with a name only when a name in the listing goes
+    on so ("my" then Space reaching "My file.txt"); asked before its
+    binding runs (the pane's capture of `RunCommand`), so otherwise Peek
+    opens as ever. Space begins no name.
+  - While a name goes on, a pill at the foot of the pane shows what
+    names must begin with and a caret (a space typed shows), and "No
+    match" once the listing, whole, has none. One redraw takes it away
+    when the pause ends; nothing is drawn per frame for it.
 - A key that types a character hides the pointer until the mouse moves
   (`CursorHideMode::OnTyping`, set at startup in `lib.rs`). A key that
   only moves, such as an arrow, leaves it. The fullscreen preview hides

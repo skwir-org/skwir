@@ -7831,3 +7831,53 @@ in both looks, a chosen folder and a block under the pointer.
 **Not checked:** the user's session (Wayland); a desktop's scheme or
 More contrast on the new fills (`block_text` is kept, not guarded: its
 test is of Skwir's own looks).
+
+### Type-ahead that goes forward (2026-10-31)
+
+The user asked for type-ahead closer to Dolphin's: a letter typed again
+reaching the next name instead of the same one, and the entry reached
+centred where the order lets it. They chose five changes from a
+proposal: go forward, the middle, match as the order folds, Space
+within a name, and a label of what is typed. Before, a name typed always
+reached the first entry in the order beginning with it, case folded but
+not accents, Space never joined it, and nothing showed it.
+
+- A new name, and one letter typed again and again, look past the
+  cursor; a name typed on stays while the entry still begins so; round
+  the end after the last (`list::seek_from`, one walk of the order per
+  character, no index made, as before).
+- Names are matched as `collate::sort_key` folds them, through
+  `collate::Prefix` (`fold` now hands its parts to a closure; a name in
+  ASCII never reaches it).
+- `PaneView::scroll_to_middle` (gpui's `Center` in the list, columns and
+  board; `Place::Middle` in the grid's math). While checking it, a key
+  stepping past the list's bottom edge moved the view by a page: the
+  list, columns and board asked gpui's `Top`, which puts the row at the
+  top whenever it is out of view. They ask `Nearest` now, as the grid
+  already scrolled.
+- Space joins a name only when a name goes on with it, in a capture of
+  `RunCommand` on the pane, before Peek's binding.
+- A pill at the foot of the pane, a status line never announced, with
+  "No match" once the listing is whole; one timer redraws it away.
+
+**Checked:** tests of `Prefix` (accents, æ, ß, Cyrillic, a name not
+UTF-8), of `seek_from` (past or on the start, round the end, one match,
+a start gone from the order), of a letter typed again, and of the grid's
+middle placement; rustfmt; clippy with `-D warnings` on skwir-core and
+skwir-ui, all targets (Rust 1.99.1); their library tests (812). In a
+window (debug build, Xvfb with lavapipe, a synthetic folder of 236
+names): "d" then "d" again reached a folder then the next name, off
+screen, brought to the middle; a pause then "d" the name after it, "dr"
+refined; "eco" reached "École normale.txt"; "q" said No match; "l l a"
+reached "llama.txt" past "lab" and "lemon"; "my" then Space showed "my "
+and stayed off Peek, "my fo" reached the folder; "zu" then Space opened
+Peek; the label went after the pause; the grid and the columns placed
+their jumps in the middle, and left one in view where it was; Down past
+the list's bottom edge then moved one row, PageDown a page. On
+bench-data/flat100k, typing "file-09999" from the top cost 1.76 s of
+CPU for ten keys in the debug build, ten Down presses 1.64 s: the walk
+is small beside selecting and drawing.
+
+**Not checked:** the user's session (Wayland); the board view; an input
+method composing a character; a release build's timings; Windows and
+macOS, not compiled (`just check-cross` not run).
