@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0" xmlns:l="http://www.w3.org/1999/xlink">
+<description>
+    <title-info>
+        <genre>antique</genre>
+        <author><first-name>Synthetic</first-name><last-name>Author</last-name></author>
+        <book-title>Synthetic Book</book-title>
+        <coverpage><image l:href="#img_0"/></coverpage>
+        <lang>en</lang>
+    </title-info>
+    <document-info>
+        <author><first-name>Synthetic</first-name><last-name>Author</last-name></author>
+        <program-used>calibre 9.17.0</program-used>
+        <date>30.10.2026</date>
+        <id>c003bb02-a6b5-46ee-ba92-36efa0b94503</id>
+        <version>1.0</version>
+    </document-info>
+    <publish-info>
+        <publisher>Synthetic Press</publisher>
+    </publish-info>
+</description>
+<body>
+<section>
+<p><strong>The First Chapter</strong></p>
+<p>The needle is here, in a sentence with a note1.</p>
+<p><image l:href="#img_1"/></p>
+<p>Words that only the first chapter has: alpha bravo.</p>
+</section>
+<section>
+<p><strong>The Second Chapter</strong></p>
+<p>Café, naïve and “quoted” words; nothing to see.</p>
+<p>Back to the first chapter.</p>
+<p><emphasis>Emphasis</emphasis>, <strong>strength</strong> and H<sub>2</sub>O.</p>
+</section>
+<section>
+<p><strong>The Long Chapter</strong></p>
+<p>Paragraph 0: w00n00é— w00n01é— w00n02é— w00n03é— w00n04é— w00n05é— w00n06é— w00n07é— w00n08é— w00n09é— w00n10é— w00n11é— w00n12é— w00n13é— w00n14é— w00n15é— w00n16é— w00n17é— w00n18é— w00n19é— w00n20é— w00n21é— w00n22é— w00n23é—</p>
+<p>Paragraph 1: w01n00é— w01n01é— w01n02é— w01n03é— w01n04é— w01n05é— w01n06é— w01n07é— w01n08é— w01n09é— w01n10é— w01n11é— w01n12é— w01n13é— w01n14é— w01n15é— w01n16é— w01n17é— w01n18é— w01n19é— w01n20é— w01n21é— w01n22é— w01n23é—</p>
+<p>Paragraph 2: w02n00é— w02n01é— w02n02é— w02n03é— w02n04é— w02n05é— w02n06é— w02n07é— w02n08é— w02n09é— w02n10é— w02n11é— w02n12é— w02n13é— w02n14é— w02n15é— w02n16é— w02n17é— w02n18é— w02n19é— w02n20é— w02n21é— w02n22é— w02n23é—</p>
+<p>Paragraph 3: w03n00é— w03n01é— w03n02é— w03n03é— w03n04é— w03n05é— w03n06é— w03n07é— w03n08é— w03n09é— w03n10é— w03n11é— w03n12é— w03n13é— w03n14é— w03n15é— w03n16é— w03n17é— w03n18é— w03n19é— w03n20é— w03n21é— w03n22é— w03n23é—</p>
+<p>Paragraph 4: w04n00é— w04n01é— w04n02é— w04n03é— w04n04é— w04n05é— w04n06é— w04n07é— w04n08é— w04n09é— w04n10é— w04n11é— w04n12é— w04n13é— w04n14é— w04n15é— w04n16é— w04n17é— w04n18é— w04n19é— w04n20é— w04n21é— w04n22é— w04n23é—</p>
+<p>Paragraph 5: w05n00é— w05n01é— w05n02é— w05n03é— w05n04é— w05n05é— w05n06é— w05n07é— w05n08é— w05n09é— w05n10é— w05n11é— w05n12é— w05n13é— w05n14é— w05n15é— w05n16é— w05n17é— w05n18é— w05n19é— w05n20é— w05n21é— w05n22é— w05n23é—</p>
+<p>Paragraph 6: w06n00é— w06n01é— w06n02é— w06n03é— w06n04é— w06n05é— w06n06é— w06n07é— w06n08é— w06n09é— w06n10é— w06n11é— w06n12é— w06n13é— w06n14é— w06n15é— w06n16é— w06n17é— w06n18é— w06n19é— w06n20é— w06n21é— w06n22é— w06n23é—</p>
+<p>Paragraph 7: w07n00é— w07n01é— w07n02é— w07n03é— w07n04é— w07n05é— w07n06é— w07n07é— w07n08é— w07n09é— w07n10é— w07n11é— w07n12é— w07n13é— w07n14é— w07n15é— w07n16é— w07n17é— w07n18é— w07n19é— w07n20é— w07n21é— w07n22é— w07n23é—</p>
+<p>Paragraph 8: w08n00é— w08n01é— w08n02é— w08n03é— w08n04é— w08n05é— w08n06é— w08n07é— w08n08é— w08n09é— w08n10é— w08n11é— w08n12é— w08n13é— w08n14é— w08n15é— w08n16é— w08n17é— w08n18é— w08n19é— w08n20é— w08n21é— w08n22é— w08n23é—</p>
+<p>Paragraph 9: w09n00é— w09n01é— w09n02é— w09n03é— w09n04é— w09n05é— w09n06é— w09n07é— w09n08é— w09n09é— w09n10é— w09n11é— w09n12é— w09n13é— w09n14é— w09n15é— w09n16é— w09n17é— w09n18é— w09n19é— w09n20é— w09n21é— w09n22é— w09n23é—</p>
+<p>Paragraph 10: w10n00é— w10n01é— w10n02é— w10n03é— w10n04é— w10n05é— w10n06é— w10n07é— w10n08é— w10n09é— w10n10é— w10n11é— w10n12é— w10n13é— w10n14é— w10n15é— w10n16é— w10n17é— w10n18é— w10n19é— w10n20é— w10n21é— w10n22é— w10n23é—</p>
+<p>Paragraph 11: w11n00é— w11n01é— w11n02é— w11n03é— w11n04é— w11n05é— w11n06é— w11n07é— w11n08é— w11n09é— w11n10é— w11n11é— w11n12é— w11n13é— w11n14é— w11n15é— w11n16é— w11n17é— w11n18é— w11n19é— w11n20é— w11n21é— w11n22é— w11n23é—</p>
+<p>Paragraph 12: w12n00é— w12n01é— w12n02é— w12n03é— w12n04é— w12n05é— w12n06é— w12n07é— w12n08é— w12n09é— w12n10é— w12n11é— w12n12é— w12n13é— w12n14é— w12n15é— w12n16é— w12n17é— w12n18é— w12n19é— w12n20é— w12n21é— w12n22é— w12n23é—</p>
+<p>Paragraph 13: w13n00é— w13n01é— w13n02é— w13n03é— w13n04é— w13n05é— w13n06é— w13n07é— w13n08é— w13n09é— w13n10é— w13n11é— w13n12é— w13n13é— w13n14é— w13n15é— w13n16é— w13n17é— w13n18é— w13n19é— w13n20é— w13n21é— w13n22é— w13n23é—</p>
+<p>Paragraph 14: w14n00é— w14n01é— w14n02é— w14n03é— w14n04é— w14n05é— w14n06é— w14n07é— w14n08é— w14n09é— w14n10é— w14n11é— w14n12é— w14n13é— w14n14é— w14n15é— w14n16é— w14n17é— w14n18é— w14n19é— w14n20é— w14n21é— w14n22é— w14n23é—</p>
+<p>Paragraph 15: w15n00é— w15n01é— w15n02é— w15n03é— w15n04é— w15n05é— w15n06é— w15n07é— w15n08é— w15n09é— w15n10é— w15n11é— w15n12é— w15n13é— w15n14é— w15n15é— w15n16é— w15n17é— w15n18é— w15n19é— w15n20é— w15n21é— w15n22é— w15n23é—</p>
+<p>Paragraph 16: w16n00é— w16n01é— w16n02é— w16n03é— w16n04é— w16n05é— w16n06é— w16n07é— w16n08é— w16n09é— w16n10é— w16n11é— w16n12é— w16n13é— w16n14é— w16n15é— w16n16é— w16n17é— w16n18é— w16n19é— w16n20é— w16n21é— w16n22é— w16n23é—</p>
+<p>Paragraph 17: w17n00é— w17n01é— w17n02é— w17n03é— w17n04é— w17n05é— w17n06é— w17n07é— w17n08é— w17n09é— w17n10é— w17n11é— w17n12é— w17n13é— w17n14é— w17n15é— w17n16é— w17n17é— w17n18é— w17n19é— w17n20é— w17n21é— w17n22é— w17n23é—</p>
+<p>Paragraph 18: w18n00é— w18n01é— w18n02é— w18n03é— w18n04é— w18n05é— w18n06é— w18n07é— w18n08é— w18n09é— w18n10é— w18n11é— w18n12é— w18n13é— w18n14é— w18n15é— w18n16é— w18n17é— w18n18é— w18n19é— w18n20é— w18n21é— w18n22é— w18n23é—</p>
+<p>Paragraph 19: w19n00é— w19n01é— w19n02é— w19n03é— w19n04é— w19n05é— w19n06é— w19n07é— w19n08é— w19n09é— w19n10é— w19n11é— w19n12é— w19n13é— w19n14é— w19n15é— w19n16é— w19n17é— w19n18é— w19n19é— w19n20é— w19n21é— w19n22é— w19n23é—</p>
+<p>Paragraph 20: w20n00é— w20n01é— w20n02é— w20n03é— w20n04é— w20n05é— w20n06é— w20n07é— w20n08é— w20n09é— w20n10é— w20n11é— w20n12é— w20n13é— w20n14é— w20n15é— w20n16é— w20n17é— w20n18é— w20n19é— w20n20é— w20n21é— w20n22é— w20n23é—</p>
+<p>Paragraph 21: w21n00é— w21n01é— w21n02é— w21n03é— w21n04é— w21n05é— w21n06é— w21n07é— w21n08é— w21n09é— w21n10é— w21n11é— w21n12é— w21n13é— w21n14é— w21n15é— w21n16é— w21n17é— w21n18é— w21n19é— w21n20é— w21n21é— w21n22é— w21n23é—</p>
+<p>Paragraph 22: w22n00é— w22n01é— w22n02é— w22n03é— w22n04é— w22n05é— w22n06é— w22n07é— w22n08é— w22n09é— w22n10é— w22n11é— w22n12é— w22n13é— w22n14é— w22n15é— w22n16é— w22n17é— w22n18é— w22n19é— w22n20é— w22n21é— w22n22é— w22n23é—</p>
+<p>Paragraph 23: w23n00é— w23n01é— w23n02é— w23n03é— w23n04é— w23n05é— w23n06é— w23n07é— w23n08é— w23n09é— w23n10é— w23n11é— w23n12é— w23n13é— w23n14é— w23n15é— w23n16é— w23n17é— w23n18é— w23n19é— w23n20é— w23n21é— w23n22é— w23n23é—</p>
+<p>Paragraph 24: w24n00é— w24n01é— w24n02é— w24n03é— w24n04é— w24n05é— w24n06é— w24n07é— w24n08é— w24n09é— w24n10é— w24n11é— w24n12é— w24n13é— w24n14é— w24n15é— w24n16é— w24n17é— w24n18é— w24n19é— w24n20é— w24n21é— w24n22é— w24n23é—</p>
+<p>Paragraph 25: w25n00é— w25n01é— w25n02é— w25n03é— w25n04é— w25n05é— w25n06é— w25n07é— w25n08é— w25n09é— w25n10é— w25n11é— w25n12é— w25n13é— w25n14é— w25n15é— w25n16é— w25n17é— w25n18é— w25n19é— w25n20é— w25n21é— w25n22é— w25n23é—</p>
+<p>Paragraph 26: w26n00é— w26n01é— w26n02é— w26n03é— w26n04é— w26n05é— w26n06é— w26n07é— w26n08é— w26n09é— w26n10é— w26n11é— w26n12é— w26n13é— w26n14é— w26n15é— w26n16é— w26n17é— w26n18é— w26n19é— w26n20é— w26n21é— w26n22é— w26n23é—</p>
+<p>Paragraph 27: w27n00é— w27n01é— w27n02é— w27n03é— w27n04é— w27n05é— w27n06é— w27n07é— w27n08é— w27n09é— w27n10é— w27n11é— w27n12é— w27n13é— w27n14é— w27n15é— w27n16é— w27n17é— w27n18é— w27n19é— w27n20é— w27n21é— w27n22é— w27n23é—</p>
+<p>Paragraph 28: w28n00é— w28n01é— w28n02é— w28n03é— w28n04é— w28n05é— w28n06é— w28n07é— w28n08é— w28n09é— w28n10é— w28n11é— w28n12é— w28n13é— w28n14é— w28n15é— w28n16é— w28n17é— w28n18é— w28n19é— w28n20é— w28n21é— w28n22é— w28n23é—</p>
+<p>Paragraph 29: w29n00é— w29n01é— w29n02é— w29n03é— w29n04é— w29n05é— w29n06é— w29n07é— w29n08é— w29n09é— w29n10é— w29n11é— w29n12é— w29n13é— w29n14é— w29n15é— w29n16é— w29n17é— w29n18é— w29n19é— w29n20é— w29n21é— w29n22é— w29n23é—</p>
+<p>Paragraph 30: w30n00é— w30n01é— w30n02é— w30n03é— w30n04é— w30n05é— w30n06é— w30n07é— w30n08é— w30n09é— w30n10é— w30n11é— w30n12é— w30n13é— w30n14é— w30n15é— w30n16é— w30n17é— w30n18é— w30n19é— w30n20é— w30n21é— w30n22é— w30n23é—</p>
+<p>Paragraph 31: w31n00é— w31n01é— w31n02é— w31n03é— w31n04é— w31n05é— w31n06é— w31n07é— w31n08é— w31n09é— w31n10é— w31n11é— w31n12é— w31n13é— w31n14é— w31n15é— w31n16é— w31n17é— w31n18é— w31n19é— w31n20é— w31n21é— w31n22é— w31n23é—</p>
+<p>Paragraph 32: w32n00é— w32n01é— w32n02é— w32n03é— w32n04é— w32n05é— w32n06é— w32n07é— w32n08é— w32n09é— w32n10é— w32n11é— w32n12é— w32n13é— w32n14é— w32n15é— w32n16é— w32n17é— w32n18é— w32n19é— w32n20é— w32n21é— w32n22é— w32n23é—</p>
+<p>Paragraph 33: w33n00é— w33n01é— w33n02é— w33n03é— w33n04é— w33n05é— w33n06é— w33n07é— w33n08é— w33n09é— w33n10é— w33n11é— w33n12é— w33n13é— w33n14é— w33n15é— w33n16é— w33n17é— w33n18é— w33n19é— w33n20é— w33n21é— w33n22é— w33n23é—</p>
+<p>Paragraph 34: w34n00é— w34n01é— w34n02é— w34n03é— w34n04é— w34n05é— w34n06é— w34n07é— w34n08é— w34n09é— w34n10é— w34n11é— w34n12é— w34n13é— w34n14é— w34n15é— w34n16é— w34n17é— w34n18é— w34n19é— w34n20é— w34n21é— w34n22é— w34n23é—</p>
+<p>Paragraph 35: w35n00é— w35n01é— w35n02é— w35n03é— w35n04é— w35n05é— w35n06é— w35n07é— w35n08é— w35n09é— w35n10é— w35n11é— w35n12é— w35n13é— w35n14é— w35n15é— w35n16é— w35n17é— w35n18é— w35n19é— w35n20é— w35n21é— w35n22é— w35n23é—</p>
+<p>Paragraph 36: w36n00é— w36n01é— w36n02é— w36n03é— w36n04é— w36n05é— w36n06é— w36n07é— w36n08é— w36n09é— w36n10é— w36n11é— w36n12é— w36n13é— w36n14é— w36n15é— w36n16é— w36n17é— w36n18é— w36n19é— w36n20é— w36n21é— w36n22é— w36n23é—</p>
+<p>Paragraph 37: w37n00é— w37n01é— w37n02é— w37n03é— w37n04é— w37n05é— w37n06é— w37n07é— w37n08é— w37n09é— w37n10é— w37n11é— w37n12é— w37n13é— w37n14é— w37n15é— w37n16é— w37n17é— w37n18é— w37n19é— w37n20é— w37n21é— w37n22é— w37n23é—</p>
+<p>Paragraph 38: w38n00é— w38n01é— w38n02é— w38n03é— w38n04é— w38n05é— w38n06é— w38n07é— w38n08é— w38n09é— w38n10é— w38n11é— w38n12é— w38n13é— w38n14é— w38n15é— w38n16é— w38n17é— w38n18é— w38n19é— w38n20é— w38n21é— w38n22é— w38n23é—</p>
+<p>Paragraph 39: w39n00é— w39n01é— w39n02é— w39n03é— w39n04é— w39n05é— w39n06é— w39n07é— w39n08é— w39n09é— w39n10é— w39n11é— w39n12é— w39n13é— w39n14é— w39n15é— w39n16é— w39n17é— w39n18é— w39n19é— w39n20é— w39n21é— w39n22é— w39n23é—</p>
+</section>
+<section>
+<p><strong>The Third Chapter</strong></p>
+<p>Another needle, in the last chapter.</p>
+<p><emphasis>A quotation set apart.</emphasis></p>
+</section>
+<section>
+<p><strong>Notes</strong></p>
+<p>1. The note's own words.</p>
+</section>
+</body>
+<binary id="img_0" content-type="image/png">iVBORw0KGgoAAAANSUhEUgAAADwAAABaCAIAAABrM6JiAAAAbElEQVR42u3YMQ0AIAwAwYpA
+BEu9dEYdUlkx0KHJJS/g5o997rgCGhoaGhoaGhoaGhoaGhoaGhoaGroNvbLGBQ0NDQ0NDQ0N
+DQ0NDQ0NDQ0NDQ3dh/anoaGhoaGhoaGhoaGhoaGhoaGhoaG/Hj1g6sZmSIAmAAAAAElFTkSu
+QmCC</binary>
+<binary id="img_1" content-type="image/png">iVBORw0KGgoAAAANSUhEUgAAACgAAAAeCAIAAADRv8uKAAAAN0lEQVR42mM4YaMxIIhh1OJR
+i0ctHrWYbItT5EQGBI1aPGrxqMWjFpNv8WglMWrxqMWjFg85iwHPVpQdhhYDHwAAAABJRU5E
+rkJggg==</binary>
+</FictionBook>

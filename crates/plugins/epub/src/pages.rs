@@ -23,8 +23,8 @@ use skwir_platform::{
 };
 
 use crate::{
-    Chapter, Container, Sections, Sheets, base, member_key, package, printed_pages,
-    table_of_contents,
+    book::{Sections, Sheets, base, member_key},
+    epub::{Chapter, Container, package, printed_pages, table_of_contents},
 };
 
 /// Pages read to find the size a page stating none is drawn at.

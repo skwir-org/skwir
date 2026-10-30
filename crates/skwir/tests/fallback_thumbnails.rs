@@ -61,9 +61,9 @@ fn assert_order(app: &App, after: &str) {
         fallbacks,
         [
             "audio-covers",
+            "book-covers",
             "comic-covers",
             "djvu-pages",
-            "epub-covers",
             "office-pages",
             "office-stored-pictures",
             "pdf-pages"

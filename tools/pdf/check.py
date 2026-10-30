@@ -74,6 +74,36 @@ def check_book(worker, root, environment):
         assert "Error" in json.loads(subprocess.check_output(command, env=environment, text=True))["body"]
 
 
+# The books MuPDF reads besides EPUB (ADR-106), made by tools/books/fixtures.py:
+# each with words of its own to find, and the outline FB2 gives.
+BOOKS = Path(__file__).resolve().parents[2] / "crates/plugins/epub/testdata"
+OTHER_BOOKS = [
+    ("synthetic.fb2", "needle is here", "Part One"),
+    ("synthetic-1251.fb2", "Синтетический текст", "Глава первая"),
+    ("synthetic.mobi", "needle is here", None),
+    ("synthetic-uncompressed.mobi", "needle is here", None),
+    ("synthetic-both.mobi", "needle is here", None),
+    ("synthetic.pdb", "plain PalmDOC text", None),
+]
+
+
+def check_other_books(worker, root, environment):
+    """FB2, MOBI 6 (PalmDOC or uncompressed, alone or before a KF8 part) and
+    PalmDOC text lay out into pages whose text is the book's."""
+    for name, words, heading in OTHER_BOOKS:
+        command = [str(worker), str(BOOKS / name), str(root), "--layout=420,595,12"]
+        with subprocess.Popen(command, env=environment, stdin=subprocess.PIPE,
+                              stdout=subprocess.PIPE, text=True) as process:
+            info = reply(process, 0)["Ready"]
+            assert info["reflowable"] and info["pages"] >= 1, (name, info)
+            text = " ".join(page_text(process, n) for n in range(1, info["pages"] + 1))
+            assert words in text, (name, text[:200])
+            if heading:
+                assert heading in [outline["title"] for outline in info["outlines"]], (name, info)
+            process.stdin.close()
+            assert process.wait(timeout=5) == 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker", type=Path, default=Path("target/release/skwir-pdf-worker"))
@@ -177,9 +207,10 @@ def main():
             assert "Unavailable" in json.loads(subprocess.check_output(command, env=missing, text=True))["body"]
         if args.engine == "mupdf":
             check_book(args.worker.resolve(), root, environment)
+            check_other_books(args.worker.resolve(), root, environment)
         pdf.write_bytes(b"not a PDF")
         assert "Error" in json.loads(subprocess.check_output(command, env=environment, text=True))["body"]
-    extra = ", book layout and locate" if args.engine == "mupdf" else ""
+    extra = ", book layout and locate, FB2, MOBI and PalmDOC" if args.engine == "mupdf" else ""
     print(f"PASS ({args.engine}): pages, first page alone, rotation/crop, text geometry, links, outlines, search, limits, corrupt PDF{extra}")
 
 
