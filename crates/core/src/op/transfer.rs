@@ -433,16 +433,17 @@ pub(super) fn batch_ahead(
     }
     let dest_remote = crate::fs::reach::of(&dest).is_some();
     let mut groups: BTreeMap<PathBuf, Vec<Source>> = BTreeMap::new();
-    for step in run {
+    for (k, step) in run.into_iter().enumerate() {
         // One that does not resolve says why in its own check.
         if let Ok(src) = ctx.resolve(step.entry)
             && let Some(parent) = src.parent()
         {
             // Where a batch may take it (an end on a remote), kept for its
-            // step, which finds it where the batch did; on this machine,
+            // step alone, which finds it where the batch did (a later step
+            // naming it finds it where that step put it); on this machine,
             // its step finds it itself.
             if dest_remote || crate::fs::reach::of(parent).is_some() {
-                ctx.resolved_as(step.entry, src.clone());
+                ctx.resolved_as(step.entry, src.clone(), Some(i + k));
             }
             groups
                 .entry(parent.to_path_buf())
@@ -534,7 +535,7 @@ fn resolve_all(entries: &[&super::EntryRef], ctx: &StepContext) {
         }
     });
     for (n, path) in found.into_inner() {
-        ctx.resolved_as(entries[n], path);
+        ctx.resolved_as(entries[n], path, None);
     }
 }
 

@@ -264,10 +264,13 @@ pub struct StepContext {
     batched_states: RefCell<HashMap<PathBuf, CopiedAs>>,
     /// Where each reference was found ([`StepContext::resolve`]): by a
     /// batch, or ahead of a dry run, on a remote where each look is a
-    /// round trip. Only for the steps looked at ([`Self::looking_ahead`]).
-    resolved: RefCell<HashMap<(crate::FileId, PathBuf), PathBuf>>,
+    /// round trip. Only for the steps looked at ([`Self::looking_ahead`]),
+    /// and, found for one step (a batch's source), for that step alone.
+    resolved: RefCell<HashMap<(crate::FileId, PathBuf), (PathBuf, Option<usize>)>>,
     /// The step past those [`Self::resolved`] was found for.
     resolved_until: std::cell::Cell<usize>,
+    /// The step under way ([`Self::step_begins`]).
+    step: std::cell::Cell<usize>,
     /// A dry run's: whether a name is in a remote's folder is read from
     /// the folder's names, listed once ([`StepContext::listing_remotes`]).
     lists_remotes: bool,
@@ -604,6 +607,7 @@ impl StepContext {
             batched_states: RefCell::default(),
             resolved: RefCell::default(),
             resolved_until: std::cell::Cell::new(0),
+            step: std::cell::Cell::new(0),
             lists_remotes: false,
             listed: RefCell::default(),
             known: RefCell::default(),
@@ -713,6 +717,7 @@ impl StepContext {
     /// the steps a look ahead found references for, where it found them is
     /// let go of: the steps since may have put another file there (a swap).
     pub(super) fn step_begins(&self, step: usize) {
+        self.step.set(step);
         self.checked.borrow_mut().take();
         self.states.borrow_mut().clear();
         if step >= self.resolved_until.get() {
@@ -1600,12 +1605,15 @@ impl StepContext {
     }
 
     /// Where `entry` is: as a batch or a look ahead found it for the steps
-    /// it looks at ([`Self::resolved_as`]), else as it resolves now.
+    /// it looks at, or for this step ([`Self::resolved_as`]), else as it
+    /// resolves now.
     ///
     /// # Errors
     /// What resolving it says.
     pub(super) fn resolve(&self, entry: &super::EntryRef) -> Result<PathBuf, super::ResolveError> {
-        if let Some(found) = self.resolved.borrow().get(&(entry.id, entry.path.clone())) {
+        if let Some((found, only)) = self.resolved.borrow().get(&(entry.id, entry.path.clone()))
+            && only.is_none_or(|step| step == self.step.get())
+        {
             return Ok(found.clone());
         }
         entry.resolve_with(&|dir| self.listed(dir))
@@ -1659,12 +1667,14 @@ impl StepContext {
         self.resolved_until.set(end);
     }
 
-    /// `entry` was found at `path`, a moment ago, for a step the look ahead
-    /// looks at ([`Self::looking_ahead`]).
-    pub(super) fn resolved_as(&self, entry: &super::EntryRef, path: PathBuf) {
+    /// `entry` was found at `path`, a moment ago, for the steps the look
+    /// ahead looks at ([`Self::looking_ahead`]), or, with `only`, for that
+    /// step alone: a batch's source, which its own step may move, a later
+    /// step naming it then finding it where it went.
+    pub(super) fn resolved_as(&self, entry: &super::EntryRef, path: PathBuf, only: Option<usize>) {
         self.resolved
             .borrow_mut()
-            .insert((entry.id, entry.path.clone()), path);
+            .insert((entry.id, entry.path.clone()), (path, only));
     }
 
     /// Whether a batch took the copy of `src` (made it, placed it, or
@@ -1881,7 +1891,7 @@ mod tests {
         let entry = super::super::EntryRef::from_path(&a).unwrap();
         let ctx = StepContext::detached();
         ctx.looking_ahead(1);
-        ctx.resolved_as(&entry, a.clone());
+        ctx.resolved_as(&entry, a.clone(), None);
         ctx.step_begins(0);
         assert_eq!(
             ctx.resolve(&entry).unwrap(),
@@ -1894,5 +1904,29 @@ mod tests {
         std::fs::rename(&parked, &b).unwrap();
         ctx.step_begins(1);
         assert_eq!(ctx.resolve(&entry).unwrap(), b, "where the swap put it");
+    }
+
+    /// Where a batch found a step's source holds for that step alone: a
+    /// later step of the same run naming the same file, which the first
+    /// moved, finds it where it went, never at the name it left.
+    #[cfg(unix)]
+    #[test]
+    fn a_source_found_for_one_step_is_found_afresh_by_the_next() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let a = tmp.path().join("it's a.txt");
+        std::fs::write(&a, b"a").unwrap();
+        let entry = super::super::EntryRef::from_path(&a).unwrap();
+        let ctx = StepContext::detached();
+        ctx.looking_ahead(2);
+        ctx.resolved_as(&entry, a.clone(), Some(0));
+        ctx.step_begins(0);
+        assert_eq!(ctx.resolve(&entry).unwrap(), a, "as the batch found it");
+        // The first step moves it, under another name.
+        let moved = tmp.path().join("l'été.txt");
+        std::fs::rename(&a, &moved).unwrap();
+        ctx.step_begins(1);
+        assert_eq!(ctx.resolve(&entry).unwrap(), moved, "where it went");
     }
 }
