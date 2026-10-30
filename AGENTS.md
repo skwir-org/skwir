@@ -591,7 +591,8 @@ just run [dir] / dist / flame [dir]   run the release build; build for packaging
   `XDG_CACHE_HOME`, `XDG_STATE_HOME` and `XDG_RUNTIME_DIR` at
   `~/.cache/skwir-tests/xdg`: one set of folders, shared by the tests of
   every run (a test wanting folders of its own makes them), so on Linux
-  and under Wine a trashed fixture never lands in the user's Trash. On
+  and under Wine a trashed fixture never lands in the user's Trash; what
+  was trashed there more than a day ago is pruned at each run. On
   macOS and Windows skwir's folders and the trash are the system's, which
   these variables do not move (`docs/HELP-WANTED.md` says so to testers).
 - Tests that need a real filesystem feature (trash, xattrs) use a temp

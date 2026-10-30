@@ -302,7 +302,11 @@ load wait for what they mean (two product defects found on the way: a
 map scan's count, rclone names looked up as hosts), the field's step is
 known by its place in the history, a relative date's filter rolls over
 at midnight, and a batch's answer holds for its step alone
-(`docs/STATUS-LOG.md`, "Known gaps closed").
+(`docs/STATUS-LOG.md`, "Known gaps closed"). Then what those test fixes
+found: a plan's last files written through rclone waited for until
+sent, a failed listing keeping the servers, rclone's SIGTERM exit a
+unit's stop, the tests' trash pruned ("The test fixes' leftovers
+fixed").
 
 ## What is left
 
@@ -364,18 +368,11 @@ leave (ADR-077).
   without the trash's own fields; no query term reads them.
 - The folder provider's `Unreadable` answer (a stat refused in a folder
   it lists) has no test: only an I/O error makes it.
-- rclone queues a file a plan wrote through its mount for upload only
-  at the kernel's release, after `close` returns: `uploads::send_now`
-  can miss the last files of a plan, which then ends before the server
-  has them. A fix needs core: `Transfer::send` to receive the files the
-  plan wrote there (rclone's control interface says nothing sooner).
-- A remote listing that fails (an rclone run timing out) empties the
-  servers listed until the next refresh.
-- A login unit whose stop is refused (its mount busy) ends "failed":
-  systemd's SIGTERM ends rclone with 143.
-- The tests' shared trash (`~/.cache/skwir-tests/xdg`) keeps what every
-  run trashed (2,262 items, 7.2 GB on 2026-10-30), which each trash
-  listing reads: nothing prunes it.
+- Disconnect still sends only what waits when asked, not what a plan
+  just wrote and rclone has not queued yet. launchd and Windows' logon
+  tasks have no counterpart of `SuccessExitStatus`: a refused stop there
+  is as before. A written name that is not UTF-8 is matched against
+  rclone's records approximately.
 
 **From a tag's place filtered at its depths (2026-10-30, ADR-108)**:
 - The sidebar's All Tags is the top's place of the home folder: its

@@ -442,6 +442,9 @@ ADR-077 (which revises ADR-021).
   one Skwir made, Eject letting go of it and its point, the next mount
   there of what it leaves otherwise (`mounter::point_for`, rclone's
   socket). Nothing relies on a unit's commands once it is turned off.
+  A unit counts rclone's exit on its manager's SIGTERM (143, its stop
+  refused while the mount is busy) as a stop (`SuccessExitStatus`),
+  sshfs's (1, as a lost connection) as a failure, which restarts it.
   On Windows rclone's logon task serves its remote control on a port it
   chooses, read back from its log, behind a login made with the task and
   kept beside the mounts while the task is (`winfsp::keep_at_login`,
@@ -611,7 +614,8 @@ ADR-077 (which revises ADR-021).
   (`Remotes::refresh_mounts`); the servers are read at start, on
   `remote.refresh`, and after connecting or disconnecting. rclone is
   asked its servers again only once its configuration file changed, or
-  on `remote.refresh` (`rclone::forget_listed`).
+  on `remote.refresh` (`rclone::forget_listed`); a listing that fails
+  keeps those last listed, and is asked again at the next refresh.
 - What is mounted is kept in the plugin's state, the newest read, and
   every publish shows the state as it then is, one at a time: a publish
   never brings back an older list (a slow refresh's, a liveness
@@ -635,11 +639,14 @@ ADR-077 (which revises ADR-021).
   (rclone's `writes` and `full`: `Transfer::sends_later`, asked of its
   remote control once a mount) is written out as a removable drive is:
   before the plan ends, and before a move removes its originals, it is
-  asked to send what waits now (`vfs/queue-set-expiry`) and waited for
-  (`Transfer::send`, `uploads::send_now`), the plan's progress saying how
-  many files the server still takes. An upload tried three times fails
-  the write-out: the file stays in rclone's cache, which goes on trying,
-  and a move's original stays. Disconnect sends what waits first (a
+  asked to send what the plan wrote there (`vfs/queue-set-expiry`),
+  waited for by rclone's record of each written file in its cache
+  (`vfs/stats`' `pathMeta`, dirty until sent: `uploads::send_written`),
+  queued or not yet (rclone queues one at its release, after `close`):
+  one not queued within 60 s fails the write-out. The plan's progress
+  says how many files the server still takes. An upload tried three
+  times fails the write-out: the file stays in rclone's cache, which goes
+  on trying, and a move's original stays. Disconnect sends what waits first (a
   refusal keeps it connected); a forced one, or one of a server that
   stopped answering, says what stays in the cache, which the next mount
   with that cache sends. What other programs left waiting is said on the

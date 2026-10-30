@@ -7742,3 +7742,39 @@ macOS and Windows not compiled for it (`just lint-all` not run, by the
 user's rule of 2026-10-27). What these leave is in PLAN.md (rclone's
 upload at release, a failed listing emptying the servers, a refused stop,
 the tests' trash never pruned).
+
+### The test fixes' leftovers fixed (2026-10-30)
+
+The four things the test fixes found and left, fixed at the user's
+request:
+
+- A plan writing through an rclone mount ended before rclone had queued
+  its last files: rclone queues a file only at the kernel's release,
+  after `close`. The plan now hands the mount what it wrote
+  (`Transfer::send`'s `written`, `StepContext::written_later`), and
+  rclone's transfer waits until its own record of each says it is on the
+  server (`vfs/stats`' `pathMeta`; 60 s for one never queued) (3fa206fb).
+- A listing of rclone's remotes that fails keeps those last listed
+  (01792cec).
+- A login unit counts rclone's exit on its manager's SIGTERM (143) as a
+  stop, not a failure; sshfs's stays a failure, which restarts it
+  (d825d4c5).
+- The tests' shared trash is pruned at each run of what was trashed more
+  than a day ago (282b2dd4); it held 2,262 items (7.2 GB), now what the
+  day's runs left.
+
+**Checked:** each new test fails with its fix taken out and passes with
+it, but the plan-level rclone test, which passed ten times on the old
+code even at load 39 (the transfer-level test is the deterministic one:
+a file held open stands in for a release not delivered yet). The 14 new
+and changed tests: 10 runs each at load 14 to 20, all passed.
+`systemd-analyze verify` accepts the units written. clippy with
+`-D warnings` on skwir-core, the remote plugin and skwir for Windows
+too (`cargo-zigbuild`). After the last commit, `just lint` (rustfmt,
+clippy on every default crate) and `just test`: 2539 passed, at load
+up to 17; no test mount left.
+
+**Not checked:** macOS not compiled for it; Wayland and the user's
+session; a real rclone remote other than the tests' loopback server.
+What is left (Disconnect, launchd and Windows' tasks, names not UTF-8)
+is in PLAN.md.
