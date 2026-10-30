@@ -7390,6 +7390,7 @@ dependencies = [
  "skwir-extend",
  "skwir-platform",
  "skwir-plugin-archives",
+ "skwir-plugin-books",
  "skwir-plugin-checksums",
  "skwir-plugin-circuits",
  "skwir-plugin-comics",
@@ -7398,7 +7399,6 @@ dependencies = [
  "skwir-plugin-documents",
  "skwir-plugin-edit-as-buffer",
  "skwir-plugin-email",
- "skwir-plugin-epub",
  "skwir-plugin-fonts",
  "skwir-plugin-geo",
  "skwir-plugin-hex",
@@ -7747,6 +7747,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "skwir-plugin-books"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "encoding_rs",
+ "memchr",
+ "percent-encoding",
+ "rbook",
+ "roxmltree 0.21.2",
+ "sha1_smol",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "zip",
+]
+
+[[package]]
 name = "skwir-plugin-checksums"
 version = "0.2.0"
 dependencies = [
@@ -7848,24 +7866,6 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
-]
-
-[[package]]
-name = "skwir-plugin-epub"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "encoding_rs",
- "memchr",
- "percent-encoding",
- "rbook",
- "roxmltree 0.21.2",
- "sha1_smol",
- "skwir-core",
- "skwir-platform",
- "tempfile",
- "zip",
 ]
 
 [[package]]

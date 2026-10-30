@@ -18,7 +18,7 @@ fn app(root: &Path) -> Arc<App> {
         Arc::new(skwir_plugin_tables::PreviewPlugin),
         Arc::new(skwir_plugin_structured_data::PreviewPlugin),
         Arc::new(skwir_plugin_email::PreviewPlugin),
-        Arc::new(skwir_plugin_epub::PreviewPlugin),
+        Arc::new(skwir_plugin_books::PreviewPlugin),
         Arc::new(skwir_plugin_hex::PreviewPlugin),
     ] {
         app.plugins.add(plugin, &app);
@@ -425,7 +425,7 @@ fn epub_chapters_source_navigation_and_disable() {
 fn fb2_chapters_contents_notes_and_source() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
-    let books = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins/epub/testdata");
+    let books = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins/books/testdata");
     let path = tmp.path().join("Synthetic reader's book.fb2");
     std::fs::copy(books.join("synthetic.fb2"), &path).unwrap();
     let first = inspect(&app, &path, &InspectRequest::default());
@@ -485,7 +485,7 @@ fn fb2_chapters_contents_notes_and_source() {
 fn mobipocket_books_read_as_chapters() {
     let tmp = tempfile::tempdir().unwrap();
     let app = app(tmp.path());
-    let books = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins/epub/testdata");
+    let books = Path::new(env!("CARGO_MANIFEST_DIR")).join("../plugins/books/testdata");
     for (fixture, name, title) in [
         ("synthetic.mobi", "Synthetic reader's book.mobi", "MOBI"),
         (

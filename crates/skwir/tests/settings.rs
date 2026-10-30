@@ -114,7 +114,7 @@ fn what_was_set_for_the_epub_plugin_follows_the_books_plugin() {
     app.settings
         .set("epub.backend", toml::Value::String("mupdf".into()));
     app.plugins
-        .add(Arc::new(skwir_plugin_epub::PreviewPlugin), &app);
+        .add(Arc::new(skwir_plugin_books::PreviewPlugin), &app);
     assert!(!app.plugins.is_enabled("books"), "turned off as it was");
     assert!(app.plugins.set_enabled("books", true, &app));
     assert_eq!(

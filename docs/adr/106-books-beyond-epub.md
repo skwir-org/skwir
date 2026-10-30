@@ -23,12 +23,14 @@ Windows and macOS not compiled for it yet.
 ## Decision
 
 1. **One books plugin.** The EPUB plugin reads FB2 and Mobipocket books
-   too, its title "Books". Its id stays `epub`: nothing moves a setting
-   to a new key, so a new id would reset `epub.backend` and the plugin's
-   toggle. Every book goes through one reading path (`book::inspect`
-   over the `Book` a format implements): chapters, a search that wraps,
-   contents rows knowing their chapter, links, the source view.
-2. **One engine choice for every book** (`epub.backend`). Automatic is
+   too: its title "Books", its id `books` (its crate
+   `skwir-plugin-books`). It was `epub`, which it names
+   (`Plugin::former_ids`): its toggle and its engine follow it from there
+   (`Settings::rename`). Every book goes through one reading path
+   (`book::inspect` over the `Book` a format implements): chapters, a
+   search that wraps, contents rows knowing their chapter, links, the
+   source view.
+2. **One engine choice for every book** (`books.backend`). Automatic is
    the built-in engine, for every book. MuPDF, chosen, reads the kinds
    of book it reads well (EPUB, FB2, MOBI 6, a file holding MOBI 6 and
    KF8 through its MOBI 6 part, PalmDOC texts; not encrypted, stored as
@@ -79,6 +81,9 @@ Windows and macOS not compiled for it yet.
   reader's typography.
 - **Falling back to the other engine on failure**: a damaged book is
   the book's error, as for documents.
+- **Keeping the id `epub`** (first built so, on the belief that nothing
+  moved a setting): `epub.backend` would choose the engine for every
+  book, and each release would make the id harder to change.
 
 ## Consequences
 

@@ -210,7 +210,7 @@ The player, in the panel or pinned at its foot:
 - The grid shows the picture of the first page that an Office or
   OpenDocument file stores, before any preview.
 
-### Books (`epub`)
+### Books (`books`)
 
 - EPUB, **FB2** (also zipped, `.fb2.zip`) and Kindle's **MOBI** and
   **AZW3**, and PalmDOC texts, all read the same way, below. A Kindle

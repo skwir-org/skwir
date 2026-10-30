@@ -1,5 +1,5 @@
 [package]
-name = "skwir-plugin-epub"
+name = "skwir-plugin-books"
 version.workspace = true
 publish.workspace = true
 edition.workspace = true

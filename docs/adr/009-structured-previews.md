@@ -46,7 +46,7 @@ are measured.
   (ADR-012: CSS that says how text reads is applied; layout, fonts and
   colours are not.)
 - **EPUB**: rbook (Apache-2.0); its parser and ZIP dependency need Rust 1.88,
-  which `epub` declares.
+  which `epub` (`books` since ADR-106) declares.
 - **Data.** CSV: csv (MIT/Unlicense). JSON: serde_json. TOML: toml_edit spans
   (MIT/Apache-2.0, the 0.25 release `toml` already pulls). YAML: yaml-rust2
   events (MIT/Apache-2.0; yaml-rust is unmaintained, RUSTSEC-2024-0320).

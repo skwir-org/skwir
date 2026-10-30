@@ -48,11 +48,11 @@ layout" EPUB engine. It is AGPL-3.0 or commercial.
 
 ### 2026-09-24: books, text size and fonts
 
-- **Book engine:** `epub.backend` is `builtin` (also `auto`:
-  reading mode, drawn fixed-layout pages, ADR-012/013) or `mupdf`, which
-  opens every book in the document reader. With `mupdf` the plugin answers
-  `open_document`, never `inspect`; a missing worker is an error naming the
-  setting.
+- **Book engine:** `epub.backend` (`books.backend` since ADR-106) is
+  `builtin` (also `auto`: reading mode, drawn fixed-layout pages,
+  ADR-012/013) or `mupdf`, which opens every book in the document
+  reader. With `mupdf` the plugin answers `open_document`, never
+  `inspect`; a missing worker is an error naming the setting.
 - **Layout is an argument:** `--layout=width,height,em` (points, bounded);
   the worker paginates before greeting (`DocumentInfo::reflowable`). Books
   use a 420 × 595 pt page, body text at the preview's text size

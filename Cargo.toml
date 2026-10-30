@@ -88,7 +88,7 @@ skwir-plugin-media = { path = "crates/plugins/media" }
 skwir-plugin-hex = { path = "crates/plugins/hex" }
 skwir-plugin-markdown = { path = "crates/plugins/markdown" }
 skwir-plugin-archives = { path = "crates/plugins/archives" }
-skwir-plugin-epub = { path = "crates/plugins/epub" }
+skwir-plugin-books = { path = "crates/plugins/books" }
 skwir-plugin-tables = { path = "crates/plugins/tables" }
 skwir-plugin-playlists = { path = "crates/plugins/playlists" }
 skwir-plugin-mpris = { path = "crates/plugins/mpris" }

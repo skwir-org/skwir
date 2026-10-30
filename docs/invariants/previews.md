@@ -530,7 +530,7 @@ A text document is read as its structure, or laid out as pages.
   Mobipocket book's text) is kept while the book is shown
   (`book::Kept`, keyed by path and version, let go with
   `PreviewRequest::shown`), built outside the lock.
-- **One engine choice for every book** (`epub.backend`): Automatic is
+- **One engine choice for every book** (`books.backend`): Automatic is
   the built-in engine. MuPDF, chosen, reads only the kinds it reads well,
   told from the file before anything opens it (`Provider::mupdf_reads`,
   `mobi::mupdf_reads`: a zipped FB2, KF8, Huffman-coded or encrypted

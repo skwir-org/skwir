@@ -7503,3 +7503,28 @@ on `remote_folders::what_another_program_left_to_send_is_said_on_its_place_until
 00181eec too: the suite run twice there and twice here, alternating,
 failed once on each side on an rclone test. Not run: `smoke`,
 `a11y-check`, the reader checks.
+
+### The books plugin's id is `books` (2026-10-30, ADR-106)
+
+The books plugin, built as `epub` the same night (above), is `books`:
+b803e9ef (its id, `books.backend`, its preview provider, with what was
+set under `epub` following it) and the crate's move
+(`crates/plugins/books`, `skwir-plugin-books`). ADR-106 had kept `epub`
+because "nothing moves a setting to a new key": `Settings::rename` had
+since 2026-09-25 (83f2d7a4), never called. It is now, and a plugin names
+the ids it had (`Plugin::former_ids`) for its toggle to follow;
+`Settings::check` notes a former name with its new one.
+
+**Checked:** at b803e9ef, clippy on skwir-core, the books plugin and
+skwir; skwir-core's library and settings tests (400), the books
+plugin's (41), skwir's settings, fallback thumbnail, plugin toggle,
+preview and any-file tests (30, 3 ignored), among them a renamed
+plugin's toggle, setting and notes (core) and the EPUB plugin's toggle
+and engine following the books plugin (skwir). After the move: rustfmt,
+clippy on the books plugin and skwir, the same tests (41, 30), and
+`just mupdf-check` (FB2, MOBI and PalmDOC from the new fixtures' path).
+
+**Not checked:** the whole suite and `lint-all` (the user's rule of
+2026-10-27); a settings file of 0.2.0 opened in a window (the tests
+start from one in memory and on disk); Windows and macOS (not
+compiled).

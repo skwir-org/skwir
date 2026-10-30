@@ -4,7 +4,7 @@
 A small EPUB (a part over two chapters, a note, a picture, a cover) and an
 FB2 written by hand, then calibre's own conversions of the EPUB: MOBI 6
 (PalmDOC and uncompressed), MOBI 6 + KF8 in one file, AZW3 (KF8), an FB2,
-and a PalmDOC text. Written to crates/plugins/epub/testdata/.
+and a PalmDOC text. Written to crates/plugins/books/testdata/.
 
     nix build github:NixOS/nixpkgs/nixos-unstable#calibre --out-link /tmp/calibre
     python3 tools/books/fixtures.py --calibre /tmp/calibre/bin/ebook-convert
@@ -27,7 +27,7 @@ import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "crates/plugins/epub/testdata"
+OUT = ROOT / "crates/plugins/books/testdata"
 
 
 def png(width, height, colour):

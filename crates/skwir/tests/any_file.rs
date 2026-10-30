@@ -158,27 +158,27 @@ fn samples() -> Vec<(&'static str, Vec<u8>)> {
         ("book.epub", epub()),
         (
             "book.fb2",
-            include_bytes!("../../plugins/epub/testdata/synthetic.fb2").to_vec(),
+            include_bytes!("../../plugins/books/testdata/synthetic.fb2").to_vec(),
         ),
         (
             "book.fb2.zip",
-            include_bytes!("../../plugins/epub/testdata/synthetic.fb2.zip").to_vec(),
+            include_bytes!("../../plugins/books/testdata/synthetic.fb2.zip").to_vec(),
         ),
         (
             "book.mobi",
-            include_bytes!("../../plugins/epub/testdata/synthetic.mobi").to_vec(),
+            include_bytes!("../../plugins/books/testdata/synthetic.mobi").to_vec(),
         ),
         (
             "both.mobi",
-            include_bytes!("../../plugins/epub/testdata/synthetic-both.mobi").to_vec(),
+            include_bytes!("../../plugins/books/testdata/synthetic-both.mobi").to_vec(),
         ),
         (
             "book.azw3",
-            include_bytes!("../../plugins/epub/testdata/synthetic.azw3").to_vec(),
+            include_bytes!("../../plugins/books/testdata/synthetic.azw3").to_vec(),
         ),
         (
             "text.pdb",
-            include_bytes!("../../plugins/epub/testdata/synthetic.pdb").to_vec(),
+            include_bytes!("../../plugins/books/testdata/synthetic.pdb").to_vec(),
         ),
         ("letter.docx", docx()),
         ("letter.odt", odt()),

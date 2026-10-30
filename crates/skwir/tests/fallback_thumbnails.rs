@@ -26,7 +26,7 @@ fn app(root: &Path) -> Arc<App> {
     for plugin in [
         Arc::new(skwir_plugin_documents::PreviewPlugin::default()) as Arc<dyn Plugin>,
         Arc::new(skwir_plugin_media::PreviewPlugin::default()),
-        Arc::new(skwir_plugin_epub::PreviewPlugin),
+        Arc::new(skwir_plugin_books::PreviewPlugin),
         Arc::new(skwir_plugin_comics::PreviewPlugin),
         Arc::new(skwir_plugin_djvu::PreviewPlugin),
         Arc::new(skwir_plugin_thumbnails::ThumbnailsPlugin::default()),

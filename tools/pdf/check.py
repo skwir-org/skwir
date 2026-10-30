@@ -76,7 +76,7 @@ def check_book(worker, root, environment):
 
 # The books MuPDF reads besides EPUB (ADR-106), made by tools/books/fixtures.py:
 # each with words of its own to find, and the outline FB2 gives.
-BOOKS = Path(__file__).resolve().parents[2] / "crates/plugins/epub/testdata"
+BOOKS = Path(__file__).resolve().parents[2] / "crates/plugins/books/testdata"
 OTHER_BOOKS = [
     ("synthetic.fb2", "needle is here", "Part One"),
     ("synthetic-1251.fb2", "Синтетический текст", "Глава первая"),

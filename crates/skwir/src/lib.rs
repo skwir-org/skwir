@@ -48,7 +48,7 @@ fn built_in() -> Vec<Arc<dyn Plugin>> {
         Arc::new(skwir_plugin_documents::PreviewPlugin::default()),
         Arc::new(skwir_plugin_markdown::PreviewPlugin),
         Arc::new(skwir_plugin_archives::PreviewPlugin),
-        Arc::new(skwir_plugin_epub::PreviewPlugin),
+        Arc::new(skwir_plugin_books::PreviewPlugin),
         Arc::new(skwir_plugin_tables::PreviewPlugin),
         Arc::new(skwir_plugin_playlists::PreviewPlugin),
         // The free desktops' media keys (D-Bus): not on macOS or Windows,

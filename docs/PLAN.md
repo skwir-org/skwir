@@ -246,7 +246,7 @@ gained a Scale rule.
 
 ## Books beyond EPUB: FB2 and MOBI (2026-10-30)
 
-The books plugin (id `epub`, now titled "Books") reads FictionBook 2 and
+The books plugin (id `books`, once `epub`) reads FictionBook 2 and
 Mobipocket books as it reads EPUB (ADR-106): one reading path for every
 book, one engine choice. An FB2, plain or zipped, is translated chapter
 by chapter into XHTML for reading mode, its notes opening under their
