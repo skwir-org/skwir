@@ -8453,3 +8453,35 @@ colored alone, which bat fresh from that chunk does not; rows of a
 grammar can take seconds, colors waiting for it; code blocks are colored
 as the document is built, so a helper's start delays a document's first
 paint; Windows and macOS compiled for neither yet.
+
+### G6: folds and outline from a grammar (2026-10-31, Grammars and printing)
+
+The parse that colors a file (G5) brings what its grammar says beside
+the colors, built by the same agent and split from G5 by the integrator.
+
+- **Folds** (`folds.scm`'s `@fold`): taken by an inspection's code view
+  that has no folds of its own (JSON, YAML and TOML keep their parsers'),
+  as the code view takes folds: those hiding a line at least, nested or
+  apart, one crossing another left out (`highlight::tree::nest`). The
+  fold markers and Expand all / Collapse all show once the parse comes.
+  The text view does not fold, as before: most code files open there,
+  and get colors and contents but no folds.
+- **Outline** (`tags.scm`'s definitions, Zed's `outline.scm`): the
+  contents drawer lists a file's definitions, the name only, indented by
+  depth, each leading to its line through `ui.inspect`'s new `line`
+  action (view-only), in the text view and the code view; the entry
+  highlighted is the last definition starting at or above the top line.
+  A document's own contents still come first. The Contents button shows
+  from the start when the grammar has an outline query, and works once
+  the parse comes.
+
+**Checked:** rustfmt, clippy with `-D warnings` on `skwir-ui` and
+`skwir-platform`; nextest on them, the tree-sitter helper and the print
+helper, 830 passed, 18 skipped: the helper's folds as the code view's
+(a fold hiding nothing and one crossing another dropped, the widest of a
+line kept); a file's definitions as entries leading to their lines,
+indented, the part shown found from the top line, the deepest of two on
+one line; the code view's lines shown under the grammar's folds.
+
+**Not checked:** a real window (G7); folds a user closed are forgotten
+when the file changes and is read again.

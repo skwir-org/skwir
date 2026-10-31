@@ -15,7 +15,7 @@ use std::str::FromStr;
 
 use skwir_core::CancelToken;
 use skwir_core::inspection::Run;
-use skwir_core::syntax::{MAX_LINES, Span};
+use skwir_core::syntax::{MAX_LINES, Span, Symbol};
 use syntect::highlighting::{FontStyle, Style};
 use syntect::parsing::ScopeStack;
 
@@ -339,7 +339,7 @@ fn boundary(text: &str, at: usize) -> usize {
 
 /// A text parsed by a tree-sitter grammar in a helper, and the looks a
 /// palette gives its captures: colored a few lines at a time where it is
-/// shown. Dropping it
+/// shown, folded and outlined as its grammar's queries say. Dropping it
 /// forgets the text in the helper without waiting. Its calls block: a
 /// worker's work.
 pub struct Tree<'h> {
@@ -414,6 +414,48 @@ impl<'h> Tree<'h> {
     pub fn runs(&self, spans: &[Span], from: usize, text: &str) -> Vec<Run> {
         self.captured.runs(spans, from, text)
     }
+
+    /// Where it folds, as the code view folds (`Inspection::folds`): lines
+    /// `start..end`, the first and the last shown and those between hidden,
+    /// one line at least; nested or apart, in order of `start`.
+    ///
+    /// # Errors
+    /// The helper's.
+    pub fn folds(&self) -> anyhow::Result<Vec<Range<usize>>> {
+        Ok(nest(self.helper.folds(&self.doc)?))
+    }
+
+    /// The definitions it holds, in the text's order.
+    ///
+    /// # Errors
+    /// The helper's.
+    pub fn outline(&self) -> anyhow::Result<Vec<Symbol>> {
+        self.helper.outline(&self.doc)
+    }
+}
+
+/// The helper's folds as the code view takes them: those that hide a line
+/// at least, nested or apart (one that crosses one before it left out).
+fn nest(folds: Vec<(u32, u32)>) -> Vec<Range<usize>> {
+    let mut folds: Vec<Range<usize>> = folds
+        .into_iter()
+        .map(|(start, end)| start as usize..end as usize)
+        .filter(|fold| fold.end > fold.start + 1)
+        .collect();
+    folds.sort_by_key(|fold| (fold.start, std::cmp::Reverse(fold.end)));
+    folds.dedup_by_key(|fold| fold.start);
+    let mut ends: Vec<usize> = Vec::new();
+    folds.retain(|fold| {
+        while ends.last().is_some_and(|&end| end <= fold.start) {
+            ends.pop();
+        }
+        if ends.last().is_some_and(|&end| fold.end > end) {
+            return false;
+        }
+        ends.push(fold.end);
+        true
+    });
+    folds
 }
 
 /// `text` colored whole by the grammar named `grammar` in the shared
@@ -662,6 +704,17 @@ mod tests {
         assert!(captured.runs(&spans, 0, "").is_empty());
     }
 
+    #[test]
+    fn the_helper_s_folds_are_the_code_view_s() {
+        // A fold hiding nothing goes; one crossing another goes; the
+        // widest of a line stays.
+        assert_eq!(
+            nest(vec![(0, 9), (1, 2), (2, 6), (2, 4), (5, 11), (6, 8)]),
+            [0..9, 2..6, 6..8]
+        );
+        assert!(nest(Vec::new()).is_empty());
+    }
+
     /// The helper built beside the tests (`cargo nextest run -p
     /// skwir-tree-sitter-worker -p skwir-platform` builds it); without it
     /// the test says so and passes, as the helper's own do.
@@ -751,5 +804,9 @@ mod tests {
         };
         assert_eq!(colors_at(&rows), colors_at(&whole));
         assert!(tree.spans(9..12).unwrap().is_empty(), "past its end");
+        assert!(
+            tree.folds().unwrap().is_empty(),
+            "the fixture folds nothing"
+        );
     }
 }

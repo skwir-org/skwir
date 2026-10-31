@@ -164,20 +164,28 @@ pub(crate) fn tree_rows(
     Ok(())
 }
 
-/// A text a tree-sitter grammar parsed for a view (ADR-110). Held by the
-/// view, and dropped with it: the helper then forgets the text.
+/// A text a tree-sitter grammar parsed for a view (ADR-110), and what the
+/// grammar says of it. Held by the view, and dropped with it: the helper
+/// then forgets the text.
 pub(crate) struct Parsed {
     pub tree: Tree<'static>,
+    /// Where it folds, as the code view folds (`Inspection::folds`): asked
+    /// only of a code view that has no folds of its own.
+    pub folds: Arc<[Range<usize>]>,
+    /// Its definitions, for the contents; `None` without any.
+    pub outline: Option<Arc<crate::outline::Symbols>>,
 }
 
 /// `text` (UTF-8) parsed by the tree-sitter grammar named `grammar` in the
-/// shared helper: on a worker. `None` when the helper cannot (not
-/// installed, the grammar failing, a timeout): bat's grammar colors it
-/// then.
+/// shared helper, its folds asked when `folds` says, and its outline: on a
+/// worker. `None` when the helper cannot (not installed, the grammar
+/// failing, a timeout): bat's grammar colors it then. What the grammar
+/// cannot say beside its colors (no folds query, no outline) is left out.
 pub(crate) fn parse(
     grammar: &str,
     text: &[u8],
     palette: &Palette,
+    folds: bool,
     cancel: &CancelToken,
 ) -> Option<Parsed> {
     let tree = Tree::open(grammar, text, palette, cancel)
@@ -187,7 +195,24 @@ pub(crate) fn parse(
             }
         })
         .ok()?;
-    Some(Parsed { tree })
+    let folds = if folds {
+        tree.folds()
+            .inspect_err(|error| tracing::debug!(%error, grammar, "a tree-sitter grammar's folds"))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let outline = tree
+        .outline()
+        .inspect_err(|error| tracing::debug!(%error, grammar, "a tree-sitter grammar's outline"))
+        .ok()
+        .and_then(|symbols| crate::outline::Symbols::of(&symbols))
+        .map(Arc::new);
+    Some(Parsed {
+        tree,
+        folds: folds.into(),
+        outline,
+    })
 }
 
 /// How far a chunk is colored.
@@ -228,6 +253,8 @@ pub(crate) struct Colorer {
     /// (`highlight::engine`); bat's grammar for `language` without, or
     /// when the grammar fails.
     pub grammar: Option<String>,
+    /// Whether that grammar says where definitions are (an outline query).
+    pub outlined: bool,
 }
 
 /// The rows of a chunk of a code view, colored, and how.
@@ -331,6 +358,23 @@ impl CodeColors {
             .get(&(line / STRIDE))?
             .rows
             .get((line % STRIDE) as usize)
+    }
+
+    /// The folds its tree-sitter grammar found, for a view whose
+    /// inspection has none of its own: none until it is parsed.
+    pub(crate) fn folds(&self) -> Option<&Arc<[Range<usize>]>> {
+        match &self.parse {
+            Parse::Done(parsed) if !parsed.folds.is_empty() => Some(&parsed.folds),
+            _ => None,
+        }
+    }
+
+    /// Its definitions, as its tree-sitter grammar found them.
+    pub(crate) fn outline(&self) -> Option<&Arc<crate::outline::Symbols>> {
+        match &self.parse {
+            Parse::Done(parsed) => parsed.outline.as_ref(),
+            _ => None,
+        }
     }
 
     fn shade(&self, chunk: u64) -> Shade {
@@ -542,7 +586,8 @@ impl CodeColors {
     }
 
     /// Parse the text with `grammar`: its lines joined, as the code view
-    /// holds them (a block a line).
+    /// holds them (a block a line), its folds asked when the inspection
+    /// has none of its own.
     fn ask_parse(
         &mut self,
         app: &Arc<skwir_core::App>,
@@ -567,7 +612,10 @@ impl CodeColors {
                     }
                     text.push_str(&block.text);
                 }
-                Reply::Parsed(parse(&grammar, text.as_bytes(), &palette, cancel).map(Arc::new))
+                let folds = data.folds.is_empty();
+                Reply::Parsed(
+                    parse(&grammar, text.as_bytes(), &palette, folds, cancel).map(Arc::new),
+                )
             },
         );
     }
@@ -604,6 +652,7 @@ impl CodeColors {
                 changed
             }
             Reply::Parsed(parsed) => {
+                // Its folds and contents come with it.
                 self.parse = parsed.map_or(Parse::Failed, Parse::Done);
                 true
             }

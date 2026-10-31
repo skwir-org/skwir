@@ -132,6 +132,7 @@ impl Display {
             colorer = Some(Arc::new(crate::coloring::Colorer {
                 language,
                 palette: Arc::new(palette),
+                outlined: grammar.as_deref().is_some_and(outlines),
                 grammar,
             }));
         } else {
@@ -247,6 +248,15 @@ impl Display {
             colors: colorer,
         }
     }
+    /// Whether the tree-sitter grammar that colors its code says where
+    /// its definitions are: its contents are offered from the start, and
+    /// come once it is parsed (`State::symbols`). Asked as it arrives,
+    /// while the view of a text read where it is shown has not taken its
+    /// start.
+    fn outlined(&self) -> bool {
+        self.text.as_ref().is_some_and(|start| start.outlined)
+            || self.colors.as_ref().is_some_and(|with| with.outlined)
+    }
     /// The matches of `query` (`folded` too) in block or row `i`: where
     /// they are in a block's text; a row's is the row, at its start.
     fn hits(&self, i: usize, query: &str, folded: &str) -> Vec<std::ops::Range<usize>> {
@@ -360,6 +370,14 @@ fn color_block(
         }
     }
     crate::code_preview::Highlighter::new(language, palette).text(&block.text)
+}
+
+/// Whether the tree-sitter grammar named `grammar` has an outline query.
+pub(crate) fn outlines(grammar: &str) -> bool {
+    skwir_platform::grammars::found().is_some_and(|found| {
+        skwir_platform::grammars::named(&found, grammar)
+            .is_some_and(|found| !found.grammar.outline.is_empty())
+    })
 }
 
 /// Whether the book's position counts its printed pages: the preference,
@@ -688,7 +706,7 @@ impl Offered {
                 ..Offered::default()
             };
         }
-        self.contents |= display.contents.is_some();
+        self.contents |= display.contents.is_some() || display.outlined();
         self.folds |= folds(data);
         self.sized |= !data.blocks.is_empty();
         self.whole |= data.whole_available;
@@ -1257,7 +1275,10 @@ impl State {
         self.collapsed = Arc::new(if !collapse {
             BTreeSet::new()
         } else if data.kind == InspectionKind::Code {
-            data.folds.iter().map(|fold| fold.start).collect()
+            self.code_folds(data)
+                .iter()
+                .map(|fold| fold.start)
+                .collect()
         } else {
             data.rows
                 .iter()
@@ -1270,6 +1291,31 @@ impl State {
     #[cfg(test)]
     fn visible(&self) -> &[usize] {
         &self.visible
+    }
+    /// The folds of a code view: its inspection's own, else those the
+    /// tree-sitter grammar coloring it found, once it is parsed.
+    fn code_folds<'a>(&'a self, data: &'a Inspection) -> &'a [std::ops::Range<usize>] {
+        match self.colors.folds() {
+            Some(folds) if data.folds.is_empty() => &folds[..],
+            _ => &data.folds[..],
+        }
+    }
+    /// A code file's definitions, as the tree-sitter grammar coloring it
+    /// found them, once it is parsed.
+    pub(crate) fn symbols(&self) -> Option<&Arc<crate::outline::Symbols>> {
+        match &self.text {
+            Some(text) => text.outline(),
+            None => self.colors.outline(),
+        }
+    }
+    /// The line at the top of a code view or a text read where it is
+    /// shown, from 0, once it is read.
+    fn top_line(&self) -> Option<u64> {
+        if let Some(text) = &self.text {
+            return text.line_of(text.scroll.borrow().top);
+        }
+        let top = self.list.logical_scroll_top().item_ix.checked_sub(1)?;
+        self.visible.get(top).map(|&line| line as u64)
     }
     /// Whether the byte view shows the file, which it searches whole:
     /// chosen (View as hex) or the automatic one, which both answer as
@@ -1303,7 +1349,12 @@ impl State {
     fn reindex(&mut self, data: &Inspection) {
         let estimate = self.row_estimate(data);
         if data.kind == InspectionKind::Code {
-            self.visible = Arc::new(crate::code_preview::visible(data, &self.collapsed));
+            let visible = crate::code_preview::visible(
+                self.code_folds(data),
+                data.blocks.len(),
+                &self.collapsed,
+            );
+            self.visible = Arc::new(visible);
             self.list
                 .reset_with_uniform_height(self.visible.len() + 1, estimate);
             return;
@@ -1342,6 +1393,7 @@ const VIEW_ONLY: &[&str] = &[
     "smaller",
     "outline",
     "block",
+    "line",
     "link",
     "links",
     "links_close",
@@ -1857,6 +1909,17 @@ impl Shell {
                         .and_then(|i| state.item_of(&display.data, i as usize))
                     {
                         state.show_item(item);
+                    }
+                    cx.notify();
+                    return;
+                }
+                // A line of code (from 1), as a code file's contents lead:
+                // a text read where it is shown finds it on a worker.
+                "line" => {
+                    if let Some(line) = args["line"].as_u64() {
+                        let line = u32::try_from(line).unwrap_or(u32::MAX);
+                        self.preview.inspection.show_line(&display.data, line);
+                        self.ask_text();
                     }
                     cx.notify();
                     return;
@@ -2654,7 +2717,7 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
     // where one has nothing for it (`Offered`).
     let offered = state.offered;
     if offered.contents {
-        let contents = view.display.contents.is_some();
+        let contents = view.display.contents.is_some() || state.symbols().is_some();
         bar.push(Item::button(
             Slot::Lead,
             1,
@@ -2690,9 +2753,11 @@ fn bar(shell: &Shell, view: View<'_>, theme: &Theme, cx: &mut Context<Shell>) ->
             "hex",
         )));
     }
-    // Folding is offered where there is something to fold.
-    if offered.folds {
-        let folding = folds(data);
+    // Folding is offered where there is something to fold: a code view's
+    // grammar may find folds once it is parsed.
+    let grammar_folds = data.kind == InspectionKind::Code && state.colors.folds().is_some();
+    if offered.folds || grammar_folds {
+        let folding = folds(data) || grammar_folds;
         bar.push(Item::button(
             Slot::View,
             0,
@@ -3013,14 +3078,21 @@ pub fn outline_drawer(
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Option<AnyElement> {
-    let contents = view.display.contents.as_ref()?;
     if !view.state.outline {
         return None;
     }
-    let top = view.state.top_block(&view.display.data);
+    // A document's own contents; else a code file's definitions.
+    let (entries, current) = if let Some(contents) = view.display.contents.as_ref() {
+        let top = view.state.top_block(&view.display.data);
+        (Arc::clone(&contents.entries), contents.current(top))
+    } else {
+        let symbols = view.state.symbols()?;
+        let current = view.state.top_line().and_then(|line| symbols.current(line));
+        (Arc::clone(&symbols.entries), current)
+    };
     Some(crate::outline::contents(
-        Arc::clone(&contents.entries),
-        contents.current(top),
+        entries,
+        current,
         &view.state.contents,
         ("ui.preview_contents", serde_json::json!({})),
         shell,
@@ -3388,6 +3460,8 @@ pub fn content(
     let row_icons = display.row_icons.clone();
     let visible = state.visible.clone();
     let collapsed = state.collapsed.clone();
+    // The folds a code view's grammar found, where it has none of its own.
+    let grammar_folds = state.colors.folds().cloned();
     let selected = state.selected;
     let selection = state.selection;
     let font_size = state.font_size;
@@ -3536,11 +3610,14 @@ pub fn content(
         let i = index - 1;
         if data.kind == InspectionKind::Code {
             let line = visible[i];
-            let fold = data
-                .folds
+            let folds = match &grammar_folds {
+                Some(folds) if data.folds.is_empty() => &folds[..],
+                _ => &data.folds[..],
+            };
+            let fold = folds
                 .binary_search_by_key(&line, |fold| fold.start)
                 .ok()
-                .map(|i| (&data.folds[i], collapsed.contains(&line)));
+                .map(|i| (&folds[i], collapsed.contains(&line)));
             if colors {
                 lines_seen.borrow_mut().push(line);
             }

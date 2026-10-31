@@ -1515,6 +1515,11 @@ is still to come are in `docs/preview-frame.md`.
   then each chunk is colored from it exactly, with no state carried from
   the chunk before. Whatever it cannot color (a line past
   `tree::LONGEST_LINE`, a helper's failure) bat colors.
+- **A grammar's folds and outline come with its parse**, never from a
+  parse of their own: folds only for a code view whose inspection has
+  none (a parser's folds win), passed through `tree::nest` so they keep
+  the rule above; the outline is the contents of a file that has none,
+  each entry leading to its line (`ui.inspect`, `line`).
 
 ## Printing (ADR-111)
 

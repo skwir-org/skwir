@@ -294,9 +294,94 @@ impl Pages {
     }
 }
 
+/// A code file's definitions as its tree-sitter grammar found them
+/// (ADR-110, `tags.scm` or Zed's `outline.scm`): each an entry leading to
+/// its line, a step in for each definition holding it. Built on the worker
+/// that parsed the file.
+#[derive(Debug)]
+pub struct Symbols {
+    pub entries: Arc<[Entry]>,
+    /// (line, entry), by line then entry: where each entry starts, to tell
+    /// the part shown at once.
+    marks: Vec<(u32, usize)>,
+}
+
+impl Symbols {
+    /// The contents of `symbols`; `None` without any.
+    pub fn of(symbols: &[skwir_core::syntax::Symbol]) -> Option<Symbols> {
+        if symbols.is_empty() {
+            return None;
+        }
+        let entries = symbols
+            .iter()
+            .map(|symbol| Entry {
+                depth: usize::try_from(symbol.depth).unwrap_or(usize::MAX),
+                title: symbol.name.trim().to_owned().into(),
+                command: Some((
+                    "ui.inspect",
+                    serde_json::json!({"action":"line","line": u64::from(symbol.line) + 1}),
+                )),
+            })
+            .collect();
+        let mut marks: Vec<(u32, usize)> = symbols
+            .iter()
+            .enumerate()
+            .map(|(entry, symbol)| (symbol.line, entry))
+            .collect();
+        marks.sort_unstable();
+        Some(Symbols { entries, marks })
+    }
+
+    /// The entry of the part at line `line` (from 0): the last to start at
+    /// or above it, the deepest where several start on one line.
+    pub fn current(&self, line: u64) -> Option<usize> {
+        let before = self
+            .marks
+            .partition_point(|&(start, _)| u64::from(start) <= line);
+        before.checked_sub(1).map(|last| self.marks[last].1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file's definitions are entries leading to their lines, indented
+    /// by depth; the part shown is the last starting at or above the line
+    /// at the top.
+    #[test]
+    fn a_code_file_s_definitions_lead_to_their_lines() {
+        let symbol = |name: &str, kind: &str, line, depth| skwir_core::syntax::Symbol {
+            name: name.into(),
+            kind: kind.into(),
+            line,
+            depth,
+        };
+        assert!(Symbols::of(&[]).is_none());
+        let symbols = Symbols::of(&[
+            symbol("Point", "class", 2, 0),
+            symbol(" new ", "method", 4, 1),
+            symbol("norm", "method", 9, 1),
+            symbol("main", "function", 20, 0),
+        ])
+        .unwrap();
+        assert_eq!(
+            symbols.entries[1],
+            Entry {
+                depth: 1,
+                title: "new".into(),
+                command: Some(("ui.inspect", serde_json::json!({"action":"line","line":5}))),
+            }
+        );
+        assert_eq!(symbols.current(0), None, "above the first");
+        assert_eq!(symbols.current(2), Some(0));
+        assert_eq!(symbols.current(8), Some(1));
+        assert_eq!(symbols.current(15), Some(2));
+        assert_eq!(symbols.current(400), Some(3));
+        // Two on one line: the deepest, which comes later.
+        let same = Symbols::of(&[symbol("a", "class", 3, 0), symbol("b", "method", 3, 1)]).unwrap();
+        assert_eq!(same.current(3), Some(1));
+    }
 
     /// The rule `Pages` keeps, as it was worked out at every frame: the
     /// entry leading to the highest page at or before `page`, the last of

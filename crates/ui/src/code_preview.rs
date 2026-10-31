@@ -1,15 +1,12 @@
 //! Virtual source lines. Fold coordinates stay in the provider's logical lines.
 //!
 //! The code view draws code colored by `skwir_platform::highlight` (bat's
-//! grammars and themes, ADR-060), in skwir's look or the one the Reading
-//! page keeps it in. Code in a look that is not skwir's is drawn with that
+//! grammars and themes, ADR-060, or a tree-sitter grammar in those themes,
+//! ADR-110), in skwir's look or the one the Reading page keeps it in. Code in a look that is not skwir's is drawn with that
 //! look's tokens (`Theme::in_look`).
 use crate::{inspector_text::Selection, shell::Shell, theme::Theme};
 use gpui::{AnyElement, Hsla, WeakEntity, div, prelude::*, px};
-use skwir_core::{
-    inspection::{Block, Inspection},
-    workspace::PaneId,
-};
+use skwir_core::{inspection::Block, workspace::PaneId};
 use std::collections::BTreeSet;
 
 pub use skwir_platform::highlight::{
@@ -21,10 +18,17 @@ pub fn color([r, g, b]: [u8; 3]) -> Hsla {
     gpui::rgb((u32::from(r) << 16) | (u32::from(g) << 8) | u32::from(b)).into()
 }
 
-pub fn visible(data: &Inspection, collapsed: &BTreeSet<usize>) -> Vec<usize> {
+/// The lines of a code view of `lines` lines shown, the folds `folds`
+/// (`Inspection::folds`, or those its grammar found) that start at a line
+/// in `collapsed` closed.
+pub fn visible(
+    folds: &[std::ops::Range<usize>],
+    lines: usize,
+    collapsed: &BTreeSet<usize>,
+) -> Vec<usize> {
     let mut hidden_until = 0;
-    let mut folds = data.folds.iter().peekable();
-    (0..data.blocks.len())
+    let mut folds = folds.iter().peekable();
+    (0..lines)
         .filter(|&line| {
             while folds.peek().is_some_and(|fold| fold.start < line) {
                 folds.next();
@@ -35,7 +39,7 @@ pub fn visible(data: &Inspection, collapsed: &BTreeSet<usize>) -> Vec<usize> {
             if let Some(fold) = folds.peek().filter(|fold| fold.start == line)
                 && collapsed.contains(&line)
             {
-                hidden_until = fold.end.min(data.blocks.len());
+                hidden_until = fold.end.min(lines);
             }
             true
         })
@@ -180,7 +184,7 @@ impl CodeRow<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use skwir_core::inspection::{Block, InspectionKind};
+    use skwir_core::inspection::{Block, Inspection, InspectionKind};
 
     #[test]
     fn nested_folds_retain_siblings_and_remember_child_state() {
@@ -190,16 +194,11 @@ mod tests {
             folds: vec![0..7, 2..5, 7..9],
             ..Inspection::default()
         };
-        assert_eq!(
-            visible(&data, &BTreeSet::from([2])),
-            [0, 1, 2, 5, 6, 7, 8, 9]
-        );
-        assert_eq!(visible(&data, &BTreeSet::from([0, 2])), [0, 7, 8, 9]);
-        assert_eq!(visible(&data, &BTreeSet::from([0, 2, 7])), [0, 7, 9]);
-        assert_eq!(
-            visible(&data, &BTreeSet::new()),
-            (0..10).collect::<Vec<_>>()
-        );
+        let visible = |collapsed| visible(&data.folds, data.blocks.len(), &collapsed);
+        assert_eq!(visible(BTreeSet::from([2])), [0, 1, 2, 5, 6, 7, 8, 9]);
+        assert_eq!(visible(BTreeSet::from([0, 2])), [0, 7, 8, 9]);
+        assert_eq!(visible(BTreeSet::from([0, 2, 7])), [0, 7, 9]);
+        assert_eq!(visible(BTreeSet::new()), (0..10).collect::<Vec<_>>());
     }
 
     /// Code is as light or dark as skwir unless the settings keep it in a

@@ -77,6 +77,8 @@ pub(crate) struct Start {
     /// The tree-sitter grammar that colors it, when one does
     /// (`highlight::engine`): the text is parsed once the view shows.
     pub grammar: Option<String>,
+    /// Whether that grammar says where definitions are (an outline query).
+    pub outlined: bool,
 }
 
 /// A text parsed by its tree-sitter grammar, and the bytes it was parsed
@@ -284,6 +286,7 @@ pub(crate) fn start(
         form,
         chunk,
         palette: Arc::new(crate::code_preview::Palette::of(code)),
+        outlined: grammar.as_deref().is_some_and(crate::inspector::outlines),
         grammar,
     })
 }
@@ -422,6 +425,7 @@ impl TextView {
             chunk,
             palette,
             grammar,
+            outlined: _,
         } = start;
         let first = (
             chunk.rows.len() as u64,
@@ -490,11 +494,28 @@ impl TextView {
             move |cancel| {
                 let bytes = held_text(&file, form, cancel)?;
                 let start = usize::try_from(form.start).ok()?;
-                let parsed = parse(&grammar, &bytes[start..], &palette, cancel)?;
+                let parsed = parse(&grammar, &bytes[start..], &palette, false, cancel)?;
                 Some(Arc::new(Text { parsed, bytes }))
             },
         );
         self.parse = Parse::Asked(asked);
+    }
+
+    /// Its definitions, as its tree-sitter grammar found them.
+    pub(crate) fn outline(&self) -> Option<&Arc<crate::outline::Symbols>> {
+        match &self.parse {
+            Parse::Done(text) => text.parsed.outline.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// The line row `row` is of, once it is read.
+    pub(crate) fn line_of(&self, row: u64) -> Option<u64> {
+        let chunk = self.chunks.get(&(row / STRIDE))?;
+        chunk
+            .lines
+            .get((row % STRIDE) as usize)
+            .map(|&(line, _)| line)
     }
 
     /// Count the rows on, to `until` (to the end with `None`), on a worker,
@@ -758,7 +779,7 @@ impl TextView {
         };
         let took = parsed.is_some();
         if let Some(parsed) = parsed {
-            // Its chunks are colored from it now.
+            // Its chunks are colored from it now; its contents show.
             self.parse = parsed.map_or(Parse::None, Parse::Done);
         }
         let Some(Reply { chunk, read }) = self.asked.take() else {
@@ -1251,7 +1272,11 @@ mod tests {
         let palette = Palette::of(&crate::code_preview::CodeTheme::own(false));
         let tree = Tree::open_in(helper, "json", &bytes, &palette, &cancel).unwrap();
         let parsed = Text {
-            parsed: Parsed { tree },
+            parsed: Parsed {
+                tree,
+                folds: Arc::default(),
+                outline: None,
+            },
             bytes,
         };
         let number = palette.look_of("number").color;
