@@ -7906,3 +7906,50 @@ skwir-ui's tests.
 **Not checked:** a text read a screen at a time inside an archive (the
 pager's turn, changed alike); the user's session (Wayland); Windows and
 macOS, not compiled (`just check-cross` not run).
+
+### A document's first page at the side its area needs (2026-10-31)
+
+The user found a PDF's preview "utterly long", faster before. The file
+is 62 pages made by pdf-lib; its cover holds two lossless JPEG 2000
+scans of 2155 by 2461 pixels, 10 MB each. OpenJPEG decodes one in
+3.0 s at full size, 0.9 s at half and 0.3 s at a quarter, on one thread,
+and PDFium decodes at a reduced size only for a page drawn small: the
+cover takes about 0.5 s at 512 px, 0.9 s at 1024 and 3 s at 1536 or
+2048, at a load average near 1 (6 s and 10 to 15 s the night before,
+under parallel builds). Not a regression: the helper before and after
+pdfium-render 0.9 and PDFium 7749 and 8066, alternated, took the same
+time, and the side pages are asked at had not changed since 2026-09-24.
+
+What Skwir added: before any page was shown, the first was rendered at
+a fixed 2048 px (`FIRST_PAGE_SIDE`), whatever the panel. Now
+`Preview::page_side` is `None` until a page is rendered, and the first
+renders at the side an upright page of ISO's shape covers in the
+content's area (`reader_scroll::area_side`). `watch_area` hands it, as
+the area is laid out, to `reader_scroll::Area` with the preview's
+generation; the job reads it once the document is open, waiting 200 ms
+at most for that preview's frame (then the side last measured, else
+512). While a preview is on its way the content fills the area, empty,
+so the area is measured before "Loading…". The page comes back with the
+side it was asked at (`PreviewResult::page_side`): the reader's
+`shown_side`, set when it arrives rather than when it is asked, and the
+side pages are rendered at from then on. reader.md says so.
+
+**Checked:** tests of `area_side` (a tall panel, a narrow one, the
+panel at the bottom) and of `Area` (nothing measured, another preview's
+side after the wait, its own laid out while the job waits); rustfmt;
+clippy with `-D warnings` on skwir-ui, all targets; skwir-ui's tests
+(442). In a window (release build, Xvfb with lavapipe, a copy of the
+file in a fixture folder, a fresh start each time, folder Properties
+shown before the file was selected), old and new binaries alternated:
+in a 320 px panel the preview took 3.0 and 2.95 s before (2048 px, then
+512 for the next pages) and 0.31 and 0.29 s after (512 px, the cover
+sharp); in an 896 px panel 2.94 and 3.06 s before and 3.05 and 3.08 s
+after (1536 px: this cover costs a full decode at either side). The
+panel opened by F11 on the selected file drew at 1536 px at once: no
+side reported after the page came, so it was neither the fallback nor
+larger.
+
+**Not checked:** the user's session (Wayland, its own display scale);
+peek or the whole screen showing the first document; the other
+engines and books (the same job and side, not opened here); Windows
+and macOS, not compiled (`just check-cross` not run).

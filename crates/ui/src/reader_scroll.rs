@@ -34,11 +34,65 @@ pub(crate) fn page_side(covered: f32) -> u32 {
     ((steps * SIDE_STEP) as u32).min(skwir_core::document::MAX_SIDE)
 }
 
+/// The side to render a page at that is fitted in an area `width` by
+/// `height` device pixels, its shape unknown until it is rendered: an
+/// upright page of the usual shape (ISO's), as wide as the area or as
+/// tall. A page of another shape covers less, or more: shown larger, it is
+/// drawn again where it is (`Shell::document_shown`).
+pub(crate) fn area_side(width: f32, height: f32) -> u32 {
+    page_side((width * std::f32::consts::SQRT_2).min(height))
+}
+
+/// The side a page shown in the preview's content area would be rendered
+/// at, as the area was last laid out (`preview::watch_area`), for the
+/// preview of each generation: the first page of the first document is
+/// rendered at it, before any page was shown to say (`PreviewState::page_side`).
+/// The preview's job reads it once it has opened the document, the frame
+/// that lays the area out for that preview having come meanwhile.
+#[derive(Default)]
+pub(crate) struct Area {
+    measured: parking_lot::Mutex<Option<(u64, u32)>>,
+    laid_out: parking_lot::Condvar,
+}
+
+impl Area {
+    /// The longest the job waits for the area of its preview to be laid
+    /// out: a window not drawn (another workspace) never lays it out.
+    const WAIT: std::time::Duration = std::time::Duration::from_millis(200);
+
+    /// The area of the preview `generation` was laid out, at `side`.
+    pub(crate) fn measured(&self, generation: u64, side: u32) {
+        let mut measured = self.measured.lock();
+        if *measured != Some((generation, side)) {
+            *measured = Some((generation, side));
+            self.laid_out.notify_all();
+        }
+    }
+
+    /// The side measured for the preview `generation`, waiting `WAIT` at
+    /// most for the frame that lays its area out; else the last measured,
+    /// else the smallest step. Called on a worker.
+    pub(crate) fn side(&self, generation: u64) -> u32 {
+        let deadline = std::time::Instant::now() + Self::WAIT;
+        let mut measured = self.measured.lock();
+        while measured.is_none_or(|(laid_out, _)| laid_out != generation) {
+            if self
+                .laid_out
+                .wait_until(&mut measured, deadline)
+                .timed_out()
+            {
+                break;
+            }
+        }
+        measured.map_or(SIDE_STEP as u32, |(_, side)| side)
+    }
+}
+
 /// Hand what the pages covered this frame to the shell, when it changes the
 /// side they are rendered at or the scale a zoom step starts from.
 pub(crate) fn report_shown(
     report: &crate::elements::document::Report,
-    side: u32,
+    side: Option<u32>,
     scale: Option<f32>,
     entity: gpui::WeakEntity<Shell>,
     window: &mut Window,
@@ -47,7 +101,9 @@ pub(crate) fn report_shown(
     let Some(shown) = report.take() else {
         return;
     };
-    if page_side(shown.covered) == side && scale.is_some_and(|s| (s - shown.scale).abs() < 1e-4) {
+    if Some(page_side(shown.covered)) == side
+        && scale.is_some_and(|s| (s - shown.scale).abs() < 1e-4)
+    {
         return;
     }
     window.defer(cx, move |window, cx| {
@@ -676,11 +732,11 @@ impl Shell {
     ) {
         self.preview.reader.shown_scale = Some(shown.scale);
         let side = page_side(shown.covered);
-        if side == self.preview.page_side {
+        if self.preview.page_side == Some(side) {
             return;
         }
-        let grew = side > self.preview.page_side;
-        self.preview.page_side = side;
+        let grew = self.preview.page_side.is_none_or(|known| side > known);
+        self.preview.page_side = Some(side);
         tracing::debug!(side, "document pages rendered at");
         if !grew || self.preview.reader.session.is_none() {
             return;
@@ -700,7 +756,10 @@ impl Shell {
         let Some(session) = self.preview.reader.session.clone() else {
             return;
         };
-        let side = self.preview.page_side;
+        // Known since the page the session came with (`preview_arrived`).
+        let Some(side) = self.preview.page_side else {
+            return;
+        };
         let initial = match &self.preview.content {
             Some(PreviewContent::Image {
                 document: Some(page),
@@ -915,7 +974,12 @@ impl Shell {
             return false;
         }
         let page = self.preview.page;
-        if let Some(kept) = reader.scroll.kept(page, self.preview.page_side).cloned() {
+        if let Some(kept) = self
+            .preview
+            .page_side
+            .and_then(|side| reader.scroll.kept(page, side))
+            .cloned()
+        {
             self.show_kept(page, kept, window, cx);
             return true;
         }
@@ -1228,6 +1292,39 @@ mod tests {
         assert_eq!(page_side(0.), 512);
         assert_eq!(page_side(f32::NAN), 512);
         assert_eq!(page_side(100_000.), MAX_SIDE);
+    }
+
+    /// Before any page was shown, the first is rendered at the side an
+    /// upright page of the usual shape covers in the content's area: as
+    /// tall as the area, or as wide, never its longer side regardless.
+    #[test]
+    fn a_first_page_is_rendered_at_the_side_its_area_gives_it() {
+        // The panel at the right: a page as tall as it.
+        assert_eq!(area_side(896., 1230.), 1536);
+        // A narrow one: a page as wide as it.
+        assert_eq!(area_side(320., 1100.), 512);
+        // The panel at the bottom, wide and short: a page as tall as it.
+        assert_eq!(area_side(2500., 500.), 512);
+    }
+
+    /// The job rendering a first page takes the side measured for its own
+    /// preview, waiting for the frame that lays its area out; a window that
+    /// draws nothing leaves it the side last measured, or the smallest.
+    #[test]
+    fn a_first_page_waits_for_its_own_area() {
+        let area = Arc::new(Area::default());
+        assert_eq!(area.side(1), 512);
+        area.measured(1, 2048);
+        let started = std::time::Instant::now();
+        assert_eq!(area.side(2), 2048);
+        assert!(started.elapsed() >= Area::WAIT);
+        // Laid out while the job waits: not the side measured before.
+        let waiting = {
+            let area = Arc::clone(&area);
+            std::thread::spawn(move || area.side(2))
+        };
+        area.measured(2, 1024);
+        assert_eq!(waiting.join().unwrap(), 1024);
     }
 
     #[test]

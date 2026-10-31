@@ -35,9 +35,6 @@ pub(crate) const TEXT_SIZE: f32 = 16.;
 const MIN_ZOOM: f32 = 0.1;
 const MAX_ZOOM: f32 = 4.0;
 const IMAGE_MAX_SIDE: u32 = 2048;
-/// The side a document's first page is rendered at, before any page was
-/// shown to say what the panel needs.
-const FIRST_PAGE_SIDE: u32 = 2048;
 
 pub enum PreviewContent {
     Inspection(crate::inspector::Display),
@@ -201,6 +198,10 @@ struct PreviewResult {
     /// A picture written as text (an SVG drawing): the type its Source is
     /// kept by (`SourceTypes`), which the picture's bar offers.
     picture_source: Option<String>,
+    /// The side a document's page was asked to be rendered at: the reader's
+    /// for the page it shows (`ReaderState::shown_side`), and the side pages
+    /// are rendered at if none was before.
+    page_side: Option<u32>,
 }
 
 /// Facts shown in the header, read from the entry's metadata.
@@ -558,8 +559,13 @@ pub struct PreviewState {
     pub(crate) picture_side: u32,
     /// The side document pages are rendered at: the one they were last
     /// shown at (`Shell::document_shown`), kept from one document to the
-    /// next, so a page opens at the size the panel shows it.
-    pub(crate) page_side: u32,
+    /// next, so a page opens at the size the panel shows it. `None` until a
+    /// page was rendered: the first is rendered at the side the content's
+    /// area says (`area`).
+    pub(crate) page_side: Option<u32>,
+    /// The side a page would be rendered at in the content's area, as it
+    /// was last laid out (`watch_area`), shared with the preview's job.
+    pub(crate) area: Arc<crate::reader_scroll::Area>,
     /// Whether the window is shown (`Shell::media_shown`): a film's player
     /// opened while it is not sends no frames until it is.
     pub(crate) window_shown: bool,
@@ -862,7 +868,8 @@ impl Default for PreviewState {
             picture_scroll: gpui::ScrollHandle::new(),
             placeholder: None,
             picture_side: 0,
-            page_side: FIRST_PAGE_SIDE,
+            page_side: None,
+            area: Arc::default(),
             window_shown: true,
             media_box: (2 * SHARPEN_STEP, 2 * SHARPEN_STEP),
             text_size: None,
@@ -2302,6 +2309,12 @@ impl Shell {
                 }
                 Some(Media::Pinned | Media::NoPoster | Media::NoPlayer) | None => {}
             }
+            // The side the page that came was asked at, which the next
+            // pages keep if none was shown before.
+            if let Some(side) = result.page_side {
+                self.preview.reader.shown_side = side;
+                self.preview.page_side.get_or_insert(side);
+            }
             if let Some(session) = result.session {
                 self.reader_opened(session, cx);
             } else if self.preview.reader.session.is_none()
@@ -2522,6 +2535,7 @@ impl Shell {
                 placeholder: false,
                 closed_links: None,
                 picture_source: None,
+                page_side: None,
             });
             self.app.wake();
             return;
@@ -2567,9 +2581,10 @@ impl Shell {
         let media_box = self.preview.media_box;
         let media_side = media_box.0.max(media_box.1).max(picture_side);
         let media_fit = (picture_side == 0).then_some(media_box);
-        // A document's page is rendered at the side pages are shown at.
+        // A document's page is rendered at the side pages are shown at, or
+        // before any was, at the side the content's area says.
         let page_side = self.preview.page_side;
-        self.preview.reader.shown_side = page_side;
+        let area = Arc::clone(&self.preview.area);
         let open_document = !is_dir && !self.preview.reader.tried;
         let lifetime = self.preview.reader.lifetime.clone();
         let media_lifetime = self.preview.media.lifetime();
@@ -2605,6 +2620,8 @@ impl Shell {
                 let closed_links = std::cell::RefCell::new(None::<String>);
                 // The type a picture written as text offers its Source by.
                 let picture_source = std::cell::RefCell::new(None::<String>);
+                // The side a document's page was asked at.
+                let asked_side = std::cell::Cell::new(None::<u32>);
                 // Every reply goes this one way: nothing after a cancel, and
                 // the UI woken after each.
                 let send = |content: PreviewContent,
@@ -2622,6 +2639,7 @@ impl Shell {
                             placeholder: false,
                             closed_links: closed_links.borrow().clone(),
                             picture_source: picture_source.borrow().clone(),
+                            page_side: asked_side.get(),
                         });
                         wake();
                     }
@@ -2824,6 +2842,7 @@ impl Shell {
                                 placeholder: true,
                                 closed_links: None,
                                 picture_source: None,
+                                page_side: None,
                             });
                             wake();
                         }
@@ -2878,6 +2897,7 @@ impl Shell {
                                             placeholder: false,
                                             closed_links: None,
                                             picture_source: None,
+                                            page_side: None,
                                         });
                                         wake();
                                     }
@@ -2932,9 +2952,13 @@ impl Shell {
                 match reader {
                     Ok(Some(session)) => {
                         closed_links.replace(session.closed_links().map(str::to_owned));
+                        // Before any page was shown, the side the content's
+                        // area says, laid out for this preview meanwhile.
+                        let side = page_side.unwrap_or_else(|| area.side(generation));
+                        asked_side.set(Some(side));
                         let rendered =
                             session
-                                .render(request.page, page_side, &cancel)
+                                .render(request.page, side, &cancel)
                                 .and_then(|page| {
                                     let image = crate::thumbs::page_image(
                                         page.width,
@@ -3190,6 +3214,7 @@ impl Shell {
                             placeholder: false,
                             closed_links: None,
                             picture_source: None,
+                            page_side: None,
                         });
                         wake();
                     }
@@ -3246,6 +3271,7 @@ impl Shell {
                     placeholder: false,
                     closed_links: None,
                     picture_source: None,
+                    page_side: None,
                 };
                 self.preview_arrived(result, window, cx);
                 true
@@ -4910,12 +4936,14 @@ pub(crate) fn content_area(
 
 /// What the content's area hands the shell once laid out (its one child
 /// fills it): the box a film's picture is asked to fit there (`media_box`),
-/// when it crosses a step.
+/// when it crosses a step, and the side a page shown there is rendered at
+/// (`area`), for the preview it is laid out for.
 fn watch_area(
     shell: &Shell,
     cx: &mut Context<Shell>,
 ) -> impl Fn(Vec<gpui::Bounds<gpui::Pixels>>, &mut Window, &mut gpui::App) + 'static {
     let known = shell.preview.media_box;
+    let (area, generation) = (Arc::clone(&shell.preview.area), shell.preview.generation);
     let shell = cx.entity().downgrade();
     move |bounds, window, cx| {
         // Nothing to show takes no room, and says nothing of the area.
@@ -4925,8 +4953,10 @@ fn watch_area(
         else {
             return;
         };
-        let covered = |side: gpui::Pixels| step_covering(f32::from(side) * window.scale_factor());
-        let area = (covered(bounds.size.width), covered(bounds.size.height));
+        let device = |side: gpui::Pixels| f32::from(side) * window.scale_factor();
+        let (width, height) = (device(bounds.size.width), device(bounds.size.height));
+        area.measured(generation, crate::reader_scroll::area_side(width, height));
+        let area = (step_covering(width), step_covering(height));
         if area != known {
             let shell = shell.clone();
             window.defer(cx, move |_, cx| {
@@ -5086,6 +5116,9 @@ pub(crate) fn content(
             .text_color(theme.text_muted)
             .child("Loading…")
             .into_any_element(),
+        // On its way, before the wait has lasted: the room it will show
+        // in, empty, so the area is laid out for it (`watch_area`).
+        None if shell.preview.phase != PreviewPhase::Idle => div().flex_1().into_any_element(),
         // Nothing to look at: the header says what it is and Properties the rest.
         None | Some(PreviewContent::Generic | PreviewContent::Dir { .. }) => {
             div().into_any_element()
