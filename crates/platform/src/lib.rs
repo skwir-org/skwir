@@ -40,6 +40,7 @@ pub mod exif;
 pub mod file;
 pub mod filesystem;
 pub mod fonts;
+pub mod grammars;
 #[cfg(target_os = "linux")]
 mod gtk_theme;
 pub mod highlight;

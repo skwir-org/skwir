@@ -22,6 +22,10 @@ image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "ti
 jpeg-decoder.workspace = true
 png.workspace = true
 parking_lot.workspace = true
+# Tree-sitter grammars found: their descriptions and first-line patterns
+# (ADR-110).
+regex.workspace = true
+toml.workspace = true
 # Code colored with bat's grammars and themes, matched by Ferroni (ADR-060).
 syntect.workspace = true
 two-face.workspace = true

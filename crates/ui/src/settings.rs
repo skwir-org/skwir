@@ -325,6 +325,45 @@ pub(crate) fn grammar_records() -> serde_json::Value {
     serde_json::json!({ "records": records })
 }
 
+/// The tree-sitter grammars found, listed on the Reading page
+/// (`ui.tree_sitter_grammars`): only shown, kept where each source keeps
+/// them (ADR-110).
+pub const TREE_SITTER_KEY: &str = "reading.tree_sitter_grammars";
+
+/// What lists the tree-sitter grammars found, said changed once they were
+/// found again.
+pub(crate) static TREE_SITTER: std::sync::LazyLock<skwir_core::settings::RecordSource> =
+    std::sync::LazyLock::new(|| {
+        skwir_core::settings::RecordSource::new("ui.tree_sitter_grammars", "", "", "")
+    });
+
+/// The tree-sitter grammars found, as the Reading page lists them: each a
+/// record of its language and where it was found, with the files it
+/// colors or why it cannot.
+pub(crate) fn tree_sitter_records() -> serde_json::Value {
+    let records: Vec<serde_json::Value> = skwir_platform::grammars::found()
+        .unwrap_or_default()
+        .iter()
+        .map(|found| {
+            let mut from = format!("From {}", found.source.label());
+            if let Some(queries) = found.queries_from {
+                from = format!("{from}, its colors from {}", queries.label());
+            }
+            let detail = match &found.problem {
+                Some(problem) => format!("{from}; not used: {problem}"),
+                None => format!("{from}; colors {}", found.file_types.join(", ")),
+            };
+            serde_json::json!({
+                "id": found.grammar.name,
+                "name": found.grammar.name,
+                "detail": detail,
+                "fixed": true,
+            })
+        })
+        .collect();
+    serde_json::json!({ "records": records })
+}
+
 /// Read the themes the user added to bat on a worker and declare the code
 /// theme settings again with them: at start, and when the settings open,
 /// where a theme added or edited since is read. The grammars added are
@@ -339,6 +378,8 @@ pub(crate) fn list_code_themes(app: &Arc<App>) {
             let user = crate::code_preview::user_themes(true);
             skwir_platform::highlight::added::read();
             GRAMMARS.changed();
+            skwir_platform::grammars::find();
+            TREE_SITTER.changed();
             let Some(app) = weak.upgrade() else { return };
             for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
                 let chosen = app
@@ -591,6 +632,20 @@ pub fn declare(app: &App) {
             ],
         )
         .records_kept_by(GRAMMARS.clone())
+        .section("Code"),
+    );
+    app.settings.declare(
+        SettingSpec::records(
+            TREE_SITTER_KEY,
+            "Tree-sitter grammars",
+            "The tree-sitter grammars found where Skwir (its grammars folder), the tree-sitter CLI, Zed, Helix, Neovim, the system and Emacs keep them, each with the files it colors or why it is not used. A grammar without queries borrows its language's from another; languages.toml in Skwir's grammars folder says what files a language colors.",
+            "Grammar",
+            vec![
+                skwir_core::settings::RecordField::text("name", "Language", "", ""),
+                skwir_core::settings::RecordField::text("detail", "Where", "", ""),
+            ],
+        )
+        .records_kept_by(TREE_SITTER.clone())
         .section("Code"),
     );
     app.settings.declare(
@@ -2400,7 +2455,8 @@ mod tests {
     use super::{
         App, BUILTIN, CODE_APPEARANCE_KEY, CODE_DARK_KEY, CODE_FONT_KEY, CODE_LIGHT_KEY, FONT_KEY,
         GRAMMARS_KEY, ICON_THEME_AUTO, Page, READING_FONT_KEY, SINGLE_TAB_KEY, SettingSpec,
-        TABS_AT_KEY, THEME_KEY, code_theme_spec, declare, font_spec, icon_theme_spec, page_order,
+        TABS_AT_KEY, THEME_KEY, TREE_SITTER_KEY, code_theme_spec, declare, font_spec,
+        icon_theme_spec, page_order,
     };
     use skwir_platform::icons::Theme;
 
@@ -2597,7 +2653,8 @@ mod tests {
                 CODE_LIGHT_KEY,
                 CODE_DARK_KEY,
                 CODE_FONT_KEY,
-                GRAMMARS_KEY
+                GRAMMARS_KEY,
+                TREE_SITTER_KEY
             ]
         );
         // The fonts stand by their subjects (ADR-073): the interface's on

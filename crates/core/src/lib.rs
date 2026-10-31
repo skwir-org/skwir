@@ -60,6 +60,7 @@ pub mod remotes;
 pub mod scheduler;
 pub mod settings;
 pub mod suggest;
+pub mod syntax;
 pub mod system;
 pub mod tabs;
 pub mod tally;

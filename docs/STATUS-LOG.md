@@ -8168,3 +8168,44 @@ Wasmtime 48.0.8.
 
 **Not checked:** Windows and macOS builds of the helper on 48 (not
 compiled for it).
+
+### G3: tree-sitter grammars found (2026-10-31, Grammars and printing)
+
+`skwir_platform::grammars` finds tree-sitter grammars where each source
+keeps them (ADR-110): Skwir's folder (`<data>/grammars`, each a grammar
+repository with its `tree-sitter.json`, else `package.json`, and the
+library `tree-sitter build` left), the tree-sitter CLI's (`config.json`'s
+`parser-directories`, its library cache), Zed's installed extensions
+(`grammars/<name>.wasm`, `languages/*/config.toml`), Helix's runtimes
+(`$HELIX_RUNTIME`, the user's, beside `hx` or `helix`, the
+distributions' folders; the user's `languages.toml`), Neovim's parser
+and query folders (its own beside `nvim`, `site`, lazy.nvim's
+nvim-treesitter, the system's), the system's (`/usr/lib/tree_sitter`,
+`/usr/share/tree-sitter/queries`) and Emacs's (`libtree-sitter-LANG` in
+its `tree-sitter` folders and the system's library folders, the runtime
+and versioned names left out). One grammar per language, the first
+source holding a library for it giving it; without queries, it borrows
+its language's, the grammar's own repository's first (Skwir's, the
+CLI's, the system's), then Helix's, Zed's, Neovim's; `; inherits:` and
+`; extends` are followed. The files it colors: `languages.toml` in
+Skwir's folder, its own, another source's, bat's grammar of that name,
+then its name. A name without an extension is told by its first line
+(`first-line-regex`, Zed's `first_line_pattern`); one with an extension
+stays the name's. In a folder of several languages' libraries, a
+library is taken by its language's name only (a first version gave Lua
+Helix's Typst library: the folder's only library is taken in a grammar's
+own repository alone). The Reading page lists them ("Tree-sitter
+grammars", `ui.tree_sitter_grammars`), found again on a worker at start
+and when the settings open: each language, where it was found and where
+its colors come from, what it colors or why it is not used (no library,
+no highlights query).
+
+**Checked:** rustfmt; clippy with `-D warnings` on `skwir-platform` and
+`skwir-ui`; nextest on both, 746 passed, 18 skipped. New tests: every source at
+once, each laid out as its owner lays it out, merged by language with
+borrowed queries, inherited queries, file types from each place, the
+problems said, files matched to grammars; a name without an extension
+told by its first line, one with one by its name alone.
+
+**Not checked:** the grammars on this machine (Neovim's, Zed's) through
+the window; Windows and macOS folders (compiled for neither).

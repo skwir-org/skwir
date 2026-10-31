@@ -1610,6 +1610,14 @@ pub fn declare_all(app: &App) {
         "The grammars added to bat and to Sublime Text that color code, as last read: each one's name, where it was found, the files it colors or why it was left out",
         |_, _| Ok(Outcome::Value(crate::settings::grammar_records())),
     );
+    app.commands.register_raw::<NoArgs, _>(
+        OWNER,
+        Topic::Skwir,
+        "ui.tree_sitter_grammars",
+        "Tree-sitter grammars",
+        "The tree-sitter grammars found, as last found: each language, where it was found, the files it colors or why it is not used",
+        |_, _| Ok(Outcome::Value(crate::settings::tree_sitter_records())),
+    );
     none(
         Topic::Go,
         "ui.omnibox_complete",
