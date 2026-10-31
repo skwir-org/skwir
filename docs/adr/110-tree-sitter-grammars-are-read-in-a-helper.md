@@ -1,7 +1,8 @@
 # ADR-110: Tree-sitter grammars are read in a helper
 
-Status: accepted 2026-10-31 with the user (GitHub #3); building, step by
-step, as `docs/PLAN.md` ("Grammars and printing") records. Extends
+Status: accepted 2026-10-31 with the user (GitHub #3); built the same
+day, as `docs/PLAN.md` ("Grammars and printing") records: checked on
+Linux, compiled for Windows and macOS (`just lint-all`), not run there. Extends
 ADR-060 (bat's grammars, matched by Ferroni), which stands.
 
 ## Context

@@ -2107,7 +2107,7 @@ screen reader reads, from the window or a script.
 - **P4. Several files in one job, and PDFs from scripts:** `skwir cmd
   print.save_pdf` without a window.
 
-**Status:** planned 2026-10-31. Built: G0 to G7, P1 to P4 (2026-10-31). Deviation: P3, the print helper, came before P1, whose print path builds on it.
+**Status:** planned 2026-10-31. Built: G0 to G7, P1 to P4 (2026-10-31); `just lint-all` and `just test-all` pass on main after it. Checked on Linux; Windows and macOS compiled only. Deviation: P3, the print helper, came before P1, whose print path builds on it.
 
 ---
 

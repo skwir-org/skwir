@@ -8607,3 +8607,29 @@ WebAssembly), with Grammars set to Tree-sitter first.
 grammars (none installed here; the finding is tested with made-up
 folders, G3); a native grammar built into Skwir's folder by hand;
 Wayland and the user's session.
+
+### Grammars and printing: the full checks (2026-10-31)
+
+After G7, `just lint-all` and `just test-all` on main.
+
+- `just lint-all` found one clippy finding in P2's cross-plugin test
+  (`len() % 2 == 0`), fixed (4e99357e); then rustfmt, the workspace's
+  clippy and `check-cross` (Windows and macOS, every new crate and the
+  print plugin's dialogs included) passed.
+- `just test-all` found two failures the steps' own checks had not run:
+  the preview's Ctrl+P (P1) was titled by `ui.preview_invoke` and its
+  arguments, now by the command it runs, Print… (f5732011); and three
+  settings of G1, G3 and G5 opened with sentences longer than a row's 30
+  words (464d0a61). Then 2692 tests passed, 30 skipped.
+- `just lint-all` again on that state: passed.
+- The disk: the workspace-wide test build makes copies of shared crates
+  with the workers' features, which `just prune` does not keep, and an
+  incremental session for each crate it compiles. Twice the disk
+  watchdog stopped it near 3 GB free; with the user's leave
+  `target/cross` (check-cross's cache) and `target/debug/incremental`
+  (95 GB) were deleted, and the suite ran with `CARGO_INCREMENTAL=0`.
+  Two sshfs test mounts the stopped runs left were detached.
+
+**Not run:** `just release-check`'s other recipes (smoke, a11y-check, the
+reader checks, bench-check, deny and notices were run where steps
+touched them, not at the end); Windows' tests under Wine.

@@ -1,7 +1,8 @@
 # ADR-111: What is shown is printed as a PDF, through the system's dialog
 
-Status: accepted 2026-10-31 with the user (GitHub #2); building, step by
-step, as `docs/PLAN.md` ("Grammars and printing") records.
+Status: accepted 2026-10-31 with the user (GitHub #2); built the same
+day, as `docs/PLAN.md` ("Grammars and printing") records: checked on
+Linux, compiled for Windows and macOS (`just lint-all`), not run there.
 
 ## Context
 
