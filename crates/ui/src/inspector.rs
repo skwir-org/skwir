@@ -2195,9 +2195,11 @@ impl Shell {
         {
             state.at_edge = 0;
             state.land_at_end = toward == -1;
-            self.run(
-                "ui.inspect",
-                serde_json::json!({"action":"page","offset":offset}),
+            // On the view under the wheel, which gives no side the
+            // keyboard: as a command, a member's turn went to the
+            // container's view kept above it, which closed the member.
+            self.inspect_here(
+                &serde_json::json!({"action":"page","offset":offset}),
                 window,
                 cx,
             );
@@ -2244,9 +2246,10 @@ impl Shell {
                     && self.preview.phase == PreviewPhase::Idle
                 {
                     self.preview.inspection.land_at_end = toward < 0;
-                    self.run(
-                        "ui.inspect",
-                        serde_json::json!({"action":"page","offset":offset}),
+                    // On the view whose pages turned, the wheel's as the
+                    // keys' (`inspect_wheel`).
+                    self.inspect_here(
+                        &serde_json::json!({"action":"page","offset":offset}),
                         window,
                         cx,
                     );
