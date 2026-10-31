@@ -45,7 +45,9 @@ step, as `docs/PLAN.md` ("Grammars and printing") records.
    offers Save as PDF. Pages are chosen in the dialog (All, Current page,
    Selection, typed) or typed for Save as PDF and scripts
    (`print::Pages`, from 1, one parser); Skwir picks them
-   (`Compose::Pages` in the PDF helper), never the printer.
+   (`Compose::Pages` in the PDF helper), never the printer. Several
+   files print as one job: each made whole, joined by the PDF helper
+   (`Compose::Append`), the pages chosen counted through them all.
 3. **PDFs Skwir makes are made by a helper** (`skwir-print-worker`: krilla
    writes the PDF, parley lays the text out), isolated, fed a description
    (`print::Job`) and the files it names, in the light look whatever the

@@ -164,6 +164,24 @@ fn composed<'a>(
             };
             booklet(pdfium, document, sheets, &layout, superseded, &path)?
         }
+        Compose::Append(others) => {
+            let mut out = pdfium.create_new_pdf().context("make a document")?;
+            out.pages_mut()
+                .append(document)
+                .context("copy the first document's pages")?;
+            for other in others {
+                anyhow::ensure!(!superseded(), "composing superseded");
+                let read = pdfium
+                    .load_pdf_from_file(other, None)
+                    .with_context(|| format!("open {}", other.display()))?;
+                out.pages_mut()
+                    .append(&read)
+                    .with_context(|| format!("copy the pages of {}", other.display()))?;
+            }
+            out.save_to_file(&path)
+                .context("write the composed document")?;
+            out.pages().len()
+        }
     };
     Ok(WorkerReply::Composed {
         pages: u32::try_from(pages).unwrap_or(u32::MAX),

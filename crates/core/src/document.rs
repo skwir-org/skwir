@@ -266,6 +266,10 @@ pub enum Compose {
         trim: bool,
         turn_backs: bool,
     },
+    /// Its pages, then those of the documents at these paths, in their
+    /// order: several files printed as one (ADR-111). The worker reads
+    /// them where it is told it may (`Setup`'s readable files).
+    Append(Vec<std::path::PathBuf>),
 }
 
 /// What a worker writes a composed document as, in its folder.

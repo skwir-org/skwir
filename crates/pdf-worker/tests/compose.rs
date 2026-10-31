@@ -111,6 +111,40 @@ fn pages_are_composed_in_the_order_asked_with_blanks() {
         },
     );
     assert!(matches!(read().body, WorkerReply::Error(_)));
+    // Several documents printed as one: its pages, then the others' in
+    // their order; one that cannot be read is that request's error.
+    let other = tmp.path().join("other.pdf");
+    let mut document = pdfium.create_new_pdf().unwrap();
+    document
+        .pages_mut()
+        .create_page_at_end(PdfPagePaperSize::Custom(
+            PdfPoints::new(100.0),
+            PdfPoints::new(120.0),
+        ))
+        .unwrap();
+    document.save_to_file(&other).unwrap();
+    ask(
+        5,
+        WorkerRequest::Compose(Compose::Append(vec![other.clone(), pdf.clone()])),
+    );
+    assert!(matches!(read().body, WorkerReply::Composed { pages: 7 }));
+    assert_eq!(
+        sizes(&pdfium, &composed),
+        [
+            (200.0, 300.0),
+            (400.0, 300.0),
+            (250.0, 250.0),
+            (100.0, 120.0),
+            (200.0, 300.0),
+            (400.0, 300.0),
+            (250.0, 250.0)
+        ]
+    );
+    ask(
+        6,
+        WorkerRequest::Compose(Compose::Append(vec![tmp.path().join("missing.pdf")])),
+    );
+    assert!(matches!(read().body, WorkerReply::Error(_)));
     drop(input);
     worker.wait().unwrap();
 }

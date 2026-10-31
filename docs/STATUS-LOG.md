@@ -8521,3 +8521,50 @@ the blank 7th, numbered and colored.
 **Not checked:** a real printer or the dialog on screen; the prompt in a
 window; trimmed margins by eye (PDFium's compose test covers the box);
 macOS and Windows (compiled only, and not yet for this step).
+
+### P4: several files in one job, listings, contact sheets, scripts (2026-10-31, Grammars and printing)
+
+- **Several files** selected print as one job: Print… and Print as
+  Booklet… take every file (the Print submenu now shows for any files,
+  `file !place`), make each whole as its preview shows it in a folder of
+  its own, and join them in the PDF helper (`Compose::Append`, new: its
+  pages then the others', the others readable at their own paths in its
+  sandbox, `document::Setup::also`); the pages chosen, the booklet, the
+  sides and the order then apply to the whole. A file that shows nothing
+  printable is left out and named in the notification; none, and that is
+  the error. Current page and Selection are offered for one file only.
+- **Save as PDF** of several files is a step per file, each PDF beside
+  its file; `together` makes one PDF of them all, named after the first
+  (the step's `joined` entries), for scripts as for the window.
+- **Print Contact Sheet…** (`print.contact_sheet`, 344, several files):
+  the pictures among them, decoded, turned and shrunk to 800 px on their
+  longer side (JPEG, PNG where see-through), several to a page with their
+  names; the rest left out and said.
+- **Print Listing…** (`print.listing`, 345, nothing selected in a
+  folder): what the pane shows, in its order, opened folders indented,
+  as a table of name, kind, size and date (as the list view writes them),
+  the folder's path its title; entries whose metadata the pane had not
+  read yet are read once, a folder at a time in its lane
+  (`fs::read_paths`), after the entries were copied under the lock.
+- **Scripts**: `skwir cmd [--apply] print.save_pdf` with no window open
+  (ADR-043's windowless skwir), tested.
+
+**Checked:** rustfmt; clippy with `-D warnings` on `skwir-plugin-print`,
+`skwir-pdf-worker`, `skwir-platform` and `skwir-core`; nextest: the
+plugin's 3 (the contact sheet: a 2000×1000 picture shrunk to 800×400 as
+a JPEG, a see-through one kept a PNG, a text file left out and said, no
+picture an error; the listing: names in the pane's order with a quote,
+spaces and accents, a folder marked and sizeless, a size read for an
+entry the pane had not hydrated, a date), the PDF helper's (a document
+joined after another, page sizes in order; one missing is that
+request's error); `crates/skwir/tests/print.rs`, 4 (two files saved
+apart, then together with a binary file between them: one PDF of 2
+pages, the letter's text before the notes'); `crates/skwir/tests/cli.rs`,
+7, a new one running `skwir cmd print.save_pdf` on two files without a
+window: the plan of 2 steps printed and nothing made, then applied and
+both PDFs made.
+
+**Not checked:** a contact sheet and a listing printed by eye (they go
+only through the dialog; the helper's drawing of both was tested at
+P3); several files printed through a real dialog; macOS and Windows
+(compiled only, at the end).

@@ -77,12 +77,14 @@ pub(crate) struct Ready {
     pub notice: Option<String>,
 }
 
-/// The PDF of `path` as `layout` asks, made in `work` (a folder of its
-/// own the caller removes): the file itself when it is printed whole as
-/// it is, else a new one.
+/// The PDF of `paths` as `layout` asks, made in `work` (a folder of its
+/// own the caller removes): the file itself when one is printed whole as
+/// it is, else a new one. Several files are printed as one document, each
+/// whole, in their order (`joined`); what the preview shows of one
+/// (`shown`) is only ever one file's.
 pub(crate) fn ready(
     app: &App,
-    path: &Path,
+    paths: &[PathBuf],
     shown: &Shown,
     layout: &Layout,
     work: &Path,
@@ -90,19 +92,65 @@ pub(crate) fn ready(
 ) -> anyhow::Result<Ready> {
     // A booklet's page is half its sheet: what Skwir lays out is laid out
     // at that size, its text not shrunk.
-    let (paper, margins) = match layout.booklet {
-        Some(_) => (layout.paper.half(), (EDGE, FOLD)),
-        None => (layout.paper, (0.0, 0.0)),
+    let paper = page_paper(layout);
+    let (whole, shown) = match paths {
+        [path] => (
+            whole(app, path, shown, &paper, work, cancel)?,
+            shown.clone(),
+        ),
+        _ => (joined(app, paths, &paper, work, cancel)?, Shown::default()),
     };
-    let (pdf, count, notice, made) = match source(app, path, shown, work, cancel)? {
-        Source::Pdf(pdf, count) => (pdf, count, None, false),
-        Source::Parts(parts, notice) => {
-            let mut job = job(app, path, &paper, parts);
-            let made = print_job::make(&mut job, work, cancel)?;
-            (job.output, made.pages, notice, true)
-        }
+    picked(whole, &shown, layout, work, cancel)
+}
+
+/// A document Skwir makes of `parts` (a contact sheet, a folder's
+/// listing), titled `title`, as `layout` asks.
+pub(crate) fn made(
+    app: &App,
+    title: &str,
+    parts: Vec<Part>,
+    layout: &Layout,
+    work: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<Ready> {
+    let mut job = job(app, title, &page_paper(layout), parts);
+    let made = print_job::make(&mut job, work, cancel)?;
+    let whole = Whole {
+        pdf: job.output,
+        pages: made.pages,
+        notice: None,
+        made: true,
     };
-    let (edge, fold) = if made { (0.0, 0.0) } else { margins };
+    picked(whole, &Shown::default(), layout, work, cancel)
+}
+
+/// The paper a page is laid out on: a booklet's is half its sheet, so
+/// what Skwir lays out is not shrunk.
+fn page_paper(layout: &Layout) -> Paper {
+    match layout.booklet {
+        Some(_) => layout.paper.half(),
+        None => layout.paper,
+    }
+}
+
+/// The pages of `whole` that `layout` picks, folded as a booklet when it
+/// says, on the sides and in the order it chose.
+fn picked(
+    whole: Whole,
+    shown: &Shown,
+    layout: &Layout,
+    work: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<Ready> {
+    let Whole {
+        pdf,
+        pages: count,
+        notice,
+        made,
+    } = whole;
+    // A page of a PDF keeps clear of a booklet sheet's edges and fold; one
+    // Skwir laid out at half a sheet has its own margins.
+    let (edge, fold) = if made { (0.0, 0.0) } else { (EDGE, FOLD) };
     let current = shown.page.and_then(|page| page.checked_sub(1));
     // What is selected was made into its own document: all of it.
     let picked = layout.pages.pick(count, current);
@@ -172,6 +220,109 @@ pub(crate) fn ready(
         pdf: out,
         pages,
         notice,
+    })
+}
+
+/// A file printed whole: its PDF and pages, what was left out of it, and
+/// whether Skwir made it (laid out at the size asked, with its margins).
+struct Whole {
+    pdf: PathBuf,
+    pages: u32,
+    notice: Option<String>,
+    made: bool,
+}
+
+/// `path` as its preview shows it, whole, made on `paper` in `work` when
+/// Skwir makes it.
+fn whole(
+    app: &App,
+    path: &Path,
+    shown: &Shown,
+    paper: &Paper,
+    work: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<Whole> {
+    Ok(match source(app, path, shown, work, cancel)? {
+        Source::Pdf(pdf, pages) => Whole {
+            pdf,
+            pages,
+            notice: None,
+            made: false,
+        },
+        Source::Parts(parts, notice) => {
+            let mut job = job(app, &display_name(path), paper, parts);
+            let made = print_job::make(&mut job, work, cancel)?;
+            Whole {
+                pdf: job.output,
+                pages: made.pages,
+                notice,
+                made: true,
+            }
+        }
+    })
+}
+
+/// Several files as one document, each whole as its preview shows it, in
+/// their order, each made in a folder of its own in `work`, then joined
+/// by the PDF helper (`Compose::Append`). One that cannot be printed (a
+/// song) is left out and said; none, and that is the error.
+fn joined(
+    app: &App,
+    paths: &[PathBuf],
+    paper: &Paper,
+    work: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<Whole> {
+    let mut wholes: Vec<Whole> = Vec::with_capacity(paths.len());
+    let mut said = Vec::new();
+    for (n, path) in paths.iter().enumerate() {
+        anyhow::ensure!(!cancel.is_cancelled(), "Printing was cancelled");
+        let own = work.join(n.to_string());
+        std::fs::create_dir(&own)?;
+        let name = display_name(path);
+        match whole(app, path, &Shown::default(), paper, &own, cancel) {
+            Ok(mut part) => {
+                if let Some(notice) = part.notice.take() {
+                    said.push(format!("“{name}”: {notice}"));
+                }
+                // The helper is told the documents' paths as text.
+                if part.pdf.to_str().is_none() {
+                    let named = own.join("named.pdf");
+                    std::fs::hard_link(&part.pdf, &named)
+                        .or_else(|_| std::fs::copy(&part.pdf, &named).map(drop))
+                        .with_context(|| format!("Keeping “{name}” to print it"))?;
+                    part.pdf = named;
+                }
+                wholes.push(part);
+            }
+            Err(error) if !cancel.is_cancelled() => {
+                said.push(format!("“{name}” was left out: {error:#}"));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    let notice = (!said.is_empty()).then(|| said.join(". "));
+    let Some(first) = wholes.first() else {
+        anyhow::bail!("None of them can be printed. {}", said.join(". "));
+    };
+    if wholes.len() == 1 {
+        let only = wholes.remove(0);
+        return Ok(Whole { notice, ..only });
+    }
+    let out = work.join("joined.pdf");
+    let pages = skwir_platform::document::compose(
+        &first.pdf,
+        Compose::Append(wholes[1..].iter().map(|whole| whole.pdf.clone()).collect()),
+        None,
+        &out,
+        cancel,
+    )?
+    .context("Printing several files as one needs PDFium, which is not there")?;
+    Ok(Whole {
+        pdf: out,
+        pages,
+        notice,
+        made: wholes.iter().all(|whole| whole.made),
     })
 }
 
@@ -389,6 +540,83 @@ fn picture(path: &Path, mime: Option<&str>, work: &Path) -> anyhow::Result<Part>
     })
 }
 
+/// Pictures of a contact sheet are written this large on their longer
+/// side: about 300 dpi at a third of A4's width, far less than a photo.
+const SHEET_SIDE: u32 = 800;
+
+/// A contact sheet of the pictures among `paths`, in their order, each
+/// shrunk (`SHEET_SIDE`) and written in `work`, named under it; what is no
+/// picture or cannot be read is left out, and said.
+pub(crate) fn sheet(
+    paths: &[PathBuf],
+    work: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<(Part, Option<String>)> {
+    let mut pictures = Vec::with_capacity(paths.len());
+    let mut left_out = Vec::new();
+    for (n, path) in paths.iter().enumerate() {
+        anyhow::ensure!(!cancel.is_cancelled(), "Printing was cancelled");
+        let name = display_name(path);
+        let image = skwir_platform::mime::of_request(path, None).is_some_and(|mime| {
+            skwir_platform::mime::is_kind(&mime, skwir_platform::mime::Kind::Image)
+        });
+        let read = image
+            .then(|| sheet_picture(path, &work.join(format!("sheet-{n}")), &name))
+            .transpose();
+        match read {
+            Ok(Some(picture)) => pictures.push(picture),
+            Ok(None) => left_out.push(name),
+            Err(error) => {
+                tracing::debug!(%error, "a picture of a contact sheet");
+                left_out.push(name);
+            }
+        }
+    }
+    anyhow::ensure!(!pictures.is_empty(), "None of them is a picture");
+    let notice = match left_out.as_slice() {
+        [] => None,
+        [one] => Some(format!("“{one}” is not a picture and was left out")),
+        many => Some(format!(
+            "{} files are not pictures and were left out",
+            many.len()
+        )),
+    };
+    Ok((
+        Part::Pictures {
+            pictures,
+            sheet: true,
+        },
+        notice,
+    ))
+}
+
+/// A picture of a contact sheet: decoded, turned, shrunk, written as a
+/// JPEG at `stem` (a PNG where it is see-through).
+fn sheet_picture(path: &Path, stem: &Path, name: &str) -> anyhow::Result<paper::Picture> {
+    let reader = image::ImageReader::open(path)?.with_guessed_format()?;
+    let image = skwir_platform::picture::decode_fitted(reader, SHEET_SIDE)?;
+    let (width, height) = (image.width(), image.height());
+    let written = if image.color().has_alpha() {
+        let png = stem.with_extension("png");
+        image.save_with_format(&png, image::ImageFormat::Png)?;
+        png
+    } else {
+        let jpeg = stem.with_extension("jpg");
+        let file = std::io::BufWriter::new(std::fs::File::create(&jpeg)?);
+        image
+            .to_rgb8()
+            .write_with_encoder(image::codecs::jpeg::JpegEncoder::new_with_quality(file, 85))?;
+        jpeg
+    };
+    Ok(paper::Picture {
+        path: written,
+        width,
+        height,
+        alt: name.to_owned(),
+        caption: Some(name.to_owned()),
+    })
+}
+
 /// A document's pages drawn as pictures, each written as a PNG.
 fn drawn(
     session: &dyn skwir_core::document::DocumentSession,
@@ -425,9 +653,10 @@ fn write_png(image: &skwir_core::thumbs::Image, path: &Path) -> anyhow::Result<(
     Ok(())
 }
 
-/// The job of `parts`, laid out on `paper` in the fonts the Reading page
-/// chooses (the desktop's where it says Automatic), in the light look.
-fn job(app: &App, path: &Path, paper: &Paper, parts: Vec<Part>) -> Job {
+/// The job of `parts`, titled `name`, laid out on `paper` in the fonts the
+/// Reading page chooses (the desktop's where it says Automatic), in the
+/// light look.
+fn job(app: &App, name: &str, paper: &Paper, parts: Vec<Part>) -> Job {
     let style = skwir_platform::desktop_style::read();
     let chosen = |key: &str, desktop: Option<String>, generic: &str| {
         app.settings
@@ -441,7 +670,7 @@ fn job(app: &App, path: &Path, paper: &Paper, parts: Vec<Part>) -> Job {
         code: chosen("ui.code_font", style.monospace_font.clone(), "monospace"),
     };
     let (fonts, fallback) = print_job::faces(&roles);
-    let name = display_name(path);
+    let name = name.to_owned();
     Job {
         paper: *paper,
         output: PathBuf::new(),
@@ -462,4 +691,54 @@ pub(crate) fn display_name(path: &Path) -> String {
         .unwrap_or(path.as_os_str())
         .to_string_lossy()
         .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A contact sheet takes the pictures among the files, shrunk and
+    /// named, a see-through one kept see-through, and says what it left.
+    #[test]
+    fn a_contact_sheet_takes_the_pictures_shrunk_and_says_what_it_left() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (big, clear, text) = (
+            tmp.path().join("wide photo.png"),
+            tmp.path().join("clear.png"),
+            tmp.path().join("notes.txt"),
+        );
+        image::RgbImage::from_pixel(2000, 1000, image::Rgb([200, 30, 30]))
+            .save(&big)
+            .unwrap();
+        image::RgbaImage::from_pixel(10, 20, image::Rgba([0, 0, 0, 0]))
+            .save(&clear)
+            .unwrap();
+        std::fs::write(&text, "not a picture").unwrap();
+        let work = tmp.path().join("work");
+        std::fs::create_dir(&work).unwrap();
+        let cancel = CancelToken::new();
+        let (part, notice) = sheet(&[big, text.clone(), clear], &work, &cancel).unwrap();
+        let Part::Pictures {
+            pictures,
+            sheet: true,
+        } = part
+        else {
+            panic!("a contact sheet");
+        };
+        assert_eq!(pictures.len(), 2);
+        assert_eq!((pictures[0].width, pictures[0].height), (SHEET_SIDE, 400));
+        assert_eq!(pictures[0].caption.as_deref(), Some("wide photo.png"));
+        assert!(pictures[0].path.starts_with(&work));
+        assert_eq!(
+            pictures[0].path.extension().and_then(|e| e.to_str()),
+            Some("jpg")
+        );
+        assert_eq!(
+            pictures[1].path.extension().and_then(|e| e.to_str()),
+            Some("png"),
+            "see-through, kept so"
+        );
+        assert!(notice.unwrap().contains("notes.txt"));
+        assert!(sheet(&[text], &work, &cancel).is_err(), "no picture");
+    }
 }

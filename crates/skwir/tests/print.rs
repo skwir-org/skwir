@@ -242,3 +242,68 @@ fn a_booklet_saved_folds_two_pages_to_a_landscape_side() {
         );
     }
 }
+
+#[test]
+fn several_files_are_saved_each_as_a_pdf_or_together_as_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(app) = app(tmp.path()) else { return };
+    let dir = tmp.path().join("files");
+    std::fs::create_dir(&dir).unwrap();
+    let letter = dir.join("letter 'one'.txt");
+    std::fs::write(&letter, "Dear reader,\nthis is printed.\n").unwrap();
+    let notes = dir.join("nötes.md");
+    std::fs::write(&notes, "# Shopping list\n\n- bread\n").unwrap();
+    let noise = dir.join("noise.bin");
+    std::fs::write(&noise, [0u8, 159, 146, 150, 0, 1, 2, 3].repeat(64)).unwrap();
+    let entries = |paths: &[&Path]| {
+        paths
+            .iter()
+            .map(|path| EntryArg::from(EntryRef::from_path(path).unwrap()))
+            .collect::<Vec<_>>()
+    };
+    let apply = |invocation: &Invocation| {
+        let Outcome::Plan(plan) = app.dispatch(invocation).unwrap() else {
+            panic!("Save as PDF makes a plan");
+        };
+        let steps = plan.steps.len();
+        let result = app.executor.execute_blocking(&plan, app.lifetime());
+        (steps, result)
+    };
+
+    // Each its own PDF, beside it.
+    let each = Invocation::new("print.save_pdf").with("entries", entries(&[&letter, &notes]));
+    let (steps, result) = apply(&each);
+    assert_eq!(steps, 2);
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let (letter_pdf, notes_pdf) = (dir.join("letter 'one'.pdf"), dir.join("nötes.pdf"));
+    assert_eq!(pages(&letter_pdf), 1);
+    assert_eq!(pages(&notes_pdf), 1);
+    std::fs::remove_file(&letter_pdf).unwrap();
+    std::fs::remove_file(&notes_pdf).unwrap();
+
+    // Together: one PDF named after the first, their pages in order, what
+    // cannot be printed left out.
+    let together = Invocation::new("print.save_pdf")
+        .with("entries", entries(&[&letter, &noise, &notes]))
+        .with("together", true);
+    let (steps, result) = apply(&together);
+    assert_eq!(steps, 1);
+    if result
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("needs PDFium"))
+    {
+        eprintln!("skipped: no PDF helper or PDFium to join with");
+        return;
+    }
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(pages(&letter_pdf), 2);
+    assert!(!notes_pdf.exists(), "one PDF of them all");
+    if let Some(text) = text(&letter_pdf) {
+        let (dear, shopping) = (
+            text.find("Dear reader").expect("the letter"),
+            text.find("Shopping list").expect("the notes"),
+        );
+        assert!(dear < shopping, "in their order: {text}");
+    }
+}

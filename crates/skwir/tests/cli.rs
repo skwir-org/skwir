@@ -94,6 +94,46 @@ fn a_script_is_told_to_name_what_it_acts_on() {
     assert!(missing.contains("does not exist"), "{missing}");
 }
 
+/// PDFs from a script (ADR-111): Save as PDF with no window, its plan
+/// printed, then applied, a PDF of each file beside it. Needs the print
+/// helper built beside skwir (a default member): without it the test
+/// says so and passes, unless `SKWIR_REQUIRE_WORKERS` is set.
+#[test]
+fn a_script_saves_files_as_pdfs_without_a_window() {
+    let helper = Path::new(env!("CARGO_BIN_EXE_skwir")).with_file_name("skwir-print-worker");
+    if !helper.is_file() {
+        assert!(
+            std::env::var_os("SKWIR_REQUIRE_WORKERS").is_none(),
+            "skwir-print-worker is not built"
+        );
+        eprintln!("skipped: skwir-print-worker is not built");
+        return;
+    }
+    let tmp = home_tempdir();
+    let runtime = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("files");
+    std::fs::create_dir(&dir).unwrap();
+    let (notes, code) = (dir.join("my notes.md"), dir.join("tool.rs"));
+    std::fs::write(&notes, "# A heading\n\nSome *text*.\n").unwrap();
+    std::fs::write(&code, "fn main() {\n    println!(\"hi\");\n}\n").unwrap();
+    let save = json!({ "entries": [notes, code] }).to_string();
+
+    let plan = printed(&skwir_cmd(runtime.path(), &["print.save_pdf", &save]));
+    assert_eq!(plan["steps"].as_array().map(Vec::len), Some(2), "{plan}");
+    assert!(!dir.join("my notes.pdf").exists(), "printed, not done");
+
+    let applied = printed(&skwir_cmd(
+        runtime.path(),
+        &["--apply", "print.save_pdf", &save],
+    ));
+    assert_eq!(applied["verdict"], json!("applied"), "{applied}");
+    assert_eq!(applied["applied"], json!(2));
+    for made in [dir.join("my notes.pdf"), dir.join("tool.pdf")] {
+        let bytes = std::fs::read(&made).unwrap();
+        assert!(bytes.starts_with(b"%PDF-"), "{}", made.display());
+    }
+}
+
 #[test]
 fn skwir_says_its_version_and_how_to_use_it_without_opening_a_window() {
     let version = Command::new(env!("CARGO_BIN_EXE_skwir"))

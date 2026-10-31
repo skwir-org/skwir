@@ -30,6 +30,7 @@ use skwir_core::registry::{KeyBinding, MenuItem};
 use skwir_core::scheduler::Priority;
 use skwir_core::workspace::PaneId;
 
+mod listing;
 mod make;
 
 pub use make::Booklet;
@@ -40,8 +41,15 @@ const ID: &str = "print";
 /// The step's kind in a plan.
 const KIND: &str = "print_pdf";
 
-/// What the file menu offers it for: one file.
-const PRINTS: &str = "single file !place";
+/// What the file menu offers it for: files, printed as one job.
+const PRINTS: &str = "file !place";
+
+/// What a contact sheet is offered for: several files (the pictures among
+/// them).
+const SHEETS: &str = "file !single !place";
+
+/// What a folder's listing is offered for: the folder, nothing selected.
+const LISTS: &str = "empty folder";
 
 /// The context menu's submenu of the ways to print.
 const PRINT: &str = "Print";
@@ -55,11 +63,12 @@ const PREVIEW: &str = "preview";
 /// reaches previews as the window does; a step is data, not the app's.
 static APP: RwLock<Option<Weak<App>>> = RwLock::new(None);
 
-/// What a print is asked with, by the window or a script: the file, and
-/// what its preview shows of it.
+/// What a print is asked with, by the window or a script: the files, and
+/// what the preview shows of the one it shows.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PrintArgs {
-    /// The file to print; the selection's one without.
+    /// The files to print, as one job in their order; the selection's
+    /// without.
     #[serde(default)]
     pub entries: Vec<EntryArg>,
     #[serde(default)]
@@ -72,7 +81,8 @@ pub struct PrintArgs {
     pub selection: Option<String>,
 }
 
-/// Save as PDF: the file, the pages (`1-3, 7, 10-`, all without), where.
+/// Save as PDF: the files, each its own PDF; the pages (`1-3, 7, 10-`, all
+/// without); where.
 #[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
 pub struct SaveArgs {
     #[serde(flatten)]
@@ -80,9 +90,13 @@ pub struct SaveArgs {
     /// Pages typed, from 1 (`1-3, 7, 10-`); every page without.
     #[serde(default)]
     pub pages: Option<String>,
-    /// The folder the PDF is made in; the file's own without.
+    /// The folder the PDFs are made in; each file's own without.
     #[serde(default)]
     pub dest: Option<PathArg>,
+    /// Several files saved as one PDF, in their order, named after the
+    /// first, as they print together.
+    #[serde(default)]
+    pub together: bool,
 }
 
 /// Print as Booklet: what Print is asked with, and how it folds. Asked
@@ -113,6 +127,14 @@ pub struct SaveBookletArgs {
     pub signature: Option<u32>,
     #[serde(default)]
     pub trim: bool,
+}
+
+/// Print Listing: the pane whose listing is printed (the active one
+/// without).
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+pub struct ListingArgs {
+    #[serde(default)]
+    pub pane: Option<PaneId>,
 }
 
 #[derive(Default)]
@@ -155,9 +177,9 @@ impl Plugin for PrintPlugin {
             Topic::Files,
             "print.print",
             "Print…",
-            "Print a file as its preview shows it, through the system's print dialog: the pages, sides and order chosen there; `page` is the page shown (Current page), `selection` what is selected (Selection)",
+            "Print files as their previews show them, one job in their order, through the system's print dialog: the pages, sides and order chosen there; of one file, `page` is the page shown (Current page), `selection` what is selected (Selection)",
             |a, app| {
-                start(app, &a, None);
+                files(app, &a, None);
                 Ok(Outcome::Done)
             },
         );
@@ -166,7 +188,7 @@ impl Plugin for PrintPlugin {
             Topic::Files,
             "print.booklet",
             "Print as Booklet…",
-            "Print a file as its preview shows it, folded as a booklet: two pages to a side of the sheet chosen in the system's dialog, in the order they fold in, in signatures of `signature` pages (one booklet without), white margins trimmed with `trim`; without `asked`, the window asks first",
+            "Print files as their previews show them, one job folded as a booklet: two pages to a side of the sheet chosen in the system's dialog, in the order they fold in, in signatures of `signature` pages (one booklet without), white margins trimmed with `trim`; without `asked`, the window asks first",
             |a, app| {
                 if a.asked {
                     let booklet = Booklet {
@@ -174,10 +196,35 @@ impl Plugin for PrintPlugin {
                         trim: a.trim,
                         turn_backs: false,
                     };
-                    start(app, &a.print, Some(booklet));
+                    files(app, &a.print, Some(booklet));
                 } else {
                     ask_booklet(app, &a.print);
                 }
+                Ok(Outcome::Done)
+            },
+        );
+        app.commands.register::<PrintArgs, _>(
+            ID,
+            Topic::Files,
+            "print.contact_sheet",
+            "Print Contact Sheet…",
+            "Print the pictures among files several to a page, each named under it, through the system's print dialog",
+            |a, app| {
+                match app.targets(a.pane, a.entries) {
+                    Ok(entries) => start(app, Printed::Sheet(entries)),
+                    Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
+                }
+                Ok(Outcome::Done)
+            },
+        );
+        app.commands.register::<ListingArgs, _>(
+            ID,
+            Topic::Files,
+            "print.listing",
+            "Print Listing…",
+            "Print the entries a pane shows, in its order, as a table of names, kinds, sizes and times modified, through the system's print dialog",
+            |a, app| {
+                start(app, Printed::Listing(app.pane_or_active(a.pane)));
                 Ok(Outcome::Done)
             },
         );
@@ -187,8 +234,8 @@ impl Plugin for PrintPlugin {
                 Topic::Files,
                 "print.save_pdf",
                 "Save as PDF",
-                "Make a PDF of a file as its preview shows it, beside it or in `dest`: `pages` typed (1-3, 7, 10-), else every page (plan)",
-                |a, app| Ok(Outcome::Plan(save_plan(a, app, None)?)),
+                "Make a PDF of each file as its preview shows it, beside it or in `dest`: `pages` typed (1-3, 7, 10-), else every page (plan)",
+                |a, app| Ok(Outcome::Plan(save_plan(&a, app, None)?)),
             )
             .plans();
         app.commands
@@ -197,14 +244,14 @@ impl Plugin for PrintPlugin {
                 Topic::Files,
                 "print.save_booklet",
                 "Save as Booklet",
-                "Make a PDF of a file as its preview shows it folded as a booklet, beside it or in `dest`, on the paper of the system's locale: `signature` pages folded together (one booklet without), white margins trimmed with `trim` (plan)",
+                "Make a PDF of each file as its preview shows it folded as a booklet, beside it or in `dest`, on the paper of the system's locale: `signature` pages folded together (one booklet without), white margins trimmed with `trim` (plan)",
                 |a, app| {
                     let booklet = Booklet {
                         signature: a.signature,
                         trim: a.trim,
                         turn_backs: false,
                     };
-                    Ok(Outcome::Plan(save_plan(a.save, app, Some(booklet))?))
+                    Ok(Outcome::Plan(save_plan(&a.save, app, Some(booklet))?))
                 },
             )
             .plans();
@@ -266,21 +313,40 @@ fn menus(app: &App) {
             item("Save as Booklet", "reading", 343, "print.save_booklet"),
         );
     }
+    for (title, icon, order, command, when) in [
+        (
+            "Print Contact Sheet…",
+            "grid",
+            344,
+            "print.contact_sheet",
+            SHEETS,
+        ),
+        ("Print Listing…", "list", 345, "print.listing", LISTS),
+    ] {
+        app.registry.menus.add(
+            ID,
+            MenuItem::new("context", title, icon, order, Invocation::new(command))
+                .when(when)
+                .submenu(PRINT),
+        );
+    }
 }
 
 /// The file a call names, and what its preview shows.
-fn target(app: &App, args: &PrintArgs) -> anyhow::Result<(EntryRef, Shown)> {
+/// The files a print is asked of, and what the preview shows of the one
+/// it shows: with several, nothing of it.
+fn targets(app: &App, args: &PrintArgs) -> anyhow::Result<(Vec<EntryRef>, Shown)> {
     let entries = app.targets(args.pane, args.entries.clone())?;
-    let [entry] = entries.as_slice() else {
-        anyhow::bail!("Print one file at a time");
-    };
-    Ok((
-        entry.clone(),
+    anyhow::ensure!(!entries.is_empty(), "Nothing to print");
+    let shown = if entries.len() == 1 {
         Shown {
             page: args.page,
             selection: args.selection.clone().filter(|text| !text.is_empty()),
-        },
-    ))
+        }
+    } else {
+        Shown::default()
+    };
+    Ok((entries, shown))
 }
 
 /// Ask how the booklet folds, then print it: one booklet or signatures,
@@ -313,16 +379,39 @@ fn ask_booklet(app: &App, args: &PrintArgs) {
     ));
 }
 
+/// What is printed.
+enum Printed {
+    /// Files as their previews show them, one job in their order, folded
+    /// as a booklet when asked.
+    Files {
+        entries: Vec<EntryRef>,
+        shown: Shown,
+        booklet: Option<Booklet>,
+    },
+    /// A contact sheet of the pictures among these files.
+    Sheet(Vec<EntryRef>),
+    /// The listing a pane shows, as it stands when asked.
+    Listing(PaneId),
+}
+
+/// Print `args`' files, as a booklet when asked.
+fn files(app: &App, args: &PrintArgs, booklet: Option<Booklet>) {
+    match targets(app, args) {
+        Ok((entries, shown)) => start(
+            app,
+            Printed::Files {
+                entries,
+                shown,
+                booklet,
+            },
+        ),
+        Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
+    }
+}
+
 /// Print on a worker: the dialog, the PDF made, the pages applied, handed
 /// to the system; how it went said in a notification.
-fn start(app: &App, args: &PrintArgs, booklet: Option<Booklet>) {
-    let (entry, shown) = match target(app, args) {
-        Ok(target) => target,
-        Err(error) => {
-            app.notify(NotifyLevel::Error, format!("{error:#}"));
-            return;
-        }
-    };
+fn start(app: &App, printed: Printed) {
     let weak = app.weak();
     app.scheduler.spawn(
         Priority::Normal,
@@ -331,34 +420,68 @@ fn start(app: &App, args: &PrintArgs, booklet: Option<Booklet>) {
         move || {
             let Some(app) = weak.upgrade() else { return };
             let cancel = app.lifetime().child();
-            let name = display_name(&entry.path);
-            match print(&app, &entry, &shown, booklet, &cancel) {
+            match print(&app, printed, &cancel) {
                 Ok(Some(said)) => app.notify(NotifyLevel::Info, said),
                 Ok(None) => {}
-                Err(error) => app.notify(
-                    NotifyLevel::Error,
-                    format!("“{name}” was not printed: {error:#}"),
-                ),
+                Err(error) => app.notify(NotifyLevel::Error, format!("{error:#}")),
             }
             app.wake();
         },
     );
 }
 
-/// Ask, make, send: what to say, `None` when the dialog was cancelled.
-fn print(
-    app: &Arc<App>,
-    entry: &EntryRef,
-    shown: &Shown,
-    booklet: Option<Booklet>,
-    cancel: &CancelToken,
-) -> anyhow::Result<Option<String>> {
-    let path = entry.resolve()?;
-    let name = display_name(&path);
+/// Print `printed`: `None` when the dialog was closed, else what to say.
+fn print(app: &Arc<App>, printed: Printed, cancel: &CancelToken) -> anyhow::Result<Option<String>> {
+    // What it is printed as, and what the dialog may offer of it, known
+    // before it asks: a listing as it stands when asked.
+    let (what, made, current_page, selection) = match printed {
+        Printed::Files {
+            entries,
+            shown,
+            booklet,
+        } => {
+            let paths = entries
+                .iter()
+                .map(EntryRef::resolve)
+                .collect::<Result<Vec<PathBuf>, _>>()?;
+            let what = match paths.as_slice() {
+                [path] => format!("“{}”", display_name(path)),
+                many => format!("{} files", many.len()),
+            };
+            let (page, selected) = (shown.page.is_some(), shown.selection.is_some());
+            (what, Make::Files(paths, shown, booklet), page, selected)
+        }
+        Printed::Sheet(entries) => {
+            let paths = entries
+                .iter()
+                .map(EntryRef::resolve)
+                .collect::<Result<Vec<PathBuf>, _>>()?;
+            (
+                "a contact sheet".to_owned(),
+                Make::Sheet(paths),
+                false,
+                false,
+            )
+        }
+        Printed::Listing(pane) => {
+            let (title, table) = listing::listing(app, pane, cancel)?;
+            let what = format!("the listing of “{title}”");
+            (what, Make::Listing(title, table), false, false)
+        }
+    };
+    let title = match &made {
+        Make::Files(paths, ..) => match paths.as_slice() {
+            [path] => display_name(path),
+            [first, rest @ ..] => format!("{} and {} more", display_name(first), rest.len()),
+            [] => anyhow::bail!("Nothing to print"),
+        },
+        Make::Sheet(_) => "Contact sheet".to_owned(),
+        Make::Listing(title, _) => title.clone(),
+    };
     let ask = skwir_platform::print::Ask {
-        title: name.clone(),
-        current_page: shown.page.is_some(),
-        selection: shown.selection.is_some(),
+        title: title.clone(),
+        current_page,
+        selection,
     };
     let Some(chosen) = skwir_platform::print::ask(&ask, cancel)? else {
         return Ok(None);
@@ -367,13 +490,9 @@ fn print(
         .prefix("skwir-print-")
         .tempdir()
         .context("A folder to make the document in")?;
-    // Selection asked: what is selected, alone; else nothing of it.
-    let shown = Shown {
-        page: shown.page,
-        selection: shown
-            .selection
-            .clone()
-            .filter(|_| chosen.pages == Pages::Selection),
+    let booklet = match &made {
+        Make::Files(_, _, booklet) => *booklet,
+        _ => None,
     };
     // A printer turning the sheet over its long edge turns a booklet's
     // backs upside down: they are turned back.
@@ -388,8 +507,31 @@ fn print(
         reverse: chosen.reverse,
         booklet,
     };
-    let ready = make::ready(app, &path, &shown, &layout, work.path(), cancel)?;
-    skwir_platform::print::send(&chosen, &name, &ready.pdf, cancel)?;
+    let ready = match made {
+        Make::Files(paths, shown, _) => {
+            // Selection asked: what is selected, alone; else nothing of it.
+            let shown = Shown {
+                page: shown.page,
+                selection: shown.selection.filter(|_| chosen.pages == Pages::Selection),
+            };
+            make::ready(app, &paths, &shown, &layout, work.path(), cancel)
+        }
+        Make::Sheet(paths) => {
+            make::sheet(&paths, work.path(), cancel).and_then(|(part, notice)| {
+                let ready = make::made(app, &title, vec![part], &layout, work.path(), cancel)?;
+                Ok(make::Ready {
+                    notice: ready.notice.or(notice),
+                    ..ready
+                })
+            })
+        }
+        Make::Listing(title, table) => {
+            make::made(app, &title, vec![table], &layout, work.path(), cancel)
+        }
+    }
+    .with_context(|| format!("{} was not printed", capitalized(&what)))?;
+    skwir_platform::print::send(&chosen, &title, &ready.pdf, cancel)
+        .with_context(|| format!("{} was not printed", capitalized(&what)))?;
     let pages = if ready.pages == 1 {
         "1 page".to_owned()
     } else {
@@ -397,10 +539,10 @@ fn print(
     };
     let to = match (&chosen.to_file, &chosen.printer) {
         (Some(file), _) => format!("to “{}”", display_name(file)),
-        (None, Some(printer)) => format!("to {printer}"),
+        (None, Some(named)) => format!("to {named}"),
         (None, None) => "to the printer".to_owned(),
     };
-    let mut said = format!("Sent {pages} of “{name}” {to}");
+    let mut said = format!("Sent {pages} of {what} {to}");
     if booklet.is_some() && chosen.duplex == skwir_core::print::Duplex::Simplex {
         said = format!(
             "{said}. A booklet is printed on both sides: on one side, print the odd sides, turn the sheets over, then the even"
@@ -412,9 +554,25 @@ fn print(
     Ok(Some(said))
 }
 
-/// Save as PDF's plan: one step making the PDF beside the file.
-fn save_plan(args: SaveArgs, app: &App, booklet: Option<Booklet>) -> anyhow::Result<Plan> {
-    let (entry, shown) = target(app, &args.print)?;
+/// What a print makes its PDF of, once the dialog chose.
+enum Make {
+    Files(Vec<PathBuf>, Shown, Option<Booklet>),
+    Sheet(Vec<PathBuf>),
+    Listing(String, skwir_core::print::Part),
+}
+
+/// `text` with its first letter a capital.
+fn capitalized(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
+/// Save as PDF's plan: a step for each file, making its PDF beside it
+/// (or in `dest`).
+fn save_plan(args: &SaveArgs, app: &App, booklet: Option<Booklet>) -> anyhow::Result<Plan> {
+    let (entries, shown) = targets(app, &args.print)?;
     let pages = match args
         .pages
         .as_deref()
@@ -425,28 +583,39 @@ fn save_plan(args: SaveArgs, app: &App, booklet: Option<Booklet>) -> anyhow::Res
         None if shown.selection.is_some() => Pages::Selection,
         None => Pages::All,
     };
-    let dest_dir = match args.dest {
-        Some(PathArg(dest)) => dest,
-        None => entry
-            .path
-            .parent()
-            .context("The file is in no folder")?
-            .to_owned(),
-    };
-    let name = pdf_name(&entry.path, booklet.is_some());
-    let step = MakePdf {
-        entry,
-        dest_dir,
-        name,
-        pages,
-        page: shown.page,
-        selection: shown.selection,
-        booklet,
-    };
     let what = if booklet.is_some() { "booklet" } else { "PDF" };
-    let title = format!("save “{}” as {what}", display_name(&step.entry.path));
+    let title = match entries.as_slice() {
+        [entry] => format!("save “{}” as {what}", display_name(&entry.path)),
+        many if args.together => format!("save {} files as one {what}", many.len()),
+        many => format!("save {} files as {what}s", many.len()),
+    };
     let mut plan = Plan::new(title);
-    plan.push(step);
+    // Together: the first file's step, the others' pages after its own.
+    let (entries, joined) = match entries.split_first() {
+        Some((first, rest)) if args.together => (vec![first.clone()], rest.to_vec()),
+        _ => (entries, Vec::new()),
+    };
+    for entry in entries {
+        let dest_dir = match &args.dest {
+            Some(PathArg(dest)) => dest.clone(),
+            None => entry
+                .path
+                .parent()
+                .context("The file is in no folder")?
+                .to_owned(),
+        };
+        let name = pdf_name(&entry.path, booklet.is_some());
+        plan.push(MakePdf {
+            entry,
+            dest_dir,
+            name,
+            pages: pages.clone(),
+            page: shown.page,
+            selection: shown.selection.clone(),
+            booklet,
+            joined: joined.clone(),
+        });
+    }
     Ok(plan)
 }
 
@@ -489,6 +658,9 @@ pub struct MakePdf {
     /// Folded as a booklet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub booklet: Option<Booklet>,
+    /// The files whose pages follow `entry`'s, one PDF of them all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub joined: Vec<EntryRef>,
 }
 
 impl MakePdf {
@@ -504,21 +676,29 @@ impl op::Kind for MakePdf {
 impl op::Effect for MakePdf {
     fn footprint(&self, _: &op::footprint::Volumes) -> Option<op::footprint::Footprint> {
         Some(
-            op::footprint::Footprint::default()
-                .read(&self.entry.path)
+            self.joined
+                .iter()
+                .fold(
+                    op::footprint::Footprint::default().read(&self.entry.path),
+                    |footprint, entry| footprint.read(&entry.path),
+                )
                 .made(&self.target())
                 .heavy_if(true),
         )
     }
 
     fn describe(&self) -> Change {
-        let (what, pdf) = (display_name(&self.entry.path), display_name(&self.target()));
+        let what = match self.joined.len() {
+            0 => format!("“{}”", display_name(&self.entry.path)),
+            more => format!("“{}” and {more} more", display_name(&self.entry.path)),
+        };
+        let pdf = display_name(&self.target());
         Change::Create {
             path: self.target(),
             directory: false,
             words: Some(Words {
-                will: format!("save “{what}” as “{pdf}”"),
-                did: format!("saved “{what}” as “{pdf}”"),
+                will: format!("save {what} as “{pdf}”"),
+                did: format!("saved {what} as “{pdf}”"),
             }),
         }
     }
@@ -528,8 +708,10 @@ impl op::Effect for MakePdf {
         if let Err(invalid) = op::valid_file_name(&self.name) {
             return conflict(invalid.to_string());
         }
-        if let Err(error) = self.entry.resolve() {
-            return conflict(error.to_string());
+        for entry in std::iter::once(&self.entry).chain(&self.joined) {
+            if let Err(error) = entry.resolve() {
+                return conflict(error.to_string());
+            }
         }
         if !ctx.is_folder(&self.dest_dir) {
             return conflict(format!(
@@ -550,7 +732,10 @@ impl op::Effect for MakePdf {
         Some(Made {
             target: self.target(),
             from: self.entry.path.clone(),
-            inputs: vec![self.entry.path.clone()],
+            inputs: std::iter::once(&self.entry)
+                .chain(&self.joined)
+                .map(|entry| entry.path.clone())
+                .collect(),
             folder: false,
             size: None,
             words: ("Save as PDF", "saved as PDF"),
@@ -565,7 +750,10 @@ impl op::Effect for MakePdf {
     }
 
     fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
-        let path = self.entry.resolve()?;
+        let paths = std::iter::once(&self.entry)
+            .chain(&self.joined)
+            .map(EntryRef::resolve)
+            .collect::<Result<Vec<PathBuf>, _>>()?;
         let target = self.target();
         let app = APP
             .read()
@@ -586,7 +774,7 @@ impl op::Effect for MakePdf {
             page: self.page,
             selection: self.selection.clone(),
         };
-        let result = make::ready(&app, &path, &shown, &layout, &work, ctx.cancel_token())
+        let result = make::ready(&app, &paths, &shown, &layout, &work, ctx.cancel_token())
             .and_then(|ready| {
                 // The file itself, printed whole: copied, never moved.
                 let made = staging.path().join("made.pdf");

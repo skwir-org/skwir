@@ -458,6 +458,16 @@ archives, and the bytes of any file.
   is laid out at half a sheet, its text not shrunk. On a printer of one
   side, print the odd sides, turn the sheets over, then the even.
   **Save as Booklet** makes the same booklet beside the file.
+- **Several files** selected print as one job, in their order: one
+  dialog, the pages counted through them all, a booklet folded of them
+  all; one that shows nothing printable (a song) is left out and said.
+  Save as PDF makes a PDF of each beside it. **Print Contact Sheet…**
+  prints the pictures among them several to a page, each named under it;
+  with nothing selected, **Print Listing…** prints what the folder shows,
+  in its order, as a table of names, kinds, sizes and dates. From a
+  script, with or without the window open:
+  `skwir cmd --apply print.save_pdf '{"entries": ["/path/to/notes.md"]}'`
+  (`"together": true` makes one PDF of several files; `"pages": "1-3"`).
 
 [Previews](previews.md) lists every kind of file with its tools, keys
 and requirements.

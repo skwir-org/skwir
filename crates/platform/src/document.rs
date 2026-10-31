@@ -124,6 +124,9 @@ pub(crate) struct Setup {
     /// Only its first page is drawn (a thumbnail): the engine reads no
     /// outline nor labels (`document::FIRST_PAGE`).
     pub first_page: bool,
+    /// Other documents it reads, at their own paths, isolated
+    /// (`Compose::Append`).
+    pub also: Vec<PathBuf>,
 }
 
 /// The pages a reflowable document (a book) is laid out into: their size
@@ -157,7 +160,7 @@ pub fn open_book(
     let setup = Setup {
         library: None,
         layout: Some(Layout::book(text_size)),
-        first_page: false,
+        ..Setup::default()
     };
     WorkerSession::open(
         Engine::Mupdf,
@@ -224,8 +227,8 @@ pub fn first_page(
             library: library
                 .filter(|_| matches!(engine, Engine::Pdfium))
                 .map(Path::to_owned),
-            layout: None,
             first_page: true,
+            ..Setup::default()
         };
         let Some(session) = WorkerSession::open(
             engine,
@@ -262,8 +265,13 @@ pub fn compose(
     let Some(executable) = worker_path(Engine::Pdfium) else {
         return Ok(None);
     };
+    let also = match &compose {
+        skwir_core::document::Compose::Append(others) => others.clone(),
+        _ => Vec::new(),
+    };
     let setup = Setup {
         library: library.map(Path::to_owned),
+        also,
         ..Setup::default()
     };
     let Some(session) = WorkerSession::start(
@@ -734,6 +742,7 @@ fn start(launch: &Launch, cancel: &CancelToken) -> anyhow::Result<(Worker, Worke
     let run = if launch.isolate {
         let mut readable: Vec<&Path> = launch.executable.parent().into_iter().collect();
         readable.extend(launch.setup.library.as_deref());
+        readable.extend(launch.setup.also.iter().map(PathBuf::as_path));
         crate::sandbox::untrusted_reading(
             &launch.executable,
             &launch.pdf,

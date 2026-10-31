@@ -12,6 +12,7 @@ skwir-core.workspace = true
 skwir-platform.workspace = true
 anyhow.workspace = true
 image = { workspace = true, features = ["png", "jpeg"] }
+jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

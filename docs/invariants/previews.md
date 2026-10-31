@@ -1535,6 +1535,11 @@ is still to come are in `docs/preview-frame.md`.
   portal's back ends print a file as it is. A range picks a booklet's
   pages before they are folded; even or odd sides and the order apply to
   the sheets' sides after.
+- **Several files are one job**: each printed whole as its preview shows
+  it, joined by the PDF helper (`Compose::Append`, reading only the
+  files it is handed), then the pages, booklet, sides and order applied
+  to the whole, as to one file. What one file's preview shows (its page,
+  its selection) is never applied to several.
 - **Pages are typed one way** (`print::Pages`, from 1, `1-3, 7, 10-`):
   the dialog's 0-based ranges are read through it, never parsed
   elsewhere.
