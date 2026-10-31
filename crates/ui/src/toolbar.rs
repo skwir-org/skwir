@@ -110,6 +110,7 @@ pub fn asset(path: &str) -> Option<&'static [u8]> {
         "terminal",
         "lock",
         "archive",
+        "printer",
     )
 }
 

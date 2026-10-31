@@ -8485,3 +8485,39 @@ one line; the code view's lines shown under the grammar's folds.
 
 **Not checked:** a real window (G7); folds a user closed are forgotten
 when the file changes and is read again.
+
+### P2: booklets (2026-10-31, Grammars and printing)
+
+Print as Booklet… and Save as Booklet (`print.booklet`,
+`print.save_booklet`, 341 and 343 in the Print submenu and the
+preview's menus). From the window, Print as Booklet asks first
+(`ui.choose`, "Fold as"): one booklet, signatures of 16 pages or of 32,
+and a switch to trim white margins (`Alt+A`); a script gives
+`signature` and `trim`, and `asked` to skip the question. Then the
+system's dialog, as Print. The pages picked (a range, Current page,
+Selection) are laid out in folding order (`print::booklet::sheets`),
+two to a side of the sheet chosen, turned landscape, by PDFium in the
+PDF helper (`Compose::Booklet`); a PDF printed as it is keeps 6 mm clear
+of the sheet's edges and 4 mm of the fold, a document Skwir makes is
+laid out at half a sheet with its own margins. A printer turning the
+sheet over its long edge gets its backs turned half a turn; on one side
+the notification says to print the odd sides, turn the sheets over,
+then the even, which the dialog's sides apply to the sheets'. Saved,
+it is `NAME (booklet).pdf` beside the file, on the locale's paper,
+undone to the trash. The menu's icons are bundled ones now (a printer
+drawn for Skwir, `toolbar/printer.svg`; the open book for booklets; a
+file with a plus to save): the names given at P1 were none.
+
+**Checked:** rustfmt; clippy with `-D warnings` on `skwir-plugin-print`
+and `skwir-ui`; nextest on the plugin and both helpers, 53 passed; the
+cross-plugin tests (`crates/skwir/tests/print.rs`), 3 passed, a new one
+saving a booklet of 400 lines of code: an even number of sides, each
+landscape, folded for real (run uncaptured: not skipped). By eye: `skwir
+cmd --apply print.save_booklet` on a 181-line source file made 4 A4
+landscape sides from its 5 pages; rendered with `pdftoppm`, the first
+sheet's front holds the blank 8th page and page 1, its back page 2 and
+the blank 7th, numbered and colored.
+
+**Not checked:** a real printer or the dialog on screen; the prompt in a
+window; trimmed margins by eye (PDFium's compose test covers the box);
+macOS and Windows (compiled only, and not yet for this step).

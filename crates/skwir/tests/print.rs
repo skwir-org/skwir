@@ -186,3 +186,59 @@ fn a_pdf_saved_is_undone_to_the_trash() {
     let result = app.executor.execute_blocking(&plan, app.lifetime());
     assert!(result.error.is_some() || std::fs::read(&pdf).unwrap() == b"kept");
 }
+
+#[test]
+fn a_booklet_saved_folds_two_pages_to_a_landscape_side() {
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(app) = app(tmp.path()) else { return };
+    let dir = tmp.path().join("files");
+    std::fs::create_dir(&dir).unwrap();
+    let code = dir.join("long.rs");
+    let source = (1..=400).fold(String::new(), |mut source, n| {
+        use std::fmt::Write as _;
+        let _ = writeln!(source, "let value_{n} = {n};");
+        source
+    });
+    std::fs::write(&code, source).unwrap();
+    let invocation = Invocation::new("print.save_booklet").with(
+        "entries",
+        [EntryArg::from(EntryRef::from_path(&code).unwrap())],
+    );
+    let Outcome::Plan(plan) = app.dispatch(&invocation).unwrap() else {
+        panic!("Save as Booklet makes a plan");
+    };
+    let result = app.executor.execute_blocking(&plan, app.lifetime());
+    if result
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("needs PDFium"))
+    {
+        eprintln!("skipped: no PDF helper or PDFium to fold with");
+        return;
+    }
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let booklet = dir.join("long (booklet).pdf");
+    let document = lopdf::Document::load(&booklet).unwrap();
+    let pages = document.get_pages();
+    assert!(
+        pages.len() >= 2 && pages.len() % 2 == 0,
+        "{} sides",
+        pages.len()
+    );
+    for (_, page) in pages {
+        let media = document
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"MediaBox")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n.as_float().unwrap_or_else(|_| n.as_i64().unwrap() as f32))
+            .collect::<Vec<f32>>();
+        assert!(
+            media[2] - media[0] > media[3] - media[1],
+            "a landscape side"
+        );
+    }
+}

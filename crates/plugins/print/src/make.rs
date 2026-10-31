@@ -35,7 +35,39 @@ pub(crate) struct Layout {
     pub pages: Pages,
     pub page_set: PageSet,
     pub reverse: bool,
+    /// Folded as a booklet, two pages to a side of `paper` turned
+    /// landscape.
+    pub booklet: Option<Booklet>,
 }
+
+/// How a booklet folds (ADR-111): in signatures of `signature` pages (one
+/// for all without), its pages' white margins trimmed, its backs turned
+/// half a turn for a printer that turns the sheet over its long edge.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+pub struct Booklet {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<u32>,
+    #[serde(default)]
+    pub trim: bool,
+    #[serde(default)]
+    pub turn_backs: bool,
+}
+
+/// What a page of a PDF keeps clear of a booklet sheet's edges, and of its
+/// fold, in points (about 6 mm and 4 mm): a page Skwir lays out at half a
+/// sheet keeps its own margins instead.
+const EDGE: f32 = 18.0;
+const FOLD: f32 = 12.0;
 
 /// A PDF ready to print or keep.
 pub(crate) struct Ready {
@@ -56,14 +88,21 @@ pub(crate) fn ready(
     work: &Path,
     cancel: &CancelToken,
 ) -> anyhow::Result<Ready> {
-    let (pdf, count, notice) = match source(app, path, shown, work, cancel)? {
-        Source::Pdf(pdf, count) => (pdf, count, None),
+    // A booklet's page is half its sheet: what Skwir lays out is laid out
+    // at that size, its text not shrunk.
+    let (paper, margins) = match layout.booklet {
+        Some(_) => (layout.paper.half(), (EDGE, FOLD)),
+        None => (layout.paper, (0.0, 0.0)),
+    };
+    let (pdf, count, notice, made) = match source(app, path, shown, work, cancel)? {
+        Source::Pdf(pdf, count) => (pdf, count, None, false),
         Source::Parts(parts, notice) => {
-            let mut job = job(app, path, &layout.paper, parts);
+            let mut job = job(app, path, &paper, parts);
             let made = print_job::make(&mut job, work, cancel)?;
-            (job.output, made.pages, notice)
+            (job.output, made.pages, notice, true)
         }
     };
+    let (edge, fold) = if made { (0.0, 0.0) } else { margins };
     let current = shown.page.and_then(|page| page.checked_sub(1));
     // What is selected was made into its own document: all of it.
     let picked = layout.pages.pick(count, current);
@@ -71,15 +110,42 @@ pub(crate) fn ready(
         !picked.pages.is_empty(),
         "No page of it is among those asked"
     );
-    let mut order = layout.page_set.keep(&picked.pages);
-    if layout.reverse {
-        order.reverse();
-    }
     let notice = notice.or_else(|| {
         picked
             .clipped
             .then(|| format!("It has {count} pages; those past them were left out"))
     });
+    // A booklet: the pages picked folded in their order, then the sides
+    // and the order chosen applied to its sheets' sides.
+    let (pdf, count, picked) = match layout.booklet {
+        Some(booklet) => {
+            let sheets = paper::booklet::sheets(&picked.pages, booklet.signature);
+            let sheet = layout.paper.landscape();
+            let folded = work.join("booklet.pdf");
+            let sides = skwir_platform::document::compose(
+                &pdf,
+                Compose::Booklet {
+                    sheets,
+                    width: sheet.width,
+                    height: sheet.height,
+                    fold,
+                    edge,
+                    trim: booklet.trim,
+                    turn_backs: booklet.turn_backs,
+                },
+                None,
+                &folded,
+                cancel,
+            )?
+            .context("Folding a booklet needs PDFium, which is not there")?;
+            (folded, sides, (0..sides).collect())
+        }
+        None => (pdf, count, picked.pages),
+    };
+    let mut order = layout.page_set.keep(&picked);
+    if layout.reverse {
+        order.reverse();
+    }
     // Printed whole, in order: the file as it is.
     if order.len() == count as usize
         && order

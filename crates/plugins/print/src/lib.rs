@@ -32,6 +32,7 @@ use skwir_core::workspace::PaneId;
 
 mod make;
 
+pub use make::Booklet;
 use make::{Layout, Shown, display_name};
 
 const ID: &str = "print";
@@ -56,7 +57,7 @@ static APP: RwLock<Option<Weak<App>>> = RwLock::new(None);
 
 /// What a print is asked with, by the window or a script: the file, and
 /// what its preview shows of it.
-#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct PrintArgs {
     /// The file to print; the selection's one without.
     #[serde(default)]
@@ -82,6 +83,36 @@ pub struct SaveArgs {
     /// The folder the PDF is made in; the file's own without.
     #[serde(default)]
     pub dest: Option<PathArg>,
+}
+
+/// Print as Booklet: what Print is asked with, and how it folds. Asked
+/// from the window without `asked`, it asks first (`ui.choose`).
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+pub struct BookletArgs {
+    #[serde(flatten)]
+    pub print: PrintArgs,
+    /// Pages folded together, a multiple of 4 (16: four sheets); all of
+    /// them in one booklet without.
+    #[serde(default)]
+    pub signature: Option<u32>,
+    /// Fit the pages' ink rather than their whole page (one box for every
+    /// page, so they scale alike).
+    #[serde(default)]
+    pub trim: bool,
+    /// Its signature and trim chosen: print without asking.
+    #[serde(default)]
+    pub asked: bool,
+}
+
+/// Save as Booklet: what Save as PDF is asked with, and how it folds.
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema)]
+pub struct SaveBookletArgs {
+    #[serde(flatten)]
+    pub save: SaveArgs,
+    #[serde(default)]
+    pub signature: Option<u32>,
+    #[serde(default)]
+    pub trim: bool,
 }
 
 #[derive(Default)]
@@ -126,7 +157,27 @@ impl Plugin for PrintPlugin {
             "Print…",
             "Print a file as its preview shows it, through the system's print dialog: the pages, sides and order chosen there; `page` is the page shown (Current page), `selection` what is selected (Selection)",
             |a, app| {
-                start(app, &a);
+                start(app, &a, None);
+                Ok(Outcome::Done)
+            },
+        );
+        app.commands.register::<BookletArgs, _>(
+            ID,
+            Topic::Files,
+            "print.booklet",
+            "Print as Booklet…",
+            "Print a file as its preview shows it, folded as a booklet: two pages to a side of the sheet chosen in the system's dialog, in the order they fold in, in signatures of `signature` pages (one booklet without), white margins trimmed with `trim`; without `asked`, the window asks first",
+            |a, app| {
+                if a.asked {
+                    let booklet = Booklet {
+                        signature: a.signature,
+                        trim: a.trim,
+                        turn_backs: false,
+                    };
+                    start(app, &a.print, Some(booklet));
+                } else {
+                    ask_booklet(app, &a.print);
+                }
                 Ok(Outcome::Done)
             },
         );
@@ -137,7 +188,24 @@ impl Plugin for PrintPlugin {
                 "print.save_pdf",
                 "Save as PDF",
                 "Make a PDF of a file as its preview shows it, beside it or in `dest`: `pages` typed (1-3, 7, 10-), else every page (plan)",
-                |a, app| Ok(Outcome::Plan(save_plan(a, app)?)),
+                |a, app| Ok(Outcome::Plan(save_plan(a, app, None)?)),
+            )
+            .plans();
+        app.commands
+            .register::<SaveBookletArgs, _>(
+                ID,
+                Topic::Files,
+                "print.save_booklet",
+                "Save as Booklet",
+                "Make a PDF of a file as its preview shows it folded as a booklet, beside it or in `dest`, on the paper of the system's locale: `signature` pages folded together (one booklet without), white margins trimmed with `trim` (plan)",
+                |a, app| {
+                    let booklet = Booklet {
+                        signature: a.signature,
+                        trim: a.trim,
+                        turn_backs: false,
+                    };
+                    Ok(Outcome::Plan(save_plan(a.save, app, Some(booklet))?))
+                },
             )
             .plans();
         menus(app);
@@ -186,9 +254,17 @@ fn menus(app: &App) {
         app.registry
             .menus
             .add(ID, item("Print…", "printer", 340, "print.print"));
+        app.registry.menus.add(
+            ID,
+            item("Print as Booklet…", "reading", 341, "print.booklet"),
+        );
         app.registry
             .menus
-            .add(ID, item("Save as PDF", "file-pdf", 342, "print.save_pdf"));
+            .add(ID, item("Save as PDF", "file-plus", 342, "print.save_pdf"));
+        app.registry.menus.add(
+            ID,
+            item("Save as Booklet", "reading", 343, "print.save_booklet"),
+        );
     }
 }
 
@@ -207,9 +283,39 @@ fn target(app: &App, args: &PrintArgs) -> anyhow::Result<(EntryRef, Shown)> {
     ))
 }
 
+/// Ask how the booklet folds, then print it: one booklet or signatures,
+/// and whether white margins are trimmed (the choice's switch).
+fn ask_booklet(app: &App, args: &PrintArgs) {
+    let mut given = serde_json::to_value(args).unwrap_or_else(|_| serde_json::json!({}));
+    given["asked"] = serde_json::json!(true);
+    let choice = |title: &str, detail: &str, signature: Option<u32>| {
+        let mut args = given.clone();
+        if let Some(signature) = signature {
+            args["signature"] = serde_json::json!(signature);
+        }
+        serde_json::json!({
+            "title": title,
+            "detail": detail,
+            "command": { "name": "print.booklet", "args": args },
+        })
+    };
+    app.request_front(Invocation::with_args(
+        "ui.choose",
+        &serde_json::json!({
+            "title": "Fold as",
+            "choices": [
+                choice("One booklet", "Every sheet folded together, one inside the other", None),
+                choice("Signatures of 16 pages", "Four sheets folded together, then the next four", Some(16)),
+                choice("Signatures of 32 pages", "Eight sheets folded together, then the next eight", Some(32)),
+            ],
+            "option": { "title": "Trim white margins", "field": "trim" },
+        }),
+    ));
+}
+
 /// Print on a worker: the dialog, the PDF made, the pages applied, handed
 /// to the system; how it went said in a notification.
-fn start(app: &App, args: &PrintArgs) {
+fn start(app: &App, args: &PrintArgs, booklet: Option<Booklet>) {
     let (entry, shown) = match target(app, args) {
         Ok(target) => target,
         Err(error) => {
@@ -226,7 +332,7 @@ fn start(app: &App, args: &PrintArgs) {
             let Some(app) = weak.upgrade() else { return };
             let cancel = app.lifetime().child();
             let name = display_name(&entry.path);
-            match print(&app, &entry, &shown, &cancel) {
+            match print(&app, &entry, &shown, booklet, &cancel) {
                 Ok(Some(said)) => app.notify(NotifyLevel::Info, said),
                 Ok(None) => {}
                 Err(error) => app.notify(
@@ -244,6 +350,7 @@ fn print(
     app: &Arc<App>,
     entry: &EntryRef,
     shown: &Shown,
+    booklet: Option<Booklet>,
     cancel: &CancelToken,
 ) -> anyhow::Result<Option<String>> {
     let path = entry.resolve()?;
@@ -268,11 +375,18 @@ fn print(
             .clone()
             .filter(|_| chosen.pages == Pages::Selection),
     };
+    // A printer turning the sheet over its long edge turns a booklet's
+    // backs upside down: they are turned back.
+    let booklet = booklet.map(|booklet| Booklet {
+        turn_backs: chosen.duplex == skwir_core::print::Duplex::LongEdge,
+        ..booklet
+    });
     let layout = Layout {
         paper: chosen.paper,
         pages: chosen.pages.clone(),
         page_set: chosen.page_set,
         reverse: chosen.reverse,
+        booklet,
     };
     let ready = make::ready(app, &path, &shown, &layout, work.path(), cancel)?;
     skwir_platform::print::send(&chosen, &name, &ready.pdf, cancel)?;
@@ -287,6 +401,11 @@ fn print(
         (None, None) => "to the printer".to_owned(),
     };
     let mut said = format!("Sent {pages} of “{name}” {to}");
+    if booklet.is_some() && chosen.duplex == skwir_core::print::Duplex::Simplex {
+        said = format!(
+            "{said}. A booklet is printed on both sides: on one side, print the odd sides, turn the sheets over, then the even"
+        );
+    }
     if let Some(notice) = ready.notice {
         said = format!("{said}. {notice}");
     }
@@ -294,7 +413,7 @@ fn print(
 }
 
 /// Save as PDF's plan: one step making the PDF beside the file.
-fn save_plan(args: SaveArgs, app: &App) -> anyhow::Result<Plan> {
+fn save_plan(args: SaveArgs, app: &App, booklet: Option<Booklet>) -> anyhow::Result<Plan> {
     let (entry, shown) = target(app, &args.print)?;
     let pages = match args
         .pages
@@ -314,7 +433,7 @@ fn save_plan(args: SaveArgs, app: &App) -> anyhow::Result<Plan> {
             .context("The file is in no folder")?
             .to_owned(),
     };
-    let name = pdf_name(&entry.path);
+    let name = pdf_name(&entry.path, booklet.is_some());
     let step = MakePdf {
         entry,
         dest_dir,
@@ -322,22 +441,26 @@ fn save_plan(args: SaveArgs, app: &App) -> anyhow::Result<Plan> {
         pages,
         page: shown.page,
         selection: shown.selection,
+        booklet,
     };
-    let title = format!("save “{}” as PDF", display_name(&step.entry.path));
+    let what = if booklet.is_some() { "booklet" } else { "PDF" };
+    let title = format!("save “{}” as {what}", display_name(&step.entry.path));
     let mut plan = Plan::new(title);
     plan.push(step);
     Ok(plan)
 }
 
 /// What the PDF of `path` is named: its name with `.pdf` for its own
-/// ending, a PDF's own name marked as printed.
-fn pdf_name(path: &Path) -> OsString {
+/// ending, a PDF's own name marked as printed, a booklet's as one.
+fn pdf_name(path: &Path, booklet: bool) -> OsString {
     let stem = path.file_stem().unwrap_or(path.as_os_str()).to_owned();
     let is_pdf = path
         .extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"));
     let mut name = stem;
-    if is_pdf {
+    if booklet {
+        name.push(" (booklet)");
+    } else if is_pdf {
         name.push(" (printed)");
     }
     name.push(".pdf");
@@ -363,6 +486,9 @@ pub struct MakePdf {
     /// What was selected, for `Pages::Selection`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<String>,
+    /// Folded as a booklet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub booklet: Option<Booklet>,
 }
 
 impl MakePdf {
@@ -454,6 +580,7 @@ impl op::Effect for MakePdf {
             pages: self.pages.clone(),
             page_set: PageSet::All,
             reverse: false,
+            booklet: self.booklet,
         };
         let shown = Shown {
             page: self.page,
@@ -496,10 +623,17 @@ mod tests {
 
     #[test]
     fn a_pdf_is_named_after_its_file() {
-        assert_eq!(pdf_name(Path::new("/example/notes.md")), "notes.pdf");
-        assert_eq!(pdf_name(Path::new("/example/Makefile")), "Makefile.pdf");
+        assert_eq!(pdf_name(Path::new("/example/notes.md"), false), "notes.pdf");
         assert_eq!(
-            pdf_name(Path::new("/example/report.PDF")),
+            pdf_name(Path::new("/example/Makefile"), false),
+            "Makefile.pdf"
+        );
+        assert_eq!(
+            pdf_name(Path::new("/example/notes.md"), true),
+            "notes (booklet).pdf"
+        );
+        assert_eq!(
+            pdf_name(Path::new("/example/report.PDF"), false),
             "report (printed).pdf"
         );
     }

@@ -450,6 +450,14 @@ archives, and the bytes of any file.
   page. The dialog's pages (All, Current page, Selection, `1-3, 7`), even
   or odd sides and reverse order are what is printed. **Save as PDF**
   makes the same PDF beside the file instead (Undo puts it in the trash).
+- **Print as Booklet…** asks how the booklet folds (one booklet, or
+  signatures of 16 or 32 pages; white margins trimmed with `Alt+A`),
+  then the dialog: two pages to a side of the sheet chosen there, in the
+  order they fold in, so the printed sheets, folded and put one inside
+  the other, read in order. A text, a source file or a Markdown document
+  is laid out at half a sheet, its text not shrunk. On a printer of one
+  side, print the odd sides, turn the sheets over, then the even.
+  **Save as Booklet** makes the same booklet beside the file.
 
 [Previews](previews.md) lists every kind of file with its tools, keys
 and requirements.
