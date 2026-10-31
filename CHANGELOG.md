@@ -6,9 +6,10 @@ Skwir 0.3 reaches servers, phones and cameras: type an address and it mounts
 the server with a tool you have, lists the servers your network announces and
 the phones you plug in, and copies to and from them in batches, going on from
 where a server stopped. The address field is now one field to go somewhere,
-filter the folder and search below it as you type. Menus open their submenus
-beside them, F1 lists keys by topic, and a tag looks the same everywhere. Each
-release now offers builds to try on Windows and macOS.
+filter the folder and search below it as you type, and what you filter by
+stays as you go. Menus open their submenus beside them, F1 lists keys by topic,
+and a tag looks the same everywhere. FB2 and Kindle books open beside EPUB.
+Each release now offers builds to try on Windows and macOS.
 
 [Installation instructions](README.md#installing)
 
@@ -27,6 +28,10 @@ release now offers builds to try on Windows and macOS.
   searches it and its subfolders, both as you type, one switch between them.
   The field offers places, tags, tabs, history and commands; `#tag` finds a
   tag; a Search button ends it.
+- **Filters stay as you go**: a kind, a tag, a date or a size you filter by is
+  kept in every folder and search you open, until you take it off; Quick
+  filters offer what to narrow to anywhere. Back shows each place as you left
+  it, and `Ctrl+D` keeps a filtered folder under Saved with its filter.
 - **Menus** open their submenus beside them, show a setting as one row of
   choices, and group the file menu by what is done to the file. **F1** lists
   the keys by topic, in columns, and finds a shortcut by what it does or by its
@@ -40,6 +45,10 @@ release now offers builds to try on Windows and macOS.
   (modified, created, opened, or when a picture was taken), and takes drags and
   the keyboard.
 - **Encrypted drives** can remember their passphrase in your keyring.
+- **Books** in FB2 and Mobipocket (MOBI, AZW3) open as EPUBs do, and text can
+  be read a screen at a time, the wheel turning a page.
+- **Typing a name** goes to the next one starting so each time, accents and
+  case aside, and brings it to the middle of the view.
 - **Builds to try on Windows and macOS** (Apple silicon, macOS 12 or later)
   come with the release, opening archives and playing audio and video now. They
   are made on Linux and have never run on either system
@@ -63,6 +72,18 @@ Changed from 0.2, which you may notice:
   asked for, waiting for it if it still runs.
 - `Ctrl` and the wheel zoom the pane under the pointer, not the one with the
   keys.
+- Narrow by is now Quick filters (View › Quick filters), over any place, and
+  what it or the address sets that the files hold (a kind, a tag, a date, a
+  size) stays as you open other folders and searches until you take its pill
+  off.
+- Back and Forward show a place with the filters it had when you left it.
+- `Ctrl+D` on a filtered folder (or a tag, the Trash) keeps it with its filter
+  under Saved, the sidebar's Searches section renamed; a folder's own menu
+  still bookmarks it alone. A saved or recent search runs as it was, without
+  the filters you have on now.
+- A letter typed again goes to the next name that starts with it, not the same
+  one.
+- The EPUB plugin is Books now; what you set for it is kept.
 
 Known limits: Linux only, as in 0.2. The Windows and macOS builds are to try,
 never run on either system ([how to help](docs/HELP-WANTED.md)). Remote folders
@@ -158,6 +179,27 @@ server and network. Undo history is cleared when Skwir exits.
   before the text: the folder shown, or another chosen with a click,
   `Alt+Down` or `@` (the folder above, home, the whole disk, a sidebar folder,
   a tag, Recent).
+- **Filters that stay** (ADR-107): what of a filter or a search the files
+  hold (a kind, an extension, a tag, a date, a size, a rating) is kept wherever
+  you go, a folder below or above, a search, the Trash, a tag, a tab or a split
+  opened from the pane, until you take its pill off, Escape shows everything or
+  Quick filters change it; the words that find names stay with the folder they
+  were typed in. Its pills say they stay, the footer counts what is shown ("12
+  of 340 items", "Reading 1,200 files…" while sizes and dates come), and a
+  folder it hides everything in says "Hidden by filters", with Show everything.
+  **Quick filters** (once Narrow by) show over any place when asked and say why
+  they offer nothing; over a search with a tag, or a tag's place, by themselves.
+- **Places as you left them** (ADR-109): Back and Forward show each place with
+  the filters it had when you left it, a search with its own terms. `Ctrl+D`
+  and the bookmark button keep what is shown: a folder as a bookmark, a search
+  as a saved search, and a folder, a tag or the Trash shown filtered under
+  **Saved** (the Searches section, renamed) with its filter, named after it
+  ("Pictures · kind:image"); the button is filled only for it as filtered so. A
+  saved one opens as it was kept, a bookmark with the filters you have on. A
+  closed tab opened again keeps its filters.
+- **A tag's place** is searched and filtered at its own depths (ADR-108): the
+  switch reads "This tag | With sub-tags", All Tags' "These tags | Every tagged
+  file", the words typed filtering what each lists.
 - **Filter and search, one field**: `Ctrl+Shift+F` looks in the folder alone
   and `Ctrl+F` in its subfolders too, the switch at the top of the list going
   from one to the other with the words kept. The files show what the words keep
@@ -234,6 +276,18 @@ server and network. Undo history is cleared when Skwir exits.
 - **Columns view**: a click on a file in a column to the left goes up to that
   folder with the file selected, as in Finder, so it is previewed; it did
   nothing.
+- **Typing a name** in the files goes forward, as in Dolphin: a new name, and
+  one letter typed again and again, look past the file the cursor is on, so
+  each press reaches the next name, round the end after the last; a name typed
+  on stays on its file while its name still begins so. Names are matched as
+  the order sorts them, case and accents aside ("ecole" reaches "École"), Space
+  goes on with a name where one goes on so (else it peeks), the file reached is
+  brought to the middle of the view, and a pill at the foot of the pane shows
+  what is typed, "No match" once the folder is listed. A key stepping past the
+  list's bottom edge moves it one row, not a page.
+- **Usage's map** is drawn in soft tiles: rounded blocks apart from each other,
+  open folders as pale trays under a header, in tints of one lightness that
+  tell neighbours apart, the chosen block ringed in the accent.
 - **Zoom**: `Ctrl` and the wheel zoom the pane under the pointer, and the
   cursor stays in sight through a zoom.
 - **What you put in a folder is selected**, as in other file managers, and
@@ -265,6 +319,23 @@ server and network. Undo history is cleared when Skwir exits.
   level skipped. A book's contents no longer list the chapter's own headings
   again above its chapters: those its contents leave out stand under the
   chapter you are reading.
+- **Books**: FB2 (and FB2 in a zip) and Mobipocket books (MOBI 6, KF8/AZW3, and
+  PalmDOC) open in the books plugin, once EPUB's, with their covers, contents
+  and pictures; a book protected by DRM, or in Amazon's KFX, says so. Settings ›
+  Reading's book engine is one choice: Automatic reads them with Skwir's own
+  engine, MuPDF chosen reads those it reads well.
+- **Text read a screen at a time**: with Continuous scrolling off (its button
+  after Full width, or Settings › Reading), Markdown and HTML in reading mode,
+  word processors' documents, reflowed books and e-mail turn a screen at a
+  time, never cutting a line; a notch of the wheel, Down, Page Down or Right
+  turn one on, Up, Page Up or Left back. It is a choice of its own beside the
+  documents' continuous scrolling.
+- **A server's previews** read each file once: a small text on a cloud remote
+  opened with up to thirteen downloads, now one, and the file shown before is
+  kept a minute for coming back to it. rclone's mounts keep what they read
+  (`full` cache), and a copy onto one ends only once the server has it; a file
+  another program left to send says so on its place ("Sending 1 file to the
+  server…").
 - **Previews**: a file of several sections (a workbook's sheets, a book's
   chapters, a font's character sheets) keeps both arrows and its tools
   (Contents, the text size, Full preview) as you go from one to the next. Read
@@ -278,7 +349,17 @@ server and network. Undo history is cleared when Skwir exits.
   dome, a torus) is drawn whole, most parts faster and with fewer triangles.
   Spreadsheets and SQLite databases are recognised by their type, not their
   name: a database named `.sqlite` or `.db3` shows when it holds SQLite, and a
-  file of such a name holding something else is no longer opened as one.
+  file of such a name holding something else is no longer opened as one. A
+  document whose first page is slow to draw (a scanned cover) shows it at once,
+  blurred, then sharp, and its first page is drawn at the size the panel needs
+  rather than a fixed large one. The wheel past the end of a font, or of any
+  file, opened from an archive turns that file's view, no longer closing it.
+- **Faster with many files**: selecting all of 100,000 files and acting on
+  them, a plan's checks, the tags index, a tag's places, a listing's renames
+  and a filter's tests stay in proportion to what changed: finding a whole
+  selection's files took 100 s there, now 43 ms. A text field's drag selects
+  past its ends, scrolling; the address field's rows hold still as you type,
+  and `Enter` or `Tab` waits for the folder typed.
 - **Fixed from 0.2**: a document read in continuous scrolling had a scrollbar
   that ended at the last page visited; it measures every page. A long name in
   the grid wraps on up to three lines again. Going from one PDF to another in
