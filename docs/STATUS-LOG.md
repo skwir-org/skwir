@@ -7990,3 +7990,96 @@ after the click, without the stand-in.
 inflated alike; the user's session (Wayland); a DjVu or a book opening
 on its page drawn small (the same path, not opened); Windows and macOS,
 not compiled (`just check-cross` not run).
+
+### A place is where it is and what filters it there (2026-10-31, ADR-109)
+
+Before 0.3.0 the user asked what to do with ADR-107's open question
+(Back or Forward to a search made of the lens alone), compared the
+behaviours, and chose a simpler model: a location and what filters it
+there is one place, recorded in the history, kept in the sidebar and
+returned to. Their choices: a filtered place kept beside the saved
+searches, in one section named Saved; Ctrl+D keeps what is shown; a
+place kept with a filter (a saved place, a saved or recent search) opens
+as kept, the pane's lens left out, one kept without (a bookmark) takes
+it.
+
+- **History.** Each step keeps what filtered it when the pane left it
+  (`StepLeft`, beside the cursor it kept), recorded where every location
+  is shown (`Pane::leave_step` in `App::open_in`, and in `step_here`,
+  which adds a step without opening). Back, Forward and the field's step
+  taken back show a step as it was last shown (`Lensing::AsLeft`): a
+  search as its terms say, anything else filtered by its filter, read
+  again by its reader (`App::read_as_left`; with none, a filter that held
+  a lens shows nothing, one of names its names). `Lensing::Again`,
+  `Lensing::AsItWas`, `Bring::InPlace` and `lens::in_place_of_lens` are
+  gone. A closed tab keeps its panes' steps and opens again filtered as
+  it was (`Pane::steps_left`).
+- **Opening as kept.** `navigate` and `tab.new` take `as_kept` and
+  `filter` (`App::navigate_as_kept`, `new_tab_as_kept`); a sidebar place
+  says how it opens (`Place::opens`, `Opens::AsKept`, `Place::open`).
+  The address field's saved rows open as kept, its recent rows run
+  without the pane's lens added again, its place rows open a saved one as
+  kept.
+- **Keeping.** The core `keep` hands the location and the pane's filter
+  to the keeper that keeps them (`Keeper::keeps(location, filter)`,
+  `Keeper::filtered`); the query plugin keeps any location shown filtered
+  as a saved place: `SavedQuery::at` (a `Location`, its exact path kept),
+  its filter in `expr`, named "Pictures · kind:image" (`kept_name`), its
+  edits keyed by `saved::Key` (`query.forget`, `rename`, `move`, `edit`
+  take `at`; `before` a search's expression or `{expr, at}`). The
+  field's button is filled for the place as shown only
+  (`Place::is_kept_as`). A saved place names no folder: not a trail's
+  root, a tab's or the history's name, a scope of the field, nor the
+  sidebar's place shown unless filtered so (`Place::is_its_location`).
+  The sidebar's section reads Saved (group `searches` kept).
+
+What it changes for a user: Back past where a lens was set shows that
+place without it; Back to a step whose lens was taken off since shows it
+with it; a folder filtered by words comes back filtered by them.
+ADR-107's status says what of it no longer holds; locations.md and
+shell.md say the rules; the guide and the changelog say what a user
+sees.
+
+**Also (PLAN's lens item):** what the lens costs on GVfs over AFC was
+looked at again against the stand-in iPhone (`tools/test/gvfs-afc.sh`
+with a probe in place of the test binary, 20 files made on the device's
+side): listing them took 21 requests; a stat or a tag read answered from
+GVfs's cache for about a second after, then took one request a file
+each, the tag read refused (`ENOTSUP`) after its request. A remote that
+refused extended attributes is no longer asked again this session
+(`reach::refuses_attributes`, by its point and mount number;
+`fs::xattr`'s reads answer as the first did), so a listing's tags and a
+lens of them cost nothing more there; the stats stay, as a sort by date
+asks them. remote.md says so.
+
+**Checked:** rustfmt; clippy with `-D warnings` on the default
+workspace, all targets, twice (the second after the attribute memory).
+nextest, in memory-capped scopes under a load of 35 to 45 from other
+sessions' builds: 1264 tests of core, query, places, tags and ui and of
+the binary's `timeline_query`, `lens`, `plugins_toggle`, `search_tags`,
+`search_scope`, `tags_location`, `paste_on_places`, `settings` and
+`keymap_titles`, 1263 passed, the failing one the new saved-place test's
+last step (an argument `query.forget` refuses, the test's), fixed; then
+704 of core, the fixed test, tags, tagspaces, xmp and the binary's
+`notes_stores`, `copy_tags`, `tags_everywhere`, `tags_everywhere_reads`
+and `tags_location`, all passed. New tests: core's
+`each_step_is_shown_with_what_filtered_it` (Back, Forward, the field's
+step taken back, as kept, a closed tab opened again, a tab opened as
+kept), the query plugin's `back_and_forward_show_each_step_as_it_was`
+(rewritten) and `a_place_is_kept_with_its_filter_and_opened_as_kept`,
+`reach`'s `a_remote_that_refused_attributes_is_not_asked_again` (procfs
+standing for a server that refuses `user.*`), the timeline's Back. In a
+window (debug build, Xvfb with lavapipe, a synthetic home): Kind: Images
+over Pictures carried into 2024, taken off there, then Back showed
+Pictures with it, the cursor on 2024; Ctrl+D made a Saved section with
+"Pictures · kind:image", a toast with Undo, the button filled and the
+place lit; over Pictures filtered by Kind: Text and code the button was
+hollow, and the saved place opened with Kind: Images alone; Back showed
+Kind: Text and code again; `data.toml` kept the place's location as a
+table.
+
+**Not checked:** Wayland and the user's session; Windows and macOS not
+compiled for it (`just lint-all` not run); the attribute memory through
+Skwir's own reads against the stand-in (the probe asked the system's
+`getxattr`; the memory is tested on procfs); `release-check`, the
+release's.

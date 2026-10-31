@@ -338,18 +338,28 @@ leave (ADR-077).
 - Windows and macOS compiled only (`just lint-all`, with the review
   fixes of 2026-10-30), not run.
 
+**From places (2026-10-31, ADR-109)**:
+- A pane filtered over a search's results (the `filter` command run over
+  one) is shown on Back without that filter: a search's step is its
+  terms.
+- Not checked: Wayland and the user's session (Xvfb only); Windows and
+  macOS not compiled for it (`just lint-all` not run).
+
 **From the lens (2026-10-30, ADR-107)**:
 - What a lens of tags, dates or sizes asks of a remote (counted:
   `docs/STATUS-LOG.md`, 2026-10-30): nothing beyond the listing on sshfs,
-  rclone over WebDAV and kio-fuse over SFTP, but on GVfs over AFC two
-  requests a file of each folder shown, one USB round trip each on an
-  iPhone. To decide: read those facets on such a mount only when Quick
-  filters are opened there (a kind or an extension reads nothing), or
-  say in the footer that the lens reads the phone. GVfs over SFTP not
-  counted: its backend refused the connection inside the test's
-  namespaces while ssh by hand reached the server, and said nothing more
-  with `GVFS_DEBUG=1`; counted in a session of its own, outside
-  namespaces, it would close this.
+  rclone over WebDAV and kio-fuse over SFTP, but on GVfs over AFC a stat
+  and a tag read a file of each folder shown once GVfs's own cache of its
+  listing lapsed (about a second), one USB round trip each on an iPhone.
+  The tag reads are gone (2026-10-31, `reach::refuses_attributes`: a
+  remote that refused extended attributes is not asked again this
+  session); the stats are what a sort by date asks too, kept as they
+  are. Not counted: GVfs over MTP (an Android phone, through
+  `just mtp-check` when one is offered) and GVfs over SFTP and SMB (its
+  SFTP backend refused the connection inside the test's namespaces while
+  ssh by hand reached the server, and said nothing more with
+  `GVFS_DEBUG=1`; counted in a session of its own, outside namespaces, it
+  would close this).
 - On those mounts no tag is read (sshfs and rclone keep no extended
   attributes): a tag lens shows a server's folders, and the files whose
   tags are kept beside them.
@@ -357,11 +367,6 @@ leave (ADR-077).
   remote folder in a window; Windows and macOS compiled only.
 
 **From the review fixes (2026-10-30)**:
-- For the user: Back or Forward to a search made of the lens alone (a
-  month the timeline chose, `kind:image` typed) keeps its terms, so the
-  lens comes back with that step (ADR-107's amendment); the other way,
-  showing its folder, would leave Back showing what the pane shows
-  already. Kept as built until the user chooses.
 - Two odd spellings of a place's two depths are not known as one place
   (a provider would have to say a location's one spelling).
 - `in:trash:` (no scope offers it) tests trashed files with their stat,
