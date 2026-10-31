@@ -399,8 +399,23 @@ fn has_more(bar: &Bar, mode: usize) -> bool {
             .any(|item| !item.shown(mode) && matches!(item.tool, Tool::Button(_)))
 }
 
-/// What never has a button, for every kind.
+/// What never has a button, for every kind, then what plugins add to the
+/// preview's menu (`Shell::preview_items`), run with what it shows.
 fn always(shell: &Shell, cx: &mut Context<Shell>) -> Vec<AnyElement> {
+    let plugins: Vec<Button> = shell
+        .preview_items()
+        .into_iter()
+        .enumerate()
+        .map(|(at, (title, icon, command))| {
+            Button::new(
+                format!("preview-plugin-{at}"),
+                icon,
+                title,
+                "ui.preview_invoke",
+            )
+            .args(serde_json::json!({ "command": command.name, "args": command.args }))
+        })
+        .collect();
     [
         Button::new(
             "preview-external",
@@ -416,6 +431,7 @@ fn always(shell: &Shell, cx: &mut Context<Shell>) -> Vec<AnyElement> {
         ),
     ]
     .into_iter()
+    .chain(plugins)
     .map(|button| menu_row(button, shell, cx))
     .collect()
 }

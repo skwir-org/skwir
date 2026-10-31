@@ -8333,3 +8333,73 @@ to end isolated and read back, a cancelled job ending the helper.
 **Not checked:** Windows and macOS (compiled for neither yet); real
 fonts of every script (Arabic, Indic shaping only through parley's
 tests).
+
+### P1: printing through the system's dialog (2026-10-31, Grammars and printing)
+
+ADR-111 accepted. The `print` plugin: Print… (Ctrl+P on a file, and in
+the preview), Save as PDF (a plan: one step making `<name>.pdf` beside
+the file, `(printed)` added to a PDF's own name; its undo puts it in the
+trash) in the file's menu (a Print submenu at 340, made from it) and the
+preview's menus. What is printed is a PDF (`make`): the file itself when
+it is one, the PDF a document's reader reads (`DocumentSession::pdf`,
+new: answered by the PDF helpers' sessions when what they read starts
+`%PDF-`, an office document's conversion among them), else one the
+print helper makes (P3) of what the preview shows, asked as the window
+asks: a provider's converted file, its inspection (a font's is printed
+as its specimen), a reader's pages drawn as pictures, then a drawing, a
+picture (JPEG, PNG, GIF and WebP as they are, others decoded) or a text.
+Selection printed is what is selected alone, colored as the file's
+language. The system's dialog chooses (`skwir_platform::print`): on
+Linux the print portal (`PreparePrint`, then `Print` with the file by
+descriptor and the token; Current page and Selection offered when the
+preview has them; a desktop without the portal says so); on macOS the
+print panel on the main thread (`dispatch2::run_on_main`) then CUPS's
+`lp`; on Windows `PrintDlgExW` on a thread of its own, then the PDF
+helper drawing each page on the printer (`WorkerRequest::Print`,
+PDFium's `FPDF_RenderPage` on the printer's DC, pdfium-render's Win32
+feature with the `windows` 0.57 it resolves to). Skwir applies what was
+chosen, as GTK's own portal printing does: the pages (`print::Pages`),
+even or odd, the reverse order, by `Compose::Pages` in the PDF helper
+(PDFium copying pages, blanks the size of the page before); a document
+printed whole and in order is handed as it is. The paper without a
+dialog is `$PAPERSIZE`, `/etc/papersize`, else the locale's region
+(Letter in the Americas that use it and the Philippines). The window
+names no plugin: a plugin's items of the preview's menu (menu
+`preview`, their `when` read against `pages`, `picture`, `text`,
+`selection`) are drawn in its More menu and its context menu and run
+through `ui.preview_invoke`, user-only, which adds the file shown, its
+pane, its page and what is selected. An agent's print asks first.
+Written beside P1 and carried by this commit: the PDF helper's booklet
+layout (`Compose::Booklet`, P2's engine, by an agent), which P2 makes
+reachable.
+
+**Checked:** clippy with `-D warnings` on the crates touched; Windows
+and macOS cross clippy on `skwir-platform` and `skwir-pdf-worker` (the
+print dialog's and the printer's code) during the step, before
+`DocumentSession::pdf` was added (`just lint-all` at the end covers the
+rest). nextest on `skwir-core`, `skwir-platform`, `skwir-pdf-worker`
+and `skwir-plugin-print` in a worktree holding this commit: 925 of 926
+passed; the last, a desktop without the print portal, hung until killed:
+a portal that answers no call held the blocking call for good. The
+print path now opens a session connection of its own with a call
+timeout of 30 s (AGENTS.md: the shared one has none), and its stand-in
+answers what it does not serve: the four portal tests pass in under a
+second. `cargo fmt --check` found P3's `pub mod print_job` out of rustfmt's
+order in `skwir-platform`'s lib.rs: sorted here. Tests: the print portal
+stood in for on a pair of
+sockets (its dialog's answer read: pages 2 to 3 and 5 from its 0-based
+ranges, odd sides, reversed, 90 %, short-edge duplex, A5 turned with
+the printer's margins widened to 15 mm; the file printed handed by
+descriptor with the token; a cancelled dialog choosing nothing; a desktop
+without the portal saying so); the paper from libpaper's file and the
+locale; the PDF helper composing pages in an order with blanks, refusing
+a page past the end, refusing to print where it is not Windows, and
+laying out booklets (the agent's tests: sides' halves, blanks, backs
+turned, trim); Save as PDF of a Markdown document, a source file of 300
+lines (and its second page alone), a picture and a drawing, read back
+(lopdf, `pdftotext`), and its undo to the trash; the plugin's names.
+
+**Not checked:** a real printer or the desktop's dialog on screen (the
+portal stood in for); macOS and Windows dialogs run (compiled only;
+Windows not under Wine yet); the preview's menu rows in a window; the
+scale the dialog chose is not applied yet.

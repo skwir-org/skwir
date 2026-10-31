@@ -28,6 +28,8 @@ use crate::process::Failure;
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 /// One page render or one whole-document search.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long a document may take to be composed for printing (ADR-111).
+const COMPOSE_TIMEOUT: Duration = Duration::from_secs(600);
 /// How long an abandoned request may keep the worker busy once it has been
 /// told to stop: a page that is being rendered finishes, a search stops at
 /// its next page. Longer than that, the worker is restarted.
@@ -42,11 +44,17 @@ enum Response {
     Page(DocumentPage),
     Matches(Vec<SearchHit>),
     Located(Option<u32>),
+    /// A document composed, in the scratch folder, of this many pages.
+    Composed(PathBuf, u32),
+    /// Pages sent to a printer.
+    Printed(u32),
 }
 
 pub struct WorkerSession {
     info: DocumentInfo,
     jobs: Sender<Job>,
+    /// The file it reads, when that is a PDF (`DocumentSession::pdf`).
+    pdf: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -240,6 +248,88 @@ pub fn first_page(
     Ok(None)
 }
 
+/// Write the pages of the PDF at `pdf` as `compose` lists them to `dest`
+/// (ADR-111), by `PDFium` (told `library` when the settings name one):
+/// the one engine that writes PDFs here. How many pages it holds; `None`
+/// when `PDFium` is not there. Called on a scheduler worker.
+pub fn compose(
+    pdf: &Path,
+    compose: skwir_core::document::Compose,
+    library: Option<&Path>,
+    dest: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<u32>> {
+    let Some(executable) = worker_path(Engine::Pdfium) else {
+        return Ok(None);
+    };
+    let setup = Setup {
+        library: library.map(Path::to_owned),
+        ..Setup::default()
+    };
+    let Some(session) = WorkerSession::start(
+        executable,
+        pdf.to_owned(),
+        pdf.to_owned(),
+        crate::file::memory_dir("skwir-compose-")?,
+        setup,
+        cancel.child(),
+        true,
+    )?
+    else {
+        return Ok(None);
+    };
+    match session.request(WorkerRequest::Compose(compose), cancel)? {
+        Response::Composed(path, pages) => {
+            // Copied before the session ends: its folder goes with it.
+            std::fs::copy(&path, dest).context("keep the composed document")?;
+            Ok(Some(pages))
+        }
+        _ => anyhow::bail!("unexpected document reply"),
+    }
+}
+
+/// Print every page of the PDF at `pdf` on Windows' printer `printer`, its
+/// settings `devmode` as the print dialog left them, by `PDFium` drawing
+/// each page on the printer (ADR-111). How many pages it sent; `None`
+/// when `PDFium` is not there. Called on a scheduler worker.
+pub fn print_on(
+    pdf: &Path,
+    printer: &str,
+    devmode: &[u8],
+    title: &str,
+    library: Option<&Path>,
+    cancel: &CancelToken,
+) -> anyhow::Result<Option<u32>> {
+    let Some(executable) = worker_path(Engine::Pdfium) else {
+        return Ok(None);
+    };
+    let setup = Setup {
+        library: library.map(Path::to_owned),
+        ..Setup::default()
+    };
+    let Some(session) = WorkerSession::start(
+        executable,
+        pdf.to_owned(),
+        pdf.to_owned(),
+        crate::file::memory_dir("skwir-print-")?,
+        setup,
+        cancel.child(),
+        true,
+    )?
+    else {
+        return Ok(None);
+    };
+    let request = WorkerRequest::Print {
+        printer: printer.to_owned(),
+        devmode: devmode.to_vec(),
+        title: title.to_owned(),
+    };
+    match session.request(request, cancel)? {
+        Response::Printed(pages) => Ok(Some(pages)),
+        _ => anyhow::bail!("unexpected document reply"),
+    }
+}
+
 impl WorkerSession {
     /// Called on a scheduler worker. None means the optional worker/library is
     /// absent; malformed or encrypted documents produce an ordinary error.
@@ -266,6 +356,30 @@ impl WorkerSession {
         lifetime: CancelToken,
         isolate: bool,
     ) -> anyhow::Result<Option<Arc<dyn DocumentSession>>> {
+        Ok(
+            Self::start(executable, pdf, source, scratch, setup, lifetime, isolate)?
+                .map(|session| Arc::new(session) as Arc<dyn DocumentSession>),
+        )
+    }
+
+    /// The session itself: `open_with_worker`'s, for what asks more of it
+    /// than a reader does (`compose`).
+    fn start(
+        executable: PathBuf,
+        pdf: PathBuf,
+        source: PathBuf,
+        scratch: tempfile::TempDir,
+        setup: Setup,
+        lifetime: CancelToken,
+        isolate: bool,
+    ) -> anyhow::Result<Option<WorkerSession>> {
+        // What it reads, kept by the session's scratch folder or the file
+        // itself, is a PDF when it says so in its first bytes.
+        let read = pdf.clone();
+        let is_pdf = crate::file::open_regular(&read).is_ok_and(|mut file| {
+            let mut magic = [0u8; 5];
+            std::io::Read::read_exact(&mut file, &mut magic).is_ok() && &magic == b"%PDF-"
+        });
         let (jobs, rx) = crossbeam_channel::unbounded::<Job>();
         let (ready, startup) = crossbeam_channel::bounded(1);
         let cancelled = lifetime.subscribe();
@@ -324,7 +438,7 @@ impl WorkerSession {
             })?;
         crossbeam_channel::select! {
             recv(startup) -> verdict => match verdict {
-                Ok(Ok(info)) => Ok(Some(Arc::new(Self { info, jobs }))),
+                Ok(Ok(info)) => Ok(Some(Self { info, jobs, pdf: is_pdf.then_some(read) })),
                 Ok(Err(error)) if error.is::<Unavailable>() => Ok(None),
                 Ok(Err(error)) => Err(error),
                 Err(_) => anyhow::bail!("document worker stopped during startup"),
@@ -365,10 +479,16 @@ impl DocumentSession for WorkerSession {
     fn info(&self) -> &DocumentInfo {
         &self.info
     }
+    fn pdf(&self) -> Option<&Path> {
+        self.pdf.as_deref()
+    }
     fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage> {
         match self.request(WorkerRequest::Render { page, side }, cancel)? {
             Response::Page(page) => Ok(page),
-            Response::Matches(_) | Response::Located(_) => {
+            Response::Matches(_)
+            | Response::Located(_)
+            | Response::Composed(..)
+            | Response::Printed(_) => {
                 anyhow::bail!("unexpected document search result")
             }
         }
@@ -382,7 +502,10 @@ impl DocumentSession for WorkerSession {
             cancel,
         )? {
             Response::Matches(hits) => Ok(hits),
-            Response::Page(_) | Response::Located(_) => {
+            Response::Page(_)
+            | Response::Located(_)
+            | Response::Composed(..)
+            | Response::Printed(_) => {
                 anyhow::bail!("unexpected document reply")
             }
         }
@@ -397,7 +520,10 @@ impl DocumentSession for WorkerSession {
             cancel,
         )? {
             Response::Located(page) => Ok(page.filter(|page| (1..=self.info.pages).contains(page))),
-            Response::Page(_) | Response::Matches(_) => {
+            Response::Page(_)
+            | Response::Matches(_)
+            | Response::Composed(..)
+            | Response::Printed(_) => {
                 anyhow::bail!("unexpected document reply")
             }
         }
@@ -512,6 +638,13 @@ impl Manager {
             }
             WorkerReply::Matches(hits) => Ok(Response::Matches(hits)),
             WorkerReply::Located(page) => Ok(Response::Located(page)),
+            WorkerReply::Printed { pages } => Ok(Response::Printed(pages)),
+            WorkerReply::Composed { pages } => Ok(Response::Composed(
+                self.launch
+                    .scratch
+                    .join(skwir_core::document::COMPOSED_FILE),
+                pages,
+            )),
             // A page the worker could not render is that page's error; the
             // worker itself is fine and keeps the document open.
             WorkerReply::Error(message) | WorkerReply::Unavailable(message) => {
@@ -564,7 +697,17 @@ impl Manager {
         }
         let worker = self.worker.as_mut().expect("started above");
         let id = worker.send(request).map_err(Failure::Broken)?;
-        let deadline = crossbeam_channel::after(REQUEST_TIMEOUT);
+        // Writing a document of thousands of pages takes longer than a page.
+        let deadline = crossbeam_channel::after(
+            if matches!(
+                request,
+                WorkerRequest::Compose(_) | WorkerRequest::Print { .. }
+            ) {
+                COMPOSE_TIMEOUT
+            } else {
+                REQUEST_TIMEOUT
+            },
+        );
         match worker.wait(id, &cancelled, &deadline) {
             Err(Failure::Cancelled) => {
                 // Tell the worker to stop; its answers are drained later.

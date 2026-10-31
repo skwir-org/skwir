@@ -1879,6 +1879,7 @@ checksum = "1e0e367e4e7da84520dedcac1901e4da967309406d1e51017ae1abfb97adbd38"
 dependencies = [
  "bitflags 2.13.2",
  "block2 0.6.2",
+ "libc",
  "objc2 0.6.5",
 ]
 
@@ -6132,6 +6133,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "windows 0.57.0",
 ]
 
 [[package]]
@@ -7787,6 +7789,7 @@ dependencies = [
  "djvu-rs",
  "embed-resource",
  "flate2",
+ "lopdf",
  "parking_lot",
  "proptest",
  "resvg 0.46.0",
@@ -7820,6 +7823,7 @@ dependencies = [
  "skwir-plugin-ops-basic",
  "skwir-plugin-places",
  "skwir-plugin-playlists",
+ "skwir-plugin-print",
  "skwir-plugin-query",
  "skwir-plugin-remote",
  "skwir-plugin-rename-bulk",
@@ -8066,8 +8070,10 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "pdfium-render",
+ "serde_json",
  "skwir-core",
  "tempfile",
+ "windows 0.57.0",
 ]
 
 [[package]]
@@ -8079,6 +8085,7 @@ dependencies = [
  "crossbeam-channel",
  "cssparser 0.37.0",
  "dirs 7.0.0",
+ "dispatch2",
  "ego-tree",
  "encoding_rs",
  "event-listener",
@@ -8500,6 +8507,21 @@ dependencies = [
  "skwir-core",
  "skwir-platform",
  "tempfile",
+]
+
+[[package]]
+name = "skwir-plugin-print"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]

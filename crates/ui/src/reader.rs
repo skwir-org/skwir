@@ -141,6 +141,13 @@ fn page(shell: &Shell) -> Option<&Arc<PageContent>> {
         _ => None,
     }
 }
+/// What is selected on the page shown, as text: what a plugin's item of
+/// the preview's menu is handed (`ui.preview_invoke`).
+pub(crate) fn selected(shell: &Shell) -> Option<String> {
+    let selection = shell.preview.reader.selection?;
+    Some(selected_text(page(shell)?, Some(selection)))
+}
+
 fn selected_text(page: &PageContent, selection: Option<(usize, usize)>) -> String {
     let Some((a, b)) = selection else {
         return String::new();

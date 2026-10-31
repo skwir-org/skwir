@@ -4363,6 +4363,120 @@ impl Shell {
     }
 
     /// `ui.preview_copy_path`: the path of what is shown, as text.
+    /// `ui.preview_invoke { command, args? }`: run `command` with what
+    /// the preview shows added to its arguments: the file (`entries`, what
+    /// is read to show it), its pane, the page shown (`page`, from 1, for
+    /// a document's pages) and what is selected (`selection`). What a
+    /// plugin's items of the preview's menu run (`preview_items`), and its
+    /// keys there: the shell names no plugin. The user's alone: an agent
+    /// names what it means itself.
+    pub fn preview_invoke(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
+        let Some(name) = args.get("command").and_then(serde_json::Value::as_str) else {
+            return;
+        };
+        let Some(key) = &self.preview.key else {
+            self.set_status("Nothing is shown", true, cx);
+            return;
+        };
+        let entry = key.content.clone().unwrap_or_else(|| EntryRef {
+            id: key.id.file,
+            path: key.path.clone(),
+            only_name: false,
+        });
+        let mut given = args
+            .get("args")
+            .filter(|args| args.is_object())
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        given["entries"] = serde_json::json!([skwir_core::op::EntryArg::from(entry)]);
+        given["pane"] = serde_json::json!(key.pane);
+        if self.preview.reader.session.is_some() {
+            given["page"] = serde_json::json!(self.preview.page);
+        }
+        if let Some(text) = self.preview_selected_text() {
+            given["selection"] = serde_json::json!(text);
+        }
+        let invocation = skwir_core::command::Invocation {
+            name: name.into(),
+            args: given,
+        };
+        if let Err(error) = self.app.dispatch(&invocation) {
+            self.set_status(format!("{error:#}"), true, cx);
+        }
+    }
+
+    /// What is selected in the preview, as text: in a structured preview,
+    /// or on a document's page.
+    fn preview_selected_text(&self) -> Option<String> {
+        let text = match &self.preview.content {
+            Some(PreviewContent::Inspection(display)) => self
+                .preview
+                .inspection
+                .selection
+                .and_then(|selection| selection.text(&display.data.blocks)),
+            _ => crate::reader::selected(self),
+        };
+        text.filter(|text| !text.is_empty())
+    }
+
+    /// What the preview holds, as the `when` of an item of its menu reads
+    /// it: `pages` (a document's), `picture`, `text` (a structured
+    /// preview), and `selection` when something is selected.
+    fn preview_tokens(&self) -> Vec<&'static str> {
+        let mut tokens = Vec::new();
+        if self.preview.reader.session.is_some() {
+            tokens.push("pages");
+        }
+        match &self.preview.content {
+            Some(PreviewContent::Inspection(_)) => tokens.push("text"),
+            Some(PreviewContent::Image { document: None, .. }) => tokens.push("picture"),
+            _ => {}
+        }
+        if self.preview.inspection.selection.is_some() || self.preview.reader.selection.is_some() {
+            tokens.push("selection");
+        }
+        tokens
+    }
+
+    /// The plugins' items of the preview's menu (`MenuItem::menu`
+    /// `preview`) that hold for what it shows, in their order: title, icon
+    /// and what they run.
+    pub(crate) fn preview_items(&self) -> Vec<(String, String, skwir_core::command::Invocation)> {
+        if self.preview.key.is_none() {
+            return Vec::new();
+        }
+        let tokens = self.preview_tokens();
+        // Each word must hold; `a|b` when either does, `!a` when it does not.
+        let holds = |when: Option<&str>| {
+            when.is_none_or(|when| {
+                when.split_whitespace()
+                    .all(|word| match word.strip_prefix('!') {
+                        Some(not) => !tokens.contains(&not),
+                        None => word.split('|').any(|one| tokens.contains(&one)),
+                    })
+            })
+        };
+        let mut items: Vec<_> = self
+            .app
+            .registry
+            .menus
+            .all()
+            .into_iter()
+            .filter(|item| item.menu == "preview" && holds(item.when.as_deref()))
+            .collect();
+        items.sort_by_key(|item| item.order);
+        items
+            .into_iter()
+            .map(|item| {
+                (
+                    item.title.clone(),
+                    item.icon.clone().unwrap_or_default(),
+                    item.command.clone(),
+                )
+            })
+            .collect()
+    }
+
     pub fn preview_copy_path(&mut self, cx: &mut Context<Self>) {
         let Some(key) = &self.preview.key else {
             return;

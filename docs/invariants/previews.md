@@ -1505,3 +1505,30 @@ is still to come are in `docs/preview-frame.md`.
   never in a static or a long-lived struct, which would keep every
   grammar compiled for good. Unused for `GRAMMARS_KEPT`, it is let go
   of and the workers that compiled it release.
+
+## Printing (ADR-111)
+
+- **Everything printed is a PDF**, made where it is printed or saved, on
+  a worker, never on the window's thread: the file itself when it is a
+  PDF; the PDF its reader reads (`DocumentSession::pdf`); else one the
+  print helper makes of what the preview shows, asked as the window asks
+  (`converted`, `inspect`, a reader's pages, then a drawing, a picture,
+  a text). A kind the print path does not know is said not printable,
+  never printed as something else.
+- **The system's dialog chooses; Skwir applies** the pages, the sides
+  and the order to the PDF it hands over (`Compose::Pages`), as the
+  portal's back ends print a file as it is. A range picks a booklet's
+  pages before they are folded; even or odd sides and the order apply to
+  the sheets' sides after.
+- **Pages are typed one way** (`print::Pages`, from 1, `1-3, 7, 10-`):
+  the dialog's 0-based ranges are read through it, never parsed
+  elsewhere.
+- **The print helper reads only what its job names** (the pictures
+  written beside it, the faces and fallback folders): a picture, a font
+  or a drawing never brings in a file it names.
+- **Paper is light.** A document Skwir makes is in the light look and the
+  light code theme whatever the window's; a booklet's page is half its
+  sheet, laid out at that size.
+- **The window names no plugin**: a plugin's items of the preview's menu
+  (`MenuItem::menu` `preview`) run through `ui.preview_invoke`, which adds
+  the file shown, its page and what is selected, and is the user's alone.

@@ -51,6 +51,7 @@ skwir-plugin-tables.workspace = true
 skwir-plugin-playlists.workspace = true
 skwir-plugin-mpris.workspace = true
 skwir-plugin-checksums.workspace = true
+skwir-plugin-print.workspace = true
 skwir-plugin-control.workspace = true
 skwir-extend.workspace = true
 skwir-plugin-structured-data.workspace = true
@@ -100,6 +101,8 @@ serde_json.workspace = true
 parking_lot.workspace = true
 # DjVu documents written for the DjVu plugin's tests.
 djvu-rs.workspace = true
+# The PDFs printing makes, read back (the print plugin's tests).
+lopdf = { version = "0.46", default-features = false }
 
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }

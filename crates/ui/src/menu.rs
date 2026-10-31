@@ -1102,7 +1102,7 @@ impl Shell {
         let none = serde_json::json!({});
         // What a document and a structured preview are both asked, one
         // command each (`ui.preview_copy`…), as their keys are.
-        let items = match &self.preview.content {
+        let mut items = match &self.preview.content {
             Some(
                 PreviewContent::Inspection(_)
                 | PreviewContent::Image {
@@ -1123,6 +1123,12 @@ impl Shell {
             Some(_) => vec![item(100, "Copy path", "copy", "ui.preview_copy_path", none)],
             None => return,
         };
+        // What plugins add, run with what the preview shows: after the
+        // shell's own, by its order group (Print in 3xx, made from it).
+        for (title, icon, command) in self.preview_items() {
+            let args = serde_json::json!({ "command": command.name, "args": command.args });
+            items.push(item(300, &title, &icon, "ui.preview_invoke", args));
+        }
         self.menu = Some(MenuState::open(position, items, window, cx));
         cx.notify();
     }

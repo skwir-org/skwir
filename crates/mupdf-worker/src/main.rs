@@ -125,6 +125,10 @@ fn run() -> anyhow::Result<()> {
         WorkerRequest::Locate { text, near } => {
             locate(document, pages, &text, near, superseded).map(WorkerReply::Located)
         }
+        // Printing composes with PDFium (ADR-111).
+        WorkerRequest::Compose(_) | WorkerRequest::Print { .. } => {
+            anyhow::bail!("MuPDF writes no PDF here")
+        }
         // `serve` answers it: nothing runs by the time it is read.
         WorkerRequest::Cancel => anyhow::bail!("nothing to cancel"),
     })

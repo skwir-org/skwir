@@ -2037,6 +2037,13 @@ pub fn declare_all(app: &App) {
         "Preview: open externally",
         "Open the file shown with the desktop's application",
     );
+    declare::<Object>(
+        app,
+        Topic::Preview,
+        "ui.preview_invoke",
+        "Preview: run with what is shown",
+        "Run `command` with the file the preview shows, the page it is on (`page`) and what is selected in it (`selection`) added to its `args`: what a plugin's items of the preview's menu and its keys there run",
+    );
     none(
         Topic::Preview,
         "ui.preview_copy_path",

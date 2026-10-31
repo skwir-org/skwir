@@ -442,6 +442,14 @@ archives, and the bytes of any file.
   foot of the panel, steered by the desktop's media keys.
 - Some kinds need a program Skwir does not carry; Settings › Plugins says
   which, and what to install.
+- **Print…** (`Ctrl+P`, the file's menu under Print, the preview's More
+  menu) prints a file as its preview shows it, through your system's
+  print dialog: a PDF as it is, an office document as its pages, a text
+  or source file numbered and colored, a table with its header on every
+  page, a Markdown document or a book as it reads, a picture fitted to the
+  page. The dialog's pages (All, Current page, Selection, `1-3, 7`), even
+  or odd sides and reverse order are what is printed. **Save as PDF**
+  makes the same PDF beside the file instead (Undo puts it in the trash).
 
 [Previews](previews.md) lists every kind of file with its tools, keys
 and requirements.

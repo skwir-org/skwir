@@ -78,6 +78,10 @@ fn run() -> anyhow::Result<()> {
         }
         // A PDF's pages never move.
         WorkerRequest::Locate { .. } => Ok(WorkerReply::Located(None)),
+        // Printing composes with PDFium (ADR-111).
+        WorkerRequest::Compose(_) | WorkerRequest::Print { .. } => {
+            anyhow::bail!("Poppler writes no PDF here")
+        }
         // `serve` answers it: nothing runs by the time it is read.
         WorkerRequest::Cancel => anyhow::bail!("nothing to cancel"),
     })

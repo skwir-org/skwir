@@ -189,6 +189,12 @@ pub trait DocumentSession: Send + Sync {
     fn closed_links(&self) -> Option<&str> {
         None
     }
+    /// The PDF it reads, when it reads one (a PDF, an office document
+    /// converted to one): what is printed as it is (ADR-111). Valid while
+    /// the session lives; `None` for pages drawn otherwise.
+    fn pdf(&self) -> Option<&std::path::Path> {
+        None
+    }
 }
 
 /// Internal protocol: JSON lines for small requests/metadata, a private RGBA
@@ -219,10 +225,51 @@ pub enum WorkerRequest {
         text: String,
         near: u32,
     },
+    /// Write a new document of this one's pages (`Compose`), in the
+    /// worker's folder as [`COMPOSED_FILE`]: what is printed (ADR-111).
+    /// Answered `Composed`; an engine that writes no PDF answers an
+    /// `Error`.
+    Compose(Compose),
+    /// Print every page on Windows' printer `printer`, with its settings
+    /// as the print dialog left them (`devmode`, a `DEVMODEW`), the job
+    /// named `title` (ADR-111). Answered `Printed`; elsewhere an `Error`.
+    Print {
+        printer: String,
+        devmode: Vec<u8>,
+        title: String,
+    },
     /// Stop what runs now: a search notices at its next page. Answered,
     /// like any request, by an `Error`.
     Cancel,
 }
+
+/// A new document made of a PDF's pages, for printing (ADR-111).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Compose {
+    /// These pages (from 0), in this order, one listed twice written
+    /// twice; `None` a blank page the size of the page before it (of the
+    /// document's first, first).
+    Pages(Vec<Option<u32>>),
+    /// A booklet: `sheets` in the order they print (`print::booklet::sheets`),
+    /// each its front then its back, two pages to a side, on sheets `width` ×
+    /// `height` points (landscape); each page fitted in its half within
+    /// `edge` of the sheet's edges and `fold` of the fold; `trim` fits the
+    /// pages' ink rather than their whole page (one box for every page, so
+    /// they scale alike); `turn_backs` turns each back half a turn, for a
+    /// printer turning the sheet over its long edge.
+    Booklet {
+        sheets: Vec<crate::print::booklet::Sheet>,
+        width: f32,
+        height: f32,
+        fold: f32,
+        edge: f32,
+        trim: bool,
+        turn_backs: bool,
+    },
+}
+
+/// What a worker writes a composed document as, in its folder.
+pub const COMPOSED_FILE: &str = "composed.pdf";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub enum WorkerReply {
@@ -237,6 +284,14 @@ pub enum WorkerReply {
     },
     Matches(Vec<SearchHit>),
     Located(Option<u32>),
+    /// `Compose` written, of this many pages.
+    Composed {
+        pages: u32,
+    },
+    /// `Print` sent to the printer, this many pages.
+    Printed {
+        pages: u32,
+    },
     Unavailable(String),
     Error(String),
 }
@@ -246,8 +301,9 @@ pub enum WorkerReply {
 pub const MAX_SIDE: u32 = 4096;
 /// Bytes of one reply line, its newline included.
 pub const MAX_REPLY: usize = 32 * 1024 * 1024;
-/// Bytes of one request line, its newline included.
-pub const MAX_REQUEST: usize = 16 * 1024;
+/// Bytes of one request line, its newline included: a document composed
+/// of tens of thousands of pages lists them all.
+pub const MAX_REQUEST: usize = 1024 * 1024;
 pub const MAX_HITS: usize = 500;
 /// Characters of selectable text on one page. A page with more is shown
 /// without selectable text; its pixels are not lost for it.
@@ -366,6 +422,9 @@ pub mod worker {
                     WorkerRequest::Search { .. } => Ok(WorkerReply::Matches(Vec::new())),
                     WorkerRequest::Locate { .. } => Ok(WorkerReply::Located(None)),
                     WorkerRequest::Render { page, .. } => anyhow::bail!("page {page} is broken"),
+                    WorkerRequest::Compose(_) | WorkerRequest::Print { .. } => {
+                        anyhow::bail!("writes no PDF")
+                    }
                     WorkerRequest::Cancel => anyhow::bail!("answered by serve"),
                 },
             )

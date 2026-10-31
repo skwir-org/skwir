@@ -7,10 +7,12 @@ use std::path::Path;
 use anyhow::Context;
 use pdfium_render::prelude::*;
 use skwir_core::document::{
-    CSS_PER_POINT, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS, MAX_PAGE_CHARS, MAX_SIDE,
-    Outline, PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit, TextChar, WorkerReply,
-    WorkerRequest, page_labels, worker,
+    COMPOSED_FILE, CSS_PER_POINT, Compose, Destination, DocumentInfo, FIRST_PAGE, Link, MAX_HITS,
+    MAX_PAGE_CHARS, MAX_SIDE, Outline, PIXELS_FILE, PageContent, PixelOrder, Rect, SearchHit,
+    TextChar, WorkerReply, WorkerRequest, page_labels, worker,
 };
+
+mod print;
 
 fn main() {
     // `--build`, skwir asking which build of it this helper is, when a
@@ -108,9 +110,430 @@ fn run() -> anyhow::Result<()> {
         }
         // A PDF's pages never move.
         WorkerRequest::Locate { .. } => Ok(WorkerReply::Located(None)),
+        WorkerRequest::Compose(compose) => {
+            composed(&pdfium, &document, &compose, scratch, superseded)
+        }
+        WorkerRequest::Print {
+            printer,
+            devmode,
+            title,
+        } => {
+            // A binding of its own: pdfium-render keeps its page handles.
+            let bindings = self::bindings()?;
+            let pages = print::print(&*bindings, Path::new(&args[0]), &printer, &devmode, &title)?;
+            Ok(WorkerReply::Printed { pages })
+        }
         // `serve` answers it: nothing runs by the time it is read.
         WorkerRequest::Cancel => anyhow::bail!("nothing to cancel"),
     })
+}
+
+/// A new document of `document`'s pages, as `compose` lists them, written
+/// in `scratch` as `COMPOSED_FILE` (ADR-111).
+fn composed<'a>(
+    pdfium: &'a Pdfium,
+    document: &PdfDocument<'a>,
+    compose: &Compose,
+    scratch: &Path,
+    superseded: &dyn Fn() -> bool,
+) -> anyhow::Result<WorkerReply> {
+    let path = scratch.join(COMPOSED_FILE);
+    let pages = match compose {
+        Compose::Pages(pages) => {
+            let out = listed(pdfium, document, pages)?;
+            out.save_to_file(&path)
+                .context("write the composed document")?;
+            out.pages().len()
+        }
+        Compose::Booklet {
+            sheets,
+            width,
+            height,
+            fold,
+            edge,
+            trim,
+            turn_backs,
+        } => {
+            let layout = Layout {
+                width: *width,
+                height: *height,
+                fold: *fold,
+                edge: *edge,
+                trim: *trim,
+                turn_backs: *turn_backs,
+            };
+            booklet(pdfium, document, sheets, &layout, superseded, &path)?
+        }
+    };
+    Ok(WorkerReply::Composed {
+        pages: u32::try_from(pages).unwrap_or(u32::MAX),
+    })
+}
+
+/// `document`'s pages as `pages` lists them, blanks as large as the page
+/// before them.
+fn listed<'a>(
+    pdfium: &'a Pdfium,
+    document: &PdfDocument<'a>,
+    pages: &[Option<u32>],
+) -> anyhow::Result<PdfDocument<'a>> {
+    let count = document.pages().len();
+    let mut out = pdfium.create_new_pdf().context("make a document")?;
+    // A blank is as large as the page before it, the first page's first.
+    let first = document.pages().get(0).context("read the first page")?;
+    let mut size = (first.width(), first.height());
+    for page in pages {
+        let at = out.pages().len();
+        match page {
+            Some(index) => {
+                let index = PdfPageIndex::try_from(*index).context("page out of range")?;
+                anyhow::ensure!(index < count, "page {} is past the end", index + 1);
+                out.pages_mut()
+                    .copy_page_range_from_document(document, index..=index, at)
+                    .with_context(|| format!("copy page {}", index + 1))?;
+                let copied = document.pages().get(index)?;
+                size = (copied.width(), copied.height());
+            }
+            None => {
+                out.pages_mut()
+                    .create_page_at_end(PdfPagePaperSize::Custom(size.0, size.1))
+                    .context("add a blank page")?;
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// How a booklet's sheets are laid out (`Compose::Booklet`).
+struct Layout {
+    width: f32,
+    height: f32,
+    fold: f32,
+    edge: f32,
+    trim: bool,
+    turn_backs: bool,
+}
+
+/// The most sheets a booklet is made of, four pages each: a request
+/// listing more is refused (its line's bound holds fewer anyway).
+const MOST_SHEETS: usize = 50_000;
+/// The largest a sheet may be, in points: PDF's own limit (200 inches).
+const LARGEST_SHEET: f32 = 14_400.0;
+
+/// A box on a page, in points: `x` and `y` its left and bottom (PDF's
+/// way, upwards) or its left and top (a drawing's, downwards), as said.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Area {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+/// The two halves of a sheet of `layout`, left then right, upwards: within
+/// `edge` of the sheet's edges and `fold` of its middle, both bounded so
+/// each half keeps some room.
+fn halves(layout: &Layout) -> [Area; 2] {
+    let (width, height) = (layout.width, layout.height);
+    let edge = layout.edge.clamp(0.0, width.min(height) / 4.0);
+    let fold = layout.fold.clamp(0.0, width / 8.0);
+    let half = (width / 2.0 - fold - edge).max(1.0);
+    let tall = (height - 2.0 * edge).max(1.0);
+    [
+        Area {
+            x: edge,
+            y: edge,
+            width: half,
+            height: tall,
+        },
+        Area {
+            x: width / 2.0 + fold,
+            y: edge,
+            width: half,
+            height: tall,
+        },
+    ]
+}
+
+/// What draws a page of `width` × `height` (its form's own space, upwards
+/// from its bottom left) fitted in `half`, keeping its proportions,
+/// centred; turned half a turn about the sheet's centre when `turned`.
+fn placed(width: f32, height: f32, half: Area, turned: bool, sheet: (f32, f32)) -> PdfMatrix {
+    let scale = (half.width / width.max(0.01)).min(half.height / height.max(0.01));
+    let x = half.x + (half.width - width * scale) / 2.0;
+    let y = half.y + (half.height - height * scale) / 2.0;
+    if turned {
+        PdfMatrix::new(-scale, 0.0, 0.0, -scale, sheet.0 - x, sheet.1 - y)
+    } else {
+        PdfMatrix::new(scale, 0.0, 0.0, scale, x, y)
+    }
+}
+
+/// A booklet of `document`'s pages, `sheets` in their order, each its
+/// front then its back, written at `path`; how many sides it has.
+///
+/// The pages are copied in the order their halves print in (front left,
+/// front right, back left, back right, a sheet after another), blanks
+/// where a half has none, in one import, so what they share (fonts,
+/// pictures) is copied once; with `trim`, each copy is cut to the box of
+/// every page's ink (its crop box set to it). `PDFium` then draws them two
+/// to a side as forms of themselves (`FPDF_ImportNPagesToOne`, which
+/// copies what they share once again, turns each as its `/Rotate` says
+/// and clips it to its crop box), and each form is placed again where
+/// `layout` says: in its half, within the edges and off the fold, the
+/// back turned half a turn for a printer turning sheets over their long
+/// edge. Stops when a newer request waits.
+fn booklet(
+    pdfium: &Pdfium,
+    document: &PdfDocument<'_>,
+    sheets: &[skwir_core::print::booklet::Sheet],
+    layout: &Layout,
+    superseded: &dyn Fn() -> bool,
+    path: &Path,
+) -> anyhow::Result<PdfPageIndex> {
+    anyhow::ensure!(
+        layout.width.is_finite()
+            && layout.height.is_finite()
+            && layout.width >= 72.0
+            && layout.height >= 72.0
+            && layout.width <= LARGEST_SHEET
+            && layout.height <= LARGEST_SHEET,
+        "the sheet is no size to print on"
+    );
+    anyhow::ensure!(!sheets.is_empty(), "a booklet of nothing");
+    anyhow::ensure!(sheets.len() <= MOST_SHEETS, "too many sheets");
+    let count = document.pages().len();
+    // The halves in the order they print.
+    let mut order: Vec<Option<PdfPageIndex>> = Vec::with_capacity(sheets.len() * 4);
+    for page in sheets
+        .iter()
+        .flat_map(|sheet| sheet.front.into_iter().chain(sheet.back))
+    {
+        order.push(match page {
+            Some(page) => {
+                let index = PdfPageIndex::try_from(page).context("page out of range")?;
+                anyhow::ensure!(index < count, "page {} is past the end", index + 1);
+                Some(index)
+            }
+            None => None,
+        });
+    }
+    let ink = if layout.trim {
+        let used: std::collections::BTreeSet<PdfPageIndex> =
+            order.iter().flatten().copied().collect();
+        ink(document, &used, superseded)?
+    } else {
+        None
+    };
+    let mut ordered = pdfium.create_new_pdf().context("make a document")?;
+    let listed: Vec<String> = order
+        .iter()
+        .flatten()
+        .map(|index| (index + 1).to_string())
+        .collect();
+    ordered
+        .pages_mut()
+        .copy_pages_from_document(document, &listed.join(","), 0)
+        .context("copy the pages")?;
+    let first = document.pages().get(0).context("read the first page")?;
+    let blank = PdfPagePaperSize::Custom(first.width(), first.height());
+    for (at, page) in order.iter().enumerate() {
+        if page.is_none() {
+            let at = PdfPageIndex::try_from(at).context("too many pages")?;
+            ordered
+                .pages_mut()
+                .create_page_at_index(blank, at)
+                .context("add a blank half")?;
+        }
+    }
+    // Each half's size as it draws: its page as it shows, or cut.
+    let mut sizes = Vec::with_capacity(order.len());
+    for (at, page) in order.iter().enumerate() {
+        if at % 64 == 0 {
+            anyhow::ensure!(!superseded(), "composing superseded");
+        }
+        if page.is_none() {
+            sizes.push(None);
+            continue;
+        }
+        let at = PdfPageIndex::try_from(at).context("too many pages")?;
+        let copy = ordered.pages().get(at).context("read a page copied")?;
+        sizes.push(Some(cut(copy, ink)?));
+    }
+    anyhow::ensure!(!superseded(), "composing superseded");
+    let sheet = (layout.width, layout.height);
+    let tiled = ordered
+        .pages()
+        .tile_into_new_document(
+            1,
+            2,
+            PdfPagePaperSize::Custom(PdfPoints::new(sheet.0), PdfPoints::new(sheet.1)),
+        )
+        .context("lay the pages two to a side")?;
+    let halves = halves(layout);
+    for (number, mut side) in tiled.pages().iter().enumerate() {
+        if number % 16 == 0 {
+            anyhow::ensure!(!superseded(), "composing superseded");
+        }
+        let turned = layout.turn_backs && number % 2 == 1;
+        side.set_content_regeneration_strategy(PdfPageContentRegenerationStrategy::Manual);
+        {
+            let mut forms: Vec<PdfPageObject<'_>> = side
+                .objects()
+                .iter()
+                .filter(|object| object.object_type() == PdfPageObjectType::XObjectForm)
+                .collect();
+            anyhow::ensure!(
+                forms.len() == 2,
+                "a side holds {} pages, not two",
+                forms.len()
+            );
+            for (k, form) in forms.iter_mut().enumerate() {
+                let Some(Some((width, height))) = sizes.get(number * 2 + k) else {
+                    continue;
+                };
+                let matrix = placed(*width, *height, halves[k], turned, sheet);
+                form.as_x_object_form_object_mut()
+                    .context("a page's form")?
+                    .reset_matrix(matrix)?;
+            }
+            drop(forms);
+        }
+        side.regenerate_content()?;
+    }
+    tiled
+        .save_to_file(path)
+        .context("write the composed document")?;
+    Ok(tiled.pages().len())
+}
+
+/// The size `page` draws at, as it shows (from its crop box, turned as its
+/// `/Rotate` says), or cut to `ink` (a box in the page as it shows, from
+/// its top left) when it holds some of it: its crop box set to that box,
+/// which `PDFium` clips its form to.
+fn cut(mut page: PdfPage<'_>, ink: Option<Area>) -> anyhow::Result<(f32, f32)> {
+    let (width, height) = (page.width().value, page.height().value);
+    // The ink's box on this page, within it.
+    let within = ink.and_then(|ink| {
+        let left = ink.x.max(0.0);
+        let top = ink.y.max(0.0);
+        let right = (ink.x + ink.width).min(width);
+        let bottom = (ink.y + ink.height).min(height);
+        (right - left >= 1.0 && bottom - top >= 1.0).then_some(Area {
+            x: left,
+            y: top,
+            width: right - left,
+            height: bottom - top,
+        })
+    });
+    let Some(within) = within else {
+        return Ok((width, height));
+    };
+    // The box in the page's own space, through `PDFium`'s mapping of a
+    // drawing of it (four pixels a point), which knows its crop box and
+    // its turn.
+    let config = PdfRenderConfig::new().scale_page_by_factor(4.0);
+    let corner = |x: f32, y: f32| {
+        page.pixels_to_points((x * 4.0).round() as i32, (y * 4.0).round() as i32, &config)
+    };
+    let (x0, y0) = corner(within.x, within.y)?;
+    let (x1, y1) = corner(within.x + within.width, within.y + within.height)?;
+    let (x0, y0, x1, y1) = (x0.value, y0.value, x1.value, y1.value);
+    let user = PdfRect::new_from_values(y0.min(y1), x0.min(x1), y0.max(y1), x0.max(x1));
+    page.boundaries_mut().set_crop(user)?;
+    Ok((within.width, within.height))
+}
+
+/// The longest side a page is drawn at to find its ink.
+const INK_SIDE: f32 = 1024.0;
+/// What a channel under is ink, of 255: paper's off-white is not.
+const INK_LEVEL: u8 = 240;
+/// White kept around the ink found, in points: what a small drawing of
+/// the page rounds away.
+const INK_MARGIN: f32 = 2.0;
+
+/// The box holding every one of `pages`' ink, in points from each page's
+/// top left as it shows, a little white around it: each page drawn small
+/// and its pixels not white bounded. `None` when no page has ink. Stops
+/// when a newer request waits, between pages.
+fn ink(
+    document: &PdfDocument<'_>,
+    pages: &std::collections::BTreeSet<PdfPageIndex>,
+    superseded: &dyn Fn() -> bool,
+) -> anyhow::Result<Option<Area>> {
+    let mut union: Option<(f32, f32, f32, f32)> = None;
+    for &index in pages {
+        anyhow::ensure!(!superseded(), "composing superseded");
+        let page = document.pages().get(index)?;
+        let (width, height) = (page.width().value, page.height().value);
+        let scale = (INK_SIDE / width.max(height).max(1.0)).min(1.0);
+        let config = PdfRenderConfig::new()
+            .set_target_width(((width * scale).ceil() as i32).max(1))
+            .set_maximum_height(((height * scale).ceil() as i32).max(1))
+            .set_reverse_byte_order(false)
+            .render_annotations(false)
+            .render_form_data(false);
+        let bitmap = page.render_with_config(&config)?;
+        let (columns, rows) = (
+            usize::try_from(bitmap.width())?,
+            usize::try_from(bitmap.height())?,
+        );
+        let raw = bitmap.as_raw_bytes();
+        let pixels = if raw.len() == columns * rows * 4 {
+            raw
+        } else {
+            bitmap.as_rgba_bytes()
+        };
+        let Some((left, top, right, bottom)) = inked(&pixels, columns, rows) else {
+            continue;
+        };
+        let (x, y) = (width / columns as f32, height / rows as f32);
+        let found = (
+            left as f32 * x - INK_MARGIN,
+            top as f32 * y - INK_MARGIN,
+            right as f32 * x + INK_MARGIN,
+            bottom as f32 * y + INK_MARGIN,
+        );
+        union = Some(union.map_or(found, |(l, t, r, b)| {
+            (
+                l.min(found.0),
+                t.min(found.1),
+                r.max(found.2),
+                b.max(found.3),
+            )
+        }));
+    }
+    Ok(union.map(|(left, top, right, bottom)| Area {
+        x: left,
+        y: top,
+        width: right - left,
+        height: bottom - top,
+    }))
+}
+
+/// The bounds of the pixels of a drawing `columns` × `rows`, four bytes
+/// each, any of whose colour channels is darker than paper: left, top,
+/// right and bottom, the last two past the last such pixel.
+fn inked(pixels: &[u8], columns: usize, rows: usize) -> Option<(usize, usize, usize, usize)> {
+    let mut bounds: Option<(usize, usize, usize, usize)> = None;
+    for (row, line) in pixels.chunks_exact(columns * 4).take(rows).enumerate() {
+        let mut first = None;
+        let mut last = 0;
+        for (column, pixel) in line.as_chunks::<4>().0.iter().enumerate() {
+            if pixel[..3].iter().any(|&channel| channel < INK_LEVEL) {
+                first.get_or_insert(column);
+                last = column;
+            }
+        }
+        if let Some(first) = first {
+            bounds = Some(
+                bounds.map_or((first, row, last + 1, row + 1), |(l, t, r, _)| {
+                    (l.min(first), t, r.max(last + 1), row + 1)
+                }),
+            );
+        }
+    }
+    bounds
 }
 
 /// What the document is: its pages, and unless only its first page is
@@ -368,6 +791,69 @@ fn search(
 mod tests {
     use std::ffi::OsStr;
     use std::path::Path;
+
+    fn layout(turn_backs: bool) -> super::Layout {
+        super::Layout {
+            width: 842.0,
+            height: 595.0,
+            fold: 10.0,
+            edge: 20.0,
+            trim: false,
+            turn_backs,
+        }
+    }
+
+    #[test]
+    fn a_sheet_s_halves_keep_off_its_edges_and_its_fold() {
+        let [left, right] = super::halves(&layout(false));
+        assert_eq!((left.x, left.y), (20.0, 20.0));
+        assert_eq!(left.width, 421.0 - 10.0 - 20.0);
+        assert_eq!(right.x, 431.0);
+        assert_eq!(right.x + right.width, 842.0 - 20.0);
+        assert_eq!(left.height, 595.0 - 40.0);
+    }
+
+    #[test]
+    fn a_page_is_fitted_centred_in_its_half_and_turned_with_the_back() {
+        let [left, _] = super::halves(&layout(false));
+        // A page half as wide as tall, in a half 391 × 555.
+        let matrix = super::placed(200.0, 400.0, left, false, (842.0, 595.0));
+        let point = |m: &pdfium_render::prelude::PdfMatrix, x: f32, y: f32| {
+            let (a, b, c, d, e, f) = (m.a(), m.b(), m.c(), m.d(), m.e(), m.f());
+            (a * x + c * y + e, b * x + d * y + f)
+        };
+        let scale = 555.0 / 400.0;
+        let (x0, y0) = point(&matrix, 0.0, 0.0);
+        let (x1, y1) = point(&matrix, 200.0, 400.0);
+        assert!((y0 - 20.0).abs() < 0.01 && (y1 - 575.0).abs() < 0.01);
+        assert!(((x1 - x0) - 200.0 * scale).abs() < 0.01);
+        assert!(
+            (f32::midpoint(x0, x1) - (20.0 + 391.0 / 2.0)).abs() < 0.01,
+            "centred"
+        );
+        // Turned, its corners land where the sheet turned half a turn
+        // puts them: the left half's page in the right half, upside down.
+        let turned = super::placed(200.0, 400.0, left, true, (842.0, 595.0));
+        let (tx0, ty0) = point(&turned, 0.0, 0.0);
+        assert!((tx0 - (842.0 - x0)).abs() < 0.01 && (ty0 - (595.0 - y0)).abs() < 0.01);
+        let (tx1, _) = point(&turned, 200.0, 400.0);
+        assert!(tx1 < tx0, "upside down");
+    }
+
+    #[test]
+    fn ink_is_bounded_by_what_is_darker_than_paper() {
+        // A 4 × 3 drawing, white but for two pixels.
+        let mut pixels = vec![255u8; 4 * 3 * 4];
+        let mut dark = |column: usize, row: usize| {
+            pixels[(row * 4 + column) * 4..][..3].copy_from_slice(&[10, 10, 10]);
+        };
+        dark(1, 0);
+        dark(2, 2);
+        assert_eq!(super::inked(&pixels, 4, 3), Some((1, 0, 3, 3)));
+        assert_eq!(super::inked(&[255; 48], 4, 3), None);
+        // Paper's off-white is no ink.
+        assert_eq!(super::inked(&[245; 48], 4, 3), None);
+    }
 
     #[test]
     fn a_packages_pdfium_is_beside_the_helper_or_in_a_macs_frameworks() {
