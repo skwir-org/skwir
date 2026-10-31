@@ -1514,11 +1514,17 @@ pub fn title(app: &App, command: &str, args: &serde_json::Value) -> String {
 }
 
 /// A title naming what an argument names elsewhere: the folder a binding
-/// goes to, the view it shows, the choice it asks for (Open with…).
+/// goes to, the view it shows, the choice it asks for (Open with…), the
+/// command a plugin's key in the preview runs (`ui.preview_invoke`: Print…).
 fn named_title(app: &App, command: &str, args: &serde_json::Value) -> Option<String> {
     let text = |key| args.get(key).and_then(serde_json::Value::as_str);
     match command {
         "ui.choose" => text("title").map(|title| format!("{title}…")),
+        "ui.preview_invoke" => {
+            let invoked = text("command").filter(|invoked| *invoked != command)?;
+            let given = args.get("args").cloned().unwrap_or(serde_json::Value::Null);
+            Some(title(app, invoked, &given))
+        }
         "navigate" => {
             let location = text("location")?;
             let place = match location.trim_end_matches('/') {

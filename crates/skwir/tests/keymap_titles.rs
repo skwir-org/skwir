@@ -30,7 +30,7 @@ fn no_place_lists_two_actions_under_one_title() {
     let mut called: BTreeMap<(String, String), Vec<String>> = BTreeMap::new();
     let mut unnamed: Vec<String> = Vec::new();
     // What `keymap::title` works out from what an argument names.
-    let named_elsewhere = ["navigate", "ui.view", "ui.choose"];
+    let named_elsewhere = ["navigate", "ui.view", "ui.choose", "ui.preview_invoke"];
     for bound in skwir_ui::keymap::bindings(&app, &[]) {
         let Some((command, args)) = &bound.command else {
             continue;
