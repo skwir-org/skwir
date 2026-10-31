@@ -1602,6 +1602,14 @@ pub fn declare_all(app: &App) {
         "Forget the recent search highlighted in the address field's suggestions",
     );
     declare_suggest(app);
+    app.commands.register_raw::<NoArgs, _>(
+        OWNER,
+        Topic::Skwir,
+        "ui.grammars",
+        "Grammars added",
+        "The grammars added to bat and to Sublime Text that color code, as last read: each one's name, where it was found, the files it colors or why it was left out",
+        |_, _| Ok(Outcome::Value(crate::settings::grammar_records())),
+    );
     none(
         Topic::Go,
         "ui.omnibox_complete",

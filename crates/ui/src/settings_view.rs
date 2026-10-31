@@ -434,6 +434,16 @@ impl SettingsView {
                 .into_any_element()
             }
             SettingKind::Records => {
+                // Kept by their owner, who adds none: only listed.
+                if row
+                    .spec
+                    .constraints
+                    .record_source
+                    .as_ref()
+                    .is_some_and(|source| source.add.is_empty())
+                {
+                    return div().into_any_element();
+                }
                 let focus = self.handle(&format!("control:{key}"), cx);
                 self.stop(&focus, Some(item), Some(&key));
                 let editing = self.drafts.contains_key(&key);

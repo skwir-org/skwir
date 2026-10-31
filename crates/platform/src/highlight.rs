@@ -18,6 +18,8 @@ use syntect::highlighting::{Color, FontStyle, Theme as Colors, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName as Bat};
 
+pub mod added;
+
 /// Whether code is drawn light or dark: Automatic is as skwir is
 /// (`CodeTheme::chosen`).
 pub const APPEARANCE_KEY: &str = "reading.code_appearance";
@@ -52,14 +54,15 @@ static GRAMMARS: Mutex<Grammars> = Mutex::new(Grammars {
     waiting: false,
 });
 
-/// bat's grammars, syntect's defaults among them, matched by Ferroni:
-/// each grammar compiled when a file first needs it, all of them let go
-/// of once no code was colored for `GRAMMARS_KEPT`, and read again when
-/// code next is. Hold the set only while coloring, never in a static.
+/// bat's grammars, syntect's defaults among them, with those the user
+/// added to bat and Sublime Text (`added`), matched by Ferroni: each
+/// grammar compiled when a file first needs it, all of them let go of once
+/// no code was colored for `GRAMMARS_KEPT`, and read again when code next
+/// is. Hold the set only while coloring, never in a static.
 pub fn syntaxes() -> Arc<SyntaxSet> {
     let mut grammars = GRAMMARS.lock();
     let set = grammars.shared.upgrade().unwrap_or_else(|| {
-        let set = Arc::new(two_face::syntax::extra_newlines());
+        let set = Arc::new(added::set());
         grammars.shared = Arc::downgrade(&set);
         set
     });

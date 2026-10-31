@@ -2087,7 +2087,7 @@ screen reader reads, from the window or a script.
 - **P4. Several files in one job, and PDFs from scripts:** `skwir cmd
   print.save_pdf` without a window.
 
-**Status:** planned 2026-10-31. Built: G0 (2026-10-31).
+**Status:** planned 2026-10-31. Built: G0, G1 (2026-10-31).
 
 ---
 

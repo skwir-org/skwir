@@ -168,6 +168,10 @@ plist = { version = "1", default-features = false }
 syntect = { version = "5", default-features = false, features = [
     "parsing",
     "dump-load",
+    # Grammars the user added (`.sublime-syntax`), and the set built with
+    # them kept in the cache.
+    "yaml-load",
+    "dump-create",
     "plist-load",
     "default-themes",
     "regex-ferroni",

@@ -293,9 +293,42 @@ pub fn code_theme_spec(
     .section("Code")
 }
 
+/// The grammars added to bat and Sublime Text, listed on the Reading page
+/// (`ui.grammars`): only shown, changed where they are kept.
+pub const GRAMMARS_KEY: &str = "reading.grammars_added";
+
+/// What lists the grammars added, said changed once they were read again.
+pub(crate) static GRAMMARS: std::sync::LazyLock<skwir_core::settings::RecordSource> =
+    std::sync::LazyLock::new(|| skwir_core::settings::RecordSource::new("ui.grammars", "", "", ""));
+
+/// The grammars added, as the Reading page lists them: each a record of
+/// its name and where it was found, with the files it colors or why it
+/// was left out.
+pub(crate) fn grammar_records() -> serde_json::Value {
+    let records: Vec<serde_json::Value> = skwir_platform::highlight::added::listed()
+        .unwrap_or_default()
+        .iter()
+        .map(|added| {
+            let mut id = added.path.to_string_lossy().into_owned();
+            if let Some(member) = &added.member {
+                id = format!("{id}/{member}");
+            }
+            let from = format!("From {}", added.source.label());
+            let detail = match (&added.problem, added.file_types.is_empty()) {
+                (Some(problem), _) => format!("{from}; not read: {problem}"),
+                (None, true) => from,
+                (None, false) => format!("{from}; colors {}", added.file_types.join(", ")),
+            };
+            serde_json::json!({ "id": id, "name": added.name, "detail": detail, "fixed": true })
+        })
+        .collect();
+    serde_json::json!({ "records": records })
+}
+
 /// Read the themes the user added to bat on a worker and declare the code
 /// theme settings again with them: at start, and when the settings open,
-/// where a theme added or edited since is read.
+/// where a theme added or edited since is read. The grammars added are
+/// read again there too.
 pub(crate) fn list_code_themes(app: &Arc<App>) {
     let weak = app.weak();
     app.scheduler.spawn(
@@ -304,6 +337,8 @@ pub(crate) fn list_code_themes(app: &Arc<App>) {
         app.lifetime().child(),
         move || {
             let user = crate::code_preview::user_themes(true);
+            skwir_platform::highlight::added::read();
+            GRAMMARS.changed();
             let Some(app) = weak.upgrade() else { return };
             for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
                 let chosen = app
@@ -544,6 +579,20 @@ pub fn declare(app: &App) {
         &font_chosen(app, CODE_FONT_KEY),
         None,
     ));
+    app.settings.declare(
+        SettingSpec::records(
+            GRAMMARS_KEY,
+            "Grammars added",
+            "The grammars you added to bat (in its syntaxes folder) and to Sublime Text (its packages) color the files they name, over bat's own grammar for a language they share; bat's folder comes last. Each is listed with what it colors, or why it was left out.",
+            "Grammar",
+            vec![
+                skwir_core::settings::RecordField::text("name", "Name", "", ""),
+                skwir_core::settings::RecordField::text("detail", "Where", "", ""),
+            ],
+        )
+        .records_kept_by(GRAMMARS.clone())
+        .section("Code"),
+    );
     app.settings.declare(
         SettingSpec::choice(
             SLIDESHOW_KEY,
@@ -2350,8 +2399,8 @@ impl crate::shell::Shell {
 mod tests {
     use super::{
         App, BUILTIN, CODE_APPEARANCE_KEY, CODE_DARK_KEY, CODE_FONT_KEY, CODE_LIGHT_KEY, FONT_KEY,
-        ICON_THEME_AUTO, Page, READING_FONT_KEY, SINGLE_TAB_KEY, SettingSpec, TABS_AT_KEY,
-        THEME_KEY, code_theme_spec, declare, font_spec, icon_theme_spec, page_order,
+        GRAMMARS_KEY, ICON_THEME_AUTO, Page, READING_FONT_KEY, SINGLE_TAB_KEY, SettingSpec,
+        TABS_AT_KEY, THEME_KEY, code_theme_spec, declare, font_spec, icon_theme_spec, page_order,
     };
     use skwir_platform::icons::Theme;
 
@@ -2547,7 +2596,8 @@ mod tests {
                 CODE_APPEARANCE_KEY,
                 CODE_LIGHT_KEY,
                 CODE_DARK_KEY,
-                CODE_FONT_KEY
+                CODE_FONT_KEY,
+                GRAMMARS_KEY
             ]
         );
         // The fonts stand by their subjects (ADR-073): the interface's on

@@ -516,6 +516,7 @@ impl Shell {
         // The themes the user added to bat and the fonts installed, on a
         // worker: then a script or an agent can choose one before the
         // settings ever open.
+        skwir_platform::highlight::added::keep_in(app.cache.namespace("grammars"));
         crate::settings::list_code_themes(&app);
         crate::settings::list_fonts(&app, cx.text_system().clone());
         crate::session::declare(&app);

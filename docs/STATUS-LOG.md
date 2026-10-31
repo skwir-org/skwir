@@ -8102,3 +8102,42 @@ stayed (folds, the look code is kept in, its tokens).
 
 **Not checked:** a window (nothing drawn changed); Windows and macOS not
 compiled for it.
+
+### G1: grammars added to bat and Sublime Text (2026-10-31, Grammars and printing)
+
+The `.sublime-syntax` files of bat's folder (`bat::syntaxes_dir`,
+`$BAT_CONFIG_DIR/syntaxes` else `bat/syntaxes` in the configuration
+folder, as `bat cache --build` reads them) and of Sublime Text's
+packages (its `Packages` folders, the zipped `.sublime-package` files of
+`Installed Packages`; ST3's folders before ST4's) join bat's grammars
+(`highlight::added`), Sublime Text's first and bat's last, the later
+taking the place of a grammar of the same name or extension as syntect
+looks them up (newest first), as in bat. A file that does not read is
+left out, said why. The set built with them is kept in skwir's cache
+(`grammars`: the set uncompressed and what was found), named by
+skwir's executable (length and time) and every file (path, length,
+time): reading it again after the grammars were let go of (ADR-060)
+reads that file; another file, or another skwir, builds it again and the
+old one is deleted. The window reads them on a worker at start and when
+the settings open, as bat's user themes; the Reading page's Code section
+lists them ("Grammars added", `ui.grammars`): each one's name, where it
+was found, what it colors or why it was left out, only listed (a list
+its owner adds nothing to has no Add button now). syntect gains its
+`yaml-load` and `dump-create` features; its YAML loader brings one
+rustc warning (`mismatched_lifetime_syntaxes`) in the vendored crate,
+outside the workspace's lints.
+
+**Measured:** building bat's set with three grammars added took 3.7 s in
+a debug test build, twice that for two builds; the release build not
+measured.
+
+**Checked:** rustfmt; clippy with `-D warnings` on `skwir-platform` and
+`skwir-ui`, all targets; nextest on both, 744 passed, 18 skipped. New
+tests: a made-up language colored, a grammar in a subfolder and one in
+a zipped package read, a broken one named, bat's Rust replaced, bat's
+folder winning over Sublime Text's, bat's own grammars still there;
+nothing added is bat's own set; the set kept, read back, and built
+again when a file changes, the old one let go of.
+
+**Not checked:** a window (the Reading page's list); Windows and macOS
+(Sublime Text's folders there) not compiled for it.

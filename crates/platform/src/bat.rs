@@ -1,6 +1,6 @@
 //! What skwir reads of bat, the pager whose grammars and themes color
-//! code in the preview: the folder of the themes its user added, so code
-//! reads in skwir in the colors it has in the terminal.
+//! code in the preview: the folders of the themes and grammars its user
+//! added, so code reads in skwir in the colors it has in the terminal.
 use std::ffi::OsString;
 use std::path::PathBuf;
 
@@ -15,6 +15,16 @@ pub fn themes_dir() -> Option<PathBuf> {
     #[cfg(not(windows))]
     let base = skwir_core::xdg::config_home();
     config_dir(std::env::var_os("BAT_CONFIG_DIR"), base).map(|dir| dir.join("themes"))
+}
+
+/// The folder bat reads its user's grammars from (`bat cache --build`):
+/// `syntaxes` beside its `themes`. It may not exist.
+pub fn syntaxes_dir() -> Option<PathBuf> {
+    #[cfg(windows)]
+    let base = dirs::config_dir();
+    #[cfg(not(windows))]
+    let base = skwir_core::xdg::config_home();
+    config_dir(std::env::var_os("BAT_CONFIG_DIR"), base).map(|dir| dir.join("syntaxes"))
 }
 
 /// bat's folder, from what `$BAT_CONFIG_DIR` says and the user's
