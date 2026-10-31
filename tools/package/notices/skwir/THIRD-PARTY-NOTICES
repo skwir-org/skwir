@@ -423,7 +423,7 @@ Apache License
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
 
-Used by: blake3 1.8.7, constant_time_eq 0.4.2, cranelift-assembler-x64 0.137.0, cranelift-bitset 0.137.0, pulley-interpreter 50.0.0, pulley-macros 50.0.0, rbook 0.7.12, rmcp 3.8.0, ryu 1.0.23, spirv 0.4.0+sdk-1.4.341.0, wasmtime-internal-component-macro 50.0.0, wasmtime-internal-component-util 50.0.0, wasmtime-internal-core 50.0.0, wasmtime-internal-jit-icache-coherence 50.0.0, wasmtime-internal-versioned-export-macros 50.0.0, wasmtime-internal-wit-bindgen 50.0.0
+Used by: blake3 1.8.7, constant_time_eq 0.4.2, cranelift-assembler-x64 0.137.1, cranelift-bitset 0.137.1, pulley-interpreter 50.0.1, pulley-macros 50.0.1, rbook 0.7.12, rmcp 3.8.0, ryu 1.0.23, spirv 0.4.0+sdk-1.4.341.0, wasmtime-internal-component-macro 50.0.1, wasmtime-internal-component-util 50.0.1, wasmtime-internal-core 50.0.1, wasmtime-internal-jit-icache-coherence 50.0.1, wasmtime-internal-versioned-export-macros 50.0.1, wasmtime-internal-wit-bindgen 50.0.1
 
 Apache License
 Version 2.0, January 2004
@@ -730,7 +730,7 @@ Apache License
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
 
-Used by: cranelift-bforest 0.137.0, cranelift-codegen 0.137.0, cranelift-codegen-shared 0.137.0, cranelift-control 0.137.0, cranelift-entity 0.137.0, cranelift-frontend 0.137.0, cranelift-native 0.137.0, regalloc2 0.15.2, target-lexicon 0.13.5, wasmtime 50.0.0, wasmtime-environ 50.0.0, wasmtime-internal-cranelift 50.0.0, wasmtime-internal-unwinder 50.0.0
+Used by: cranelift-bforest 0.137.1, cranelift-codegen 0.137.1, cranelift-codegen-shared 0.137.1, cranelift-control 0.137.1, cranelift-entity 0.137.1, cranelift-frontend 0.137.1, cranelift-native 0.137.1, regalloc2 0.15.2, target-lexicon 0.13.5, wasmtime 50.0.1, wasmtime-environ 50.0.1, wasmtime-internal-cranelift 50.0.1, wasmtime-internal-unwinder 50.0.1
 
 Apache License
                            Version 2.0, January 2004
