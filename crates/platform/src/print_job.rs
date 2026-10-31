@@ -168,7 +168,10 @@ pub fn light_palette(app: &skwir_core::App) -> Palette {
         .settings
         .get::<String>(LIGHT_KEY)
         .map_or_else(|| DEFAULT.into(), Into::into);
-    Palette::of(&CodeTheme { dark: false, name })
+    Palette::of(&CodeTheme {
+        name,
+        ..CodeTheme::own(false)
+    })
 }
 
 /// What a preview prints as, and what the caller says of it: that a code

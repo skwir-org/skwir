@@ -8403,3 +8403,53 @@ lines (and its second page alone), a picture and a drawing, read back
 portal stood in for); macOS and Windows dialogs run (compiled only;
 Windows not under Wine yet); the preview's menu rows in a window; the
 scale the dialog chose is not applied yet.
+
+### G5: the second engine (2026-10-31, Grammars and printing)
+
+Code is colored by a tree-sitter grammar where `reading.grammars` says
+(Settings › Reading › Code › Grammars: bat first, the default, or
+Tree-sitter first), built by an agent and checked by the integrator
+after it. `highlight::engine` chooses for a file's name, its language
+and its first line: a language only one engine knows is that one's, so a
+tree-sitter grammar always colors a language bat does not know; a
+grammar with a problem is never chosen. Tree-sitter's capture names map
+to the scopes bat's themes color (`highlight::tree::scope_of`: the
+helper's names, Helix's, older Neovim's and Zed's, a dotted name falling
+back to its longest known prefix), looked up through syntect's
+`style_for_stack` once per text, so both engines wear one theme, bold and
+italic as bat's runs. `grammars::find` hands the helper the grammars
+found, so its list and the Reading page's are one.
+
+- **The text view** (a file read where it is shown): UTF-8 the preview
+  holds whole (`Held::whole`, 16 MiB quick, 128 MiB Full), parsed on a
+  worker once the view shows, never the file read again, a remote's file
+  not held whole never fetched for it. Chunks stay plain until the parse
+  comes rather than be colored twice, then each is colored from it,
+  exactly wherever it is; a row that goes on with a long line takes the
+  spans of its line from where it starts in it. A chunk holding a line
+  over 1 MiB (`LONGEST_LINE`, past which a reply could pass the
+  channel's limit), or one the helper fails on, is colored by bat from
+  that chunk's start.
+- **An inspection's code view**: its lines joined and parsed on the
+  first draw, then colored chunk by chunk from the parse.
+- **Code blocks** (Markdown fences, `<pre>`): opened, colored and let go
+  of one by one as the document is built; bat's grammar when the helper
+  cannot (logged at debug, not said).
+
+**Checked:** rustfmt, clippy with `-D warnings` on `skwir-ui` and
+`skwir-platform`; nextest on them and the helper, 787 passed, 18
+skipped (none of the new ones): the capture table and its fallback; the
+engine chosen (bat first keeps JSON on bat, Tree-sitter first takes it,
+a language only a grammar knows is its either way, a broken grammar or
+none found is bat); keywords and comments in base16 Ocean light wear the
+colors bat gives its own; a row takes its line's spans from where it
+starts, a span ending inside a character moved back; JSON colored by the
+fixture's WebAssembly grammar through the real helper, every byte in a
+run; a comment opened in chunk 0 colors chunk 1's lines when chunk 1 is
+colored alone, which bat fresh from that chunk does not; rows of a
+~50 KB line across a chunk's end color its digits and only them.
+
+**Not checked:** a real window (G7); the first parse of a WebAssembly
+grammar can take seconds, colors waiting for it; code blocks are colored
+as the document is built, so a helper's start delays a document's first
+paint; Windows and macOS compiled for neither yet.

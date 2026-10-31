@@ -123,6 +123,9 @@ pub const CODE_APPEARANCE_KEY: &str = skwir_platform::highlight::APPEARANCE_KEY;
 /// (`code_preview::CodeTheme`).
 pub const CODE_LIGHT_KEY: &str = skwir_platform::highlight::LIGHT_KEY;
 pub const CODE_DARK_KEY: &str = skwir_platform::highlight::DARK_KEY;
+/// Which grammars color a language both bat's and a tree-sitter grammar
+/// know (`highlight::First`, ADR-110).
+pub const CODE_ENGINE_KEY: &str = skwir_platform::highlight::ENGINE_KEY;
 /// The player's preferences. The audio and video plugin (`media`)
 /// declares them, with the rest of what concerns playback; the shell's
 /// player reads them. With the plugin off there is no player, and they are
@@ -620,6 +623,16 @@ pub fn declare(app: &App) {
         &font_chosen(app, CODE_FONT_KEY),
         None,
     ));
+    app.settings.declare(
+        SettingSpec::choice(
+            CODE_ENGINE_KEY,
+            "Grammars",
+            "Which grammars color a language that both bat and a tree-sitter grammar found below know. bat first colors it with bat's grammar, or one you added to bat or Sublime Text; Tree-sitter first with the tree-sitter grammar. A language only one of them knows is colored by that one, so a tree-sitter grammar always colors a language bat does not know. Tree-sitter colors what the preview holds whole; a longer file is colored by bat, else shown plain.",
+            skwir_platform::highlight::First::CHOICES[0].0,
+            &skwir_platform::highlight::First::CHOICES,
+        )
+        .section("Code"),
+    );
     app.settings.declare(
         SettingSpec::records(
             GRAMMARS_KEY,
@@ -2453,10 +2466,10 @@ impl crate::shell::Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        App, BUILTIN, CODE_APPEARANCE_KEY, CODE_DARK_KEY, CODE_FONT_KEY, CODE_LIGHT_KEY, FONT_KEY,
-        GRAMMARS_KEY, ICON_THEME_AUTO, Page, READING_FONT_KEY, SINGLE_TAB_KEY, SettingSpec,
-        TABS_AT_KEY, THEME_KEY, TREE_SITTER_KEY, code_theme_spec, declare, font_spec,
-        icon_theme_spec, page_order,
+        App, BUILTIN, CODE_APPEARANCE_KEY, CODE_DARK_KEY, CODE_ENGINE_KEY, CODE_FONT_KEY,
+        CODE_LIGHT_KEY, FONT_KEY, GRAMMARS_KEY, ICON_THEME_AUTO, Page, READING_FONT_KEY,
+        SINGLE_TAB_KEY, SettingSpec, TABS_AT_KEY, THEME_KEY, TREE_SITTER_KEY, code_theme_spec,
+        declare, font_spec, icon_theme_spec, page_order,
     };
     use skwir_platform::icons::Theme;
 
@@ -2653,6 +2666,7 @@ mod tests {
                 CODE_LIGHT_KEY,
                 CODE_DARK_KEY,
                 CODE_FONT_KEY,
+                CODE_ENGINE_KEY,
                 GRAMMARS_KEY,
                 TREE_SITTER_KEY
             ]

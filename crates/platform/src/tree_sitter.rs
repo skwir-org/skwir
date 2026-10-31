@@ -64,6 +64,13 @@ pub fn shared() -> &'static Helper {
     &SHARED
 }
 
+/// A helper of its own running `executable`, isolated as the shared one,
+/// told no grammar until `set_grammars` is: tests, and a tool that ships
+/// the program elsewhere.
+pub fn with_program(executable: PathBuf) -> Helper {
+    Helper::new(Some(executable), true, KEPT)
+}
+
 /// A text the helper parsed: the handle that names it, how many lines it
 /// holds, and the capture names its spans index (`Span::capture`).
 pub struct Opened {

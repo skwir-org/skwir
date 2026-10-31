@@ -114,10 +114,20 @@ pub fn found() -> Option<Arc<[Found]>> {
 }
 
 /// Find the grammars again where this system keeps them, keep them for
-/// `found`, and answer them.
+/// `found`, tell the helper every caller shares those it can use
+/// (`tree_sitter::shared`: a grammar colors what it injects there too),
+/// and answer them. Telling it starts nothing: a helper told others is let
+/// go of, and the next text opened starts one told these.
 pub fn find() -> Arc<[Found]> {
     let found: Arc<[Found]> = find_in(&Roots::here(), &bat_file_types()).into();
     *FOUND.write() = Some(Arc::clone(&found));
+    crate::tree_sitter::shared().set_grammars(
+        found
+            .iter()
+            .filter(|found| found.problem.is_none())
+            .map(|found| found.grammar.clone())
+            .collect(),
+    );
     found
 }
 

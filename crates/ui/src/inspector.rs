@@ -71,7 +71,7 @@ pub struct Display {
     pub(crate) later: Arc<crate::inspector_pictures::Later>,
     /// What colors its code view where it is shown (`coloring`): a code
     /// view held whole is shown plain at once, colored as it is drawn.
-    pub(crate) colors: Option<crate::coloring::Colorer>,
+    pub(crate) colors: Option<Arc<crate::coloring::Colorer>>,
 }
 impl Display {
     pub fn new(mut data: Inspection, code: &crate::code_preview::CodeTheme) -> Self {
@@ -108,7 +108,7 @@ impl Display {
             .as_ref()
             .filter(|_| data.kind == InspectionKind::Code)
             .and_then(|file| {
-                crate::text_view::start(file, crate::code_preview::Palette::of(code))
+                crate::text_view::start(file, code)
                     .inspect_err(|error| tracing::debug!(%error, "a text's first rows"))
                     .ok()
                     .map(Box::new)
@@ -124,10 +124,16 @@ impl Display {
             for block in &mut data.blocks {
                 skwir_platform::links::link_block(block, true);
             }
-            colorer = Some(crate::coloring::Colorer {
-                language: data.blocks.first().and_then(|b| b.language.clone()),
-                palette: Arc::new(palette),
+            let language = data.blocks.first().and_then(|b| b.language.clone());
+            let grammar = language.as_deref().and_then(|language| {
+                let first_line = data.blocks.first().map(|b| b.text.as_str());
+                tree_sitter_grammar(language, Some(language), first_line, code)
             });
+            colorer = Some(Arc::new(crate::coloring::Colorer {
+                language,
+                palette: Arc::new(palette),
+                grammar,
+            }));
         } else {
             // Text too long for the code view is raw text all the same: its
             // addresses are found before it is cut, so none is cut in two.
@@ -145,10 +151,7 @@ impl Display {
             if !block.code || data.kind == InspectionKind::Code {
                 continue;
             }
-            let mut highlighter =
-                crate::code_preview::Highlighter::new(block.language.as_deref(), palette);
-            block.runs = highlighter
-                .text(&block.text)
+            block.runs = color_block(block, palette, code)
                 .into_iter()
                 .map(|run| skwir_core::inspection::Run { code: true, ..run })
                 .collect();
@@ -317,6 +320,48 @@ impl Display {
             .or_else(|| wrap.then(|| last(from.0..len, true)).flatten())
     }
 }
+/// The tree-sitter grammar that colors a text named `name` in `language`
+/// (`highlight::engine`), where the settings in `code` choose one.
+fn tree_sitter_grammar(
+    name: &str,
+    language: Option<&str>,
+    first_line: Option<&str>,
+    code: &crate::code_preview::CodeTheme,
+) -> Option<String> {
+    match skwir_platform::highlight::engine(name, language, first_line, code.grammars) {
+        skwir_platform::highlight::Engine::TreeSitter(grammar) => Some(grammar),
+        skwir_platform::highlight::Engine::Bat => None,
+    }
+}
+
+/// The runs of a document's code block (a fenced block in Markdown, a
+/// `<pre>`): by the tree-sitter grammar its language's engine is, opened,
+/// colored and let go of (a block is short); by bat's grammar otherwise,
+/// or when the helper cannot (logged, not said).
+fn color_block(
+    block: &skwir_core::inspection::Block,
+    palette: &crate::code_preview::Palette,
+    code: &crate::code_preview::CodeTheme,
+) -> Vec<skwir_core::inspection::Run> {
+    let language = block.language.as_deref();
+    // A preview moved on from asks the helper nothing more.
+    let grammar = language
+        .filter(|_| !skwir_core::scheduler::job_cancelled())
+        .and_then(|language| tree_sitter_grammar(language, Some(language), None, code));
+    if let Some(grammar) = grammar {
+        match skwir_platform::highlight::tree::color_text(
+            &grammar,
+            &block.text,
+            palette,
+            &skwir_core::CancelToken::new(),
+        ) {
+            Ok(runs) => return runs,
+            Err(error) => tracing::debug!(%error, grammar, "a code block's tree-sitter colors"),
+        }
+    }
+    crate::code_preview::Highlighter::new(language, palette).text(&block.text)
+}
+
 /// Whether the book's position counts its printed pages: the preference,
 /// when the book lists them.
 /// An inspection as it is drawn: what the panel shows (`PreviewState::

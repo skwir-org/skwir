@@ -15,6 +15,13 @@
 //! farthest wanted, keeping only where each chunk stops; then every chunk
 //! wanted is colored exactly. Its first paint waits for none of it: the
 //! lines show plain, their links found, and their colors follow.
+//!
+//! A text a tree-sitter grammar colors (ADR-110, `highlight::engine`) is
+//! parsed whole in the helper once it shows (`parse`), its chunks plain
+//! meanwhile rather than colored twice; then each chunk is colored from
+//! the parse, exactly at once, wherever it is (`tree_rows`): no state
+//! goes from one chunk to the next. A parse that fails leaves the text to
+//! bat's grammar.
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -31,6 +38,7 @@ use crate::code_preview::{Highlighter, Palette, Resume};
 use crate::latest::Latest;
 use crate::preview::PreviewContent;
 use crate::shell::Shell;
+use skwir_platform::highlight::tree::Tree;
 
 /// Chunks kept around the view: a few screens either way.
 pub(crate) const KEPT: usize = 24;
@@ -124,6 +132,64 @@ pub(crate) fn color_rows(
     Ok(colors.stop())
 }
 
+/// Rows `rows`, their runs replaced: colored by `tree`, row `n` being the
+/// bytes from `at(n).1` of line `at(n).0`, then given the links their text
+/// writes (`link_block`). Exact wherever the rows are: nothing goes from
+/// one chunk to the next.
+pub(crate) fn tree_rows(
+    rows: &mut [Block],
+    at: impl Fn(usize) -> (u32, usize),
+    tree: &Tree<'_>,
+    cancel: &CancelToken,
+) -> anyhow::Result<()> {
+    let (Some(first), Some(last)) = (
+        rows.first().map(|_| at(0).0),
+        rows.len().checked_sub(1).map(|last| at(last).0),
+    ) else {
+        return Ok(());
+    };
+    skwir_platform::inspection::check(cancel)?;
+    let spans = tree.spans(first..last.saturating_add(1))?;
+    for (n, row) in rows.iter_mut().enumerate() {
+        if n % 64 == 0 {
+            skwir_platform::inspection::check(cancel)?;
+        }
+        let (line, from) = at(n);
+        let spans = spans
+            .get(line.saturating_sub(first) as usize)
+            .map_or(&[][..], Vec::as_slice);
+        row.runs = tree.runs(spans, from, &row.text);
+        skwir_platform::links::link_block(row, true);
+    }
+    Ok(())
+}
+
+/// A text a tree-sitter grammar parsed for a view (ADR-110). Held by the
+/// view, and dropped with it: the helper then forgets the text.
+pub(crate) struct Parsed {
+    pub tree: Tree<'static>,
+}
+
+/// `text` (UTF-8) parsed by the tree-sitter grammar named `grammar` in the
+/// shared helper: on a worker. `None` when the helper cannot (not
+/// installed, the grammar failing, a timeout): bat's grammar colors it
+/// then.
+pub(crate) fn parse(
+    grammar: &str,
+    text: &[u8],
+    palette: &Palette,
+    cancel: &CancelToken,
+) -> Option<Parsed> {
+    let tree = Tree::open(grammar, text, palette, cancel)
+        .inspect_err(|error| {
+            if !cancel.is_cancelled() {
+                tracing::debug!(%error, grammar, "coloring with a tree-sitter grammar");
+            }
+        })
+        .ok()?;
+    Some(Parsed { tree })
+}
+
 /// How far a chunk is colored.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Shade {
@@ -158,6 +224,10 @@ pub(crate) fn next_to_color(
 pub(crate) struct Colorer {
     pub language: Option<String>,
     pub palette: Arc<Palette>,
+    /// The tree-sitter grammar that colors it, when one does
+    /// (`highlight::engine`); bat's grammar for `language` without, or
+    /// when the grammar fails.
+    pub grammar: Option<String>,
 }
 
 /// The rows of a chunk of a code view, colored, and how.
@@ -167,16 +237,20 @@ pub(crate) struct Colored {
 }
 
 enum Reply {
-    /// A chunk colored, and where its colors stopped.
+    /// A chunk colored, and where bat's colors stopped (none where a
+    /// tree-sitter grammar colored it).
     Chunk {
         chunk: u64,
         rows: Vec<Block>,
         exact: bool,
-        stop: Resume,
+        stop: Option<Resume>,
     },
     /// A pass forward ended, with the rows of the chunks it was asked to
     /// keep; where each chunk stopped went in `progress` as it went.
     Forward { kept: Vec<(u64, Vec<Block>)> },
+    /// The text parsed by its tree-sitter grammar; `None` when it could
+    /// not be.
+    Parsed(Option<Arc<Parsed>>),
 }
 
 /// What is on its way.
@@ -184,6 +258,20 @@ enum Reply {
 enum Asked {
     Chunk(u64),
     Forward,
+    Parse,
+}
+
+/// Where a code view a tree-sitter grammar colors is with its parse.
+#[derive(Default)]
+enum Parse {
+    /// Not asked: bat's grammar colors it, or nothing was drawn yet.
+    #[default]
+    Unasked,
+    /// On its way, the chunks plain until it comes.
+    Asked,
+    Done(Arc<Parsed>),
+    /// It could not be parsed: bat's grammar colors it.
+    Failed,
 }
 
 /// An inspection's code view colored where it is shown (`inspector`): the
@@ -206,6 +294,8 @@ pub(crate) struct CodeColors {
     middle: u64,
     asked: Latest<Reply>,
     asking: Option<Asked>,
+    /// The parse of a view a tree-sitter grammar colors (`Colorer::grammar`).
+    parse: Parse,
 }
 
 impl Default for CodeColors {
@@ -220,6 +310,7 @@ impl Default for CodeColors {
             middle: 0,
             asked: Latest::default(),
             asking: None,
+            parse: Parse::default(),
         }
     }
 }
@@ -290,6 +381,11 @@ impl CodeColors {
     /// where nothing is known yet, a pass forward from the last chunk
     /// colored exactly to it.
     fn next(&self) -> Option<Next> {
+        if matches!(self.parse, Parse::Done(_)) {
+            // Colored from the parse, a chunk is exact wherever it is.
+            return next_to_color(&self.wanted, |chunk| Some(self.shade(chunk)), |_| true)
+                .map(Next::Chunk);
+        }
         if let Some(chunk) = next_to_color(
             &self.wanted,
             |chunk| Some(self.shade(chunk)),
@@ -318,6 +414,8 @@ impl CodeColors {
             let given_way = match asked {
                 Asked::Chunk(chunk) => !self.wanted.contains(&chunk),
                 Asked::Forward => matches!(self.next(), Some(Next::Chunk(_))),
+                // A parse is never asked again: it waits for it.
+                Asked::Parse => false,
             };
             if !given_way {
                 return;
@@ -326,12 +424,22 @@ impl CodeColors {
             self.asking = None;
             self.drain();
         }
+        if let Some(grammar) = with.grammar.clone()
+            && matches!(self.parse, Parse::Unasked)
+            && !self.wanted.is_empty()
+        {
+            return self.ask_parse(app, data, with, grammar);
+        }
         let Some(next) = self.next() else {
             return;
         };
         let (data, with) = (Arc::clone(data), with.clone());
         match next {
             Next::Chunk(chunk) => {
+                if let Parse::Done(parsed) = &self.parse {
+                    let parsed = Arc::clone(parsed);
+                    return self.ask_tree_chunk(app, data, chunk, parsed);
+                }
                 let exact = self.known(chunk);
                 let from = self.starts.get(&chunk).cloned();
                 self.asking = Some(Asked::Chunk(chunk));
@@ -353,7 +461,7 @@ impl CodeColors {
                             chunk,
                             rows,
                             exact,
-                            stop,
+                            stop: Some(stop),
                         }
                     },
                 );
@@ -392,6 +500,78 @@ impl CodeColors {
         }
     }
 
+    /// Color chunk `chunk` of `data` from its parse.
+    fn ask_tree_chunk(
+        &mut self,
+        app: &Arc<skwir_core::App>,
+        data: Arc<Inspection>,
+        chunk: u64,
+        parsed: Arc<Parsed>,
+    ) {
+        self.asking = Some(Asked::Chunk(chunk));
+        self.asked.ask(
+            app,
+            Lane::SHARED,
+            app.lifetime(),
+            Priority::Visible,
+            "code-colors-tree",
+            move |cancel| {
+                let mut rows = rows_of(&data, chunk);
+                // A block is a whole line: its spans from its start.
+                let first = chunk * STRIDE;
+                let at = |n: usize| (u32::try_from(first + n as u64).unwrap_or(u32::MAX), 0);
+                if let Err(error) = tree_rows(&mut rows, at, &parsed.tree, cancel) {
+                    if !cancel.is_cancelled() {
+                        tracing::debug!(%error, chunk, "coloring a chunk from its parse");
+                    }
+                    // Plain rows, their links found: taken, never asked
+                    // again while the view lasts.
+                    for row in &mut rows {
+                        row.runs.clear();
+                        skwir_platform::links::link_block(row, true);
+                    }
+                }
+                Reply::Chunk {
+                    chunk,
+                    rows,
+                    exact: true,
+                    stop: None,
+                }
+            },
+        );
+    }
+
+    /// Parse the text with `grammar`: its lines joined, as the code view
+    /// holds them (a block a line).
+    fn ask_parse(
+        &mut self,
+        app: &Arc<skwir_core::App>,
+        data: &Arc<Inspection>,
+        with: &Colorer,
+        grammar: String,
+    ) {
+        let (data, palette) = (Arc::clone(data), Arc::clone(&with.palette));
+        self.parse = Parse::Asked;
+        self.asking = Some(Asked::Parse);
+        self.asked.ask(
+            app,
+            Lane::SHARED,
+            app.lifetime(),
+            Priority::Visible,
+            "code-colors-parse",
+            move |cancel| {
+                let mut text = String::new();
+                for (n, block) in data.blocks.iter().enumerate() {
+                    if n > 0 {
+                        text.push('\n');
+                    }
+                    text.push_str(&block.text);
+                }
+                Reply::Parsed(parse(&grammar, text.as_bytes(), &palette, cancel).map(Arc::new))
+            },
+        );
+    }
+
     /// Take what was colored. Whether rows the view draws changed.
     fn take(&mut self) -> bool {
         let Some(reply) = self.asked.take() else {
@@ -413,7 +593,7 @@ impl CodeColors {
                 if exact || !had {
                     chunks.insert(chunk, Rc::new(Colored { rows, exact }));
                 }
-                start = exact.then_some((chunk + 1, stop));
+                start = stop.filter(|_| exact).map(|stop| (chunk + 1, stop));
                 true
             }
             Reply::Forward { kept } => {
@@ -422,6 +602,10 @@ impl CodeColors {
                     chunks.insert(chunk, Rc::new(Colored { rows, exact: true }));
                 }
                 changed
+            }
+            Reply::Parsed(parsed) => {
+                self.parse = parsed.map_or(Parse::Failed, Parse::Done);
+                true
             }
         };
         let_go(chunks, &self.wanted, self.middle);
@@ -487,8 +671,118 @@ impl Shell {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    /// The tree-sitter helper built beside the tests, told the JSON grammar
+    /// it is tested with (`crates/tree-sitter-worker/tests/fixtures/json`,
+    /// as WebAssembly). `cargo nextest run -p skwir-tree-sitter-worker -p
+    /// skwir-ui` builds it; without it a test says so and passes, as the
+    /// helper's own do. Kept for the test's process: a `Parsed` holds the
+    /// helper it was parsed in.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn json_helper() -> Option<&'static skwir_platform::tree_sitter::Helper> {
+        let Some(program) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.parent()?.join("skwir-tree-sitter-worker")))
+            .filter(|path| path.is_file())
+        else {
+            eprintln!("skipped: needs skwir-tree-sitter-worker built beside the tests");
+            return None;
+        };
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../tree-sitter-worker/tests/fixtures/json");
+        let helper = skwir_platform::tree_sitter::with_program(program);
+        helper.set_grammars(vec![skwir_core::syntax::Grammar {
+            name: "json".into(),
+            library: fixtures.join("tree-sitter-json.wasm"),
+            symbol: "tree_sitter_json".into(),
+            highlights: vec![fixtures.join("queries/highlights.scm")],
+            ..skwir_core::syntax::Grammar::default()
+        }]);
+        Some(Box::leak(Box::new(helper)))
+    }
+
+    /// A code view colored from its parse a chunk at a time is exact
+    /// wherever the chunk is: a comment opened in the chunk before colors
+    /// the lines of this one it holds, which bat's grammar, colored fresh
+    /// from the chunk's start, cannot know. Links are found as before.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_chunk_is_colored_from_its_parse_exactly_wherever_it_is() {
+        use skwir_core::inspection::InspectionKind;
+        use skwir_platform::highlight::tree::Tree;
+        let Some(helper) = json_helper() else {
+            return;
+        };
+        let lines = 2 * STRIDE as usize + 10;
+        let text = |n: usize| match n {
+            0 => "[".to_owned(),
+            250 => "/* a comment".to_owned(),
+            262 => "still one */".to_owned(),
+            300 => "\"see https://example.invalid/300\",".to_owned(),
+            n if n == lines - 1 => "0]".to_owned(),
+            n => format!("{n},"),
+        };
+        let data = Inspection {
+            kind: InspectionKind::Code,
+            blocks: (0..lines)
+                .map(|n| Block {
+                    text: text(n),
+                    code: true,
+                    language: Some("json".into()),
+                    ..Block::default()
+                })
+                .collect(),
+            ..Inspection::default()
+        };
+        let joined = (0..lines).map(text).collect::<Vec<_>>().join("\n");
+        let palette = Palette::of(&crate::code_preview::CodeTheme::own(false));
+        let cancel = CancelToken::new();
+        let tree = Tree::open_in(helper, "json", joined.as_bytes(), &palette, &cancel).unwrap();
+        let mut rows = rows_of(&data, 1);
+        let first = STRIDE as usize;
+        tree_rows(
+            &mut rows,
+            |n| (u32::try_from(first + n).unwrap(), 0),
+            &tree,
+            &cancel,
+        )
+        .unwrap();
+        let color = |row: &Block| row.runs.first().and_then(|run| run.color);
+        let (comment, number) = (
+            palette.look_of("comment").color,
+            palette.look_of("number").color,
+        );
+        for line in 256..=262 {
+            assert_eq!(color(&rows[line - first]), Some(comment), "line {line}");
+        }
+        assert_eq!(color(&rows[263 - first]), Some(number), "past the comment");
+        assert!(rows[300 - first].runs.iter().any(|run| run.link.is_some()));
+        let colors: std::collections::BTreeSet<_> = rows
+            .iter()
+            .flat_map(|row| row.runs.iter().filter_map(|run| run.color))
+            .collect();
+        assert!(colors.len() > 2, "{colors:?}");
+        // Every byte of every row in a run, none past its text.
+        for row in &rows {
+            assert_eq!(
+                row.runs.iter().map(|run| run.range.len()).sum::<usize>(),
+                row.text.len()
+            );
+        }
+        // bat's grammar, fresh from the chunk's start, colors a number.
+        let mut fresh = rows_of(&data, 1);
+        color_rows(
+            &mut fresh,
+            |_| true,
+            (Some("json"), &palette),
+            None,
+            &cancel,
+        )
+        .unwrap();
+        assert_ne!(color(&fresh[0]), Some(comment));
+    }
 
     #[test]
     fn the_chunks_laid_out_come_first_then_their_neighbours() {

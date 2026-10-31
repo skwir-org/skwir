@@ -1,7 +1,10 @@
 //! What colors code: bat's grammars and themes (two-face), matched by
 //! Ferroni through syntect (ADR-060), for the code view, a document's code
 //! blocks and whatever else draws or prints code. The window draws what
-//! it colors (`skwir-ui`'s `code_preview`); a plugin colors with it too.
+//! it colors (`skwir-ui`'s `code_preview`); a plugin colors with it too. A
+//! tree-sitter grammar colors a language bat does not know, or every one
+//! it knows where the settings put it first (`tree`, ADR-110), in the
+//! same themes.
 //!
 //! Code is colored in the look the Reading page keeps it in
 //! (`reading.code_appearance`), in skwir's own colors unless it chooses a
@@ -19,6 +22,9 @@ use syntect::parsing::SyntaxSet;
 use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName as Bat};
 
 pub mod added;
+pub mod tree;
+
+pub use tree::{ENGINE_KEY, Engine, First, engine};
 
 /// Whether code is drawn light or dark: Automatic is as skwir is
 /// (`CodeTheme::chosen`).
@@ -168,6 +174,9 @@ pub struct CodeTheme {
     /// bat's name for the theme, the name of a theme the user added to
     /// bat, or [`DEFAULT`].
     pub name: Arc<str>,
+    /// Which grammars color a language both bat's and a tree-sitter
+    /// grammar know (`reading.grammars`): the colors change with it too.
+    pub grammars: First,
 }
 
 impl CodeTheme {
@@ -176,12 +185,14 @@ impl CodeTheme {
         Self {
             dark,
             name: DEFAULT.into(),
+            grammars: First::Bat,
         }
     }
 
     /// The theme the settings choose while skwir is dark, or light: the
     /// look `reading.code_appearance` keeps code in, Automatic following
-    /// skwir's, and the theme chosen for that look.
+    /// skwir's, the theme chosen for that look, and the grammars chosen
+    /// first.
     pub fn chosen(app: &skwir_core::App, skwir_dark: bool) -> Self {
         let dark = match app.settings.get::<String>(APPEARANCE_KEY).as_deref() {
             Some("light") => false,
@@ -189,13 +200,14 @@ impl CodeTheme {
             _ => skwir_dark,
         };
         let key = if dark { DARK_KEY } else { LIGHT_KEY };
-        app.settings.get::<String>(key).map_or_else(
-            || Self::own(dark),
-            |name| Self {
-                dark,
-                name: name.into(),
-            },
-        )
+        Self {
+            name: app
+                .settings
+                .get::<String>(key)
+                .map_or_else(|| DEFAULT.into(), Into::into),
+            grammars: First::chosen(app),
+            ..Self::own(dark)
+        }
     }
 }
 
@@ -706,8 +718,8 @@ mod tests {
     fn a_theme_chosen_brings_its_background_and_its_font_styles() {
         let theme = |dark, name: &str| {
             Palette::of(&CodeTheme {
-                dark,
                 name: name.into(),
+                ..CodeTheme::own(dark)
             })
         };
         assert_eq!(theme(true, "Dracula").background, Some([0x28, 0x2a, 0x36]));

@@ -1505,6 +1505,16 @@ is still to come are in `docs/preview-frame.md`.
   never in a static or a long-lived struct, which would keep every
   grammar compiled for good. Unused for `GRAMMARS_KEPT`, it is let go
   of and the workers that compiled it release.
+- **A tree-sitter grammar is the second engine** (ADR-110), chosen by
+  `highlight::engine` (`reading.grammars`, bat first by default; a
+  language only one engine knows is that one's). It colors in the theme
+  bat's grammars do: capture names are mapped to bat's scopes
+  (`highlight::tree::scope_of`), never colored apart. It parses only
+  what the preview holds whole, in the shared helper, on a worker, never
+  reading the file again; until the parse comes a chunk stays plain,
+  then each chunk is colored from it exactly, with no state carried from
+  the chunk before. Whatever it cannot color (a line past
+  `tree::LONGEST_LINE`, a helper's failure) bat colors.
 
 ## Printing (ADR-111)
 
