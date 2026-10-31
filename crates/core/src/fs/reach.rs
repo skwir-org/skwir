@@ -337,6 +337,45 @@ pub fn proved_changed() -> u64 {
     PROVED_CHANGED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The remotes that refused extended attributes this session, by their
+/// point and their number (`mount_of`), so a mount made again is asked
+/// again. A refusal still reaches the server on some (GVfs's bridge looks
+/// each file up on an iPhone before it refuses, a USB round trip): asked
+/// once a mount, never again for each file a listing reads (its tags, a
+/// lens of them). In memory alone, as what reads proved is.
+static REFUSES_ATTRIBUTES: Mutex<Option<crate::hashing::Set<(PathBuf, u64)>>> = Mutex::new(None);
+
+/// `path`'s remote's key in what is remembered of it this session.
+fn remembered_as(path: &Path) -> Option<(PathBuf, u64)> {
+    let remote = of(path)?;
+    Some((remote.point.clone(), mount_of(remote.device.unwrap_or(0))))
+}
+
+/// Reading an extended attribute of `path` was refused as the volume
+/// keeping none (`xattr::refused`): on a remote, its mount is not asked
+/// again ([`refuses_attributes`]). A local volume answers at once, and is
+/// asked each time.
+pub fn note_refused_attributes(path: &Path) {
+    if let Some(key) = remembered_as(path) {
+        REFUSES_ATTRIBUTES
+            .lock()
+            .get_or_insert_with(Default::default)
+            .insert(key);
+    }
+}
+
+/// Whether `path`'s remote refused extended attributes this session
+/// ([`note_refused_attributes`]): a read there is answered as it was.
+pub fn refuses_attributes(path: &Path) -> bool {
+    let Some(key) = remembered_as(path) else {
+        return false;
+    };
+    REFUSES_ATTRIBUTES
+        .lock()
+        .as_ref()
+        .is_some_and(|refused| refused.contains(&key))
+}
+
 /// The lane of work on `path`: its remote's, the shared one elsewhere.
 pub fn lane(path: &Path) -> Lane {
     of(path).map_or(Lane::SHARED, |remote| remote.lane())
@@ -858,6 +897,38 @@ mod imp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A remote that refused extended attributes is not asked again this
+    /// session, its files answered as it answered (procfs stands for a
+    /// server that keeps none: it refuses `user.*`); a local volume that
+    /// refuses is asked each time.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_remote_that_refused_attributes_is_not_asked_again() {
+        let point = Path::new("/proc/self");
+        let file = point.join("status");
+        assert!(!refuses_attributes(&file));
+        let local = crate::fs::xattr::get(&file, "user.xdg.tags").unwrap_err();
+        assert!(crate::fs::xattr::refused(&local), "{local}");
+        assert!(!refuses_attributes(&file), "a local volume is asked again");
+        pretend_remote(point);
+        let first = crate::fs::xattr::get(&file, "user.xdg.tags").unwrap_err();
+        assert!(crate::fs::xattr::refused(&first));
+        assert!(refuses_attributes(&file));
+        assert!(
+            refuses_attributes(&point.join("stat")),
+            "its other files too"
+        );
+        for again in [
+            crate::fs::xattr::get_deref(point.join("stat"), "user.xdg.tags").map(drop),
+            crate::fs::xattr::list(point.join("cmdline")).map(drop),
+        ] {
+            let error = again.unwrap_err();
+            assert!(crate::fs::xattr::refused(&error), "{error}");
+            assert!(error.to_string().contains("keeps no extended attributes"));
+        }
+        assert!(!refuses_attributes(Path::new("/example/elsewhere/a.txt")));
+    }
 
     /// Files from anywhere are stat-ed a lane each: a remote's alone.
     #[cfg(target_os = "linux")]

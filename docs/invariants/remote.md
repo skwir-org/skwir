@@ -107,6 +107,13 @@ ADR-077 (which revises ADR-021).
   search's hints and plocate's answer, the tags index's counts and tag
   locations leave out what a pane shown there taught them. Usage asks
   before measuring a remote.
+- **Extended attributes** a remote refused (`xattr::refused`: sshfs,
+  rclone, GVfs's bridge, which on an iPhone looks each file up first)
+  are not asked of it again this session (`reach::refuses_attributes`,
+  by its point and mount number, so a mount made again is asked again):
+  every read through `fs::xattr` answers as the first did, so a listing's
+  tags or a lens of them cost no request a file. Writes are tried each
+  time, their refusal sending the notes beside the file.
 - **Delete** on a FUSE remote (sshfs, rclone, GVfs) is permanent and asked
   (the trash command makes a `Delete` there); a kernel share keeps its own
   `.Trash-<uid>`. Nothing is ever copied from a remote into this

@@ -112,13 +112,33 @@ mod imp {
     }
 }
 
+/// A read of `path`'s attributes, unless its remote refused them this
+/// session (`reach::refuses_attributes`): answered as it was then, the
+/// server not asked again for each file. A refusal is remembered.
+fn read<T>(path: &Path, ask: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+    if crate::fs::reach::refuses_attributes(path) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "this server keeps no extended attributes",
+        ));
+    }
+    let answer = ask();
+    if let Err(error) = &answer
+        && refused(error)
+    {
+        crate::fs::reach::note_refused_attributes(path);
+    }
+    answer
+}
+
 /// The attribute `name` of the file (or link) at `path`; `None` when it
 /// has none of that name.
 ///
 /// # Errors
 /// When it cannot be read, or the volume keeps no attributes ([`refused`]).
 pub fn get(path: impl AsRef<Path>, name: impl AsRef<OsStr>) -> io::Result<Option<Vec<u8>>> {
-    imp::get(path.as_ref(), name.as_ref())
+    let (path, name) = (path.as_ref(), name.as_ref());
+    read(path, || imp::get(path, name))
 }
 
 /// [`get`] through a link, of the file it leads to.
@@ -126,7 +146,8 @@ pub fn get(path: impl AsRef<Path>, name: impl AsRef<OsStr>) -> io::Result<Option
 /// # Errors
 /// As [`get`].
 pub fn get_deref(path: impl AsRef<Path>, name: impl AsRef<OsStr>) -> io::Result<Option<Vec<u8>>> {
-    imp::get_deref(path.as_ref(), name.as_ref())
+    let (path, name) = (path.as_ref(), name.as_ref());
+    read(path, || imp::get_deref(path, name))
 }
 
 /// Set the attribute `name` of the file (or link) at `path` to `value`.
@@ -166,7 +187,8 @@ pub fn remove_deref(path: impl AsRef<Path>, name: impl AsRef<OsStr>) -> io::Resu
 /// # Errors
 /// When they cannot be listed, or the volume keeps no attributes.
 pub fn list(path: impl AsRef<Path>) -> io::Result<Vec<OsString>> {
-    imp::list(path.as_ref())
+    let path = path.as_ref();
+    read(path, || imp::list(path))
 }
 
 /// [`list`] through a link, of the file it leads to.
@@ -174,7 +196,8 @@ pub fn list(path: impl AsRef<Path>) -> io::Result<Vec<OsString>> {
 /// # Errors
 /// As [`list`].
 pub fn list_deref(path: impl AsRef<Path>) -> io::Result<Vec<OsString>> {
-    imp::list_deref(path.as_ref())
+    let path = path.as_ref();
+    read(path, || imp::list_deref(path))
 }
 
 /// Whether what carries a file elsewhere (a copy, an archive made of it,
