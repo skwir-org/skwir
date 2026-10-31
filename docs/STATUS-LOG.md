@@ -8568,3 +8568,42 @@ both PDFs made.
 only through the dialog; the helper's drawing of both was tested at
 P3); several files printed through a real dialog; macOS and Windows
 (compiled only, at the end).
+
+### G7: grammars checked by hand (2026-10-31, Grammars and printing)
+
+The debug build at P4's commit, on a display of its own (Xvfb, lavapipe),
+its XDG folders scratch but for Zed's data folder linked in, the
+grammars as this machine has them: Neovim's bundled parsers and queries
+(c, lua, markdown, markdown_inline, query, vim, vimdoc, from its Nix
+package) and Zed's installed extensions (html, nix, svelte, as
+WebAssembly), with Grammars set to Tree-sitter first.
+
+- **Found:** Settings › Reading › Code lists the ten, each with where it
+  was found ("From Neovim", "From Zed") and the files it colors (c and h;
+  html, htm and shtml; nix; svelte…).
+- **Colored:** a flake (`flake.nix`, Zed's Nix grammar), a Lua module
+  (Neovim's), a C program (Neovim's), an HTML page's source (Zed's) and
+  a Svelte component's source (Zed's; bat knows no Svelte), the
+  tree-sitter helper running under bubblewrap; fenced Nix and Svelte
+  blocks in a Markdown document colored as it reads.
+- **Outline:** the flake's Contents lists its bindings from Zed's
+  `outline.scm`, nested (`outputs` › `devShells.${system}.default` ›
+  `shellHook`); choosing `shellHook` closes the drawer and marks line 13.
+  Neovim's bundled queries have no `tags.scm`, so Lua and C show no
+  Contents, as meant.
+- **Found by looking:** with Tree-sitter first, code of another language
+  inside a file is colored only by a grammar for it: no JavaScript or CSS
+  grammar is installed here, so the HTML page's and the component's
+  script and style are plain, where bat colors them. A `.svelte` file
+  starting with `<script>` is typed HTML by its bytes and opens in HTML's
+  reading mode; its Source takes the name's language, Svelte. No folds
+  showed: code files open in the text view, which does not fold, and the
+  code view that takes a grammar's folds (structured data without folds
+  of its own) has no grammar with `folds.scm` here. Grammars whose file
+  types come from their name list names no file has (`markdown_inline`,
+  `query`, `vimdoc`).
+
+**Not checked:** Helix, Emacs, the tree-sitter CLI and the system's
+grammars (none installed here; the finding is tested with made-up
+folders, G3); a native grammar built into Skwir's folder by hand;
+Wayland and the user's session.

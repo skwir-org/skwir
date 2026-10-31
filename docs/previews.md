@@ -140,11 +140,26 @@ The player, in the panel or pinned at its foot:
   way.
 - Long lines wrap to the panel, the line's number on its first row; More
   › Wrap lines (`Alt+Z`, Reading › Text) lets them go on sideways.
-- Code is highlighted with bat's grammars, in Skwir's theme or one of
-  bat's, themes you added to bat included (Reading › Code), light or
-  dark whatever Skwir is. Colors follow what is read: after a jump into
-  the middle of a long file, a string or comment open across the jump
-  can be colored wrongly until it ends.
+- Code is highlighted with bat's grammars, grammars you added to bat or
+  Sublime Text included, or with a tree-sitter grammar: one in Skwir's
+  grammars folder (`~/.local/share/skwir/grammars`, a grammar's
+  repository as `tree-sitter build` leaves it), or one an editor or the
+  system installed (Zed's extensions, Helix, Neovim, Emacs, the
+  tree-sitter CLI, `/usr/lib/tree_sitter`). Reading › Code lists the
+  grammars found, where each was found and what it colors, and chooses
+  which colors a language both know (Grammars: bat first by default); a
+  tree-sitter grammar always colors a language bat does not know, such
+  as Svelte. Both are drawn in Skwir's theme or one of bat's, themes you
+  added to bat included, light or dark whatever Skwir is.
+- With bat, colors follow what is read: after a jump into the middle of
+  a long file, a string or comment open across the jump can be colored
+  wrongly until it ends. With a tree-sitter grammar the file is parsed
+  whole first (up to what the preview holds: 16 MiB, 128 MiB in Full),
+  its lines plain meanwhile, then colored exactly wherever you are. Code
+  in another language inside it (an HTML file's script) is colored only
+  when a grammar for that language is found too. Where the grammar says
+  where definitions are (`tags.scm`, Zed's `outline.scm`), Contents lists
+  them, each leading to its line.
 - The text is decoded once, from its first bytes: UTF-8, UTF-16 by its
   mark, else Windows-1252 (and the bar says so).
 - Any file can be shown as bytes (see [Bytes](#bytes-hex)).

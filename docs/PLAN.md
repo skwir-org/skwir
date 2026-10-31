@@ -322,6 +322,26 @@ on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
 
+**From grammars and printing (2026-10-31, ADR-110, ADR-111)**:
+- The text view, where code files open, does not fold: a grammar's folds
+  reach only a structured-data code view without folds of its own.
+- Code of another language inside a file a tree-sitter grammar colors is
+  colored only by a grammar found for that language: with Tree-sitter
+  first and no JavaScript or CSS grammar, an HTML file's script and style
+  are plain where bat colors them.
+- A grammar's file types taken from its name can name no real file
+  (Neovim's `markdown_inline`, `query`, `vimdoc`).
+- The first parse of a WebAssembly grammar can take seconds, its colors
+  waiting; code blocks are colored as a document is built, so a helper
+  starting delays its first paint. Folds a user closed are forgotten
+  when the file is read again.
+- Printing: the scale the dialog chose is not applied; nothing asks
+  before printing hundreds of pages; the portal's dialog is not given
+  the window as its parent; a contact sheet, a listing and several files
+  were not printed through a real dialog nor looked at printed.
+- macOS's print panel and Windows' print dialog are compiled only;
+  Windows' printing and the two new helpers were not run under Wine.
+
 **From books beyond EPUB (2026-10-30, ADR-106)**:
 - A KF8 book laid out in fixed pages (a comic) reads as chapters of
   pictures, not as pages in the document reader: calibre 9.17 marks no
@@ -2087,7 +2107,7 @@ screen reader reads, from the window or a script.
 - **P4. Several files in one job, and PDFs from scripts:** `skwir cmd
   print.save_pdf` without a window.
 
-**Status:** planned 2026-10-31. Built: G0 to G6, P1 to P4 (2026-10-31). Deviation: P3, the print helper, came before P1, whose print path builds on it.
+**Status:** planned 2026-10-31. Built: G0 to G7, P1 to P4 (2026-10-31). Deviation: P3, the print helper, came before P1, whose print path builds on it.
 
 ---
 
