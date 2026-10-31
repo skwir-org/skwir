@@ -2551,7 +2551,7 @@ impl Shell {
         for place in self.app.registry.places.all() {
             // A folder, a tag, every tag, Recent: where words can search
             // (`App::searchable`), never the trash or the shelf.
-            if place.hidden || !self.app.searchable(&place.location) {
+            if place.hidden || !place.is_its_location() || !self.app.searchable(&place.location) {
                 continue;
             }
             add(

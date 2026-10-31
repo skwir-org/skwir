@@ -26,7 +26,7 @@ use gpui::{AnyElement, Context, ExternalPaths, MouseButton, SharedString, div, p
 use skwir_core::Location;
 use skwir_core::command::Invocation;
 use skwir_core::os_path::PathArg;
-use skwir_core::registry::{Place, Reorder};
+use skwir_core::registry::{Opens, Place, Reorder};
 use skwir_core::workspace::TabId;
 
 use crate::controls;
@@ -376,6 +376,7 @@ pub fn roots(places: Vec<Place>, sections: &Sections, home: Option<&std::path::P
                 && !sections.hidden.contains(&a.place.group)
                 && a.place.activate.is_none()
                 && a.place.unavailable.is_none()
+                && a.place.is_its_location()
         })
         .filter_map(|a| {
             Some(Root {
@@ -507,6 +508,11 @@ impl Sections {
 }
 
 fn group_title(group: &str) -> String {
+    // Saved searches and the places kept with their filters (ADR-109),
+    // in the group that holds the user's arrangement of them.
+    if group == "searches" {
+        return "Saved".to_owned();
+    }
     let mut chars = group.chars();
     chars.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(chars).collect()
@@ -561,24 +567,26 @@ pub fn drop_target<T: Clone>(order: &[T], from: usize, gap: usize) -> Option<Opt
 }
 
 /// What activating `place` runs: its own command (mount, unlock), or
-/// opening its location.
+/// opening its location as it opens (`Place::open`, ADR-109).
 pub fn open_invocation(place: &Place) -> Invocation {
-    if let Some(activate) = &place.activate {
-        return activate.clone();
-    }
-    Invocation::navigate(&place.location)
+    place.open()
 }
 
 /// Opening `place` in a tab behind the one shown: a middle click on its
 /// row, or its menu. One that must be mounted or unlocked first runs that
-/// command with `tab`, which opens the volume there once it is mounted.
+/// command with `tab`, which opens the volume there once it is mounted;
+/// one kept with its filter opens as kept (ADR-109).
 pub fn open_in_tab(place: &Place) -> Invocation {
     if let Some(activate) = &place.activate {
         return activate.clone().with("tab", true);
     }
-    Invocation::new("tab.new")
+    let tab = Invocation::new("tab.new")
         .with("location", place.location.arg())
-        .with("show", false)
+        .with("show", false);
+    match &place.opens {
+        Opens::Lensed => tab,
+        Opens::AsKept(filter) => tab.with("as_kept", true).with("filter", filter.as_deref()),
+    }
 }
 
 /// Share of the volume in use, 0 to 1.
@@ -598,6 +606,12 @@ pub fn render(
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let current = shell.ui().address_shown.clone();
+    let filter = shell
+        .app
+        .workspace
+        .read()
+        .pane(shell.pane)
+        .and_then(|p| p.filter().map(str::to_owned));
     // Groups in the user's order, those put away left out; places as the
     // user arranged them (`arrange`). A group whose places are all hidden
     // keeps its header, whose menu shows them again.
@@ -805,7 +819,10 @@ pub fn render(
         let item = Item::of(place);
         let at_cursor = cursor.as_ref() == Some(&item);
         let menu_here = marked.as_ref() == Some(&item);
-        let is_current = place.location.to_string() == current;
+        // A saved place is the one shown only filtered as it was kept
+        // (ADR-109); any other is its location's.
+        let is_current = place.location.to_string() == current
+            && (place.is_its_location() || place.filter() == filter.as_deref());
         let color = place.color.as_deref().and_then(|c| {
             skwir_core::metadata::TAG_COLORS
                 .iter()
@@ -2483,6 +2500,6 @@ mod tests {
             "never negative"
         );
         assert_eq!(group_title("devices"), "Devices");
-        assert_eq!(group_title("searches"), "Searches");
+        assert_eq!(group_title("searches"), "Saved");
     }
 }

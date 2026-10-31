@@ -3,6 +3,11 @@
 Status: accepted 2026-10-30, the user's choices for each point below
 (asked in the session that built it); built the night of 2026-10-30 on
 Linux (`docs/STATUS-LOG.md`, "A lens stays until it is taken off").
+Amended by ADR-109 (2026-10-31): Back, Forward and the field's step
+taken back show a step as it was last shown, its filter or its terms
+whole (rule 2's "Back brings back nothing" and this record's
+amendment on Back and Forward no longer hold); a saved or recent
+search opens as it was kept (rule 4).
 Amends ADR-098 (words typed over a folder, the pills after the trail)
 and retires the folder narrowing of 2026-10-03 (`workspace::Narrowed`).
 

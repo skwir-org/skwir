@@ -85,7 +85,9 @@ fn timeline_selection_preserves_paths_and_filters_the_period() {
 
 /// A bar of a search's timeline narrows that search: a month of a folder,
 /// then a day of that month, its root and depth kept; a change of its
-/// lens (ADR-107), made in place, which Back does not undo.
+/// lens (ADR-107), made in place, which Back does not undo: it shows the
+/// folder as it was left, filtered by nothing (ADR-109), and Forward the
+/// search with its day.
 #[test]
 fn a_bar_of_a_search_refines_it() {
     let tmp = tempfile::tempdir().unwrap();
@@ -161,10 +163,20 @@ fn a_bar_of_a_search_refines_it() {
         "{}",
         location.rest
     );
-    // Back leaves the search for the folder, the day its lens still.
+    // Back leaves the search for the folder as it was left: no lens.
     app.dispatch(&Invocation::new("back")).unwrap();
     assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
     assert_eq!(app.pane_location(pane), Some(Location::from_path(&root)));
+    {
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        assert!(p.lens().is_none(), "{:?}", p.lens());
+        assert_eq!(p.filter(), None);
+    }
+    // Forward: the search as it was, its day its lens.
+    app.dispatch(&Invocation::new("forward")).unwrap();
+    assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+    assert_eq!(app.pane_location(pane), Some(location));
     let ws = app.workspace.read();
     let p = ws.pane(pane).unwrap();
     assert!(

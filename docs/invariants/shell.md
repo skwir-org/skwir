@@ -194,6 +194,12 @@ of bars, split or not.
   again once listed, so a link followed is gone back from to the document
   it was in. A link to a file in the folder shown adds a step without
   listing the folder again (`App::step_here`).
+- Each step keeps what filtered it when the pane left it, recorded as
+  every location is shown (`Pane::leave_step` in `App::open_in`, and in
+  `step_here`), and Back, Forward and the field's step taken back show it
+  so (ADR-109, `Pane::filter_at`); a closed tab opened again keeps them
+  (`Pane::steps_left`). Nothing else changes a step's filter behind the
+  pane's back: a filter changed in place is the step's as it is left.
 - Chevrons list on a worker (`nav_menu.rs`): each one the folders in the
   segment before it; one after the last the shown folder's places
   (`LocationProvider::places_of`), a separator, then its subfolders
@@ -712,10 +718,16 @@ of bars, split or not.
   tags rings its files with no branch here.
 - The sidebar repeats nothing its location says.
 - **Keeping.** Ctrl+D and the pane's keep button run the core `keep`
-  command, which hands the location to the `Keeper` registered for its
-  scheme (bookmarks, saved searches). A kept place carries `forget` (the
-  button runs it while shown) and `reorder`. A new kind of kept place
-  registers a keeper and fills those two fields; no UI branch.
+  command, which keeps what the pane shows as it shows it (ADR-109): the
+  location and the pane's filter go to the `Keeper` that keeps them, the
+  one of the location's scheme when nothing filters it (bookmarks, saved
+  searches, pinned tags), the one that keeps any location shown filtered
+  otherwise (`Keeper::filtered`: the query plugin's saved places). The
+  button is filled only for the place as shown, filter included
+  (`Place::is_kept_as`). A kept place carries `forget` (the button runs
+  it while shown), `reorder`, and how it opens (`Place::opens`: as kept,
+  or with the pane's lens). A new kind of kept place registers a keeper
+  and fills those fields; no UI branch.
 - **Bookmarks** are edited only through `BookmarkEdit`
   (`skwir_platform::places`); each edit returns its inverse, offered as
   Undo/Redo (`App::notify_undoable`, as for any edit outside a plan).

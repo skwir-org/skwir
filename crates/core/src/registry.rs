@@ -289,6 +289,21 @@ pub struct Place {
     /// pill: Shift narrows what is shown to its files too, Alt shows them
     /// in the folder shown), given the pane it acts on.
     pub clicks: Vec<Click>,
+    /// How it is opened as to the pane's lens (ADR-109): with it, having
+    /// none to say (a folder, a bookmark), or as it was kept (a saved
+    /// search, a saved place and its filter).
+    pub opens: Opens,
+}
+
+/// How a place is opened as to the pane's lens (ADR-109).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub enum Opens {
+    /// With the pane's lens: the place says no filter of its own.
+    #[default]
+    Lensed,
+    /// As it was kept, the pane's lens left out: a search as its terms
+    /// say, anything else filtered by this alone.
+    AsKept(Option<String>),
 }
 
 /// A click on a place with modifiers held, and what it runs.
@@ -328,7 +343,45 @@ impl Place {
             hidden: false,
             rename: None,
             clicks: Vec::new(),
+            opens: Opens::Lensed,
         }
+    }
+
+    /// What opening it runs in a pane: its own command (a volume to mount
+    /// or unlock), or its location, as it opens (`opens`).
+    pub fn open(&self) -> Invocation {
+        if let Some(activate) = &self.activate {
+            return activate.clone();
+        }
+        match &self.opens {
+            Opens::Lensed => Invocation::navigate(&self.location),
+            Opens::AsKept(filter) => Invocation::navigate(&self.location)
+                .with("as_kept", true)
+                .with("filter", filter.as_deref()),
+        }
+    }
+
+    /// Whether it keeps `location` shown filtered by `filter` (the pane's,
+    /// `None` for nothing): a place the user kept, of that place, filtered
+    /// so (ADR-109). A bookmarked folder shown filtered is not it.
+    pub fn is_kept_as(&self, location: &Location, filter: Option<&str>) -> bool {
+        self.forget.is_some() && location.same_place(&self.location) && self.filter() == filter
+    }
+
+    /// The filter a saved place is kept with (ADR-109); `None` for any
+    /// other place.
+    pub fn filter(&self) -> Option<&str> {
+        match &self.opens {
+            Opens::AsKept(Some(filter)) => Some(filter),
+            Opens::AsKept(None) | Opens::Lensed => None,
+        }
+    }
+
+    /// Whether it stands for its location itself: every place but a saved
+    /// one, whose location is only where its filter applies (ADR-109). One
+    /// that does not names no folder, starts no trail and is no scope.
+    pub fn is_its_location(&self) -> bool {
+        self.filter().is_none()
     }
 
     /// What names it in the user's arrangement of its group: its `key`,
@@ -351,14 +404,19 @@ pub struct Reorder {
 }
 
 /// What keeps locations of one scheme in the sidebar: folders as
-/// bookmarks, searches as saved searches. The core `keep` command runs
-/// `save` for the location a pane shows, adding the pane's id; each place
-/// it kept carries its own [`Place::forget`]. The words are the pane
+/// bookmarks, searches as saved searches; or any location shown with a
+/// filter, as a saved place (`filtered`, ADR-109). The core `keep` command
+/// runs `save` for what a pane shows, adding the pane's id; each place it
+/// kept carries its own [`Place::forget`]. The words are the pane
 /// button's.
 #[derive(Clone, Debug, Serialize)]
 pub struct Keeper {
-    /// The [`Location::scheme`] it keeps (`path`, `query`).
+    /// The [`Location::scheme`] it keeps (`path`, `query`), shown filtered
+    /// by nothing.
     pub scheme: String,
+    /// It keeps any location shown with a filter instead, whatever its
+    /// scheme: a place kept with what filters it (ADR-109).
+    pub filtered: bool,
     pub save: Invocation,
     /// "Bookmark this folder".
     pub save_title: String,
@@ -372,9 +430,15 @@ pub struct Keeper {
 }
 
 impl Keeper {
-    /// Whether it keeps `location`.
-    pub fn keeps(&self, location: &Location) -> bool {
-        *self.scheme == *location.scheme && self.keeps.is_none_or(|keeps| keeps(location))
+    /// Whether it keeps `location` shown filtered by `filter` (the pane's,
+    /// `None` for nothing).
+    pub fn keeps(&self, location: &Location, filter: Option<&str>) -> bool {
+        if self.filtered {
+            return filter.is_some();
+        }
+        filter.is_none()
+            && *self.scheme == *location.scheme
+            && self.keeps.is_none_or(|keeps| keeps(location))
     }
 }
 
@@ -771,7 +835,9 @@ impl Registry {
     /// gave it, else its owner's (`Place::title`); `None` for a location
     /// the sidebar does not show.
     pub fn place_title(&self, location: &Location) -> Option<String> {
-        let place = self.places.find(|p| p.location.same_place(location))?;
+        let place = self
+            .places
+            .find(|p| p.is_its_location() && p.location.same_place(location))?;
         Some(self.user_title(&place).unwrap_or(place.title))
     }
 

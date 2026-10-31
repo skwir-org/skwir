@@ -1539,6 +1539,7 @@ impl Plugin for PlacesPlugin {
             ID,
             Keeper {
                 scheme: skwir_core::location::PATH_SCHEME.into(),
+                filtered: false,
                 save: shown(),
                 save_title: "Bookmark this folder".into(),
                 forget_title: "Remove from bookmarks".into(),

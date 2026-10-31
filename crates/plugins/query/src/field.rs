@@ -409,6 +409,12 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
         row.completion = Some(format!("{before}{key}"));
         rows.push(row);
     }
+    // A recent or saved search runs as it was (ADR-109): the pane's lens,
+    // which its words held then if it had one, is not added again.
+    let as_it_was = Ask {
+        lens: None,
+        ..ask.clone()
+    };
     for (rank, recent) in recent(app).into_iter().take(RECENT_SHOWN).enumerate() {
         // Where it looked, as its own text says it (`in:recent:`, a folder
         // typed) or as it was run; its words without it.
@@ -428,7 +434,7 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
             .detail(format!("in {}", app.location_title(&scope)))
             .icon("recent")
             .rank(i32::try_from(rank).unwrap_or(0))
-            .runs(search(app, &words, &scope, ask));
+            .runs(search(app, &words, &scope, &as_it_was));
         row.typed = true;
         row.forget = Some(Invocation::with_args(
             "query.forget_recent",
@@ -440,14 +446,30 @@ fn before_typing(app: &App, ask: &Ask) -> Answer {
         rows.push(row);
     }
     for (rank, saved) in crate::saved(app).into_iter().take(RECENT_SHOWN).enumerate() {
-        let location = Location::new(crate::SCHEME, saved.expr.clone());
+        // Opened as it was kept (ADR-109): a search as its terms say, a
+        // place filtered by its filter alone.
+        let (location, filter, detail) = match saved.at {
+            None => {
+                let detail = crate::facets::text_of(&saved.expr).unwrap_or(saved.expr.clone());
+                (Location::new(crate::SCHEME, saved.expr), None, detail)
+            }
+            Some(at) => {
+                let detail = format!("{} in {}", saved.expr, app.location_title(&at));
+                (at, Some(saved.expr), detail)
+            }
+        };
         let mut row = Suggestion::new(Section::Saved, saved.name)
-            .detail(crate::facets::text_of(&saved.expr).unwrap_or(saved.expr))
+            .detail(detail)
             .icon("star")
             .rank(i32::try_from(rank).unwrap_or(0))
             .runs(Invocation::with_args(
                 "navigate",
-                &serde_json::json!({ "location": location.arg(), "pane": ask.pane }),
+                &serde_json::json!({
+                    "location": location.arg(),
+                    "pane": ask.pane,
+                    "as_kept": true,
+                    "filter": filter,
+                }),
             ));
         row.detail_typed = true;
         rows.push(row);

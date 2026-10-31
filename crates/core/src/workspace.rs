@@ -657,9 +657,10 @@ pub struct Pane {
     pub history: Vec<Location>,
     /// Index into `history` of the current location.
     pub history_pos: usize,
-    /// By step of `history`, the entry the cursor was on when the pane left
-    /// it: Back and Forward select it again (`go_to`).
-    left_at: Vec<Option<EntryId>>,
+    /// By step of `history`, what the pane had there when it left it: the
+    /// entry the cursor was on, which Back and Forward select again
+    /// (`go_to`), and what filtered it, which they show it with (ADR-109).
+    left_at: Vec<StepLeft>,
     /// A name to select once the listing has it, and whether it is still
     /// coming once the listing is complete; see [`Pane::reveal`].
     reveal: Option<(OsString, bool)>,
@@ -850,11 +851,9 @@ impl Lens {
 pub enum Bring {
     /// The pane's lens, added to its terms: a facet they set is their own.
     Added,
-    /// Nothing: its terms say its lens whole.
+    /// Nothing: its terms say its lens whole (typed, kept, or a step of
+    /// the history shown again as it was, ADR-109).
     Nothing,
-    /// A step of the pane's history shown again: the lens its terms held
-    /// was the pane's then, and the pane's now takes its place.
-    InPlace,
 }
 
 /// How a location takes the lens a pane brings into it
@@ -867,6 +866,35 @@ pub enum Lensed {
     /// The location's own terms hold it (a search): the pane filters
     /// nothing, and this is its lens.
     Holds(Option<Lens>),
+    /// A location that holds none, shown as it was left or kept
+    /// (ADR-109): filtered by that text as its reader reads it (`None`:
+    /// names), or by nothing.
+    AsLeft(Option<(Arc<str>, Option<ReadFilter>)>),
+}
+
+/// What filtered a step of a pane's history when the pane left it
+/// (`Pane::filter_at`, ADR-109): its text, and whether its reader read a
+/// lens in it, which only that reader can tell: with no reader, a filter
+/// that held one shows nothing, one of names its names (ADR-107 rule 9).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StepFilter {
+    pub text: Arc<str>,
+    pub lens: bool,
+}
+
+/// What the pane had at a step of its history when it left it.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct StepLeft {
+    /// The entry the cursor was on.
+    cursor: Option<EntryId>,
+    /// What filtered it: a search's own terms say the rest.
+    filter: Option<StepFilter>,
+}
+
+impl StepLeft {
+    pub(crate) fn filter(&self) -> Option<&StepFilter> {
+        self.filter.as_ref()
+    }
 }
 
 /// What words typed over a folder keep, as the filter's reader read them
@@ -1124,7 +1152,7 @@ impl Pane {
         self.history.truncate(self.history_pos);
         self.left_at.truncate(self.history.len());
         self.history_pos = before;
-        let again = self.left_at.get(before).copied().flatten().map(|id| {
+        let again = self.left_at.get(before).and_then(|s| s.cursor).map(|id| {
             let mut selection = Selection::default();
             selection.set([id]);
             selection
@@ -1146,7 +1174,7 @@ impl Pane {
         }
         self.remember_left(self.history_pos, left);
         self.history_pos = pos;
-        let again = self.left_at.get(pos).copied().flatten().map(|id| {
+        let again = self.left_at.get(pos).and_then(|s| s.cursor).map(|id| {
             let mut selection = Selection::default();
             selection.set([id]);
             selection
@@ -1155,10 +1183,62 @@ impl Pane {
     }
 
     fn remember_left(&mut self, pos: usize, left: Option<EntryId>) {
+        self.left_at_mut(pos).cursor = left;
+    }
+
+    fn left_at_mut(&mut self, pos: usize) -> &mut StepLeft {
         if self.left_at.len() <= pos {
-            self.left_at.resize(pos + 1, None);
+            self.left_at.resize(pos + 1, StepLeft::default());
         }
-        self.left_at[pos] = left;
+        &mut self.left_at[pos]
+    }
+
+    /// What filters the step shown, as Back and Forward show it again
+    /// (ADR-109): its filter's text, and whether its reader read a lens in
+    /// it. A search's own terms say the rest: `None` over one.
+    fn step_filter(&self) -> Option<StepFilter> {
+        self.filter.as_ref().map(|text| StepFilter {
+            text: Arc::clone(text),
+            lens: self.read.as_ref().is_some_and(|r| r.lens.is_some()),
+        })
+    }
+
+    /// What filtered step `pos` of `history` when the pane left it, or
+    /// filters it now for the step shown (ADR-109).
+    pub fn filter_at(&self, pos: usize) -> Option<StepFilter> {
+        if pos == self.history_pos {
+            return self.step_filter();
+        }
+        self.left_at.get(pos).and_then(|s| s.filter.clone())
+    }
+
+    /// The step shown is left for another location: what filters it is
+    /// kept for Back and Forward (ADR-109). Asked as every location is
+    /// shown, before it takes the lens (`App::open_in`).
+    pub(crate) fn leave_step(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        let filter = self.step_filter();
+        self.left_at_mut(self.history_pos).filter = filter;
+    }
+
+    /// What every step had when left, the step shown's filter as it is
+    /// now: what a tab closed keeps (`App::close_tab`).
+    pub(crate) fn steps_left(&self) -> Vec<StepLeft> {
+        let mut steps = self.left_at.clone();
+        steps.resize(self.history.len(), StepLeft::default());
+        if let Some(here) = steps.get_mut(self.history_pos) {
+            here.filter = self.step_filter();
+        }
+        steps
+    }
+
+    /// Give a pane what its steps had when left (`steps_left`): a tab
+    /// closed, opened again. The step shown's filter is the caller's to
+    /// set, read by its reader (`filter_as_left`).
+    pub(crate) fn set_steps_left(&mut self, steps: Vec<StepLeft>) {
+        self.left_at = steps;
     }
 
     /// Work tied to this location stops immediately on navigation or pane close.
@@ -1204,7 +1284,25 @@ impl Pane {
                 self.set_filter(None, None);
                 self.lens = lens;
             }
+            Lensed::AsLeft(filter) => self.filter_as_left(filter),
         }
+    }
+
+    /// Filter the pane by what filtered a step when it was left, or a
+    /// place when it was kept (ADR-109): `text` as `read` tests it, else
+    /// by its names (`None`: show everything). Its test is the one given,
+    /// even for the text the pane filters by already, as `carry` reads a
+    /// lens: read again where it is shown, a date says the day it is
+    /// read on.
+    pub(crate) fn filter_as_left(&mut self, filter: Option<(Arc<str>, Option<ReadFilter>)>) {
+        let Some((text, read)) = filter else {
+            self.carry(None);
+            return;
+        };
+        self.filter = Some(text);
+        self.read = read.map(Arc::new);
+        self.lens = self.read.as_ref().and_then(|r| r.lens.clone());
+        self.filter_changed();
     }
 
     /// Filter the pane by `lens` alone (`None`: show everything): what a

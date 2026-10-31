@@ -101,20 +101,6 @@ pub fn without_lens(expr: &str) -> Option<String> {
     Some(facets::written(&part(&q, false)))
 }
 
-/// The search `expr`, a step of a pane's history shown again, with the
-/// pane's lens (`lens`, its words) in place of the one its terms held
-/// (ADR-107: the lens is the pane's, never a step's). A search whose
-/// every term is of the lens keeps them, as what it looks for, and takes
-/// the pane's lens beside them, as any search brought one does.
-pub fn in_place_of_lens(expr: &str, lens: &str) -> Result<String, String> {
-    let q = lang::parse(expr).map_err(|e| e.to_string())?;
-    let rest = part(&q, false);
-    if rest.expr.is_none() {
-        return facets::with_lens(expr, lens);
-    }
-    facets::with_lens(&facets::written(&rest), lens)
-}
-
 /// Whether the listing knows what `entry`'s metadata says: not before it
 /// comes, nor for a file that could not be read (`Metadata::is_unread`),
 /// whose size, dates and tags stay unknown, never taken for none.

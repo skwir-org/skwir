@@ -7,6 +7,7 @@ use skwir_core::app::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::command::Invocation;
 use skwir_core::location::Location;
+use skwir_core::registry::Opens;
 use skwir_core::suggest::{Answer, Ask, Section, SuggestSource, Suggester, Suggestion, Typed};
 
 /// The most rows a source of places or commands gives for words.
@@ -204,11 +205,21 @@ impl SuggestSource for Places {
                     .user_title(&place)
                     .unwrap_or(place.title.clone());
                 let rank = rank_of(&title, words)?;
+                // A saved search or place opens as it was kept, a place
+                // saying its filter (ADR-109).
+                let detail = match place.filter() {
+                    Some(filter) => format!("{} · {filter}", said(&place.location)),
+                    None => said(&place.location),
+                };
+                let runs = match place.opens {
+                    Opens::Lensed => navigate(&place.location, ask),
+                    Opens::AsKept(_) => place.open().with("pane", ask.pane),
+                };
                 let mut row = Suggestion::new(Section::Go, title)
-                    .detail(said(&place.location))
+                    .detail(detail)
                     .icon(crate::trail::glyph(app, &place.location))
                     .rank(rank)
-                    .runs(navigate(&place.location, ask));
+                    .runs(runs);
                 row.scope = scope_of(app, &place.location);
                 Some((rank, row))
             })

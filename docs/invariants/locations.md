@@ -172,8 +172,8 @@ and `notes.agree` are core `notes.*` commands.
   finds names and nothing read from the file (`lens::is_lens`): a kind,
   an extension, a tag, a date, a size, a rating, a comment. It stays
   wherever the pane goes until taken off (a pill's ×, Quick filters,
-  `query.narrow` without a facet, Escape over a filtered location); Back
-  brings back nothing. The words that find names, and what only a search
+  `query.narrow` without a facet, Escape over a filtered location); a
+  step of the history is shown as it was (ADR-109, below). The words that find names, and what only a search
   tells, go with the location. It is read again by its reader wherever a
   location is shown, so a date says the day it is read on
   (`modified:today`), and when its words read otherwise
@@ -191,15 +191,20 @@ and `notes.agree` are core `notes.*` commands.
     its lens whole is shown as is (`App::navigate_as_is`: the address
     field's words, a pill's choice): a search with its own terms,
     anything else filtered by nothing, so a search's last term taken off
-    shows its folder whole, never an empty search (`show_refined`). The
-    field's step taken back is shown as it was.
+    shows its folder whole, never an empty search (`show_refined`).
   - Whether a pane shows a location already is one check, as it would
     show it (`App::shows`, on `lensed_in`): a search asked again where it
     is shown is left as it is.
-  - Back and Forward show a search's step with the pane's lens in place
-    of the one its terms held then (`App::show_again`, `Bring::InPlace`);
-    a search made of the lens alone keeps its terms, else it would walk
-    the whole tree.
+  - **A place is where it is and what filters it (ADR-109).** Back,
+    Forward and the field's step taken back show a step as it was last
+    shown (`Lensing::AsLeft`): a search as its terms say, anything else
+    filtered by what filtered it when the pane left it, read again by
+    its reader; with none, a filter that held a lens shows nothing, one
+    of names its names. A place kept with its filter opens as kept
+    (`App::navigate_as_kept`, `navigate`'s `as_kept`, `tab.new`'s): a
+    saved place by its filter alone, a saved or recent search by its
+    own terms, the pane's lens left out; a bookmark or a pinned tag, kept
+    with none, takes the lens like any place gone to.
   - A change of a search's lens alone is made in place of it; a change
     of its words is a step Back undoes.
   - A tab or a split opened from a pane takes its lens (`new_tab`,

@@ -464,7 +464,11 @@ impl Shell {
             .iter()
             .map(|(tab, shows, active)| {
                 let location = shows.get(*active).and_then(Option::as_ref);
-                let place = location.and_then(|l| places.iter().find(|p| p.location.same_place(l)));
+                let place = location.and_then(|l| {
+                    places
+                        .iter()
+                        .find(|p| p.is_its_location() && p.location.same_place(l))
+                });
                 let glyph = location.map_or("folder", |l| crate::trail::glyph(&self.app, l));
                 Label {
                     tab: *tab,

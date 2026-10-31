@@ -836,6 +836,9 @@ struct PaneRow {
     /// The field's edge: focused, the active pane's, or none.
     edge: gpui::Hsla,
     location: Option<skwir_core::Location>,
+    /// What filters the location shown, as the keep button keeps it
+    /// (ADR-109).
+    filter: Option<String>,
     /// The View menu or the view buttons' menu, open from this row.
     menu_open: Option<&'static str>,
     /// The menu of places open from this row, if one is.
@@ -871,6 +874,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
         let ws = shell.app.workspace.read();
         let pane = ws.pane(shell.pane);
         let location = pane.and_then(|p| p.location()).cloned();
+        let filter = pane.and_then(|p| p.filter()).map(str::to_owned);
         let active = ws.active_id() == shell.pane;
         let focused = shell.ui().address.read(cx).is_focused(window);
         PaneRow {
@@ -909,6 +913,7 @@ pub fn render_address(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -
                 theme.surface
             },
             location,
+            filter,
             // The View menu hangs from the active pane's button: the pane it
             // acts on.
             menu_open: shell
@@ -1190,18 +1195,17 @@ fn pane_row(
                 .mr(px(2.)),
         );
     }
-    // Keep what the pane shows in the sidebar, a folder as a bookmark or a
-    // search as a saved search, while a plugin keeps such locations:
-    // filled when it is kept, and pressing it then takes it back with the
-    // place's own command. It is at the field's end: it is about what the
-    // field shows.
+    // Keep what the pane shows in the sidebar as it shows it (ADR-109), a
+    // folder as a bookmark, a search as a saved search, anything filtered
+    // with its filter, while a plugin keeps such locations: filled when it
+    // is kept, and pressing it then takes it back with the place's own
+    // command. It is at the field's end: it is about what the field shows.
     if let Some(location) = &row.location {
         let registry = &shell.app.registry;
+        let filter = row.filter.as_deref();
         // Offered only where its keeper keeps what is shown (`keep`).
-        let keeper = registry.keepers.find(|k| k.keeps(location));
-        let kept = registry
-            .places
-            .find(|p| p.forget.is_some() && location.same_place(&p.location));
+        let keeper = registry.keepers.find(|k| k.keeps(location, filter));
+        let kept = registry.places.find(|p| p.is_kept_as(location, filter));
         let button = match (kept, keeper) {
             (Some(place), keeper) => {
                 let forget = place.forget.expect("kept");

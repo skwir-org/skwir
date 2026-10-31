@@ -90,7 +90,7 @@ pub fn sync(shell: &mut Shell) {
     for crumb in trail.iter_mut().flat_map(|trail| &mut trail.crumbs) {
         if let Some(title) = registry
             .places
-            .find(|p| p.location.same_place(&crumb.location))
+            .find(|p| p.is_its_location() && p.location.same_place(&crumb.location))
             .and_then(|place| registry.user_title(&place))
         {
             crumb.label = title;

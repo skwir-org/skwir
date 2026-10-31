@@ -7,7 +7,7 @@ work where the keyboard is, by topic.
 ## The window
 
 - **Sidebar** (`F9` shows or hides it). Places in groups: your folders,
-  the places you kept (bookmarks, searches, tags), Recent, the Trash and
+  the places you kept (bookmarks, Saved, tags), Recent, the Trash and
   the drives. Click a group's header to fold it, drag it to move it; the
   sidebar's menu shows or hides each group. A place can be renamed
   (`F2`), moved or hidden; renaming a place never renames its folder.
@@ -54,7 +54,7 @@ work where the keyboard is, by topic.
 | `Ctrl+J` | Jump: the address, places first |
 | `Ctrl+Enter`, middle click | Open in a new tab behind this one |
 | `F5`, `Ctrl+R` | Refresh |
-| `Ctrl+D` | Keep the place shown in the sidebar |
+| `Ctrl+D` | Keep the place shown in the sidebar, with its filters |
 
 - **The address** shows where you are as a trail. Click a segment to go
   there; each `›` lists the folders inside the segment before it. The
@@ -97,6 +97,14 @@ work where the keyboard is, by topic.
   shown ("12 of 340 items"), and a folder it hides everything in says
   "Hidden by filters", with a button that shows everything. A tab or a
   split opened from a pane keeps its filters too.
+- **Back and Forward show each place as you left it**, its filters with
+  it: a folder filtered when you went on is filtered again, and one you
+  had not filtered yet is shown whole.
+- **`Ctrl+D` keeps what is shown** in the sidebar: a folder as a
+  bookmark, and a folder (or a tag, the Trash) shown with a filter under
+  **Saved**, with its filter, beside the saved searches. A saved one
+  opens just as it was kept, whatever filters you have on; a bookmark
+  keeps them.
 - **Type the first letters of a name** in the file list to go to it.
 - **Jump** (`Ctrl+J`) is the address with nothing typed: the folders you
   go to most, from zoxide's list and the desktop's recent files, then
@@ -344,9 +352,10 @@ it, **+ Filter** adds one, and the text can be typed as is:
   words that read as terms (`pdf last week`) are offered as such under
   the search of the words themselves.
 - `Alt+Enter` searches the home folder instead. `Ctrl+D` keeps a search
-  in the sidebar. The address offers your last searches when you press
-  `Ctrl+F`; `Shift+Delete` forgets one, and Settings › General › Remember
-  recent searches turns that off.
+  under Saved in the sidebar. The address offers your last searches when
+  you press `Ctrl+F`; `Shift+Delete` forgets one, and Settings › General ›
+  Remember recent searches turns that off. A saved or recent search runs
+  as it was, without the filters you have on now.
 - Over a search with tags, a bar of Quick filters offers what it can
   narrow to (the tags within, the files' kinds and years), each with a
   count; a choice is a filter that stays as you go. View › Quick filters

@@ -760,6 +760,7 @@ impl Plugin for TagsPlugin {
             ID,
             skwir_core::registry::Keeper {
                 scheme: location::SCHEME.into(),
+                filtered: false,
                 save: Invocation::new("tags.keep"),
                 save_title: "Pin this tag to the sidebar".into(),
                 forget_title: "Unpin this tag from the sidebar".into(),

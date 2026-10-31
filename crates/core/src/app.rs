@@ -22,7 +22,7 @@ use crate::plugin::PluginHost;
 use crate::registry::Registry;
 use crate::scheduler::{Priority, Scheduler};
 use crate::settings::Settings;
-use crate::workspace::{PaneId, Workspace};
+use crate::workspace::{PaneId, StepFilter, Workspace};
 
 /// Severity of a [`Notification`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -1054,26 +1054,26 @@ impl App {
     /// Take back the step `pane` shows, as if it had never been gone to:
     /// the step before is shown again, and the one taken back and those
     /// ahead of it go (Escape in the address field after a search shown as
-    /// it was typed), as it was: a search as its text says, anything else
-    /// with the pane's lens, which the field puts back as it found it.
-    /// Nothing at the first step.
+    /// it was typed), as it was (ADR-109): a search as its text says,
+    /// anything else filtered as when the pane left it. Nothing at the
+    /// first step.
     pub fn take_step_back(&self, pane: PaneId) -> anyhow::Result<()> {
         let (from, before) = {
             let ws = self.workspace.read();
             let p = ws
                 .pane(pane)
                 .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-            let before = p
-                .history_pos
-                .checked_sub(1)
-                .and_then(|pos| p.history.get(pos).cloned());
+            let before = p.history_pos.checked_sub(1).and_then(|pos| {
+                let location = p.history.get(pos).cloned()?;
+                Some((location, p.filter_at(pos)))
+            });
             (p.history_pos, before)
         };
-        let Some(location) = before else {
+        let Some((location, filter)) = before else {
             return Ok(());
         };
         let left = self.cursor_of(pane);
-        let as_it_was = Opening::lensing(Lensing::AsItWas);
+        let as_it_was = Opening::lensing(Lensing::AsLeft(filter.as_ref()));
         self.open_in(pane, &location, as_it_was, |p, _| {
             p.take_step_back(from, &location, left);
         })
@@ -1119,6 +1119,8 @@ impl App {
             .location()
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("the pane shows nothing"))?;
+        // The step left keeps what filters it, as Back shows it (ADR-109).
+        p.leave_step();
         p.go_on(here, left);
         Ok(())
     }
@@ -1160,17 +1162,73 @@ impl App {
         Ok(())
     }
 
-    /// Show a step of `pane`'s history again (Back, Forward), then let
-    /// `then` update its history with the location shown: as `show`, but
-    /// the lens a search's terms held then gives way to the pane's now
-    /// (ADR-107: the lens is the pane's, never a step's).
+    /// Show a step of `pane`'s history again (Back, Forward) as it was
+    /// last shown (ADR-109): a search as its terms say, anything else
+    /// filtered by `filter`, what filtered it when the pane left it; then
+    /// let `then` update its history with the location shown.
     pub(crate) fn show_again(
         &self,
         pane: PaneId,
         location: &Location,
+        filter: Option<&StepFilter>,
         then: impl FnOnce(&mut crate::workspace::Pane, &Location),
     ) -> anyhow::Result<()> {
-        self.open_in(pane, location, Opening::lensing(Lensing::Again), then)
+        self.open_in(
+            pane,
+            location,
+            Opening::lensing(Lensing::AsLeft(filter)),
+            then,
+        )
+    }
+
+    /// Show `location` in `pane` as it was kept (ADR-109: a saved place,
+    /// a saved search), a step of its own: a search as its terms say,
+    /// anything else filtered by `filter` alone, the pane's lens left out.
+    ///
+    /// # Errors
+    /// As `navigate`.
+    pub fn navigate_as_kept(
+        &self,
+        pane: PaneId,
+        location: &Location,
+        filter: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let location = &self.reached_in(pane, location)?;
+        let filter = self.kept_filter(filter);
+        let left = self.cursor_of(pane);
+        let as_kept = Opening::lensing(Lensing::AsLeft(filter.as_ref()));
+        self.open_in(pane, location, as_kept, |p, shown| {
+            p.go_on(shown.clone(), left);
+        })
+    }
+
+    /// A kept place's filter as a step's (`StepFilter`), asked of the
+    /// filter reader: whether it holds a lens.
+    pub(crate) fn kept_filter(&self, filter: Option<&str>) -> Option<StepFilter> {
+        let text = filter.map(str::trim).filter(|t| !t.is_empty())?;
+        let reader = self.registry.filter_readers.all().into_iter().next();
+        let lens = reader
+            .and_then(|reader| (reader.0)(text))
+            .is_some_and(|read| read.lens.is_some());
+        Some(StepFilter {
+            text: Arc::from(text),
+            lens,
+        })
+    }
+
+    /// `filter`, a step's as it was left, as the filter reader there is
+    /// now reads it, read as of now (a date says today); with no reader, a
+    /// filter that held a lens goes with it, one of names stays one
+    /// (ADR-107 rule 9).
+    pub(crate) fn read_as_left(
+        &self,
+        filter: &StepFilter,
+    ) -> Option<(Arc<str>, Option<crate::workspace::ReadFilter>)> {
+        match self.registry.filter_readers.all().into_iter().next() {
+            Some(reader) => Some((Arc::clone(&filter.text), (reader.0)(&filter.text))),
+            None if filter.lens => None,
+            None => Some((Arc::clone(&filter.text), None)),
+        }
     }
 
     /// `location` as it takes `pane`'s lens (ADR-107, `LocationProvider::
@@ -1191,8 +1249,7 @@ impl App {
             .and_then(|p| p.lens().cloned());
         let bring = match lensing {
             Lensing::Brought => Bring::Added,
-            Lensing::Again => Bring::InPlace,
-            Lensing::AsIs | Lensing::AsItWas => Bring::Nothing,
+            Lensing::AsIs | Lensing::AsLeft(_) => Bring::Nothing,
         };
         if let Some((shown, own)) = self
             .provider(&location.scheme)
@@ -1200,11 +1257,16 @@ impl App {
         {
             return (shown, Lensed::Holds(own));
         }
-        // Its text says it has none; else the pane's, read as of now (a
-        // date says today), and gone with its reader.
+        // Its text says it has none; as it was left, what filtered it
+        // then; else the pane's. Each read as of now (a date says today),
+        // and gone with its reader.
         let lens = match lensing {
             Lensing::AsIs => None,
-            _ => carried.and_then(|lens| {
+            Lensing::AsLeft(filter) => {
+                let filter = filter.and_then(|filter| self.read_as_left(filter));
+                return (location.clone(), Lensed::AsLeft(filter));
+            }
+            Lensing::Brought => carried.and_then(|lens| {
                 let reader = self.registry.filter_readers.all().into_iter().next()?;
                 (reader.0)(&lens.words)?.lens
             }),
@@ -1246,6 +1308,8 @@ impl App {
             open.close();
             return Ok(());
         }
+        // What filtered the step left, for Back to show it with (ADR-109).
+        p.leave_step();
         if how.waking {
             p.reopen(open, listing, lensed);
         } else {
@@ -2179,6 +2243,14 @@ pub struct NavigateArgs {
     /// is then left as it is.
     #[serde(default)]
     pub in_place: bool,
+    /// Show it as it was kept (ADR-109: a saved place, a saved search):
+    /// a search as its terms say, anything else filtered by `filter`
+    /// alone; the pane's lens is not brought in.
+    #[serde(default)]
+    pub as_kept: bool,
+    /// With `as_kept`: what filters it, as the `filter` command's `text`.
+    #[serde(default)]
+    pub filter: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema)]
@@ -2255,11 +2327,11 @@ struct Opening<'a> {
     /// navigation meanwhile overrides).
     from: Option<&'a Location>,
     /// What of the pane's lens it is shown with (ADR-107).
-    lensing: Lensing,
+    lensing: Lensing<'a>,
 }
 
-impl Opening<'_> {
-    fn lensing(lensing: Lensing) -> Self {
+impl<'a> Opening<'a> {
+    fn lensing(lensing: Lensing<'a>) -> Self {
         Opening {
             lensing,
             ..Opening::default()
@@ -2270,19 +2342,17 @@ impl Opening<'_> {
 /// What of the pane's lens a location is shown with (ADR-107,
 /// `App::lensed_in`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum Lensing {
+enum Lensing<'a> {
     /// Brought in: a search adds it to its terms, anything else is
     /// filtered by it.
     #[default]
     Brought,
-    /// A step of the history shown again (Back, Forward): brought in, in
-    /// place of the lens a search's terms held then.
-    Again,
     /// Its text says its lens whole: a search's terms, anything else none.
     AsIs,
-    /// A step taken back, as it was: a search as its text says, anything
-    /// else with the pane's.
-    AsItWas,
+    /// As it was left or kept (ADR-109): a search as its terms say,
+    /// anything else filtered by this alone (a step of the history shown
+    /// again, a saved place), the pane's lens left out.
+    AsLeft(Option<&'a StepFilter>),
 }
 
 /// A pane's filter text, and what the filter reader there is now reads in
@@ -2575,11 +2645,13 @@ mod builtin {
             "core", Topic::Go,
             "navigate",
             "Go to location",
-            "Open a path or location in a pane, an entry of it selected once listed when `select` names one; `in_place` puts it in place of the step the pane shows, with no step of its own",
+            "Open a path or location in a pane, an entry of it selected once listed when `select` names one; `in_place` puts it in place of the step the pane shows, with no step of its own; `as_kept` shows it as a saved place is kept, filtered by `filter` alone, the pane's lens left out (ADR-109)",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
                 let location = Location::parse_os(a.location.as_os_str());
-                if a.in_place {
+                if a.as_kept {
+                    app.navigate_as_kept(pane, &location, a.filter.as_deref())?;
+                } else if a.in_place {
                     app.navigate_in_place(pane, &location)?;
                 } else {
                     app.navigate(pane, &location)?;
@@ -2596,16 +2668,21 @@ mod builtin {
             "core", Topic::Places,
             "keep",
             "Add to sidebar",
-            "Keep what the pane shows in the sidebar: a folder as a bookmark, a search as a saved search",
+            "Keep what the pane shows in the sidebar, as it shows it (ADR-109): a folder as a bookmark, a search as a saved search, anything shown filtered as a saved place with its filter",
             |a, app| {
                 let pane = app.pane_or_active(a.pane);
-                let location = app
-                    .pane_location(pane)
-                    .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to keep"))?;
+                let (location, filter) = {
+                    let ws = app.workspace.read();
+                    let p = ws.pane(pane);
+                    let location = p
+                        .and_then(|p| p.location().cloned())
+                        .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to keep"))?;
+                    (location, p.and_then(|p| p.filter().map(str::to_owned)))
+                };
                 let keeper = app
                     .registry
                     .keepers
-                    .find(|k| k.keeps(&location))
+                    .find(|k| k.keeps(&location, filter.as_deref()))
                     .ok_or_else(|| anyhow::anyhow!("this location cannot be kept in the sidebar"))?;
                 let mut save = keeper.save;
                 if !save.args.is_object() {
@@ -2667,13 +2744,15 @@ mod builtin {
                             p.history_pos.checked_sub(steps)
                         };
                         pos.and_then(|pos| {
-                            Some((pos, p.history.get(pos)?.clone(), p.selection.cursor))
+                            let location = p.history.get(pos)?.clone();
+                            Some((pos, location, p.filter_at(pos), p.selection.cursor))
                         })
                     };
-                    if let Some((pos, loc, left)) = target {
-                        app.show_again(pane, &loc, |p, shown| {
+                    if let Some((pos, loc, filter, left)) = target {
+                        app.show_again(pane, &loc, filter.as_ref(), |p, shown| {
                             p.go_to(pos, &loc, left);
-                            // The step as shown, with the pane's lens.
+                            // The step as shown, written as its provider
+                            // writes it.
                             p.replace_here(shown.clone());
                         })?;
                     }
@@ -3803,6 +3882,77 @@ mod tests {
             .unwrap()
             .take_step_back(from, &a, None);
         assert_eq!(history(), (vec![a.clone(), b, c, a], 3));
+    }
+
+    /// Back, Forward and the field's step taken back show a folder filtered
+    /// as it was when the pane left it (ADR-109), as does a closed tab
+    /// opened again; a place shown as kept is filtered by its filter alone.
+    /// With no reader, a filter is of names, and stays one.
+    #[test]
+    fn each_step_is_shown_with_what_filtered_it() {
+        use crate::Location;
+        let tmp = tempfile::tempdir().unwrap();
+        let [a, b] = ["it's a", "b"].map(|name| {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir(&dir).unwrap();
+            Location::from_path(dir)
+        });
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        let first = app.workspace.read().active_id();
+        let run = |name: &str, args: serde_json::Value| {
+            app.dispatch(&super::Invocation::with_args(name, &args))
+                .unwrap();
+        };
+        let shown = |pane: super::PaneId| {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            (p.location().cloned(), p.filter().map(str::to_owned))
+        };
+        let at = |location: &Location, filter: Option<&str>| {
+            (Some(location.clone()), filter.map(str::to_owned))
+        };
+        app.navigate(first, &a).unwrap();
+        run(
+            "filter",
+            serde_json::json!({ "text": "dunes", "pane": first }),
+        );
+        app.navigate(first, &b).unwrap();
+        assert_eq!(shown(first), at(&b, None), "words go with the location");
+        run(
+            "filter",
+            serde_json::json!({ "text": "été", "pane": first }),
+        );
+        run("back", serde_json::json!({ "pane": first }));
+        assert_eq!(shown(first), at(&a, Some("dunes")));
+        run("forward", serde_json::json!({ "pane": first }));
+        assert_eq!(shown(first), at(&b, Some("été")));
+        // The field's own step, taken back: the folder as it was left.
+        app.step_here(first).unwrap();
+        app.navigate_in_place(first, &a).unwrap();
+        app.take_step_back(first).unwrap();
+        assert_eq!(shown(first), at(&b, Some("été")));
+        // Shown as kept: its filter alone, a step of its own.
+        app.navigate_as_kept(first, &a, Some("kept")).unwrap();
+        assert_eq!(shown(first), at(&a, Some("kept")));
+        run("back", serde_json::json!({ "pane": first }));
+        assert_eq!(shown(first), at(&b, Some("été")));
+
+        // A closed tab opened again: each step as it was left.
+        let (tab, pane) = app.new_tab(Some(first), Some(a.clone()), true).unwrap();
+        run("filter", serde_json::json!({ "text": "x", "pane": pane }));
+        app.navigate(pane, &b).unwrap();
+        run("filter", serde_json::json!({ "text": "y", "pane": pane }));
+        app.close_tab(tab).unwrap();
+        let tab = app.reopen_tab(None).unwrap().expect("a tab to reopen");
+        let pane = app.workspace.read().tab(tab).unwrap().active;
+        assert_eq!(shown(pane), at(&b, Some("y")));
+        run("back", serde_json::json!({ "pane": pane }));
+        assert_eq!(shown(pane), at(&a, Some("x")));
+        // A tab opened as kept: its filter alone.
+        let (_, kept) = app
+            .new_tab_as_kept(Some(pane), b.clone(), Some("z"), true)
+            .unwrap();
+        assert_eq!(shown(kept), at(&b, Some("z")));
     }
 
     /// What an agent's call opens is checked as it resolves, never as its

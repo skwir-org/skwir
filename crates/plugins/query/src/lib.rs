@@ -30,18 +30,18 @@ use skwir_core::command::{Invocation, NoArgs, Outcome, Topic};
 use skwir_core::location::Location;
 use skwir_core::os_path::PathArg;
 use skwir_core::plugin::Plugin;
-use skwir_core::registry::{Keeper, KeyBinding, MenuItem, Place, Reorder};
+use skwir_core::registry::{Keeper, KeyBinding, MenuItem, Opens, Place, Reorder};
 use skwir_core::scheduler::Priority;
 use skwir_core::settings::SettingSpec;
 use skwir_core::workspace::PaneId;
 
 pub use provider::{QueryProvider, SCHEME};
-use saved::Edit;
 pub use saved::SavedQuery;
+use saved::{Edit, Key, KeyArg};
 
 const ID: &str = "query";
 const SAVED_KEY: &str = "query.saved";
-/// The sidebar section of saved searches.
+/// The sidebar section of saved searches and saved places, "Saved".
 const GROUP: &str = "searches";
 
 /// The query plugin.
@@ -90,15 +90,22 @@ struct ForgetRecentArgs {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct SaveArgs {
-    /// The search; the one the pane shows when omitted.
+    /// The search, or with `at` what filters the place; what the pane
+    /// shows when omitted (ADR-109): its search, or its location with its
+    /// filter.
     #[serde(default)]
     expr: Option<String>,
+    /// Where a saved place is (a path or `scheme:rest`), shown filtered by
+    /// `expr` alone; a search is saved when omitted.
+    #[serde(default)]
+    at: Option<PathArg>,
     /// Its name in the sidebar; made from the search when omitted.
     #[serde(default)]
     name: Option<String>,
-    /// The saved search it goes before; last when omitted.
+    /// The saved entry it goes before (a search's `expr`, or
+    /// `{"expr", "at"}` for a place); last when omitted.
     #[serde(default)]
-    before: Option<String>,
+    before: Option<KeyArg>,
     #[serde(default)]
     pane: Option<PaneId>,
     /// Set by a toast's Undo: the result offers Redo instead.
@@ -108,9 +115,12 @@ struct SaveArgs {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct ForgetArgs {
-    /// The saved search.
+    /// The saved search, or a saved place's filter.
     #[serde(default)]
     expr: Option<String>,
+    /// Where the saved place is; a search when omitted.
+    #[serde(default)]
+    at: Option<PathArg>,
     /// Or its name, when `expr` is omitted.
     #[serde(default)]
     name: Option<String>,
@@ -120,8 +130,11 @@ struct ForgetArgs {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct RenameArgs {
-    /// The saved search.
+    /// The saved search, or a saved place's filter.
     expr: String,
+    /// Where the saved place is; a search when omitted.
+    #[serde(default)]
+    at: Option<PathArg>,
     /// Its new name; empty for one made from the search.
     name: String,
     #[serde(default)]
@@ -130,11 +143,15 @@ struct RenameArgs {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct MoveArgs {
-    /// The saved search.
+    /// The saved search, or a saved place's filter.
     expr: String,
-    /// The saved search it goes before; last when omitted.
+    /// Where the saved place is; a search when omitted.
     #[serde(default)]
-    before: Option<String>,
+    at: Option<PathArg>,
+    /// The saved entry it goes before (a search's `expr`, or
+    /// `{"expr", "at"}` for a place); last when omitted.
+    #[serde(default)]
+    before: Option<KeyArg>,
     #[serde(default)]
     undo: bool,
 }
@@ -219,9 +236,13 @@ struct RefineArgs {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 struct EditArgs {
-    /// The saved search.
+    /// The saved search, or a saved place's filter.
     expr: String,
-    /// What it searches for from now on; its name and place stay.
+    /// Where the saved place is; a search when omitted.
+    #[serde(default)]
+    at: Option<PathArg>,
+    /// What it searches for (or filters by) from now on; its name and
+    /// place stay.
     to: String,
     #[serde(default)]
     undo: bool,
@@ -368,14 +389,45 @@ fn check(expr: &str) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("query: {e}"))
 }
 
-/// The name a new name means: the one made from the search when empty.
-fn name_or_suggested(app: &App, name: &str, expr: &str) -> String {
+/// The name a new name means: the one made from the search, or the
+/// place and its filter, when empty.
+fn name_or_suggested(app: &App, name: &str, key: &Key) -> String {
     let name = name.trim();
     if name.is_empty() {
-        suggested_name(Some(app), expr)
+        kept_name(app, key)
     } else {
         name.to_owned()
     }
+}
+
+/// A saved entry as a command names it: its `expr`, and `at` for a place.
+fn key_of(expr: String, at: Option<&PathArg>) -> Key {
+    Key {
+        expr,
+        at: at.map(saved::at_location),
+    }
+}
+
+/// What `pane` shows, as it is kept (ADR-109): its search, else its
+/// location with what filters it.
+fn shown_key(app: &App, pane: PaneId) -> anyhow::Result<Key> {
+    let ws = app.workspace.read();
+    let p = ws
+        .pane(pane)
+        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+    let location = p
+        .location()
+        .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to save"))?;
+    if &*location.scheme == SCHEME {
+        return Ok(Key::from(location.rest.as_str()));
+    }
+    let filter = p
+        .filter()
+        .ok_or_else(|| anyhow::anyhow!("the pane shows neither a search nor a filter"))?;
+    Ok(Key {
+        expr: filter.to_owned(),
+        at: Some(location.clone()),
+    })
 }
 
 /// Apply `edit` to the saved searches and persist them: the edit that
@@ -392,9 +444,13 @@ fn apply_edit(app: &App, saving: &Mutex<()>, edit: &Edit) -> anyhow::Result<Opti
             let mut t = toml::Table::new();
             t.insert("name".into(), toml::Value::String(s.name.clone()));
             t.insert("expr".into(), toml::Value::String(s.expr.clone()));
-            toml::Value::Table(t)
+            if let Some(at) = &s.at {
+                t.insert("at".into(), toml::Value::try_from(at)?);
+            }
+            Ok(toml::Value::Table(t))
         })
-        .collect();
+        .collect::<Result<_, toml::ser::Error>>()
+        .map_err(|e| anyhow::anyhow!("the saved searches were not written: {e}"))?;
     app.settings.set(SAVED_KEY, toml::Value::Array(arr));
     app.settings
         .save()
@@ -405,30 +461,48 @@ fn apply_edit(app: &App, saving: &Mutex<()>, edit: &Edit) -> anyhow::Result<Opti
 
 /// The command that applies `edit`, from a toast's button.
 fn invocation(edit: &Edit, undo: bool) -> Invocation {
+    let key = edit.key();
     let (name, mut args) = match edit {
-        Edit::Add { name, expr, before } => (
+        Edit::Add { name, before, .. } => (
             "query.save",
-            serde_json::json!({ "expr": expr, "name": name, "before": before }),
+            serde_json::json!({ "name": name, "before": before.as_ref().map(Key::json) }),
         ),
-        Edit::Remove { expr } => ("query.forget", serde_json::json!({ "expr": expr })),
-        Edit::Rename { expr, name } => (
-            "query.rename",
-            serde_json::json!({ "expr": expr, "name": name }),
-        ),
-        Edit::Move { expr, before } => (
+        Edit::Remove { .. } => ("query.forget", serde_json::json!({})),
+        Edit::Rename { name, .. } => ("query.rename", serde_json::json!({ "name": name })),
+        Edit::Move { before, .. } => (
             "query.move",
-            serde_json::json!({ "expr": expr, "before": before }),
+            serde_json::json!({ "before": before.as_ref().map(Key::json) }),
         ),
-        Edit::Change { expr, to } => ("query.edit", serde_json::json!({ "expr": expr, "to": to })),
+        Edit::Change { to, .. } => ("query.edit", serde_json::json!({ "to": to })),
     };
+    args["expr"] = serde_json::json!(key.expr);
+    if let Some(at) = &key.at {
+        args["at"] = serde_json::json!(at.arg());
+    }
     args["undo"] = serde_json::json!(undo);
     Invocation::with_args(name, &args)
 }
 
+/// The name a saved entry is given when none is: a search's from what it
+/// looks for and where (`suggested_name`), a saved place's from where it
+/// is and what filters it ("Pictures · kind:image", ADR-109).
+fn kept_name(app: &App, key: &Key) -> String {
+    match &key.at {
+        None => suggested_name(Some(app), &key.expr),
+        Some(at) => {
+            let place = app.location_title(at);
+            format!("{place} · {}", suggested_name(Some(app), &key.expr))
+        }
+    }
+}
+
 /// What an edit did, in a sentence, or what it found when it did nothing.
-/// `shown` is the search's name before the edit, when it was saved.
+/// `shown` is the entry's name before the edit, when it was saved.
 fn describe(app: &App, edit: &Edit, shown: Option<&str>, done: bool) -> Option<String> {
-    let name = || shown.map_or_else(|| suggested_name(Some(app), edit.expr()), str::to_owned);
+    let name = || shown.map_or_else(|| kept_name(app, edit.key()), str::to_owned);
+    if edit.key().at.is_some() {
+        return describe_place(edit, &name, done);
+    }
     Some(match (edit, done) {
         (Edit::Add { name: new, .. }, true) => format!("Saved search “{new}”"),
         (Edit::Add { .. }, false) => format!("This search is already saved as “{}”", name()),
@@ -441,6 +515,20 @@ fn describe(app: &App, edit: &Edit, shown: Option<&str>, done: bool) -> Option<S
         (Edit::Change { .. }, true) => format!("Changed saved search “{}”", name()),
         // Renamed to its own name, dropped where it was, edited to the same
         // search, or no longer saved: nothing to say.
+        (Edit::Rename { .. } | Edit::Move { .. } | Edit::Change { .. }, false) => return None,
+    })
+}
+
+/// `describe` for a saved place (ADR-109).
+fn describe_place(edit: &Edit, name: &dyn Fn() -> String, done: bool) -> Option<String> {
+    Some(match (edit, done) {
+        (Edit::Add { name: new, .. }, true) => format!("Saved “{new}”"),
+        (Edit::Add { .. }, false) => format!("This is already saved as “{}”", name()),
+        (Edit::Remove { .. }, true) => format!("Removed “{}” from Saved", name()),
+        (Edit::Remove { .. }, false) => "This is not saved".to_owned(),
+        (Edit::Rename { name: new, .. }, true) => format!("Renamed “{}” to “{new}”", name()),
+        (Edit::Move { .. }, true) => format!("Moved “{}”", name()),
+        (Edit::Change { .. }, true) => format!("Changed the filter of “{}”", name()),
         (Edit::Rename { .. } | Edit::Move { .. } | Edit::Change { .. }, false) => return None,
     })
 }
@@ -462,7 +550,7 @@ impl Editor {
             let Some(app) = weak.upgrade() else { return };
             let shown = saved(&app)
                 .into_iter()
-                .find(|s| s.expr == edit.expr())
+                .find(|s| s.key() == *edit.key())
                 .map(|s| s.name);
             match apply_edit(&app, &saving, &edit) {
                 Ok(Some(inverse)) => {
@@ -496,33 +584,56 @@ fn menu_item(title: &str, command: Invocation, order: i32, icon: &str) -> MenuIt
     MenuItem::new("place", title, icon, order, command)
 }
 
+/// A saved search or saved place as the sidebar's Saved section shows it:
+/// opened as it was kept (ADR-109), a search as its terms say, a place
+/// filtered by its filter alone.
 fn place(search: SavedQuery) -> Place {
-    let expr = serde_json::json!(search.expr);
+    let key = search.key();
+    let mut named = serde_json::json!({ "expr": search.expr });
+    if let Some(at) = &search.at {
+        named["at"] = serde_json::json!(at.arg());
+    }
+    let (kept, title, placeholder) = match &search.at {
+        None => (
+            "search",
+            "Edit saved search",
+            "kind:document modified:this-week *.pdf  (in: picks the root)",
+        ),
+        Some(_) => (
+            "filter",
+            "Edit filter",
+            "kind:image modified:this-year report",
+        ),
+    };
     let rename = Invocation::with_args(
         "ui.ask",
         &serde_json::json!({
-            "title": "Rename saved search",
+            "title": if search.at.is_none() { "Rename saved search" } else { "Rename" },
             "accept": "Rename",
-            "placeholder": "Name (empty: made from the search)",
+            "placeholder": format!("Name (empty: made from the {kept})"),
             "text": search.name,
             "command": "query.rename",
-            "args": { "expr": expr },
+            "args": named,
             "field": "name",
         }),
     );
     // Rename… and the item that removes it are the sidebar's, from
     // `rename` and `forget`.
     let menu = vec![menu_item(
-        "Edit Search…",
+        if search.at.is_none() {
+            "Edit Search…"
+        } else {
+            "Edit Filter…"
+        },
         Invocation::with_args(
             "ui.ask",
             &serde_json::json!({
-                "title": "Edit saved search",
+                "title": title,
                 "accept": "Save",
-                "placeholder": "kind:document modified:this-week *.pdf  (in: picks the root)",
+                "placeholder": placeholder,
                 "text": search.expr,
                 "command": "query.edit",
-                "args": { "expr": expr },
+                "args": named,
                 "field": "to",
             }),
         ),
@@ -530,23 +641,26 @@ fn place(search: SavedQuery) -> Place {
         210,
         "search",
     )];
+    let (location, opens) = match search.at {
+        None => (Location::new(SCHEME, search.expr), Opens::AsKept(None)),
+        Some(at) => (at, Opens::AsKept(Some(search.expr))),
+    };
     Place {
         menu,
-        forget: Some(Invocation::with_args(
-            "query.forget",
-            &serde_json::json!({ "expr": expr }),
-        )),
+        forget: Some(Invocation::with_args("query.forget", &named)),
         reorder: Some(Reorder {
-            command: Invocation::with_args("query.move", &serde_json::json!({ "expr": expr })),
-            before: expr,
+            command: Invocation::with_args("query.move", &named),
+            before: key.json(),
         }),
         rename: Some(rename),
-        ..Place::new(
-            GROUP,
-            search.name,
-            "folder-saved-search",
-            Location::new(SCHEME, search.expr),
-        )
+        opens,
+        // A folder may be both bookmarked and saved with a filter: each is
+        // a place of its own in the user's arrangement.
+        key: key
+            .at
+            .is_some()
+            .then(|| format!("{}\u{1f}{}", location, key.expr)),
+        ..Place::new(GROUP, search.name, "folder-saved-search", location)
     }
 }
 
@@ -712,23 +826,18 @@ impl Plugin for QueryPlugin {
             Topic::Find,
             "query.save",
             "Save search",
-            "Keep a search in the sidebar, the one the pane shows when `expr` is omitted",
+            "Keep a search in the sidebar's Saved, or with `at` a place and what filters it there, shown so when opened (ADR-109); what the pane shows when `expr` is omitted",
             move |a, app| {
-                let expr = if let Some(expr) = a.expr {
-                    expr
-                } else {
-                    let pane = app.pane_or_active(a.pane);
-                    app.pane_location(pane)
-                        .filter(|l| &*l.scheme == SCHEME)
-                        .map(|l| l.rest)
-                        .ok_or_else(|| anyhow::anyhow!("the pane is not showing a search"))?
+                let key = match a.expr {
+                    Some(expr) => key_of(expr, a.at.as_ref()),
+                    None => shown_key(app, app.pane_or_active(a.pane))?,
                 };
-                check(&expr)?;
-                let name = name_or_suggested(app, a.name.as_deref().unwrap_or_default(), &expr);
+                check(&key.expr)?;
+                let name = name_or_suggested(app, a.name.as_deref().unwrap_or_default(), &key);
                 let edit = Edit::Add {
                     name,
-                    expr,
-                    before: a.before,
+                    key,
+                    before: a.before.map(Key::from),
                 };
                 edits.run(app, edit, a.undo);
                 Ok(Outcome::Done)
@@ -741,18 +850,18 @@ impl Plugin for QueryPlugin {
             Topic::Find,
             "query.forget",
             "Remove saved search",
-            "Take a saved search out of the sidebar, named by its search or its name",
+            "Take a saved search out of the sidebar, named by its search (a saved place by its filter and `at`) or its name",
             move |a, app| {
-                let expr = match (a.expr, a.name) {
-                    (Some(expr), _) => expr,
+                let key = match (a.expr, a.name) {
+                    (Some(expr), _) => key_of(expr, a.at.as_ref()),
                     (None, Some(name)) => saved(app)
                         .into_iter()
                         .find(|s| s.name == name)
-                        .map(|s| s.expr)
+                        .map(|s| s.key())
                         .ok_or_else(|| anyhow::anyhow!("no saved search named “{name}”"))?,
                     (None, None) => anyhow::bail!("which saved search? pass its expr or name"),
                 };
-                edits.run(app, Edit::Remove { expr }, a.undo);
+                edits.run(app, Edit::Remove { key }, a.undo);
                 Ok(Outcome::Done)
             },
         );
@@ -765,8 +874,9 @@ impl Plugin for QueryPlugin {
             "Rename saved search",
             "Change the name a saved search shows in the sidebar",
             move |a, app| {
-                let name = name_or_suggested(app, &a.name, &a.expr);
-                edits.run(app, Edit::Rename { expr: a.expr, name }, a.undo);
+                let key = key_of(a.expr, a.at.as_ref());
+                let name = name_or_suggested(app, &a.name, &key);
+                edits.run(app, Edit::Rename { key, name }, a.undo);
                 Ok(Outcome::Done)
             },
         );
@@ -780,8 +890,8 @@ impl Plugin for QueryPlugin {
             "Put a saved search before another in the sidebar, or last",
             move |a, app| {
                 let edit = Edit::Move {
-                    expr: a.expr,
-                    before: a.before,
+                    key: key_of(a.expr, a.at.as_ref()),
+                    before: a.before.map(Key::from),
                 };
                 edits.run(app, edit, a.undo);
                 Ok(Outcome::Done)
@@ -794,11 +904,12 @@ impl Plugin for QueryPlugin {
             Topic::Find,
             "query.edit",
             "Edit saved search",
-            "Change what a saved search looks for; its name and place in the sidebar stay",
+            "Change what a saved search looks for, or what filters a saved place; its name and place in the sidebar stay",
             move |a, app| {
                 let to = a.to.trim().to_owned();
                 check(&to)?;
-                edits.run(app, Edit::Change { expr: a.expr, to }, a.undo);
+                let key = key_of(a.expr, a.at.as_ref());
+                edits.run(app, Edit::Change { key, to }, a.undo);
                 Ok(Outcome::Done)
             },
         );
@@ -1135,9 +1246,23 @@ impl Plugin for QueryPlugin {
             ID,
             Keeper {
                 scheme: SCHEME.into(),
+                filtered: false,
                 save: Invocation::new("query.save"),
                 save_title: "Save this search".into(),
                 forget_title: "Remove saved search".into(),
+                keeps: None,
+            },
+        );
+        // Anything shown filtered is kept with its filter, beside the
+        // saved searches (ADR-109): the filter is this plugin's to read.
+        app.registry.keepers.add(
+            ID,
+            Keeper {
+                scheme: SCHEME.into(),
+                filtered: true,
+                save: Invocation::new("query.save"),
+                save_title: "Save with this filter".into(),
+                forget_title: "Remove from Saved".into(),
                 keeps: None,
             },
         );
@@ -2057,20 +2182,6 @@ mod tests {
             lens::without_lens("cat kind:image in:/x").as_deref(),
             Some("cat in:/x")
         );
-        // A step shown again takes the pane's lens in place of its own; one
-        // of the lens alone keeps it, as what it looks for.
-        assert_eq!(
-            lens::in_place_of_lens("cat kind:image tag:a in:/x", "kind:video").unwrap(),
-            "cat kind:video in:/x"
-        );
-        assert_eq!(
-            lens::in_place_of_lens("cat kind:image in:/x", "").unwrap(),
-            "cat in:/x"
-        );
-        assert_eq!(
-            lens::in_place_of_lens("modified:2024-05 in:/x", "kind:image").unwrap(),
-            "kind:image modified:2024-05 in:/x"
-        );
     }
 
     /// The designer's path: a chip on a folder starts a search there, each
@@ -2239,11 +2350,11 @@ mod tests {
         assert_eq!(filtered(), (None, None));
     }
 
-    /// The lens is the pane's, never a step's (ADR-107): a search shown
-    /// again by Back or Forward takes the pane's lens in place of the one
-    /// it was shown with, so a lens taken off meanwhile stays off.
+    /// Back and Forward show each step as it was last shown (ADR-109): a
+    /// search with the terms it had, lens included, whatever the pane's
+    /// lens became since; a folder filtered as it was when left.
     #[test]
-    fn back_and_forward_bring_no_lens_back() {
+    fn back_and_forward_show_each_step_as_it_was() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("it's here");
         std::fs::create_dir(&root).unwrap();
@@ -2268,8 +2379,8 @@ mod tests {
                 .map(|e| e.name_str().into_owned())
                 .collect()
         };
-        app.navigate(pane, &Location::from_path(root.join("pics")))
-            .unwrap();
+        let pics = Location::from_path(root.join("pics"));
+        app.navigate(pane, &pics).unwrap();
         assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
         run(
             "query.narrow",
@@ -2281,24 +2392,150 @@ mod tests {
             serde_json::json!({ "expr": "cat OR notes", "root": root_arg, "pane": pane }),
         );
         assert_eq!(names(), set(&["cat.png"]), "the lens brought in");
+        let search = app.pane_location(pane).unwrap();
         run("back", serde_json::json!({ "pane": pane }));
-        assert_eq!(lens().as_deref(), Some("kind:image"));
-        // Taken off; Forward shows the search with the pane's lens: none.
+        assert_eq!(app.pane_location(pane), Some(pics.clone()));
+        assert_eq!(lens().as_deref(), Some("kind:image"), "as it was left");
+        // Taken off; Forward shows the search as it was, its lens with it.
         run("query.narrow", serde_json::json!({ "pane": pane }));
-        run("forward", serde_json::json!({ "pane": pane }));
         assert_eq!(lens(), None);
-        assert_eq!(names(), set(&["cat.png", "notes.txt"]));
-        // Another lens put on meanwhile is the one it takes.
+        run("forward", serde_json::json!({ "pane": pane }));
+        assert_eq!(app.pane_location(pane), Some(search.clone()));
+        assert_eq!(lens().as_deref(), Some("kind:image"));
+        assert_eq!(names(), set(&["cat.png"]));
+        // The folder as it was last left, filtered by nothing now; another
+        // lens put on there stays its own.
         run("back", serde_json::json!({ "pane": pane }));
+        assert_eq!(lens(), None);
         run(
             "query.narrow",
             serde_json::json!({ "facet": "kind", "value": "text", "pane": pane }),
         );
         run("forward", serde_json::json!({ "pane": pane }));
+        assert_eq!(lens().as_deref(), Some("kind:image"));
+        assert_eq!(names(), set(&["cat.png"]));
+        run("back", serde_json::json!({ "pane": pane }));
         assert_eq!(lens().as_deref(), Some("kind:text"));
-        assert_eq!(names(), set(&["notes.txt"]));
         let history = app.workspace.read().pane(pane).unwrap().history.clone();
         assert_eq!(history.len(), 2, "{history:?}");
+    }
+
+    /// What a pane shows filtered is kept with its filter (ADR-109): Keep
+    /// saves the place beside the saved searches, its button filled only
+    /// for it as filtered so, and opening it shows it filtered by its
+    /// filter alone, as a saved search opens with its own terms alone,
+    /// whatever lens the pane has.
+    #[test]
+    fn a_place_is_kept_with_its_filter_and_opened_as_kept() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("it's here");
+        std::fs::create_dir(&root).unwrap();
+        tree(&root);
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        app.plugins.add(Arc::new(QueryPlugin::default()), &app);
+        let pane = app.workspace.read().active_id();
+        let run = |inv: Invocation| {
+            app.dispatch(&inv.with("pane", pane)).unwrap();
+            assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        };
+        let narrow = |kind: Option<&str>| {
+            let args = match kind {
+                Some(kind) => serde_json::json!({ "facet": "kind", "value": kind }),
+                None => serde_json::json!({}),
+            };
+            run(Invocation::with_args("query.narrow", &args));
+        };
+        let shown = || {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            (
+                p.location().cloned(),
+                p.filter().map(str::to_owned),
+                p.lens().map(|l| l.words.to_string()),
+            )
+        };
+        let names = || -> BTreeSet<String> {
+            let ws = app.workspace.read();
+            let p = ws.pane(pane).unwrap();
+            p.order()
+                .iter()
+                .filter_map(|id| p.entry(*id))
+                .filter(|e| !e.is_dir())
+                .map(|e| e.name_str().into_owned())
+                .collect()
+        };
+        let docs = Location::from_path(root.join("docs"));
+        app.navigate(pane, &docs).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        narrow(Some("text"));
+        run(Invocation::new("keep"));
+        let kept = saved(&app);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0].expr, "kind:text");
+        assert_eq!(kept[0].at.as_ref(), Some(&docs));
+        assert!(kept[0].name.starts_with("docs · "), "{}", kept[0].name);
+        let place = app
+            .registry
+            .places
+            .find(|p| p.is_kept_as(&docs, Some("kind:text")))
+            .expect("the place kept as shown");
+        assert!(
+            app.registry
+                .places
+                .find(|p| p.is_kept_as(&docs, None))
+                .is_none(),
+            "the folder filtered by nothing is not it"
+        );
+        // A search saved too, its lens its own terms.
+        let search = location_for("cat OR notes", Some(&root));
+        run(Invocation::with_args(
+            "query.save",
+            &serde_json::json!({ "expr": search.rest }),
+        ));
+        assert_eq!(saved(&app).len(), 2);
+        let saved_search = app
+            .registry
+            .places
+            .find(|p| p.location == search)
+            .expect("the saved search");
+
+        // Elsewhere, with another lens: each opens as it was kept.
+        app.navigate(pane, &Location::from_path(root.join("pics")))
+            .unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(10)));
+        narrow(Some("image"));
+        run(place.open());
+        assert_eq!(
+            shown(),
+            (
+                Some(docs.clone()),
+                Some("kind:text".to_owned()),
+                Some("kind:text".to_owned())
+            )
+        );
+        assert_eq!(names(), set(&["notes.txt"]));
+        narrow(Some("image"));
+        run(saved_search.open());
+        assert_eq!(shown().0, Some(search.clone()));
+        assert_eq!(shown().2, None, "the pane's lens left out");
+        assert_eq!(names(), set(&["cat.png", "notes.txt"]));
+        // A bookmark-like place, kept with no filter, takes the lens.
+        narrow(Some("image"));
+        run(Invocation::navigate(&docs));
+        assert_eq!(shown().2.as_deref(), Some("kind:image"));
+
+        app.dispatch(&Invocation::with_args(
+            "query.forget",
+            &serde_json::json!({ "expr": "kind:text", "at": docs.arg() }),
+        ))
+        .unwrap();
+        assert_eq!(saved(&app).len(), 1);
+        assert!(
+            app.registry
+                .places
+                .find(|p| p.is_kept_as(&docs, Some("kind:text")))
+                .is_none()
+        );
     }
 
     /// Answers `taken` from a text file holding the clock's digits.

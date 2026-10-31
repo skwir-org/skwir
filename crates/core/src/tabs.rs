@@ -8,6 +8,7 @@
 //! window's tabs were when it closed, for the next start.
 
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,7 +19,7 @@ use crate::entry::EntryId;
 use crate::location::{Location, SortSpec};
 use crate::os_path::PathArg;
 use crate::settings::{STARTUP, SettingSpec};
-use crate::workspace::{PaneId, Selection, TabId};
+use crate::workspace::{PaneId, Selection, StepLeft, TabId};
 
 /// Application data: the tabs the window showed when it closed.
 pub const LAST_TABS: &str = "core.last_tabs";
@@ -26,6 +27,15 @@ pub const LAST_TABS: &str = "core.last_tabs";
 /// Whether tabs not shown let go of their listings (the default), or all
 /// stay listed and current.
 pub const SLEEP_KEY: &str = "core.sleep_hidden_tabs";
+
+/// What a new tab's pane is filtered by.
+enum Filtered {
+    /// The lens of the pane it opens from (ADR-107).
+    Lens,
+    /// A place as it was kept (ADR-109): this filter alone, as its reader
+    /// read it.
+    Kept(Option<(Arc<str>, Option<crate::workspace::ReadFilter>)>),
+}
 
 /// How many closed tabs can be reopened.
 const CLOSED_KEPT: usize = 16;
@@ -44,6 +54,9 @@ struct ClosedTab {
 struct ClosedPane {
     history: Vec<Location>,
     history_pos: usize,
+    /// What each step had when left, the one shown's filter as it was
+    /// (ADR-109).
+    steps: Vec<StepLeft>,
     sort: SortSpec,
     selection: Selection,
 }
@@ -296,6 +309,34 @@ impl App {
         location: Option<Location>,
         show: bool,
     ) -> anyhow::Result<(TabId, PaneId)> {
+        self.new_tab_as(from, location, Filtered::Lens, show)
+    }
+
+    /// A new tab showing `location` as it was kept (ADR-109: a saved place,
+    /// a saved search), filtered by `filter` alone, with `from`'s sort: as
+    /// `new_tab`, but the pane's lens is not brought in.
+    pub fn new_tab_as_kept(
+        &self,
+        from: Option<PaneId>,
+        location: Location,
+        filter: Option<&str>,
+        show: bool,
+    ) -> anyhow::Result<(TabId, PaneId)> {
+        // Read before the workspace's lock: the reader is a plugin's.
+        let filter = self
+            .kept_filter(filter)
+            .and_then(|filter| self.read_as_left(&filter));
+        self.new_tab_as(from, Some(location), Filtered::Kept(filter), show)
+    }
+
+    /// `new_tab`, its pane filtered as `filtered` says.
+    fn new_tab_as(
+        &self,
+        from: Option<PaneId>,
+        location: Option<Location>,
+        filtered: Filtered,
+        show: bool,
+    ) -> anyhow::Result<(TabId, PaneId)> {
         let (tab, pane) = {
             let mut ws = self.workspace.write();
             let from = from.unwrap_or_else(|| ws.active_id());
@@ -316,7 +357,10 @@ impl App {
             };
             let (tab, panes) = ws.add_dormant_tab(at, vec![(location, sort)]);
             if let Some(p) = ws.pane_mut(panes[0]) {
-                p.carry(lens);
+                match filtered {
+                    Filtered::Kept(filter) => p.filter_as_left(filter),
+                    Filtered::Lens => p.carry(lens),
+                }
             }
             if !show {
                 ws.opened_beside(tab);
@@ -357,6 +401,7 @@ impl App {
             .map(|p| ClosedPane {
                 history: p.history.clone(),
                 history_pos: p.history_pos,
+                steps: p.steps_left(),
                 sort: p.sort,
                 selection: p.kept_selection().clone(),
             })
@@ -408,6 +453,18 @@ impl App {
         let Some(closed) = closed else {
             return Ok(None);
         };
+        // What filtered each pane's step shown, read before the
+        // workspace's lock: the reader is a plugin's.
+        let filters: Vec<_> = closed
+            .panes
+            .iter()
+            .map(|p| {
+                p.steps
+                    .get(p.pos())
+                    .and_then(StepLeft::filter)
+                    .and_then(|filter| self.read_as_left(filter))
+            })
+            .collect();
         let tab = {
             let mut ws = self.workspace.write();
             let (tab, ids) = ws.add_dormant_tab(
@@ -418,10 +475,12 @@ impl App {
                     .map(|p| (p.history[p.pos()].clone(), p.sort))
                     .collect(),
             );
-            for (id, record) in ids.iter().zip(closed.panes) {
+            for ((id, record), filter) in ids.iter().zip(closed.panes).zip(filters) {
                 if let Some(p) = ws.pane_mut(*id) {
                     p.history_pos = record.pos();
                     p.history = record.history;
+                    p.set_steps_left(record.steps);
+                    p.filter_as_left(filter);
                     p.set_restore(Some(record.selection));
                 }
             }
@@ -612,6 +671,13 @@ pub struct NewTabArgs {
     /// the tab shown, beside it.
     #[serde(default = "shown_by_default")]
     pub show: bool,
+    /// Show `location` as it was kept (ADR-109: a saved place, a saved
+    /// search), filtered by `filter` alone, not with the pane's lens.
+    #[serde(default)]
+    pub as_kept: bool,
+    /// With `as_kept`: what filters it, as the `filter` command's `text`.
+    #[serde(default)]
+    pub filter: Option<String>,
 }
 
 fn shown_by_default() -> bool {
@@ -707,7 +773,12 @@ pub(crate) fn register(app: &App) {
         "Open a tab showing a location, or what the pane shows; shown at once unless `show` is false",
         |a, app| {
             let location = a.location.map(|l| Location::parse_os(l.as_os_str()));
-            let (tab, pane) = app.new_tab(a.pane, location, a.show)?;
+            let (tab, pane) = match (a.as_kept, location) {
+                (true, Some(location)) => {
+                    app.new_tab_as_kept(a.pane, location, a.filter.as_deref(), a.show)?
+                }
+                (_, location) => app.new_tab(a.pane, location, a.show)?,
+            };
             Ok(Outcome::Value(serde_json::json!({ "tab": tab, "pane": pane })))
         },
     )

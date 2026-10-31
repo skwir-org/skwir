@@ -96,11 +96,11 @@ impl LocationProvider for QueryProvider {
     }
 
     /// A search holds a lens in its own terms (ADR-107): one brought in is
-    /// added to them (`facets::with_lens`), or, for a step shown again,
-    /// takes the place of the one they held (`lens::in_place_of_lens`);
-    /// what of them the listing can decide is the lens it then holds. One
-    /// whose terms take nothing new is shown as it is written; one that
-    /// does not read says what is wrong, and the pane keeps its lens.
+    /// added to them (`facets::with_lens`); one typed, kept or shown again
+    /// as it was (ADR-109) is as written. What of them the listing can
+    /// decide is the lens it then holds. One whose terms take nothing new
+    /// is shown as it is written; one that does not read says what is
+    /// wrong, and the pane keeps its lens.
     fn lensed(
         &self,
         location: &Location,
@@ -116,7 +116,6 @@ impl LocationProvider for QueryProvider {
         let brought = match bring {
             Bring::Nothing => Ok(as_written.clone()),
             Bring::Added => crate::facets::with_lens(expr, words),
-            Bring::InPlace => crate::lens::in_place_of_lens(expr, words),
         };
         let shown = match brought {
             Ok(brought) if brought != as_written => Location::new(SCHEME, brought),
@@ -2032,7 +2031,7 @@ mod tests {
             crate::lang::parse(&broken.rest).is_err(),
             "it does not read"
         );
-        for bring in [Bring::Added, Bring::InPlace, Bring::Nothing] {
+        for bring in [Bring::Added, Bring::Nothing] {
             let (shown, held) = provider
                 .lensed(&broken, Some(&lens), bring)
                 .expect("a search answers");
