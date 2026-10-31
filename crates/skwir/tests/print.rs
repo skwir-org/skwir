@@ -221,7 +221,7 @@ fn a_booklet_saved_folds_two_pages_to_a_landscape_side() {
     let document = lopdf::Document::load(&booklet).unwrap();
     let pages = document.get_pages();
     assert!(
-        pages.len() >= 2 && pages.len() % 2 == 0,
+        pages.len() >= 2 && pages.len().is_multiple_of(2),
         "{} sides",
         pages.len()
     );
