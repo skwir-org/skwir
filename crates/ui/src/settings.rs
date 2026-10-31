@@ -627,7 +627,7 @@ pub fn declare(app: &App) {
         SettingSpec::choice(
             CODE_ENGINE_KEY,
             "Grammars",
-            "Which grammars color a language that both bat and a tree-sitter grammar found below know. bat first colors it with bat's grammar, or one you added to bat or Sublime Text; Tree-sitter first with the tree-sitter grammar. A language only one of them knows is colored by that one, so a tree-sitter grammar always colors a language bat does not know. Tree-sitter colors what the preview holds whole; a longer file is colored by bat, else shown plain.",
+            "Which grammar colors a language that both bat and a tree-sitter grammar found below know. With bat first, bat's grammar colors it, or one you added to bat or Sublime Text; with Tree-sitter first, the tree-sitter grammar. A language only one of them knows is colored by that one, so a tree-sitter grammar always colors a language bat does not know. Tree-sitter colors what the preview holds whole; a longer file is colored by bat, else shown plain.",
             skwir_platform::highlight::First::CHOICES[0].0,
             &skwir_platform::highlight::First::CHOICES,
         )
@@ -637,7 +637,7 @@ pub fn declare(app: &App) {
         SettingSpec::records(
             GRAMMARS_KEY,
             "Grammars added",
-            "The grammars you added to bat (in its syntaxes folder) and to Sublime Text (its packages) color the files they name, over bat's own grammar for a language they share; bat's folder comes last. Each is listed with what it colors, or why it was left out.",
+            "The grammars you added to bat (in its syntaxes folder) and to Sublime Text (its packages) color the files they name. They come before bat's own grammar for a language they share, bat's folder last. Each is listed with what it colors, or why it was left out.",
             "Grammar",
             vec![
                 skwir_core::settings::RecordField::text("name", "Name", "", ""),
@@ -651,7 +651,7 @@ pub fn declare(app: &App) {
         SettingSpec::records(
             TREE_SITTER_KEY,
             "Tree-sitter grammars",
-            "The tree-sitter grammars found where Skwir (its grammars folder), the tree-sitter CLI, Zed, Helix, Neovim, the system and Emacs keep them, each with the files it colors or why it is not used. A grammar without queries borrows its language's from another; languages.toml in Skwir's grammars folder says what files a language colors.",
+            "The tree-sitter grammars found, each with the files it colors or why it is not used. They are looked for in Skwir's grammars folder and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar without queries borrows its language's from another; languages.toml in Skwir's grammars folder says what files a language colors.",
             "Grammar",
             vec![
                 skwir_core::settings::RecordField::text("name", "Language", "", ""),
