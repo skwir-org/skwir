@@ -185,6 +185,15 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   (`PreviewResult::page_side`), which is the reader's from then on. A
   fixed 2048 px drew a cover of two JPEG 2000 scans in 3 s in a panel
   that needed 512 px (0.3 s).
+- A document opening (nothing of it shown yet, never a turn) on a page
+  asked larger than the smallest step has that page drawn at the step
+  first (`reader_scroll::draft_side`), sent as the wait's picture
+  (previews.md, the desktop's thumbnail) marked as a page (its
+  `page_side`), so it stands where the page will whatever the file's
+  type (`PreviewState::placeholder_page`). A page slow to draw shows
+  blurred once the wait has lasted, then sharp in place; one quick to
+  draw never shows it. It costs that small render: 2 ms on a page of
+  text, 0.3 s for the scans above, before their 3 s.
 - A cached page remembers the side it was asked at, so an engine with no
   more pixels (a small picture) is not asked again.
 

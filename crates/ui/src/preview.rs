@@ -551,9 +551,13 @@ pub struct PreviewState {
     pub(crate) fit_width: bool,
     /// Where a picture zoomed past the panel is scrolled to (`picture`).
     pub(crate) picture_scroll: gpui::ScrollHandle,
-    /// The file's thumbnail while its preview is on its way: shown only
-    /// once the wait has lasted, as "Loading…" is (`body`).
+    /// The file's thumbnail while its preview is on its way, or the page a
+    /// document opens on drawn small (`reader_scroll::draft_side`): shown
+    /// only once the wait has lasted, as "Loading…" is (`body`).
     pub(crate) placeholder: Option<PreviewContent>,
+    /// Whether the placeholder is a page drawn by the document's reader,
+    /// which stands where the page will, whatever the file's type.
+    pub(crate) placeholder_page: bool,
     /// The side an image was asked to be decoded at for a zoom
     /// (`sharpen_picture`); 0 for the display side.
     pub(crate) picture_side: u32,
@@ -867,6 +871,7 @@ impl Default for PreviewState {
             fit_width: false,
             picture_scroll: gpui::ScrollHandle::new(),
             placeholder: None,
+            placeholder_page: false,
             picture_side: 0,
             page_side: None,
             area: Arc::default(),
@@ -2228,6 +2233,8 @@ impl Shell {
         // lasted (`BUSY_AFTER`), in place of "Loading…", so a preview that
         // comes at once never flashes it.
         if result.placeholder {
+            // A page drawn small says the side it was asked at.
+            self.preview.placeholder_page = result.page_side.is_some();
             if let Some(PreviewContent::Image { image, .. }) =
                 self.preview.placeholder.replace(result.content)
             {
@@ -2955,6 +2962,51 @@ impl Shell {
                         // Before any page was shown, the side the content's
                         // area says, laid out for this preview meanwhile.
                         let side = page_side.unwrap_or_else(|| area.side(generation));
+                        // A document opening, before its page: the page
+                        // drawn small, kept aside as the thumbnail is, to
+                        // stand in for it once the wait has lasted. One
+                        // quick to draw never shows it.
+                        let small = crate::reader_scroll::draft_side(side)
+                            .filter(|_| show_thumbnail && !reused);
+                        let draft = small
+                            .and_then(|small| session.render(request.page, small, &cancel).ok())
+                            .and_then(|draft| {
+                                let (width, height) = (draft.width, draft.height);
+                                let image = crate::thumbs::page_image(
+                                    width,
+                                    height,
+                                    draft.pixels,
+                                    draft.order,
+                                )?;
+                                Some(PreviewContent::Image {
+                                    image,
+                                    width,
+                                    height,
+                                    detail: None,
+                                    document: None,
+                                    facts: Vec::new(),
+                                    pixels: Pixels::Own,
+                                    ink: None,
+                                })
+                            });
+                        if let Some(content) = draft
+                            && !cancel.is_cancelled()
+                        {
+                            let _ = tx.send(PreviewResult {
+                                generation,
+                                content,
+                                complete: false,
+                                session: None,
+                                media: None,
+                                sniffed: None,
+                                placeholder: true,
+                                closed_links: None,
+                                picture_source: None,
+                                // A page, drawn where the page will be.
+                                page_side: small,
+                            });
+                            wake();
+                        }
                         asked_side.set(Some(side));
                         let rendered =
                             session
@@ -5026,11 +5078,11 @@ pub(crate) fn on_paper(shell: &Shell) -> bool {
     !matches!(preview.content, Some(PreviewContent::Image { .. })) && placeholder(shell).is_none()
 }
 
-/// The thumbnail standing in for the preview, once the wait has lasted
-/// (`BUSY_AFTER`) and while nothing else is shown. Never a film's: it is
-/// the frame its thumbnailer chose, not the one the panel will show, so
-/// the wait ends on another picture. A track's is its cover, drawn in its
-/// player's figure.
+/// The thumbnail standing in for the preview, or a document's page drawn
+/// small, once the wait has lasted (`BUSY_AFTER`) and while nothing else
+/// is shown. Never a film's: it is the frame its thumbnailer chose, not
+/// the one the panel will show, so the wait ends on another picture. A
+/// track's is its cover, drawn in its player's figure.
 pub(crate) fn placeholder(shell: &Shell) -> Option<&PreviewContent> {
     let preview = &shell.preview;
     preview.placeholder.as_ref().filter(|_| {
@@ -5089,7 +5141,7 @@ pub(crate) fn content(
                 .min_h_0()
                 .flex()
                 .flex_col()
-                .child(if opens_as_pages(shell) {
+                .child(if opens_as_pages(shell) || p.placeholder_page {
                     crate::reader::page_placeholder(
                         Arc::clone(image),
                         (*width as f32, *height as f32),

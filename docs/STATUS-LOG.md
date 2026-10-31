@@ -7953,3 +7953,40 @@ larger.
 peek or the whole screen showing the first document; the other
 engines and books (the same job and side, not opened here); Windows
 and macOS, not compiled (`just check-cross` not run).
+
+### A document opens on its page drawn small first (2026-10-31)
+
+The second fix the user chose for the slow cover above: a page that is
+slow to draw shows at once, blurred, then sharp in place. A document
+opening (nothing of it shown yet, never a turn) on a page asked larger
+than the smallest step has that page drawn at 512 px first
+(`reader_scroll::draft_side`), sent as the wait's picture the way the
+desktop's thumbnail is (`placeholder: true`): it replaces "Loading…" (or
+the thumbnail) only once the wait has lasted `BUSY_AFTER`, so a page
+quick to draw never shows it. Its `page_side` marks it as a page
+(`PreviewState::placeholder_page`), drawn where the reader will draw it
+whatever the file's type (a thumbnail still stands as a page only for
+the names and types `opens_as_pages` lists). reader.md and previews.md
+say so.
+
+What it costs is that small render before the page: in the PDF helper,
+2 ms on a page of text (its page at 1536 px in 10 ms instead of 9), 12 ms
+on a page of one raw scan (23 ms instead of 20), and about 0.3 s for
+the JPEG 2000 cover before its 3 s, at a load near 1.
+
+**Checked:** a test of `draft_side`; rustfmt; clippy with `-D warnings`
+on skwir-ui, all targets; skwir-ui's tests (443). In a window (release
+build, Xvfb with lavapipe, the copy of the file, an 896 px panel, a fresh
+start), in two runs under other builds (a load of 13 measured at the
+second): "Loading…" at 0.37 s, the page drawn small from 0.64 and
+0.73 s, where the page then stood, sharp at 7.1 s in the second; at a
+load of 43, the page small at 5.8 s. The
+helper alone at loads of 30 to 40: the page small in 1.2 to 2.5 s, sharp
+in 14.5 to 23 s. A page of text opened in the same panel was there 0.18 s
+after the click, without the stand-in.
+
+**Not checked:** a quiet machine in a window (the load never fell under
+2.5 in 15 minutes), so the timings above with the page small are
+inflated alike; the user's session (Wayland); a DjVu or a book opening
+on its page drawn small (the same path, not opened); Windows and macOS,
+not compiled (`just check-cross` not run).

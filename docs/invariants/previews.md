@@ -788,8 +788,10 @@ is still to come are in `docs/preview-frame.md`.
   where the preview will: an image's at the image's own size (from its
   header), so only sharpness changes; a document's where the reader
   draws page one; anything else at its proportions, as large as a
-  preview may be. A preview replaces it; a file with no picture of its
-  own (no preview for its type) keeps it. A film's never stands in: it
+  preview may be. A document's page drawn small by its reader takes its
+  place, sent the same way (reader.md, Coordinates and page size). A
+  preview replaces it; a file with no picture of its own (no preview for
+  its type) keeps it. A film's never stands in: it
   is another frame than the one the panel shows, so the wait would end
   on a different picture. It is the film's picture only when no frame
   comes (media.md, Posters).

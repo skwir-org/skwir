@@ -43,6 +43,15 @@ pub(crate) fn area_side(width: f32, height: f32) -> u32 {
     page_side((width * std::f32::consts::SQRT_2).min(height))
 }
 
+/// The side a document's page opened at `side` is first drawn at, to stand
+/// in for it while it is drawn (`preview::placeholder`): the smallest
+/// step, when it is asked larger. A scan's images are read at a fraction
+/// of their size there: a page slow to draw shows at once, blurred.
+pub(crate) fn draft_side(side: u32) -> Option<u32> {
+    let smallest = SIDE_STEP as u32;
+    (side > smallest).then_some(smallest)
+}
+
 /// The side a page shown in the preview's content area would be rendered
 /// at, as the area was last laid out (`preview::watch_area`), for the
 /// preview of each generation: the first page of the first document is
@@ -1305,6 +1314,15 @@ mod tests {
         assert_eq!(area_side(320., 1100.), 512);
         // The panel at the bottom, wide and short: a page as tall as it.
         assert_eq!(area_side(2500., 500.), 512);
+    }
+
+    /// A document opens on its page drawn at the smallest step first, to
+    /// stand in for it, unless that is the side it is asked at.
+    #[test]
+    fn a_page_opened_larger_than_the_smallest_step_is_drawn_small_first() {
+        assert_eq!(draft_side(512), None);
+        assert_eq!(draft_side(1024), Some(512));
+        assert_eq!(draft_side(skwir_core::document::MAX_SIDE), Some(512));
     }
 
     /// The job rendering a first page takes the side measured for its own

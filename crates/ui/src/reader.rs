@@ -611,8 +611,9 @@ pub fn page_element(
         .into_any_element()
 }
 
-/// A document's first page stood in for by its thumbnail while the reader
-/// opens it: where the reader will draw it, at the page's proportions: at
+/// A document's first page stood in for by its thumbnail, or by itself
+/// drawn small (`reader_scroll::draft_side`), while the reader opens and
+/// draws it: where the reader will draw it, at the page's proportions: at
 /// the top of the column and as wide as it fits when reading continuously,
 /// in the middle of the canvas a page at a time.
 pub(crate) fn page_placeholder(
