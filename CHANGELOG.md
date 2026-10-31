@@ -396,9 +396,11 @@ server and network. Undo history is cleared when Skwir exits.
   ever run on its system.
 - **Under the hood**: gpui from Zed's main of 2026-10-27, built with Rust
   1.99.1; PDFium chromium/8125 in the packages. tokio, rustls-webpki and
-  Wasmtime were updated for security advisories (Wasmtime 50.0.1 for
-  RUSTSEC-2026-0422, 0423 and 0424); Wasmtime 50 compiles each plugin from
-  outside once more, on its first start after the update. The packages
+  Wasmtime were updated for security advisories (RUSTSEC-2026-0422, 0423
+  and 0424); plugins from outside now run on Wasmtime 48.0.8, a long-term
+  release supported until 2028 and the one tree-sitter's grammars run on
+  (ADR-110), and each is compiled once more, on its first start after the
+  update. The packages
   suggest the tools remote folders use (sshfs, rclone, GVfs's backends,
   kio-fuse, rsync, FUSE, Avahi, wsdd).
 <!-- The review fixes of 2026-10-28 go above: an item each a user notices. -->

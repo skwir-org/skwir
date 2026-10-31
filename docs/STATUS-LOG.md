@@ -8141,3 +8141,30 @@ again when a file changes, the old one let go of.
 
 **Not checked:** a window (the Reading page's list); Windows and macOS
 (Sublime Text's folders there) not compiled for it.
+
+### G2: ADR-110, and the module helper on Wasmtime 48 (2026-10-31, Grammars and printing)
+
+ADR-110 accepted: tree-sitter grammars, native and WebAssembly, read by a
+helper, found where editors and the system keep them, bat first unless a
+setting says. tree-sitter 0.27's WebAssembly grammars run on
+`wasmtime-c-api-impl ^48`; the module helper moves from Wasmtime 50.0.1
+to 48.0.8 so both helpers share one Wasmtime. 48 is a long-term release
+(Wasmtime supports releases numbered by twelve for 24 months; others
+two), and 48.0.8 was published with 50.0.1 on 2026-10-29: `cargo deny`
+finds no advisory in it (RUSTSEC-2026-0422, 0423 and 0424 included).
+Cranelift moves from 0.137.1 to 0.135.8; the notices are made again.
+A plugin from outside is compiled once more on its first start, as the
+changelog says.
+
+**Checked:** `cargo deny check` (advisories, bans, licences, sources) on
+the lockfile alone; rustfmt; clippy with `-D warnings` on
+`skwir-module-worker` and `skwir-extend`; their nextest suites, 18
+passed: the module helper's own and `skwir-extend`'s, which build the
+workspace's modules (the template, the hex view, the Netpbm thumbnailer)
+and run them through the helper, privacy refusals included. The same 18
+passed earlier the same day in a scratch worktree with tree-sitter 0.27
+and its `wasm` feature in the same lockfile, resolving to that one
+Wasmtime 48.0.8.
+
+**Not checked:** Windows and macOS builds of the helper on 48 (not
+compiled for it).

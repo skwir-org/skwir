@@ -423,7 +423,7 @@ Apache License
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
 
-Used by: blake3 1.8.7, constant_time_eq 0.4.2, cranelift-assembler-x64 0.137.1, cranelift-bitset 0.137.1, dunce 1.0.5, pulley-interpreter 50.0.1, pulley-macros 50.0.1, rbook 0.7.12, rmcp 3.8.0, ryu 1.0.23, wasmtime-internal-component-macro 50.0.1, wasmtime-internal-component-util 50.0.1, wasmtime-internal-core 50.0.1, wasmtime-internal-jit-icache-coherence 50.0.1, wasmtime-internal-versioned-export-macros 50.0.1, wasmtime-internal-wit-bindgen 50.0.1
+Used by: blake3 1.8.7, constant_time_eq 0.4.2, cranelift-assembler-x64 0.135.8, cranelift-bitset 0.135.8, dunce 1.0.5, pulley-interpreter 48.0.8, pulley-macros 48.0.8, rbook 0.7.12, rmcp 3.8.0, ryu 1.0.23, wasmtime-internal-component-macro 48.0.8, wasmtime-internal-component-util 48.0.8, wasmtime-internal-core 48.0.8, wasmtime-internal-jit-icache-coherence 48.0.8, wasmtime-internal-versioned-export-macros 48.0.8, wasmtime-internal-wit-bindgen 48.0.8
 
 Apache License
 Version 2.0, January 2004
@@ -730,7 +730,7 @@ Apache License
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
 
-Used by: cranelift-bforest 0.137.1, cranelift-codegen 0.137.1, cranelift-codegen-shared 0.137.1, cranelift-control 0.137.1, cranelift-entity 0.137.1, cranelift-frontend 0.137.1, cranelift-native 0.137.1, regalloc2 0.15.2, target-lexicon 0.13.5, wasmtime 50.0.1, wasmtime-environ 50.0.1, wasmtime-internal-cranelift 50.0.1, wasmtime-internal-unwinder 50.0.1
+Used by: cranelift-bforest 0.135.8, cranelift-codegen 0.135.8, cranelift-codegen-shared 0.135.8, cranelift-control 0.135.8, cranelift-entity 0.135.8, cranelift-frontend 0.135.8, cranelift-native 0.135.8, regalloc2 0.15.2, target-lexicon 0.13.5, wasmtime 48.0.8, wasmtime-environ 48.0.8, wasmtime-internal-cranelift 48.0.8, wasmtime-internal-unwinder 48.0.8
 
 Apache License
                            Version 2.0, January 2004
@@ -2226,7 +2226,7 @@ Used by: untrusted 0.9.0
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: accesskit 0.24.1, accesskit_consumer 0.38.0, accesskit_windows 0.34.0, brotli-decompressor 5.0.3, chrono 0.4.45, djvu-bitmap 0.43.0, djvu-bzz 0.43.0, djvu-iff 0.43.0, djvu-iw44 0.43.0, djvu-jb2 0.43.0, djvu-pixmap 0.43.0, djvu-zp 0.43.0, libm 0.2.16, lyon 1.0.19, lyon_algorithms 1.0.22, lyon_geom 1.0.20, lyon_path 1.0.19, lyon_tessellation 1.0.23, md5 0.8.1, pdfium-render 0.9.4, profiling 1.0.18, profiling-procmacros 1.0.18, pulp-wasm-simd-flag 0.1.1, seahash 4.1.0, svg_fmt 0.4.5, taffy 0.15.0, wide 0.7.33, winapi-x86_64-pc-windows-gnu 0.4.0, windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.52.0, windows-sys 0.59.0, windows-sys 0.61.2, windows-targets 0.52.6, windows-threading 0.2.1, windows_x86_64_gnu 0.52.6, wuff 0.2.9, zune-inflate 0.2.54
+Used by: accesskit 0.24.1, accesskit_consumer 0.38.0, accesskit_windows 0.34.0, brotli-decompressor 5.0.3, chrono 0.4.45, djvu-bitmap 0.43.0, djvu-bzz 0.43.0, djvu-iff 0.43.0, djvu-iw44 0.43.0, djvu-jb2 0.43.0, djvu-pixmap 0.43.0, djvu-zp 0.43.0, libm 0.2.16, lyon 1.0.19, lyon_algorithms 1.0.22, lyon_geom 1.0.20, lyon_path 1.0.19, lyon_tessellation 1.0.23, md5 0.8.1, pdfium-render 0.9.4, profiling 1.0.18, profiling-procmacros 1.0.18, pulp-wasm-simd-flag 0.1.1, seahash 4.1.0, svg_fmt 0.4.5, taffy 0.15.0, wide 0.7.33, winapi-x86_64-pc-windows-gnu 0.4.0, windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.59.0, windows-sys 0.61.2, windows-targets 0.52.6, windows-threading 0.2.1, windows_x86_64_gnu 0.52.6, wuff 0.2.9, zune-inflate 0.2.54
 
 MIT License
 
@@ -2281,7 +2281,7 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: adler2 2.0.1, allocator-api2 0.2.21, anyhow 1.0.104, async-channel 2.5.0, async-executor 1.14.0, async-io 2.6.0, async-lock 3.4.2, async-process 2.5.0, async-recursion 1.2.0, async-task 4.7.1, async-trait 0.1.92, atomic-waker 1.1.2, blocking 1.7.0, concurrent-queue 2.5.0, displaydoc 0.2.7, dtoa 1.0.11, dyn-clone 1.0.20, endi 1.1.1, enumn 0.1.14, event-listener 5.4.2, event-listener-strategy 0.5.4, fast-float2 0.2.4, fastrand 2.5.0, flume 0.12.0, futures-lite 2.6.1, gstreamer 0.25.4, gstreamer-app 0.25.2, gstreamer-app-sys 0.25.4, gstreamer-base 0.25.4, gstreamer-base-sys 0.25.4, gstreamer-sys 0.25.4, gstreamer-video 0.25.4, gstreamer-video-sys 0.25.4, hashify 0.2.9, home 0.5.12, inventory 0.3.25, itoa 1.0.18, lazy_static 1.5.1, leb128fmt 0.1.0, mail-parser 0.11.9, minimal-lexical 0.2.1, once_cell 1.21.4, option-operations 0.6.1, ordered-stream 0.2.0, parking 2.2.1, paste 1.0.15, pastey 0.2.3, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, piper 0.2.5, polling 3.11.0, proc-macro-crate 3.5.0, proc-macro2 1.0.107, quote 1.0.47, ref-cast 1.0.27, ref-cast-impl 1.0.27, rustc-hash 2.1.3, rustix 1.1.6, rustversion 1.0.23, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_derive_internals 0.30.0, serde_json 1.0.154, serde_repr 0.1.21, servo_arc 0.4.3, smol_str 0.3.7, syn 2.0.119, syn 3.0.9, thiserror 2.0.21, thiserror-impl 2.0.21, typed-path 0.13.0, unicode-ident 1.0.27, waker-fn 1.2.0, wasm-encoder 0.261.0, wasm-metadata 0.261.0, wasmparser 0.261.0, wasmprinter 0.261.0, wit-component 0.261.0, wit-parser 0.261.0, zmij 1.0.23, zvariant_utils 4.2.0
+Used by: adler2 2.0.1, allocator-api2 0.2.21, anyhow 1.0.104, async-channel 2.5.0, async-executor 1.14.0, async-io 2.6.0, async-lock 3.4.2, async-process 2.5.0, async-recursion 1.2.0, async-task 4.7.1, async-trait 0.1.92, atomic-waker 1.1.2, blocking 1.7.0, concurrent-queue 2.5.0, displaydoc 0.2.7, dtoa 1.0.11, dyn-clone 1.0.20, endi 1.1.1, enumn 0.1.14, event-listener 5.4.2, event-listener-strategy 0.5.4, fast-float2 0.2.4, fastrand 2.5.0, flume 0.12.0, futures-lite 2.6.1, gstreamer 0.25.4, gstreamer-app 0.25.2, gstreamer-app-sys 0.25.4, gstreamer-base 0.25.4, gstreamer-base-sys 0.25.4, gstreamer-sys 0.25.4, gstreamer-video 0.25.4, gstreamer-video-sys 0.25.4, hashify 0.2.9, home 0.5.12, inventory 0.3.25, itoa 1.0.18, lazy_static 1.5.1, leb128fmt 0.1.0, mail-parser 0.11.9, minimal-lexical 0.2.1, once_cell 1.21.4, option-operations 0.6.1, ordered-stream 0.2.0, parking 2.2.1, paste 1.0.15, pastey 0.2.3, pin-project 1.1.13, pin-project-internal 1.1.13, pin-project-lite 0.2.17, piper 0.2.5, polling 3.11.0, proc-macro-crate 3.5.0, proc-macro2 1.0.107, quote 1.0.47, ref-cast 1.0.27, ref-cast-impl 1.0.27, rustc-hash 2.1.3, rustix 1.1.6, rustversion 1.0.23, semver 1.0.28, serde 1.0.229, serde_core 1.0.229, serde_derive 1.0.229, serde_derive_internals 0.30.0, serde_json 1.0.154, serde_repr 0.1.21, servo_arc 0.4.3, smol_str 0.3.7, syn 2.0.119, syn 3.0.9, thiserror 2.0.21, thiserror-impl 2.0.21, typed-path 0.13.0, unicode-ident 1.0.27, waker-fn 1.2.0, wasm-encoder 0.254.2, wasm-encoder 0.261.0, wasm-metadata 0.254.2, wasm-metadata 0.261.0, wasmparser 0.254.2, wasmparser 0.261.0, wasmprinter 0.254.2, wit-component 0.254.2, wit-component 0.261.0, wit-parser 0.254.2, wit-parser 0.261.0, zmij 1.0.23, zvariant_utils 4.2.0
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -4114,7 +4114,7 @@ SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: gimli 0.33.0, gimli 0.34.0, heck 0.5.0, unicode-bidi 0.3.18, unicode-properties 0.1.3, unicode-segmentation 1.13.3, unicode-width 0.2.3
+Used by: gimli 0.33.0, gimli 0.34.0, heck 0.5.0, linked-hash-map 0.5.6, unicode-bidi 0.3.18, unicode-properties 0.1.3, unicode-segmentation 1.13.3, unicode-width 0.2.3
 
 Copyright (c) 2015 The Rust Project Developers
 
@@ -5347,7 +5347,7 @@ SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: object 0.40.0
+Used by: object 0.39.1, object 0.40.0
 
 Copyright (c) 2015 The Gimli Developers
 
@@ -7487,6 +7487,33 @@ Used by: xmlwriter 0.1.0
 The MIT License (MIT)
 
 Copyright (c) 2019 Reizner Evgeniy
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------
+MIT License (MIT)
+
+Used by: yaml-rust 0.4.5
+
+The MIT License (MIT)
+
+Copyright (c) 2015 Chen Yuheng
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

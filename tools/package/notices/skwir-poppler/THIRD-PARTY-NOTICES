@@ -473,9 +473,9 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: getrandom 0.3.4
+Used by: getrandom 0.4.3
 
-Copyright (c) 2018-2025 The rust-random Project Developers
+Copyright (c) 2018-2026 The rust-random Project Developers
 Copyright (c) 2014 The Rust Project Developers
 
 Permission is hereby granted, free of charge, to any
