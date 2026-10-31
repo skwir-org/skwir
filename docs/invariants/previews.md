@@ -1415,7 +1415,12 @@ is still to come are in `docs/preview-frame.md`.
   (`inspector::VIEW_ONLY`) is done on it in the panel's place
   (`Shell::with_parked`, through `inspect_here`, never a command);
   another file opens in the member's place (`sibling`); anything else
-  first shows the container again.
+  first shows the container again. The wheel gives neither side the
+  keyboard: what it does is done on the view under it, never as a
+  command (a section turned, `inspect_wheel` and the pager's
+  `inspect_turn`, through `inspect_here`; a text's size,
+  `inspect_text_step`). As a command, a member's next section went to
+  the container's view, which closed the member.
 - Views are kept per member (`PreviewState::containers`, beside
   `nested`) and go with it when the panel goes up, their pictures
   evicted. While a member is on its way, its view is the one it was

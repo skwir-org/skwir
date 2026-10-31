@@ -7881,3 +7881,28 @@ is small beside selecting and drawing.
 **Not checked:** the user's session (Wayland); the board view; an input
 method composing a character; a release build's timings; Windows and
 macOS, not compiled (`just check-cross` not run).
+
+### A member's section turned under the wheel (2026-10-31)
+
+The user found that scrolling on past the bottom of a font opened from
+an archive closed the font. Reproduced in a window: the wheel at the
+sheet's end ran `ui.inspect` `page`, which acts on the side with the
+keyboard, and the keyboard was the archive's (the member was opened from
+its list), so `container_command` showed the archive again and asked it
+for the page. The member's › worked: a press gives its side the
+keyboard. The wheel gives neither side the keyboard, so both its turns
+(`inspect_wheel`, the pager's `inspect_turn`, which a text read a screen
+at a time in an archive would have hit too) now turn the view under it
+through `inspect_here`, as Ctrl and the wheel change its text size;
+previews.md says so.
+
+**Checked:** in a window (release build, Xvfb with lavapipe, a zip of a
+Noto font): before, the wheel past the specimen's end closed the member
+and the log showed `page` run; after, the same gesture turned to the
+next sheets with the member open, and back up past the top to the first
+sheet. rustfmt; clippy with `-D warnings` on skwir-ui, all targets;
+skwir-ui's tests.
+
+**Not checked:** a text read a screen at a time inside an archive (the
+pager's turn, changed alike); the user's session (Wayland); Windows and
+macOS, not compiled (`just check-cross` not run).
