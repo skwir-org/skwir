@@ -316,7 +316,8 @@ may have covered one: check the source before starting it. Work that
 closes an item removes its line; work that leaves one adds it here.
 
 **Planned** (in the sections below): Indexing and AI (Phase 7, designed
-2026-10-26: ADR-089 to ADR-095); skwird's steps (ADR-050); the desktop's colors on macOS and Windows (step E); Phase 5b
+2026-10-26: ADR-089 to ADR-095); [Grammars and
+printing](#grammars-and-printing) (2026-10-31); skwird's steps (ADR-050); the desktop's colors on macOS and Windows (step E); Phase 5b
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
@@ -1996,6 +1997,97 @@ recorded in its ADR: Tantivy dropped for trigrams (ADR-090);
 (ADR-093, ADR-094); natural language in the address is `query.ask` over
 the query language, not a `LocationProvider` of its own (ADR-095); the
 permission layer it needs exists (Phase 6, ADR-044).
+
+---
+
+## Grammars and printing
+
+Planned 2026-10-31 with the user from GitHub #3 (tree-sitter grammars)
+and #2 (print from the preview, a booklet mode). Two tracks, a step a
+commit; each step's checks and measurements go in `docs/STATUS-LOG.md`,
+what was only compiled said so there and here.
+
+**Goal:** code in any language a grammar exists for is colored, from
+grammars the user added to bat, Sublime Text or Skwir, or that an editor
+or the system installed (tree-sitter's included); whatever a preview
+shows can be printed, as it is or as a booklet, or saved as a PDF that a
+screen reader reads, from the window or a script.
+
+**Grammars** (#3):
+
+- **G0. The highlighter in `skwir-platform`.** The coloring engine
+  (bat's grammars and themes, `Highlighter`, `Resume`, `Palette` as plain
+  colors) moves out of `skwir-ui`'s `code_preview`, which keeps the
+  drawing, so a plugin colors code as the window does (printing, P3).
+  *Done when:* the code view and code blocks color as before and their
+  tests pass where they moved.
+- **G1. Grammars added to bat and Sublime Text** (`bat::syntaxes_dir`,
+  Sublime Text's `Packages` folders and zipped packages): their
+  `.sublime-syntax` files join bat's set, one of a language's name
+  taking its place as in bat. The set built with them is kept in
+  Skwir's cache, keyed by the versions and the files, so reading it
+  again stays as quick as bat's own (ADR-060); one that does not read is
+  named on the Reading page. *Done when:* a made-up language is colored,
+  a broken file is named and the rest work, and a changed file builds
+  the set again.
+- **G2. ADR-110**, and the module helper on Wasmtime 48 (an LTS release,
+  supported 24 months), the version tree-sitter 0.27's WebAssembly
+  grammars run on: one Wasmtime for both helpers.
+- **G3. Grammars found:** Skwir's folder (`<data>/grammars`, a grammar
+  repository as `tree-sitter build` leaves it), Zed's installed
+  extensions, Helix's runtime, Neovim's parsers, Emacs's
+  (`libtree-sitter-LANG`), the system's packages (`/usr/lib/tree_sitter`,
+  `/usr/share/tree-sitter/queries`) and the tree-sitter CLI's own
+  (`parser-directories`, its library cache). A grammar without queries
+  or file types borrows them from another source naming its language;
+  `languages.toml` in Skwir's folder maps the rest. A name without an
+  extension is told by its first line. The Reading page lists each
+  grammar, where it was found and what is wrong with one.
+- **G4. `skwir-tree-sitter-worker`:** native and WebAssembly grammars,
+  isolated like the readers, the grammar folders readable; the text the
+  preview holds (ADR-101), never read again; colors by line, injections
+  from the other grammars found, cancellable, up to what a preview holds
+  whole; one helper, let go of a minute after its last use; `--probe`,
+  `--build`, the packages' lists.
+- **G5. The second engine:** `Highlighter` colors with a tree-sitter
+  grammar where the setting says (`reading.grammars`, bat first by
+  default); capture names map to the scopes bat's themes color, so both
+  engines wear one theme. *Done when:* a fixture grammar colors the code
+  view and a fenced block, as text is read where it is shown.
+- **G6. Folds and outline:** folds from a grammar's `folds.scm`, a code
+  file's outline (functions, types) from `tags.scm` or Zed's
+  `outline.scm`, in the preview's outline panel.
+- **G7. Checked by hand** with Neovim's parsers and Zed's grammars on
+  the reference machine; the guide and the invariants say it.
+
+**Printing** (#2):
+
+- **P1. ADR-111, the `print` plugin and the system's dialog.** Print…
+  (Ctrl+P), Print as Booklet…, Save as PDF and Save as Booklet in a 3xx
+  submenu, the preview's More menu and the reader's bar; an agent's
+  print through the review queue. The dialog is the system's: the print
+  portal on Linux, the print panel on macOS (compiled only), the print
+  dialog on Windows with the PDF helper drawing into the printer (tried
+  under Wine). It offers All, Current page, Selection and typed pages;
+  Skwir prints only those itself (`print::Pages`), the dialog's range
+  reset. A PDF, an office document's and a plugin's PDF print as they
+  are. Tests: a stand-in portal on a private bus keeps what it is given.
+- **P2. Booklet:** a small prompt (signature, white margins trimmed,
+  pages), the folding order in core, the PDF helper laying the pages out
+  two to a sheet with PDFium, on the paper and duplex the dialog chose;
+  pages picked before they are laid out; even and odd sides passed on.
+- **P3. PDFs Skwir makes** (`skwir-print-worker`, krilla and parley),
+  tagged for screen readers with bookmarks, title and author, in the
+  light look, code colored and numbered, the name above and the page
+  below: pictures and contact sheets; pages without a PDF (DjVu,
+  comics, fixed-layout books, plugins' pages); text and code; tables and
+  a folder's listing; rich text (Markdown, HTML, notebooks, documents
+  and books in reading mode, email); drawings kept vector, font
+  specimens. Not printed: audio, video, archives, maps, hex.
+- **P4. Several files in one job, and PDFs from scripts:** `skwir cmd
+  print.save_pdf` without a window.
+
+**Status:** planned 2026-10-31; nothing built.
 
 ---
 
