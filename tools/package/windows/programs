@@ -16,3 +16,4 @@ skwir-module-worker
 skwir-archive-worker
 skwir-media-worker
 skwir-tree-sitter-worker
+skwir-print-worker

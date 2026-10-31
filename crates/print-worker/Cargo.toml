@@ -1,0 +1,36 @@
+[package]
+name = "skwir-print-worker"
+description = "skwir helper: the PDFs skwir makes to print what a preview shows (ADR-111)"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+skwir-core.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+# Writes the PDF: glyphs of embedded subset fonts with their text, images,
+# links, the outline, metadata and the structure a screen reader reads.
+krilla = { version = "0.8", default-features = false, features = ["raster-images"] }
+# An SVG kept vector, through usvg: krilla-svg draws usvg's tree, read
+# here with nothing but the drawing itself and the job's fonts.
+krilla-svg = "0.8"
+usvg = { version = "0.47", default-features = false, features = ["text"] }
+# Lays text out: shaping, bidirectional text, line breaking. Without
+# `system`: fonts are the job's and its fallback folders', never the
+# system's discovery.
+parley = { version = "0.12", default-features = false, features = ["std"] }
+# A font's character map, read from its file to find which fallback holds
+# a character no role font has: parley's version.
+skrifa = { version = "0.44", default-features = false, features = ["std"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+image = { workspace = true, features = ["png", "jpeg"] }
+# Reads the PDFs made back: pages, text, outline, links, images.
+lopdf = { version = "0.46", default-features = false }
+
+[lints]
+workspace = true

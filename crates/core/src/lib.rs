@@ -55,6 +55,7 @@ pub mod permissions;
 pub mod playing;
 pub mod plugin;
 pub mod preview;
+pub mod print;
 pub mod registry;
 pub mod remotes;
 pub mod scheduler;

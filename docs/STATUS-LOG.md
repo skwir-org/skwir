@@ -8275,3 +8275,61 @@ the worker reads it.
 `skwir-tree-sitter-worker` in a worktree holding this commit and the next
 (P3), 965 passed, 18 skipped, the media test and the tree-sitter
 manager's 3,001 grammars among them.
+
+### P3: PDFs Skwir makes (2026-10-31, Grammars and printing)
+
+Committed before P1, which builds on it (a change of the plan's order).
+`skwir-print-worker` (ADR-111), built by an agent and checked by the
+integrator: `skwir-print-worker <job.json>` makes a PDF of a
+`print::Job` (`skwir_core::print`, the contract: paper, title, author,
+language, header, page numbers, fonts by role as files, fallback
+folders, the pages to write, parts) and answers one `Made` line. krilla
+0.8 writes the PDF (fonts subset and embedded, JPEG kept as it is, links,
+an outline from headings, title, author and language, tagged: H1–H6, P,
+lists, tables with header cells, figures with their alternative text,
+Code), krilla-svg draws SVG as vectors (usvg 0.47, its own fonts only,
+nothing it names read), parley 0.12 lays text out (shaping, bidi, line
+breaking) from the job's faces and a fallback face found in the folders
+named when a character needs one; no fontconfig. Two passes: every part
+laid out to pages, then drawn a page at a time. Parts: flowing text (a
+reading view: headings kept with what follows, lists, quotes, code blocks
+wrapped and marked, tables whose header repeats, pictures fitted, notes,
+internal and external links), code (numbered, wrapped and marked,
+colored), tables (header repeated, columns fitted down to 6 pt, cells
+cut, too wide split across pages the first column repeated), pictures
+(one to a page, or a contact sheet three or four across with captions),
+a drawing, pages drawn as pictures, a font's specimen. A job over
+512 MiB is refused. `skwir_platform::print_job` makes jobs of what
+previews show: fonts by role resolved to files through fontdb (the
+Reading page's choice, else a generic serif and monospace, bold and
+italic only when the family has them), an inspection's blocks, tables,
+code (the whole file read through `text_rows`, at most
+`print::MAX_CODE_LINES` lines, colored by the one highlighter in the light
+code theme) and pictures mapped to parts, and the helper run isolated
+(`sandbox::fed_reading`, the faces, fallback folders and pictures
+readable), cancellable, timed by the job's size. `Run`'s and `Block`'s
+fields default and are left out of the job when default (a 1,000-line
+colored job's JSON: 413 KB to 209 KB). Packaged as the other helpers.
+
+**Measured** (by the agent, release build, machine load 5 to 17): the
+helper 9.4 MB with its debug info stripped (7.7 stripped); 1,000 colored
+lines of code 0.06 to 0.08 s, 12 MB, a PDF of 86 KB; 100,000 lines
+6.4 s, 64 MB, 1,563 pages; 1,000,000 lines 92 s, 524 MB at most, 15,625
+pages; a table of 100,000 rows 8.3 s, 60 MB, 2,084 pages.
+
+**Checked:** clippy with `-D warnings` on `skwir-print-worker`,
+`skwir-platform` and `skwir-core`; nextest on those and
+`skwir-tree-sitter-worker` in a worktree holding exactly this commit,
+965 passed, 18 skipped. The helper's tests run it on jobs made in the test with the
+machine's fonts and read the PDFs back (lopdf, `pdftotext`): pages,
+numbers, wrapped rows marked, header and footer, the outline, links,
+pictures and their XObjects, tags, the contact sheet, a table's header on
+its second page and its columns split, a drawing kept vector, a
+specimen, a character found in a fallback folder, refused jobs.
+`print_job`'s: faces of a family found, parts of every kind of
+inspection, a long file read whole and cut at its bound, a job made end
+to end isolated and read back, a cancelled job ending the helper.
+
+**Not checked:** Windows and macOS (compiled for neither yet); real
+fonts of every script (Arabic, Indic shaping only through parley's
+tests).

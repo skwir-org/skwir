@@ -61,6 +61,7 @@ pub mod open;
 pub mod package;
 pub mod picture;
 pub mod places;
+pub mod print_job;
 pub mod preview;
 pub mod process;
 pub mod sandbox;
