@@ -16,8 +16,12 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::process::ChildGuard;
 
-/// How long a worker may read none of a request before it is said wedged.
+/// How long a worker may read none of a long request before it is said
+/// wedged.
 const STUCK: std::time::Duration = std::time::Duration::from_secs(10);
+/// What a pipe holds at least (Linux's default, a page on older systems'
+/// is less): a line no longer is written at once or not at all.
+const PIPE: usize = 64 * 1024;
 
 pub(crate) struct LineChannel<Reply> {
     child: ChildGuard,
@@ -74,12 +78,20 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
     }
 
     /// Write one request as one line in a single buffer, so a request is
-    /// never left half written between two calls. A line longer than the
-    /// pipe holds (a document of thousands of pages composed, every grammar
-    /// found) is written as the worker reads it; one that reads nothing for
-    /// `STUCK` is wedged, and the request fails.
+    /// never left half written between two calls. A full pipe fails the
+    /// request at once: a worker that stops reading never holds its
+    /// manager. A line longer than the pipe holds (a document of thousands
+    /// of pages composed, every grammar found) cannot fit at once: it is
+    /// written as the worker reads it, a worker reading none of it for
+    /// `STUCK` taken as wedged.
     pub(crate) fn send(&mut self, request: &impl Serialize) -> anyhow::Result<()> {
         let line = skwir_core::jsonl::encode(request)?;
+        if line.len() <= PIPE {
+            return self
+                .input
+                .write_all(&line)
+                .context("worker is not reading its requests");
+        }
         let mut written = 0;
         let mut since = std::time::Instant::now();
         while written < line.len() {

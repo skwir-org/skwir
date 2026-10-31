@@ -8258,3 +8258,20 @@ are the grammars' files').
 **Not checked:** Windows and macOS (compiled for neither yet); grammars
 of Neovim, Helix and Zed on this machine through the helper (G7); the
 window does not use it yet (G5).
+
+### G4's line channel: a short request fails at once again (2026-10-31)
+
+G4 let `LineChannel::send` wait while a full pipe drained, for requests
+longer than the pipe holds; it waited for short ones too, and the media
+helper's test of a worker that stops reading
+(`an_unresponsive_worker_cannot_block_cleanup_on_a_full_command_pipe`)
+failed, its manager held up to ten seconds. A line of 64 KiB or less is
+written at once or fails at once, as before G4; only a longer one (every
+grammar found, a document of thousands of pages composed) is written as
+the worker reads it.
+
+**Checked:** clippy with `-D warnings` on `skwir-platform`; nextest on
+`skwir-core`, `skwir-platform`, `skwir-print-worker` and
+`skwir-tree-sitter-worker` in a worktree holding this commit and the next
+(P3), 965 passed, 18 skipped, the media test and the tree-sitter
+manager's 3,001 grammars among them.
