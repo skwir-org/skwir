@@ -1,0 +1,33 @@
+[package]
+name = "skwir-tree-sitter-worker"
+description = "skwir helper: tree-sitter grammars, native and WebAssembly, run in a process of their own (ADR-110)"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+skwir-core.workspace = true
+# WebAssembly grammars run on its Wasmtime (`wasmtime-c-api-impl`), the
+# one the module helper follows (ADR-110).
+tree-sitter = { version = "0.27", features = ["wasm"] }
+tree-sitter-highlight = "0.27"
+# `LanguageFn`, how a native grammar's symbol becomes a language.
+tree-sitter-language = "0.1"
+# A native grammar is a shared library, loaded when first needed.
+libloading = "0.8"
+# A grammar's `injection-regex`.
+regex.workspace = true
+anyhow.workspace = true
+
+[build-dependencies]
+# Builds the fixture grammar the tests load (Linux only).
+cc = "1"
+
+[dev-dependencies]
+serde_json.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

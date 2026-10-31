@@ -8209,3 +8209,52 @@ told by its first line, one with one by its name alone.
 
 **Not checked:** the grammars on this machine (Neovim's, Zed's) through
 the window; Windows and macOS folders (compiled for neither).
+
+### G4: the tree-sitter helper (2026-10-31, Grammars and printing)
+
+`skwir-tree-sitter-worker` (ADR-110), a helper of its own, built by an
+agent and checked by the integrator after it. It speaks
+`skwir_core::syntax` in tagged lines as the readers do: told every
+grammar found once, it loads one when first needed, a native library
+through libloading (its `tree_sitter_<name>` symbol; the ABI checked
+against tree-sitter 0.27's range, 13 to 15) or a WebAssembly module
+through tree-sitter's own Wasmtime 48 store; a query that does not
+compile against its language is left out and said (`Check`), the grammar
+still parsing. `Open` highlights a text whole with tree-sitter-highlight,
+injections colored by the other grammars found (by `injection-regex`,
+else name), cancellable (`Cancel`, a reader thread setting the flag), and
+keeps per line the innermost capture's spans, the folds (`@fold` spans
+of two lines or more, nested or apart) and the outline (`tags.scm`'s
+`@definition.*`/`@name`, Zed's `@item`/`@name`); `Colors` answers lines
+by range. Any panic is that request's error. `--probe` and `--build` as
+the other helpers. `skwir_platform::tree_sitter` is its manager: one
+helper for every caller, started on first use under
+`sandbox::fed_reading` (new: a program fed what Skwir hands it, reading
+only the folders named, the grammars' here), each text written to its
+working folder in `memory_dir`, documents closed on drop, a timeout per
+request scaled for `Open`, cancelled through its token, let go of a
+minute after its last answer with nothing open, started again once when
+it died. A request longer than the request pipe holds (every grammar
+found) failed with "worker is not reading its requests" on the shared
+line channel, which set the pipe non-blocking for a wedged worker's
+sake: `LineChannel::send` now writes as the worker reads, giving up after
+10 s of nothing read (the PDF helper's `Compose` of thousands of pages
+needs it too). Fixture: tree-sitter-json v0.24.8's generated parser and
+queries (MIT), built into a library by the helper's `build.rs` on Linux,
+and its released `.wasm`. Packaged as the other helpers: Linux's
+packages, Windows' and macOS's lists.
+
+**Checked:** clippy with `-D warnings` on `skwir-tree-sitter-worker` and
+`skwir-platform`; nextest, 20 passed: the helper's (its greeting, a native
+and a WebAssembly grammar coloring each line, injected text colored by its
+own grammar, folds and outlines, a missing library, a wrong ABI and a
+query that does not compile each said with the helper going on, a parse
+of several MiB cancelled, a request over the limit refused, `--probe`,
+`--build`) and the manager's (open, color, close; a cancelled parse; the
+helper let go of and started again; one that died started again once;
+3,001 grammars told at once, after the channel's fix; the folders read
+are the grammars' files').
+
+**Not checked:** Windows and macOS (compiled for neither yet); grammars
+of Neovim, Helix and Zed on this machine through the helper (G7); the
+window does not use it yet (G5).

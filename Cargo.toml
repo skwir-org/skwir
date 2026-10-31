@@ -22,6 +22,7 @@ members = [
     "crates/model-worker",
     "crates/module-worker",
     "crates/kmtp-worker",
+    "crates/tree-sitter-worker",
 ]
 # The native workers link Poppler, MuPDF, DjVuLibre, GStreamer and
 # libarchive. They are optional at runtime and stay out of the default build
@@ -45,6 +46,7 @@ default-members = [
     "crates/model-worker",
     "crates/module-worker",
     "crates/kmtp-worker",
+    "crates/tree-sitter-worker",
 ]
 # Toolkit spikes live in their own workspace so their heavy dependency
 # trees never touch the main build.

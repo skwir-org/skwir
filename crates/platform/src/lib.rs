@@ -69,6 +69,7 @@ pub mod system_thumbs;
 pub mod thumb_providers;
 pub mod thumbnails;
 pub mod trash;
+pub mod tree_sitter;
 pub mod uri;
 pub mod users;
 #[cfg(windows)]

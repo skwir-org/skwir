@@ -3,9 +3,9 @@ Third-party software in skwir
 The programs of this package (skwir, skwir-pdf-worker,
 skwir-poppler-worker, skwir-djvu-worker, skwir-djvulibre-worker,
 skwir-media-worker, skwir-archive-worker, skwir-model-worker,
-skwir-module-worker, skwir-kmtp-worker) are built from skwir's own code,
-under the package's licence, and the crates below, each under the
-licence it is listed with, whose text follows.
+skwir-module-worker, skwir-kmtp-worker, skwir-tree-sitter-worker) are
+built from skwir's own code, under the package's licence, and the crates
+below, each under the licence it is listed with, whose text follows.
 
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
@@ -424,7 +424,7 @@ Apache License
 ------------------------------------------------------------------------
 Apache License 2.0 (Apache-2.0)
 
-Used by: blake3 1.8.7, constant_time_eq 0.4.2, cranelift-assembler-x64 0.135.8, cranelift-bitset 0.135.8, pulley-interpreter 48.0.8, pulley-macros 48.0.8, rbook 0.7.12, rmcp 3.8.0, ryu 1.0.23, spirv 0.4.0+sdk-1.4.341.0, wasmtime-internal-component-macro 48.0.8, wasmtime-internal-component-util 48.0.8, wasmtime-internal-core 48.0.8, wasmtime-internal-jit-icache-coherence 48.0.8, wasmtime-internal-versioned-export-macros 48.0.8, wasmtime-internal-wit-bindgen 48.0.8
+Used by: blake3 1.8.7, constant_time_eq 0.4.2, cranelift-assembler-x64 0.135.8, cranelift-bitset 0.135.8, pulley-interpreter 48.0.8, pulley-macros 48.0.8, rbook 0.7.12, rmcp 3.8.0, ryu 1.0.23, spirv 0.4.0+sdk-1.4.341.0, wasmtime-c-api-impl 48.0.8, wasmtime-internal-c-api-macros 48.0.8, wasmtime-internal-component-macro 48.0.8, wasmtime-internal-component-util 48.0.8, wasmtime-internal-core 48.0.8, wasmtime-internal-jit-icache-coherence 48.0.8, wasmtime-internal-versioned-export-macros 48.0.8, wasmtime-internal-wit-bindgen 48.0.8
 
 Apache License
 Version 2.0, January 2004
@@ -7861,6 +7861,31 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ------------------------------------------------------------------------
 MIT License (MIT)
 
+Used by: streaming-iterator 0.1.9
+
+Copyright (c) 2016 Steven Fackler
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+------------------------------------------------------------------------
+MIT License (MIT)
+
 Used by: strict-num 0.1.1
 
 Copyright (c) 2022 Yevhenii Reizner
@@ -8354,6 +8379,33 @@ NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPO
 NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
 DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
 OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------
+MIT License (MIT)
+
+Used by: tree-sitter 0.27.1, tree-sitter-highlight 0.27.1, tree-sitter-language 0.1.9
+
+The MIT License (MIT)
+
+Copyright (c) 2018 Max Brunsfeld
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 ------------------------------------------------------------------------
 MIT License (MIT)

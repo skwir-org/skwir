@@ -16,6 +16,9 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::process::ChildGuard;
 
+/// How long a worker may read none of a request before it is said wedged.
+const STUCK: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub(crate) struct LineChannel<Reply> {
     child: ChildGuard,
     input: ChildStdin,
@@ -71,12 +74,32 @@ impl<Reply: DeserializeOwned + Send + 'static> LineChannel<Reply> {
     }
 
     /// Write one request as one line in a single buffer, so a request is
-    /// never left half written between two calls.
+    /// never left half written between two calls. A line longer than the
+    /// pipe holds (a document of thousands of pages composed, every grammar
+    /// found) is written as the worker reads it; one that reads nothing for
+    /// `STUCK` is wedged, and the request fails.
     pub(crate) fn send(&mut self, request: &impl Serialize) -> anyhow::Result<()> {
         let line = skwir_core::jsonl::encode(request)?;
-        self.input
-            .write_all(&line)
-            .context("worker is not reading its requests")
+        let mut written = 0;
+        let mut since = std::time::Instant::now();
+        while written < line.len() {
+            match self.input.write(&line[written..]) {
+                Ok(0) => anyhow::bail!("worker closed its requests"),
+                Ok(n) => {
+                    written += n;
+                    since = std::time::Instant::now();
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    if since.elapsed() > STUCK {
+                        return Err(e).context("worker is not reading its requests");
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(2));
+                }
+                Err(e) => return Err(e).context("worker is not reading its requests"),
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn replies(&self) -> &Receiver<anyhow::Result<Reply>> {

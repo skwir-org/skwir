@@ -311,6 +311,25 @@ pub fn fed(program: &Path, work: &Path, otherwise: Otherwise) -> anyhow::Result<
     Ok(plain(program, Path::new(""), work))
 }
 
+/// `fed`, the program also reading `readable` where it runs isolated
+/// (files or folders it needs beside the system's: the grammars a parser
+/// loads), read-only at their own paths. One that does not exist is left
+/// out.
+pub fn fed_reading(
+    program: &Path,
+    work: &Path,
+    otherwise: Otherwise,
+    readable: &[&Path],
+) -> anyhow::Result<Untrusted> {
+    if available() {
+        return isolated(program, None, &[], work, readable);
+    }
+    if otherwise == Otherwise::Refuse {
+        return Err(needed());
+    }
+    Ok(plain(program, Path::new(""), work))
+}
+
 /// `program` set to read `input` and write in `work`, its current folder,
 /// as it would without skwir: not isolated. Only through `untrusted`'s
 /// `Otherwise::Run`, and for tests of what runs so.
