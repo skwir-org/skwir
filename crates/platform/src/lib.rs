@@ -42,6 +42,7 @@ pub mod filesystem;
 pub mod fonts;
 #[cfg(target_os = "linux")]
 mod gtk_theme;
+pub mod highlight;
 #[cfg(target_os = "linux")]
 mod icon_theme;
 pub mod icons;

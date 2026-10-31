@@ -30,8 +30,6 @@ schemars.workspace = true
 toml.workspace = true
 skwir-platform.workspace = true
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
-syntect.workspace = true
-two-face.workspace = true
 smallvec = "1"
 
 [dev-dependencies]

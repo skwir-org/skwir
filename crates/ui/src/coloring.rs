@@ -622,7 +622,7 @@ mod tests {
         };
         let palette = Palette::of(&crate::code_preview::CodeTheme::own(false));
         let mut whole = data.clone();
-        crate::code_preview::highlight(&mut whole, &palette);
+        skwir_platform::highlight::highlight(&mut whole, &palette);
         let runs = |block: &Block| format!("{:?}", block.runs);
         let cancel = CancelToken::new();
         let mut from = None;

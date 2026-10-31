@@ -22,6 +22,9 @@ image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "ti
 jpeg-decoder.workspace = true
 png.workspace = true
 parking_lot.workspace = true
+# Code colored with bat's grammars and themes, matched by Ferroni (ADR-060).
+syntect.workspace = true
+two-face.workspace = true
 tempfile.workspace = true
 serde_json.workspace = true
 jiff.workspace = true

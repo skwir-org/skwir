@@ -8083,3 +8083,22 @@ compiled for it (`just lint-all` not run); the attribute memory through
 Skwir's own reads against the stand-in (the probe asked the system's
 `getxattr`; the memory is tested on procfs); `release-check`, the
 release's.
+
+### G0: the highlighter in the platform (2026-10-31, Grammars and printing)
+
+The coloring engine left `skwir-ui`'s `code_preview` for
+`skwir_platform::highlight` as it was, nothing in it changed: bat's
+grammars and their release after a minute unused (ADR-060), bat's and
+the user's themes, `CodeTheme` (with the three Reading keys, which
+`skwir-ui`'s settings now name from there), `Palette`, `Highlighter`,
+`Resume`, and `highlight`, the whole-text coloring the tests used, now
+public for printing (P3). `code_preview` keeps the drawing (`color`,
+`visible`, `CodeRow`) and re-exports what its callers named; syntect and
+two-face moved with it. Ten tests moved with the code they test, three
+stayed (folds, the look code is kept in, its tokens).
+
+**Checked:** rustfmt; clippy with `-D warnings` on `skwir-platform` and
+`skwir-ui`, all targets; nextest on both, 741 passed, 18 skipped.
+
+**Not checked:** a window (nothing drawn changed); Windows and macOS not
+compiled for it.

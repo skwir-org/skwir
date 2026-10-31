@@ -118,11 +118,11 @@ pub const SLIDESHOW_PACES: [(&str, &str); 4] = [
 ];
 /// Whether code is drawn light or dark: Automatic is as skwir is
 /// (`code_preview::CodeTheme::chosen`).
-pub const CODE_APPEARANCE_KEY: &str = "reading.code_appearance";
+pub const CODE_APPEARANCE_KEY: &str = skwir_platform::highlight::APPEARANCE_KEY;
 /// The colors code is drawn in when it is light, and when it is dark
 /// (`code_preview::CodeTheme`).
-pub const CODE_LIGHT_KEY: &str = "reading.code_light";
-pub const CODE_DARK_KEY: &str = "reading.code_dark";
+pub const CODE_LIGHT_KEY: &str = skwir_platform::highlight::LIGHT_KEY;
+pub const CODE_DARK_KEY: &str = skwir_platform::highlight::DARK_KEY;
 /// The player's preferences. The audio and video plugin (`media`)
 /// declares them, with the rest of what concerns playback; the shell's
 /// player reads them. With the plugin off there is no player, and they are
