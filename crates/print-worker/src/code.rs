@@ -4,6 +4,11 @@
 //! from the rows each line takes, laying out only the lines that may not
 //! fit on one; a page lays out its lines again as it is drawn, one at a
 //! time, so a file of millions of lines is held as its pages' starts.
+//! A line longer than [`PIECE`] (a minified file, one whose lines end in
+//! a carriage return alone) is laid out a piece at a time, each from a
+//! new row, so no layout holds more than a piece of it.
+
+use std::ops::Range;
 
 use anyhow::Result;
 use krilla::tagging::{ArtifactType, Tag};
@@ -11,7 +16,7 @@ use parley::{Alignment, Layout};
 use skwir_core::print::{Line, Run};
 
 use crate::fonts::{Fonts, Role};
-use crate::geometry::{Frame, row_pages};
+use crate::geometry::{Frame, units_pages};
 use crate::out::{PageCx, Part, Structure, key};
 use crate::text::{self, GREY, Ink, Spec, Wrap};
 
@@ -21,6 +26,8 @@ pub const LINE_HEIGHT: f32 = 1.3;
 const TAB: usize = 4;
 /// Between the gutter and the code.
 const GAP: f32 = 6.0;
+/// The most bytes of a line laid out at once.
+pub const PIECE: usize = 4096;
 
 pub struct Code<'a> {
     lines: &'a [Line],
@@ -30,11 +37,13 @@ pub struct Code<'a> {
     gutter: f32,
     row: f32,
     per_page: u32,
-    starts: Vec<(u32, u32)>,
+    /// Where each page starts: a line, the piece of it (its first byte)
+    /// and the row of that.
+    starts: Vec<((u32, u32), u32)>,
     frame: Frame,
-    /// The line laid out last, kept for the page after when it goes on
-    /// over it.
-    cache: Option<(usize, Layout<Ink>, String)>,
+    /// The piece laid out last, by its line and first byte, kept for the
+    /// page after when it goes on over it.
+    cache: Option<((usize, usize), Layout<Ink>, String)>,
     structure: Structure,
 }
 
@@ -65,24 +74,28 @@ impl<'a> Code<'a> {
         spec.width = Some(width);
         let per_page = ((frame.text.height / row).floor() as u32).max(1);
         // A line of printable ASCII in a monospaced face fits when its
-        // characters do; any other is laid out to count its rows.
-        let narrow = text::plain(fonts, "i", &spec).width();
-        let wide = text::plain(fonts, "M", &spec).width();
-        let advance = ((narrow - wide).abs() < 0.01).then_some(wide);
+        // characters do, in each of the faces its colors may ask (bold,
+        // italic); any other is laid out, a piece at a time, to count its
+        // rows.
+        let advance = monospaced(fonts, &spec);
         let mut layout = Layout::new();
-        let rows = lines.iter().map(|line| {
+        let units = lines.iter().enumerate().flat_map(|(at, line)| {
             let printable = line.text.bytes().all(|b| (0x20..0x7f).contains(&b));
-            if let Some(advance) = advance
-                && printable
-                && line.text.len() as f32 * advance <= width - 0.5
-            {
-                return 1;
-            }
-            let (text, runs) = detab(&line.text, &line.runs);
-            text::lay_out(fonts, &mut layout, &text, &runs, &spec, &mut Vec::new());
-            layout.len().max(1) as u32
+            let fits = advance.is_some_and(|advance| {
+                printable && line.text.len() as f32 * advance <= width - 0.5
+            });
+            pieces(&line.text).map(move |piece| ((at as u32, piece.start as u32), piece, fits))
         });
-        let starts = row_pages(rows, per_page);
+        let units = units.map(|(key, piece, fits)| {
+            if fits {
+                return (key, 1);
+            }
+            let line = &lines[key.0 as usize];
+            let (text, runs) = piece_of(line, piece);
+            text::lay_out(fonts, &mut layout, &text, &runs, &spec, &mut Vec::new());
+            (key, layout.len().max(1) as u32)
+        });
+        let starts = units_pages(units, per_page);
         Code {
             lines,
             numbers,
@@ -106,7 +119,7 @@ impl Part for Code<'_> {
 
     fn draw(&mut self, page: usize, cx: &mut PageCx) -> Result<()> {
         self.structure.goto(cx, &[(key(1, 0), Tag::Code.into())]);
-        let Some(&(first_line, first_row)) = self.starts.get(page) else {
+        let Some(&((first_line, first_piece), first_row)) = self.starts.get(page) else {
             return Ok(());
         };
         let text_x = self.frame.text.x + self.gutter + GAP;
@@ -125,14 +138,19 @@ impl Part for Code<'_> {
         // The code first, a line laid out at a time, its rows written in
         // the gutter as they are drawn; the gutter after.
         cx.span(|surface, fonts| {
-            let (mut line, mut row) = (first_line as usize, first_row as usize);
+            let (mut line, mut start, mut row) = (
+                first_line as usize,
+                first_piece as usize,
+                first_row as usize,
+            );
             let mut drawn = 0u32;
             while line < lines.len() && drawn < *per_page {
-                if cache.as_ref().is_none_or(|(at, _, _)| *at != line) {
-                    let (text, runs) = detab(&lines[line].text, &lines[line].runs);
+                let piece = start..piece_end(&lines[line].text, start);
+                if cache.as_ref().is_none_or(|(at, _, _)| *at != (line, start)) {
+                    let (text, runs) = piece_of(&lines[line], piece.clone());
                     let mut layout = cache.take().map(|(_, l, _)| l).unwrap_or_default();
                     text::lay_out(fonts, &mut layout, &text, &runs, spec, &mut Vec::new());
-                    *cache = Some((line, layout, text));
+                    *cache = Some(((line, start), layout, text));
                 }
                 let (_, layout, text) = cache.as_ref().expect("laid out");
                 let count = layout.len().max(1);
@@ -140,7 +158,7 @@ impl Part for Code<'_> {
                     if drawn > 0 {
                         gutter.push('\n');
                     }
-                    if row == 0 {
+                    if row == 0 && start == 0 {
                         if *numbers {
                             gutter.push_str(&(u64::from(*first) + line as u64).to_string());
                         }
@@ -165,8 +183,13 @@ impl Part for Code<'_> {
                     row += 1;
                 }
                 if row >= count {
-                    line += 1;
                     row = 0;
+                    if piece.end < lines[line].text.len() {
+                        start = piece.end;
+                    } else {
+                        line += 1;
+                        start = 0;
+                    }
                 }
             }
         });
@@ -203,6 +226,74 @@ impl Part for Code<'_> {
     fn finish(&mut self, cx: &mut PageCx) {
         self.structure.close_all(cx);
     }
+}
+
+/// Whether the code face writes every printable ASCII character at one
+/// advance in each of its faces a color may ask (regular, bold, italic,
+/// both): that advance, when it does.
+fn monospaced(fonts: &mut Fonts, spec: &Spec) -> Option<f32> {
+    let mut advance: Option<f32> = None;
+    for (bold, italic) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut spec = spec.clone();
+        spec.bold = bold;
+        spec.italic = italic;
+        let narrow = text::plain(fonts, "i", &spec).width();
+        let wide = text::plain(fonts, "M", &spec).width();
+        if (narrow - wide).abs() >= 0.01 || advance.is_some_and(|a| (a - wide).abs() >= 0.01) {
+            return None;
+        }
+        advance = Some(wide);
+    }
+    advance
+}
+
+/// Where the piece of `text` from `start` ends: [`PIECE`] bytes on, on a
+/// character's boundary, or the end of the text.
+fn piece_end(text: &str, start: usize) -> usize {
+    if text.len() - start <= PIECE {
+        text.len()
+    } else {
+        text.floor_char_boundary(start + PIECE)
+    }
+}
+
+/// The pieces a line is laid out in: one for any line up to [`PIECE`]
+/// bytes, an empty one included.
+pub fn pieces(text: &str) -> impl Iterator<Item = Range<usize>> + '_ {
+    let mut start = Some(0);
+    std::iter::from_fn(move || {
+        let from = start?;
+        let end = piece_end(text, from);
+        start = (end < text.len()).then_some(end);
+        Some(from..end)
+    })
+}
+
+/// A piece of a line, its tabs turned to spaces, with its runs moved to
+/// start with it. A line laid out whole keeps all its runs; a piece of a
+/// long one finds its own by halving, as a highlighter writes runs in
+/// order, apart.
+fn piece_of(line: &Line, piece: Range<usize>) -> (String, Vec<Run>) {
+    if piece.start == 0 && piece.end == line.text.len() {
+        return detab(&line.text, &line.runs);
+    }
+    let first = line
+        .runs
+        .partition_point(|run| (run.end as usize) <= piece.start);
+    let runs: Vec<Run> = line.runs[first..]
+        .iter()
+        .take_while(|run| (run.start as usize) < piece.end)
+        .filter_map(|run| {
+            let from = (run.start as usize).max(piece.start);
+            let to = (run.end as usize).min(piece.end);
+            (from < to).then(|| Run {
+                start: (from - piece.start) as u32,
+                end: (to - piece.start) as u32,
+                ..run.clone()
+            })
+        })
+        .collect();
+    detab(&line.text[piece], &runs)
 }
 
 /// Code with its tabs turned to spaces, to the next multiple of [`TAB`]
@@ -248,6 +339,42 @@ pub fn detab(text: &str, runs: &[Run]) -> (String, Vec<Run>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_long_line_is_laid_out_in_pieces_with_their_runs() {
+        let empty: Vec<_> = pieces("").collect();
+        assert!(empty.len() == 1 && empty[0] == (0..0), "{empty:?}");
+        let short: Vec<_> = pieces("short").collect();
+        assert!(short.len() == 1 && short[0] == (0..5), "{short:?}");
+        // Of 10 000 bytes, two pieces whole and what is left, each on a
+        // character's boundary.
+        let long = "é".repeat(5000);
+        let cut: Vec<_> = pieces(&long).collect();
+        assert_eq!(cut.len(), 3);
+        assert!(cut.iter().all(|piece| long.is_char_boundary(piece.end)));
+        assert_eq!(cut.last().unwrap().end, long.len());
+        let line = Line {
+            text: "a".repeat(PIECE + 10),
+            runs: vec![
+                Run {
+                    start: 0,
+                    end: 2,
+                    bold: true,
+                    ..Run::default()
+                },
+                Run {
+                    start: (PIECE - 2) as u32,
+                    end: (PIECE + 4) as u32,
+                    italic: true,
+                    ..Run::default()
+                },
+            ],
+        };
+        let (text, runs) = piece_of(&line, PIECE..PIECE + 10);
+        assert_eq!(text.len(), 10);
+        assert_eq!(runs.len(), 1);
+        assert!(runs[0].italic && (runs[0].start, runs[0].end) == (0, 4));
+    }
 
     #[test]
     fn tabs_go_to_the_next_stop_and_runs_follow() {

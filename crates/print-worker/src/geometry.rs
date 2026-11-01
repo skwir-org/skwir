@@ -177,21 +177,24 @@ impl Grid {
     }
 }
 
-/// Where each page of rows starts: lines of `rows` rows each (a line
-/// wrapped takes several), `per_page` rows to a page. A page starts at a
-/// line and the row of it, so a line longer than a page goes on over the
-/// next. One page at least, empty when there are no lines.
-pub fn row_pages(rows: impl IntoIterator<Item = u32>, per_page: u32) -> Vec<(u32, u32)> {
+/// Where each page of rows starts: units (a line, or a piece of a long
+/// one) of `rows` rows each, named by their keys, `per_page` rows to a
+/// page. A page starts at a unit's key and the row of it, so a unit
+/// longer than a page goes on over the next. One page at least, at the
+/// default key when there are no units.
+pub fn units_pages<K: Copy + Default>(
+    units: impl IntoIterator<Item = (K, u32)>,
+    per_page: u32,
+) -> Vec<(K, u32)> {
     let per_page = per_page.max(1);
-    let mut starts = vec![(0, 0)];
-    let mut used = 0u32;
-    for (line, rows) in rows.into_iter().enumerate() {
-        let line = line as u32;
+    let mut starts = Vec::new();
+    let mut used = per_page;
+    for (key, rows) in units {
         let mut row = 0;
         let mut left = rows.max(1);
         while left > 0 {
             if used == per_page {
-                starts.push((line, row));
+                starts.push((key, row));
                 used = 0;
             }
             let take = left.min(per_page - used);
@@ -199,6 +202,9 @@ pub fn row_pages(rows: impl IntoIterator<Item = u32>, per_page: u32) -> Vec<(u32
             row += take;
             left -= take;
         }
+    }
+    if starts.is_empty() {
+        starts.push((K::default(), 0));
     }
     starts
 }
@@ -353,6 +359,16 @@ pub fn written(laid_out: u32, asked: Option<&[u32]>) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pages of lines of `rows` rows each, keyed by their index.
+    fn row_pages(rows: impl IntoIterator<Item = u32>, per_page: u32) -> Vec<(u32, u32)> {
+        units_pages(
+            rows.into_iter()
+                .enumerate()
+                .map(|(line, rows)| (line as u32, rows)),
+            per_page,
+        )
+    }
 
     #[test]
     fn a4_keeps_its_margins_and_the_bands_sit_in_them() {
