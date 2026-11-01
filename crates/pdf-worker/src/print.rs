@@ -108,7 +108,10 @@ mod windows {
                 let _ = DeleteDC(dc);
                 anyhow::bail!("the printer refused the document");
             }
-            let (width, height) = (GetDeviceCaps(dc, HORZRES), GetDeviceCaps(dc, VERTRES));
+            let (width, height) = (
+                GetDeviceCaps(Some(dc), HORZRES),
+                GetDeviceCaps(Some(dc), VERTRES),
+            );
             let handle = bindings.FPDF_LoadDocument(&pdf.to_string_lossy(), None);
             if handle.is_null() {
                 AbortDoc(dc);

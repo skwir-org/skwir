@@ -17,11 +17,13 @@ pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdf
 
 # Windows prints through PDFium drawing on the printer (ADR-111): its
 # device-context call, and GDI's spooler calls. pdfium-render takes any
-# `windows` 0.x without its features; this is the one the tree resolves it
-# to (0.57), the features its call needs given here, so its HDC is ours.
+# `windows` 0.x without its features, which Cargo resolves to the newest
+# the tree holds: the one the platform crate and gpui use (0.62), named
+# here with the features its call needs, so its HDC is ours. When they
+# move to another, this moves with them (`just check-windows` says so).
 [target.'cfg(windows)'.dependencies]
 pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_6721", "pdfium_use_win32"] }
-windows = { version = "0.57", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_Xps"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_Xps"] }
 
 [dev-dependencies]
 serde_json.workspace = true
