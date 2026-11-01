@@ -71,7 +71,10 @@ fn pages_are_composed_in_the_order_asked_with_blanks() {
     // The third page, a blank of its size, the first twice.
     ask(
         1,
-        WorkerRequest::Compose(Compose::Pages(vec![Some(2), None, Some(0), Some(0)])),
+        WorkerRequest::Compose(Compose::Pages {
+            pages: vec![Some(2), None, Some(0), Some(0)],
+            scale: 1.0,
+        }),
     );
     let reply = read();
     assert_eq!(reply.id, 1);
@@ -91,14 +94,26 @@ fn pages_are_composed_in_the_order_asked_with_blanks() {
         ]
     );
     // A page past the end is that request's error; the helper goes on.
-    ask(2, WorkerRequest::Compose(Compose::Pages(vec![Some(3)])));
+    ask(
+        2,
+        WorkerRequest::Compose(Compose::Pages {
+            pages: vec![Some(3)],
+            scale: 1.0,
+        }),
+    );
     let reply = read();
     assert!(
         matches!(&reply.body, WorkerReply::Error(message) if message.contains("past the end")),
         "{:?}",
         reply.body
     );
-    ask(3, WorkerRequest::Compose(Compose::Pages(vec![Some(1)])));
+    ask(
+        3,
+        WorkerRequest::Compose(Compose::Pages {
+            pages: vec![Some(1)],
+            scale: 1.0,
+        }),
+    );
     assert!(matches!(read().body, WorkerReply::Composed { pages: 1 }));
     assert_eq!(sizes(&pdfium, &composed), [(400.0, 300.0)]);
     // Printing on a printer is Windows' alone.
@@ -479,9 +494,66 @@ fn a_trimmed_booklet_fits_the_pages_ink_larger() {
     }
     // The source's pages are as they were: drawn again, uncut.
     assert!(matches!(
-        worker.ask(WorkerRequest::Compose(Compose::Pages(vec![Some(0)]))),
+        worker.ask(WorkerRequest::Compose(Compose::Pages {
+            pages: vec![Some(0)],
+            scale: 1.0
+        })),
         WorkerReply::Composed { pages: 1 }
     ));
     assert_eq!(sizes(&pdfium, &composed), [(420.0, 595.0)]);
+    worker.end();
+}
+
+/// The print dialog's scale: each page drawn at that of its size about
+/// its middle, on a page of its own size; a scale that is none refused.
+#[test]
+fn pages_are_drawn_at_the_scale_asked_about_their_middle() {
+    let Some(pdfium) = pdfium() else {
+        eprintln!("skipped: no PDFium (SKWIR_PDFIUM_LIBRARY)");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let (pdf, scratch) = (tmp.path().join("corner.pdf"), tmp.path().join("work"));
+    std::fs::create_dir(&scratch).unwrap();
+    // A 40-point square at 20 points from the bottom left of 420 × 595.
+    numbered(&pdfium, &pdf, 2, &[], true);
+    let composed = scratch.join(COMPOSED_FILE);
+    let mut worker = Worker::start(&pdf, &scratch);
+    assert!(matches!(
+        worker.ask(WorkerRequest::Compose(Compose::Pages {
+            pages: vec![Some(1), Some(0)],
+            scale: 0.5
+        })),
+        WorkerReply::Composed { pages: 2 }
+    ));
+    assert_eq!(sizes(&pdfium, &composed), [(420.0, 595.0), (420.0, 595.0)]);
+    let document = pdfium.load_pdf_from_file(&composed, None).unwrap();
+    for page in document.pages().iter() {
+        let bounds: Vec<_> = page
+            .objects()
+            .iter()
+            .filter_map(|object| object.bounds().ok())
+            .collect();
+        assert_eq!(bounds.len(), 1);
+        // Halfway to the middle (210, 297.5): from 115, 158.75, 20 wide.
+        let (left, bottom, width) = (
+            bounds[0].left().value,
+            bounds[0].bottom().value,
+            bounds[0].width().value,
+        );
+        assert!((left - 115.0).abs() < 0.5, "{left}");
+        assert!((bottom - 158.75).abs() < 0.5, "{bottom}");
+        assert!((width - 20.0).abs() < 0.5, "{width}");
+    }
+    for scale in [0.0, -1.0, 11.0] {
+        let reply = worker.ask(WorkerRequest::Compose(Compose::Pages {
+            pages: vec![Some(0)],
+            scale,
+        }));
+        assert!(
+            matches!(&reply, WorkerReply::Error(message) if message.contains("scale")),
+            "{scale}: {reply:?}"
+        );
+    }
     worker.end();
 }

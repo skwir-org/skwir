@@ -1202,6 +1202,14 @@ impl StepContext {
             .insert(dest_dir.to_path_buf(), mark);
     }
 
+    /// Whether something can be staged in `dest_dir` (`stage`) and moved
+    /// into place: not where only copies go, written in place (a camera,
+    /// whose folders move nothing between them, ADR-083). What a step that
+    /// stages refuses in its `check`, so it is refused before it runs.
+    pub fn stages_in(dest_dir: &Path) -> bool {
+        !crate::fs::reach::writes_in_place(dest_dir)
+    }
+
     /// A staging folder in `dest_dir` for a step to make something in and
     /// put in place whole (`Staging::place`), so what it leaves cut short
     /// never looks finished: removed when dropped, and swept by a later
@@ -1212,9 +1220,7 @@ impl StepContext {
     /// nothing between its folders (`fs::reach::writes_in_place`: a
     /// camera, where only copies go, written in place).
     pub fn stage(&self, dest_dir: &Path) -> std::io::Result<super::staging::Staging> {
-        // What is staged is moved into place, which a camera does not do
-        // between its folders: only copies go there, in place (ADR-083).
-        if crate::fs::reach::writes_in_place(dest_dir) {
+        if !Self::stages_in(dest_dir) {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Unsupported,
                 "it moves nothing between its folders (a camera): only copies are made there",

@@ -248,8 +248,10 @@ pub enum WorkerRequest {
 pub enum Compose {
     /// These pages (from 0), in this order, one listed twice written
     /// twice; `None` a blank page the size of the page before it (of the
-    /// document's first, first).
-    Pages(Vec<Option<u32>>),
+    /// document's first, first). Each drawn at `scale` of its size about
+    /// its middle, on a page of its own size (1 as it is): the print
+    /// dialog's scale.
+    Pages { pages: Vec<Option<u32>>, scale: f32 },
     /// A booklet: `sheets` in the order they print (`print::booklet::sheets`),
     /// each its front then its back, two pages to a side, on sheets `width` ×
     /// `height` points (landscape); each page fitted in its half within

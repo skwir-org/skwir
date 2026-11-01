@@ -139,8 +139,9 @@ fn composed<'a>(
 ) -> anyhow::Result<WorkerReply> {
     let path = scratch.join(COMPOSED_FILE);
     let pages = match compose {
-        Compose::Pages(pages) => {
+        Compose::Pages { pages, scale } => {
             let out = listed(pdfium, document, pages)?;
+            scaled(&out, *scale, superseded)?;
             out.save_to_file(&path)
                 .context("write the composed document")?;
             out.pages().len()
@@ -220,6 +221,54 @@ fn listed<'a>(
         }
     }
     Ok(out)
+}
+
+/// The largest a print dialog's scale is taken: ten times (GTK's dialog
+/// offers up to 1,000 %).
+const LARGEST_SCALE: f32 = 10.0;
+
+/// Each page of `document` drawn at `scale` of its size about the middle
+/// of what it shows, clipped to that (its media box within its crop box),
+/// on a page of its own size: the print dialog's scale, which the system's
+/// printing leaves to the application. Stops when a newer request waits.
+fn scaled(
+    document: &PdfDocument<'_>,
+    scale: f32,
+    superseded: &dyn Fn() -> bool,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        scale.is_finite() && scale > 0.0 && scale <= LARGEST_SCALE,
+        "no scale to print at: {scale}"
+    );
+    if (scale - 1.0).abs() < 1e-3 {
+        return Ok(());
+    }
+    for (number, mut page) in document.pages().iter().enumerate() {
+        if number % 64 == 0 {
+            anyhow::ensure!(!superseded(), "composing superseded");
+        }
+        // Its content is rewritten here: never again from its objects.
+        page.set_content_regeneration_strategy(PdfPageContentRegenerationStrategy::Manual);
+        let shown = page.boundaries().bounding()?.bounds;
+        let middle = (
+            f32::midpoint(shown.left().value, shown.right().value),
+            f32::midpoint(shown.bottom().value, shown.top().value),
+        );
+        page.apply_matrix_with_clip(scale_about(scale, middle), shown)?;
+    }
+    Ok(())
+}
+
+/// What draws a page at `scale` of its size, `middle` staying where it is.
+fn scale_about(scale: f32, middle: (f32, f32)) -> PdfMatrix {
+    PdfMatrix::new(
+        scale,
+        0.0,
+        0.0,
+        scale,
+        middle.0 * (1.0 - scale),
+        middle.1 * (1.0 - scale),
+    )
 }
 
 /// How a booklet's sheets are laid out (`Compose::Booklet`).
@@ -856,6 +905,17 @@ mod tests {
         assert!((tx0 - (842.0 - x0)).abs() < 0.01 && (ty0 - (595.0 - y0)).abs() < 0.01);
         let (tx1, _) = point(&turned, 200.0, 400.0);
         assert!(tx1 < tx0, "upside down");
+    }
+
+    /// A page drawn at half its size keeps its middle where it is: its
+    /// corners come halfway in.
+    #[test]
+    fn a_page_scaled_keeps_its_middle() {
+        let m = super::scale_about(0.5, (300.0, 400.0));
+        let point = |x: f32, y: f32| (m.a() * x + m.c() * y + m.e(), m.b() * x + m.d() * y + m.f());
+        assert_eq!(point(300.0, 400.0), (300.0, 400.0));
+        assert_eq!(point(0.0, 0.0), (150.0, 200.0));
+        assert_eq!(point(600.0, 800.0), (450.0, 600.0));
     }
 
     #[test]

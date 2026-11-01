@@ -137,3 +137,35 @@ than one thing to do.
 - **Not Skwir's dialog over CUPS**, which stays rejected: it chooses what
   and how, never the printer.
 
+## Revision (2026-11-01, after review): what is picked is made, the scale applied
+
+- **The system's dialog's scale is applied**, decided with the user: a
+  portal's back end and CUPS print a file as it is handed, so each page
+  of what Skwir hands over is drawn at that scale about its middle, on a
+  page of its own size, by the PDF helper (`Compose::Pages`'s `scale`),
+  a booklet's sides as any page. What the system's dialog chooses is
+  only what sending honours (`print::Chosen`). Windows' printer applies
+  its own from the settings its dialog left.
+- **Pages are picked where they are made.** A PDF is counted only when
+  picking needs it (pages, a booklet, sides, order, scale), by the
+  reader the settings choose; sent as it is, it is not read. The print
+  helper writes only the pages named before it lays out
+  (`Job::pages`), a reader's pages are drawn only when picked. The
+  `PDFium` library the settings name is the program's
+  (`document::pdfium_choice`): the documents plugin, which declares the
+  setting, keeps it there, and every `PDFium` helper is told it, the
+  ones that compose and print included.
+- **A page turns to fit its paper**: on Windows, where nothing turns it,
+  a page wide on paper fed upright (a booklet's sheet) is drawn turned a
+  quarter turn. On macOS `lp` is told the printer's CUPS queue
+  (`PMPrinterGetID`, never the name the panel shows) and the paper chosen;
+  the orientation is the PDF's own, which CUPS turns to fit.
+- **Made here, kept where asked.** PDFs are made in the system's
+  temporary folder and composed beside them on disk, never in memory;
+  Save as PDF stages only the finished PDF where it is kept, and refuses
+  in its `check` a folder that takes only copies written in place (a
+  camera). What reads the files (a listing, the files, the helpers) runs
+  in their remote's lane; the dialogs wait holding none.
+- **Through the preview, the entry shown**: `ui.preview_invoke` names a
+  link itself, as the file menu does; Save as PDF goes beside it, and
+  what is read is what it opens, typed by that file's name.

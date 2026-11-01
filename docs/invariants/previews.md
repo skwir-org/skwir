@@ -1579,8 +1579,9 @@ is still to come are in `docs/preview-frame.md`.
   pages, so pages are never left to them: they are handed every page
   (the portal's `print-pages` `all`, no current page nor selection) and,
   where they let it be hidden (macOS, Windows), show no range. Skwir
-  applies the pages, the sides and the order to the PDF it hands over
-  (`Compose::Pages`), as the portal's back ends print a file as it is.
+  applies the pages, the sides, the order and the scale to the PDF it
+  hands over (`Compose::Pages`), as the portal's back ends print a file
+  as it is; `print::Chosen` carries only what sending honours.
   Skwir's pages pick a booklet's pages before they are folded; what the
   system's dialog still chooses (a portal's range changed there, even or
   odd sides, the order) applies to what is sent, the sheets' sides.
@@ -1596,7 +1597,24 @@ is still to come are in `docs/preview-frame.md`.
   its selection) is never applied to several.
 - **Pages are typed one way** (`print::Pages`, from 1, `1-3, 7, 10-`):
   the dialog's 0-based ranges are read through it, never parsed
-  elsewhere.
+  elsewhere; one it refuses is an error, never every page.
+- **What is picked is made**: a PDF is counted only when picking needs
+  it (`Layout::as_it_is` sends it unread), by the reader the settings
+  choose; the print helper writes only the pages named before it lays
+  out (`Job::pages`: the page shown, ranges that end); a reader's pages
+  are drawn only when picked.
+- **`PDFium`'s library is the program's** (`document::pdfium_choice`,
+  in the platform because two plugins must agree on it): the documents
+  plugin sets it from its setting and clears it when turned off, and
+  every `PDFium` helper started without a library of its own is told it
+  (`document.rs` `start`), so printing composes with the library the
+  reader opens, never reading another plugin's settings.
+- **Made here, kept where asked**: a PDF is made in the system's
+  temporary folder and composed beside it on disk, never in memory; Save
+  as PDF stages only the finished PDF where it is kept, and its `check`
+  refuses a folder that takes only copies written in place
+  (`StepContext::stages_in`). What reads files (a listing, the files,
+  the helpers) runs in their remote's lane; a dialog waits holding none.
 - **The print helper reads only what its job names** (the pictures
   written beside it, the faces and fallback folders): a picture, a font
   or a drawing never brings in a file it names.
@@ -1605,6 +1623,7 @@ is still to come are in `docs/preview-frame.md`.
   sheet, laid out at that size.
 - **The window names no plugin**: a plugin's items of the preview's menu
   (`MenuItem::menu` `preview`) run through `ui.preview_invoke`, which adds
-  the file shown, its page and page count and what is selected, is the
-  user's alone, and runs the command as the window runs any
+  the entry shown (a link itself, as the file menu names it: what is
+  read is what it opens), its page and page count and what is selected,
+  is the user's alone, and runs the command as the window runs any
   (`Shell::run`): a plan it answers applies, never dropped.

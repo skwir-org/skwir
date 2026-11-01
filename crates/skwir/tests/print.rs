@@ -319,6 +319,57 @@ fn named(path: &Path) -> [EntryArg; 1] {
     [EntryArg::from(EntryRef::from_path(path).unwrap())]
 }
 
+/// A PDF saved whole is the file as it is: neither opened nor counted,
+/// so it needs no document reader, even one that cannot read it.
+#[test]
+fn a_pdf_saved_whole_is_copied_unread() {
+    let tmp = common::home_tempdir();
+    let Some(app) = app(tmp.path()) else { return };
+    let dir = tmp.path().join("files");
+    std::fs::create_dir(&dir).unwrap();
+    let pdf = dir.join("report.pdf");
+    // No reader opens this: anything that read it would fail.
+    std::fs::write(&pdf, b"%PDF-1.7 not a document any reader opens").unwrap();
+    applied(
+        &app,
+        &Invocation::new("print.save_pdf").with("entries", named(&pdf)),
+    );
+    let printed = dir.join("report (printed).pdf");
+    assert_eq!(
+        std::fs::read(&printed).unwrap(),
+        std::fs::read(&pdf).unwrap()
+    );
+}
+
+/// A link is saved beside itself, named after itself, as what it opens
+/// shows: its target's type, read through it.
+#[cfg(unix)]
+#[test]
+fn a_link_is_saved_beside_itself_as_its_target_shows() {
+    let tmp = common::home_tempdir();
+    let Some(app) = app(tmp.path()) else { return };
+    let (here, there) = (tmp.path().join("here"), tmp.path().join("there"));
+    std::fs::create_dir(&here).unwrap();
+    std::fs::create_dir(&there).unwrap();
+    let target = there.join("notes.md");
+    std::fs::write(&target, "# Planted bulbs\n\nTulips *and* crocuses.\n").unwrap();
+    // Named with no ending: typed by what it opens, never its own name.
+    let link = here.join("garden notes");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+    applied(
+        &app,
+        &Invocation::new("print.save_pdf").with("entries", named(&link)),
+    );
+    let pdf = here.join("garden notes.pdf");
+    assert!(pdf.is_file(), "beside the link");
+    assert!(!there.join("notes.pdf").exists(), "not beside its target");
+    if let Some(text) = text(&pdf) {
+        // Read as Markdown: the heading without its mark.
+        assert!(text.contains("Planted bulbs"), "{text}");
+        assert!(!text.contains("# Planted"), "{text}");
+    }
+}
+
 /// Dispatch `invocation`, a Save as PDF, and apply its plan.
 fn applied(app: &Arc<App>, invocation: &Invocation) {
     let Outcome::Plan(plan) = app.dispatch(invocation).unwrap() else {

@@ -40,9 +40,31 @@ pub(crate) struct Layout {
     pub sent: Pages,
     pub page_set: PageSet,
     pub reverse: bool,
+    /// Each page drawn at this of its size about its middle (1 as it
+    /// is): the system's dialog's scale, which its printing leaves to the
+    /// application.
+    pub scale: f32,
     /// Folded as a booklet, two pages to a side of `paper` turned
     /// landscape.
     pub booklet: Option<Booklet>,
+}
+
+impl Layout {
+    /// Whether a document is sent as it is: every page, in order, at its
+    /// size, unfolded. Its pages are then neither counted nor composed.
+    fn as_it_is(&self) -> bool {
+        self.pages == Pages::All
+            && self.booklet.is_none()
+            && !matches!(self.sent, Pages::Ranges(_))
+            && self.page_set == PageSet::All
+            && !self.reverse
+            && unscaled(self.scale)
+    }
+}
+
+/// Whether `scale` draws a page as it is.
+fn unscaled(scale: f32) -> bool {
+    (scale - 1.0).abs() < 1e-3
 }
 
 /// How a booklet folds (ADR-111): in signatures of `signature` pages (one
@@ -77,7 +99,8 @@ const FOLD: f32 = 12.0;
 /// A PDF ready to print or keep.
 pub(crate) struct Ready {
     pub pdf: PathBuf,
-    pub pages: u32,
+    /// Its pages, when counted: a PDF sent as it is is not.
+    pub pages: Option<u32>,
     /// What was left out (a text cut at its bound), to say.
     pub notice: Option<String>,
 }
@@ -99,13 +122,67 @@ pub(crate) fn ready(
     // at that size, its text not shrunk.
     let paper = page_paper(layout);
     let (whole, shown) = match paths {
-        [path] => (
-            whole(app, path, shown, &paper, work, cancel)?,
-            shown.clone(),
-        ),
+        // One file: what is picked of it is all that is made of it where
+        // it can be named before it is (`named`).
+        [path] => {
+            let picking = Picking {
+                pages: &layout.pages,
+                current: shown.page.and_then(|page| page.checked_sub(1)),
+            };
+            (
+                whole(app, path, shown, Some(&picking), &paper, work, cancel)?,
+                shown.clone(),
+            )
+        }
         _ => (joined(app, paths, &paper, work, cancel)?, Shown::default()),
     };
-    picked(whole, &shown, layout, work, cancel)
+    picked(app, whole, &shown, layout, work, cancel)
+}
+
+/// The pages chosen of one file, picked as it is made: `current` the page
+/// its preview shows, from 0.
+struct Picking<'a> {
+    pages: &'a Pages,
+    current: Option<u32>,
+}
+
+/// The most pages [`named`] names before a document is counted: a pick of
+/// more is made whole and picked from after.
+const MOST_NAMED: u64 = 100_000;
+
+/// The pages `pages` picks (from 0, in order, each once) when they can be
+/// named before the document is made and counted, so only those are
+/// made: the page shown (`current`, from 0), the pages of ranges that each
+/// end. `None` when they are picked once it is counted: every page, a
+/// selection (made into its own document), a range to the end, more than
+/// [`MOST_NAMED`].
+fn named(pages: &Pages, current: Option<u32>) -> Option<Vec<u32>> {
+    match pages {
+        Pages::All | Pages::Selection => None,
+        Pages::Current => current.map(|page| vec![page]),
+        Pages::Ranges(ranges) => {
+            let mut total = 0u64;
+            for range in ranges {
+                let last = range.last?;
+                total += u64::from(last.saturating_sub(range.first)) + 1;
+                if total > MOST_NAMED {
+                    return None;
+                }
+            }
+            let mut named: Vec<u32> = ranges
+                .iter()
+                .flat_map(|range| range.first.saturating_sub(1)..range.last.unwrap_or_default())
+                .collect();
+            named.sort_unstable();
+            named.dedup();
+            Some(named)
+        }
+    }
+}
+
+/// "It has n pages", said of pages asked past them.
+fn past(count: u32) -> String {
+    format!("It has {count} pages; those past them were left out")
 }
 
 /// A document Skwir makes of `parts` (a contact sheet, a folder's
@@ -118,15 +195,48 @@ pub(crate) fn made(
     work: &Path,
     cancel: &CancelToken,
 ) -> anyhow::Result<Ready> {
-    let mut job = job(app, title, &page_paper(layout), parts);
+    let named = named(&layout.pages, None);
+    let whole = laid_out(
+        app,
+        title,
+        &page_paper(layout),
+        parts,
+        named,
+        None,
+        work,
+        cancel,
+    )?;
+    picked(app, whole, &Shown::default(), layout, work, cancel)
+}
+
+/// The PDF the print helper makes of `parts`, titled `title`: of the pages
+/// `named` alone when given (from 0), what was asked past its end said.
+#[allow(clippy::too_many_arguments)] // What a job is made of, each its own.
+fn laid_out(
+    app: &App,
+    title: &str,
+    paper: &Paper,
+    parts: Vec<Part>,
+    named: Option<Vec<u32>>,
+    notice: Option<String>,
+    work: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<Whole> {
+    let mut job = job(app, title, paper, parts);
+    job.pages = named;
     let made = print_job::make(&mut job, work, cancel)?;
-    let whole = Whole {
+    let clipped = job
+        .pages
+        .as_ref()
+        .and_then(|named| named.last())
+        .is_some_and(|&last| last >= made.laid_out);
+    Ok(Whole {
         pdf: job.output,
-        pages: made.pages,
-        notice: None,
+        pages: Some(made.pages),
+        notice: notice.or_else(|| clipped.then(|| past(made.laid_out))),
         made: true,
-    };
-    picked(whole, &Shown::default(), layout, work, cancel)
+        picked: job.pages.is_some(),
+    })
 }
 
 /// The paper a page is laid out on: a booklet's is half its sheet, so
@@ -141,6 +251,7 @@ fn page_paper(layout: &Layout) -> Paper {
 /// The pages of `whole` that `layout` picks, folded as a booklet when it
 /// says, on the sides and in the order it chose.
 fn picked(
+    app: &App,
     whole: Whole,
     shown: &Shown,
     layout: &Layout,
@@ -149,25 +260,38 @@ fn picked(
 ) -> anyhow::Result<Ready> {
     let Whole {
         pdf,
-        pages: count,
+        pages,
         notice,
         made,
+        picked: made_picked,
     } = whole;
+    // Every page in order at its size: the file as it is, uncounted.
+    if layout.as_it_is() {
+        return Ok(Ready { pdf, pages, notice });
+    }
+    let count = match pages {
+        Some(count) => count,
+        None => page_count(app, &pdf, cancel)?,
+    };
     // A page of a PDF keeps clear of a booklet sheet's edges and fold; one
     // Skwir laid out at half a sheet has its own margins.
     let (edge, fold) = if made { (0.0, 0.0) } else { (EDGE, FOLD) };
     let current = shown.page.and_then(|page| page.checked_sub(1));
-    // What is selected was made into its own document: all of it.
-    let picked = layout.pages.pick(count, current);
+    // What is selected was made into its own document, and what was
+    // picked as it was made is all it holds: all of it.
+    let picked = if made_picked {
+        paper::Picked {
+            pages: (0..count).collect(),
+            clipped: false,
+        }
+    } else {
+        layout.pages.pick(count, current)
+    };
     anyhow::ensure!(
         !picked.pages.is_empty(),
         "No page of it is among those asked"
     );
-    let notice = notice.or_else(|| {
-        picked
-            .clipped
-            .then(|| format!("It has {count} pages; those past them were left out"))
-    });
+    let notice = notice.or_else(|| picked.clipped.then(|| past(count)));
     // A booklet: the pages picked folded in their order, then the sides
     // and the order chosen applied to its sheets' sides.
     let (pdf, count, picked) = match layout.booklet {
@@ -218,8 +342,9 @@ fn picked(
     if layout.reverse {
         order.reverse();
     }
-    // Printed whole, in order: the file as it is.
-    if order.len() == count as usize
+    // Printed whole, in order, at its size: the file as it is.
+    if unscaled(layout.scale)
+        && order.len() == count as usize
         && order
             .iter()
             .enumerate()
@@ -227,14 +352,17 @@ fn picked(
     {
         return Ok(Ready {
             pdf,
-            pages: count,
+            pages: Some(count),
             notice,
         });
     }
     let out = work.join("pages.pdf");
     let pages = skwir_platform::document::compose(
         &pdf,
-        Compose::Pages(order.iter().copied().map(Some).collect()),
+        Compose::Pages {
+            pages: order.iter().copied().map(Some).collect(),
+            scale: layout.scale,
+        },
         None,
         &out,
         cancel,
@@ -242,46 +370,65 @@ fn picked(
     .context("Printing its pages needs PDFium, which is not there")?;
     Ok(Ready {
         pdf: out,
-        pages,
+        pages: Some(pages),
         notice,
     })
 }
 
-/// A file printed whole: its PDF and pages, what was left out of it, and
-/// whether Skwir made it (laid out at the size asked, with its margins).
+/// A file as printed: its PDF and pages (when counted: a PDF is counted
+/// only when picking needs it), what was left out of it, whether Skwir
+/// made it (laid out at the size asked, with its margins), and whether it
+/// holds only the pages picked, picked as it was made.
 struct Whole {
     pdf: PathBuf,
-    pages: u32,
+    pages: Option<u32>,
     notice: Option<String>,
     made: bool,
+    picked: bool,
 }
 
-/// `path` as its preview shows it, whole, made on `paper` in `work` when
-/// Skwir makes it.
+/// `path` as its preview shows it, made on `paper` in `work` when Skwir
+/// makes it: of the pages `picking` asks alone where they are known
+/// before it is made, whole without.
 fn whole(
     app: &App,
     path: &Path,
     shown: &Shown,
+    picking: Option<&Picking<'_>>,
     paper: &Paper,
     work: &Path,
     cancel: &CancelToken,
 ) -> anyhow::Result<Whole> {
-    Ok(match source(app, path, shown, work, cancel)? {
+    Ok(match source(app, path, shown, picking, work, cancel)? {
         Source::Pdf(pdf, pages) => Whole {
             pdf,
             pages,
             notice: None,
             made: false,
+            picked: false,
         },
-        Source::Parts(parts, notice) => {
-            let mut job = job(app, &display_name(path), paper, parts);
-            let made = print_job::make(&mut job, work, cancel)?;
-            Whole {
-                pdf: job.output,
-                pages: made.pages,
+        Source::Parts {
+            parts,
+            notice,
+            picked,
+        } => {
+            // Pages drawn as pictures were picked as they were drawn; text
+            // is laid out whole, the pages named written alone.
+            let named = picking
+                .filter(|_| !picked)
+                .and_then(|picking| named(picking.pages, picking.current));
+            let mut whole = laid_out(
+                app,
+                &display_name(path),
+                paper,
+                parts,
+                named,
                 notice,
-                made: true,
-            }
+                work,
+                cancel,
+            )?;
+            whole.picked |= picked;
+            whole
         }
     })
 }
@@ -304,7 +451,7 @@ fn joined(
         let own = work.join(n.to_string());
         std::fs::create_dir(&own)?;
         let name = display_name(path);
-        match whole(app, path, &Shown::default(), paper, &own, cancel) {
+        match whole(app, path, &Shown::default(), None, paper, &own, cancel) {
             Ok(mut part) => {
                 if let Some(notice) = part.notice.take() {
                     said.push(format!("“{name}”: {notice}"));
@@ -344,18 +491,35 @@ fn joined(
     .context("Printing several files as one needs PDFium, which is not there")?;
     Ok(Whole {
         pdf: out,
-        pages,
+        pages: Some(pages),
         notice,
         made: wholes.iter().all(|whole| whole.made),
+        picked: false,
     })
 }
 
 /// What is printed before its pages are picked.
 enum Source {
-    /// A PDF, and how many pages it has.
-    Pdf(PathBuf, u32),
-    /// Parts the helper makes a PDF of, and what was left out of them.
-    Parts(Vec<Part>, Option<String>),
+    /// A PDF, and how many pages it has when known.
+    Pdf(PathBuf, Option<u32>),
+    /// Parts the helper makes a PDF of, what was left out of them, and
+    /// whether they hold only the pages picked (a reader's drawn).
+    Parts {
+        parts: Vec<Part>,
+        notice: Option<String>,
+        picked: bool,
+    },
+}
+
+impl Source {
+    /// Parts laid out whole.
+    fn parts(parts: Vec<Part>, notice: Option<String>) -> Source {
+        Source::Parts {
+            parts,
+            notice,
+            picked: false,
+        }
+    }
 }
 
 /// What `path` is printed as, as its preview shows it: the order the
@@ -365,26 +529,31 @@ fn source(
     app: &App,
     path: &Path,
     shown: &Shown,
+    picking: Option<&Picking<'_>>,
     work: &Path,
     cancel: &CancelToken,
 ) -> anyhow::Result<Source> {
+    // What is read is what the entry opens (a link's target), typed by its
+    // own name: the link's names where it goes and what it is called.
+    let path: &Path = &skwir_core::fs::content_path(path)
+        .with_context(|| format!("“{}” shows nothing that can be printed", display_name(path)))?;
     let mime = skwir_platform::mime::of_request(path, None).map(|mime| mime.as_str().to_owned());
     let request = request(path, mime.clone())?;
     if let Some(selection) = &shown.selection {
-        return Ok(Source::Parts(vec![selected(path, selection)], None));
+        return Ok(Source::parts(vec![selected(path, selection)], None));
     }
+    // A PDF is counted only when its pages are picked (`picked`).
     if mime.as_deref() == Some("application/pdf") {
-        let count = page_count(path, cancel)?;
-        return Ok(Source::Pdf(path.to_owned(), count));
+        return Ok(Source::Pdf(path.to_owned(), None));
     }
     if let Some(converted) = app.previews.converted(&request, cancel)? {
         // A plugin's own file in its place: printed as that file is.
-        return source(app, &converted.path, shown, work, cancel);
+        return source(app, &converted.path, shown, picking, work, cancel);
     }
     let view = InspectRequest::default();
     if let Some(inspection) = app.previews.inspect(&request, &view, cancel)? {
         if inspection.kind == InspectionKind::Font {
-            return Ok(Source::Parts(vec![specimen(path)], None));
+            return Ok(Source::parts(vec![specimen(path)], None));
         }
         let palette = print_job::light_palette(app);
         let mut written = 0usize;
@@ -404,7 +573,7 @@ fn source(
         };
         let parts = print_job::parts(&inspection, &palette, &mut pictures, cancel)?;
         if !parts.parts.is_empty() {
-            return Ok(Source::Parts(parts.parts, parts.notice));
+            return Ok(Source::parts(parts.parts, parts.notice));
         }
     }
     if let Some(session) = app.previews.open_document(&request, cancel)? {
@@ -412,9 +581,9 @@ fn source(
             // Kept while the session lives: copied for printing.
             let copy = work.join("document.pdf");
             std::fs::copy(pdf, &copy).context("Keeping the document's PDF to print it")?;
-            return Ok(Source::Pdf(copy, session.info().pages));
+            return Ok(Source::Pdf(copy, Some(session.info().pages)));
         }
-        return Ok(Source::Parts(vec![drawn(&*session, work, cancel)?], None));
+        return drawn(&*session, picking, work, cancel);
     }
     builtin(path, mime.as_deref(), &request, work, cancel)
 }
@@ -429,7 +598,7 @@ fn builtin(
 ) -> anyhow::Result<Source> {
     let name = display_name(path);
     if matches!(mime, Some("image/svg+xml" | "image/svg+xml-compressed")) {
-        return Ok(Source::Parts(
+        return Ok(Source::parts(
             vec![Part::Drawing {
                 svg: path.to_owned(),
                 alt: name,
@@ -443,7 +612,7 @@ fn builtin(
             skwir_platform::mime::is_kind(&mime, skwir_platform::mime::Kind::Image)
         });
     if image {
-        return Ok(Source::Parts(vec![picture(path, mime, work)?], None));
+        return Ok(Source::parts(vec![picture(path, mime, work)?], None));
     }
     let held = request.held()?;
     if skwir_platform::inspection::is_text(held.head()) {
@@ -452,7 +621,7 @@ fn builtin(
             &skwir_platform::highlight::CodeTheme::own(false),
         );
         let parts = print_job::parts(&inspection, &palette, &mut |_| None, cancel)?;
-        return Ok(Source::Parts(parts.parts, parts.notice));
+        return Ok(Source::parts(parts.parts, parts.notice));
     }
     anyhow::bail!("“{name}” shows nothing that can be printed")
 }
@@ -472,14 +641,21 @@ fn request(path: &Path, mime: Option<String>) -> anyhow::Result<PreviewRequest> 
     })
 }
 
-/// How many pages the PDF at `path` has, as `PDFium` reads it.
-pub(crate) fn page_count(path: &Path, cancel: &CancelToken) -> anyhow::Result<u32> {
-    let session = skwir_platform::document::open(
-        path,
-        &[skwir_platform::document::Engine::Pdfium],
-        &cancel.child(),
-    )?
-    .context("Printing a PDF needs PDFium, which is not there")?;
+/// How many pages the PDF at `path` has, as the document reader the
+/// settings choose reads it (its engine, its `PDFium`), else `PDFium` where
+/// no reader is on.
+pub(crate) fn page_count(app: &App, path: &Path, cancel: &CancelToken) -> anyhow::Result<u32> {
+    let lifetime = cancel.child();
+    let request = request(path, Some("application/pdf".to_owned()))?;
+    let session = match app.previews.open_document(&request, &lifetime)? {
+        Some(session) => session,
+        None => skwir_platform::document::open(
+            path,
+            &[skwir_platform::document::Engine::Pdfium],
+            &lifetime,
+        )?
+        .context("Counting a PDF's pages needs a document reader, which is not there")?,
+    };
     Ok(session.info().pages)
 }
 
@@ -581,11 +757,17 @@ pub(crate) fn sheet(
     for (n, path) in paths.iter().enumerate() {
         anyhow::ensure!(!cancel.is_cancelled(), "Printing was cancelled");
         let name = display_name(path);
-        let image = skwir_platform::mime::of_request(path, None).is_some_and(|mime| {
-            skwir_platform::mime::is_kind(&mime, skwir_platform::mime::Kind::Image)
-        });
-        let read = image
-            .then(|| sheet_picture(path, &work.join(format!("sheet-{n}")), &name))
+        // What a link opens, typed by its own name.
+        let content = skwir_core::fs::content_path(path);
+        let image = content
+            .as_deref()
+            .and_then(|content| skwir_platform::mime::of_request(content, None))
+            .is_some_and(|mime| {
+                skwir_platform::mime::is_kind(&mime, skwir_platform::mime::Kind::Image)
+            });
+        let read = content
+            .filter(|_| image)
+            .map(|content| sheet_picture(&content, &work.join(format!("sheet-{n}")), &name))
             .transpose();
         match read {
             Ok(Some(picture)) => pictures.push(picture),
@@ -641,14 +823,28 @@ fn sheet_picture(path: &Path, stem: &Path, name: &str) -> anyhow::Result<paper::
     })
 }
 
-/// A document's pages drawn as pictures, each written as a PNG.
+/// A document's pages drawn as pictures, each written as a PNG: those
+/// `picking` asks alone (its count known), every one without.
 fn drawn(
     session: &dyn skwir_core::document::DocumentSession,
+    picking: Option<&Picking<'_>>,
     work: &Path,
     cancel: &CancelToken,
-) -> anyhow::Result<Part> {
-    let mut pages = Vec::new();
-    for page in 1..=session.info().pages {
+) -> anyhow::Result<Source> {
+    let count = session.info().pages;
+    let chosen = match picking {
+        Some(picking) => picking.pages.pick(count, picking.current),
+        None => paper::Picked {
+            pages: (0..count).collect(),
+            clipped: false,
+        },
+    };
+    anyhow::ensure!(
+        !chosen.pages.is_empty(),
+        "No page of it is among those asked"
+    );
+    let mut pages = Vec::with_capacity(chosen.pages.len());
+    for page in chosen.pages.iter().map(|page| page + 1) {
         anyhow::ensure!(!cancel.is_cancelled(), "Printing was cancelled");
         let drawn = session.render(page, PAGE_SIDE, cancel)?;
         let (width, height) = (drawn.width, drawn.height);
@@ -667,7 +863,11 @@ fn drawn(
             caption: None,
         });
     }
-    Ok(Part::Pages { pages })
+    Ok(Source::Parts {
+        parts: vec![Part::Pages { pages }],
+        notice: chosen.clipped.then(|| past(count)),
+        picked: picking.is_some(),
+    })
 }
 
 fn write_png(image: &skwir_core::thumbs::Image, path: &Path) -> anyhow::Result<()> {
@@ -723,6 +923,25 @@ mod tests {
 
     /// A contact sheet takes the pictures among the files, shrunk and
     /// named, a see-through one kept see-through, and says what it left.
+    /// Pages named before a document is counted: the page shown, closed
+    /// ranges in order, each once; every page, a range to the end and a
+    /// pick too long are picked once it is counted.
+    #[test]
+    fn pages_are_named_before_counting_only_when_they_can_be() {
+        let typed = |text: &str| Pages::Ranges(paper::parse(text).unwrap());
+        assert_eq!(named(&typed("7, 1-3, 2"), None), Some(vec![0, 1, 2, 6]));
+        assert_eq!(named(&typed("1-3, 10-"), None), None);
+        assert_eq!(named(&Pages::Current, Some(4)), Some(vec![4]));
+        assert_eq!(named(&Pages::All, Some(4)), None);
+        assert_eq!(named(&Pages::Selection, None), None);
+        assert_eq!(named(&typed("1-4294967295"), None), None);
+        let most = u32::try_from(MOST_NAMED).unwrap();
+        assert_eq!(
+            named(&typed(&format!("1-{most}")), None).map(|pages| pages.len()),
+            Some(usize::try_from(MOST_NAMED).unwrap())
+        );
+    }
+
     #[test]
     fn a_contact_sheet_takes_the_pictures_shrunk_and_says_what_it_left() {
         let tmp = tempfile::tempdir().unwrap();
