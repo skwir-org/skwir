@@ -983,7 +983,12 @@ fn choice_row(
             }
         }
     });
-    if all.iter().all(|c| c.picture.is_none()) {
+    // Segments hold a title alone: a choice that says more, or shows it,
+    // is a card.
+    if all
+        .iter()
+        .all(|c| c.picture.is_none() && c.detail.is_empty())
+    {
         let mut frame = controls::segmented(id, focus, theme)
             .aria_label(field.title.clone())
             .on_click(keyboard);

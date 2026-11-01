@@ -94,8 +94,9 @@ pub enum Kind {
     /// typed (what kind of server): picking one answers the form.
     Pick { choices: Vec<Choice> },
     /// One of a few `choices`, all in sight side by side (a radio group):
-    /// those with a picture as cards, the picture above the title, the
-    /// others as segments.
+    /// as cards when one has a picture or a detail (the picture above the
+    /// title, the detail under it: what a choice says is never dropped),
+    /// else as segments.
     Row { choices: Vec<Choice> },
     /// Where the user can go to do what the form waits for (a sign-in's
     /// page): `value` is the address, opened by the window's link.
