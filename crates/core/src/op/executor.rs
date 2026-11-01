@@ -2404,6 +2404,11 @@ impl Executor {
                         cancelled = true;
                         break;
                     }
+                    // It found it had nothing to make, and changed nothing:
+                    // done already, as a step whose check found it so.
+                    Err(e) if e.is::<super::Unneeded>() => {
+                        skipped += 1;
+                    }
                     Err(e) => {
                         tracing::warn!(plan = %plan.title, "a step failed: {e:#}");
                         err = Some(super::said(&e));
@@ -3364,6 +3369,52 @@ mod tests {
         fn clone_box(&self) -> Box<dyn Operation> {
             Box::new(self.clone())
         }
+    }
+
+    /// A step that finds, as it runs, it has nothing to make.
+    #[derive(Debug, Clone)]
+    struct Needless;
+
+    impl Operation for Needless {
+        fn kind(&self) -> &'static str {
+            "needless"
+        }
+        fn args(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn describe(&self) -> Change {
+            Change::Trash {
+                path: "/example/needless".into(),
+            }
+        }
+        fn check(&self, _: &StepContext) -> StepStatus {
+            StepStatus::Pending { reversible: true }
+        }
+        fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            Err(super::super::Unneeded("as small as it gets already".to_owned()).into())
+        }
+        fn clone_box(&self) -> Box<dyn Operation> {
+            Box::new(self.clone())
+        }
+    }
+
+    /// A step with nothing to make is done already: the plan goes on, the
+    /// steps after it applied, and nothing failed or was cancelled.
+    #[test]
+    fn a_step_with_nothing_to_make_lets_the_plan_go_on() {
+        let executor = Executor::new(Scheduler::new(1));
+        let applied = Arc::new(AtomicUsize::new(0));
+        let probe = || {
+            Box::new(Probe {
+                applied: Arc::clone(&applied),
+                conflict: false,
+            }) as Box<dyn Operation>
+        };
+        let plan = Plan::with_steps("copies", vec![probe(), Box::new(Needless), probe()]);
+        let r = executor.execute_blocking(&plan, &CancelToken::new());
+        assert_eq!((r.applied, r.skipped, r.error), (2, 1, None));
+        assert!(!r.cancelled);
+        assert_eq!(applied.load(Ordering::SeqCst), 2);
     }
 
     /// The journal keeps the latest actions, never more than its bound,

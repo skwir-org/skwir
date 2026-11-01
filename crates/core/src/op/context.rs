@@ -23,6 +23,14 @@ use crate::location::Waker;
 #[error("cancelled")]
 pub struct Cancelled;
 
+/// The error a step returns when it found, as it ran, that it had nothing
+/// to make (a smaller copy that would not be smaller), having changed
+/// nothing: the executor counts it done already, as a step whose check
+/// found it so, and the plan goes on. Its words say why, to the user.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct Unneeded(pub String);
+
 /// Why a step was given no secret ([`StepContext::ask_secret`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unanswered {

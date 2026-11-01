@@ -26,6 +26,12 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 - A step that changes metadata states its words (`op::Words`: what it
   will do, for the review; what it did, for the toast). What a plan left
   out goes in its note (`Plan::with_note`), never in its title.
+- A step that finds, as it runs, it has nothing to make (a smaller copy
+  that would not be smaller, ADR-112), having changed nothing, returns
+  `op::Unneeded` with why: the executor counts it done already, as a
+  step whose check found it so, and the plan goes on. Never an error for
+  it: an error stops the plan, and a batch would stop at its first such
+  file. Why is told by the step's own plugin, once for the plan's steps.
 - **Unfolding.** A step whose steps depend on what it reads says them
   (`Operation::unfolds`: a notes edit and the rename of a name holding
   the file's tags). They replace it before anything is settled or
