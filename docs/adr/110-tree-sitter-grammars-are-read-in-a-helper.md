@@ -55,7 +55,9 @@ revised 2026-11-01: a choice for each language beside Automatic's rule.
    Skwir's cache (Wasmtime's own cache, configured in code, 256 MiB at
    most, the one folder of the user's the helper writes in): a large
    grammar compiles in seconds, and the helper starts again after each
-   unused minute.
+   unused minute. The cache is trusted no further than the helper: only
+   the helper writes it, isolated, and only helpers read it, so a module
+   kept there can do no more than the helper could, in a helper again.
 3. **Grammars are found where they are kept**: Skwir's own folder
    (`<data>/grammars`, a grammar repository as `tree-sitter build` leaves
    it, its `tree-sitter.json` naming its file types), then Zed's, Helix's,
