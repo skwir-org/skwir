@@ -8806,7 +8806,9 @@ name = "skwir-print-worker"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "flate2",
  "image",
+ "imagesize",
  "krilla",
  "krilla-svg",
  "lopdf",

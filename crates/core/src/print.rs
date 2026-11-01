@@ -597,6 +597,14 @@ pub struct Picture {
     pub caption: Option<String>,
 }
 
+impl Picture {
+    /// The most pixels a picture is decoded at to be printed, read from
+    /// its header first: as many as a preview shown whole decodes (the
+    /// platform's `limits::WHOLE_PICTURE_PIXELS`). The print helper draws
+    /// a frame for one larger, and one handed to it as it is stays under.
+    pub const MOST_PIXELS: u64 = 128 * 1024 * 1024;
+}
+
 /// The helper's answer, a line on its standard output.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Made {

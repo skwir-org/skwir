@@ -18,6 +18,10 @@ krilla = { version = "0.8", default-features = false, features = ["raster-images
 # here with nothing but the drawing itself and the job's fonts.
 krilla-svg = "0.8"
 usvg = { version = "0.47", default-features = false, features = ["text"] }
+# A picture's size from its header, before anything decodes it; krilla's.
+imagesize = "0.14"
+# A compressed drawing (`.svgz`) inflated within a bound.
+flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 # Lays text out: shaping, bidirectional text, line breaking. Without
 # `system`: fonts are the job's and its fallback folders', never the
 # system's discovery.

@@ -764,6 +764,62 @@ fn a_drawing_stays_vector_and_reads_nothing_beside_it() {
 }
 
 #[test]
+fn a_drawing_compressed_or_holding_a_picture_too_large_is_drawn_within_bounds() {
+    use std::io::Write as _;
+    let Some(fonts) = fonts() else { return };
+    let dir = scratch();
+    // A PNG's header saying 100 000 × 100 000, inside the drawing: left
+    // out, not decoded. A small one beside it is drawn.
+    let mut huge = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+    huge.extend_from_slice(&100_000u32.to_be_bytes());
+    huge.extend_from_slice(&100_000u32.to_be_bytes());
+    huge.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
+    let small = dir.path().join("small.png");
+    write_png(&small, 8, 8, 0);
+    let base64 = |data: &[u8]| {
+        const DIGITS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in data.chunks(3) {
+            let n = (u32::from(chunk[0]) << 16)
+                | (u32::from(*chunk.get(1).unwrap_or(&0)) << 8)
+                | u32::from(*chunk.get(2).unwrap_or(&0));
+            for i in 0..4 {
+                if i <= chunk.len() {
+                    out.push(DIGITS[(n >> (18 - 6 * i) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
+    };
+    let svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="50">
+  <image width="50" height="50" href="data:image/png;base64,{}"/>
+  <image x="50" width="50" height="50" href="data:image/png;base64,{}"/>
+</svg>"#,
+        base64(&huge),
+        base64(&std::fs::read(&small).unwrap()),
+    );
+    // Compressed, as an `.svgz` is.
+    let path = dir.path().join("drawing.svgz");
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(svg.as_bytes()).unwrap();
+    std::fs::write(&path, gz.finish().unwrap()).unwrap();
+    let job = job(
+        dir.path(),
+        fonts,
+        vec![Part::Drawing {
+            svg: path,
+            alt: "Two pictures".into(),
+        }],
+    );
+    let (made, document, _) = ok(dir.path(), &job);
+    assert_eq!(made.pages, 1);
+    assert_eq!(images(&document).len(), 1, "the small picture alone");
+}
+
+#[test]
 fn a_specimen_writes_the_sample_in_its_face_at_each_size() {
     let Some(fonts) = fonts() else { return };
     let dir = scratch();

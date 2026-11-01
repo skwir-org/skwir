@@ -3,9 +3,16 @@
 //! a document's pages drawn as pictures; an SVG drawing kept vector. A
 //! JPEG is embedded as it is, other pictures as krilla takes them in;
 //! each is a figure with its alternative text for a screen reader.
+//!
+//! Everything decoded here is bounded first, from what its header says:
+//! a picture past [`Picture::MOST_PIXELS`] is not decoded (krilla decodes
+//! a PNG or a WebP whole, at once, however large it says it is), nor is
+//! a compressed drawing that inflates past [`DRAWING_LIMIT`], nor a
+//! picture inside a drawing past either.
 
 use std::io::Read;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use krilla::geom::{PathBuilder, Size, Transform};
@@ -25,6 +32,8 @@ use crate::text::{self, GREY, RULE, Spec, Wrap};
 /// The largest picture read, and the largest drawing.
 const PICTURE_LIMIT: u64 = 256 * 1024 * 1024;
 const DRAWING_LIMIT: u64 = 64 * 1024 * 1024;
+/// How a gzip stream starts: a compressed drawing (`.svgz`).
+const GZIP: [u8; 2] = [0x1f, 0x8b];
 
 pub struct Pictures<'a> {
     all: &'a [Picture],
@@ -150,9 +159,22 @@ pub fn draw_picture(surface: &mut Surface, path: &Path, area: Area) {
     }
 }
 
-/// A picture skwir wrote, by what its bytes say it is.
+/// Whether the picture `data` holds may be decoded: its size, read from
+/// its header, at most [`Picture::MOST_PIXELS`]. One whose size cannot
+/// be read is not.
+fn decodable(data: &[u8]) -> bool {
+    imagesize::blob_size(data).is_ok_and(|size| {
+        (size.width as u64).saturating_mul(size.height as u64) <= Picture::MOST_PIXELS
+    })
+}
+
+/// A picture skwir wrote, by what its bytes say it is, when it may be
+/// decoded.
 fn read_picture(path: &Path) -> Option<Image> {
     let data = read_bounded(path, PICTURE_LIMIT).ok()?;
+    if !decodable(&data) {
+        return None;
+    }
     let data_of = |data: Vec<u8>| krilla::Data::from(data);
     if data.starts_with(&[0xff, 0xd8, 0xff]) {
         Image::from_jpeg(data_of(data), true).ok()
@@ -178,6 +200,44 @@ fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>> {
     Ok(data)
 }
 
+/// `data` inflated, when it is gzipped (an `.svgz`), refused past `limit`
+/// bytes, where usvg would inflate whatever a stream says.
+fn inflated(data: Vec<u8>, limit: u64) -> Result<Vec<u8>> {
+    if !data.starts_with(&GZIP) {
+        return Ok(data);
+    }
+    let mut out = Vec::new();
+    flate2::read::GzDecoder::new(data.as_slice())
+        .take(limit + 1)
+        .read_to_end(&mut out)?;
+    if out.len() as u64 > limit {
+        bail!("it inflates to more than {limit} bytes");
+    }
+    Ok(out)
+}
+
+/// What a drawing may draw of the pictures it holds (`data:`): those
+/// [`decodable`], and drawings inflated within [`DRAWING_LIMIT`], which
+/// ask the same of theirs. Nothing it names elsewhere is read.
+fn bounded_images() -> usvg::ImageHrefResolver<'static> {
+    let decode = usvg::ImageHrefResolver::default_data_resolver();
+    usvg::ImageHrefResolver {
+        resolve_data: Box::new(move |mime, data, options| {
+            let data = if data.starts_with(&GZIP) {
+                Arc::new(inflated(data.to_vec(), DRAWING_LIMIT).ok()?)
+            } else {
+                data
+            };
+            let picture = imagesize::image_type(&data).is_ok();
+            if picture && !decodable(&data) {
+                return None;
+            }
+            decode(mime, data, options)
+        }),
+        resolve_string: Box::new(|_, _| None),
+    }
+}
+
 /// An SVG drawing on a page of its own, fitted to the text.
 pub struct Drawing {
     tree: usvg::Tree,
@@ -189,8 +249,11 @@ pub struct Drawing {
 impl Drawing {
     pub fn plan(svg: &Path, alt: &str, fonts: &Fonts, frame: Frame) -> Result<Drawing> {
         let data = read_bounded(svg, DRAWING_LIMIT)
+            .and_then(|data| inflated(data, DRAWING_LIMIT))
             .with_context(|| format!("the drawing {} could not be read", svg.display()))?;
-        let tree = usvg::Tree::from_data(&data, &fonts.svg_options())
+        let mut options = fonts.svg_options();
+        options.image_href_resolver = bounded_images();
+        let tree = usvg::Tree::from_data(&data, &options)
             .with_context(|| format!("the drawing {} could not be read", svg.display()))?;
         Ok(Drawing {
             tree,
@@ -224,5 +287,35 @@ impl Part for Drawing {
 
     fn finish(&mut self, cx: &mut PageCx) {
         self.structure.close_all(cx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_picture_too_large_is_not_decoded() {
+        // A PNG's header saying 100 000 × 100 000, with nothing after.
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend_from_slice(&100_000u32.to_be_bytes());
+        png.extend_from_slice(&100_000u32.to_be_bytes());
+        png.extend_from_slice(&[8, 2, 0, 0, 0]);
+        assert!(!decodable(&png));
+        let mut small = png.clone();
+        small[16..24].copy_from_slice(&[0, 0, 0, 64, 0, 0, 0, 48]);
+        assert!(decodable(&small));
+        assert!(!decodable(b"not a picture"));
+    }
+
+    #[test]
+    fn a_drawing_inflates_within_its_bound() {
+        use std::io::Write as _;
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        gz.write_all(&[b' '; 4096]).unwrap();
+        let data = gz.finish().unwrap();
+        assert_eq!(inflated(data.clone(), 4096).unwrap().len(), 4096);
+        assert!(inflated(data, 4095).is_err());
+        assert_eq!(inflated(b"<svg/>".to_vec(), 1).unwrap(), b"<svg/>");
     }
 }
