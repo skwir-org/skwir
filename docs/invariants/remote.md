@@ -107,13 +107,20 @@ ADR-077 (which revises ADR-021).
   search's hints and plocate's answer, the tags index's counts and tag
   locations leave out what a pane shown there taught them. Usage asks
   before measuring a remote.
-- **Extended attributes** a remote refused (`xattr::refused`: sshfs,
-  rclone, GVfs's bridge, which on an iPhone looks each file up first)
-  are not asked of it again this session (`reach::refuses_attributes`,
-  by its point and mount number, so a mount made again is asked again):
-  every read through `fs::xattr` answers as the first did, so a listing's
-  tags or a lens of them cost no request a file. Writes are tried each
-  time, their refusal sending the notes beside the file.
+- **Extended attributes** a FUSE remote refused (`xattr::refused`:
+  sshfs, rclone, GVfs's bridge, which on an iPhone looks each file up
+  first) are not asked of it again while it stays mounted
+  (`reach::refuses_attributes`): the kernel answers so for every file of
+  one FUSE connection. It is remembered by its point and the number of
+  the FUSE mount (`mount_of`; a bridge's folder by the bridge's), and
+  let go of once the table lists that mount no more, so a mount made
+  again is asked again. Every read through `fs::xattr` answers as the
+  first did, so a listing's tags or a lens of them cost no request a
+  file. A kernel's share (NFS, SMB) is asked each time: its server may
+  keep attributes in one folder and not another. Writes are tried each
+  time, their refusal sending the notes beside the file; one that
+  succeeds lets go of the refusal. With nothing remembered, a read asks
+  nothing of the table (a count read without a lock).
 - **Delete** on a FUSE remote (sshfs, rclone, GVfs) is permanent and asked
   (the trash command makes a `Delete` there); a kernel share keeps its own
   `.Trash-<uid>`. Nothing is ever copied from a remote into this

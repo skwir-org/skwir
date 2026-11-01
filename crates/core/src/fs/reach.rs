@@ -16,7 +16,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use parking_lot::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use parking_lot::{Mutex, RwLock};
 
 use crate::scheduler::Lane;
 
@@ -200,7 +202,7 @@ pub fn of(path: &Path) -> Option<Arc<Remote>> {
 /// The folders a test says remotes are mounted at, and their types
 /// ([`pretend_remote`]).
 #[cfg(test)]
-static PRETENDED_REMOTES: Mutex<Vec<(PathBuf, &str)>> = Mutex::new(Vec::new());
+static PRETENDED_REMOTES: Mutex<Vec<(PathBuf, &str, Option<u64>)>> = Mutex::new(Vec::new());
 
 /// The remotes a test says are mounted, as the table would list them:
 /// every question asked of the table answers for them too ([`of`],
@@ -210,12 +212,12 @@ fn pretended() -> Vec<Arc<Remote>> {
     PRETENDED_REMOTES
         .lock()
         .iter()
-        .map(|(point, fstype)| {
+        .map(|(point, fstype, device)| {
             Arc::new(Remote {
                 point: point.clone(),
                 fstype: (*fstype).to_owned(),
                 source: "me@example.com:/".into(),
-                device: None,
+                device: *device,
             })
         })
         .collect()
@@ -226,9 +228,16 @@ fn pretended() -> Vec<Arc<Remote>> {
 /// path below it.
 #[cfg(all(test, target_os = "linux"))]
 pub(crate) fn pretend_remote(point: &Path) {
+    pretend_mount(point, "fuse.sshfs", None);
+}
+
+/// Say, for this test's process, that a remote of type `fstype` is
+/// mounted at `point` on `device`.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn pretend_mount(point: &Path, fstype: &'static str, device: Option<u64>) {
     PRETENDED_REMOTES
         .lock()
-        .push((point.to_path_buf(), "fuse.sshfs"));
+        .push((point.to_path_buf(), fstype, device));
 }
 
 /// Say, for this test's process, that a camera GVfs mounted is at
@@ -241,9 +250,7 @@ pub(crate) fn pretend_camera(point: &Path) {
             .file_name()
             .is_some_and(|n| n.as_encoded_bytes().starts_with(b"gphoto2:"))
     );
-    PRETENDED_REMOTES
-        .lock()
-        .push((point.to_path_buf(), "fuse.gvfsd-fuse"));
+    pretend_mount(point, "fuse.gvfsd-fuse", None);
 }
 
 /// The remote whose files are on `device` (a stat's), if one is.
@@ -337,43 +344,116 @@ pub fn proved_changed() -> u64 {
     PROVED_CHANGED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// The remotes that refused extended attributes this session, by their
-/// point and their number (`mount_of`), so a mount made again is asked
-/// again. A refusal still reaches the server on some (GVfs's bridge looks
-/// each file up on an iPhone before it refuses, a USB round trip): asked
-/// once a mount, never again for each file a listing reads (its tags, a
-/// lens of them). In memory alone, as what reads proved is.
-static REFUSES_ATTRIBUTES: Mutex<Option<crate::hashing::Set<(PathBuf, u64)>>> = Mutex::new(None);
+/// The FUSE mounts that refused extended attributes, each by the point
+/// the refusal was asked under (a bridge's folder: GVfs's `afc:host=…`)
+/// and the number of the FUSE mount that answered (`mount_of`, a bridge's
+/// own), so a mount made again is asked again. A FUSE program's refusal
+/// holds for every file of its connection, and some still reach the
+/// server first (GVfs's bridge looks each file up on an iPhone, a USB
+/// round trip): asked once a mount, never again for each file a listing
+/// reads (its tags, a lens of them). A kernel's share is not remembered:
+/// its server may keep attributes in one folder and not another. Let go
+/// of when the table lists that mount no more (`forget_unmounted`) or a
+/// write there succeeds (`note_accepted_attributes`). In memory alone,
+/// as what reads proved is; a refused mount or two, never a list of files.
+static REFUSES_ATTRIBUTES: RwLock<Vec<(PathBuf, u64)>> = RwLock::new(Vec::new());
 
-/// `path`'s remote's key in what is remembered of it this session.
-fn remembered_as(path: &Path) -> Option<(PathBuf, u64)> {
+/// How many refusals [`REFUSES_ATTRIBUTES`] holds: a read where it holds
+/// none asks nothing of the table and takes no lock.
+static REFUSALS: AtomicUsize = AtomicUsize::new(0);
+
+/// What a refusal of `path`'s extended attributes is remembered by: its
+/// FUSE remote's point and the number of its FUSE mount; `None` on this
+/// machine's volumes and a kernel's share.
+fn refusing_mount(path: &Path) -> Option<(PathBuf, u64)> {
     let remote = of(path)?;
-    Some((remote.point.clone(), mount_of(remote.device.unwrap_or(0))))
+    if remote.by_kernel() {
+        return None;
+    }
+    let table = table();
+    // A bridge's folder tells no device: the bridge's mount does.
+    let device = remote.device.or_else(|| {
+        table
+            .remotes
+            .iter()
+            .find(|r| path.starts_with(&r.point))
+            .and_then(|r| r.device)
+    });
+    Some((
+        remote.point.clone(),
+        device.map_or(0, |d| number_in(&table, d)),
+    ))
 }
 
 /// Reading an extended attribute of `path` was refused as the volume
-/// keeping none (`xattr::refused`): on a remote, its mount is not asked
-/// again ([`refuses_attributes`]). A local volume answers at once, and is
-/// asked each time.
+/// keeping none (`xattr::refused`): on a FUSE remote, that mount is not
+/// asked again while it stays mounted ([`refuses_attributes`]). This
+/// machine's volumes answer at once and a kernel's share may answer each
+/// folder otherwise: both are asked each time.
 pub fn note_refused_attributes(path: &Path) {
-    if let Some(key) = remembered_as(path) {
-        REFUSES_ATTRIBUTES
-            .lock()
-            .get_or_insert_with(Default::default)
-            .insert(key);
+    let Some(key) = refusing_mount(path) else {
+        return;
+    };
+    let mut refused = REFUSES_ATTRIBUTES.write();
+    if !refused.contains(&key) {
+        refused.push(key);
+        REFUSALS.store(refused.len(), Ordering::Release);
     }
 }
 
-/// Whether `path`'s remote refused extended attributes this session
-/// ([`note_refused_attributes`]): a read there is answered as it was.
-pub fn refuses_attributes(path: &Path) -> bool {
-    let Some(key) = remembered_as(path) else {
-        return false;
+/// Writing an extended attribute of `path` succeeded: a refusal its mount
+/// made is let go of, its attributes read again.
+pub fn note_accepted_attributes(path: &Path) {
+    if REFUSALS.load(Ordering::Acquire) == 0 {
+        return;
+    }
+    let Some(key) = refusing_mount(path) else {
+        return;
     };
-    REFUSES_ATTRIBUTES
-        .lock()
-        .as_ref()
-        .is_some_and(|refused| refused.contains(&key))
+    let mut refused = REFUSES_ATTRIBUTES.write();
+    refused.retain(|kept| *kept != key);
+    REFUSALS.store(refused.len(), Ordering::Release);
+}
+
+/// Whether `path`'s FUSE mount refused extended attributes and is still
+/// the one mounted there ([`note_refused_attributes`]): a read there is
+/// answered as it was. With none remembered, a load and nothing else.
+pub fn refuses_attributes(path: &Path) -> bool {
+    if REFUSALS.load(Ordering::Acquire) == 0 {
+        return false;
+    }
+    // The deepest point remembered above `path`, asked of the table only
+    // then: a read elsewhere takes no lock the table's readers share.
+    let remembered = REFUSES_ATTRIBUTES
+        .read()
+        .iter()
+        .filter(|(point, _)| path.starts_with(point))
+        .max_by_key(|(point, _)| point.as_os_str().len())
+        .cloned();
+    remembered.is_some_and(|key| refusing_mount(path) == Some(key))
+}
+
+/// Let go of the refusals of mounts `table` lists no more: a mount made
+/// again, even at the same point with the same number, is asked again.
+fn forget_unmounted(table: &Table) {
+    if REFUSALS.load(Ordering::Acquire) == 0 {
+        return;
+    }
+    let mounted = |point: &Path, number: u64| {
+        let listed = |r: &Arc<Remote>| {
+            !r.by_kernel()
+                && point.starts_with(&r.point)
+                && r.device.map_or(0, |d| number_in(table, d)) == number
+        };
+        #[cfg(test)]
+        if pretended().iter().any(&listed) {
+            return true;
+        }
+        table.remotes.iter().any(listed)
+    };
+    let mut refused = REFUSES_ATTRIBUTES.write();
+    refused.retain(|(point, number)| mounted(point, *number));
+    REFUSALS.store(refused.len(), Ordering::Release);
 }
 
 /// The lane of work on `path`: its remote's, the shared one elsewhere.
@@ -408,13 +488,18 @@ pub fn by_lane<T>(
 /// unique number for the mount where it says one (Linux 6.8), which no
 /// later mount takes again; else its number in the table, which one may.
 pub fn mount_of(device: u64) -> u64 {
+    // A device that is a disk's is told without the table.
+    #[cfg(all(target_os = "linux", not(test)))]
+    if rustix::fs::major(device) != 0 {
+        return 0;
+    }
+    number_in(&table(), device)
+}
+
+/// [`mount_of`] as `table` tells it.
+fn number_in(table: &Table, device: u64) -> u64 {
     #[cfg(test)]
-    if let Some(number) = PRETENDED.with(|p| {
-        p.borrow()
-            .iter()
-            .find(|(of, _)| *of == device)
-            .map(|&(_, number)| number)
-    }) {
+    if let Some(number) = pretended_number(device) {
         return number;
     }
     // FUSE mounts on no block device of its own: a device that has one
@@ -423,11 +508,22 @@ pub fn mount_of(device: u64) -> u64 {
     if rustix::fs::major(device) != 0 {
         return 0;
     }
-    table()
+    table
         .made_up
         .iter()
         .find(|(of, _)| *of == device)
         .map_or(0, |&(_, number)| number)
+}
+
+/// The number a test says `device`'s mount has ([`pretend_made_up`]).
+#[cfg(test)]
+fn pretended_number(device: u64) -> Option<u64> {
+    PRETENDED.with(|p| {
+        p.borrow()
+            .iter()
+            .find(|(of, _)| *of == device)
+            .map(|&(_, number)| number)
+    })
 }
 
 #[cfg(test)]
@@ -440,7 +536,11 @@ thread_local! {
 /// by the mount whose number is `number` ([`mount_of`]).
 #[cfg(test)]
 pub(crate) fn pretend_made_up(device: u64, number: u64) {
-    PRETENDED.with(|p| p.borrow_mut().push((device, number)));
+    PRETENDED.with(|p| {
+        let mut p = p.borrow_mut();
+        p.retain(|(of, _)| *of != device);
+        p.push((device, number));
+    });
 }
 
 /// The folders whose folders are mounts, each with its program's type,
@@ -506,6 +606,8 @@ fn table() -> Arc<Table> {
     }
     let table = Arc::new(Table::read());
     *held = Some((Instant::now(), Arc::clone(&table)));
+    drop(held);
+    forget_unmounted(&table);
     table
 }
 
@@ -898,9 +1000,9 @@ mod imp {
 mod tests {
     use super::*;
 
-    /// A remote that refused extended attributes is not asked again this
-    /// session, its files answered as it answered (procfs stands for a
-    /// server that keeps none: it refuses `user.*`); a local volume that
+    /// A FUSE remote that refused extended attributes is not asked again
+    /// while mounted, its files answered as it answered (procfs stands for
+    /// a server that keeps none: it refuses `user.*`); a local volume that
     /// refuses is asked each time.
     #[cfg(target_os = "linux")]
     #[test]
@@ -928,6 +1030,63 @@ mod tests {
             assert!(error.to_string().contains("keeps no extended attributes"));
         }
         assert!(!refuses_attributes(Path::new("/example/elsewhere/a.txt")));
+    }
+
+    /// A kernel's share is asked each time: its server may keep attributes
+    /// in one folder and not another.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_share_the_kernel_mounts_is_asked_each_time() {
+        let point = Path::new("/proc/self");
+        pretend_mount(point, "nfs4", None);
+        let file = point.join("status");
+        let refused = crate::fs::xattr::get(&file, "user.xdg.tags").unwrap_err();
+        assert!(crate::fs::xattr::refused(&refused), "{refused}");
+        assert!(!refuses_attributes(&file));
+        assert_eq!(REFUSALS.load(Ordering::Acquire), 0);
+    }
+
+    /// A FUSE mount made again is asked again: its refusal is kept by the
+    /// mount's number, and let go of once the table lists it no more.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_mount_made_again_is_asked_again() {
+        let point = Path::new("/proc/self");
+        let file = point.join("status");
+        // A FUSE mount's device is no disk's: major 0.
+        let device = rustix::fs::makedev(0, 77);
+        pretend_mount(point, "fuse.sshfs", Some(device));
+        pretend_made_up(device, 7);
+        assert!(crate::fs::xattr::get(&file, "user.xdg.tags").is_err());
+        assert!(refuses_attributes(&file));
+        // Let go of and mounted again at the same point: another number.
+        pretend_made_up(device, 8);
+        assert!(!refuses_attributes(&file), "a mount made again is asked");
+        changed();
+        assert!(of(Path::new("/example/elsewhere")).is_none());
+        assert_eq!(REFUSALS.load(Ordering::Acquire), 0, "the old one let go of");
+    }
+
+    /// A write that succeeds lets go of the refusal its mount made: its
+    /// attributes are read again.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_write_that_succeeds_lets_go_of_a_refusal() {
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(&base).unwrap();
+        let file = tmp.path().join("it's a note.txt");
+        std::fs::write(&file, "x").unwrap();
+        pretend_remote(tmp.path());
+        note_refused_attributes(&file);
+        assert!(refuses_attributes(&file));
+        assert!(crate::fs::xattr::get(&file, "user.xdg.comment").is_err());
+        crate::fs::xattr::set(&file, "user.xdg.comment", b"kept").unwrap();
+        assert!(!refuses_attributes(&file));
+        assert_eq!(
+            crate::fs::xattr::get(&file, "user.xdg.comment").unwrap(),
+            Some(b"kept".to_vec())
+        );
     }
 
     /// Files from anywhere are stat-ed a lane each: a remote's alone.

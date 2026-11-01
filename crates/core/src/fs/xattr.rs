@@ -112,9 +112,9 @@ mod imp {
     }
 }
 
-/// A read of `path`'s attributes, unless its remote refused them this
-/// session (`reach::refuses_attributes`): answered as it was then, the
-/// server not asked again for each file. A refusal is remembered.
+/// A read of `path`'s attributes, unless its FUSE remote refused them
+/// while mounted (`reach::refuses_attributes`): answered as it was then,
+/// the server not asked again for each file. A refusal is remembered.
 fn read<T>(path: &Path, ask: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
     if crate::fs::reach::refuses_attributes(path) {
         return Err(io::Error::new(
@@ -127,6 +127,16 @@ fn read<T>(path: &Path, ask: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
         && refused(error)
     {
         crate::fs::reach::note_refused_attributes(path);
+    }
+    answer
+}
+
+/// A write of `path`'s attributes, tried whatever a read was answered:
+/// one that succeeds lets go of a refusal its mount made
+/// (`reach::note_accepted_attributes`).
+fn written(path: &Path, answer: io::Result<()>) -> io::Result<()> {
+    if answer.is_ok() {
+        crate::fs::reach::note_accepted_attributes(path);
     }
     answer
 }
@@ -155,7 +165,8 @@ pub fn get_deref(path: impl AsRef<Path>, name: impl AsRef<OsStr>) -> io::Result<
 /// # Errors
 /// When it cannot be written, or the volume keeps no attributes.
 pub fn set(path: impl AsRef<Path>, name: impl AsRef<OsStr>, value: &[u8]) -> io::Result<()> {
-    imp::set(path.as_ref(), name.as_ref(), value)
+    let path = path.as_ref();
+    written(path, imp::set(path, name.as_ref(), value))
 }
 
 /// [`set`] through a link, on the file it leads to.
@@ -163,7 +174,8 @@ pub fn set(path: impl AsRef<Path>, name: impl AsRef<OsStr>, value: &[u8]) -> io:
 /// # Errors
 /// As [`set`].
 pub fn set_deref(path: impl AsRef<Path>, name: impl AsRef<OsStr>, value: &[u8]) -> io::Result<()> {
-    imp::set_deref(path.as_ref(), name.as_ref(), value)
+    let path = path.as_ref();
+    written(path, imp::set_deref(path, name.as_ref(), value))
 }
 
 /// Remove the attribute `name` of the file (or link) at `path`.
@@ -171,7 +183,8 @@ pub fn set_deref(path: impl AsRef<Path>, name: impl AsRef<OsStr>, value: &[u8]) 
 /// # Errors
 /// When it is not there ([`missing`]), or cannot be removed.
 pub fn remove(path: impl AsRef<Path>, name: impl AsRef<OsStr>) -> io::Result<()> {
-    imp::remove(path.as_ref(), name.as_ref())
+    let path = path.as_ref();
+    written(path, imp::remove(path, name.as_ref()))
 }
 
 /// [`remove`] through a link, on the file it leads to.
@@ -179,7 +192,8 @@ pub fn remove(path: impl AsRef<Path>, name: impl AsRef<OsStr>) -> io::Result<()>
 /// # Errors
 /// As [`remove`].
 pub fn remove_deref(path: impl AsRef<Path>, name: impl AsRef<OsStr>) -> io::Result<()> {
-    imp::remove_deref(path.as_ref(), name.as_ref())
+    let path = path.as_ref();
+    written(path, imp::remove_deref(path, name.as_ref()))
 }
 
 /// The names of the attributes of the file (or link) at `path`.
