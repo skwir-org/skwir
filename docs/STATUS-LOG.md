@@ -8724,3 +8724,76 @@ real dialog; macOS and Windows (compiled only, not run, nor Windows
 under Wine); `just test-all` (the touched crates' tests and the
 binary's print, CLI, keymap, plugin-toggle and remote-configuration
 tests were run).
+
+### G8: a grammar for each language (2026-11-01, ADR-110 revised)
+
+The user found the Reading page's grammar lists hard to tell from its
+settings: "Grammars added" and "Tree-sitter grammars" were settings rows,
+and each grammar under them ("c, From Neovim; colors c, h") was drawn as
+one more. Asked whether a switch for each grammar would do, they chose a
+picker for each language instead.
+
+**Built:**
+- The finder keeps each source's grammar of a language (`grammars::all`)
+  and uses, for each language, the source chosen, else the first usable
+  (`grammars::choose`, `pick`); a source's queries alone are lent, not
+  listed. Sources have keys (`skwir`, `tree-sitter`, `zed`, `helix`,
+  `neovim`, `system`, `emacs`).
+- The engine reads each language's own choice first
+  (`reading.grammar_for`: bat, a source's tree-sitter grammar, plain;
+  `highlight::GrammarChoices`, part of the code theme, so previews color
+  again when it changes), by the tree-sitter grammar found for a file,
+  else by bat's grammar's name; then Automatic (`reading.grammars`). A
+  source chosen that has none of it, or a choice not known, is
+  Automatic. Plain text is a third outcome (`Engine::Plain`), honoured by
+  the text view, the code view and code blocks as bat's plain text.
+- Settings › Reading: a Grammars section, "Automatic uses" (the former
+  Grammars choice) then "Languages" (`ui.languages`): the languages a
+  tree-sitter grammar was found or a grammar added to bat or Sublime Text
+  for (an added one joins the language of its name, else of a file type
+  they share), each with its files and a dropdown: Automatic saying what
+  it picks now, bat's (or the added grammar's) where bat knows it, each
+  source's tree-sitter grammar (greyed with why when it cannot be used,
+  "its colors from Helix" when borrowed), Plain text. Choosing runs
+  `ui.grammar_choose`, which chooses the grammars again before the
+  setting changes and saves on a worker; Automatic removes the language,
+  and the table goes once empty (`Settings::unset`, new in core).
+- Every records list in Settings is drawn inset in its setting's card in
+  smaller rows, says None found or None yet when empty and Nothing
+  matches when filtered to nothing, and past eight rows has a filter
+  with its count and folds to its first rows ("Show all N"). A record
+  may carry a choice of its own (a dropdown, Left and Right stepping
+  through its enabled choices, its popup under its right edge). A record
+  with no detail takes one line.
+
+**Checked:** rustfmt and clippy on skwir-core, skwir-platform, skwir-ui;
+their tests (1362, 18 skipped), with new ones: the finder keeps Zed's
+and Neovim's nix and uses the one chosen, the first when the source
+chosen has none; a language's own choice before Automatic (bat, a
+source, plain, a bat-only language by its grammar's name, an unknown
+choice ignored); choosing and forgetting in the settings. The binary's
+settings, keymap-title, plugin-toggle, remote-configuration and print
+tests (34). `just lint-all` passed, with `check-cross`.
+
+In a window (debug build, Xvfb with lavapipe, a private session bus,
+XDG folders of its own with Zed's extensions linked in read-only, a copy
+of Zed's nix grammar in Skwir's grammars folder as a second source, and
+an `.exnotes` grammar added to bat): Grammars shows "Automatic uses" and
+the 11 languages inset, folded to 8 with "Show all 11", the filter
+saying "1 of 11" for `ni` and "Nothing matches “zzz”, 0 of 11" for
+`zzz`; nix's dropdown offered Automatic (Skwir's folder), bat, Skwir's
+folder, Zed and Plain text; Zed chosen wrote `nix = "zed"`, kept across
+a restart; Plain text showed `flake.nix` without colors and without its
+outline button; Left stepped Plain, Zed, Skwir's folder, bat, Automatic,
+which left `[reading.grammar_for]` out of the file. The Network page's
+servers and the Privacy page's private folders (10, so filtered) drew
+inset too. Found by looking and fixed: the dropdown's popup reached past
+the dialog's right edge (now under the dropdown's right edge), the
+filter touched the line above, a record without detail kept an empty
+line, and a clicked dropdown took no keys.
+
+**Not checked:** a language a grammar added to bat shares with a
+tree-sitter grammar (grouping by name and file type is in the code, not
+looked at); Helix's ~200 grammars as a long list; a grammar chosen that
+then disappears, by hand (the list says it and the engine falls back,
+as the tests show); macOS and Windows (compiled only).

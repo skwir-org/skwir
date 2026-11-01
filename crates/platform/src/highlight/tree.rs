@@ -1,6 +1,7 @@
 //! Code colored by a tree-sitter grammar (ADR-110), in the theme bat's
 //! grammars color it in: which engine colors a text (`engine`, as the
-//! Reading page's `reading.grammars` chooses), the scopes bat's themes
+//! Reading page's Grammars choose: each language's own choice, else
+//! Automatic's rule, `reading.grammars`), the scopes bat's themes
 //! color for tree-sitter's capture names (`scope_of`), and a text parsed
 //! in the helper and colored a few lines at a time (`Tree`).
 //!
@@ -10,8 +11,10 @@
 //! byte of a row is in a run, those no capture colors in the theme's own
 //! color, as bat's runs are.
 
+use std::collections::BTreeMap;
 use std::ops::Range;
 use std::str::FromStr;
+use std::sync::Arc;
 
 use skwir_core::CancelToken;
 use skwir_core::inspection::Run;
@@ -20,7 +23,7 @@ use syntect::highlighting::{FontStyle, Style};
 use syntect::parsing::ScopeStack;
 
 use super::Palette;
-use crate::grammars::{self, Found};
+use crate::grammars::{self, Found, Source};
 use crate::tree_sitter::{self, Helper};
 
 /// Which grammars color a language that both bat's grammars and a
@@ -63,43 +66,147 @@ impl First {
     }
 }
 
-/// What colors a text: bat's grammars, or the tree-sitter grammar named.
+/// What each language is colored by, as chosen on the Reading page: a
+/// table of languages (in lower case) to choices (`Choice::key`). A
+/// language it does not name is Automatic.
+pub const CHOSEN_KEY: &str = "reading.grammar_for";
+
+/// What colors a language, chosen rather than Automatic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Choice {
+    /// bat's grammars (with the ones added to bat and Sublime Text).
+    Bat,
+    /// The tree-sitter grammar of the language this source keeps.
+    TreeSitter(Source),
+    /// No colors.
+    Plain,
+}
+
+impl Choice {
+    /// How the settings name it.
+    pub fn key(self) -> &'static str {
+        match self {
+            Choice::Bat => "bat",
+            Choice::Plain => "plain",
+            Choice::TreeSitter(source) => source.key(),
+        }
+    }
+
+    /// The choice the settings name `key`; none for any other.
+    pub fn of_key(key: &str) -> Option<Choice> {
+        match key {
+            "bat" => Some(Choice::Bat),
+            "plain" => Some(Choice::Plain),
+            other => Source::of_key(other).map(Choice::TreeSitter),
+        }
+    }
+}
+
+/// What the settings choose of grammars: Automatic's rule, and the
+/// languages chosen otherwise.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GrammarChoices {
+    pub first: First,
+    pub chosen: Arc<BTreeMap<String, Choice>>,
+}
+
+impl GrammarChoices {
+    /// Automatic for every language, by `first`.
+    pub fn automatic(first: First) -> Self {
+        GrammarChoices {
+            first,
+            chosen: Arc::default(),
+        }
+    }
+
+    /// As the settings say (`reading.grammars`, `reading.grammar_for`); a
+    /// choice no longer known is Automatic.
+    pub fn chosen(app: &skwir_core::App) -> Self {
+        GrammarChoices {
+            first: First::chosen(app),
+            chosen: Arc::new(chosen_in(
+                &app.settings
+                    .get::<BTreeMap<String, String>>(CHOSEN_KEY)
+                    .unwrap_or_default(),
+            )),
+        }
+    }
+
+    /// The languages whose tree-sitter grammar is chosen from a source:
+    /// what `grammars::choose` takes.
+    pub fn sources(&self) -> BTreeMap<String, Source> {
+        self.chosen
+            .iter()
+            .filter_map(|(language, choice)| match choice {
+                Choice::TreeSitter(source) => Some((language.clone(), *source)),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// The choices a table says, by language in lower case.
+pub fn chosen_in(table: &BTreeMap<String, String>) -> BTreeMap<String, Choice> {
+    table
+        .iter()
+        .filter_map(|(language, key)| Some((language.to_lowercase(), Choice::of_key(key)?)))
+        .collect()
+}
+
+/// What colors a text: bat's grammars, the tree-sitter grammar named, or
+/// nothing (its language chosen Plain text).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Engine {
     Bat,
     TreeSitter(String),
+    Plain,
 }
 
 /// What colors a text named `name` (a file's name; its language when it
 /// has none, as a document's code block), colored as `language` (what the
 /// code view colors by: an extension or a name), `first_line` its first
-/// line: the tree-sitter grammar found for it where `first` chooses it,
-/// or where bat's grammars know no `language`; else bat's. Before the
-/// grammars are found, or with none, bat's. It may read bat's grammars: a
-/// worker's work.
+/// line. Its language's own choice first (`grammars.chosen`, by the
+/// tree-sitter grammar found for it, else by bat's grammar's name): bat's,
+/// the tree-sitter grammar (the source chosen is the one `found` uses, or
+/// Automatic when it is gone), or nothing. Automatic: the tree-sitter
+/// grammar found for it where `grammars.first` chooses it, or where bat's
+/// grammars know no `language`; else bat's. Before the grammars are
+/// found, or with none, bat's unless chosen Plain. It may read bat's
+/// grammars: a worker's work.
 pub fn engine(
     name: &str,
     language: Option<&str>,
     first_line: Option<&str>,
-    first: First,
+    grammars: &GrammarChoices,
 ) -> Engine {
-    let Some(found) = grammars::found().filter(|found| !found.is_empty()) else {
-        return Engine::Bat;
-    };
-    engine_in(&found, (name, language, first_line), first, |token| {
-        super::syntaxes()
-            .find_syntax_by_token(token)
-            .is_some_and(|syntax| syntax.name != "Plain Text")
-    })
+    let found = grammars::found().unwrap_or_default();
+    engine_in(
+        &found,
+        (name, language, first_line),
+        grammars,
+        |token| {
+            super::syntaxes()
+                .find_syntax_by_token(token)
+                .is_some_and(|syntax| syntax.name != "Plain Text")
+        },
+        |token| {
+            super::syntaxes()
+                .find_syntax_by_token(token)
+                .filter(|syntax| syntax.name != "Plain Text")
+                .map(|syntax| syntax.name.to_lowercase())
+        },
+    )
 }
 
 /// `engine` among the grammars `found`, `bat_knows` saying whether bat's
-/// grammars color a language token.
+/// grammars color a language token, `bat_name` the name of bat's grammar
+/// that does (in lower case).
 fn engine_in(
     found: &[Found],
     (name, language, first_line): (&str, Option<&str>, Option<&str>),
-    first: First,
+    grammars: &GrammarChoices,
     bat_knows: impl FnOnce(&str) -> bool,
+    bat_name: impl FnOnce(&str) -> Option<String>,
 ) -> Engine {
     // By the file's name, else by the language a code block names
     // (`rust`, where its grammar colors `.rs`).
@@ -108,10 +215,25 @@ fn engine_in(
             .and_then(|language| grammars::named(found, language))
             .filter(|found| found.problem.is_none())
     });
+    if !grammars.chosen.is_empty() {
+        let language_of = tree
+            .map(|tree| tree.grammar.name.to_lowercase())
+            .or_else(|| language.and_then(bat_name));
+        match language_of.and_then(|of| grammars.chosen.get(&of)) {
+            Some(Choice::Plain) => return Engine::Plain,
+            Some(Choice::Bat) => return Engine::Bat,
+            Some(Choice::TreeSitter(source)) => {
+                if let Some(tree) = tree.filter(|tree| tree.source == *source) {
+                    return Engine::TreeSitter(tree.grammar.name.clone());
+                }
+            }
+            None => {}
+        }
+    }
     let Some(tree) = tree else {
         return Engine::Bat;
     };
-    if first == First::Bat && language.is_some_and(bat_knows) {
+    if grammars.first == First::Bat && language.is_some_and(bat_knows) {
         return Engine::Bat;
     }
     Engine::TreeSitter(tree.grammar.name.clone())
@@ -578,7 +700,15 @@ mod tests {
         ];
         // bat's grammars know JSON and Rust, not Zig.
         let bat = |token: &str| matches!(token, "json" | "rs" | "rust");
-        let engine = |name, language, first| engine_in(&found, (name, language, None), first, bat);
+        let engine = |name, language, first| {
+            engine_in(
+                &found,
+                (name, language, None),
+                &GrammarChoices::automatic(first),
+                bat,
+                |_| None,
+            )
+        };
         let tree = |name: &str| Engine::TreeSitter(name.to_owned());
         // bat first: bat colors what both know, tree-sitter the rest.
         assert_eq!(engine("data.json", Some("json"), First::Bat), Engine::Bat);
@@ -611,13 +741,73 @@ mod tests {
         );
         // No grammars found: bat's.
         assert_eq!(
-            engine_in(&[], ("main.zig", Some("zig"), None), First::TreeSitter, bat),
+            engine_in(
+                &[],
+                ("main.zig", Some("zig"), None),
+                &GrammarChoices::automatic(First::TreeSitter),
+                bat,
+                |_| None
+            ),
             Engine::Bat
         );
         assert_eq!(First::of(Some("tree_sitter")), First::TreeSitter);
         assert_eq!(First::of(Some("bat")), First::Bat);
         assert_eq!(First::of(None), First::Bat);
         assert_eq!(First::CHOICES[0].0, "bat", "the default first");
+    }
+
+    /// A language's own choice comes before Automatic's rule: bat, its
+    /// tree-sitter grammar (while the source chosen is the one used), or
+    /// no colors, a language bat alone knows found by bat's grammar.
+    #[test]
+    fn a_language_s_own_choice_comes_first() {
+        let found = [found("json", &["json"], None), found("zig", &["zig"], None)];
+        let bat = |token: &str| matches!(token, "json" | "vue");
+        let bat_name = |token: &str| (token == "vue").then(|| "vue component".to_owned());
+        let engine = |name, language, chosen: &[(&str, &str)]| {
+            let table = chosen
+                .iter()
+                .map(|(language, key)| ((*language).to_owned(), (*key).to_owned()))
+                .collect();
+            let grammars = GrammarChoices {
+                first: First::Bat,
+                chosen: Arc::new(chosen_in(&table)),
+            };
+            engine_in(&found, (name, language, None), &grammars, bat, bat_name)
+        };
+        let tree = |name: &str| Engine::TreeSitter(name.to_owned());
+        // bat first, but JSON chosen from the source that keeps its grammar.
+        assert_eq!(engine("a.json", Some("json"), &[]), Engine::Bat);
+        assert_eq!(
+            engine("a.json", Some("json"), &[("JSON", "helix")]),
+            tree("json")
+        );
+        // A source that does not keep it: Automatic.
+        assert_eq!(
+            engine("a.json", Some("json"), &[("json", "zed")]),
+            Engine::Bat
+        );
+        // bat for one tree-sitter colors otherwise; no colors at all.
+        assert_eq!(engine("b.zig", Some("zig"), &[("zig", "bat")]), Engine::Bat);
+        assert_eq!(
+            engine("b.zig", Some("zig"), &[("zig", "plain")]),
+            Engine::Plain
+        );
+        // A language only bat knows, by its grammar's name.
+        assert_eq!(
+            engine("c.vue", Some("vue"), &[("vue component", "plain")]),
+            Engine::Plain
+        );
+        // A choice no longer known is Automatic.
+        assert_eq!(
+            engine("b.zig", Some("zig"), &[("zig", "gone")]),
+            tree("zig")
+        );
+        assert_eq!(
+            Choice::of_key("neovim"),
+            Some(Choice::TreeSitter(Source::Neovim))
+        );
+        assert_eq!(Choice::TreeSitter(Source::TreeSitter).key(), "tree-sitter");
     }
 
     #[test]

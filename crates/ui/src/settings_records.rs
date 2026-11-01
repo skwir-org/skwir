@@ -1,7 +1,11 @@
 //! A list of records in the Settings dialog (`SettingKind::Records`): tile
-//! servers today. Each record is a row with its actions (the owner's own,
-//! such as Test; Edit; Remove); one at a time is edited in place, a draft
-//! kept apart from the rows, which are rebuilt whenever a setting changes.
+//! servers, remotes, the languages and their grammars. The list is drawn
+//! inset in its setting's card, a list under the setting rather than more
+//! settings, saying so when it is empty; a long one (`FOLD`) has a filter
+//! and shows its first rows until unfolded. Each record is a row with its
+//! actions (the owner's own, such as Test; Edit; Remove; a choice of its
+//! own); one at a time is edited in place, a draft kept apart from the
+//! rows, which are rebuilt whenever a setting changes.
 //!
 //! A secret field's value goes to the desktop's keyring and never to the
 //! settings (`skwir_platform::secrets`): saving a draft that holds a new
@@ -20,6 +24,88 @@ use crate::settings::SettingsView;
 use crate::theme::Theme;
 
 pub(crate) type Record = serde_json::Map<String, serde_json::Value>;
+
+/// Rows a list shows until unfolded; a longer one has a filter.
+pub(crate) const FOLD: usize = 8;
+
+/// A record's own choice (`choice`: its `value`, `label`, `choices`, each
+/// a `value`, `label`, `detail` and whether `disabled`, and the `command`
+/// choosing runs, with `args` and the value in its `field`), as Left and
+/// Right step through it: the values that may be chosen, in order, and
+/// the one held.
+#[derive(Clone)]
+pub(crate) struct Pick {
+    pub(crate) focus: gpui::FocusHandle,
+    run: Run,
+    values: Vec<String>,
+    held: Option<usize>,
+}
+
+/// What choosing a record's value runs.
+#[derive(Clone)]
+struct Run {
+    command: String,
+    args: serde_json::Value,
+    field: String,
+}
+
+impl Run {
+    fn of(choice: &serde_json::Map<String, serde_json::Value>) -> Option<Run> {
+        Some(Run {
+            command: choice.get("command")?.as_str()?.to_owned(),
+            args: choice
+                .get("args")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+            field: choice
+                .get("field")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("value")
+                .to_owned(),
+        })
+    }
+
+    /// Run it with `value`; what refuses it is said.
+    fn with(&self, app: &skwir_core::App, value: &str) {
+        let mut args = self.args.clone();
+        if !args.is_object() {
+            args = serde_json::json!({});
+        }
+        args[self.field.as_str()] = serde_json::json!(value);
+        let invocation = skwir_core::command::Invocation::with_args(self.command.as_str(), &args);
+        if let Err(error) = app.dispatch(&invocation) {
+            app.notify(skwir_core::app::NotifyLevel::Error, format!("{error:#}"));
+        }
+    }
+}
+
+impl Pick {
+    /// Choose the value `delta` from the one held, staying at the ends.
+    pub(crate) fn step(&self, delta: i64, view: &SettingsView) {
+        let Some(last) = self.values.len().checked_sub(1) else {
+            return;
+        };
+        let held = i64::try_from(self.held.unwrap_or(0)).unwrap_or(0);
+        let at = usize::try_from((held + delta).max(0))
+            .unwrap_or(0)
+            .min(last);
+        if Some(at) != self.held {
+            self.run.with(&view.app, &self.values[at]);
+        }
+    }
+}
+
+/// A row of a list inset in its setting's card: a line between rows.
+fn inset_row(theme: &Theme, first: bool) -> gpui::Div {
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .gap_3()
+        .px_3()
+        .py_2()
+        .when(!first, |d| d.border_t_1().border_color(theme.border))
+}
 
 /// The records a setting's editor text holds.
 pub(crate) fn records(text: &str) -> Vec<Record> {
@@ -556,8 +642,10 @@ impl SettingsView {
         any
     }
 
-    /// The rows under a records setting's own: each record, or the form of
-    /// the one edited. `last` rounds the card's bottom.
+    /// The list under a records setting's own row, inset in its card:
+    /// each record, or the form of the one edited; what an empty list or
+    /// a filter finds nothing says; a long one's filter and fold. `last`
+    /// rounds the card's bottom.
     pub(crate) fn record_rows(
         &mut self,
         key: &str,
@@ -574,15 +662,53 @@ impl SettingsView {
         };
         debug_assert_eq!(spec.kind, SettingKind::Records);
         let editing = self.drafts.get(key).map(|d| (d.id.clone(), d.new));
-        let mut shown: Vec<Option<Record>> = records(value).into_iter().map(Some).collect();
-        if editing.as_ref().is_some_and(|(_, new)| *new) {
-            shown.push(None);
+        let all = records(value);
+        // A long list: its filter, and its first rows until unfolded.
+        let long = all.len() > FOLD;
+        let filter = long.then(|| self.record_filter(key, cx));
+        let query = filter
+            .as_ref()
+            .map(|input| input.read(cx).text().trim().to_lowercase())
+            .unwrap_or_default();
+        let text_fields: Vec<String> = spec
+            .constraints
+            .fields
+            .iter()
+            .filter(|f| matches!(f.kind, FieldKind::Text { .. }))
+            .map(|f| f.key.clone())
+            .collect();
+        let matches = |record: &Record| {
+            query.is_empty()
+                || text_fields
+                    .iter()
+                    .any(|field| text_of(record, field).to_lowercase().contains(&query))
+        };
+        let mut shown: Vec<(usize, Option<Record>)> = all
+            .into_iter()
+            .enumerate()
+            .filter(|(_, record)| matches(record))
+            .map(|(index, record)| (index, Some(record)))
+            .collect();
+        let found = shown.len();
+        let unfolded = self.records_unfolded.contains(key);
+        let folded = long && query.is_empty() && !unfolded;
+        if folded {
+            shown.truncate(FOLD);
         }
-        let count = shown.len();
-        for (index, record) in shown.into_iter().enumerate() {
+        if editing.as_ref().is_some_and(|(_, new)| *new) {
+            shown.push((found, None));
+        }
+        let mut rows = div()
+            .flex()
+            .flex_col()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.bg);
+        for (n, (index, record)) in shown.iter().enumerate() {
             let edge = crate::settings_view::Edge {
-                first: false,
-                last: last && index + 1 == count,
+                first: n == 0,
+                last: n + 1 == shown.len(),
             };
             let id = record
                 .as_ref()
@@ -595,12 +721,119 @@ impl SettingsView {
             let element = if edited {
                 self.record_form(key, edge, item, theme, window, cx)
             } else if let (Some(record), Some(id)) = (record, id) {
-                self.record_row(key, &spec, &record, (&id, index), edge, item, theme, cx)
+                self.record_row(key, &spec, record, (&id, *index), edge, item, theme, cx)
             } else {
                 continue;
             };
-            items.push(element);
+            rows = rows.child(element);
         }
+        if shown.is_empty() {
+            let said = if !query.is_empty() {
+                format!("Nothing matches “{query}”")
+            } else if spec
+                .constraints
+                .record_source
+                .as_ref()
+                .is_some_and(|source| source.add.is_empty())
+            {
+                "None found".to_owned()
+            } else {
+                "None yet".to_owned()
+            };
+            rows = rows.child(
+                inset_row(theme, true)
+                    .text_sm()
+                    .text_color(theme.text_muted)
+                    .child(said),
+            );
+        }
+        let mut block = crate::settings_view::card_row(
+            theme,
+            crate::settings_view::Edge { first: false, last },
+        )
+        .flex_col()
+        .items_start()
+        .gap_2()
+        .pt_2();
+        if let Some(input) = &filter {
+            let focused = input.read(cx).is_focused(window);
+            self.stop(&input.focus_handle(cx), Some(item), None);
+            block = block.child(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(div().flex_1().child(controls::field(
+                        input,
+                        None,
+                        focused,
+                        false,
+                        Some("search"),
+                        theme,
+                    )))
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(theme.text_muted)
+                            .child(if query.is_empty() {
+                                format!("{found}")
+                            } else {
+                                format!("{found} of {}", records(value).len())
+                            }),
+                    ),
+            );
+        }
+        block = block.child(div().w_full().child(rows));
+        if long && query.is_empty() {
+            let focus = self.handle(&format!("fold:{key}"), cx);
+            self.stop(&focus, Some(item), None);
+            let toggled = key.to_owned();
+            let label = if unfolded {
+                "Show fewer".to_owned()
+            } else {
+                format!("Show all {found}")
+            };
+            block = block.child(
+                controls::button(
+                    format!("records-fold-{key}"),
+                    label,
+                    Some(if unfolded { "fold" } else { "unfold" }),
+                    ButtonStyle::Plain,
+                    &focus,
+                    theme,
+                )
+                .aria_expanded(unfolded)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if !this.records_unfolded.remove(&toggled) {
+                        this.records_unfolded.insert(toggled.clone());
+                    }
+                    cx.notify();
+                })),
+            );
+        }
+        items.push(block.into_any_element());
+    }
+
+    /// The filter of the list `key`, made the first time it is long.
+    fn record_filter(&mut self, key: &str, cx: &mut Context<Self>) -> Entity<TextInput> {
+        if let Some(input) = self.record_filters.get(key) {
+            return input.clone();
+        }
+        let input = cx.new(|cx| {
+            let mut input = TextInput::new("Filter".to_owned(), cx);
+            input.set_label("Filter the list".to_owned());
+            input
+        });
+        let sub = cx.subscribe(&input, |_, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Changed) {
+                cx.notify();
+            }
+        });
+        self.keep_subscription(sub);
+        self.record_filters.insert(key.to_owned(), input.clone());
+        input
     }
 
     #[allow(clippy::too_many_arguments)] // a row of the list and its place in it
@@ -725,7 +958,7 @@ impl SettingsView {
             .on_drag(drag, move |_, position, _, cx| {
                 cx.new(|_| crate::dnd::DragPreview::named(label.clone(), position))
             });
-        crate::settings_view::card_row(theme, edge)
+        inset_row(theme, edge.first)
             .relative()
             .key_context("SettingRecord")
             .child(handle)
@@ -739,19 +972,23 @@ impl SettingsView {
                     .child(crate::elements::clip::clipped(
                         div()
                             .id(gpui::SharedString::from(format!("record-title-{key}-{id}")))
+                            .text_sm()
                             .truncate(),
                         title,
                     ))
-                    .child(crate::elements::clip::clipped(
-                        div()
-                            .id(gpui::SharedString::from(format!(
-                                "record-detail-{key}-{id}"
-                            )))
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .truncate(),
-                        detail,
-                    )),
+                    // A line of its own only when it says something.
+                    .when(!detail.is_empty(), |d| {
+                        d.child(crate::elements::clip::clipped(
+                            div()
+                                .id(gpui::SharedString::from(format!(
+                                    "record-detail-{key}-{id}"
+                                )))
+                                .text_xs()
+                                .text_color(theme.text_muted)
+                                .truncate(),
+                            detail,
+                        ))
+                    }),
             )
             .child(actions)
             // The gaps above and below, where a dragged record lands.
@@ -808,6 +1045,10 @@ impl SettingsView {
                 })),
             );
         }
+        // A choice of its own (a language's grammar), last of its actions.
+        if let Some(choice) = record.get("choice").and_then(serde_json::Value::as_object) {
+            actions = actions.child(self.record_choice(key, id, choice, item, theme, cx));
+        }
         // What else the line does, as the owner says, after Edit and
         // Remove for the keys: they stand above.
         let mut own = div().flex().flex_wrap().gap(px(6.)).pt(px(4.));
@@ -851,7 +1092,7 @@ impl SettingsView {
             );
             owns = true;
         }
-        crate::settings_view::card_row(theme, edge)
+        inset_row(theme, edge.first)
             .key_context("SettingRecord")
             .child(
                 div()
@@ -863,23 +1104,181 @@ impl SettingsView {
                     .child(crate::elements::clip::clipped(
                         div()
                             .id(gpui::SharedString::from(format!("record-title-{key}-{id}")))
+                            .text_sm()
                             .truncate(),
                         title,
                     ))
-                    .child(crate::elements::clip::clipped(
-                        div()
-                            .id(gpui::SharedString::from(format!(
-                                "record-detail-{key}-{id}"
-                            )))
-                            .text_xs()
-                            .text_color(theme.text_muted)
-                            .truncate(),
-                        detail,
-                    ))
+                    .when(!detail.is_empty(), |d| {
+                        d.child(crate::elements::clip::clipped(
+                            div()
+                                .id(gpui::SharedString::from(format!(
+                                    "record-detail-{key}-{id}"
+                                )))
+                                .text_xs()
+                                .text_color(theme.text_muted)
+                                .truncate(),
+                            detail,
+                        ))
+                    })
                     .when(owns, |d| d.child(own)),
             )
             .child(actions)
             .into_any_element()
+    }
+
+    /// A record's own choice: a dropdown saying the value held, its
+    /// choices in a popup under it, one that cannot be chosen greyed with
+    /// why; choosing runs the owner's command. Left and Right step through
+    /// them while it has the keyboard (`Pick`).
+    fn record_choice(
+        &mut self,
+        key: &str,
+        id: &str,
+        choice: &serde_json::Map<String, serde_json::Value>,
+        item: usize,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(run) = Run::of(choice) else {
+            return div().into_any_element();
+        };
+        let text = |value: &serde_json::Value, field: &str| {
+            value
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let held = choice
+            .get("value")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let offered: Vec<(String, String, String, bool)> = choice
+            .get("choices")
+            .and_then(serde_json::Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|one| {
+                (
+                    text(one, "value"),
+                    text(one, "label"),
+                    text(one, "detail"),
+                    one.get("disabled").and_then(serde_json::Value::as_bool) == Some(true),
+                )
+            })
+            .collect();
+        let focus = self.handle(&format!("pick:{key}:{id}"), cx);
+        self.stop(&focus, Some(item), None);
+        self.record_stops
+            .push((focus.clone(), key.to_owned(), id.to_owned()));
+        let values: Vec<String> = offered
+            .iter()
+            .filter(|(_, _, _, disabled)| !disabled)
+            .map(|(value, ..)| value.clone())
+            .collect();
+        self.record_picks.push(Pick {
+            focus: focus.clone(),
+            run: run.clone(),
+            held: values.iter().position(|value| *value == held),
+            values,
+        });
+        let open = self
+            .record_open
+            .as_ref()
+            .is_some_and(|(k, i)| k == key && i == id);
+        let label = choice
+            .get("label")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let anchor = crate::elements::popover::PopoverAnchor::default();
+        let (opened_key, opened_id, focused) = (key.to_owned(), id.to_owned(), focus.clone());
+        let mut control = div().child(
+            controls::dropdown(format!("pick-{key}-{id}"), label, &focus, theme)
+                .min_w(px(180.))
+                .aria_expanded(open)
+                // Left and Right step through it, as through a choice's.
+                .key_context("SettingControl")
+                .child(anchor.marker())
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    window.focus(&focused, cx);
+                    let this_one = Some((opened_key.clone(), opened_id.clone()));
+                    this.record_open = if this.record_open == this_one {
+                        None
+                    } else {
+                        this_one
+                    };
+                    cx.notify();
+                })),
+        );
+        if open {
+            let hover = theme.hover;
+            let mut panel = div()
+                .id(gpui::SharedString::from(format!("picks-{key}-{id}")))
+                .min_w(px(220.))
+                .max_h(px(360.))
+                .overflow_y_scroll()
+                .p_1()
+                .flex()
+                .flex_col()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.bg)
+                .text_color(theme.text)
+                .text_xs()
+                .font_family(theme.font.clone())
+                .shadow_lg()
+                .occlude()
+                .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                    this.record_open = None;
+                    cx.notify();
+                }));
+            for (n, (value, label, detail, disabled)) in offered.into_iter().enumerate() {
+                let selected = value == held;
+                let run = run.clone();
+                panel = panel.child(
+                    div()
+                        .id(crate::elements::known_by("pick-choice", (key, id, n)))
+                        .px_2()
+                        .py_1()
+                        .flex()
+                        .items_start()
+                        .gap_2()
+                        .rounded_sm()
+                        .when(!disabled, |d| {
+                            d.cursor_pointer().hover(move |s| s.bg(hover))
+                        })
+                        .when(disabled, |d| d.text_color(theme.text_muted))
+                        .child(div().w(px(14.)).flex_none().when(selected, |d| {
+                            d.child(controls::glyph("check", theme.accent, 14.))
+                        }))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(label)
+                                .when(!detail.is_empty(), |d| {
+                                    d.child(div().text_color(theme.text_muted).child(detail))
+                                }),
+                        )
+                        .when(!disabled, |d| {
+                            d.on_click(cx.listener(move |this, _, _, cx| {
+                                this.record_open = None;
+                                if !selected {
+                                    run.with(&this.app, &value);
+                                }
+                                cx.notify();
+                            }))
+                        }),
+                );
+            }
+            // Under the dropdown's right edge, reaching left: inside the
+            // dialog, as the dropdown stands at the row's right.
+            control = control.child(anchor.popup_right(panel));
+        }
+        control.into_any_element()
     }
 
     /// Half of a record's row: the drop zone of the gap before record
@@ -1106,8 +1505,9 @@ impl SettingsView {
                 .when(busy, |b| b.opacity(0.5))
                 .on_click(cx.listener(move |this, _, _, cx| this.save_record(&save_key, cx))),
             );
-        crate::settings_view::card_row(theme, edge)
+        inset_row(theme, edge.first)
             .items_start()
+            .py_3()
             .child(form.child(footer))
             .into_any_element()
     }

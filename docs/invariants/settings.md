@@ -14,8 +14,12 @@ the reasoning.
   does), or one its owner keeps elsewhere (`records_kept_by`, a
   `RecordSource`: its commands list, add, edit and remove; a record may
   say what else its line does, `actions`, each a `label`, a `command` and
-  its `args`, and that another program changes it, `fixed`, which takes
-  Edit and Remove away); `data` for what the user makes
+  its `args`, that another program changes it, `fixed`, which takes
+  Edit and Remove away, and a `choice` of its own, a dropdown on its line:
+  its `value` and `label`, its `choices` (each a `value`, `label`,
+  `detail`, and whether `disabled`, greyed with why) and the `command`
+  choosing runs, with `args` and the value in its `field`: a language's
+  grammar); `data` for what the user makes
   through commands rather than the dialog (saved searches, pinned tags),
   kept in the data file (ADR-057); `state` for what skwir keeps of the
   window (ADR-056).
@@ -179,6 +183,14 @@ The key is the owner's; the page is the subject's (ADR-072).
   "section: title" to a screen reader. A choice there is a dropdown. A
   section of records or a setting under a switch is never a column. Its
   lines are essential or folded together.
+- **A list is a list, not more settings.** A records setting's records
+  are drawn inset in its card, under its own row, in smaller rows a line
+  apart (`settings_records`), never as rows like settings; an empty one
+  says so (None found for a list its owner fills, None yet for one the
+  user does). One longer than `settings_records::FOLD` has a filter over
+  its words, which says how many it found, and shows its first rows until
+  unfolded. A record's own choice steps by Left and Right, as a setting's
+  does, its popup under its right edge, inside the dialog.
 - **Changed by you** lists what differed from its default when it was
   reached, settings and plugins (`PluginInfo::enabled_by_default`), each
   with its way back, then Restore all; its count in the sidebar is live.

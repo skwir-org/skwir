@@ -2084,6 +2084,13 @@ screen reader reads, from the window or a script.
   `outline.scm`, in the preview's outline panel.
 - **G7. Checked by hand** with Neovim's parsers and Zed's grammars on
   the reference machine; the guide and the invariants say it.
+- **G8. A grammar for each language** (2026-11-01, ADR-110 revised after
+  the user found the two lists of grammars read as settings): a Grammars
+  section on the Reading page, "Automatic uses" then one list of
+  languages, each with a dropdown (Automatic saying what it picks, bat,
+  each source's tree-sitter grammar, Plain text), every source's grammar
+  kept to choose from; record lists drawn inset everywhere, with a
+  filter and folding when long.
 
 **Printing** (#2):
 
@@ -2119,7 +2126,7 @@ screen reader reads, from the window or a script.
   `print.print` and `print.save_pdf` the only commands; the preview's
   menu applying the plans its items answer.
 
-**Status:** planned 2026-10-31. Built: G0 to G7, P1 to P4 (2026-10-31); `just lint-all` and `just test-all` pass on main after it. Checked on Linux; Windows and macOS compiled only. Deviation: P3, the print helper, came before P1, whose print path builds on it. Revised 2026-11-01 (P5): the four print items and the booklet prompt became one Print… and Skwir's own dialog, pages no longer left to the desktop's dialog (KDE's hides them); checked on Linux with GTK's portal on a display of its own, KDE's portal not tried; macOS and Windows compiled only.
+**Status:** planned 2026-10-31. Built: G0 to G7, P1 to P4 (2026-10-31); `just lint-all` and `just test-all` pass on main after it. Checked on Linux; Windows and macOS compiled only. Deviation: P3, the print helper, came before P1, whose print path builds on it. Revised 2026-11-01 (G8): a grammar chosen for each language, the lists in Settings drawn as lists. Revised 2026-11-01 (P5): the four print items and the booklet prompt became one Print… and Skwir's own dialog, pages no longer left to the desktop's dialog (KDE's hides them); checked on Linux with GTK's portal on a display of its own, KDE's portal not tried; macOS and Windows compiled only.
 
 ---
 

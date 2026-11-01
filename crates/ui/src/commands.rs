@@ -15,6 +15,14 @@ use skwir_core::command::{Effect, Form, Invocation, NoArgs, Outcome, Repeats, To
 /// Who declares them.
 pub const OWNER: &str = "ui";
 
+/// `ui.grammar_choose`: a language (its name in lower case) and what
+/// colors it.
+#[derive(serde::Deserialize, JsonSchema)]
+pub struct GrammarArgs {
+    pub language: String,
+    pub grammar: String,
+}
+
 /// The arguments of the commands, as their schemas say them. Only read
 /// through serde, to check what a command is given and to describe it.
 #[allow(dead_code)] // Fields are read by `Deserialize` and `JsonSchema` only.
@@ -1605,18 +1613,21 @@ pub fn declare_all(app: &App) {
     app.commands.register_raw::<NoArgs, _>(
         OWNER,
         Topic::Skwir,
-        "ui.grammars",
-        "Grammars added",
-        "The grammars added to bat and to Sublime Text that color code, as last read: each one's name, where it was found, the files it colors or why it was left out",
-        |_, _| Ok(Outcome::Value(crate::settings::grammar_records())),
+        "ui.languages",
+        "Languages and their grammars",
+        "The languages a grammar was found or added for, as last found: each one's files and what colors it, Automatic or chosen, with what may be chosen",
+        |_, app| Ok(Outcome::Value(crate::settings::language_records(app))),
     );
-    app.commands.register_raw::<NoArgs, _>(
+    app.commands.register::<GrammarArgs, _>(
         OWNER,
         Topic::Skwir,
-        "ui.tree_sitter_grammars",
-        "Tree-sitter grammars",
-        "The tree-sitter grammars found, as last found: each language, where it was found, the files it colors or why it is not used",
-        |_, _| Ok(Outcome::Value(crate::settings::tree_sitter_records())),
+        "ui.grammar_choose",
+        "Choose a language's grammar",
+        "Color `language` (its name in lower case) with `grammar`: auto (as Automatic uses says), bat, plain, or where its tree-sitter grammar was found (skwir, tree-sitter, zed, helix, neovim, system, emacs)",
+        |args, app| {
+            crate::settings::choose_grammar(app, &args.language, &args.grammar)?;
+            Ok(Outcome::Done)
+        },
     );
     none(
         Topic::Go,

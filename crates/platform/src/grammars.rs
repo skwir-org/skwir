@@ -4,9 +4,11 @@
 //!
 //! A grammar is a library (a shared library, or a WebAssembly module Zed
 //! builds) and queries (`highlights.scm` and its kind). Sources come in
-//! this order, the first holding a library for a language giving it:
-//! Skwir's own folder, the CLI's, Zed's, Helix's, Neovim's, the system's,
-//! Emacs's. A library without queries borrows those another source holds
+//! this order: Skwir's own folder, the CLI's, Zed's, Helix's, Neovim's,
+//! the system's, Emacs's. Each source's grammar of a language is kept
+//! (`all`); the one used (`found`) is the source the Reading page chose
+//! for the language (`choose`), else the first usable. A library without
+//! queries borrows those another source holds
 //! for its language, the grammar's own repository's first (Skwir's, the
 //! CLI's, the system's), then Helix's, Zed's, Neovim's. What files a
 //! language colors is said by `languages.toml` in Skwir's folder first,
@@ -17,7 +19,7 @@
 //! when the settings open, as bat's themes are.
 use parking_lot::RwLock;
 use skwir_core::syntax::Grammar;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -41,6 +43,48 @@ pub enum Source {
 }
 
 impl Source {
+    /// Every source, in the order they come.
+    pub const ALL: [Source; 7] = [
+        Source::Skwir,
+        Source::TreeSitter,
+        Source::Zed,
+        Source::Helix,
+        Source::Neovim,
+        Source::System,
+        Source::Emacs,
+    ];
+
+    /// How the settings name it (`reading.grammar_for`).
+    pub fn key(self) -> &'static str {
+        match self {
+            Source::Skwir => "skwir",
+            Source::TreeSitter => "tree-sitter",
+            Source::Zed => "zed",
+            Source::Helix => "helix",
+            Source::Neovim => "neovim",
+            Source::System => "system",
+            Source::Emacs => "emacs",
+        }
+    }
+
+    /// The source the settings name `key`.
+    pub fn of_key(key: &str) -> Option<Source> {
+        Source::ALL.into_iter().find(|source| source.key() == key)
+    }
+
+    /// Its name at the head of a choice ("Zed", "Skwir's folder").
+    pub fn short(self) -> &'static str {
+        match self {
+            Source::Skwir => "Skwir's folder",
+            Source::TreeSitter => "tree-sitter CLI",
+            Source::Zed => "Zed",
+            Source::Helix => "Helix",
+            Source::Neovim => "Neovim",
+            Source::System => "System",
+            Source::Emacs => "Emacs",
+        }
+    }
+
     /// Its name, as the Reading page says it.
     pub fn label(self) -> &'static str {
         match self {
@@ -104,22 +148,44 @@ pub struct Roots {
     pub emacs: Vec<PathBuf>,
 }
 
-/// The grammars found, as last found; `None` before they are.
+/// Every source's grammar of each language, as last found; `None` before
+/// they are.
+static ALL: RwLock<Option<Arc<[Found]>>> = RwLock::new(None);
+
+/// The grammar used for each language, as last chosen among `ALL`.
 static FOUND: RwLock<Option<Arc<[Found]>>> = RwLock::new(None);
 
-/// The grammars found, as last found. Finding them again (`find`) is a
-/// worker's work.
+/// The grammar used for each language, as last found and chosen. Finding
+/// them again (`find`) is a worker's work.
 pub fn found() -> Option<Arc<[Found]>> {
     FOUND.read().clone()
 }
 
+/// Every source's grammar of each language, by language, in the order the
+/// sources come: what the Reading page offers to choose from.
+pub fn all() -> Option<Arc<[Found]>> {
+    ALL.read().clone()
+}
+
 /// Find the grammars again where this system keeps them, keep them for
-/// `found`, tell the helper every caller shares those it can use
-/// (`tree_sitter::shared`: a grammar colors what it injects there too),
-/// and answer them. Telling it starts nothing: a helper told others is let
-/// go of, and the next text opened starts one told these.
-pub fn find() -> Arc<[Found]> {
-    let found: Arc<[Found]> = find_in(&Roots::here(), &bat_file_types()).into();
+/// `all`, choose each language's as `chosen` says (`choose`), and answer
+/// those used.
+pub fn find(chosen: &BTreeMap<String, Source>) -> Arc<[Found]> {
+    let all: Arc<[Found]> = find_in(&Roots::here(), &bat_file_types()).into();
+    *ALL.write() = Some(all);
+    choose(chosen)
+}
+
+/// Use, for each language `chosen` names (in lower case), its grammar from
+/// the source it names where that one is usable, and for any other the
+/// first usable; keep them for `found`, tell the helper every caller
+/// shares those it can use (`tree_sitter::shared`: a grammar colors what
+/// it injects there too), and answer them. Telling it starts nothing: a
+/// helper told others is let go of, and the next text opened starts one
+/// told these.
+pub fn choose(chosen: &BTreeMap<String, Source>) -> Arc<[Found]> {
+    let all = ALL.read().clone().unwrap_or_default();
+    let found: Arc<[Found]> = pick(&all, chosen).into();
     *FOUND.write() = Some(Arc::clone(&found));
     crate::tree_sitter::shared().set_grammars(
         found
@@ -129,6 +195,37 @@ pub fn find() -> Arc<[Found]> {
             .collect(),
     );
     found
+}
+
+/// One grammar per language of `all` (by language, sources in order): the
+/// source `chosen` names for it where usable, else the first usable, else
+/// the first, which says why it cannot be.
+fn pick(all: &[Found], chosen: &BTreeMap<String, Source>) -> Vec<Found> {
+    let mut picked = Vec::new();
+    let mut at = 0;
+    while at < all.len() {
+        let language = all[at].grammar.name.to_lowercase();
+        let end = all[at..]
+            .iter()
+            .position(|found| found.grammar.name.to_lowercase() != language)
+            .map_or(all.len(), |n| at + n);
+        let alternatives = &all[at..end];
+        let usable = |found: &&Found| found.problem.is_none();
+        let wanted = chosen.get(&language).and_then(|source| {
+            alternatives
+                .iter()
+                .filter(usable)
+                .find(|found| found.source == *source)
+        });
+        if let Some(found) = wanted
+            .or_else(|| alternatives.iter().find(usable))
+            .or_else(|| alternatives.first())
+        {
+            picked.push(found.clone());
+        }
+        at = end;
+    }
+    picked
 }
 
 /// The grammar that colors a file named `name`: by its whole name, then
@@ -411,8 +508,9 @@ fn find_in(roots: &Roots, bat: &HashMap<String, Vec<String>>) -> Vec<Found> {
     merge(candidates, &mapped, bat)
 }
 
-/// One grammar per language: the first candidate with a library gives it;
-/// queries its own, else borrowed; file types as the module says.
+/// Each source's grammar of each language, by language, sources in order
+/// (the first candidate of each source): queries its own, else borrowed;
+/// file types as the module says, the same for every source's.
 fn merge(
     candidates: Vec<Candidate>,
     mapped: &HashMap<String, Vec<String>>,
@@ -431,35 +529,20 @@ fn merge(
     let mut found = Vec::new();
     for key in names {
         let candidates = &by_name[&key];
-        let Some(own) = candidates
+        // What a language colors, the same whoever's grammar colors it.
+        let first = candidates
             .iter()
             .find(|c| c.library.is_some())
-            .or_else(|| candidates.first())
-        else {
-            continue;
-        };
-        let source = own.source.unwrap_or(Source::Skwir);
-        let (queries, queries_from) = if own.queries.is_empty() {
-            let mut lenders: Vec<&Candidate> = candidates
-                .iter()
-                .filter(|c| !c.queries.is_empty())
-                .collect();
-            lenders.sort_by_key(|c| {
-                let source = c.source.unwrap_or(Source::Skwir);
-                (!source.upstream(), lender_rank(source))
-            });
-            match lenders.first() {
-                Some(lender) => (lender.queries.clone(), lender.source),
-                None => (Queries::default(), None),
-            }
-        } else {
-            (own.queries.clone(), None)
-        };
+            .or_else(|| candidates.first());
         let file_types = mapped
             .get(&key)
             .cloned()
             .filter(|types| !types.is_empty())
-            .or_else(|| Some(own.file_types.clone()).filter(|types| !types.is_empty()))
+            .or_else(|| {
+                first
+                    .map(|own| own.file_types.clone())
+                    .filter(|types| !types.is_empty())
+            })
             .or_else(|| {
                 candidates
                     .iter()
@@ -468,45 +551,80 @@ fn merge(
             })
             .or_else(|| bat.get(&key).cloned().filter(|types| !types.is_empty()))
             .unwrap_or_else(|| vec![key.clone()]);
-        let first_line = own
-            .first_line
-            .clone()
-            .or_else(|| candidates.iter().find_map(|c| c.first_line.clone()));
-        let injection_regex = own
-            .injection_regex
-            .clone()
-            .or_else(|| candidates.iter().find_map(|c| c.injection_regex.clone()));
-        let problem = own
-            .problem
-            .clone()
-            .or_else(|| match (&own.library, queries.is_empty()) {
-                (None, _) => Some("no library: build the grammar (`tree-sitter build`)".to_owned()),
-                (Some(_), true) => Some("no highlights query found for its language".to_owned()),
-                (Some(_), false) => None,
-            });
-        found.push(Found {
-            grammar: Grammar {
-                name: own.name.clone(),
-                library: own.library.clone().unwrap_or_default(),
-                symbol: own
-                    .symbol
-                    .clone()
-                    .unwrap_or_else(|| format!("tree_sitter_{}", own.name.replace('-', "_"))),
-                highlights: queries.highlights,
-                injections: queries.injections,
-                locals: queries.locals,
-                folds: queries.folds,
-                outline: queries.outline,
-                injection_regex,
-            },
-            source,
-            queries_from: queries_from.filter(|&from| from != source),
-            file_types,
-            first_line,
-            problem,
-        });
+        let mut sources = HashSet::new();
+        for own in candidates {
+            // One grammar a source: its first; a source's queries alone
+            // (Neovim's beside a library of another) are lent, not listed,
+            // unless no source has a library.
+            let source = own.source.unwrap_or(Source::Skwir);
+            let first_of_all = first.is_some_and(|first| std::ptr::eq(first, own));
+            if !sources.insert(source) || (own.library.is_none() && !first_of_all) {
+                continue;
+            }
+            found.push(alternative(own, candidates, &file_types));
+        }
     }
     found
+}
+
+/// `own`, a source's grammar of a language whose grammars are
+/// `candidates`, as found: its queries, else those another lends; its
+/// first line and injections, else another's; what makes it unusable.
+fn alternative(own: &Candidate, candidates: &[Candidate], file_types: &[String]) -> Found {
+    let source = own.source.unwrap_or(Source::Skwir);
+    let (queries, queries_from) = if own.queries.is_empty() {
+        let mut lenders: Vec<&Candidate> = candidates
+            .iter()
+            .filter(|c| !c.queries.is_empty())
+            .collect();
+        lenders.sort_by_key(|c| {
+            let source = c.source.unwrap_or(Source::Skwir);
+            (!source.upstream(), lender_rank(source))
+        });
+        match lenders.first() {
+            Some(lender) => (lender.queries.clone(), lender.source),
+            None => (Queries::default(), None),
+        }
+    } else {
+        (own.queries.clone(), None)
+    };
+    let first_line = own
+        .first_line
+        .clone()
+        .or_else(|| candidates.iter().find_map(|c| c.first_line.clone()));
+    let injection_regex = own
+        .injection_regex
+        .clone()
+        .or_else(|| candidates.iter().find_map(|c| c.injection_regex.clone()));
+    let problem = own
+        .problem
+        .clone()
+        .or_else(|| match (&own.library, queries.is_empty()) {
+            (None, _) => Some("no library: build the grammar (`tree-sitter build`)".to_owned()),
+            (Some(_), true) => Some("no highlights query found for its language".to_owned()),
+            (Some(_), false) => None,
+        });
+    Found {
+        grammar: Grammar {
+            name: own.name.clone(),
+            library: own.library.clone().unwrap_or_default(),
+            symbol: own
+                .symbol
+                .clone()
+                .unwrap_or_else(|| format!("tree_sitter_{}", own.name.replace('-', "_"))),
+            highlights: queries.highlights,
+            injections: queries.injections,
+            locals: queries.locals,
+            folds: queries.folds,
+            outline: queries.outline,
+            injection_regex,
+        },
+        source,
+        queries_from: queries_from.filter(|&from| from != source),
+        file_types: file_types.to_vec(),
+        first_line,
+        problem,
+    }
 }
 
 /// Whose queries are borrowed before whose, once the grammars' own
@@ -1098,8 +1216,10 @@ mod tests {
             &root.join("helix/queries/markup/highlights.scm"),
             "(heading) @markup.heading",
         );
-        // Neovim's: a library whose queries only Helix and the system have.
+        // Neovim's: a library whose queries only Helix and the system have,
+        // and one of a language Zed has too, its queries Zed's.
         write(&root.join("nvim/parser/lua.so"), "");
+        write(&root.join("nvim/parser/nix.so"), "");
         write(
             &root.join("nvim-queries/c/highlights.scm"),
             "(comment) @comment",
@@ -1131,7 +1251,27 @@ mod tests {
             emacs: vec![root.join("emacs")],
         };
         let bat = HashMap::from([("zig".to_owned(), vec!["zig".to_owned(), "zon".to_owned()])]);
-        let found = find_in(&roots, &bat);
+        let all = find_in(&roots, &bat);
+        // Each source's grammar of a language is kept, in their order.
+        let nix: Vec<(Source, Option<Source>)> = all
+            .iter()
+            .filter(|found| found.grammar.name == "nix")
+            .map(|found| (found.source, found.queries_from))
+            .collect();
+        assert_eq!(
+            nix,
+            [(Source::Zed, None), (Source::Neovim, Some(Source::Zed))]
+        );
+        // The first is used, unless another is chosen.
+        let chosen = pick(&all, &BTreeMap::from([("nix".to_owned(), Source::Neovim)]));
+        let nix = named(&chosen, "nix").unwrap();
+        assert_eq!(nix.source, Source::Neovim);
+        assert!(nix.grammar.library.ends_with("nvim/parser/nix.so"));
+        assert_eq!(nix.file_types, ["nix"], "a language colors the same files");
+        // A source chosen that has none of it: the first.
+        let none = pick(&all, &BTreeMap::from([("nix".to_owned(), Source::Helix)]));
+        assert_eq!(named(&none, "nix").unwrap().source, Source::Zed);
+        let found = pick(&all, &BTreeMap::new());
         assert_eq!(
             names(&found),
             [

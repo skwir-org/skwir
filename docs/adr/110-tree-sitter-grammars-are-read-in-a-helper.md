@@ -3,7 +3,8 @@
 Status: accepted 2026-10-31 with the user (GitHub #3); built the same
 day, as `docs/PLAN.md` ("Grammars and printing") records: checked on
 Linux, compiled for Windows and macOS (`just lint-all`), not run there. Extends
-ADR-060 (bat's grammars, matched by Ferroni), which stands.
+ADR-060 (bat's grammars, matched by Ferroni), which stands. Decision 4
+revised 2026-11-01: a choice for each language beside Automatic's rule.
 
 ## Context
 
@@ -60,6 +61,12 @@ ADR-060 (bat's grammars, matched by Ferroni), which stands.
    over for the next.
 4. **A setting chooses the engine** where both know a language
    (`reading.grammars`): bat first (the default) or tree-sitter first.
+   Revised 2026-11-01 with the user: that is Automatic's rule, and each
+   language may be chosen otherwise on the Reading page (Grammars ›
+   Languages, `reading.grammar_for`): bat, the tree-sitter grammar of a
+   source that has one (every source's is found, the first usable used
+   otherwise), or plain text. One list of languages replaces the lists
+   of grammars added and found, which read as settings.
 5. **One theme for both.** Tree-sitter's capture names (`@keyword`,
    `@function.method`) are mapped to the scopes bat's themes color
    (`keyword`, `entity.name.function`), a dotted name falling back to its

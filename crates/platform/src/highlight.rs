@@ -24,7 +24,7 @@ use two_face::theme::{EmbeddedLazyThemeSet, EmbeddedThemeName as Bat};
 pub mod added;
 pub mod tree;
 
-pub use tree::{ENGINE_KEY, Engine, First, engine};
+pub use tree::{CHOSEN_KEY, Choice, ENGINE_KEY, Engine, First, GrammarChoices, engine};
 
 /// Whether code is drawn light or dark: Automatic is as skwir is
 /// (`CodeTheme::chosen`).
@@ -174,9 +174,9 @@ pub struct CodeTheme {
     /// bat's name for the theme, the name of a theme the user added to
     /// bat, or [`DEFAULT`].
     pub name: Arc<str>,
-    /// Which grammars color a language both bat's and a tree-sitter
-    /// grammar know (`reading.grammars`): the colors change with it too.
-    pub grammars: First,
+    /// What colors each language (`reading.grammars`, and each language's
+    /// own choice, `reading.grammar_for`): the colors change with it too.
+    pub grammars: GrammarChoices,
 }
 
 impl CodeTheme {
@@ -185,7 +185,7 @@ impl CodeTheme {
         Self {
             dark,
             name: DEFAULT.into(),
-            grammars: First::Bat,
+            grammars: GrammarChoices::default(),
         }
     }
 
@@ -205,7 +205,7 @@ impl CodeTheme {
                 .settings
                 .get::<String>(key)
                 .map_or_else(|| DEFAULT.into(), Into::into),
-            grammars: First::chosen(app),
+            grammars: GrammarChoices::chosen(app),
             ..Self::own(dark)
         }
     }

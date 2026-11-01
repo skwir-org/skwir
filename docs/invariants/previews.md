@@ -1506,8 +1506,15 @@ is still to come are in `docs/preview-frame.md`.
   grammar compiled for good. Unused for `GRAMMARS_KEPT`, it is let go
   of and the workers that compiled it release.
 - **A tree-sitter grammar is the second engine** (ADR-110), chosen by
-  `highlight::engine` (`reading.grammars`, bat first by default; a
-  language only one engine knows is that one's). It colors in the theme
+  `highlight::engine`: a language's own choice first
+  (`reading.grammar_for`, by its name in lower case: bat, a source's
+  tree-sitter grammar, or plain text, which every coloring path honours
+  by coloring as plain text), else Automatic (`reading.grammars`, bat
+  first by default; a language only one engine knows is that one's).
+  Each source's grammar of a language is found (`grammars::all`); the one
+  used is the source chosen, else the first usable (`grammars::choose`,
+  run before the setting changes, so a preview colored again finds it).
+  It colors in the theme
   bat's grammars do: capture names are mapped to bat's scopes
   (`highlight::tree::scope_of`), never colored apart. It parses only
   what the preview holds whole, in the shared helper, on a worker, never

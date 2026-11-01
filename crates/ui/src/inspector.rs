@@ -125,10 +125,19 @@ impl Display {
                 skwir_platform::links::link_block(block, true);
             }
             let language = data.blocks.first().and_then(|b| b.language.clone());
-            let grammar = language.as_deref().and_then(|language| {
+            let engine = language.as_deref().map(|language| {
                 let first_line = data.blocks.first().map(|b| b.text.as_str());
-                tree_sitter_grammar(language, Some(language), first_line, code)
+                engine(language, Some(language), first_line, code)
             });
+            let grammar = match &engine {
+                Some(skwir_platform::highlight::Engine::TreeSitter(grammar)) => {
+                    Some(grammar.clone())
+                }
+                _ => None,
+            };
+            // Chosen Plain text: bat's plain text.
+            let language =
+                language.filter(|_| engine != Some(skwir_platform::highlight::Engine::Plain));
             colorer = Some(Arc::new(crate::coloring::Colorer {
                 language,
                 palette: Arc::new(palette),
@@ -330,18 +339,15 @@ impl Display {
             .or_else(|| wrap.then(|| last(from.0..len, true)).flatten())
     }
 }
-/// The tree-sitter grammar that colors a text named `name` in `language`
-/// (`highlight::engine`), where the settings in `code` choose one.
-fn tree_sitter_grammar(
+/// What colors a text named `name` in `language` (`highlight::engine`),
+/// as the settings in `code` choose.
+fn engine(
     name: &str,
     language: Option<&str>,
     first_line: Option<&str>,
     code: &crate::code_preview::CodeTheme,
-) -> Option<String> {
-    match skwir_platform::highlight::engine(name, language, first_line, code.grammars) {
-        skwir_platform::highlight::Engine::TreeSitter(grammar) => Some(grammar),
-        skwir_platform::highlight::Engine::Bat => None,
-    }
+) -> skwir_platform::highlight::Engine {
+    skwir_platform::highlight::engine(name, language, first_line, &code.grammars)
 }
 
 /// The runs of a document's code block (a fenced block in Markdown, a
@@ -353,11 +359,20 @@ fn color_block(
     palette: &crate::code_preview::Palette,
     code: &crate::code_preview::CodeTheme,
 ) -> Vec<skwir_core::inspection::Run> {
-    let language = block.language.as_deref();
+    let mut language = block.language.as_deref();
     // A preview moved on from asks the helper nothing more.
-    let grammar = language
+    let engine = language
         .filter(|_| !skwir_core::scheduler::job_cancelled())
-        .and_then(|language| tree_sitter_grammar(language, Some(language), None, code));
+        .map(|language| engine(language, Some(language), None, code));
+    let grammar = match engine {
+        Some(skwir_platform::highlight::Engine::TreeSitter(grammar)) => Some(grammar),
+        Some(skwir_platform::highlight::Engine::Plain) => {
+            // Chosen Plain text: bat's plain text.
+            language = None;
+            None
+        }
+        _ => None,
+    };
     if let Some(grammar) = grammar {
         match skwir_platform::highlight::tree::color_text(
             &grammar,

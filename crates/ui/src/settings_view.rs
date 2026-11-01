@@ -1607,6 +1607,7 @@ impl Render for SettingsView {
         self.stops.clear();
         self.row_items.clear();
         self.record_stops.clear();
+        self.record_picks.clear();
         let search_focus = self.search.focus_handle(cx);
         self.stop(&search_focus, None, None);
         let nav = self.nav.clone();

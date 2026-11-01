@@ -145,11 +145,14 @@ The player, in the panel or pinned at its foot:
   grammars folder (`~/.local/share/skwir/grammars`, a grammar's
   repository as `tree-sitter build` leaves it), or one an editor or the
   system installed (Zed's extensions, Helix, Neovim, Emacs, the
-  tree-sitter CLI, `/usr/lib/tree_sitter`). Reading › Code lists the
-  grammars found, where each was found and what it colors, and chooses
-  which colors a language both know (Grammars: bat first by default); a
-  tree-sitter grammar always colors a language bat does not know, such
-  as Svelte. Both are drawn in Skwir's theme or one of bat's, themes you
+  tree-sitter CLI, `/usr/lib/tree_sitter`). Reading › Grammars lists
+  the languages a grammar was found or added for, with the files each
+  colors and a choice of what colors it: Automatic (bat first by
+  default, as "Automatic uses" says), bat's grammar, the tree-sitter
+  grammar of each place one was found (Zed, Neovim…; one that cannot be
+  used greyed with why), or Plain text. Automatic always colors a
+  language bat does not know, such as Svelte, with its tree-sitter
+  grammar. Both are drawn in Skwir's theme or one of bat's, themes you
   added to bat included, light or dark whatever Skwir is.
 - With bat, colors follow what is read: after a jump into the middle of
   a long file, a string or comment open across the jump can be colored

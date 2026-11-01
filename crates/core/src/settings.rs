@@ -1653,6 +1653,15 @@ impl Settings {
         Ok(())
     }
 
+    /// Drop a dotted key, so its default holds again and the file says it
+    /// no more once saved.
+    pub fn unset(&self, key: &str) {
+        let mut pending = self.writer.lock();
+        Self::remove(&mut self.values.write(), key);
+        pending.insert(key.to_owned());
+        self.bump();
+    }
+
     /// Set a dotted key, creating intermediate tables. Writers run off the UI
     /// thread; use `settings.apply` for user preference changes.
     pub fn set(&self, key: &str, value: toml::Value) {

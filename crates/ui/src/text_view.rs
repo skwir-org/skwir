@@ -79,6 +79,8 @@ pub(crate) struct Start {
     pub grammar: Option<String>,
     /// Whether that grammar says where definitions are (an outline query).
     pub outlined: bool,
+    /// Its language is chosen Plain text: no colors.
+    pub plain: bool,
 }
 
 /// A text parsed by its tree-sitter grammar, and the bytes it was parsed
@@ -269,25 +271,26 @@ pub(crate) fn start(
         &cancel,
     )?;
     // A grammar parses UTF-8 the preview holds.
-    let grammar = (form.encoding == skwir_platform::inspection::Encoding::Utf8
-        && file.held.is_some())
-    .then(|| {
+    let engine = {
         let name = file.path.file_name().map(|name| name.to_string_lossy());
         let language = file.language.as_deref();
         let first_line = chunk.rows.first().map(|row| row.text.as_str());
         let name = name.as_deref().or(language).unwrap_or_default();
-        match skwir_platform::highlight::engine(name, language, first_line, code.grammars) {
-            skwir_platform::highlight::Engine::TreeSitter(grammar) => Some(grammar),
-            skwir_platform::highlight::Engine::Bat => None,
-        }
-    })
-    .flatten();
+        skwir_platform::highlight::engine(name, language, first_line, &code.grammars)
+    };
+    // A grammar parses UTF-8 the preview holds.
+    let parses = form.encoding == skwir_platform::inspection::Encoding::Utf8 && file.held.is_some();
+    let grammar = match &engine {
+        skwir_platform::highlight::Engine::TreeSitter(grammar) if parses => Some(grammar.clone()),
+        _ => None,
+    };
     Ok(Start {
         form,
         chunk,
         palette: Arc::new(crate::code_preview::Palette::of(code)),
         outlined: grammar.as_deref().is_some_and(crate::inspector::outlines),
         grammar,
+        plain: engine == skwir_platform::highlight::Engine::Plain,
     })
 }
 
@@ -415,7 +418,7 @@ impl TextView {
     /// folder.
     fn new(
         app: &Arc<skwir_core::App>,
-        file: TextFile,
+        mut file: TextFile,
         start: Start,
         scroll: Option<Scroll>,
         paths: bool,
@@ -426,7 +429,12 @@ impl TextView {
             palette,
             grammar,
             outlined: _,
+            plain,
         } = start;
+        // Chosen Plain text: bat's plain text, the theme's own color.
+        if plain {
+            file.language = None;
+        }
         let first = (
             chunk.rows.len() as u64,
             chunk.lines.iter().filter(|(_, first)| *first).count() as u64,

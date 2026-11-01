@@ -296,75 +296,256 @@ pub fn code_theme_spec(
     .section("Code")
 }
 
-/// The grammars added to bat and Sublime Text, listed on the Reading page
-/// (`ui.grammars`): only shown, changed where they are kept.
-pub const GRAMMARS_KEY: &str = "reading.grammars_added";
+/// The languages a grammar was found or added for, listed on the Reading
+/// page under Grammars (`ui.languages`), each with what colors it chosen
+/// there (`ui.grammar_choose`, kept in `reading.grammar_for`): the list
+/// itself is only shown.
+pub const LANGUAGES_KEY: &str = "reading.languages";
 
-/// What lists the grammars added, said changed once they were read again.
-pub(crate) static GRAMMARS: std::sync::LazyLock<skwir_core::settings::RecordSource> =
-    std::sync::LazyLock::new(|| skwir_core::settings::RecordSource::new("ui.grammars", "", "", ""));
+/// What lists the languages, said changed once the grammars were found or
+/// read again, or one was chosen.
+pub(crate) static LANGUAGES: std::sync::LazyLock<skwir_core::settings::RecordSource> =
+    std::sync::LazyLock::new(|| {
+        skwir_core::settings::RecordSource::new("ui.languages", "", "", "")
+    });
 
-/// The grammars added, as the Reading page lists them: each a record of
-/// its name and where it was found, with the files it colors or why it
-/// was left out.
-pub(crate) fn grammar_records() -> serde_json::Value {
-    let records: Vec<serde_json::Value> = skwir_platform::highlight::added::listed()
+/// A language as the Grammars list shows it: the tree-sitter grammar each
+/// source keeps of it, and the grammars added to bat and Sublime Text
+/// that color its files.
+struct Language {
+    /// In lower case, as `reading.grammar_for` names it.
+    key: String,
+    title: String,
+    file_types: Vec<String>,
+    tree: Vec<skwir_platform::grammars::Found>,
+    added: Vec<skwir_platform::highlight::added::Added>,
+}
+
+/// The languages a tree-sitter grammar was found or a grammar added for,
+/// by name: an added grammar joins the tree-sitter language of its name,
+/// else of a file type they share, else stands alone.
+fn languages() -> Vec<Language> {
+    let mut languages: Vec<Language> = Vec::new();
+    // Each source's grammar of a language comes beside the others.
+    for found in skwir_platform::grammars::all().unwrap_or_default().iter() {
+        let key = found.grammar.name.to_lowercase();
+        match languages.last_mut() {
+            Some(language) if language.key == key => language.tree.push(found.clone()),
+            _ => languages.push(Language {
+                key,
+                title: found.grammar.name.clone(),
+                file_types: found.file_types.clone(),
+                tree: vec![found.clone()],
+                added: Vec::new(),
+            }),
+        }
+    }
+    let types_of = |types: &[String]| -> std::collections::HashSet<String> {
+        types
+            .iter()
+            .map(|t| t.trim_start_matches('.').to_lowercase())
+            .collect()
+    };
+    let by_type: Vec<std::collections::HashSet<String>> = languages
+        .iter()
+        .map(|language| types_of(&language.file_types))
+        .collect();
+    let mut alone: Vec<Language> = Vec::new();
+    for added in skwir_platform::highlight::added::listed()
         .unwrap_or_default()
         .iter()
-        .map(|added| {
-            let mut id = added.path.to_string_lossy().into_owned();
-            if let Some(member) = &added.member {
-                id = format!("{id}/{member}");
-            }
-            let from = format!("From {}", added.source.label());
-            let detail = match (&added.problem, added.file_types.is_empty()) {
-                (Some(problem), _) => format!("{from}; not read: {problem}"),
-                (None, true) => from,
-                (None, false) => format!("{from}; colors {}", added.file_types.join(", ")),
+    {
+        let key = added.name.to_lowercase();
+        let types = types_of(&added.file_types);
+        let home = languages
+            .iter()
+            .position(|language| language.key == key)
+            .or_else(|| by_type.iter().position(|of| !of.is_disjoint(&types)));
+        match home {
+            Some(at) => languages[at].added.push(added.clone()),
+            None => match alone.iter_mut().find(|language| language.key == key) {
+                Some(language) => language.added.push(added.clone()),
+                None => alone.push(Language {
+                    key,
+                    title: added.name.clone(),
+                    file_types: added.file_types.clone(),
+                    tree: Vec::new(),
+                    added: vec![added.clone()],
+                }),
+            },
+        }
+    }
+    languages.extend(alone);
+    languages.sort_by(|a, b| a.key.cmp(&b.key));
+    languages
+}
+
+/// A tree-sitter grammar as a choice says it: "Zed (tree-sitter)".
+fn tree_label(found: &skwir_platform::grammars::Found) -> String {
+    use skwir_platform::grammars::Source;
+    match found.source {
+        Source::TreeSitter => "tree-sitter CLI".to_owned(),
+        source => format!("{} (tree-sitter)", source.short()),
+    }
+}
+
+/// The languages as the Reading page lists them (`ui.languages`): each a
+/// record of its name and the files it colors, with a choice of what
+/// colors it: Automatic (saying what it picks now), bat's grammar (an
+/// added one where one is), each source's tree-sitter grammar (one that
+/// cannot be used greyed, saying why), Plain text.
+pub(crate) fn language_records(app: &App) -> serde_json::Value {
+    use skwir_platform::highlight::{Choice, First, GrammarChoices};
+    let choices = GrammarChoices::chosen(app);
+    let syntaxes = skwir_platform::highlight::syntaxes();
+    let records: Vec<serde_json::Value> = languages()
+        .iter()
+        .map(|language| {
+            let usable_added = language.added.iter().find(|added| added.problem.is_none());
+            let bat_knows = usable_added.is_some()
+                || language.file_types.iter().any(|t| {
+                    syntaxes
+                        .find_syntax_by_extension(t.trim_start_matches('.'))
+                        .is_some_and(|syntax| syntax.name != "Plain Text")
+                });
+            let bat = bat_knows.then(|| match usable_added {
+                Some(added) => format!("{}: {}", added.source.label(), added.name),
+                None => "bat".to_owned(),
+            });
+            let usable_tree = language.tree.iter().find(|found| found.problem.is_none());
+            let automatic = match (choices.first, &bat, usable_tree) {
+                (First::Bat, Some(bat), _) | (First::TreeSitter, Some(bat), None) => bat.clone(),
+                (_, _, Some(found)) => tree_label(found),
+                (_, None, None) => "Plain text".to_owned(),
             };
-            serde_json::json!({ "id": id, "name": added.name, "detail": detail, "fixed": true })
+            let mut offered = vec![serde_json::json!({
+                "value": "auto",
+                "label": format!("Automatic: {automatic}"),
+            })];
+            if let Some(bat) = &bat {
+                offered.push(serde_json::json!({ "value": "bat", "label": bat }));
+            }
+            for found in &language.tree {
+                let detail = match (&found.problem, found.queries_from) {
+                    (Some(problem), _) => problem.clone(),
+                    (None, Some(from)) => format!("its colors from {}", from.short()),
+                    (None, None) => String::new(),
+                };
+                offered.push(serde_json::json!({
+                    "value": found.source.key(),
+                    "label": tree_label(found),
+                    "detail": detail,
+                    "disabled": found.problem.is_some(),
+                }));
+            }
+            offered.push(serde_json::json!({ "value": "plain", "label": "Plain text" }));
+            // The choice kept, where it is still offered and usable.
+            let kept = choices.chosen.get(&language.key).copied();
+            let usable = |value: &str| {
+                offered.iter().any(|choice| {
+                    choice["value"] == value && choice["disabled"].as_bool() != Some(true)
+                })
+            };
+            let value = kept
+                .map(Choice::key)
+                .filter(|value| usable(value))
+                .unwrap_or("auto");
+            let label = offered
+                .iter()
+                .find(|choice| choice["value"] == value)
+                .and_then(|choice| choice["label"].as_str())
+                .unwrap_or_default()
+                .to_owned();
+            let mut detail = language.file_types.join(", ");
+            if let Some(kept) = kept.filter(|kept| !usable(kept.key())) {
+                let gone = match kept {
+                    Choice::TreeSitter(source) => format!("{}'s grammar", source.short()),
+                    Choice::Bat => "bat's grammar".to_owned(),
+                    Choice::Plain => "Plain text".to_owned(),
+                };
+                detail = format!("{detail} · {gone} chosen is not here: Automatic");
+            }
+            for added in language
+                .added
+                .iter()
+                .filter(|added| added.problem.is_some())
+            {
+                detail = format!(
+                    "{detail} · {}'s {}: {}",
+                    added.source.label(),
+                    added.name,
+                    added.problem.as_deref().unwrap_or_default()
+                );
+            }
+            serde_json::json!({
+                "id": language.key,
+                "name": language.title,
+                "detail": detail,
+                "fixed": true,
+                "choice": {
+                    "value": value,
+                    "label": label,
+                    "choices": offered,
+                    "command": "ui.grammar_choose",
+                    "args": { "language": language.key },
+                    "field": "grammar",
+                },
+            })
         })
         .collect();
     serde_json::json!({ "records": records })
 }
 
-/// The tree-sitter grammars found, listed on the Reading page
-/// (`ui.tree_sitter_grammars`): only shown, kept where each source keeps
-/// them (ADR-110).
-pub const TREE_SITTER_KEY: &str = "reading.tree_sitter_grammars";
-
-/// What lists the tree-sitter grammars found, said changed once they were
-/// found again.
-pub(crate) static TREE_SITTER: std::sync::LazyLock<skwir_core::settings::RecordSource> =
-    std::sync::LazyLock::new(|| {
-        skwir_core::settings::RecordSource::new("ui.tree_sitter_grammars", "", "", "")
-    });
-
-/// The tree-sitter grammars found, as the Reading page lists them: each a
-/// record of its language and where it was found, with the files it
-/// colors or why it cannot.
-pub(crate) fn tree_sitter_records() -> serde_json::Value {
-    let records: Vec<serde_json::Value> = skwir_platform::grammars::found()
-        .unwrap_or_default()
-        .iter()
-        .map(|found| {
-            let mut from = format!("From {}", found.source.label());
-            if let Some(queries) = found.queries_from {
-                from = format!("{from}, its colors from {}", queries.label());
+/// `ui.grammar_choose`: color `language` with `grammar` (`auto`, `bat`,
+/// a tree-sitter source, `plain`), kept in `reading.grammar_for` and used
+/// at once: the grammar each language uses is chosen again before the
+/// settings change, so a preview colored again finds it.
+pub(crate) fn choose_grammar(app: &App, language: &str, grammar: &str) -> anyhow::Result<()> {
+    use skwir_platform::highlight::{CHOSEN_KEY, Choice, GrammarChoices};
+    let language = language.trim().to_lowercase();
+    anyhow::ensure!(!language.is_empty(), "No language is named");
+    let mut table: std::collections::BTreeMap<String, String> =
+        app.settings.get(CHOSEN_KEY).unwrap_or_default();
+    table.retain(|key, _| key.to_lowercase() != language);
+    if grammar != "auto" {
+        anyhow::ensure!(
+            Choice::of_key(grammar).is_some(),
+            "“{grammar}” is no grammar to choose"
+        );
+        table.insert(language, grammar.to_owned());
+    }
+    let chosen = skwir_platform::highlight::tree::chosen_in(&table);
+    skwir_platform::grammars::choose(
+        &GrammarChoices {
+            chosen: Arc::new(chosen),
+            ..GrammarChoices::chosen(app)
+        }
+        .sources(),
+    );
+    if table.is_empty() {
+        app.settings.unset(CHOSEN_KEY);
+    } else {
+        app.settings.set(CHOSEN_KEY, toml::Value::try_from(table)?);
+    }
+    LANGUAGES.changed();
+    let weak = app.weak();
+    app.scheduler.spawn(
+        skwir_core::scheduler::Priority::Normal,
+        "grammar-chosen-save",
+        app.lifetime().child(),
+        move || {
+            let Some(app) = weak.upgrade() else { return };
+            if let Err(error) = app.settings.save() {
+                app.notify(
+                    skwir_core::app::NotifyLevel::Error,
+                    format!("The grammar chosen was not saved: {error:#}"),
+                );
             }
-            let detail = match &found.problem {
-                Some(problem) => format!("{from}; not used: {problem}"),
-                None => format!("{from}; colors {}", found.file_types.join(", ")),
-            };
-            serde_json::json!({
-                "id": found.grammar.name,
-                "name": found.grammar.name,
-                "detail": detail,
-                "fixed": true,
-            })
-        })
-        .collect();
-    serde_json::json!({ "records": records })
+            app.wake();
+        },
+    );
+    app.wake();
+    Ok(())
 }
 
 /// Read the themes the user added to bat on a worker and declare the code
@@ -380,10 +561,11 @@ pub(crate) fn list_code_themes(app: &Arc<App>) {
         move || {
             let user = crate::code_preview::user_themes(true);
             skwir_platform::highlight::added::read();
-            GRAMMARS.changed();
-            skwir_platform::grammars::find();
-            TREE_SITTER.changed();
             let Some(app) = weak.upgrade() else { return };
+            skwir_platform::grammars::find(
+                &skwir_platform::highlight::GrammarChoices::chosen(&app).sources(),
+            );
+            LANGUAGES.changed();
             for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
                 let chosen = app
                     .settings
@@ -626,41 +808,36 @@ pub fn declare(app: &App) {
     app.settings.declare(
         SettingSpec::choice(
             CODE_ENGINE_KEY,
-            "Grammars",
-            "Which grammar colors a language that both bat and a tree-sitter grammar found below know. With bat first, bat's grammar colors it, or one you added to bat or Sublime Text; with Tree-sitter first, the tree-sitter grammar. A language only one of them knows is colored by that one, so a tree-sitter grammar always colors a language bat does not know. Tree-sitter colors what the preview holds whole; a longer file is colored by bat, else shown plain.",
+            "Automatic uses",
+            "Which grammar colors a language left Automatic below when both bat and a tree-sitter grammar know it. With bat first, bat's grammar colors it, or one you added to bat or Sublime Text; with Tree-sitter first, the tree-sitter grammar. A language only one of them knows is colored by that one. Tree-sitter colors what the preview holds whole; a longer file is colored by bat, else shown plain.",
             skwir_platform::highlight::First::CHOICES[0].0,
             &skwir_platform::highlight::First::CHOICES,
         )
-        .section("Code"),
+        .section("Grammars"),
     );
     app.settings.declare(
         SettingSpec::records(
-            GRAMMARS_KEY,
-            "Grammars added",
-            "The grammars you added to bat (in its syntaxes folder) and to Sublime Text (its packages) color the files they name. They come before bat's own grammar for a language they share, bat's folder last. Each is listed with what it colors, or why it was left out.",
-            "Grammar",
-            vec![
-                skwir_core::settings::RecordField::text("name", "Name", "", ""),
-                skwir_core::settings::RecordField::text("detail", "Where", "", ""),
-            ],
-        )
-        .records_kept_by(GRAMMARS.clone())
-        .section("Code"),
-    );
-    app.settings.declare(
-        SettingSpec::records(
-            TREE_SITTER_KEY,
-            "Tree-sitter grammars",
-            "The tree-sitter grammars found, each with the files it colors or why it is not used. They are looked for in Skwir's grammars folder and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar without queries borrows its language's from another; languages.toml in Skwir's grammars folder says what files a language colors.",
-            "Grammar",
+            LANGUAGES_KEY,
+            "Languages",
+            "The languages a grammar was found or added for, each with the files it colors and what colors it. Automatic follows the choice above; bat's grammar is one you added to bat or Sublime Text where you did; each tree-sitter grammar is named by where it was found, one that cannot be used greyed with why; Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them; languages.toml in Skwir's grammars folder says what files a language colors.",
+            "Language",
             vec![
                 skwir_core::settings::RecordField::text("name", "Language", "", ""),
-                skwir_core::settings::RecordField::text("detail", "Where", "", ""),
+                skwir_core::settings::RecordField::text("detail", "Files", "", ""),
             ],
         )
-        .records_kept_by(TREE_SITTER.clone())
-        .section("Code"),
+        .records_kept_by(LANGUAGES.clone())
+        .section("Grammars"),
     );
+    // Each language's own choice, by its name in lower case: chosen in the
+    // list above (`ui.grammar_choose`), kept with the preferences.
+    let mut chosen = SettingSpec::data(
+        skwir_platform::highlight::CHOSEN_KEY,
+        "What colors each language chosen on the Reading page: a language's name, in lower case, to bat, plain, or where its tree-sitter grammar was found (skwir, tree-sitter, zed, helix, neovim, system, emacs)",
+        toml::Value::Table(toml::Table::new()),
+    );
+    chosen.store = skwir_core::settings::Store::Settings;
+    app.settings.declare(chosen);
     app.settings.declare(
         SettingSpec::choice(
             SLIDESHOW_KEY,
@@ -1341,12 +1518,31 @@ pub struct SettingsView {
     /// The focus handles of each record's buttons this frame, with the
     /// setting and the record's id: what Alt+Up and Alt+Down move.
     pub(crate) record_stops: Vec<(FocusHandle, String, String)>,
+    /// Each record's own choice this frame (a language's grammar): its
+    /// focus, and what choosing runs with the values in order, enabled
+    /// ones, the one held marked: what Left and Right step through.
+    pub(crate) record_picks: Vec<crate::settings_records::Pick>,
+    /// The record whose choice is open, by setting and id.
+    pub(crate) record_open: Option<(String, String)>,
+    /// A long list's filter, by setting (`settings_records::FOLD`).
+    pub(crate) record_filters: BTreeMap<String, Entity<TextInput>>,
+    /// The long lists shown whole.
+    pub(crate) records_unfolded: std::collections::BTreeSet<String>,
+    /// What the dialog subscribed to once open (a list's filter).
+    kept: Vec<Subscription>,
     /// What keyring jobs came back with, for `sync`.
     pub(crate) keyring: Arc<Mutex<Vec<crate::settings_records::KeyringDone>>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<SettingsEvent> for SettingsView {}
+
+impl SettingsView {
+    /// Keep `subscription` while the dialog lives (a list's filter).
+    pub(crate) fn keep_subscription(&mut self, subscription: Subscription) {
+        self.kept.push(subscription);
+    }
+}
 
 impl SettingsView {
     pub fn new(
@@ -1425,6 +1621,11 @@ impl SettingsView {
             probe: Arc::new(Mutex::new(None)),
             drafts: BTreeMap::new(),
             record_stops: Vec::new(),
+            record_picks: Vec::new(),
+            record_open: None,
+            record_filters: BTreeMap::new(),
+            records_unfolded: std::collections::BTreeSet::new(),
+            kept: Vec::new(),
             keyring: Arc::default(),
             root: cx.focus_handle(),
             a11y: false,
@@ -1859,6 +2060,16 @@ impl SettingsView {
 
     /// Left/right on a focused choice or number.
     fn adjust(&mut self, delta: i64, window: &mut Window, cx: &mut Context<Self>) {
+        // A record's own choice steps through its enabled choices.
+        if let Some(pick) = self
+            .record_picks
+            .iter()
+            .find(|pick| pick.focus.contains_focused(window, cx))
+            .cloned()
+        {
+            pick.step(delta, self);
+            return;
+        }
         let Some(key) = self
             .stops
             .iter()
@@ -2467,9 +2678,9 @@ impl crate::shell::Shell {
 mod tests {
     use super::{
         App, BUILTIN, CODE_APPEARANCE_KEY, CODE_DARK_KEY, CODE_ENGINE_KEY, CODE_FONT_KEY,
-        CODE_LIGHT_KEY, FONT_KEY, GRAMMARS_KEY, ICON_THEME_AUTO, Page, READING_FONT_KEY,
-        SINGLE_TAB_KEY, SettingSpec, TABS_AT_KEY, THEME_KEY, TREE_SITTER_KEY, code_theme_spec,
-        declare, font_spec, icon_theme_spec, page_order,
+        CODE_LIGHT_KEY, FONT_KEY, ICON_THEME_AUTO, LANGUAGES_KEY, Page, READING_FONT_KEY,
+        SINGLE_TAB_KEY, SettingSpec, TABS_AT_KEY, THEME_KEY, code_theme_spec, declare, font_spec,
+        icon_theme_spec, page_order,
     };
     use skwir_platform::icons::Theme;
 
@@ -2654,7 +2865,10 @@ mod tests {
             .map(|column| column.setting)
             .collect();
         assert_eq!(columns, standing);
-        assert_eq!(sections(&specs, &Page::Reading), ["Pages", "Text", "Code"]);
+        assert_eq!(
+            sections(&specs, &Page::Reading),
+            ["Pages", "Text", "Code", "Grammars"]
+        );
         assert_eq!(
             page(&specs, &Page::Reading)
                 .into_iter()
@@ -2665,11 +2879,17 @@ mod tests {
                 CODE_APPEARANCE_KEY,
                 CODE_LIGHT_KEY,
                 CODE_DARK_KEY,
-                CODE_FONT_KEY,
-                CODE_ENGINE_KEY,
-                GRAMMARS_KEY,
-                TREE_SITTER_KEY
+                CODE_FONT_KEY
             ]
+        );
+        // Grammars: the rule Automatic follows, then each language's choice.
+        assert_eq!(
+            page(&specs, &Page::Reading)
+                .into_iter()
+                .filter(|(section, _)| section == "Grammars")
+                .map(|(_, key)| key)
+                .collect::<Vec<_>>(),
+            [CODE_ENGINE_KEY, LANGUAGES_KEY]
         );
         // The fonts stand by their subjects (ADR-073): the interface's on
         // Appearance, the reading font first of what text reads in.
@@ -2700,6 +2920,45 @@ mod tests {
     /// Sections made of the same settings are one table, a line each;
     /// another section between them, a section of records or one setting
     /// under a switch keeps them apart.
+    /// A language's grammar chosen is kept by its name in lower case and
+    /// read back as the code theme's; Automatic forgets it, leaving the
+    /// file as it was; what is no grammar is refused.
+    #[test]
+    fn a_language_s_grammar_is_chosen_and_forgotten() {
+        use skwir_platform::grammars::Source;
+        use skwir_platform::highlight::{CHOSEN_KEY, Choice, GrammarChoices};
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
+        declare(&app);
+        super::choose_grammar(&app, "Nix", "zed").unwrap();
+        super::choose_grammar(&app, "html", "plain").unwrap();
+        let kept: std::collections::BTreeMap<String, String> =
+            app.settings.get(CHOSEN_KEY).unwrap();
+        assert_eq!(
+            kept,
+            [("html", "plain"), ("nix", "zed")]
+                .map(|(l, g)| (l.to_owned(), g.to_owned()))
+                .into()
+        );
+        let chosen = GrammarChoices::chosen(&app);
+        assert_eq!(
+            chosen.chosen.get("nix"),
+            Some(&Choice::TreeSitter(Source::Zed))
+        );
+        assert_eq!(chosen.sources().get("nix"), Some(&Source::Zed));
+        assert!(super::choose_grammar(&app, "nix", "notepad").is_err());
+        super::choose_grammar(&app, "nix", "auto").unwrap();
+        super::choose_grammar(&app, "html", "auto").unwrap();
+        // Nothing chosen: the table is gone, its default again.
+        assert!(
+            app.settings
+                .get::<std::collections::BTreeMap<String, String>>(CHOSEN_KEY)
+                .unwrap_or_default()
+                .is_empty()
+        );
+        assert!(GrammarChoices::chosen(&app).chosen.is_empty());
+    }
+
     #[test]
     fn sections_alike_are_a_table() {
         use super::{Block, blocks};
