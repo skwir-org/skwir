@@ -33,7 +33,8 @@
 //!   a block that stands for several entries (the smaller ones, the
 //!   hidden ones), and `block_reclaim` for the line around a block whose
 //!   room can be had back (a cache, a trash); its fills are `block`,
-//!   `block_age` and `block_kind`.
+//!   `block_age` and `block_kind`, lighter or darker where the desktop
+//!   asks for more contrast, so `block_text` reads on them at its ratio.
 //!   `map_*` draw a map: its graticule, a track, and a route with the
 //!   places and areas of a file; land, water and borders are the offline
 //!   background's.
@@ -226,7 +227,9 @@ pub struct BlockFill {
 
 /// The Usage map's fills of a look, as Oklch's lightness and chroma: one
 /// lightness for every hue, so no entry looks heavier than another, and
-/// `block_text` reads on each.
+/// `block_text` reads on each, at the ratio the desktop's contrast asks
+/// of text (`Contrast::ratios`): further from the text where it asks for
+/// more, the map's hues kept.
 struct Blocks {
     /// An open block: one of the folder shown's own entries, and one
     /// inside it.
@@ -266,6 +269,36 @@ const DARK_BLOCKS: Blocks = Blocks {
         (0.29, 0.012),
     ],
     kind: (0.49, 0.095),
+};
+
+/// `LIGHT_BLOCKS` where the desktop asks for more contrast: 7:1.
+const LIGHT_BLOCKS_MORE: Blocks = Blocks {
+    trays: [(0.95, 0.025), (0.915, 0.04)],
+    folder: (0.85, 0.068),
+    file: (0.885, 0.045),
+    ages: [
+        (0.755, 0.11),
+        (0.795, 0.09),
+        (0.835, 0.065),
+        (0.875, 0.04),
+        (0.915, 0.013),
+    ],
+    kind: (0.83, 0.095),
+};
+
+/// `DARK_BLOCKS` where the desktop asks for more contrast: 7:1.
+const DARK_BLOCKS_MORE: Blocks = Blocks {
+    trays: [(0.245, 0.02), (0.28, 0.028)],
+    folder: (0.385, 0.055),
+    file: (0.345, 0.04),
+    ages: [
+        (0.41, 0.10),
+        (0.385, 0.08),
+        (0.345, 0.06),
+        (0.305, 0.035),
+        (0.26, 0.011),
+    ],
+    kind: (0.395, 0.08),
 };
 
 /// The hues of the folder shown's entries, in degrees, around the whole
@@ -773,10 +806,11 @@ impl Theme {
 
     /// The Usage map's fills of this look.
     fn blocks(&self) -> &'static Blocks {
-        if self.is_dark {
-            &DARK_BLOCKS
-        } else {
-            &LIGHT_BLOCKS
+        match (self.is_dark, self.desktop.contrast) {
+            (false, Contrast::Normal) => &LIGHT_BLOCKS,
+            (true, Contrast::Normal) => &DARK_BLOCKS,
+            (false, Contrast::More) => &LIGHT_BLOCKS_MORE,
+            (true, Contrast::More) => &DARK_BLOCKS_MORE,
         }
     }
 
@@ -1210,7 +1244,14 @@ mod tests {
             Some(Kind::Font),
             Some(Kind::Program),
         ];
-        for t in [Theme::light(), Theme::dark()] {
+        // At the ratio text needs at each contrast the desktop asks for:
+        // 7:1 where it asks for more.
+        let looks = [Contrast::Normal, Contrast::More]
+            .into_iter()
+            .flat_map(|contrast| [false, true].map(|dark| (dark, contrast)));
+        for (dark, contrast) in looks {
+            let t = Theme::derive(&Base::own(dark), contrast);
+            let (least, _) = contrast.ratios();
             let mut fills = Vec::new();
             for depth in 0..2 {
                 for index in 0..BLOCK_HUES {
@@ -1225,9 +1266,8 @@ mod tests {
             for ground in fills.iter().flat_map(|fill| [fill.closed, fill.open]) {
                 let ratio = color::ratio(t.block_text, ground);
                 assert!(
-                    ratio >= 4.5,
-                    "{ratio:.2}:1 on {ground:?}, dark: {}",
-                    t.is_dark
+                    ratio >= least,
+                    "{ratio:.2}:1 on {ground:?}, dark: {dark}, {contrast:?}"
                 );
             }
         }

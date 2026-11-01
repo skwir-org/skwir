@@ -338,3 +338,6 @@ laid over).
   them is the look's own dark or light text (`block_text`), no longer
   white. The ring around a chosen block is drawn on the ground around
   it, so it is the accent, which is guarded at 3:1 there.
+- 2026-11-01: where the desktop asks for more contrast, the map's fills
+  move further from that text, their hues kept, so it reads at 7:1 as
+  all text then does (`Theme::blocks` by look and contrast).
