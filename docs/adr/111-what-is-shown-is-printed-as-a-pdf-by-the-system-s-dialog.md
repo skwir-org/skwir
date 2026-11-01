@@ -95,6 +95,10 @@ one Print…, Skwir's own dialog first (see Revision).
   map) is said not printable.
 - Two helpers more are packaged and probed: the print helper here, the
   tree-sitter one beside it (ADR-110).
+- A font whose licence forbids embedding it (its OS/2 `fsType`
+  restricted, or bitmaps only) is never written in a PDF Skwir makes:
+  the print helper passes it over for the next face, and refuses a
+  specimen of one (decided 2026-11-01, after the review).
 
 ## Revision (2026-11-01): one Print…, Skwir's dialog first
 

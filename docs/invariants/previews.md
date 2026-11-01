@@ -1618,6 +1618,25 @@ is still to come are in `docs/preview-frame.md`.
 - **The print helper reads only what its job names** (the pictures
   written beside it, the faces and fallback folders): a picture, a font
   or a drawing never brings in a file it names.
+- **The print helper works within bounds**, whatever the file. A
+  picture's size is read from its header and one past
+  `print::Picture::MOST_PIXELS` is drawn as a frame, never decoded; a
+  compressed drawing, and one a drawing holds, is inflated within its
+  limit; a line of code, and a stretch of a code block, is laid out
+  `code::PIECE` bytes at most at a time; a table's row taller than a
+  page is laid out once, each page drawing the lines it shows; a table's
+  header is repeated over the pages after its own only when it leaves
+  half a page, decided once for laying out and drawing.
+- **What the helper writes keeps the shaper's placing.** parley's glyphs
+  reach krilla through one conversion (`text::krilla_glyph`), which turns
+  parley's downward vertical offset back into the shaper's upward one: a
+  mark stays on its side of the line.
+- **A font that forbids embedding is never written.** A face whose OS/2
+  `fsType` is restricted or bitmap-only is passed over for the next one
+  (another of its family, the other role's, a fallback), and a specimen
+  of one is refused. Fallbacks are looked for only for characters a font
+  is meant to hold (no control, format, private use or unassigned one),
+  4,096 at most, each font's map read once.
 - **Paper is light.** A document Skwir makes is in the light look and the
   light code theme whatever the window's; a booklet's page is half its
   sheet, laid out at that size.
