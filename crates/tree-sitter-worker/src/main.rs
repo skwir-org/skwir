@@ -45,11 +45,17 @@ fn main() {
     if args.first().is_some_and(|arg| arg == "--probe") {
         return;
     }
-    if !args.is_empty() {
-        eprintln!("usage: skwir-tree-sitter-worker");
-        std::process::exit(2);
-    }
-    if let Err(error) = serve() {
+    // `--cache <folder>`: where compiled WebAssembly grammars are kept
+    // (skwir's cache); without it, each is compiled at each start.
+    let cache = match args.as_slice() {
+        [] => None,
+        [flag, folder] if flag == "--cache" => Some(std::path::PathBuf::from(folder)),
+        _ => {
+            eprintln!("usage: skwir-tree-sitter-worker [--cache <folder>]");
+            std::process::exit(2);
+        }
+    };
+    if let Err(error) = serve(cache) {
         // The manager reads replies only: what ended the helper is said as
         // one, then the helper exits, which the manager notices too.
         let reply = Reply::Error(format!("{error:#}"));
@@ -66,7 +72,7 @@ type Parse = (u64, Request, Arc<AtomicUsize>);
 /// Each request gets one reply; a request that fails, or panics, is that
 /// request's `Error` and the helper goes on. A line that is too long or
 /// does not parse ends the helper: what followed it cannot be told apart.
-fn serve() -> anyhow::Result<()> {
+fn serve(cache: Option<std::path::PathBuf>) -> anyhow::Result<()> {
     send(
         0,
         &Reply::Ready {
@@ -88,7 +94,7 @@ fn serve() -> anyhow::Result<()> {
         std::thread::Builder::new()
             .name("parses".into())
             .spawn(move || {
-                let mut worker = text::Worker::new(kept);
+                let mut worker = text::Worker::new(kept, cache);
                 for (id, request, cancel) in asked {
                     let reply = if cancel.load(Ordering::SeqCst) == 0 {
                         let (reply, panicked) = answer(|| worker.handle(request, &cancel));

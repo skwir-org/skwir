@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use skwir_core::syntax::{Grammar, Queries};
-use tree_sitter::{Language, Query, QueryError, QueryErrorKind, WasmStore, wasmtime};
+use tree_sitter::{Language, Query, QueryError, QueryErrorKind, WasmStore};
 use tree_sitter_highlight::HighlightConfiguration;
 
 /// Bytes of one query file read at most: the largest editors carry are
@@ -18,6 +18,11 @@ const QUERY_FILE: u64 = 4 * 1024 * 1024;
 const QUERY: usize = 8 * 1024 * 1024;
 /// Bytes of a WebAssembly grammar read at most: the largest are a few MiB.
 const WASM: u64 = 64 * 1024 * 1024;
+/// Bytes of compiled grammars kept at most: Wasmtime's cleanup takes the
+/// oldest out past it. A grammar compiles to a few MiB.
+const COMPILED: u64 = 256 * 1024 * 1024;
+/// Compiled grammars kept at most, every version of every one.
+const COMPILED_FILES: u64 = 4096;
 
 /// Captures that name no color but what Neovim does with the text (spell
 /// checking, hiding it). The highlighter colors a node by the last capture
@@ -63,11 +68,14 @@ pub struct Grammars {
     /// them: a parser runs a language loaded here in a store of its own.
     engine: Option<wasmtime::Engine>,
     loader: Option<WasmStore>,
+    /// The folder compiled grammars are kept in (`--cache`).
+    cache: Option<PathBuf>,
 }
 
 impl Grammars {
-    pub fn new() -> Self {
+    pub fn new(cache: Option<PathBuf>) -> Self {
         Grammars {
+            cache,
             list: Vec::new(),
             regexes: Vec::new(),
             loaded: HashMap::new(),
@@ -104,9 +112,24 @@ impl Grammars {
         self.list.iter().any(|grammar| is_wasm(&grammar.library))
     }
 
-    /// The engine every store is made with.
+    /// The engine every store is made with: its compiled modules kept in
+    /// the cache folder where one was given, so a grammar compiles once,
+    /// not at each start of the helper. A cache that cannot be had (its
+    /// folder unwritable) leaves it compiling each time.
     pub fn engine(&mut self) -> &wasmtime::Engine {
-        self.engine.get_or_insert_with(wasmtime::Engine::default)
+        let cache = self.cache.as_deref();
+        self.engine.get_or_insert_with(|| {
+            let mut config = wasmtime::Config::new();
+            if let Some(folder) = cache {
+                match compiled_in(folder) {
+                    Ok(cache) => {
+                        config.cache(Some(cache));
+                    }
+                    Err(error) => eprintln!("no compile cache: {error:#}"),
+                }
+            }
+            wasmtime::Engine::new(&config).unwrap_or_default()
+        })
     }
 
     /// The capture name a highlight's index is.
@@ -362,6 +385,18 @@ fn highlight_of(
         })
         .map_err(|error| problems.push(format!("highlights: {error}")))
         .ok()
+}
+
+/// Wasmtime's cache of compiled modules in `folder`, configured here and
+/// nowhere else (no configuration file, no folder of Wasmtime's choosing),
+/// bounded by `COMPILED` and `COMPILED_FILES`.
+fn compiled_in(folder: &Path) -> anyhow::Result<wasmtime::Cache> {
+    let mut config = wasmtime::CacheConfig::new();
+    config
+        .with_directory(folder)
+        .with_files_total_size_soft_limit(COMPILED)
+        .with_file_count_soft_limit(COMPILED_FILES);
+    wasmtime::Cache::new(config).map_err(|error| anyhow::anyhow!("{error}"))
 }
 
 /// Whether a capture of a highlights query is a color: not one of those

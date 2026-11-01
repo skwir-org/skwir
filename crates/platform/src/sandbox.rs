@@ -149,6 +149,7 @@ fn isolates() -> bool {
                 &[],
                 work.path(),
                 &[],
+                &[],
             )?;
             crate::process::run(
                 &mut run.command,
@@ -288,7 +289,7 @@ pub fn untrusted_beside(
     readable: &[&Path],
 ) -> anyhow::Result<Untrusted> {
     if available() {
-        return isolated(program, Some(input), beside, work, readable);
+        return isolated(program, Some(input), beside, work, readable, &[]);
     }
     if otherwise == Otherwise::Refuse {
         return Err(needed());
@@ -303,7 +304,7 @@ pub fn untrusted_beside(
 /// skwir reads them, the program opens none.
 pub fn fed(program: &Path, work: &Path, otherwise: Otherwise) -> anyhow::Result<Untrusted> {
     if available() {
-        return isolated(program, None, &[], work, &[]);
+        return isolated(program, None, &[], work, &[], &[]);
     }
     if otherwise == Otherwise::Refuse {
         return Err(needed());
@@ -334,8 +335,21 @@ pub fn fed_reading(
     otherwise: Otherwise,
     readable: &[&Path],
 ) -> anyhow::Result<Untrusted> {
+    fed_reading_writing(program, work, otherwise, readable, &[])
+}
+
+/// `fed_reading`, the program also writing in the folders `writable` (a
+/// cache of its own, kept in skwir's) at their own paths. One that is not
+/// a folder is left out.
+pub fn fed_reading_writing(
+    program: &Path,
+    work: &Path,
+    otherwise: Otherwise,
+    readable: &[&Path],
+    writable: &[&Path],
+) -> anyhow::Result<Untrusted> {
     if available() {
-        return isolated(program, None, &[], work, readable);
+        return isolated(program, None, &[], work, readable, writable);
     }
     if otherwise == Otherwise::Refuse {
         return Err(needed());
@@ -367,7 +381,7 @@ pub fn command(program: &Path, input: &Path, work: &Path) -> anyhow::Result<Untr
     if !available() {
         return Err(needed());
     }
-    isolated(program, Some(input), &[], work, &[])
+    isolated(program, Some(input), &[], work, &[], &[])
 }
 
 /// A relocatable package's private runtime is readable by its helpers
@@ -412,6 +426,7 @@ fn isolated(
     beside: &[(PathBuf, PathBuf)],
     work: &Path,
     readable: &[&Path],
+    writable: &[&Path],
 ) -> anyhow::Result<Untrusted> {
     let bwrap = crate::process::required("bwrap")?;
     let mut command = Command::new(bwrap);
@@ -438,6 +453,11 @@ fn isolated(
     for path in readable {
         if outside(path) && path.exists() {
             command.arg("--ro-bind").arg(path).arg(path);
+        }
+    }
+    for path in writable {
+        if outside(path) && path.is_dir() {
+            command.arg("--bind").arg(path).arg(path);
         }
     }
     if let Some(input) = input {
@@ -572,6 +592,7 @@ fn isolated(
     beside: &[(PathBuf, PathBuf)],
     work: &Path,
     readable: &[&Path],
+    writable: &[&Path],
 ) -> anyhow::Result<Untrusted> {
     use std::ffi::OsString;
     let work = std::fs::canonicalize(work)?;
@@ -623,11 +644,19 @@ fn isolated(
         .filter_map(|path| std::fs::canonicalize(path).ok())
         .chain(also)
         .collect();
+    let writable: Vec<PathBuf> = writable
+        .iter()
+        .filter_map(|path| std::fs::canonicalize(path).ok())
+        .collect();
     let mut profile = PROFILE.to_owned();
     profile.extend(
         (0..readable.len())
             .map(|n| format!("(allow file-read* (subpath (param \"READABLE{n}\")))\n")),
     );
+    profile
+        .extend((0..writable.len()).map(|n| {
+            format!("(allow file-read* file-write* (subpath (param \"WRITABLE{n}\")))\n")
+        }));
     let mut command = Command::new("/usr/bin/sandbox-exec");
     hand_environment(&mut command, false);
     command.arg("-p").arg(profile);
@@ -640,7 +669,13 @@ fn isolated(
     let also = readable
         .iter()
         .enumerate()
-        .map(|(n, path)| (format!("READABLE{n}"), path));
+        .map(|(n, path)| (format!("READABLE{n}"), path))
+        .chain(
+            writable
+                .iter()
+                .enumerate()
+                .map(|(n, path)| (format!("WRITABLE{n}"), path)),
+        );
     for (name, value) in named.into_iter().chain(also) {
         let mut parameter = OsString::from(format!("{name}="));
         parameter.push(value);
@@ -670,6 +705,7 @@ fn isolated(
     _beside: &[(PathBuf, PathBuf)],
     _work: &Path,
     _readable: &[&Path],
+    _writable: &[&Path],
 ) -> anyhow::Result<Untrusted> {
     Err(needed())
 }

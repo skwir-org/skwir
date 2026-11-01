@@ -51,7 +51,11 @@ revised 2026-11-01: a choice for each language beside Automatic's rule.
    a text parsed is answered beside a parse that runs.
 2. **One Wasmtime.** The module helper moves to Wasmtime 48, the version
    tree-sitter's WebAssembly grammars need, and follows tree-sitter's
-   version from then on.
+   version from then on. A WebAssembly grammar compiled is kept in
+   Skwir's cache (Wasmtime's own cache, configured in code, 256 MiB at
+   most, the one folder of the user's the helper writes in): a large
+   grammar compiles in seconds, and the helper starts again after each
+   unused minute.
 3. **Grammars are found where they are kept**: Skwir's own folder
    (`<data>/grammars`, a grammar repository as `tree-sitter build` leaves
    it, its `tree-sitter.json` naming its file types), then Zed's, Helix's,

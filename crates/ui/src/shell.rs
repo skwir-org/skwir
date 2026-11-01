@@ -517,6 +517,11 @@ impl Shell {
         // worker: then a script or an agent can choose one before the
         // settings ever open.
         skwir_platform::highlight::added::keep_in(app.cache.namespace("grammars"));
+        // The WebAssembly grammars the tree-sitter helper compiles, kept
+        // in the cache rather than compiled at each start (ADR-110).
+        skwir_platform::tree_sitter::keep_compiled_in(
+            app.cache.namespace("wasmtime").folder("tree-sitter"),
+        );
         crate::settings::list_code_themes(&app);
         crate::settings::list_fonts(&app, cx.text_system().clone());
         crate::session::declare(&app);

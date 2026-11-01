@@ -12,6 +12,9 @@ skwir-core.workspace = true
 # WebAssembly grammars run on its Wasmtime (`wasmtime-c-api-impl`), the
 # one the module helper follows (ADR-110).
 tree-sitter = { version = "0.27", features = ["wasm"] }
+# The same Wasmtime, its compile cache on: a WebAssembly grammar compiled
+# once is kept in skwir's cache, not compiled again at each start.
+wasmtime = { version = "48", default-features = false, features = ["cache"] }
 tree-sitter-highlight = "0.27"
 # `LanguageFn`, how a native grammar's symbol becomes a language.
 tree-sitter-language = "0.1"

@@ -17,9 +17,20 @@ version = 2
 # and resvg) is that dependency's to replace.
 unmaintained = "workspace"
 yanked = "deny"
-# An advisory ignored is listed here with its reason (none now: zip 8.6's,
-# held by calamine 0.36, went with calamine 0.37's zip 9 on 2026-10-28).
-ignore = []
+# An advisory ignored is listed here with its reason (zip 8.6's, held by
+# calamine 0.36, went with calamine 0.37's zip 9 on 2026-10-28).
+ignore = [
+    # zstd 0.13 and zstd-safe 7, held by Wasmtime 48's compile cache (the
+    # tree-sitter helper's, ADR-110; Wasmtime asks zstd ^0.13, the fixes
+    # are in 0.14 and 8.2). The cache calls `zstd::encode_all` and
+    # `decode_all` alone, on modules the helper compiled itself: each a
+    # context of its own (0391 is a context reused with `with_context`),
+    # no `seekable` feature (0398), no streaming decoder (0403 spares
+    # `decode_all`). Drop these with Wasmtime's move to zstd 0.14.
+    { id = "RUSTSEC-2026-0391", reason = "Wasmtime 48's cache: encode_all/decode_all, a fresh context each" },
+    { id = "RUSTSEC-2026-0398", reason = "Wasmtime 48's cache: no seekable feature" },
+    { id = "RUSTSEC-2026-0403", reason = "Wasmtime 48's cache: decode_all, not the streaming decoder" },
+]
 
 [licenses]
 version = 2

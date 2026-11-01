@@ -64,6 +64,18 @@ const OPEN_PER_MIB: Duration = Duration::from_secs(6);
 /// ended (`docs/invariants/reader.md`).
 const CANCEL_GRACE: Duration = Duration::from_secs(5);
 
+/// Where every helper keeps the WebAssembly grammars it compiled, once
+/// set (`keep_compiled_in`).
+static COMPILED: OnceLock<PathBuf> = OnceLock::new();
+
+/// Keep the WebAssembly grammars helpers compile in `folder` (a folder of
+/// skwir's cache: `app.cache.namespace("wasmtime")`), so each compiles once
+/// rather than at each start of a helper. Wasmtime bounds it; deleting it
+/// costs a compile. Without it, nothing is kept. Set once, at start.
+pub fn keep_compiled_in(folder: PathBuf) {
+    let _ = COMPILED.set(folder);
+}
+
 /// The helper every caller shares, told no grammar until
 /// [`Helper::set_grammars`] is.
 pub fn shared() -> &'static Helper {
@@ -629,11 +641,26 @@ impl Process {
         let folders: Vec<&Path> = folders.iter().map(PathBuf::as_path).collect();
         // A grammar is code, and a text nobody vouched for may target its
         // scanner: the helper reads the grammars and its own folder.
+        // Where compiled WebAssembly grammars are kept, the one folder of
+        // the user's it writes in; none where none was given (tests).
+        let compiled = COMPILED
+            .get()
+            .filter(|folder| folder.is_absolute() && std::fs::create_dir_all(folder).is_ok());
+        let writable: Vec<&Path> = compiled.iter().map(|folder| folder.as_path()).collect();
         let mut run = if inner.isolate {
-            sandbox::fed_reading(&executable, work.path(), Otherwise::Run, &folders)?
+            sandbox::fed_reading_writing(
+                &executable,
+                work.path(),
+                Otherwise::Run,
+                &folders,
+                &writable,
+            )?
         } else {
             sandbox::plain(&executable, Path::new(""), work.path())
         };
+        if let Some(folder) = compiled {
+            run.command.arg("--cache").arg(folder);
+        }
         let explain = |error| crate::process::explain(&executable, cancel, error);
         let channel: LineChannel<Tagged<Reply>> =
             LineChannel::spawn(&mut run.command, MAX_REPLY, "skwir-tree-sitter")?;
@@ -1121,6 +1148,59 @@ mod tests {
         helper.close(opened.doc).unwrap();
         cancel.cancel();
         assert!(helper.open("json", TEXT.as_bytes(), &cancel).is_err());
+    }
+
+    /// WebAssembly grammars compiled are kept in the folder given, which
+    /// the helper writes in where it runs isolated: the next helper finds
+    /// them there.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn compiled_grammars_are_kept_in_the_cache() {
+        let Some(executable) = built_helper() else {
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let compiled = dir.path().join("wasmtime/tree-sitter");
+        keep_compiled_in(compiled.clone());
+        let helper = Helper::new(Some(executable), true, Duration::from_millis(200));
+        helper.set_grammars(vec![json()]);
+        let cancel = CancelToken::new();
+        // The compiled modules, not Wasmtime's notes of their use.
+        let files = || {
+            walk(&compiled)
+                .into_iter()
+                .filter(|path| {
+                    path.is_file()
+                        && path
+                            .extension()
+                            .is_none_or(|extension| extension != "stats")
+                })
+                .count()
+        };
+        let opened = helper.open("json", TEXT.as_bytes(), &cancel).unwrap();
+        until(|| files() > 0);
+        let kept = files();
+        let folder = process_of(&opened.doc).unwrap().outside.clone();
+        drop(opened);
+        until(|| !folder.exists());
+        // Another helper compiles nothing again.
+        let again = helper.open("json", TEXT.as_bytes(), &cancel).unwrap();
+        assert_eq!(helper.colors(&again.doc, 0..4, &cancel).unwrap().len(), 4);
+        assert_eq!(files(), kept);
+    }
+
+    /// Every path under `dir`.
+    #[cfg(target_os = "linux")]
+    fn walk(dir: &Path) -> Vec<PathBuf> {
+        let mut found = Vec::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                found.extend(walk(&path));
+            }
+            found.push(path);
+        }
+        found
     }
 
     /// Unused for its `kept`, the helper is let go of, a text open in it

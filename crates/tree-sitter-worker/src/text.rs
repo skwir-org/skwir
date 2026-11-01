@@ -77,9 +77,10 @@ pub struct Document {
 }
 
 impl Worker {
-    pub fn new(kept: Kept) -> Self {
+    /// `cache`, the folder compiled WebAssembly grammars are kept in.
+    pub fn new(kept: Kept, cache: Option<std::path::PathBuf>) -> Self {
         Worker {
-            grammars: Grammars::new(),
+            grammars: Grammars::new(cache),
             highlighter: Highlighter::new(),
             stored: false,
             kept,
