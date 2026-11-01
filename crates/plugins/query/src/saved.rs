@@ -9,6 +9,8 @@
 //! filter, its `expr`, and where it is, `at`. Their [`Key`] is what every
 //! edit names and what `before` points at.
 
+use std::path::PathBuf;
+
 use skwir_core::location::Location;
 use skwir_core::os_path::PathArg;
 
@@ -31,10 +33,7 @@ pub struct SavedQuery {
 impl SavedQuery {
     /// What names it among the others.
     pub fn key(&self) -> Key {
-        Key {
-            expr: self.expr.clone(),
-            at: self.at.clone(),
-        }
+        Key::new(self.expr.clone(), self.at.clone())
     }
 }
 
@@ -57,6 +56,16 @@ impl From<&str> for Key {
 }
 
 impl Key {
+    /// A saved entry's key, a saved place's `at` written one way however
+    /// it came ([`kept_at`]): the keep button, every edit and what is
+    /// stored then agree on the same place.
+    pub fn new(expr: String, at: Option<Location>) -> Self {
+        Key {
+            expr,
+            at: at.map(|at| kept_at(&at)),
+        }
+    }
+
     /// As a command's argument names one ([`KeyArg`]): a search by its
     /// expression, a place as `{"expr": …, "at": …}`.
     pub fn json(&self) -> serde_json::Value {
@@ -83,19 +92,27 @@ pub enum KeyArg {
 impl From<KeyArg> for Key {
     fn from(arg: KeyArg) -> Self {
         match arg {
-            KeyArg::Kept { expr, at } => Key {
-                expr,
-                at: at.as_ref().map(at_location),
-            },
+            KeyArg::Kept { expr, at } => Key::new(expr, at.as_ref().map(at_location)),
             KeyArg::Search(expr) => Key { expr, at: None },
         }
     }
 }
 
 /// A saved place's `at` as a command's argument gives it: a path or
-/// `scheme:rest`, as `navigate` reads its `location`.
+/// `scheme:rest`, as `navigate` reads its `location`, written one way
+/// ([`kept_at`]).
 pub fn at_location(at: &PathArg) -> Location {
-    Location::parse_os(at.as_os_str())
+    kept_at(&Location::parse_os(at.as_os_str()))
+}
+
+/// Where a saved place is, written one way: a folder by its path, `~`
+/// expanded and read part by part (`/a/b/` and `/a/./b` are `/a/b`), as
+/// `Location::same_place` compares folders; anything else as written.
+pub fn kept_at(at: &Location) -> Location {
+    match at.path() {
+        Some(path) => Location::from_path(path.components().collect::<PathBuf>()),
+        None => at.clone(),
+    }
 }
 
 /// A change to the saved list. `before` names the entry this one goes in

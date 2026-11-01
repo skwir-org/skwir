@@ -376,17 +376,67 @@ fn set_filter(app: &App, pane: PaneId, text: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Saved searches from settings.
+/// Saved searches and saved places from settings, read one by one: one
+/// that does not read (a hand edit) is left out and logged, the others
+/// shown ([`Stored`]).
 pub fn saved(app: &App) -> Vec<SavedQuery> {
-    app.settings
-        .get::<Vec<SavedQuery>>(SAVED_KEY)
-        .unwrap_or_default()
+    stored(app).list
+}
+
+/// The saved list as the settings file holds it.
+#[derive(Default)]
+struct Stored {
+    /// The entries that read, in order.
+    list: Vec<SavedQuery>,
+    /// Those that do not, as written: kept when the list is written again.
+    unread: Vec<toml::Value>,
+    /// The setting holds no list at all: nothing is written over it.
+    unreadable: bool,
+}
+
+/// Read the saved list one entry at a time ([`Stored`]).
+fn stored(app: &App) -> Stored {
+    let Some(value) = app.settings.get::<toml::Value>(SAVED_KEY) else {
+        return Stored::default();
+    };
+    let toml::Value::Array(entries) = value else {
+        tracing::warn!("{SAVED_KEY} is not a list: the saved searches are not shown");
+        return Stored {
+            unreadable: true,
+            ..Stored::default()
+        };
+    };
+    let mut stored = Stored::default();
+    for (at, entry) in entries.into_iter().enumerate() {
+        if let Ok(saved) = entry.clone().try_into::<SavedQuery>() {
+            stored.list.push(saved);
+        } else {
+            tracing::warn!(
+                entry = at,
+                "a saved search does not read: left out, kept as written"
+            );
+            stored.unread.push(entry);
+        }
+    }
+    stored
 }
 
 fn check(expr: &str) -> anyhow::Result<()> {
     lang::parse(expr)
         .map(drop)
         .map_err(|e| anyhow::anyhow!("query: {e}"))
+}
+
+/// What a saved entry holds reads: a search as a search ([`check`]); a
+/// saved place's filter as the `filter` command took it, its reader
+/// reading what it can of any text (`lens::read_filter`), so only an
+/// empty one is refused (ADR-109).
+fn check_kept(expr: &str, at: Option<&Location>) -> anyhow::Result<()> {
+    match at {
+        None => check(expr),
+        Some(_) if expr.trim().is_empty() => anyhow::bail!("a saved place needs a filter"),
+        Some(_) => Ok(()),
+    }
 }
 
 /// The name a new name means: the one made from the search, or the
@@ -402,10 +452,7 @@ fn name_or_suggested(app: &App, name: &str, key: &Key) -> String {
 
 /// A saved entry as a command names it: its `expr`, and `at` for a place.
 fn key_of(expr: String, at: Option<&PathArg>) -> Key {
-    Key {
-        expr,
-        at: at.map(saved::at_location),
-    }
+    Key::new(expr, at.map(saved::at_location))
 }
 
 /// What `pane` shows, as it is kept (ADR-109): its search, else its
@@ -429,17 +476,23 @@ fn shown_key(app: &App, pane: PaneId) -> anyhow::Result<Key> {
     }
     let filter =
         filter.ok_or_else(|| anyhow::anyhow!("the pane shows neither a search nor a filter"))?;
-    Ok(Key {
-        expr: filter,
-        at: Some(app.kept_location(&location)),
-    })
+    Ok(Key::new(filter, Some(app.kept_location(&location))))
 }
 
 /// Apply `edit` to the saved searches and persist them: the edit that
 /// reverts it, `None` when it changed nothing. One edit at a time.
 fn apply_edit(app: &App, saving: &Mutex<()>, edit: &Edit) -> anyhow::Result<Option<Edit>> {
     let _saving = saving.lock();
-    let mut list = saved(app);
+    let Stored {
+        mut list,
+        unread,
+        unreadable,
+    } = stored(app);
+    // A list that did not read is never written over: it is the user's.
+    anyhow::ensure!(
+        !unreadable,
+        "the saved searches in the settings file do not read; nothing was written"
+    );
     let Some(inverse) = edit.apply(&mut list).map_err(anyhow::Error::msg)? else {
         return Ok(None);
     };
@@ -454,6 +507,7 @@ fn apply_edit(app: &App, saving: &Mutex<()>, edit: &Edit) -> anyhow::Result<Opti
             }
             Ok(toml::Value::Table(t))
         })
+        .chain(unread.into_iter().map(Ok))
         .collect::<Result<_, toml::ser::Error>>()
         .map_err(|e| anyhow::anyhow!("the saved searches were not written: {e}"))?;
     app.settings.set(SAVED_KEY, toml::Value::Array(arr));
@@ -837,7 +891,7 @@ impl Plugin for QueryPlugin {
                     Some(expr) => key_of(expr, a.at.as_ref()),
                     None => shown_key(app, app.pane_or_active(a.pane))?,
                 };
-                check(&key.expr)?;
+                check_kept(&key.expr, key.at.as_ref())?;
                 let name = name_or_suggested(app, a.name.as_deref().unwrap_or_default(), &key);
                 let edit = Edit::Add {
                     name,
@@ -912,8 +966,8 @@ impl Plugin for QueryPlugin {
             "Change what a saved search looks for, or what filters a saved place; its name and place in the sidebar stay",
             move |a, app| {
                 let to = a.to.trim().to_owned();
-                check(&to)?;
                 let key = key_of(a.expr, a.at.as_ref());
+                check_kept(&to, key.at.as_ref())?;
                 edits.run(app, Edit::Change { key, to }, a.undo);
                 Ok(Outcome::Done)
             },

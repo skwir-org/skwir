@@ -106,3 +106,109 @@ fn the_last_window_s_tabs_come_back_filtered() {
         )
     );
 }
+
+/// What filters a folder is kept with it, whatever way the folder was
+/// written (`~`, a trailing separator): the keep button, Ctrl+D again and
+/// every edit name the same place, and taking it back takes it out
+/// (ADR-109).
+#[cfg(unix)]
+#[test]
+fn a_place_is_kept_once_however_its_folder_is_written() {
+    let tmp = home_tempdir();
+    let root = folder(tmp.path());
+    let app = app_in(&tmp.path().join("state"));
+    let pane = app.workspace.read().active_id();
+    let home = dirs::home_dir().unwrap();
+    let below_home = root.strip_prefix(&home).unwrap();
+    let tilde = Location::parse(&format!("~/{}", below_home.display()));
+    let slashed = Location::parse(&format!("{}/", root.display()));
+    for (i, written) in [tilde, slashed].iter().enumerate() {
+        app.navigate(pane, written).unwrap();
+        assert!(app.pump_until_complete(pane, WAIT));
+        run(
+            &app,
+            "filter",
+            &serde_json::json!({ "text": "beach", "pane": pane }),
+        );
+        run(&app, "keep", &serde_json::json!({ "pane": pane }));
+        assert_eq!(
+            skwir_plugin_query::saved(&app).len(),
+            1,
+            "kept once, written {i}"
+        );
+    }
+    let kept = app
+        .kept_place(&Location::from_path(&root), Some("beach"))
+        .expect("the button is filled");
+    // The place's own command, as its button and its menu run it.
+    app.dispatch(&kept.forget.unwrap()).unwrap();
+    assert!(skwir_plugin_query::saved(&app).is_empty());
+}
+
+/// A filter the pane took is kept as it was typed, even one its reader
+/// reads only in part (an unclosed quote): the filter, not a search.
+#[test]
+fn a_filter_typed_in_part_is_kept() {
+    let tmp = home_tempdir();
+    let root = folder(tmp.path());
+    let app = app_in(&tmp.path().join("state"));
+    let pane = app.workspace.read().active_id();
+    app.navigate(pane, &Location::from_path(&root)).unwrap();
+    assert!(app.pump_until_complete(pane, WAIT));
+    run(
+        &app,
+        "filter",
+        &serde_json::json!({ "text": "beach \"day", "pane": pane }),
+    );
+    run(&app, "keep", &serde_json::json!({ "pane": pane }));
+    let saved = skwir_plugin_query::saved(&app);
+    assert_eq!(saved[0].expr, "beach \"day");
+}
+
+/// An entry of the saved list that does not read (a hand edit) leaves
+/// the others shown, and is kept as written when the list is written
+/// again; a setting that is no list is never written over.
+#[test]
+fn a_saved_entry_that_does_not_read_is_kept_as_written() {
+    let tmp = home_tempdir();
+    let app = app_in(&tmp.path().join("state"));
+    let entries: toml::Value = toml::from_str(
+        r#"saved = [
+            { name = "Reports", expr = "report kind:document" },
+            { name = "Hand edit", expr = "kind:image", at = "/example/photos" },
+        ]"#,
+    )
+    .unwrap();
+    app.settings.set("query.saved", entries["saved"].clone());
+    let names = || {
+        skwir_plugin_query::saved(&app)
+            .into_iter()
+            .map(|s| s.name)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(names(), ["Reports"]);
+    run(
+        &app,
+        "query.save",
+        &serde_json::json!({ "expr": "kind:video", "name": "Videos" }),
+    );
+    assert_eq!(names(), ["Reports", "Videos"]);
+    let written = app.settings.get::<toml::Value>("query.saved").unwrap();
+    let written = written.as_array().unwrap();
+    assert_eq!(written.len(), 3, "{written:?}");
+    assert_eq!(written[2]["name"].as_str(), Some("Hand edit"));
+
+    app.settings
+        .set("query.saved", toml::Value::String("not a list".into()));
+    assert!(names().is_empty());
+    run(
+        &app,
+        "query.save",
+        &serde_json::json!({ "expr": "kind:audio", "name": "Audio" }),
+    );
+    assert_eq!(
+        app.settings.get::<toml::Value>("query.saved"),
+        Some(toml::Value::String("not a list".into())),
+        "never written over"
+    );
+}
