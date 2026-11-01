@@ -25,8 +25,8 @@ use skwir_core::print::{Align, Block, BlockKind, Picture, Run};
 use crate::fonts::{Fonts, Role};
 use crate::geometry::{self, Area, Frame};
 use crate::out::{Heading, PageCx, Part, Structure, key};
-use crate::pictures;
 use crate::text::{self, CODE_BACK, GREY, Ink, RULE, Spec, Wrap};
+use crate::{code, pictures};
 
 pub const BODY: f32 = 10.5;
 const LINE_HEIGHT: f32 = 1.4;
@@ -110,9 +110,18 @@ struct Item {
     bar: Option<f32>,
     /// The height of the header repeated over the rows on a page after.
     head: f32,
-    /// A code block's text as it is laid out, its tabs turned to spaces,
-    /// and its runs.
-    code: Option<(String, Vec<Run>)>,
+    /// A code block's stretch as it is laid out.
+    code: Option<CodeText>,
+}
+
+/// A stretch of a code block laid out apart: its text with its tabs
+/// turned to spaces, its runs, and whether its first row goes on from a
+/// line the stretch before began.
+#[derive(Clone, Debug)]
+struct CodeText {
+    text: String,
+    runs: Vec<Run>,
+    continues: bool,
 }
 
 impl Item {
@@ -521,13 +530,15 @@ impl<'a> Flow<'a> {
             .rows
             .clone()
             .filter(|&row| {
-                row > 0
-                    && layout.get(row - 1).is_some_and(|line| {
-                        matches!(
-                            line.break_reason(),
-                            BreakReason::Regular | BreakReason::Emergency
-                        )
-                    })
+                if row == 0 {
+                    return item.code.as_ref().is_some_and(|code| code.continues);
+                }
+                layout.get(row - 1).is_some_and(|line| {
+                    matches!(
+                        line.break_reason(),
+                        BreakReason::Regular | BreakReason::Emergency
+                    )
+                })
             })
             .collect();
         if continued.is_empty() {
@@ -770,8 +781,8 @@ fn between(layout: &Layout<Ink>, top: f32, (from, to): (f32, f32)) -> Range<usiz
 
 /// The text an item of text or code lays out, and its runs.
 fn text_of<'s>(blocks: &'s [Block], item: &'s Item) -> (&'s str, &'s [Run]) {
-    if let Some((text, runs)) = &item.code {
-        return (text, runs);
+    if let Some(code) = &item.code {
+        return (&code.text, &code.runs);
     }
     let block = &blocks[item.block];
     (&block.text, &block.runs)
@@ -997,26 +1008,49 @@ fn items(
                 item.own = Some((key(group::BLOCK, index), Tag::Code.into()));
                 let spec = spec_of(block, &item, language);
                 let text = block.text.strip_suffix('\n').unwrap_or(&block.text);
-                let (text, runs) = crate::code::detab(text, &block.runs);
-                text::lay_out(fonts, &mut layout, &text, &runs, &spec, &mut Vec::new());
-                item.code = Some((text, runs));
-                let count = layout.len();
-                item.rows = layout
-                    .lines()
-                    .enumerate()
-                    .map(|(at, line)| {
-                        let m = line.metrics();
-                        let top = if at == 0 {
-                            0.0
-                        } else {
-                            m.block_min_coord + CODE_PAD
-                        };
-                        let bottom = m.block_max_coord
-                            + CODE_PAD
-                            + if at + 1 == count { CODE_PAD } else { 0.0 };
-                        (top, bottom)
-                    })
-                    .collect();
+                // Laid out a stretch at a time, so no layout holds more
+                // than a piece of a long block: each an item, the same
+                // group, no room between them, padded at the block's ends.
+                let stretches = code_stretches(text, &block.runs);
+                let last = stretches.len() - 1;
+                for (at, code) in stretches.into_iter().enumerate() {
+                    let mut stretch = item.clone();
+                    text::lay_out(
+                        fonts,
+                        &mut layout,
+                        &code.text,
+                        &code.runs,
+                        &spec,
+                        &mut Vec::new(),
+                    );
+                    let count = layout.len();
+                    stretch.rows = layout
+                        .lines()
+                        .enumerate()
+                        .map(|(row, line)| {
+                            let m = line.metrics();
+                            let top = if at == 0 && row == 0 {
+                                0.0
+                            } else {
+                                m.block_min_coord + CODE_PAD
+                            };
+                            let end = at == last && row + 1 == count;
+                            let bottom =
+                                m.block_max_coord + CODE_PAD + if end { CODE_PAD } else { 0.0 };
+                            (top, bottom)
+                        })
+                        .collect();
+                    stretch.code = Some(code);
+                    if at > 0 {
+                        stretch.before = 0.0;
+                    }
+                    if at < last {
+                        stretch.after = 0.0;
+                        items.push(stretch);
+                    } else {
+                        item = stretch;
+                    }
+                }
             }
             BlockKind::Rule => {
                 item.kind = Kind::Rule;
@@ -1071,6 +1105,75 @@ fn items(
         index += 1;
     }
     items
+}
+
+/// A code block's text (`text`, its runs `runs`) cut into the stretches
+/// laid out apart: whole lines up to [`code::PIECE`] bytes together, a
+/// longer line in pieces of it. Each takes its runs, found by sweeping
+/// them in order of their start, so a long block's are not each tested
+/// against each stretch. One stretch at least.
+fn code_stretches(text: &str, runs: &[Run]) -> Vec<CodeText> {
+    let mut ranges: Vec<(Range<usize>, bool)> = Vec::new();
+    let mut gathered: Option<Range<usize>> = None;
+    let mut at = 0;
+    for line in text.split('\n') {
+        let range = at..at + line.len();
+        at = range.end + 1;
+        if line.len() > code::PIECE {
+            ranges.extend(gathered.take().map(|whole| (whole, false)));
+            ranges.extend(
+                code::pieces(line)
+                    .enumerate()
+                    .map(|(n, piece)| (range.start + piece.start..range.start + piece.end, n > 0)),
+            );
+            continue;
+        }
+        match &mut gathered {
+            Some(whole) if range.end - whole.start <= code::PIECE => whole.end = range.end,
+            _ => ranges.extend(gathered.replace(range).map(|whole| (whole, false))),
+        }
+    }
+    ranges.extend(gathered.map(|whole| (whole, false)));
+    if ranges.len() == 1 {
+        let (text, runs) = code::detab(text, runs);
+        return vec![CodeText {
+            text,
+            runs,
+            continues: false,
+        }];
+    }
+    let mut sorted: Vec<&Run> = runs.iter().collect();
+    sorted.sort_by_key(|run| run.start);
+    let mut next = 0;
+    let mut active: Vec<&Run> = Vec::new();
+    ranges
+        .into_iter()
+        .map(|(range, continues)| {
+            active.retain(|run| run.end as usize > range.start);
+            while next < sorted.len() && (sorted[next].start as usize) < range.end {
+                active.push(sorted[next]);
+                next += 1;
+            }
+            let own: Vec<Run> = active
+                .iter()
+                .filter_map(|run| {
+                    let from = (run.start as usize).max(range.start);
+                    let to = (run.end as usize).min(range.end);
+                    (from < to).then(|| Run {
+                        start: (from - range.start) as u32,
+                        end: (to - range.start) as u32,
+                        ..(*run).clone()
+                    })
+                })
+                .collect();
+            let (text, runs) = code::detab(&text[range], &own);
+            CodeText {
+                text,
+                runs,
+                continues,
+            }
+        })
+        .collect()
 }
 
 /// A picture's size in a document: its pixels as a browser shows them,
@@ -1435,6 +1538,42 @@ mod tests {
         let (text, runs) = slice("a|bcd|efgh", &runs, 2..5);
         assert_eq!(text, "bcd");
         assert_eq!((runs[0].start, runs[0].end), (0, 3));
+    }
+
+    #[test]
+    fn a_long_code_block_is_laid_out_a_stretch_at_a_time() {
+        let short = code_stretches("fn main() {}\nlet a = 1;", &[]);
+        assert_eq!(short.len(), 1);
+        assert_eq!(short[0].text, "fn main() {}\nlet a = 1;");
+        // Lines gathered up to a piece, a long one cut, its runs following.
+        let line = "x".repeat(100);
+        let mut text = vec![line.as_str(); 60].join("\n");
+        let long_start = text.len() + 1;
+        text.push('\n');
+        text.push_str(&"y".repeat(code::PIECE * 2));
+        let runs = [Run {
+            start: (long_start + code::PIECE - 1) as u32,
+            end: (long_start + code::PIECE + 1) as u32,
+            bold: true,
+            ..Run::default()
+        }];
+        let stretches = code_stretches(&text, &runs);
+        // Forty lines, twenty, then the long one in two pieces: the two
+        // line ends between stretches are where they part.
+        assert_eq!(stretches.len(), 4);
+        assert!(stretches.iter().all(|s| s.text.len() <= code::PIECE));
+        let joined: usize = stretches.iter().map(|s| s.text.len()).sum();
+        assert_eq!(joined + 2, text.len());
+        let (cut, rest) = (
+            &stretches[stretches.len() - 2],
+            &stretches[stretches.len() - 1],
+        );
+        assert!(!cut.continues && rest.continues);
+        assert_eq!(
+            (cut.runs[0].start as usize, cut.runs[0].end as usize),
+            (code::PIECE - 1, code::PIECE)
+        );
+        assert_eq!((rest.runs[0].start, rest.runs[0].end), (0, 1));
     }
 
     #[test]
