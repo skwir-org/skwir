@@ -2771,7 +2771,7 @@ impl Shell {
             "reader_page_cancel" => self.reader_page_cancel(window, cx),
             "preview_open_external" => self.preview_open_external(cx),
             "preview_copy_path" => self.preview_copy_path(cx),
-            "preview_invoke" => self.preview_invoke(args, cx),
+            "preview_invoke" => self.preview_invoke(args, window, cx),
             "properties" => self.properties(cx),
             "properties_count" => self.properties_count(args, cx),
             "properties_fold" => self.properties_fold(args, cx),

@@ -4369,8 +4369,14 @@ impl Shell {
     /// a document's pages) and what is selected (`selection`). What a
     /// plugin's items of the preview's menu run (`preview_items`), and its
     /// keys there: the shell names no plugin. The user's alone: an agent
-    /// names what it means itself.
-    pub fn preview_invoke(&mut self, args: &serde_json::Value, cx: &mut Context<Self>) {
+    /// names what it means itself. Run as the window runs any command
+    /// (`Shell::run`): a plan it answers applies as the user's action.
+    pub fn preview_invoke(
+        &mut self,
+        args: &serde_json::Value,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(name) = args.get("command").and_then(serde_json::Value::as_str) else {
             return;
         };
@@ -4396,13 +4402,8 @@ impl Shell {
         if let Some(text) = self.preview_selected_text() {
             given["selection"] = serde_json::json!(text);
         }
-        let invocation = skwir_core::command::Invocation {
-            name: name.into(),
-            args: given,
-        };
-        if let Err(error) = self.app.dispatch(&invocation) {
-            self.set_status(format!("{error:#}"), true, cx);
-        }
+        let name = name.to_owned();
+        self.run(&name, given, window, cx);
     }
 
     /// What is selected in the preview, as text: in a structured preview,
