@@ -4371,11 +4371,12 @@ impl Shell {
 
     /// `ui.preview_copy_path`: the path of what is shown, as text.
     /// `ui.preview_invoke { command, args? }`: run `command` with what
-    /// the preview shows added to its arguments: the file (`entries`, what
-    /// is read to show it), its pane, the page shown (`page`, from 1, for
-    /// a document's pages) and how many it has (`count`), and what is
-    /// selected (`selection`). What a
-    /// plugin's items of the preview's menu run (`preview_items`), and its
+    /// the preview shows added to its arguments: the file (`entries`, the
+    /// entry shown, a link itself as the file menu names it: where things
+    /// go beside it; a command follows it to what it reads), its pane, the
+    /// page shown (`page`, from 1, for a document's pages) and how many it
+    /// has (`count`), and what is selected (`selection`). What a plugin's
+    /// items of the preview's menu run (`preview_items`), and its
     /// keys there: the shell names no plugin. The user's alone: an agent
     /// names what it means itself. Run as the window runs any command
     /// (`Shell::run`): a plan it answers applies as the user's action.
@@ -4392,11 +4393,11 @@ impl Shell {
             self.set_status("Nothing is shown", true, cx);
             return;
         };
-        let entry = key.content.clone().unwrap_or_else(|| EntryRef {
+        let entry = EntryRef {
             id: key.id.file,
             path: key.path.clone(),
             only_name: false,
-        });
+        };
         let mut given = args
             .get("args")
             .filter(|args| args.is_object())
