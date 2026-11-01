@@ -1201,12 +1201,17 @@ fn pane_row(
     // is kept, and pressing it then takes it back with the place's own
     // command. It is at the field's end: it is about what the field shows.
     if let Some(location) = &row.location {
-        let registry = &shell.app.registry;
         let filter = row.filter.as_deref();
         // Offered only where its keeper keeps what is shown (`keep`).
-        let keeper = registry.keepers.find(|k| k.keeps(location, filter));
-        // A remote folder is kept by its address (`App::kept_place`).
-        let kept = shell.app.kept_place(location, filter);
+        let keeper = shell.app.keeper_of(location, filter);
+        // Kept plain where nothing keeps a filter (ADR-109 rule 7); a
+        // remote folder by its address (`App::kept_place`).
+        let kept_filter = match &keeper {
+            Some((_, false)) => None,
+            _ => filter,
+        };
+        let kept = shell.app.kept_place(location, kept_filter);
+        let keeper = keeper.map(|(keeper, _)| keeper);
         let button = match (kept, keeper) {
             (Some(place), keeper) => {
                 let forget = place.forget.expect("kept");

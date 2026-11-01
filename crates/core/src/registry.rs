@@ -408,7 +408,9 @@ pub struct Reorder {
 /// What keeps locations of one scheme in the sidebar: folders as
 /// bookmarks, searches as saved searches; or any location shown with a
 /// filter, as a saved place (`filtered`, ADR-109). The core `keep` command
-/// runs `save` for what a pane shows, adding the pane's id; each place it
+/// runs `save` for what a pane shows, adding the pane's id, and `unkept`,
+/// the filter it was shown with, when it keeps it plain for want of a
+/// keeper of filters (`App::keeper_of`): its toast says so. Each place it
 /// kept carries its own [`Place::forget`]. The words are the pane
 /// button's.
 #[derive(Clone, Debug, Serialize)]

@@ -3,7 +3,10 @@
 Status: accepted 2026-10-31, the user's choices for each point below
 (asked in the session that built it), before 0.3.0. Amends ADR-107:
 rule 2's "Back brings back nothing", rule 4 for saved and recent
-searches, and its amendment's Back and Forward.
+searches, and its amendment's Back and Forward. Amended 2026-11-01 (the
+review's fixes, the user's choices): the last window's tabs come back
+filtered (rule 1), and Keep with no keeper of filters keeps a place
+plain and says so (rule 7).
 
 ## Context
 
@@ -33,7 +36,9 @@ searches, and its amendment's Back and Forward.
    tag's place at its depth, the trash, Recent, with the words and the
    lens filtering it; a search, whose terms hold them. History steps,
    tabs closed and reopened, saved places and `navigate`'s `as_kept`
-   deal in places. Sort, view, zoom and the selection are not of it.
+   deal in places; the last window's tabs keep the place each pane
+   showed, not its history (`SavedTab::filters`). Sort, view, zoom and
+   the selection are not of it.
 2. **Back, Forward and the field's step taken back show a step as it
    was last shown** (`Lensing::Restored`): a search as its terms say,
    anything else filtered by what filtered it when the pane left it
@@ -66,7 +71,10 @@ searches, and its amendment's Back and Forward.
 7. **The filter goes with its reader** (ADR-107 rule 9): with the query
    plugin off, a step whose filter held a lens is shown filtered by
    nothing, one of names alone by its names; saved places go with the
-   plugin.
+   plugin. With nothing that keeps a filter, Keep keeps a place shown
+   filtered plain, as its location's keeper does (a bookmark), and its
+   toast says the filter was not kept (`App::keeper_of`, the keeper's
+   `unkept`).
 
 ## Consequences
 

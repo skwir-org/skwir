@@ -1390,6 +1390,25 @@ impl App {
         })
     }
 
+    /// What keeps `location` shown filtered by `filter` (`keep`, ADR-109),
+    /// and whether it keeps the filter: the keeper of a place shown so,
+    /// else, with none that keeps a filter (the query plugin off, ADR-109
+    /// rule 7), the location's own keeper, which keeps it plain.
+    pub fn keeper_of(
+        &self,
+        location: &Location,
+        filter: Option<&str>,
+    ) -> Option<(crate::registry::Keeper, bool)> {
+        let keepers = &self.registry.keepers;
+        if let Some(keeper) = keepers.find(|k| k.keeps(location, filter)) {
+            return Some((keeper, true));
+        }
+        filter?;
+        keepers
+            .find(|k| k.keeps(location, None))
+            .map(|keeper| (keeper, false))
+    }
+
     /// `location` as the sidebar keeps it: a remote folder by its address
     /// (ADR-077), which connects again once its mount is gone; anything
     /// else as it is. What a saved place keeps and is compared by.
@@ -2714,16 +2733,18 @@ mod builtin {
                         .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to keep"))?;
                     (location, p.and_then(|p| p.filter().map(str::to_owned)))
                 };
-                let keeper = app
-                    .registry
-                    .keepers
-                    .find(|k| k.keeps(&location, filter.as_deref()))
+                let (keeper, keeps_filter) = app
+                    .keeper_of(&location, filter.as_deref())
                     .ok_or_else(|| anyhow::anyhow!("this location cannot be kept in the sidebar"))?;
                 let mut save = keeper.save;
                 if !save.args.is_object() {
                     save.args = serde_json::json!({});
                 }
                 save.args["pane"] = serde_json::json!(pane);
+                // Kept plain: its keeper's toast says the filter was not.
+                if let Some(filter) = filter.filter(|_| !keeps_filter) {
+                    save.args["unkept"] = serde_json::json!(filter);
+                }
                 app.dispatch(&save)
             },
         );

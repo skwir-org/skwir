@@ -722,9 +722,12 @@ of bars, split or not.
   location and the pane's filter go to the `Keeper` that keeps them, the
   one of the location's scheme when nothing filters it (bookmarks, saved
   searches, pinned tags), the one that keeps any location shown filtered
-  otherwise (`Keeper::filtered`: the query plugin's saved places). The
-  button is filled only for the place as shown, filter included
-  (`Place::is_kept_as`). A kept place carries `forget` (the button runs
+  otherwise (`Keeper::filtered`: the query plugin's saved places); with
+  none of those, the location's own, which keeps it plain and is handed
+  the filter left out as `unkept` for its toast to say (`App::keeper_of`).
+  The button is filled only for the place as shown, filter included
+  (`App::kept_place`, `Place::is_kept_as`: a remote folder by its
+  address). A kept place carries `forget` (the button runs
   it while shown), `reorder`, and how it opens (`Place::opens`: as kept,
   or with the pane's lens). A new kind of kept place registers a keeper
   and fills those fields; no UI branch.

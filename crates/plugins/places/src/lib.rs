@@ -870,6 +870,11 @@ struct BookmarkArgs {
     /// The bookmark it goes before; last when omitted.
     #[serde(default)]
     before: Option<MarkArg>,
+    /// The filter the folder was shown with, which nothing keeps (the
+    /// core `keep` with the query plugin off, ADR-109): its toast says the
+    /// bookmark is the folder alone.
+    #[serde(default)]
+    unkept: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1095,12 +1100,26 @@ impl Places {
         undo: bool,
         watcher: Watcher,
     ) -> anyhow::Result<()> {
+        self.edit_saying(app, edit, undo, watcher, None)
+    }
+
+    /// [`Places::edit`], its toast also saying that the filter the folder
+    /// was shown with, `unkept`, is not kept with it (the core `keep`
+    /// with nothing that keeps a filter, ADR-109).
+    fn edit_saying(
+        &self,
+        app: &App,
+        edit: BookmarkEdit,
+        undo: bool,
+        watcher: Watcher,
+        unkept: Option<String>,
+    ) -> anyhow::Result<()> {
         if !skwir_core::scheduler::on_window_thread() {
-            return self.apply(app, &edit, undo, &watcher);
+            return self.apply(app, &edit, undo, &watcher, unkept.as_deref());
         }
         let this = self.clone();
         self.spawn(app, "places-bookmarks", move |app| {
-            if let Err(error) = this.apply(app, &edit, undo, &watcher) {
+            if let Err(error) = this.apply(app, &edit, undo, &watcher, unkept.as_deref()) {
                 app.notify(
                     NotifyLevel::Error,
                     format!("The bookmarks were not changed: {error:#}"),
@@ -1116,6 +1135,7 @@ impl Places {
         edit: &BookmarkEdit,
         undo: bool,
         watcher: &Watcher,
+        unkept: Option<&str>,
     ) -> anyhow::Result<()> {
         // A new bookmark is a folder; one coming back (an undone removal)
         // may be missing, and was a bookmark all the same.
@@ -1138,14 +1158,19 @@ impl Places {
                 .find(|b| Some(b.path.as_path()) == edit.path())
                 .map(|b| b.title),
         };
+        // The bookmark is the folder alone: its filter is said to be left.
+        let said = |text: String| match unkept {
+            Some(filter) => format!("{text}; its filter “{filter}” is not kept with it"),
+            None => text,
+        };
         if let Some(inverse) = skwir_platform::places::edit_bookmarks(edit)? {
             watcher.watch_bookmarks();
             self.populate(app);
             if let Some(text) = describe(edit, shown.as_deref(), true) {
-                app.notify_undoable(text, undo, invocation(&inverse, !undo));
+                app.notify_undoable(said(text), undo, invocation(&inverse, !undo));
             }
         } else if let Some(text) = describe(edit, shown.as_deref(), false) {
-            app.notify(NotifyLevel::Info, text);
+            app.notify(NotifyLevel::Info, said(text));
         }
         Ok(())
     }
@@ -1233,6 +1258,7 @@ impl Plugin for PlacesPlugin {
             "Add a folder to the desktop's shared bookmarks (the GTK bookmarks file)",
             move |args, app| {
                 let undo = args.target.undo;
+                let unkept = args.unkept;
                 let path = target(app, args.target)?;
                 // A remote folder is kept by its address, which connects
                 // again once its mount is gone (ADR-077).
@@ -1242,7 +1268,7 @@ impl Plugin for PlacesPlugin {
                         title: args.title,
                         before: args.before.map(MarkArg::into_marked),
                     };
-                    places.edit(app, edit, undo, watcher.clone())?;
+                    places.edit_saying(app, edit, undo, watcher.clone(), unkept)?;
                     return Ok(Outcome::Done);
                 }
                 // Restored or deleted, a folder of the trash leaves the
@@ -1258,7 +1284,7 @@ impl Plugin for PlacesPlugin {
                     title: args.title,
                     before: args.before.map(MarkArg::into_marked),
                 };
-                places.edit(app, edit, undo, watcher.clone())?;
+                places.edit_saying(app, edit, undo, watcher.clone(), unkept)?;
                 Ok(Outcome::Done)
             },
         );
