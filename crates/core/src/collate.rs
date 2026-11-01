@@ -3,7 +3,8 @@
 //! (or [`compare`]) so the panes, archives and comic pages agree.
 //!
 //! This is not a locale's collation: case is folded with Unicode lowercase
-//! and the accents of Latin letters are dropped, which covers the names a
+//! and the accents of Latin letters are dropped (written with their letter
+//! or apart from it, as a combining mark), which covers the names a
 //! file manager mostly shows without a collation database. Names equal
 //! under those rules fall back to their raw bytes, so the order is total.
 //! A name typed to reach an entry is matched by the same folding
@@ -21,9 +22,14 @@ const LATIN: &str = concat!(
 );
 
 /// `c` case-folded, a Latin letter's accent dropped, handed to `push` a
-/// part at a time.
+/// part at a time. An accent written apart from its letter, as a name in
+/// decomposed form has it ("e" then U+0301, as macOS's HFS+ writes names),
+/// is a combining mark and folds to nothing, so "école" folds alike
+/// written either way.
 fn fold(c: char, push: &mut impl FnMut(&[u8])) {
     match c {
+        // Combining Diacritical Marks.
+        '\u{300}'..='\u{36f}' => {}
         'Æ' | 'æ' => push(b"ae"),
         'Œ' | 'œ' => push(b"oe"),
         'ß' => push(b"ss"),
@@ -184,6 +190,22 @@ mod tests {
         );
     }
 
+    /// A name in decomposed form, its accent a mark after its letter, sorts
+    /// where the same name composed does: beside its letter, not after "z".
+    #[test]
+    fn an_accent_written_apart_folds_as_one_written_with_its_letter() {
+        let decomposed = "e\u{301}cole";
+        assert_eq!(
+            sorted(&["ezra", decomposed, "eclair", "ecume"]),
+            ["eclair", decomposed, "ecume", "ezra"]
+        );
+        // Ties fall back to the bytes: the order stays total.
+        assert_ne!(
+            compare(OsStr::new(decomposed), OsStr::new("école")),
+            Ordering::Equal
+        );
+    }
+
     #[test]
     fn a_prefix_begins_names_the_order_puts_beside_it() {
         let begins = |text: &str, name: &str| Prefix::new(text).begins(OsStr::new(name));
@@ -203,6 +225,11 @@ mod tests {
         assert!(begins("aeb", "Æble"));
         assert!(!begins("af", "Æble"));
         assert!(begins("пр", "Привет"));
+        // A name in decomposed form (macOS's HFS+), reached typed either way.
+        assert!(begins("ecole", "E\u{301}cole normale"));
+        assert!(begins("école", "e\u{301}cole"));
+        assert!(begins("e\u{301}t", "été"));
+        assert!(!begins("ecoles", "e\u{301}cole"));
     }
 
     #[cfg(unix)]
