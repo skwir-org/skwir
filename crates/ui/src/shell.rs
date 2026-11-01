@@ -2271,7 +2271,7 @@ impl Shell {
                 if self.confirm_move(mv, window, cx)
                     || self.clashes_move(mv, cx)
                     || self.review_move(mv, window, cx)
-                    || self.form_move(mv, cx)
+                    || self.form_move(mv, window, cx)
                 {
                 } else if self.palette.is_some() {
                     self.palette_move(mv, cx);

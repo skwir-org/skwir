@@ -821,6 +821,17 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   `modal::Pressed` controls; a press on one
   leaves the keyboard in the field; Escape that nothing in the dialog
   answered cancels it (`modal::modal`).
+- **A form is described, never drawn, by its plugin** (`skwir_core::form`,
+  `form.rs`, ADR-086): fields of text, numbers, secrets, switches,
+  choices, picks, and rows of a few choices side by side (`Kind::Row`: a
+  radio group, segments, or cards when a choice has a picture). A
+  picture is marks the plugin places (`form::Picture`: boxes and text),
+  drawn in the window's tokens as on paper, never colors or an image of
+  the plugin's. A field shown only while another holds a value
+  (`Field::when`) is neither walked by Tab nor refused while hidden; a
+  choice may name the answer's button while chosen (Print…, Save). A
+  row has the keyboard as one: Up and Down, or Space, change its choice,
+  Enter answers the form as from a field.
 - **A question names what it is about when asked.** `ui.ask` fills the
   asked command's `pane`, `entries` (the selection) and `in` (the folder
   shown) that the asker left out, as they are when it opens: Rename

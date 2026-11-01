@@ -13,20 +13,21 @@ use skwir_core::CancelToken;
 use skwir_core::print::{Duplex, Margins, POINTS_PER_MM, PageSet, Pages, Paper};
 use std::path::{Path, PathBuf};
 
-/// What a dialog is asked.
+/// What a dialog is asked. The pages were chosen in Skwir's own dialog:
+/// the system's offers none where it lets them be hidden (macOS, Windows)
+/// and is handed all of them where it does not (the portal), with neither
+/// the current page nor the selection.
 #[derive(Clone, Debug, Default)]
 pub struct Ask {
     /// The document's name, the dialog's title.
     pub title: String,
-    /// Whether the preview shows a page of it: "Current page" is offered.
-    pub current_page: bool,
-    /// Whether something of it is selected: "Selection" is offered.
-    pub selection: bool,
 }
 
 /// What the dialog chose, and what it keeps to print with.
 #[derive(Clone, Debug)]
 pub struct Chosen {
+    /// The pages of what is sent its range chose: all of them, unless
+    /// changed in a dialog that shows its range.
     pub pages: Pages,
     pub page_set: PageSet,
     /// Last page first.
@@ -228,20 +229,23 @@ mod portal {
         cancel: &CancelToken,
     ) -> anyhow::Result<Option<Chosen>> {
         let empty: HashMap<&str, Value<'_>> = HashMap::new();
+        // Its range shows every page: Skwir's dialog chose them.
+        let settings: HashMap<&str, Value<'_>> =
+            HashMap::from([("print-pages", Value::from("all"))]);
         let Some(results) = request(bus, destination, cancel, |token| {
             let mut options: HashMap<&str, Value<'_>> = HashMap::new();
             options.insert("handle_token", Value::from(token));
             options.insert("modal", Value::from(true));
             options.insert("accept_label", Value::from("Print"));
-            options.insert("has_current_page", Value::from(ask.current_page));
-            options.insert("has_selected_pages", Value::from(ask.selection));
+            options.insert("has_current_page", Value::from(false));
+            options.insert("has_selected_pages", Value::from(false));
             options.insert("supported_output_file_formats", Value::from(vec!["pdf"]));
             bus.call_method(
                 destination,
                 PATH,
                 Some(PRINT),
                 "PreparePrint",
-                &("", ask.title.as_str(), &empty, &empty, options),
+                &("", ask.title.as_str(), &settings, &empty, options),
             )
         })?
         else {
@@ -456,6 +460,7 @@ mod portal {
         #[derive(Default)]
         struct Seen {
             titles: Vec<String>,
+            settings: Vec<HashMap<String, OwnedValue>>,
             options: Vec<HashMap<String, OwnedValue>>,
             printed: Vec<Vec<u8>>,
         }
@@ -482,10 +487,11 @@ mod portal {
                 options: HashMap<String, OwnedValue>,
             ) -> OwnedObjectPath {
                 // No window to be modal to; no hints asked.
-                let _ = (parent, settings, setup);
+                let _ = (parent, setup);
                 {
                     let mut seen = self.seen.lock().unwrap();
                     seen.titles.push(title);
+                    seen.settings.push(settings);
                     seen.options.push(options);
                 }
                 let (code, results) = match &self.answer {
@@ -618,8 +624,6 @@ mod portal {
                 None,
                 &Ask {
                     title: "Report.pdf".into(),
-                    current_page: true,
-                    selection: false,
                 },
                 &cancel,
             )
@@ -659,9 +663,13 @@ mod portal {
             {
                 let seen = seen.lock().unwrap();
                 assert_eq!(seen.titles, ["Report.pdf"]);
+                // Skwir's dialog chose the pages: this one is handed all of
+                // them, and offers neither the page shown nor the selection.
                 let options = &seen.options[0];
-                assert!(bool::try_from(&options["has_current_page"]).unwrap());
+                assert!(!bool::try_from(&options["has_current_page"]).unwrap());
                 assert!(!bool::try_from(&options["has_selected_pages"]).unwrap());
+                let pages = String::try_from(seen.settings[0]["print-pages"].try_clone().unwrap());
+                assert_eq!(pages.unwrap(), "all");
             }
             let tmp = tempfile::tempdir().unwrap();
             let pdf = tmp.path().join("made.pdf");
@@ -724,12 +732,11 @@ mod portal {
 mod macos {
     use super::{Ask, Chosen, Duplex, PageSet, Pages, System, sheet};
     use objc2_app_kit::{
-        NSPaperOrientation, NSPrintAllPages, NSPrintCopies, NSPrintFirstPage, NSPrintInfo,
-        NSPrintLastPage, NSPrintPanel, NSPrintPanelOptions,
+        NSPaperOrientation, NSPrintCopies, NSPrintInfo, NSPrintPanel, NSPrintPanelOptions,
     };
     use objc2_foundation::{NSNumber, NSString};
     use skwir_core::CancelToken;
-    use skwir_core::print::{POINTS_PER_MM, Range};
+    use skwir_core::print::POINTS_PER_MM;
     use std::path::Path;
 
     /// What the panel chose, as plain values: `AppKit`'s objects stay on
@@ -738,8 +745,6 @@ mod macos {
         size: (f64, f64),
         margins: [f64; 4],
         landscape: bool,
-        range: Option<(i64, i64)>,
-        selection: bool,
         copies: i64,
         duplex: i64,
         scale: f64,
@@ -748,21 +753,19 @@ mod macos {
 
     #[allow(clippy::unnecessary_wraps)] // The other systems' dialogs may fail.
     pub(super) fn ask(ask: &Ask, _cancel: &CancelToken) -> anyhow::Result<Option<Chosen>> {
-        let offer_selection = ask.selection;
+        let _ = ask;
         // AppKit's panels run on the main thread: this waits for it there,
         // as a modal panel does.
         let panel = dispatch2::run_on_main(move |mtm| {
             let info = NSPrintInfo::sharedPrintInfo();
             let panel = NSPrintPanel::printPanel(mtm);
-            let mut options = NSPrintPanelOptions::ShowsCopies
-                | NSPrintPanelOptions::ShowsPageRange
-                | NSPrintPanelOptions::ShowsPaperSize
-                | NSPrintPanelOptions::ShowsOrientation
-                | NSPrintPanelOptions::ShowsScaling;
-            if offer_selection {
-                options |= NSPrintPanelOptions::ShowsPrintSelection;
-            }
-            panel.setOptions(options);
+            // No range: Skwir's dialog chose the pages.
+            panel.setOptions(
+                NSPrintPanelOptions::ShowsCopies
+                    | NSPrintPanelOptions::ShowsPaperSize
+                    | NSPrintPanelOptions::ShowsOrientation
+                    | NSPrintPanelOptions::ShowsScaling,
+            );
             // NSModalResponseOK.
             if panel.runModalWithPrintInfo(&info) != 1 {
                 return None;
@@ -771,7 +774,7 @@ mod macos {
             // SAFETY: the dictionary is NSPrintInfo's own, of attribute
             // keys to objects, as AppKit declares it; the keys are AppKit's
             // constant strings.
-            let (all, first, last, copies, duplex) = unsafe {
+            let (copies, duplex) = unsafe {
                 let dictionary = info.dictionary();
                 let number = |key: &NSString| {
                     dictionary
@@ -786,13 +789,7 @@ mod macos {
                     ))
                     .and_then(|value| value.downcast::<NSNumber>().ok())
                     .map_or(1, |number| number.integerValue() as i64);
-                (
-                    number(NSPrintAllPages).unwrap_or(1) != 0,
-                    number(NSPrintFirstPage).unwrap_or(1),
-                    number(NSPrintLastPage).unwrap_or(i64::MAX),
-                    number(NSPrintCopies).unwrap_or(1),
-                    duplex,
-                )
+                (number(NSPrintCopies).unwrap_or(1), duplex)
             };
             let size = info.paperSize();
             Some(Panel {
@@ -804,8 +801,6 @@ mod macos {
                     info.leftMargin(),
                 ],
                 landscape: info.orientation() == NSPaperOrientation::Landscape,
-                range: (!all).then_some((first, last)),
-                selection: info.isSelectionOnly(),
                 copies,
                 duplex,
                 scale: info.scalingFactor(),
@@ -822,19 +817,9 @@ mod macos {
         } else {
             panel.size
         };
-        let pages = if panel.selection {
-            Pages::Selection
-        } else if let Some((first, last)) = panel.range {
-            let page = |n: i64| u32::try_from(n.max(1)).unwrap_or(u32::MAX);
-            Pages::Ranges(vec![Range {
-                first: page(first),
-                last: (last < i64::from(u32::MAX)).then(|| page(last)),
-            }])
-        } else {
-            Pages::All
-        };
         Ok(Some(Chosen {
-            pages,
+            // The panel shows no range.
+            pages: Pages::All,
             page_set: PageSet::All,
             reverse: false,
             scale: (panel.scale as f32).clamp(0.1, 10.0),
@@ -898,13 +883,12 @@ mod windows {
     use ::windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
     use ::windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
     use ::windows::Win32::UI::Controls::Dialogs::{
-        DEVNAMES, PD_CURRENTPAGE, PD_NOCURRENTPAGE, PD_NOSELECTION, PD_PAGENUMS, PD_RESULT_PRINT,
-        PD_SELECTION, PD_USEDEVMODECOPIESANDCOLLATE, PRINTDLGEXW, PRINTPAGERANGE, PrintDlgExW,
+        DEVNAMES, PD_NOCURRENTPAGE, PD_NOPAGENUMS, PD_NOSELECTION, PD_RESULT_PRINT,
+        PD_USEDEVMODECOPIESANDCOLLATE, PRINTDLGEXW, PRINTPAGERANGE, PrintDlgExW,
         START_PAGE_GENERAL,
     };
     use ::windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow;
     use skwir_core::CancelToken;
-    use skwir_core::print::Range;
     use std::path::Path;
 
     /// Ranges a dialog may give at most.
@@ -912,20 +896,17 @@ mod windows {
 
     /// What the dialog chose, as plain values.
     struct Dialog {
-        current: bool,
-        selection: bool,
-        ranges: Vec<(u32, u32)>,
         devmode: Vec<u8>,
         printer: String,
     }
 
     pub(super) fn ask(ask: &Ask, _cancel: &CancelToken) -> anyhow::Result<Option<Chosen>> {
-        let (current, selection) = (ask.current_page, ask.selection);
+        let _ = ask;
         // The dialog is a COM property sheet: shown on a thread of its own,
         // in a single-threaded apartment, the worker's left as it was.
         let Some(dialog) = std::thread::Builder::new()
             .name("skwir-print-dialog".into())
-            .spawn(move || dialog(current, selection))?
+            .spawn(dialog)?
             .join()
             .map_err(|_| anyhow::anyhow!("the print dialog stopped"))??
         else {
@@ -965,26 +946,9 @@ mod windows {
                 None => fallback,
             }
         };
-        let pages = if dialog.selection {
-            Pages::Selection
-        } else if dialog.current {
-            Pages::Current
-        } else if dialog.ranges.is_empty() {
-            Pages::All
-        } else {
-            Pages::Ranges(
-                dialog
-                    .ranges
-                    .iter()
-                    .map(|&(first, last)| Range {
-                        first: first.max(1),
-                        last: Some(last.max(first.max(1))),
-                    })
-                    .collect(),
-            )
-        };
         Ok(Some(Chosen {
-            pages,
+            // The dialog offers no pages: Skwir's chose them.
+            pages: Pages::All,
             page_set: PageSet::All,
             reverse: false,
             scale: 1.0,
@@ -1021,15 +985,11 @@ mod windows {
 
     /// Show the dialog: what it chose, `None` when cancelled.
     #[allow(unsafe_code)]
-    fn dialog(current: bool, selection: bool) -> anyhow::Result<Option<Dialog>> {
+    fn dialog() -> anyhow::Result<Option<Dialog>> {
         let mut ranges = [PRINTPAGERANGE::default(); RANGES];
-        let mut flags = PD_USEDEVMODECOPIESANDCOLLATE;
-        if !current {
-            flags |= PD_NOCURRENTPAGE;
-        }
-        if !selection {
-            flags |= PD_NOSELECTION;
-        }
+        // No pages offered: Skwir's dialog chose them.
+        let flags =
+            PD_USEDEVMODECOPIESANDCOLLATE | PD_NOCURRENTPAGE | PD_NOSELECTION | PD_NOPAGENUMS;
         // SAFETY: COM is started on this thread and ended here; the dialog
         // is handed a structure of its own size, a valid owner window and
         // the range array it may fill (its length given); the memory it
@@ -1054,16 +1014,6 @@ mod windows {
                 let devmode = locked_bytes(dialog.hDevMode);
                 let printer = printer_name(dialog.hDevNames);
                 Ok(Some(Dialog {
-                    current: dialog.Flags.contains(PD_CURRENTPAGE),
-                    selection: dialog.Flags.contains(PD_SELECTION),
-                    ranges: if dialog.Flags.contains(PD_PAGENUMS) {
-                        ranges[..(dialog.nPageRanges as usize).min(RANGES)]
-                            .iter()
-                            .map(|range| (range.nFromPage, range.nToPage))
-                            .collect()
-                    } else {
-                        Vec::new()
-                    },
                     devmode,
                     printer: printer.unwrap_or_default(),
                 }))

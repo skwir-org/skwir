@@ -337,8 +337,13 @@ leave (ADR-077).
   when the file is read again.
 - Printing: the scale the dialog chose is not applied; nothing asks
   before printing hundreds of pages; the portal's dialog is not given
-  the window as its parent; a contact sheet, a listing and several files
-  were not printed through a real dialog nor looked at printed.
+  the window as its parent; a listing and several files were not
+  printed through a real dialog (a contact sheet and a booklet were
+  saved from Skwir's dialog, a booklet printed to a file through GTK's);
+  KDE's portal, the user's, was not tried with P5. The pages of a file
+  that is not a PDF (a text, a Markdown document) are not counted before
+  the dialog asks, so its booklet pictures say `n`. The preview's menu
+  shows no key beside Print… (Ctrl+P there).
 - macOS's print panel and Windows' print dialog are compiled only;
   Windows' printing and the two new helpers were not run under Wine.
 
@@ -2106,8 +2111,15 @@ screen reader reads, from the window or a script.
   specimens. Not printed: audio, video, archives, maps, hex.
 - **P4. Several files in one job, and PDFs from scripts:** `skwir cmd
   print.save_pdf` without a window.
+- **P5. One Print…, Skwir's dialog first** (2026-11-01, ADR-111
+  revised after the user tried P1 to P4): one Print… in the file's menu
+  and the preview's, a form of Skwir's (to a printer or a PDF, the
+  pages, as shown, a booklet with its folds drawn, a contact sheet), the
+  system's dialog asked only for the printer, the paper and the sides;
+  `print.print` and `print.save_pdf` the only commands; the preview's
+  menu applying the plans its items answer.
 
-**Status:** planned 2026-10-31. Built: G0 to G7, P1 to P4 (2026-10-31); `just lint-all` and `just test-all` pass on main after it. Checked on Linux; Windows and macOS compiled only. Deviation: P3, the print helper, came before P1, whose print path builds on it.
+**Status:** planned 2026-10-31. Built: G0 to G7, P1 to P4 (2026-10-31); `just lint-all` and `just test-all` pass on main after it. Checked on Linux; Windows and macOS compiled only. Deviation: P3, the print helper, came before P1, whose print path builds on it. Revised 2026-11-01 (P5): the four print items and the booklet prompt became one Print… and Skwir's own dialog, pages no longer left to the desktop's dialog (KDE's hides them); checked on Linux with GTK's portal on a display of its own, KDE's portal not tried; macOS and Windows compiled only.
 
 ---
 

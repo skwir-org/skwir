@@ -4366,7 +4366,8 @@ impl Shell {
     /// `ui.preview_invoke { command, args? }`: run `command` with what
     /// the preview shows added to its arguments: the file (`entries`, what
     /// is read to show it), its pane, the page shown (`page`, from 1, for
-    /// a document's pages) and what is selected (`selection`). What a
+    /// a document's pages) and how many it has (`count`), and what is
+    /// selected (`selection`). What a
     /// plugin's items of the preview's menu run (`preview_items`), and its
     /// keys there: the shell names no plugin. The user's alone: an agent
     /// names what it means itself. Run as the window runs any command
@@ -4396,8 +4397,9 @@ impl Shell {
             .unwrap_or_else(|| serde_json::json!({}));
         given["entries"] = serde_json::json!([skwir_core::op::EntryArg::from(entry)]);
         given["pane"] = serde_json::json!(key.pane);
-        if self.preview.reader.session.is_some() {
+        if let Some(session) = &self.preview.reader.session {
             given["page"] = serde_json::json!(self.preview.page);
+            given["count"] = serde_json::json!(session.info().pages);
         }
         if let Some(text) = self.preview_selected_text() {
             given["selection"] = serde_json::json!(text);

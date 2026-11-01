@@ -46,6 +46,9 @@ pub struct Field {
     pub title: String,
     /// What it is, under it; empty for nothing.
     pub help: String,
+    /// What a text field shows while empty (an example); empty for
+    /// nothing.
+    pub placeholder: String,
     pub kind: Kind,
     /// What it holds as the form opens: its text, `true` or `false` for a
     /// switch, a choice's value. Never a secret's: a secret kept says so
@@ -57,6 +60,18 @@ pub struct Field {
     /// (what seldom needs changing): the asker leaves one it holds a value
     /// of the user's in unfolded.
     pub advanced: bool,
+    /// Shown only while other fields hold one of some values, each (how a
+    /// booklet folds, while Booklet is chosen): hidden, it is neither
+    /// walked, nor refused, and the asker ignores what it holds.
+    pub when: Vec<When>,
+}
+
+/// When a field is shown (see [`Field::when`]): while the field `key`
+/// holds one of `values`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct When {
+    pub key: String,
+    pub values: Vec<String>,
 }
 
 /// What a field holds, which picks its control.
@@ -78,12 +93,17 @@ pub enum Kind {
     /// One of many, chosen from a list the form shows filtered by what is
     /// typed (what kind of server): picking one answers the form.
     Pick { choices: Vec<Choice> },
+    /// One of a few `choices`, all in sight side by side (a radio group):
+    /// those with a picture as cards, the picture above the title, the
+    /// others as segments.
+    Row { choices: Vec<Choice> },
     /// Where the user can go to do what the form waits for (a sign-in's
     /// page): `value` is the address, opened by the window's link.
     Link,
 }
 
-/// One choice of a [`Kind::Choice`] or [`Kind::Pick`] field.
+/// One choice of a [`Kind::Choice`], [`Kind::Pick`] or [`Kind::Row`]
+/// field.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Choice {
     /// What the answer holds.
@@ -95,6 +115,43 @@ pub struct Choice {
     /// The heading it is listed under, consecutive choices of one sharing
     /// it; empty for none.
     pub section: String,
+    /// What it looks like, drawn above its title in a row.
+    pub picture: Option<Picture>,
+    /// The verb on the form's answer while it is chosen (Print…, Save);
+    /// empty: the form's own.
+    pub accept: String,
+}
+
+/// A small drawing of what a choice does (how a booklet's sheets fold),
+/// in pixels of its own box at the window's usual size: the window draws
+/// it in its own colors, the plugin says only where.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Picture {
+    pub width: u16,
+    pub height: u16,
+    pub marks: Vec<Mark>,
+}
+
+/// One mark of a [`Picture`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Mark {
+    /// A box outlined (a page, a sheet), shaded where `shaded` (ink, a
+    /// sheet behind another).
+    Box {
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        shaded: bool,
+    },
+    /// `text` centred in a box (a page's number).
+    Text {
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        text: String,
+    },
 }
 
 impl Choice {
@@ -115,6 +172,18 @@ impl Choice {
     #[must_use]
     pub fn section(mut self, section: impl Into<String>) -> Self {
         self.section = section.into();
+        self
+    }
+
+    #[must_use]
+    pub fn picture(mut self, picture: Picture) -> Self {
+        self.picture = Some(picture);
+        self
+    }
+
+    #[must_use]
+    pub fn accept(mut self, accept: impl Into<String>) -> Self {
+        self.accept = accept.into();
         self
     }
 
@@ -149,6 +218,12 @@ impl Field {
     }
 
     #[must_use]
+    pub fn placeholder(mut self, placeholder: impl Into<String>) -> Self {
+        self.placeholder = placeholder.into();
+        self
+    }
+
+    #[must_use]
     pub fn value(mut self, value: impl Into<String>) -> Self {
         self.value = value.into();
         self
@@ -164,6 +239,35 @@ impl Field {
     pub fn advanced(mut self) -> Self {
         self.advanced = true;
         self
+    }
+
+    /// Shown only while the field `key` holds one of `values` (and what
+    /// any other `when` asks).
+    #[must_use]
+    pub fn when(mut self, key: impl Into<String>, values: &[&str]) -> Self {
+        self.when.push(When {
+            key: key.into(),
+            values: values.iter().map(|&value| value.to_owned()).collect(),
+        });
+        self
+    }
+
+    /// Whether it is shown while the form's fields hold `values`.
+    pub fn shown_with(&self, values: &Values) -> bool {
+        self.when.iter().all(|when| {
+            let holds = values.get(&when.key);
+            when.values.iter().any(|value| value == holds)
+        })
+    }
+
+    /// Its choices: a choice's, a pick's or a row's; none for the others.
+    pub fn choices(&self) -> &[Choice] {
+        match &self.kind {
+            Kind::Choice { choices, .. } | Kind::Pick { choices } | Kind::Row { choices } => {
+                choices
+            }
+            _ => &[],
+        }
     }
 
     /// Whether what it holds is a secret.
@@ -189,7 +293,8 @@ impl Field {
                 choices,
                 open: false,
             }
-            | Kind::Pick { choices } => (!choices.iter().any(|c| c.value == text))
+            | Kind::Pick { choices }
+            | Kind::Row { choices } => (!choices.iter().any(|c| c.value == text))
                 .then(|| format!("{} is one of its choices", self.title)),
             _ => None,
         }
@@ -236,12 +341,29 @@ impl Form {
         self
     }
 
-    /// Why `values` are no answer to it, the first field's that is not;
-    /// `None` when they are one.
+    /// Why `values` are no answer to it, the first field's that is not
+    /// among those shown; `None` when they are one.
     pub fn refusal(&self, values: &Values) -> Option<String> {
         self.fields
             .iter()
+            .filter(|field| field.shown_with(values))
             .find_map(|field| field.refusal(values.get(&field.key)))
+    }
+
+    /// The verb on its answer while its fields hold `values`: a shown
+    /// choice's chosen, else its own.
+    pub fn accept_with(&self, values: &Values) -> &str {
+        self.fields
+            .iter()
+            .filter(|field| field.shown_with(values))
+            .find_map(|field| {
+                let held = values.get(&field.key);
+                field
+                    .choices()
+                    .iter()
+                    .find(|choice| choice.value == held && !choice.accept.is_empty())
+            })
+            .map_or(self.accept.as_str(), |choice| choice.accept.as_str())
     }
 
     /// The form again with what `values` hold in its fields, but its
@@ -421,6 +543,51 @@ mod tests {
             form.refusal(&values(&[("name", "n"), ("kind", "b2")]))
                 .as_deref(),
             Some("Kind is one of its choices")
+        );
+    }
+
+    /// A field shown only with another's value is refused only while it
+    /// is shown, and the choice held names the answer's button.
+    #[test]
+    fn a_hidden_field_is_not_refused_and_a_choice_names_the_answer() {
+        let row = |choices: &[(&str, &str)]| Kind::Row {
+            choices: choices
+                .iter()
+                .map(|(value, accept)| Choice::new(*value, *value).accept(*accept))
+                .collect(),
+        };
+        let form = Form::new("Print", "OK")
+            .field(Field::new(
+                "to",
+                "To",
+                row(&[("printer", "Print…"), ("pdf", "Save")]),
+            ))
+            .field(Field::new(
+                "pages",
+                "Pages",
+                row(&[("all", ""), ("ranges", "")]),
+            ))
+            .field(
+                Field::text("ranges", "Pages to print")
+                    .required()
+                    .when("pages", &["ranges"]),
+            );
+        let all = values(&[("to", "printer"), ("pages", "all"), ("ranges", "")]);
+        assert!(!form.fields[2].shown_with(&all));
+        assert_eq!(form.refusal(&all), None, "hidden: not needed");
+        let ranges = values(&[("to", "pdf"), ("pages", "ranges"), ("ranges", "")]);
+        assert!(form.fields[2].shown_with(&ranges));
+        assert_eq!(
+            form.refusal(&ranges).as_deref(),
+            Some("Pages to print is needed")
+        );
+        assert_eq!(form.accept_with(&all), "Print…");
+        assert_eq!(form.accept_with(&ranges), "Save");
+        let neither = values(&[("to", "fax"), ("pages", "all")]);
+        assert_eq!(form.accept_with(&neither), "OK");
+        assert_eq!(
+            form.refusal(&neither).as_deref(),
+            Some("To is one of its choices")
         );
     }
 

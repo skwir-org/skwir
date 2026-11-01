@@ -1530,11 +1530,22 @@ is still to come are in `docs/preview-frame.md`.
   (`converted`, `inspect`, a reader's pages, then a drawing, a picture,
   a text). A kind the print path does not know is said not printable,
   never printed as something else.
-- **The system's dialog chooses; Skwir applies** the pages, the sides
-  and the order to the PDF it hands over (`Compose::Pages`), as the
-  portal's back ends print a file as it is. A range picks a booklet's
-  pages before they are folded; even or odd sides and the order apply to
-  the sheets' sides after.
+- **Skwir's dialog chooses what and how; the system's, where.** One
+  Print… asks a form first (`print::dialog`): to a printer or a PDF, the
+  pages, the layout. Desktops' dialogs differ in what they offer of
+  pages, so pages are never left to them: they are handed every page
+  (the portal's `print-pages` `all`, no current page nor selection) and,
+  where they let it be hidden (macOS, Windows), show no range. Skwir
+  applies the pages, the sides and the order to the PDF it hands over
+  (`Compose::Pages`), as the portal's back ends print a file as it is.
+  Skwir's pages pick a booklet's pages before they are folded; what the
+  system's dialog still chooses (a portal's range changed there, even or
+  odd sides, the order) applies to what is sent, the sheets' sides.
+- **A choice in the dialog is a command's argument**: what it chose
+  runs `print.print` or `print.save_pdf` with `pages` and `layout`, as a
+  script or an agent passes them (`asked`: straight to the system's
+  dialog). Nothing the dialog offers is out of a script's reach. A PDF
+  it chose is a plan applied as the user's own action is.
 - **Several files are one job**: each printed whole as its preview shows
   it, joined by the PDF helper (`Compose::Append`, reading only the
   files it is handed), then the pages, booklet, sides and order applied
@@ -1551,4 +1562,6 @@ is still to come are in `docs/preview-frame.md`.
   sheet, laid out at that size.
 - **The window names no plugin**: a plugin's items of the preview's menu
   (`MenuItem::menu` `preview`) run through `ui.preview_invoke`, which adds
-  the file shown, its page and what is selected, and is the user's alone.
+  the file shown, its page and page count and what is selected, is the
+  user's alone, and runs the command as the window runs any
+  (`Shell::run`): a plan it answers applies, never dropped.

@@ -3,6 +3,8 @@
 Status: accepted 2026-10-31 with the user (GitHub #2); built the same
 day, as `docs/PLAN.md` ("Grammars and printing") records: checked on
 Linux, compiled for Windows and macOS (`just lint-all`), not run there.
+Decisions 2 and 5 revised 2026-11-01 with the user, after trying it:
+one Print…, Skwir's own dialog first (see Revision).
 
 ## Context
 
@@ -93,3 +95,45 @@ Linux, compiled for Windows and macOS (`just lint-all`), not run there.
   map) is said not printable.
 - Two helpers more are packaged and probed: the print helper here, the
   tree-sitter one beside it (ADR-110).
+
+## Revision (2026-11-01): one Print…, Skwir's dialog first
+
+Tried by the user the day after: Save as PDF and Save as Booklet did
+nothing from the preview's More menu (`ui.preview_invoke` dropped the plan
+the command answered); Save as Booklet asked no fold where Print as
+Booklet did; and no page could be chosen, because the dialog that should
+offer them is the desktop's: KDE's print portal (the user's) folds its
+range under Options, never enables Current page or Selection (it reads
+neither `has_current_page` nor `has_selected_pages`), and keeps only the
+first and last page of `1-3, 7`. Four items and a submenu were also more
+than one thing to do.
+
+- **One Print…** (Ctrl+P) in the file's menu (3xx, no submenu) and the
+  preview's, for files, and for a folder with nothing selected (its
+  listing). It opens **Skwir's own dialog**, a form the window draws
+  (`skwir_core::form`, ADR-086, given rows of choices drawn as cards with
+  a picture, fields shown only while another holds a value, and a choice
+  that names the answer's button): to a printer or a PDF beside the file;
+  which pages (All, the page the preview shows, its selection, typed);
+  the layout (as shown, a booklet whose folds are drawn with the page
+  numbers where they land, a contact sheet of several pictures); one PDF
+  of several files or a PDF each. It opens on the last choices but the
+  pages, kept until Skwir quits, never a setting.
+- **The system's dialog chooses only where and how**: the printer, the
+  paper, the copies, the sides. It is handed every page (the portal's
+  `print-pages` `all`, neither the current page nor the selection
+  offered); macOS's panel and Windows' dialog show no range. What a
+  portal's range is still changed to applies to what is sent, a
+  booklet's sides once folded, as its even or odd sides do.
+- **Two commands**: `print.print` and `print.save_pdf` take `pages`
+  (`all`, `current`, `selection`, typed), `layout` (`as_shown`,
+  `booklet` with `signature` and `trim`, `contact_sheet`, `listing`) and,
+  to save, `together` and `dest`. `print.booklet`, `print.save_booklet`,
+  `print.contact_sheet` and `print.listing` are gone. The window's
+  dialog answers the plugin alone (a form); a script or an agent passes
+  the arguments, `asked` going straight to the system's dialog. A PDF
+  chosen in the dialog is a plan the plugin applies as the user's own
+  action is (`App::apply_whole`): undone to the trash.
+- **Not Skwir's dialog over CUPS**, which stays rejected: it chooses what
+  and how, never the printer.
+

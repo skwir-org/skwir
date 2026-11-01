@@ -32,7 +32,12 @@ pub(crate) struct Shown {
 #[derive(Clone, Debug)]
 pub(crate) struct Layout {
     pub paper: Paper,
+    /// The pages of the document, chosen in Skwir's dialog.
     pub pages: Pages,
+    /// What the system's dialog chose of what is sent, its sides once
+    /// folded: all of it unless its range was changed there (Skwir hands
+    /// it all, and offers no current page or selection there).
+    pub sent: Pages,
     pub page_set: PageSet,
     pub reverse: bool,
     /// Folded as a booklet, two pages to a side of `paper` turned
@@ -189,6 +194,25 @@ fn picked(
             (folded, sides, (0..sides).collect())
         }
         None => (pdf, count, picked.pages),
+    };
+    // The system dialog's range, of what is sent: by place, as its sides
+    // are.
+    let picked = match &layout.sent {
+        sent @ Pages::Ranges(_) => {
+            let places = u32::try_from(picked.len()).unwrap_or(u32::MAX);
+            let kept: Vec<u32> = sent
+                .pick(places, None)
+                .pages
+                .iter()
+                .filter_map(|&at| picked.get(at as usize).copied())
+                .collect();
+            anyhow::ensure!(
+                !kept.is_empty(),
+                "No page of it is among those the print dialog asked"
+            );
+            kept
+        }
+        _ => picked,
     };
     let mut order = layout.page_set.keep(&picked);
     if layout.reverse {
@@ -449,7 +473,7 @@ fn request(path: &Path, mime: Option<String>) -> anyhow::Result<PreviewRequest> 
 }
 
 /// How many pages the PDF at `path` has, as `PDFium` reads it.
-fn page_count(path: &Path, cancel: &CancelToken) -> anyhow::Result<u32> {
+pub(crate) fn page_count(path: &Path, cancel: &CancelToken) -> anyhow::Result<u32> {
     let session = skwir_platform::document::open(
         path,
         &[skwir_platform::document::Engine::Pdfium],

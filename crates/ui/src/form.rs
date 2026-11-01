@@ -17,7 +17,7 @@ use gpui::{
     AnyElement, Context, Entity, FocusHandle, SharedString, Subscription, Window, div, prelude::*,
     relative,
 };
-use skwir_core::form::{Answer, Asked, Choice, Field, Form, Kind, Values};
+use skwir_core::form::{Answer, Asked, Choice, Field, Form, Kind, Mark, Picture, Values};
 
 use crate::controls::{self, ButtonStyle};
 use crate::input::{InputEvent, TextInput};
@@ -49,6 +49,12 @@ enum Control {
         picker: Picker,
     },
     Link {
+        focus: FocusHandle,
+    },
+    /// A few choices side by side: the value chosen, and the row's focus
+    /// (Up and Down, Space and Enter change it).
+    Row {
+        value: String,
         focus: FocusHandle,
     },
 }
@@ -89,8 +95,9 @@ impl FormState {
         use gpui::Focusable as _;
         let mut walk = Vec::new();
         if self.form.waiting.is_none() {
+            let values = self.values(cx);
             for (field, control) in self.form.fields.iter().zip(&self.controls) {
-                if !self.shows(field) {
+                if !self.shows(field, &values) {
                     continue;
                 }
                 walk.push(match control {
@@ -102,6 +109,7 @@ impl FormState {
                     } => input.read(cx).focus_handle(cx),
                     Control::Toggle { focus, .. }
                     | Control::Choice { focus, .. }
+                    | Control::Row { focus, .. }
                     | Control::Link { focus } => focus.clone(),
                 });
             }
@@ -125,10 +133,11 @@ impl FormState {
         walk
     }
 
-    /// Whether `field` is drawn: any not folded under More Options, and
-    /// those once unfolded.
-    fn shows(&self, field: &Field) -> bool {
-        !field.advanced || self.more
+    /// Whether `field` is drawn while the fields hold `values`: any not
+    /// folded under More Options, and those once unfolded, while what it
+    /// is shown with holds (`Field::when`).
+    fn shows(&self, field: &Field, values: &Values) -> bool {
+        (!field.advanced || self.more) && field.shown_with(values)
     }
 
     /// How many fields More Options folds.
@@ -154,7 +163,7 @@ impl FormState {
                 Control::Choice {
                     input: Some(input), ..
                 } => input.read(cx).text().trim().to_owned(),
-                Control::Choice { value, .. } => value.clone(),
+                Control::Choice { value, .. } | Control::Row { value, .. } => value.clone(),
                 Control::Pick { shown, picker, .. } => shown
                     .get(picker.highlighted)
                     .and_then(|&at| choices(field).get(at))
@@ -212,12 +221,9 @@ impl FormState {
     }
 }
 
-/// The choices of a choice or a pick.
+/// The choices of a choice, a pick or a row.
 fn choices(field: &Field) -> &[Choice] {
-    match &field.kind {
-        Kind::Choice { choices, .. } | Kind::Pick { choices } => choices,
-        _ => &[],
-    }
+    field.choices()
 }
 
 /// Which of `choices` match `typed`, best first: all, in their order, for
@@ -259,7 +265,7 @@ impl Shell {
                 Kind::Text | Kind::Integer { .. } | Kind::Secret { .. } => {
                     let placeholder = match field.kind {
                         Kind::Secret { kept: true } => "Kept: type another to replace it",
-                        _ => "",
+                        _ => field.placeholder.as_str(),
                     };
                     let input = self.form_input(field, placeholder, at, &mut subs, window, cx);
                     Control::Input(input)
@@ -293,6 +299,15 @@ impl Shell {
                 Kind::Link => Control::Link {
                     focus: cx.focus_handle(),
                 },
+                Kind::Row { choices } => Control::Row {
+                    // One is always chosen: the asker's, else the first.
+                    value: if choices.iter().any(|c| c.value == field.value) {
+                        field.value.clone()
+                    } else {
+                        choices.first().map(|c| c.value.clone()).unwrap_or_default()
+                    },
+                    focus: cx.focus_handle(),
+                },
             };
             if first.is_none() && !field.advanced && !waiting {
                 use gpui::Focusable as _;
@@ -304,6 +319,7 @@ impl Shell {
                     } => input.read(cx).focus_handle(cx),
                     Control::Toggle { focus, .. }
                     | Control::Choice { focus, .. }
+                    | Control::Row { focus, .. }
                     | Control::Link { focus } => focus.clone(),
                 });
             }
@@ -499,11 +515,32 @@ impl Shell {
         cx.notify();
     }
 
-    /// `ui.list_move` while a form shows a list: whether it took the move.
-    pub(crate) fn form_move(&mut self, mv: ListMove, cx: &mut Context<Self>) -> bool {
+    /// `ui.list_move` while a form shows a list, or a row of choices has
+    /// the keyboard (Up the one before, Down the one after): whether it
+    /// took the move.
+    pub(crate) fn form_move(
+        &mut self,
+        mv: ListMove,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let Some(form) = self.form.as_mut() else {
             return false;
         };
+        let row = form.open.is_none().then(|| {
+            form.controls
+                .iter()
+                .position(|c| matches!(c, Control::Row { focus, .. } if focus.is_focused(window)))
+        });
+        if let Some(Some(at)) = row {
+            let step = match mv {
+                ListMove::By(delta) | ListMove::Page(delta) => delta,
+                ListMove::First => isize::MIN,
+                ListMove::Last => isize::MAX,
+            };
+            self.form_row_move(at, step, false, cx);
+            return true;
+        }
         let Some(at) = form.listed() else {
             return false;
         };
@@ -573,6 +610,47 @@ impl Shell {
         }
     }
 
+    /// Choose `value` in row `at`.
+    fn form_row_choose(&mut self, at: usize, value: &str, cx: &mut Context<Self>) {
+        if let Some(form) = self.form.as_mut()
+            && let Some(Control::Row { value: held, .. }) = form.controls.get_mut(at)
+        {
+            value.clone_into(held);
+            form.refusal = None;
+            cx.notify();
+        }
+    }
+
+    /// Choose the choice `step` after the one row `at` holds (before it
+    /// when negative), stopping at its ends; with `cycle`, the next one,
+    /// past the last to the first (Space and Enter, as a segmented setting
+    /// does).
+    fn form_row_move(&mut self, at: usize, step: isize, cycle: bool, cx: &mut Context<Self>) {
+        let Some(form) = self.form.as_ref() else {
+            return;
+        };
+        let (Some(field), Some(Control::Row { value, .. })) =
+            (form.form.fields.get(at), form.controls.get(at))
+        else {
+            return;
+        };
+        let all = choices(field);
+        if all.is_empty() {
+            return;
+        }
+        let last = all.len() - 1;
+        let now = all.iter().position(|c| c.value == *value).unwrap_or(0);
+        let next = if cycle {
+            (now + 1) % all.len()
+        } else if step < 0 {
+            now.saturating_sub(step.unsigned_abs())
+        } else {
+            now.saturating_add(step.unsigned_abs()).min(last)
+        };
+        let chosen = all[next].value.clone();
+        self.form_row_choose(at, &chosen, cx);
+    }
+
     fn form_more(&mut self, cx: &mut Context<Self>) {
         if let Some(form) = self.form.as_mut() {
             form.more = !form.more;
@@ -585,6 +663,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     let state = shell.form.as_ref()?;
     let theme = cx.global::<Theme>().clone();
     let form = &state.form;
+    let values = state.values(cx);
     let mut body = div()
         .id("form-fields")
         .flex_1()
@@ -618,7 +697,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         if form.waiting.is_some() && !matches!(field.kind, Kind::Link) {
             continue;
         }
-        if state.shows(field) {
+        if state.shows(field, &values) {
             body = body.child(field_row(
                 shell, state, at, field, control, &theme, window, cx,
             ));
@@ -678,7 +757,7 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
         buttons.push(modal::pressed(
             controls::button(
                 "form-accept",
-                form.accept.clone(),
+                form.accept_with(&values).to_owned(),
                 Some("check"),
                 ButtonStyle::Plain,
                 &state.accept_focus,
@@ -693,10 +772,12 @@ pub fn render(shell: &Shell, window: &Window, cx: &mut Context<Shell>) -> Option
     } else {
         "Enter to confirm, Escape to cancel"
     };
+    // As tall as the room below its top allows but a tenth: a dialog of
+    // pictures (Print…'s) fits a window 800 pixels high whole.
     let panel = modal::panel("form", 600., &theme)
         .when(shell.a11y, |d| d.aria_label(form.title.clone()))
         .key_context(keymap::FORM)
-        .max_h(relative(0.8))
+        .max_h(relative(0.9))
         .p_3()
         .gap_3()
         .child(
@@ -853,6 +934,11 @@ fn field_row(
                 ))
                 .child(choice_list(shell, state, at, field, PICK_ROWS, theme, cx));
         }
+        Control::Row { value, focus } => {
+            row = row
+                .child(label)
+                .child(choice_row(at, field, value, focus, theme, cx));
+        }
         Control::Link { focus } => {
             let url = field.value.clone();
             row = row.child(div().flex().child(modal::pressed(
@@ -870,6 +956,176 @@ fn field_row(
         }
     }
     row.children(help).into_any_element()
+}
+
+/// A row of choices, `value` chosen: cards when one has a picture (the
+/// picture over its title and detail), else segments. The row has the
+/// keyboard as one: Up and Down choose the one before or after, Space the
+/// next; Enter answers the form, as it does from a field; a click
+/// chooses one.
+fn choice_row(
+    at: usize,
+    field: &Field,
+    value: &str,
+    focus: &FocusHandle,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let all = choices(field);
+    let id = SharedString::from(format!("form-row-{at}"));
+    // Space and Enter reach the focused row as a keyboard click; the
+    // pointer's clicks belong to its choices.
+    let keyboard = cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+        if let gpui::ClickEvent::Keyboard(key) = event {
+            match key.button {
+                gpui::KeyboardButton::Space => this.form_row_move(at, 1, true, cx),
+                gpui::KeyboardButton::Enter => this.form_enter(None, window, cx),
+            }
+        }
+    });
+    if all.iter().all(|c| c.picture.is_none()) {
+        let mut frame = controls::segmented(id, focus, theme)
+            .aria_label(field.title.clone())
+            .on_click(keyboard);
+        for (index, choice) in all.iter().enumerate() {
+            let chosen = choice.value.clone();
+            let focus = focus.clone();
+            frame = frame.child(
+                controls::segment(
+                    format!("form-segment-{at}-{index}"),
+                    choice.shown().to_owned(),
+                    choice.value == value,
+                    theme,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    window.focus(&focus, cx);
+                    this.form_row_choose(at, &chosen, cx);
+                })),
+            );
+        }
+        return div().flex().child(frame).into_any_element();
+    }
+    let accent = theme.accent;
+    let mut frame = div()
+        .id(id)
+        .role(gpui::Role::RadioGroup)
+        .aria_label(field.title.clone())
+        .track_focus(focus)
+        .flex()
+        .gap_2()
+        .p(gpui::px(2.))
+        .rounded_lg()
+        .border_1()
+        .border_color(gpui::transparent_black())
+        .focus(move |s| s.border_color(accent))
+        .on_click(keyboard);
+    for (index, choice) in all.iter().enumerate() {
+        let selected = choice.value == value;
+        let chosen = choice.value.clone();
+        let focus = focus.clone();
+        let hover = theme.hover;
+        let card = div()
+            .id(crate::elements::known_by("form-card", (at, index)))
+            .role(gpui::Role::RadioButton)
+            .aria_label(SharedString::from(choice.shown().to_owned()))
+            .aria_toggled(if selected {
+                gpui::Toggled::True
+            } else {
+                gpui::Toggled::False
+            })
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap_1()
+            .px_2()
+            .py_1p5()
+            .rounded_md()
+            .border_1()
+            .cursor_pointer()
+            .when(selected, |d| {
+                d.border_color(theme.accent)
+                    .bg(theme.selection_bg)
+                    .text_color(theme.selection_text)
+            })
+            .when(!selected, |d| {
+                d.border_color(theme.border).hover(move |s| s.bg(hover))
+            })
+            .children(choice.picture.as_ref().map(|picture| drawn(picture, theme)))
+            .child(
+                div()
+                    .text_sm()
+                    .text_center()
+                    .child(choice.shown().to_owned()),
+            )
+            .when(!choice.detail.is_empty(), |d| {
+                d.child(
+                    div()
+                        .text_xs()
+                        .text_center()
+                        .when(!selected, |d| d.text_color(theme.text_muted))
+                        .child(choice.detail.clone()),
+                )
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                window.focus(&focus, cx);
+                this.form_row_choose(at, &chosen, cx);
+            }));
+        frame = frame.child(card);
+    }
+    frame.into_any_element()
+}
+
+/// A choice's picture, drawn as on paper whatever the card's color: its
+/// boxes on `bg` outlined in `text_muted`, those shaded (a sheet behind
+/// another) on `surface`, what is written in `text`.
+fn drawn(picture: &Picture, theme: &Theme) -> AnyElement {
+    let px = |n: u16| gpui::px(f32::from(n));
+    let mut drawing = div()
+        .relative()
+        .flex_none()
+        .w(px(picture.width))
+        .h(px(picture.height));
+    for mark in &picture.marks {
+        drawing = drawing.child(match mark {
+            Mark::Box {
+                x,
+                y,
+                width,
+                height,
+                shaded,
+            } => div()
+                .absolute()
+                .left(px(*x))
+                .top(px(*y))
+                .w(px(*width))
+                .h(px(*height))
+                .border_1()
+                .border_color(theme.text_muted)
+                .bg(if *shaded { theme.surface } else { theme.bg }),
+            Mark::Text {
+                x,
+                y,
+                width,
+                height,
+                text,
+            } => div()
+                .absolute()
+                .left(px(*x))
+                .top(px(*y))
+                .w(px(*width))
+                .h(px(*height))
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(gpui::px(10.))
+                .line_height(gpui::px(12.))
+                .text_color(theme.text)
+                .child(text.clone()),
+        });
+    }
+    drawing.into_any_element()
 }
 
 /// The list of a choice unfolded, or of a pick: what matches what was

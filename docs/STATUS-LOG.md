@@ -8633,3 +8633,94 @@ After G7, `just lint-all` and `just test-all` on main.
 **Not run:** `just release-check`'s other recipes (smoke, a11y-check, the
 reader checks, bench-check, deny and notices were run where steps
 touched them, not at the end); Windows' tests under Wine.
+
+### P5: one Print…, Skwir's dialog first (2026-11-01, ADR-111 revised)
+
+The user tried P1 to P4 and found three faults: Save as PDF and Save as
+Booklet did nothing from the preview's More menu, Save as Booklet asked
+no fold, and no page could be chosen. The first was the window's:
+`ui.preview_invoke` ran its command with `App::dispatch` and dropped the
+plan it answered; it now runs it through `Shell::run` (40514762). The
+second was a gap in P2. The third was the desktop's: their print dialog
+is KDE's portal (`xdg-desktop-portal-kde` 6.8.2, its `print.cpp` read),
+which folds its range under Options, reads neither `has_current_page`
+nor `has_selected_pages`, and keeps only the first and last page of
+`1-3, 7`. Decided with the user: one Print… opening a dialog of Skwir's.
+
+**Built:**
+- The core's form (ADR-086) takes rows of a few choices side by side
+  (`Kind::Row`: segments, or cards when a choice has a picture), pictures
+  a plugin places as marks (`form::Picture`, boxes and text, drawn in
+  the window's tokens), fields shown only while others hold some values
+  (`Field::when`, neither walked nor refused while hidden), a choice
+  naming the answer's button, a text field's placeholder. In a row, Up
+  and Down or Space change the choice, Enter answers. A form may now take
+  nine tenths of the room below its top, not eight.
+- The print plugin's dialog (`dialog.rs`): to a printer or a PDF beside
+  the file (in the folder, for a listing); all pages, the page the
+  preview shows, its selection, or pages typed (refused ones asked again,
+  saying why); as shown, a booklet, a contact sheet of several files with
+  pictures; the booklet's folds as cards drawing the first sheet's front
+  and back with the page numbers where they land (a PDF's pages counted
+  before asking, within 400 ms, or given by the preview) and a stack per
+  fold; trim; one PDF of several or a PDF each. It opens on the last
+  choices but the pages, kept until Skwir quits or the plugin is turned
+  off.
+- One Print… (Ctrl+P) for files and for a folder with nothing selected
+  (its listing), in the file's menu (340) and the preview's. Two commands:
+  `print.print` and `print.save_pdf` take `pages`, `layout`, `signature`,
+  `trim`, `together`, `dest`; `print.booklet`, `print.save_booklet`,
+  `print.contact_sheet` and `print.listing` are gone. A PDF chosen is a
+  plan the plugin applies as the user's action is (`App::apply_whole`).
+  Save as PDF now makes contact sheets and listings too (`MakePdf::of`).
+- The system's dialog is asked only for the printer, the paper, the
+  copies and the sides: the portal is handed `print-pages` `all` with no
+  current page or selection offered; macOS's panel shows no range and
+  Windows' dialog no pages (`PD_NOPAGENUMS`). A range still changed in a
+  portal's dialog applies to what is sent (a booklet's sides).
+
+**Checked:** rustfmt and clippy (`-D warnings`, pedantic) on skwir-core,
+skwir-platform, skwir-ui, the print plugin and skwir; the tests of the
+first four (1367, 18 skipped) and the binary's print, CLI, keymap-title
+and plugin-toggle tests. New tests: the core form's hidden fields and
+answer verb; the dialog's offers, answers, pictures and remembered
+choices (`dialog.rs`, 4); the platform's stand-in portal handed `all`
+and no current page; in `crates/skwir/tests/print.rs`, Print… answered
+headlessly as the window would (`take_forms`, `answer_form`): pages
+`5-2` refused and asked again with the text kept, then `2` saved one
+page as a plan, undone to the trash, the next dialog opening on PDF;
+the page shown and the selection saved alone, `current` refused without
+a page; a contact sheet of two pictures and a text (1 page) and a
+folder's listing (1 page, its names) saved as PDFs.
+
+In a window (debug build, Xvfb with lavapipe, a private session bus, a
+synthetic folder): the file menu holds one Print… (Ctrl+P); the dialog
+draws the To and Pages segments and the Layout cards; Booklet shows the
+folds' cards (`n | 1`, `2 | n−1` for a Markdown file, `blank | 1`,
+`2 | 7` for a PDF of 7 pages from the preview's More menu, which said "7
+pages" and offered "Page 3") and the trim switch; PDF turns the answer
+into Save; Tab then Down chose Pages… and its field appeared; `1-4` as a
+booklet saved "notes (booklet).pdf", 2 landscape A4 sides, with a toast
+and Undo. Printer then opened GTK's portal dialog (the private bus
+started it on the test display): All pages chosen, Current page greyed;
+printed to a file in the scratch folder: the booklet's 4 sides, the
+toast saying how to print both sides by hand; with Pages: 2 in GTK's
+dialog, one side, identical to the second of the four. Three files with
+two pictures offered Contact sheet, and PDFs (one or each) only as
+shown; the contact sheet saved, 1 page, the pictures named. A folder
+with nothing selected: "Print the listing of “files”", To and Pages
+only. Found by looking and fixed: Enter on a focused row stepped it
+instead of answering (now Space steps, Enter answers); the dialog was
+taller than an 800-pixel window, now whole there; a "…" under each
+stack read as noise and is gone.
+
+`just lint-all` passed on this state: rustfmt, the workspace's clippy,
+and `check-cross` (the platform's dialogs and the print plugin for
+Windows and macOS, the window's form for Windows).
+
+**Not checked:** KDE's portal with P5 (the user's desktop; GTK's was the
+one on the test display); a listing and several files printed through a
+real dialog; macOS and Windows (compiled only, not run, nor Windows
+under Wine); `just test-all` (the touched crates' tests and the
+binary's print, CLI, keymap, plugin-toggle and remote-configuration
+tests were run).

@@ -442,32 +442,38 @@ archives, and the bytes of any file.
   foot of the panel, steered by the desktop's media keys.
 - Some kinds need a program Skwir does not carry; Settings › Plugins says
   which, and what to install.
-- **Print…** (`Ctrl+P`, the file's menu under Print, the preview's More
-  menu) prints a file as its preview shows it, through your system's
-  print dialog: a PDF as it is, an office document as its pages, a text
-  or source file numbered and colored, a table with its header on every
-  page, a Markdown document or a book as it reads, a picture fitted to the
-  page. The dialog's pages (All, Current page, Selection, `1-3, 7`), even
-  or odd sides and reverse order are what is printed. **Save as PDF**
-  makes the same PDF beside the file instead (Undo puts it in the trash).
-- **Print as Booklet…** asks how the booklet folds (one booklet, or
-  signatures of 16 or 32 pages; white margins trimmed with `Alt+A`),
-  then the dialog: two pages to a side of the sheet chosen there, in the
-  order they fold in, so the printed sheets, folded and put one inside
-  the other, read in order. A text, a source file or a Markdown document
-  is laid out at half a sheet, its text not shrunk. On a printer of one
-  side, print the odd sides, turn the sheets over, then the even.
-  **Save as Booklet** makes the same booklet beside the file.
-- **Several files** selected print as one job, in their order: one
-  dialog, the pages counted through them all, a booklet folded of them
-  all; one that shows nothing printable (a song) is left out and said.
-  Save as PDF makes a PDF of each beside it. **Print Contact Sheet…**
-  prints the pictures among them several to a page, each named under it;
-  with nothing selected, **Print Listing…** prints what the folder shows,
-  in its order, as a table of names, kinds, sizes and dates. From a
-  script, with or without the window open:
+- **Print…** (`Ctrl+P`, the file's menu, the preview's More menu) prints
+  a file as its preview shows it: a PDF as it is, an office document as
+  its pages, a text or source file numbered and colored, a table with its
+  header on every page, a Markdown document or a book as it reads, a
+  picture fitted to the page. Skwir's dialog asks first:
+  - **To**: a printer, or a PDF beside the file (Undo puts it in the
+    trash).
+  - **Pages**: all, the page the preview shows, what is selected in it,
+    or pages typed (`1-3, 7, 10-`).
+  - **Layout**: as shown, or a booklet: two pages to a side of the sheet,
+    in the order they fold in, so the printed sheets, folded and put one
+    inside the other, read in order. Each way to fold (one booklet, sets
+    of 16 or 32 pages) is drawn with the pages where they land; white
+    margins can be trimmed. A text, a source file or a Markdown document
+    is laid out at half a sheet, its text not shrunk.
+
+  Up and Down (or Space) change the choice that has the keyboard, Enter
+  prints. A printer is then chosen in your system's own dialog, with the
+  paper, the copies and the sides. On a printer of one side, print a
+  booklet's odd sides, turn the sheets over, then the even. The dialog
+  opens on what you chose last.
+- **Several files** selected print as one job, in their order, the pages
+  counted through them all, a booklet folded of them all; one that shows
+  nothing printable (a song) is left out and said. Saved, they make a PDF
+  each or one of them all. With pictures among them, **Contact sheet**
+  prints them several to a page, each named under it. With nothing
+  selected, Print… prints what the folder shows, in its order, as a table
+  of names, kinds, sizes and dates. From a script, with or without the
+  window open:
   `skwir cmd --apply print.save_pdf '{"entries": ["/path/to/notes.md"]}'`
-  (`"together": true` makes one PDF of several files; `"pages": "1-3"`).
+  (`"together": true` makes one PDF of several files; `"pages": "1-3"`;
+  `"layout": "booklet"`, `"contact_sheet"` or `"listing"`).
 
 [Previews](previews.md) lists every kind of file with its tools, keys
 and requirements.
