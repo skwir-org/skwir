@@ -8815,6 +8815,7 @@ dependencies = [
  "skrifa 0.44.0",
  "skwir-core",
  "tempfile",
+ "unicode-general-category",
  "usvg 0.47.0",
 ]
 

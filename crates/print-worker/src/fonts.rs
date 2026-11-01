@@ -4,7 +4,9 @@
 //! of its own, so a run names the very face it wants and parley never
 //! picks among faces itself; a face missing (no italic) is the nearest
 //! one, slanted or emboldened as parley says. Nothing of the system's
-//! font discovery is asked.
+//! font discovery is asked. A face whose licence forbids embedding it
+//! (its OS/2 `fsType`) is passed over: the PDF holds every face it
+//! writes in, subset.
 
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
@@ -19,7 +21,7 @@ use parley::{
     FontContext, FontData, FontFamily, FontFamilyName, FontStyle, FontWeight, LayoutContext,
 };
 use skrifa::raw::tables::cmap::Cmap;
-use skrifa::raw::{FontData as RawData, FontRead};
+use skrifa::raw::{FontData as RawData, FontRead, TableProvider};
 use skwir_core::print::{Face, Family, Job};
 
 use crate::text::Ink;
@@ -32,6 +34,10 @@ const FONT_LIMIT: u64 = 256 * 1024 * 1024;
 const FALLBACK_LIMIT: usize = 192 * 1024 * 1024;
 const FALLBACK_FILES: usize = 20_000;
 const FALLBACK_DEPTH: usize = 8;
+/// The most characters looked for in the fallback folders: past them, a
+/// text of every script there is draws the rest as the faces found have
+/// them, rather than read each font file's map for each.
+const LOOKED_FOR: usize = 4096;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Role {
@@ -113,7 +119,12 @@ impl Fonts {
 
     /// The face a specimen shows, registered as its role.
     pub fn load_specimen(&mut self, face: &Face) -> Result<()> {
-        let loaded = load_face(&mut self.cx, face, "skwir-specimen")?;
+        let Some(loaded) = load_face(&mut self.cx, face, "skwir-specimen")? else {
+            bail!(
+                "the font {} may not be embedded in a document, as its licence says",
+                face.path.display()
+            );
+        };
         self.faces
             .roles
             .insert(Role::Specimen, [Some(loaded), None, None, None]);
@@ -269,19 +280,16 @@ impl Faces {
     /// The characters of `text` no regular face of the roles holds
     /// (spaces and marks that draw nothing left out).
     fn lacking(&self, text: &BTreeSet<char>) -> BTreeSet<char> {
-        let maps: Vec<Vec<Coverage>> = [Role::Text, Role::Code]
+        let maps: Vec<Coverage> = [Role::Text, Role::Code]
             .iter()
             .filter_map(|role| self.nearest(*role, false, false))
-            .map(|face| coverage(&face.data))
+            .flat_map(|face| coverage(&face.data))
             .collect();
+        let maps: Vec<Cmap> = maps.iter().filter_map(Coverage::cmap).collect();
         text.iter()
             .copied()
             .filter(|&c| draws(c))
-            .filter(|&c| {
-                !maps
-                    .iter()
-                    .any(|faces| faces.iter().any(|face| face.holds(c)))
-            })
+            .filter(|&c| !maps.iter().any(|cmap| holds(cmap, c)))
             .collect()
     }
 
@@ -293,7 +301,7 @@ impl Faces {
         &mut self,
         cx: &mut FontContext,
         folders: &[PathBuf],
-        mut missing: BTreeSet<char>,
+        missing: BTreeSet<char>,
     ) {
         let mut files = Vec::new();
         for folder in folders {
@@ -304,6 +312,10 @@ impl Faces {
         }
         files.sort_by_cached_key(|path| (rank(path), path.clone()));
         files.dedup();
+        // The characters looked for, a bounded number: each font file's
+        // map is read once, and asked of each.
+        let beyond = missing.len().saturating_sub(LOOKED_FOR);
+        let mut missing: BTreeSet<char> = missing.into_iter().take(LOOKED_FOR).collect();
         let mut taken = 0usize;
         let mut serial = 0;
         for path in files {
@@ -314,7 +326,14 @@ impl Faces {
                 continue;
             };
             for (index, face) in faces.iter().enumerate() {
-                let holds: Vec<char> = missing.iter().copied().filter(|&c| face.holds(c)).collect();
+                let Some(cmap) = face.cmap() else {
+                    continue;
+                };
+                let holds: Vec<char> = missing
+                    .iter()
+                    .copied()
+                    .filter(|&c| holds(&cmap, c))
+                    .collect();
                 if holds.is_empty() {
                     continue;
                 }
@@ -323,7 +342,9 @@ impl Faces {
                     path: path.clone(),
                     index: index as u32,
                 };
-                let Ok(loaded) = load_face(cx, &face, &name) else {
+                // One that cannot be read, or may not be embedded: the
+                // next file.
+                let Ok(Some(loaded)) = load_face(cx, &face, &name) else {
                     break;
                 };
                 serial += 1;
@@ -335,17 +356,36 @@ impl Faces {
                 break;
             }
         }
-        self.missing = missing.len();
+        self.missing = missing.len() + beyond;
     }
 }
 
-/// Whether a character draws something a font must hold: not a space, a
-/// control, a joiner or a variation selector.
+/// Whether a character draws something a font must hold, worth looking
+/// for in the fallback folders: not a space, nor one a shaper hides
+/// (controls, formats such as joiners and bidirectional marks, variation
+/// selectors and the few other default-ignorable ones), nor one no font
+/// is meant to hold (private use, unassigned, a surrogate).
 fn draws(c: char) -> bool {
-    !(c.is_whitespace()
-        || c.is_control()
-        || matches!(c, '\u{200b}'..='\u{200f}' | '\u{2060}'..='\u{2064}' | '\u{feff}' | '\u{00ad}')
-        || matches!(c, '\u{fe00}'..='\u{fe0f}' | '\u{e0100}'..='\u{e01ef}'))
+    use unicode_general_category::{GeneralCategory as G, get_general_category};
+    if c.is_whitespace() {
+        return false;
+    }
+    let ignorable = matches!(
+        c,
+        '\u{034f}'
+            | '\u{115f}'..='\u{1160}'
+            | '\u{17b4}'..='\u{17b5}'
+            | '\u{180b}'..='\u{180f}'
+            | '\u{3164}'
+            | '\u{fe00}'..='\u{fe0f}'
+            | '\u{ffa0}'
+            | '\u{e0100}'..='\u{e01ef}'
+    );
+    !ignorable
+        && !matches!(
+            get_general_category(c),
+            G::Control | G::Format | G::PrivateUse | G::Unassigned | G::Surrogate
+        )
 }
 
 /// Font files below `folder`, a few levels down, links followed.
@@ -411,12 +451,16 @@ struct Coverage {
 }
 
 impl Coverage {
-    fn holds(&self, c: char) -> bool {
-        Cmap::read(RawData::new(&self.cmap))
-            .ok()
-            .and_then(|cmap| cmap.map_codepoint(c))
-            .is_some_and(|glyph| glyph.to_u32() != 0)
+    /// The map read, once for all the characters asked of it.
+    fn cmap(&self) -> Option<Cmap<'_>> {
+        Cmap::read(RawData::new(&self.cmap)).ok()
     }
+}
+
+/// Whether `cmap` gives `c` a glyph.
+fn holds(cmap: &Cmap, c: char) -> bool {
+    cmap.map_codepoint(c)
+        .is_some_and(|glyph| glyph.to_u32() != 0)
 }
 
 /// The character maps of a font's faces, from its data.
@@ -495,16 +539,21 @@ fn load_family(
         if let Some(face) = face {
             *serial += 1;
             let name = format!("skwir-{role:?}-{serial}").to_lowercase();
-            faces[face_index(bold, italic)] = Some(load_face(cx, face, &name)?);
+            // One that may not be embedded is as if the family lacked it.
+            faces[face_index(bold, italic)] = load_face(cx, face, &name)?;
         }
     }
     Ok(faces)
 }
 
-/// A face read and registered as `family`.
-fn load_face(cx: &mut FontContext, face: &Face, family: &str) -> Result<Loaded> {
+/// A face read and registered as `family`; `None` for one whose licence
+/// forbids embedding it.
+fn load_face(cx: &mut FontContext, face: &Face, family: &str) -> Result<Option<Loaded>> {
     let data = read_font(face)
         .with_context(|| format!("the font {} could not be read", face.path.display()))?;
+    if !embeddable(&data) {
+        return Ok(None);
+    }
     let data = Arc::new(data);
     let registered = cx.collection.register_fonts(
         Blob::new(data.clone()),
@@ -516,10 +565,25 @@ fn load_face(cx: &mut FontContext, face: &Face, family: &str) -> Result<Loaded> 
     if registered.is_empty() {
         bail!("{} holds no font", face.path.display());
     }
-    Ok(Loaded {
+    Ok(Some(Loaded {
         data,
         family: family.to_owned(),
-    })
+    }))
+}
+
+/// Whether the font `data` may be embedded in a document, as its OS/2
+/// `fsType` says: not when its usage is restricted (its low four bits
+/// 2 alone, the least restrictive of several bits winning), nor when only
+/// its bitmaps may be (bit 9). A font without the table may.
+fn embeddable(data: &[u8]) -> bool {
+    let Some(fs_type) = skrifa::FontRef::new(data)
+        .ok()
+        .and_then(|font| font.os2().ok())
+        .map(|os2| os2.fs_type())
+    else {
+        return true;
+    };
+    fs_type & 0x000f != 0x0002 && fs_type & 0x0200 == 0
 }
 
 /// The face's font: the file itself, or its face copied out of a
@@ -559,7 +623,13 @@ pub fn face_of_collection(data: &[u8], index: u32) -> Option<Vec<u8>> {
         let (start, len) = (be32(record, 8) as usize, be32(record, 12) as usize);
         let table = data.get(start..start.checked_add(len)?)?;
         placed.push((record, at, table));
-        at += len.div_ceil(4) * 4;
+        at = at.checked_add(len.div_ceil(4) * 4)?;
+        // A face's tables are parts of the file apart: ones that add up
+        // to more (records naming one stretch again and again) are no
+        // face, and would be copied out as many times.
+        if at > data.len() + 16 * tables + 12 {
+            return None;
+        }
     }
     for (record, at, table) in &placed {
         out.extend_from_slice(&record[..8]);
@@ -612,9 +682,58 @@ mod tests {
     }
 
     #[test]
+    fn a_collection_whose_tables_add_up_to_more_than_it_is_refused() {
+        let mut data = collection();
+        // The second face's one table made the whole file, named twice.
+        data[52..54].copy_from_slice(&2u16.to_be_bytes());
+        let whole = u32::try_from(data.len()).unwrap();
+        let mut records = Vec::new();
+        for _ in 0..2 {
+            records.extend_from_slice(b"name");
+            records.extend_from_slice(&0u32.to_be_bytes());
+            records.extend_from_slice(&0u32.to_be_bytes());
+            records.extend_from_slice(&whole.to_be_bytes());
+        }
+        data.splice(60..76, records);
+        assert!(face_of_collection(&data, 1).is_none());
+        assert!(face_of_collection(&collection(), 1).is_some());
+    }
+
+    #[test]
     fn only_characters_that_draw_need_a_font() {
-        assert!(draws('a') && draws('漢') && draws('↪'));
+        assert!(draws('a') && draws('漢') && draws('↪') && draws('\u{0301}'));
         assert!(!draws(' ') && !draws('\u{200d}') && !draws('\u{fe0f}') && !draws('\n'));
+        // Bidirectional marks and isolates, private use, unassigned.
+        assert!(!draws('\u{202b}') && !draws('\u{2067}') && !draws('\u{061c}'));
+        assert!(!draws('\u{e000}') && !draws('\u{10fffd}') && !draws('\u{40000}'));
+    }
+
+    /// A font of nothing but an OS/2 table saying `fs_type`.
+    fn with_fs_type(fs_type: u16) -> Vec<u8> {
+        let mut os2 = vec![0u8; 78];
+        os2[8..10].copy_from_slice(&fs_type.to_be_bytes());
+        let mut data = 0x0001_0000u32.to_be_bytes().to_vec();
+        data.extend_from_slice(&1u16.to_be_bytes());
+        data.extend_from_slice(&[0; 6]);
+        data.extend_from_slice(b"OS/2");
+        data.extend_from_slice(&0u32.to_be_bytes());
+        data.extend_from_slice(&28u32.to_be_bytes());
+        data.extend_from_slice(&(os2.len() as u32).to_be_bytes());
+        data.extend_from_slice(&os2);
+        data
+    }
+
+    #[test]
+    fn a_font_whose_licence_forbids_embedding_is_passed_over() {
+        assert!(embeddable(&with_fs_type(0)));
+        assert!(embeddable(&with_fs_type(0x0004)), "preview and print");
+        assert!(
+            embeddable(&with_fs_type(0x0006)),
+            "the least restrictive wins"
+        );
+        assert!(!embeddable(&with_fs_type(0x0002)), "restricted");
+        assert!(!embeddable(&with_fs_type(0x0200)), "bitmaps only");
+        assert!(embeddable(b"not a font"));
     }
 
     #[test]

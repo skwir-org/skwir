@@ -25,6 +25,9 @@ parley = { version = "0.12", default-features = false, features = ["std"] }
 # A font's character map, read from its file to find which fallback holds
 # a character no role font has: parley's version.
 skrifa = { version = "0.44", default-features = false, features = ["std"] }
+# Which characters a font is meant to hold: none private, unassigned or
+# hidden by a shaper is looked for in the fallback folders.
+unicode-general-category = "1"
 
 [dev-dependencies]
 tempfile.workspace = true
