@@ -423,15 +423,7 @@ pub fn draw_line(
             group.text.start = group.text.start.min(range.start);
             group.text.end = group.text.end.max(range.end);
             for glyph in cluster.glyphs() {
-                group.glyphs.push(KrillaGlyph::new(
-                    GlyphId::new(glyph.id),
-                    glyph.advance / size,
-                    glyph.x / size,
-                    glyph.y / size,
-                    0.0,
-                    range.clone(),
-                    None,
-                ));
+                group.glyphs.push(krilla_glyph(&glyph, size, range.clone()));
             }
             group.advance += advance;
             x += advance;
@@ -483,6 +475,27 @@ pub fn draw_line(
         marks(surface, Mark::End(rect, covered));
         at = end;
     }
+}
+
+/// A glyph parley placed, as krilla draws it, for the text `text`.
+///
+/// Both take advances and horizontal offsets rightwards, but not vertical
+/// offsets the same way. parley lays out downwards and turns the shaper's
+/// upward offset over (`y` is `-y_offset`, `parley_engine`'s
+/// `shaped_text.rs`); krilla keeps the shaper's sign, upwards, and
+/// subtracts it from its own downward `y` (its own shaper hands it the
+/// offset as it is). So `y` is turned over again here: a mark raised over
+/// a capital stays raised. krilla also wants each in ems, not points.
+fn krilla_glyph(glyph: &parley::layout::Glyph, size: f32, text: Range<usize>) -> KrillaGlyph {
+    KrillaGlyph::new(
+        GlyphId::new(glyph.id),
+        glyph.advance / size,
+        glyph.x / size,
+        -glyph.y / size,
+        0.0,
+        text,
+        None,
+    )
 }
 
 pub fn fill(color: [u8; 3]) -> Fill {
@@ -585,6 +598,21 @@ mod tests {
         assert!(stretches[1].1.bold && stretches[1].1.link == Some(0));
         assert!(!stretches[2].1.bold && stretches[2].1.link == Some(0));
         assert!(stretches[3].1.italic);
+    }
+
+    #[test]
+    fn a_glyph_parley_raises_stays_raised_for_krilla() {
+        // parley's 2 points up (y downwards) at 10 points: 0.2 em up.
+        let raised = parley::layout::Glyph {
+            id: 7,
+            x: 1.0,
+            y: -2.0,
+            advance: 0.0,
+        };
+        let glyph = krilla_glyph(&raised, 10.0, 0..2);
+        assert!((glyph.y_offset - 0.2).abs() < 1e-6, "{}", glyph.y_offset);
+        assert!((glyph.x_offset - 0.1).abs() < 1e-6);
+        assert_eq!(glyph.text_range, 0..2);
     }
 
     #[test]

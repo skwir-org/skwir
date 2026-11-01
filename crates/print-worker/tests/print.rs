@@ -881,6 +881,63 @@ fn a_face_the_family_has_is_used_and_one_it_lacks_is_made_up() {
     assert!(page.contains("Some text, styled"), "{page}");
 }
 
+/// Where each run of glyphs of page `page` is set, in the order drawn,
+/// `y` downwards from the page's top as the helper draws: krilla sets
+/// each run's text matrix `1 0 0 -1 x y` in that space.
+fn text_origins(document: &Document, page: u32) -> Vec<(f32, f32)> {
+    let id = document.get_pages()[&page];
+    let content = document.get_and_decode_page_content(id).unwrap();
+    let number = |o: &Object| {
+        o.as_float()
+            .or_else(|_| o.as_i64().map(|i| i as f32))
+            .unwrap_or(0.0)
+    };
+    content
+        .operations
+        .iter()
+        .filter(|operation| operation.operator == "Tm" && operation.operands.len() == 6)
+        .map(|operation| {
+            (
+                number(&operation.operands[4]),
+                number(&operation.operands[5]),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_mark_above_a_capital_is_printed_above_it() {
+    let Some(fonts) = fonts() else { return };
+    let dir = scratch();
+    // Q has no precomposed form with a circumflex: the font, or HarfBuzz
+    // without it, raises the mark from its place over a small letter.
+    let mut job = job(
+        dir.path(),
+        fonts,
+        vec![Part::Flow {
+            blocks: vec![Block {
+                size: 4.0,
+                ..block("Q\u{302}")
+            }],
+        }],
+    );
+    job.header = None;
+    job.numbers = false;
+    let (_, document, _) = ok(dir.path(), &job);
+    let origins = text_origins(&document, 1);
+    let Some(&(_, base)) = origins.first() else {
+        panic!("no text set: {origins:?}");
+    };
+    assert!(
+        origins.iter().any(|&(_, y)| y < base - 1.0),
+        "the mark set higher than its letter's baseline: {origins:?}"
+    );
+    assert!(
+        origins.iter().all(|&(_, y)| y <= base + 0.01),
+        "nothing set below the baseline: {origins:?}"
+    );
+}
+
 #[test]
 fn a_job_too_large_or_unreadable_is_refused_in_a_line() {
     let dir = scratch();
