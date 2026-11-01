@@ -12,7 +12,7 @@
 //! background. A theme chosen, one of bat's or one its user added to bat
 //! (`bat::themes_dir`), brings the background it is meant for, and its
 //! bold and italic: not its underline, which in skwir is a link's.
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use skwir_core::inspection::{Inspection, Run};
 use std::path::Path;
 use std::sync::{Arc, OnceLock, RwLock, Weak};
@@ -51,6 +51,9 @@ struct Grammars {
     last_use: Option<Instant>,
     /// Whether a thread waits to let go of `kept`.
     waiting: bool,
+    /// Whether a thread reads the set, outside the lock: others wait for
+    /// it (`READ`) rather than read it too.
+    reading: bool,
 }
 
 static GRAMMARS: Mutex<Grammars> = Mutex::new(Grammars {
@@ -58,20 +61,22 @@ static GRAMMARS: Mutex<Grammars> = Mutex::new(Grammars {
     kept: None,
     last_use: None,
     waiting: false,
+    reading: false,
 });
+
+/// Told when a set read has been shared, or its reading failed.
+static READ: Condvar = Condvar::new();
 
 /// bat's grammars, syntect's defaults among them, with those the user
 /// added to bat and Sublime Text (`added`), matched by Ferroni: each
 /// grammar compiled when a file first needs it, all of them let go of once
 /// no code was colored for `GRAMMARS_KEPT`, and read again when code next
-/// is. Hold the set only while coloring, never in a static.
+/// is. Hold the set only while coloring, never in a static. Reading it
+/// reads files and may build it (`added`): a worker's work, never the
+/// window's; what bat knows without coloring is `added::table`.
 pub fn syntaxes() -> Arc<SyntaxSet> {
+    let set = shared_set();
     let mut grammars = GRAMMARS.lock();
-    let set = grammars.shared.upgrade().unwrap_or_else(|| {
-        let set = Arc::new(added::set());
-        grammars.shared = Arc::downgrade(&set);
-        set
-    });
     grammars.kept = Some(Arc::clone(&set));
     grammars.last_use = Some(Instant::now());
     if !grammars.waiting {
@@ -83,6 +88,45 @@ pub fn syntaxes() -> Arc<SyntaxSet> {
             .is_ok();
     }
     set
+}
+
+/// The set shared now, else read: by this thread outside the lock, files
+/// read and a set built there holding no one else up, or by the thread
+/// that reads it already, waited for.
+fn shared_set() -> Arc<SyntaxSet> {
+    let mut grammars = GRAMMARS.lock();
+    loop {
+        if let Some(set) = grammars.shared.upgrade() {
+            return set;
+        }
+        if !grammars.reading {
+            break;
+        }
+        READ.wait(&mut grammars);
+    }
+    grammars.reading = true;
+    drop(grammars);
+    let reading = Reading;
+    let set = Arc::new(added::set());
+    {
+        let mut grammars = GRAMMARS.lock();
+        grammars.shared = Arc::downgrade(&set);
+        // Kept until the caller keeps it, so a thread woken finds it.
+        grammars.kept = Some(Arc::clone(&set));
+    }
+    drop(reading);
+    set
+}
+
+/// A set read by this thread (`shared_set`): said over however the
+/// reading ends, a panic included.
+struct Reading;
+
+impl Drop for Reading {
+    fn drop(&mut self) {
+        GRAMMARS.lock().reading = false;
+        READ.notify_all();
+    }
 }
 
 /// Wait until the grammars have been unused for `GRAMMARS_KEPT`, let go
@@ -571,6 +615,19 @@ mod tests {
                 .len()
                 > 1
         );
+    }
+
+    /// Threads asking at once while none is shared wait for the one that
+    /// reads the set, and share it.
+    #[test]
+    fn threads_asking_at_once_share_one_set() {
+        assert_eq!(let_go_if_idle(Instant::now() + GRAMMARS_KEPT), None);
+        let sets: Vec<Arc<SyntaxSet>> = std::thread::scope(|scope| {
+            let asked: Vec<_> = (0..8).map(|_| scope.spawn(syntaxes)).collect();
+            asked.into_iter().map(|one| one.join().unwrap()).collect()
+        });
+        assert!(sets.windows(2).all(|two| Arc::ptr_eq(&two[0], &two[1])));
+        assert!(!GRAMMARS.lock().reading);
     }
 
     #[test]

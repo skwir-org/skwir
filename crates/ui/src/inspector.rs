@@ -353,7 +353,11 @@ fn engine(
 /// The runs of a document's code block (a fenced block in Markdown, a
 /// `<pre>`): by the tree-sitter grammar its language's engine is, opened,
 /// colored and let go of (a block is short); by bat's grammar otherwise,
-/// or when the helper cannot (logged, not said).
+/// or when the helper cannot (logged, not said). Each block is parsed on
+/// its own, never joined with the others of its language: blocks parsed
+/// together would color across each other (a string or a comment one
+/// leaves open colors the next). The helper is waited for under the job's
+/// token, so a preview let go of stops waiting.
 fn color_block(
     block: &skwir_core::inspection::Block,
     palette: &crate::code_preview::Palette,
@@ -378,7 +382,7 @@ fn color_block(
             &grammar,
             &block.text,
             palette,
-            &skwir_core::CancelToken::new(),
+            &skwir_core::scheduler::job_token().unwrap_or_default(),
         ) {
             Ok(runs) => return runs,
             Err(error) => tracing::debug!(%error, grammar, "a code block's tree-sitter colors"),
@@ -907,14 +911,17 @@ impl State {
         self.colors = crate::coloring::CodeColors::default();
         if refresh {
             let top = self.place(data);
-            let folds: BTreeSet<usize> = if data.kind == InspectionKind::Code {
-                data.folds.iter().map(|fold| fold.start).collect()
-            } else {
-                (0..data.rows.len())
-                    .filter(|&i| data.rows[i].branch)
-                    .collect()
-            };
-            self.collapsed = Arc::new(self.collapsed.intersection(&folds).copied().collect());
+            // The folds a grammar finds come with its parse: those closed
+            // stay closed until it comes (`folds_arrived`).
+            let parsed = data.kind == InspectionKind::Code
+                && data.folds.is_empty()
+                && display
+                    .colors
+                    .as_ref()
+                    .is_some_and(|with| with.grammar.is_some());
+            if !parsed {
+                self.keep_folds(data);
+            }
             let items = data.blocks.len() + listed(data).len();
             self.selected = self.selected.filter(|&i| i < items);
             self.selection = None;
@@ -1278,6 +1285,36 @@ impl State {
         self.highlight(data, reached);
         let row = &rows[reached];
         (!row.branch).then(|| row.target.clone()).flatten()
+    }
+    /// Keep closed only the folds `data` has: a code view's own, else
+    /// those its grammar found; an archive's folders.
+    fn keep_folds(&mut self, data: &Inspection) {
+        let folds: BTreeSet<usize> = if data.kind == InspectionKind::Code {
+            self.code_folds(data)
+                .iter()
+                .map(|fold| fold.start)
+                .collect()
+        } else {
+            (0..data.rows.len())
+                .filter(|&i| data.rows[i].branch)
+                .collect()
+        };
+        if folds.is_superset(&self.collapsed) {
+            return;
+        }
+        self.collapsed = Arc::new(self.collapsed.intersection(&folds).copied().collect());
+    }
+    /// The parse of a code view arrived, with the folds its grammar found
+    /// or none: the folds kept closed through a refresh close again where
+    /// they still are; the others are forgotten.
+    pub(crate) fn folds_arrived(&mut self, data: &Inspection) {
+        if data.kind != InspectionKind::Code || !data.folds.is_empty() {
+            return;
+        }
+        self.keep_folds(data);
+        if !self.collapsed.is_empty() {
+            self.relayout(data);
+        }
     }
     fn toggle_collapsed(&mut self, data: &Inspection, index: usize) {
         let collapsed = Arc::make_mut(&mut self.collapsed);
@@ -5364,6 +5401,36 @@ mod tests {
         assert_eq!(state.visible[top.item_ix - 1], 3);
         // Another file starts over.
         state.arrived(&changed, false);
+        assert!(state.collapsed.is_empty());
+    }
+
+    /// A code view whose folds its grammar finds keeps those closed
+    /// through a refresh until its parse comes; a parse without them
+    /// forgets them.
+    #[test]
+    fn a_refresh_keeps_a_grammar_s_folds_closed_until_its_parse_comes() {
+        let mut display = code(&["{", "  1", "}", "[", "  2", "]"], Vec::new());
+        let with = crate::coloring::Colorer {
+            language: Some("json".into()),
+            palette: Arc::new(crate::code_preview::Palette::of(
+                &crate::code_preview::CodeTheme::own(true),
+            )),
+            grammar: Some("json".into()),
+            outlined: false,
+        };
+        display.colors = Some(Arc::new(with));
+        let mut state = State::default();
+        state.reset(&display.data);
+        state.collapsed = Arc::new(BTreeSet::from([0, 3]));
+        state.arrived(&display, true);
+        assert_eq!(*state.collapsed, BTreeSet::from([0, 3]), "until the parse");
+        state.colors.parse_failed();
+        state.folds_arrived(&display.data);
+        assert!(state.collapsed.is_empty(), "no folds came");
+        // Without a grammar, a refresh keeps only the inspection's own.
+        display.colors = None;
+        state.collapsed = Arc::new(BTreeSet::from([0]));
+        state.arrived(&display, true);
         assert!(state.collapsed.is_empty());
     }
 

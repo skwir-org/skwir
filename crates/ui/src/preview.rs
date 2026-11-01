@@ -315,6 +315,10 @@ struct Version {
     size: Option<u64>,
     /// The colors its code is drawn in.
     code: crate::code_preview::CodeTheme,
+    /// The grammars code is colored with, as last picked
+    /// (`grammars::generation`): a file shown before they were found, or
+    /// with others, is colored again with those now used.
+    grammars: u64,
 }
 
 /// What the panel shows of entry `id` of `pane`: its key, its version and
@@ -346,6 +350,7 @@ fn shown_entry(
                 .value(keys::SIZE)
                 .and_then(skwir_core::Value::as_u64),
             code: code.clone(),
+            grammars: skwir_platform::grammars::generation(),
         },
         entry.clone(),
     ))
@@ -2145,6 +2150,8 @@ impl Shell {
                     .and_then(skwir_core::Value::as_time),
                 size: None,
                 code,
+                // A folder's preview colors no code.
+                grammars: 0,
             },
             entry,
         ))
@@ -6741,11 +6748,19 @@ mod tests {
             modified: modified.map(|s| std::time::UNIX_EPOCH + std::time::Duration::from_secs(s)),
             size,
             code: crate::code_preview::CodeTheme::own(dark),
+            grammars: 0,
         };
         assert!(!at(None, None, false).rewritten(&at(Some(5), Some(9), false)));
         assert!(at(Some(5), Some(9), false).rewritten(&at(Some(6), Some(9), false)));
         assert!(at(Some(5), Some(9), false).rewritten(&at(Some(5), Some(10), false)));
         assert!(!at(Some(5), Some(9), false).rewritten(&at(Some(5), Some(9), true)));
+        // Grammars found since it was colored: shown again, the same file.
+        let found = Version {
+            grammars: 1,
+            ..at(Some(5), Some(9), false)
+        };
+        assert_ne!(found, at(Some(5), Some(9), false));
+        assert!(!at(Some(5), Some(9), false).rewritten(&found));
     }
 
     #[test]

@@ -21,7 +21,8 @@
 //! meanwhile rather than colored twice; then each chunk is colored from
 //! the parse, exactly at once, wherever it is (`tree_rows`): no state
 //! goes from one chunk to the next. A parse that fails leaves the text to
-//! bat's grammar.
+//! bat's grammar, and so does a chunk the parse cannot color, colored
+//! fresh (`parsed_rows`), in the code view as in the text view.
 
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
@@ -149,7 +150,7 @@ pub(crate) fn tree_rows(
         return Ok(());
     };
     skwir_platform::inspection::check(cancel)?;
-    let spans = tree.spans(first..last.saturating_add(1))?;
+    let spans = tree.spans(first..last.saturating_add(1), cancel)?;
     for (n, row) in rows.iter_mut().enumerate() {
         if n % 64 == 0 {
             skwir_platform::inspection::check(cancel)?;
@@ -160,6 +161,29 @@ pub(crate) fn tree_rows(
             .map_or(&[][..], Vec::as_slice);
         row.runs = tree.runs(spans, from, &row.text);
         skwir_platform::links::link_block(row, true);
+    }
+    Ok(())
+}
+
+/// Rows `rows` colored from their parse (`tree_rows`, `at` saying where
+/// each is), else by bat's grammar in `colors`, fresh from the rows'
+/// start (`ends(n)` saying whether row `n` ends its line), where the parse
+/// cannot color them: `tree` an error (a line longer than a grammar
+/// colors), or the helper failing, timing out or gone. What tree-sitter
+/// cannot color bat colors, in every view alike; either way the rows are
+/// as exact as they will be, since the parse would fail them again.
+pub(crate) fn parsed_rows(
+    rows: &mut [Block],
+    (at, ends): (impl Fn(usize) -> (u32, usize), impl Fn(usize) -> bool),
+    tree: anyhow::Result<&Tree<'_>>,
+    colors: (Option<&str>, &Palette),
+    cancel: &CancelToken,
+) -> anyhow::Result<()> {
+    let colored = tree.and_then(|tree| tree_rows(rows, at, tree, cancel));
+    if let Err(error) = colored {
+        skwir_platform::inspection::check(cancel)?;
+        tracing::debug!(%error, "rows colored by bat's grammar, not their parse");
+        color_rows(rows, ends, colors, None, cancel)?;
     }
     Ok(())
 }
@@ -183,7 +207,7 @@ pub(crate) struct Parsed {
 /// cannot say beside its colors (no folds query, no outline) is left out.
 pub(crate) fn parse(
     grammar: &str,
-    text: &[u8],
+    text: skwir_platform::tree_sitter::Text,
     palette: &Palette,
     folds: bool,
     cancel: &CancelToken,
@@ -196,14 +220,14 @@ pub(crate) fn parse(
         })
         .ok()?;
     let folds = if folds {
-        tree.folds()
+        tree.folds(cancel)
             .inspect_err(|error| tracing::debug!(%error, grammar, "a tree-sitter grammar's folds"))
             .unwrap_or_default()
     } else {
         Vec::new()
     };
     let outline = tree
-        .outline()
+        .outline(cancel)
         .inspect_err(|error| tracing::debug!(%error, grammar, "a tree-sitter grammar's outline"))
         .ok()
         .and_then(|symbols| crate::outline::Symbols::of(&symbols))
@@ -369,6 +393,12 @@ impl CodeColors {
         }
     }
 
+    /// Its parse failed, as when the helper cannot have it.
+    #[cfg(test)]
+    pub(crate) fn parse_failed(&mut self) {
+        self.parse = Parse::Failed;
+    }
+
     /// Its definitions, as its tree-sitter grammar found them.
     pub(crate) fn outline(&self) -> Option<&Arc<crate::outline::Symbols>> {
         match &self.parse {
@@ -482,7 +512,7 @@ impl CodeColors {
             Next::Chunk(chunk) => {
                 if let Parse::Done(parsed) = &self.parse {
                     let parsed = Arc::clone(parsed);
-                    return self.ask_tree_chunk(app, data, chunk, parsed);
+                    return self.ask_tree_chunk(app, (data, with), chunk, parsed);
                 }
                 let exact = self.known(chunk);
                 let from = self.starts.get(&chunk).cloned();
@@ -544,11 +574,12 @@ impl CodeColors {
         }
     }
 
-    /// Color chunk `chunk` of `data` from its parse.
+    /// Color chunk `chunk` of `data` from its parse, else by bat's grammar
+    /// as `with` says (`parsed_rows`).
     fn ask_tree_chunk(
         &mut self,
         app: &Arc<skwir_core::App>,
-        data: Arc<Inspection>,
+        (data, with): (Arc<Inspection>, Colorer),
         chunk: u64,
         parsed: Arc<Parsed>,
     ) {
@@ -564,16 +595,11 @@ impl CodeColors {
                 // A block is a whole line: its spans from its start.
                 let first = chunk * STRIDE;
                 let at = |n: usize| (u32::try_from(first + n as u64).unwrap_or(u32::MAX), 0);
-                if let Err(error) = tree_rows(&mut rows, at, &parsed.tree, cancel) {
-                    if !cancel.is_cancelled() {
-                        tracing::debug!(%error, chunk, "coloring a chunk from its parse");
-                    }
-                    // Plain rows, their links found: taken, never asked
-                    // again while the view lasts.
-                    for row in &mut rows {
-                        row.runs.clear();
-                        skwir_platform::links::link_block(row, true);
-                    }
+                let colors = (with.language.as_deref(), &*with.palette);
+                // It fails only when let go of: never taken.
+                if parsed_rows(&mut rows, (at, |_| true), Ok(&parsed.tree), colors, cancel).is_err()
+                {
+                    return Reply::Forward { kept: Vec::new() };
                 }
                 Reply::Chunk {
                     chunk,
@@ -613,9 +639,10 @@ impl CodeColors {
                     text.push_str(&block.text);
                 }
                 let folds = data.folds.is_empty();
-                Reply::Parsed(
-                    parse(&grammar, text.as_bytes(), &palette, folds, cancel).map(Arc::new),
-                )
+                // Joined once, then kept by the tree alone (to parse again
+                // in a helper started later), never copied.
+                let text = Arc::<[u8]>::from(text.into_bytes());
+                Reply::Parsed(parse(&grammar, text.into(), &palette, folds, cancel).map(Arc::new))
             },
         );
     }
@@ -707,11 +734,21 @@ impl Shell {
         if !colors.asked.is_pending() {
             return;
         }
+        let waited = matches!(colors.parse, Parse::Asked);
         let changed = colors.take();
+        let parsed = waited && !matches!(colors.parse, Parse::Asked);
         if let Some(PreviewContent::Inspection(display)) = &preview.content
             && let Some(with) = display.colors.as_ref()
         {
-            colors.request(&self.app, &display.data, with);
+            preview
+                .inspection
+                .colors
+                .request(&self.app, &display.data, with);
+            if parsed {
+                // Its folds came, or none will: those kept closed through
+                // a refresh close again.
+                preview.inspection.folds_arrived(&display.data);
+            }
         }
         if changed {
             cx.notify();
@@ -722,6 +759,41 @@ impl Shell {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// Rows the parse cannot color (the helper gone, a line too long for
+    /// it) are colored by bat's grammar, fresh, and their links found:
+    /// never left plain, whichever view asks.
+    #[test]
+    fn rows_the_parse_cannot_color_are_colored_by_bat_s_grammar() {
+        let palette = Palette::of(&crate::code_preview::CodeTheme::own(false));
+        let mut rows: Vec<Block> = [
+            "fn main() {",
+            "    let answer = 42; // see https://example.invalid/answer",
+            "}",
+        ]
+        .iter()
+        .map(|text| Block {
+            text: (*text).to_owned(),
+            code: true,
+            ..Block::default()
+        })
+        .collect();
+        let at = |n: usize| (u32::try_from(n).unwrap(), 0);
+        parsed_rows(
+            &mut rows,
+            (at, |_| true),
+            Err(anyhow::anyhow!("the helper is gone")),
+            (Some("rs"), &palette),
+            &CancelToken::new(),
+        )
+        .unwrap();
+        let colors: HashSet<[u8; 3]> = rows
+            .iter()
+            .flat_map(|row| row.runs.iter().filter_map(|run| run.color))
+            .collect();
+        assert!(colors.len() > 2, "{colors:?}");
+        assert!(rows[1].runs.iter().any(|run| run.link.is_some()));
+    }
 
     /// The tree-sitter helper built beside the tests, told the JSON grammar
     /// it is tested with (`crates/tree-sitter-worker/tests/fixtures/json`,

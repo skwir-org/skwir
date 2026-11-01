@@ -190,7 +190,16 @@ The key is the owner's; the page is the subject's (ADR-072).
   user does). One longer than `settings_records::FOLD` has a filter over
   its words, which says how many it found, and shows its first rows until
   unfolded. A record's own choice steps by Left and Right, as a setting's
-  does, its popup under its right edge, inside the dialog.
+  does, its popup under its right edge, inside the dialog. A list is
+  parsed once for each text it has (`SettingsView::parsed_records`),
+  never per frame or per record; a list its owner keeps elsewhere is
+  answered from memory (`ui.languages` reads no grammar).
+- **Data is written by its owning command, off the window's thread.**
+  `settings.apply` takes no `data` setting; its command changes it
+  through `Settings::set` and saves it on a worker when asked from the
+  window (a save holds the settings' writer across the file's write),
+  the changes queued in the order made (`ui.grammar_choose`, as the
+  pinned tags do), and where it is asked otherwise.
 - **Changed by you** lists what differed from its default when it was
   reached, settings and plugins (`PluginInfo::enabled_by_default`), each
   with its way back, then Restore all; its count in the sidebar is live.

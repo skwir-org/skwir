@@ -13,6 +13,7 @@
 //! says the keyring has it. Removing a record forgets its secrets. The
 //! whole list is validated before anything is kept, so a record the owner
 //! refuses leaves nothing in the keyring.
+use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui::{AnyElement, Context, Entity, Focusable, Subscription, Window, div, prelude::*, px};
@@ -110,6 +111,23 @@ fn inset_row(theme: &Theme, first: bool) -> gpui::Div {
 /// The records a setting's editor text holds.
 pub(crate) fn records(text: &str) -> Vec<Record> {
     serde_json::from_str(text).unwrap_or_default()
+}
+
+impl SettingsView {
+    /// The records of setting `key` whose editor text is `value`, parsed
+    /// once for each text: a list is drawn every frame, and may hold
+    /// hundreds (the Grammars' languages).
+    pub(crate) fn parsed_records(&self, key: &str, value: &str) -> Rc<Vec<Record>> {
+        let mut parsed = self.parsed_records.borrow_mut();
+        if let Some((text, records)) = parsed.get(key)
+            && text == value
+        {
+            return Rc::clone(records);
+        }
+        let list = Rc::new(records(value));
+        parsed.insert(key.to_owned(), (value.to_owned(), Rc::clone(&list)));
+        list
+    }
 }
 
 fn text_of(record: &Record, key: &str) -> String {
@@ -662,7 +680,7 @@ impl SettingsView {
         };
         debug_assert_eq!(spec.kind, SettingKind::Records);
         let editing = self.drafts.get(key).map(|d| (d.id.clone(), d.new));
-        let all = records(value);
+        let all = self.parsed_records(key, value);
         // A long list: its filter, and its first rows until unfolded.
         let long = all.len() > FOLD;
         let filter = long.then(|| self.record_filter(key, cx));
@@ -683,8 +701,8 @@ impl SettingsView {
                     .iter()
                     .any(|field| text_of(record, field).to_lowercase().contains(&query))
         };
-        let mut shown: Vec<(usize, Option<Record>)> = all
-            .into_iter()
+        let mut shown: Vec<(usize, Option<&Record>)> = all
+            .iter()
             .enumerate()
             .filter(|(_, record)| matches(record))
             .map(|(index, record)| (index, Some(record)))
@@ -721,7 +739,8 @@ impl SettingsView {
             let element = if edited {
                 self.record_form(key, edge, item, theme, window, cx)
             } else if let (Some(record), Some(id)) = (record, id) {
-                self.record_row(key, &spec, record, (&id, *index), edge, item, theme, cx)
+                let place = (&id[..], *index, all.len());
+                self.record_row(key, &spec, record, place, edge, item, theme, cx)
             } else {
                 continue;
             };
@@ -780,7 +799,7 @@ impl SettingsView {
                             .child(if query.is_empty() {
                                 format!("{found}")
                             } else {
-                                format!("{found} of {}", records(value).len())
+                                format!("{found} of {}", all.len())
                             }),
                     ),
             );
@@ -842,7 +861,7 @@ impl SettingsView {
         key: &str,
         spec: &skwir_core::settings::SettingSpec,
         record: &Record,
-        (id, index): (&str, usize),
+        (id, index, count): (&str, usize, usize),
         edge: crate::settings_view::Edge,
         item: usize,
         theme: &Theme,
@@ -944,7 +963,6 @@ impl SettingsView {
                     this.remove_record(&remove_key, &remove_id, cx);
                 })),
             );
-        let count = records(&self.row(key).map(|r| r.value.clone()).unwrap_or_default()).len();
         let drag = RecordDrag {
             key: key.to_owned(),
             index,

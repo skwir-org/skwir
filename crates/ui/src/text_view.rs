@@ -44,7 +44,7 @@ use skwir_platform::text_rows::{self, Form, Index, Point, STRIDE};
 
 use crate::code_preview::{Palette, Resume};
 use crate::coloring::{
-    Parsed, Shade, around, color_rows, let_go, next_to_color, parse, tree_rows, unread,
+    Parsed, Shade, around, color_rows, let_go, next_to_color, parse, parsed_rows, unread,
 };
 use crate::elements::rows::{Scroll, Seen};
 use crate::latest::Latest;
@@ -213,19 +213,13 @@ fn read_chunk(
                         .map_or(text.bytes.len(), |newline| offset + newline + 1);
                 }
             }
-            let colored = if long {
+            let tree = if long {
                 Err(anyhow::anyhow!("a line longer than a grammar colors"))
             } else {
-                tree_rows(&mut blocks, |n| at[n], &text.parsed.tree, cancel)
+                Ok(&text.parsed.tree)
             };
-            // Colored fresh, as after a jump, and taken as exact: the parse
-            // would fail it again.
-            if let Err(error) = colored {
-                skwir_platform::inspection::check(cancel)?;
-                tracing::debug!(%error, chunk, "a text's rows colored by bat's grammar instead");
-                let language = file.language.as_deref();
-                color_rows(&mut blocks, |n| ends[n], (language, palette), None, cancel)?;
-            }
+            let colors = (file.language.as_deref(), palette);
+            parsed_rows(&mut blocks, (|n| at[n], |n| ends[n]), tree, colors, cancel)?;
             if let Some(paths) = paths {
                 paths.lock().link(&mut blocks);
                 skwir_platform::inspection::check(cancel)?;
@@ -502,7 +496,9 @@ impl TextView {
             move |cancel| {
                 let bytes = held_text(&file, form, cancel)?;
                 let start = usize::try_from(form.start).ok()?;
-                let parsed = parse(&grammar, &bytes[start..], &palette, false, cancel)?;
+                // The tree keeps the bytes the preview holds, not a copy.
+                let shared = skwir_platform::tree_sitter::Text::shared(Arc::clone(&bytes), start);
+                let parsed = parse(&grammar, shared, &palette, false, cancel)?;
                 Some(Arc::new(Text { parsed, bytes }))
             },
         );
@@ -1278,7 +1274,7 @@ mod tests {
         assert!(!start.first, "the second chunk starts inside the long line");
         assert_eq!(held_text(&file, form, &cancel).as_deref(), Some(&bytes[..]));
         let palette = Palette::of(&crate::code_preview::CodeTheme::own(false));
-        let tree = Tree::open_in(helper, "json", &bytes, &palette, &cancel).unwrap();
+        let tree = Tree::open_in(helper, "json", Arc::clone(&bytes), &palette, &cancel).unwrap();
         let parsed = Text {
             parsed: Parsed {
                 tree,

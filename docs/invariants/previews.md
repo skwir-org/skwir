@@ -1504,16 +1504,29 @@ is still to come are in `docs/preview-frame.md`.
   state may be resumed (`Resume`, whose parser state indexes into it):
   never in a static or a long-lived struct, which would keep every
   grammar compiled for good. Unused for `GRAMMARS_KEPT`, it is let go
-  of and the workers that compiled it release.
+  of and the workers that compiled it release. Reading it reads files
+  and may build it (the grammars added, `highlight::added`): on a worker,
+  outside the lock others wait at, never on the window's thread. What bat
+  knows without coloring (a grammar's name, the files it colors) is
+  `added::table`, kept in the cache beside the set and read at start:
+  finding grammars, the Reading page and choosing an engine never read
+  the set. The last few sets built are kept (`added::KEEP`), so builds
+  of skwir run side by side each find theirs.
 - **A tree-sitter grammar is the second engine** (ADR-110), chosen by
   `highlight::engine`: a language's own choice first
-  (`reading.grammar_for`, by its name in lower case: bat, a source's
-  tree-sitter grammar, or plain text, which every coloring path honours
-  by coloring as plain text), else Automatic (`reading.grammars`, bat
-  first by default; a language only one engine knows is that one's).
+  (`reading.grammar_for`: bat, a source's tree-sitter grammar, or plain
+  text, which every coloring path honours by coloring as plain text),
+  else Automatic (`reading.grammars`, bat first by default; a language
+  only one engine knows is that one's). A choice is kept and found by the
+  key its language is listed by (`tree::languages`, `tree::language_key`,
+  one grouping for both): never by another name for the same language
+  (bat's "Bourne Again Shell (bash)" is `bash`'s).
   Each source's grammar of a language is found (`grammars::all`); the one
-  used is the source chosen, else the first usable (`grammars::choose`,
-  run before the setting changes, so a preview colored again finds it).
+  used is the source chosen, else the first usable, picked under the
+  choices the coloring reads (`grammars::sync`, from `engine`), whoever
+  made them: a reload, another window, a script. A preview's version
+  carries what was picked (`grammars::generation`), so one colored before
+  the grammars were found, or with others, is colored again.
   It colors in the theme
   bat's grammars do: capture names are mapped to bat's scopes
   (`highlight::tree::scope_of`), never colored apart. It parses only
@@ -1521,12 +1534,15 @@ is still to come are in `docs/preview-frame.md`.
   reading the file again; until the parse comes a chunk stays plain,
   then each chunk is colored from it exactly, with no state carried from
   the chunk before. Whatever it cannot color (a line past
-  `tree::LONGEST_LINE`, a helper's failure) bat colors.
+  `tree::LONGEST_LINE`, a helper's failure) bat colors, fresh, in every
+  view (`coloring::parsed_rows`).
 - **A grammar's folds and outline come with its parse**, never from a
   parse of their own: folds only for a code view whose inspection has
   none (a parser's folds win), passed through `tree::nest` so they keep
-  the rule above; the outline is the contents of a file that has none,
-  each entry leading to its line (`ui.inspect`, `line`).
+  the rule above, and kept closed through a refresh until the new parse
+  says where they are (`State::folds_arrived`); the outline is the
+  contents of a file that has none, each entry leading to its line
+  (`ui.inspect`, `line`).
 - **A grammar's files are where they really lie** (`grammars::find_in`,
   `Confined`): each is named by its real path and kept only in its
   source's folders. What a description names (a `tree-sitter.json`, an

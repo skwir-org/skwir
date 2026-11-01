@@ -380,13 +380,11 @@ pub fn named<'a>(found: &'a [Found], name: &str) -> Option<&'a Found> {
 }
 
 /// What bat's grammars say each language colors, by its name in lower
-/// case: the files a grammar found without file types borrows.
+/// case: the files a grammar found without file types borrows. Read from
+/// what bat's set holds as kept (`added::table_now`), never the set: a
+/// start finds grammars without reading bat's.
 fn bat_file_types() -> HashMap<String, Vec<String>> {
-    let set = crate::highlight::syntaxes();
-    set.syntaxes()
-        .iter()
-        .map(|syntax| (syntax.name.to_lowercase(), syntax.file_extensions.clone()))
-        .collect()
+    crate::highlight::added::table_now().file_types()
 }
 
 impl Roots {

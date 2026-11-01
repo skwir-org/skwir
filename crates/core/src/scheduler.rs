@@ -530,6 +530,13 @@ pub fn job_cancelled() -> bool {
         .unwrap_or(false)
 }
 
+/// The token of the job the calling thread runs, `None` outside a job: a
+/// caller that waits on something cancellable (a helper's answer) passes
+/// it, so the job let go of stops waiting.
+pub fn job_token() -> Option<CancelToken> {
+    JOB.try_with(|job| job.borrow().clone()).ok().flatten()
+}
+
 /// Whether a window marked its thread: else skwir runs without one (a
 /// script's `skwir cmd`, a test), and nothing applies what listings send
 /// unless the caller does.
@@ -813,17 +820,20 @@ mod tests {
     #[test]
     fn a_job_sees_its_own_cancellation() {
         assert!(!job_cancelled(), "outside a job");
+        assert!(job_token().is_none(), "outside a job");
         let scheduler = Scheduler::new(2);
         let cancel = CancelToken::new();
         let (started, began) = crossbeam_channel::bounded(1);
         let (tx, rx) = crossbeam_channel::bounded(1);
         scheduler.spawn(Priority::Normal, "test", cancel.clone(), move || {
             let before = job_cancelled();
+            // What it waits on stops with it, through its token.
+            let token = job_token().expect("in a job");
             started.send(()).unwrap();
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while !job_cancelled() && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(1));
-            }
+            let _ = token
+                .subscribe()
+                .receiver()
+                .recv_timeout(Duration::from_secs(5));
             tx.send((before, job_cancelled())).unwrap();
         });
         began.recv_timeout(Duration::from_secs(5)).unwrap();

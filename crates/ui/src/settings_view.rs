@@ -944,7 +944,7 @@ impl SettingsView {
         // A list's records are rows of the same card, under its own.
         let records = row.spec.kind == SettingKind::Records;
         let below = records
-            && (!crate::settings_records::records(&row.value).is_empty()
+            && (!self.parsed_records(&key, &row.value).is_empty()
                 || self.drafts.contains_key(&key));
         items.push(
             card_row(

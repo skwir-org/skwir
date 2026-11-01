@@ -11,31 +11,31 @@
 //! byte of a row is in a run, those no capture colors in the theme's own
 //! color, as bat's runs are.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use parking_lot::Mutex;
 use skwir_core::CancelToken;
 use skwir_core::inspection::Run;
-use skwir_core::syntax::{MAX_LINES, Span, Symbol};
+use skwir_core::syntax::{Span, Symbol};
 use syntect::highlighting::{FontStyle, Style};
 use syntect::parsing::ScopeStack;
 
 use super::Palette;
+use super::added::{Added, Table};
 use crate::grammars::{self, Found, Source};
-use crate::tree_sitter::{self, Helper};
+use crate::tree_sitter::{self, Helper, Text};
 
 /// Which grammars color a language that both bat's grammars and a
 /// tree-sitter grammar know (`First`).
 pub const ENGINE_KEY: &str = "reading.grammars";
 
 /// The longest line a tree-sitter grammar colors, and the longest code
-/// block: the helper answers a line's spans whole, and a minified file's
-/// one line could hold more of them than a reply does
-/// (`syntax::MAX_REPLY`), at a span every two bytes. bat's grammar colors
-/// a longer one.
-pub const LONGEST_LINE: usize = 1 << 20;
+/// block: the longest the helper keeps spans of (`syntax::MAX_LINE`), one
+/// bound for both. bat's grammar colors a longer one.
+pub const LONGEST_LINE: usize = skwir_core::syntax::MAX_LINE;
 
 /// Which grammars color a language both know: bat's (the default) or a
 /// tree-sitter grammar found for it. A language only one knows is colored
@@ -133,7 +133,7 @@ impl GrammarChoices {
     }
 
     /// The languages whose tree-sitter grammar is chosen from a source:
-    /// what `grammars::choose` takes.
+    /// what `grammars::sync` takes.
     pub fn sources(&self) -> BTreeMap<String, Source> {
         self.chosen
             .iter()
@@ -153,6 +153,150 @@ pub fn chosen_in(table: &BTreeMap<String, String>) -> BTreeMap<String, Choice> {
         .collect()
 }
 
+/// A language as the Reading page lists it, and as its own choice is kept
+/// (`reading.grammar_for`): the tree-sitter grammar each source keeps of
+/// it, usable or not, and the grammars added to bat and Sublime Text that
+/// color its files.
+#[derive(Clone, Debug)]
+pub struct Language {
+    /// Its name in lower case: what its choice is kept by.
+    pub key: String,
+    pub title: String,
+    pub file_types: Vec<String>,
+    pub tree: Vec<Found>,
+    pub added: Vec<Added>,
+}
+
+/// The languages a tree-sitter grammar was found or a grammar added for,
+/// by key: each source's grammar of a language beside the others (`all`
+/// keeps them by language), an added grammar joining the tree-sitter
+/// language of its name, else the first whose files it colors too, else
+/// standing alone.
+pub fn languages(all: &[Found], added: &[Added]) -> Vec<Language> {
+    let mut languages: Vec<Language> = Vec::new();
+    for found in all {
+        let key = found.grammar.name.to_lowercase();
+        match languages.last_mut() {
+            Some(language) if language.key == key => language.tree.push(found.clone()),
+            _ => languages.push(Language {
+                key,
+                title: found.grammar.name.clone(),
+                file_types: found.file_types.clone(),
+                tree: vec![found.clone()],
+                added: Vec::new(),
+            }),
+        }
+    }
+    // Where each name and each file type is first found, so an added
+    // grammar finds its language at once, however many there are.
+    let mut by_key: HashMap<String, usize> = HashMap::new();
+    let mut by_type: HashMap<String, usize> = HashMap::new();
+    for (at, language) in languages.iter().enumerate() {
+        by_key.entry(language.key.clone()).or_insert(at);
+        for file_type in types_of(&language.file_types) {
+            by_type.entry(file_type).or_insert(at);
+        }
+    }
+    let mut alone: Vec<Language> = Vec::new();
+    let mut alone_by_key: HashMap<String, usize> = HashMap::new();
+    for added in added {
+        let key = added.name.to_lowercase();
+        let home = by_key.get(&key).copied().or_else(|| {
+            types_of(&added.file_types)
+                .iter()
+                .filter_map(|file_type| by_type.get(file_type).copied())
+                .min()
+        });
+        if let Some(at) = home {
+            languages[at].added.push(added.clone());
+        } else if let Some(&at) = alone_by_key.get(&key) {
+            alone[at].added.push(added.clone());
+        } else {
+            alone_by_key.insert(key.clone(), alone.len());
+            alone.push(Language {
+                key,
+                title: added.name.clone(),
+                file_types: added.file_types.clone(),
+                tree: Vec::new(),
+                added: vec![added.clone()],
+            });
+        }
+    }
+    languages.extend(alone);
+    languages.sort_by(|a, b| a.key.cmp(&b.key));
+    languages
+}
+
+/// File types as they are matched: without a leading dot, in lower case.
+fn types_of(types: &[String]) -> HashSet<String> {
+    types
+        .iter()
+        .map(|t| t.trim_start_matches('.').to_lowercase())
+        .collect()
+}
+
+/// The languages as last found and read (`languages` of `grammars::all`
+/// and `added::listed`), worked out again only when either was.
+pub fn listed_languages() -> Arc<[Language]> {
+    type Listed = (Arc<[Found]>, Arc<[Added]>, Arc<[Language]>);
+    static LISTED: Mutex<Option<Listed>> = Mutex::new(None);
+    let all = grammars::all().unwrap_or_default();
+    let added = super::added::listed().unwrap_or_default();
+    let mut listed = LISTED.lock();
+    if let Some((was_all, was_added, languages)) = listed.as_ref()
+        && Arc::ptr_eq(was_all, &all)
+        && Arc::ptr_eq(was_added, &added)
+    {
+        return Arc::clone(languages);
+    }
+    let languages: Arc<[Language]> = languages(&all, &added).into();
+    *listed = Some((all, added, Arc::clone(&languages)));
+    languages
+}
+
+/// The key of the language a text is of, as the Reading page keeps its
+/// choice (`Language::key`): the text named `name`, colored as `language`
+/// (`engine`'s). The language of the tree-sitter grammar that colors it
+/// (`grammars::for_file`: a usable one, else any, so a language whose
+/// grammars cannot be used is still the one chosen for), else of the one
+/// a code block names; else the one bat's grammar for it joins, as an
+/// added grammar joins one (`languages`: its own, by its name, else the
+/// tree-sitter language whose files it colors too; a ` ```c++ ` block is
+/// `cpp`'s); else bat's grammar's name, in lower case.
+pub fn language_key(
+    languages: &[Language],
+    all: &[Found],
+    (name, language, first_line): (&str, Option<&str>, Option<&str>),
+    bat: &Table,
+) -> Option<String> {
+    let tree = grammars::for_file(all, name, first_line)
+        .or_else(|| grammars::for_file_any(all, name, first_line))
+        .or_else(|| language.and_then(|language| grammars::named(all, language)));
+    if let Some(tree) = tree {
+        return Some(tree.grammar.name.to_lowercase());
+    }
+    let named = language.and_then(|language| bat.grammar_of(language))?;
+    let key = named.name.to_lowercase();
+    let types = types_of(&named.file_types);
+    let home = languages
+        .iter()
+        .find(|listed| listed.key == key)
+        .or_else(|| {
+            languages.iter().find(|listed| {
+                listed
+                    .added
+                    .iter()
+                    .any(|added| added.name.eq_ignore_ascii_case(&named.name))
+            })
+        })
+        .or_else(|| {
+            languages.iter().find(|listed| {
+                !listed.tree.is_empty() && !types_of(&listed.file_types).is_disjoint(&types)
+            })
+        });
+    Some(home.map_or(key, |listed| listed.key.clone()))
+}
+
 /// What colors a text: bat's grammars, the tree-sitter grammar named, or
 /// nothing (its language chosen Plain text).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -165,49 +309,42 @@ pub enum Engine {
 /// What colors a text named `name` (a file's name; its language when it
 /// has none, as a document's code block), colored as `language` (what the
 /// code view colors by: an extension or a name), `first_line` its first
-/// line. Its language's own choice first (`grammars.chosen`, by the
-/// tree-sitter grammar found for it, else by bat's grammar's name): bat's,
-/// the tree-sitter grammar (the source chosen is the one `found` uses, or
-/// Automatic when it is gone), or nothing. Automatic: the tree-sitter
-/// grammar found for it where `grammars.first` chooses it, or where bat's
-/// grammars know no `language`; else bat's. Before the grammars are
-/// found, or with none, bat's unless chosen Plain. It may read bat's
-/// grammars: a worker's work.
+/// line. Its language's own choice first (`grammars.chosen`, by the key
+/// the Reading page keeps it by, `language_key`): bat's, the tree-sitter
+/// grammar of the source chosen (Automatic when it cannot be used), or
+/// nothing. Automatic: the tree-sitter grammar used for it where
+/// `grammars.first` chooses it, or where bat's grammars know no
+/// `language`; else bat's. The grammar used for each language is picked
+/// under these very choices (`grammars::sync`), whoever made them: a
+/// choice made in another window, by hand or by a script is honoured.
+/// Before the grammars are found, or with none, bat's unless chosen
+/// Plain. It may read what bat's set holds: a worker's work.
 pub fn engine(
     name: &str,
     language: Option<&str>,
     first_line: Option<&str>,
     grammars: &GrammarChoices,
 ) -> Engine {
-    let found = grammars::found().unwrap_or_default();
+    let found = grammars::sync(&grammars.sources());
+    let all = grammars::all().unwrap_or_default();
     engine_in(
-        &found,
+        (&found, &all, &listed_languages()),
         (name, language, first_line),
         grammars,
-        |token| {
-            super::syntaxes()
-                .find_syntax_by_token(token)
-                .is_some_and(|syntax| syntax.name != "Plain Text")
-        },
-        |token| {
-            super::syntaxes()
-                .find_syntax_by_token(token)
-                .filter(|syntax| syntax.name != "Plain Text")
-                .map(|syntax| syntax.name.to_lowercase())
-        },
+        &super::added::table_now(),
     )
 }
 
-/// `engine` among the grammars `found`, `bat_knows` saying whether bat's
-/// grammars color a language token, `bat_name` the name of bat's grammar
-/// that does (in lower case).
+/// `engine` among the grammars `found` (one for each language, as used),
+/// `all` (every source's) and the languages they make, `bat` saying what
+/// bat's grammars color.
 fn engine_in(
-    found: &[Found],
-    (name, language, first_line): (&str, Option<&str>, Option<&str>),
+    (found, all, languages): (&[Found], &[Found], &[Language]),
+    file: (&str, Option<&str>, Option<&str>),
     grammars: &GrammarChoices,
-    bat_knows: impl FnOnce(&str) -> bool,
-    bat_name: impl FnOnce(&str) -> Option<String>,
+    bat: &Table,
 ) -> Engine {
+    let (name, language, first_line) = file;
     // By the file's name, else by the language a code block names
     // (`rust`, where its grammar colors `.rs`).
     let tree = grammars::for_file(found, name, first_line).or_else(|| {
@@ -216,10 +353,8 @@ fn engine_in(
             .filter(|found| found.problem.is_none())
     });
     if !grammars.chosen.is_empty() {
-        let language_of = tree
-            .map(|tree| tree.grammar.name.to_lowercase())
-            .or_else(|| language.and_then(bat_name));
-        match language_of.and_then(|of| grammars.chosen.get(&of)) {
+        let key = language_key(languages, all, file, bat);
+        match key.and_then(|key| grammars.chosen.get(&key)) {
             Some(Choice::Plain) => return Engine::Plain,
             Some(Choice::Bat) => return Engine::Bat,
             Some(Choice::TreeSitter(source)) => {
@@ -233,7 +368,7 @@ fn engine_in(
     let Some(tree) = tree else {
         return Engine::Bat;
     };
-    if grammars.first == First::Bat && language.is_some_and(bat_knows) {
+    if grammars.first == First::Bat && language.is_some_and(|token| bat.colors(token).is_some()) {
         return Engine::Bat;
     }
     Engine::TreeSitter(tree.grammar.name.clone())
@@ -428,7 +563,10 @@ impl Captured {
             }
         };
         let mut at = from;
-        for span in spans {
+        // The spans that end before the row starts are passed over at once,
+        // not one by one: a row deep in a long line starts after thousands.
+        let first = spans.partition_point(|span| span.end as usize <= from);
+        for span in &spans[first..] {
             let (start, stop) = (span.start as usize, span.end as usize);
             if start >= end {
                 break;
@@ -473,14 +611,16 @@ pub struct Tree<'h> {
 
 impl Tree<'static> {
     /// `text`, UTF-8, parsed by the grammar named `grammar` in the helper
-    /// every caller shares (`tree_sitter::shared`).
+    /// every caller shares (`tree_sitter::shared`). A text a preview holds
+    /// is shared with it (`Text::shared`): the tree keeps it, to parse it
+    /// again in a helper started later, never a copy of it.
     ///
     /// # Errors
     /// The helper's: not installed, the grammar failing to load, a text
     /// too long, a timeout, a cancel.
     pub fn open(
         grammar: &str,
-        text: &[u8],
+        text: impl Into<Text>,
         palette: &Palette,
         cancel: &CancelToken,
     ) -> anyhow::Result<Tree<'static>> {
@@ -496,7 +636,7 @@ impl<'h> Tree<'h> {
     pub fn open_in(
         helper: &'h Helper,
         grammar: &str,
-        text: &[u8],
+        text: impl Into<Text>,
         palette: &Palette,
         cancel: &CancelToken,
     ) -> anyhow::Result<Tree<'h>> {
@@ -515,20 +655,16 @@ impl<'h> Tree<'h> {
     }
 
     /// The spans of lines `lines`, each line's in its own bytes; those past
-    /// the text's last line left out.
+    /// the text's last line left out. `cancel` stops the wait.
     ///
     /// # Errors
-    /// The helper's: one that ended, a timeout.
-    pub fn spans(&self, lines: Range<u32>) -> anyhow::Result<Vec<Vec<Span>>> {
-        let asked = lines.end.min(self.lines).saturating_sub(lines.start);
-        let mut spans = Vec::with_capacity(asked as usize);
-        let mut from = lines.start;
-        while from < lines.end.min(self.lines) {
-            let to = from.saturating_add(MAX_LINES).min(lines.end);
-            spans.extend(self.helper.colors(&self.doc, from..to, &CancelToken::new())?);
-            from = to;
+    /// The helper's: one that ended, a timeout, a cancel.
+    pub fn spans(&self, lines: Range<u32>, cancel: &CancelToken) -> anyhow::Result<Vec<Vec<Span>>> {
+        let end = lines.end.min(self.lines);
+        if lines.start >= end {
+            return Ok(Vec::new());
         }
-        Ok(spans)
+        self.helper.colors(&self.doc, lines.start..end, cancel)
     }
 
     /// The runs of `text`, the bytes from `from` of a line whose spans are
@@ -539,20 +675,24 @@ impl<'h> Tree<'h> {
 
     /// Where it folds, as the code view folds (`Inspection::folds`): lines
     /// `start..end`, the first and the last shown and those between hidden,
-    /// one line at least; nested or apart, in order of `start`.
+    /// one line at least; nested or apart, in order of `start`. `cancel`
+    /// stops the wait.
     ///
     /// # Errors
-    /// The helper's.
-    pub fn folds(&self) -> anyhow::Result<Vec<Range<usize>>> {
-        Ok(nest(self.helper.folds(&self.doc, &CancelToken::new())?))
+    /// The helper's, a cancel.
+    pub fn folds(&self, cancel: &CancelToken) -> anyhow::Result<Vec<Range<usize>>> {
+        anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+        Ok(nest(self.helper.folds(&self.doc, cancel)?))
     }
 
-    /// The definitions it holds, in the text's order.
+    /// The definitions it holds, in the text's order. `cancel` stops the
+    /// wait.
     ///
     /// # Errors
-    /// The helper's.
-    pub fn outline(&self) -> anyhow::Result<Vec<Symbol>> {
-        self.helper.outline(&self.doc, &CancelToken::new())
+    /// The helper's, a cancel.
+    pub fn outline(&self, cancel: &CancelToken) -> anyhow::Result<Vec<Symbol>> {
+        anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+        self.helper.outline(&self.doc, cancel)
     }
 }
 
@@ -609,7 +749,7 @@ fn color_text_in(
         LONGEST_LINE >> 10
     );
     let tree = Tree::open_in(helper, grammar, text.as_bytes(), palette, cancel)?;
-    let spans = tree.spans(0..tree.lines())?;
+    let spans = tree.spans(0..tree.lines(), cancel)?;
     let mut runs = Vec::new();
     let mut offset = 0;
     for (n, line) in text.split('\n').enumerate() {
@@ -699,14 +839,18 @@ mod tests {
             found("broken", &["brk"], Some("no library")),
         ];
         // bat's grammars know JSON and Rust, not Zig.
-        let bat = |token: &str| matches!(token, "json" | "rs" | "rust");
+        let bat = table(&[
+            ("JSON", &["json"]),
+            ("Rust", &["rs"]),
+            ("Plain Text", &["txt"]),
+        ]);
+        let listed = languages(&found, &[]);
         let engine = |name, language, first| {
             engine_in(
-                &found,
+                (&found, &found, &listed),
                 (name, language, None),
                 &GrammarChoices::automatic(first),
-                bat,
-                |_| None,
+                &bat,
             )
         };
         let tree = |name: &str| Engine::TreeSitter(name.to_owned());
@@ -742,11 +886,10 @@ mod tests {
         // No grammars found: bat's.
         assert_eq!(
             engine_in(
-                &[],
+                (&[], &[], &[]),
                 ("main.zig", Some("zig"), None),
                 &GrammarChoices::automatic(First::TreeSitter),
-                bat,
-                |_| None
+                &bat,
             ),
             Engine::Bat
         );
@@ -756,14 +899,66 @@ mod tests {
         assert_eq!(First::CHOICES[0].0, "bat", "the default first");
     }
 
-    /// A language's own choice comes before Automatic's rule: bat, its
-    /// tree-sitter grammar (while the source chosen is the one used), or
-    /// no colors, a language bat alone knows found by bat's grammar.
+    /// bat's set as a table of grammars and the files they color.
+    fn table(grammars: &[(&str, &[&str])]) -> Table {
+        Table::new(
+            grammars
+                .iter()
+                .map(|(name, types)| super::super::added::Named {
+                    name: (*name).to_owned(),
+                    file_types: types.iter().map(|&t| t.to_owned()).collect(),
+                })
+                .collect(),
+        )
+    }
+
+    fn added(name: &str, file_types: &[&str]) -> Added {
+        Added {
+            name: name.into(),
+            source: super::super::added::Source::Bat,
+            path: std::path::PathBuf::from(format!("{name}.sublime-syntax")),
+            member: None,
+            file_types: file_types.iter().map(|&t| t.to_owned()).collect(),
+            problem: None,
+        }
+    }
+
+    /// A choice is kept by the key the Reading page lists its language
+    /// by, and honoured by that key whatever colors the text: a language
+    /// whose tree-sitter grammars cannot be used is still the one chosen
+    /// for, not bat's name for it; an added grammar's, by where it is
+    /// listed.
     #[test]
-    fn a_language_s_own_choice_comes_first() {
-        let found = [found("json", &["json"], None), found("zig", &["zig"], None)];
-        let bat = |token: &str| matches!(token, "json" | "vue");
-        let bat_name = |token: &str| (token == "vue").then(|| "vue component".to_owned());
+    fn a_choice_is_found_by_the_key_its_language_is_listed_by() {
+        let all = [
+            found("bash", &["sh", "bash"], Some("no highlights query")),
+            found("cpp", &["cpp", "cc"], None),
+        ];
+        let used = all.clone();
+        let bat = table(&[
+            ("Bourne Again Shell (bash)", &["sh", "bash"]),
+            ("C++", &["cpp", "cc", "c++"]),
+            ("Skwirlang", &["skwirl"]),
+            ("Plain Text", &["txt"]),
+        ]);
+        let added_ones = [added("Skwirlang", &["skwirl"]), added("Cpp Extra", &["cc"])];
+        let listed = languages(&all, &added_ones);
+        let keys: Vec<&str> = listed.iter().map(|l| l.key.as_str()).collect();
+        assert_eq!(keys, ["bash", "cpp", "skwirlang"]);
+        assert_eq!(listed[1].added.len(), 1, "joined by a file type");
+        let key = |name, language| language_key(&listed, &all, (name, language, None), &bat);
+        assert_eq!(key("x.sh", Some("sh")).as_deref(), Some("bash"));
+        assert_eq!(key("sh", Some("sh")).as_deref(), Some("bash"), "a block");
+        assert_eq!(
+            key("c++", Some("c++")).as_deref(),
+            Some("cpp"),
+            "bat's joins"
+        );
+        assert_eq!(
+            key("a.skwirl", Some("skwirl")).as_deref(),
+            Some("skwirlang")
+        );
+        assert_eq!(key("notes.txt", Some("txt")), None, "plain text");
         let engine = |name, language, chosen: &[(&str, &str)]| {
             let table = chosen
                 .iter()
@@ -773,7 +968,53 @@ mod tests {
                 first: First::Bat,
                 chosen: Arc::new(chosen_in(&table)),
             };
-            engine_in(&found, (name, language, None), &grammars, bat, bat_name)
+            engine_in(
+                (&used, &all, &listed),
+                (name, language, None),
+                &grammars,
+                &bat,
+            )
+        };
+        // Its only grammar cannot be used: bat colors it, unless chosen
+        // Plain text by the key it is listed by.
+        assert_eq!(engine("x.sh", Some("sh"), &[]), Engine::Bat);
+        assert_eq!(
+            engine("x.sh", Some("sh"), &[("bash", "plain")]),
+            Engine::Plain
+        );
+        assert_eq!(
+            engine("a.skwirl", Some("skwirl"), &[("skwirlang", "plain")]),
+            Engine::Plain
+        );
+        assert_eq!(
+            engine("a.cpp", Some("cpp"), &[("cpp", "helix")]),
+            Engine::TreeSitter("cpp".into())
+        );
+    }
+
+    /// A language's own choice comes before Automatic's rule: bat, its
+    /// tree-sitter grammar (while the source chosen is the one used), or
+    /// no colors, a language bat alone knows found by bat's grammar.
+    #[test]
+    fn a_language_s_own_choice_comes_first() {
+        let found = [found("json", &["json"], None), found("zig", &["zig"], None)];
+        let bat = table(&[("JSON", &["json"]), ("Vue Component", &["vue"])]);
+        let listed = languages(&found, &[]);
+        let engine = |name, language, chosen: &[(&str, &str)]| {
+            let table = chosen
+                .iter()
+                .map(|(language, key)| ((*language).to_owned(), (*key).to_owned()))
+                .collect();
+            let grammars = GrammarChoices {
+                first: First::Bat,
+                chosen: Arc::new(chosen_in(&table)),
+            };
+            engine_in(
+                (&found, &found, &listed),
+                (name, language, None),
+                &grammars,
+                &bat,
+            )
         };
         let tree = |name: &str| Engine::TreeSitter(name.to_owned());
         // bat first, but JSON chosen from the source that keeps its grammar.
@@ -892,6 +1133,32 @@ mod tests {
             [(0..3, plain.color)]
         );
         assert!(captured.runs(&spans, 0, "").is_empty());
+        // A row deep in a long line, a span every two bytes: its own part,
+        // from its first byte, whether a span starts there or not.
+        let long: Vec<Span> = (0..50_000u32)
+            .map(|n| span(4 * n, 4 * n + 2, u16::from(n % 2 == 1)))
+            .collect();
+        for from in [120_000usize, 120_001, 120_002, 199_998] {
+            let text = "x".repeat(10);
+            let runs = captured.runs(&long, from, &text);
+            assert_eq!(runs.first().map(|run| run.range.start), Some(0), "{from}");
+            assert_eq!(runs.last().map(|run| run.range.end), Some(text.len()));
+            let expected = |at: usize| match at % 4 {
+                0 | 1 if at < 200_000 => {
+                    if (at / 4) % 2 == 1 {
+                        number.color
+                    } else {
+                        string.color
+                    }
+                }
+                _ => plain.color,
+            };
+            for run in &runs {
+                for at in run.range.clone() {
+                    assert_eq!(run.color, Some(expected(from + at)), "{from} {at}");
+                }
+            }
+        }
     }
 
     #[test]
@@ -973,7 +1240,7 @@ mod tests {
         // A tree kept: a line cut into rows is colored a row at a time.
         let tree = Tree::open_in(&helper, "json", text.as_bytes(), &palette, &cancel).unwrap();
         assert_eq!(tree.lines(), 4);
-        let spans = tree.spans(2..3).unwrap();
+        let spans = tree.spans(2..3, &cancel).unwrap();
         let line = "  \"ok\": [true, null, \"a\\n\"]";
         let whole = tree.runs(&spans[0], 0, line);
         let (head, tail) = line.split_at(12);
@@ -993,9 +1260,12 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(colors_at(&rows), colors_at(&whole));
-        assert!(tree.spans(9..12).unwrap().is_empty(), "past its end");
         assert!(
-            tree.folds().unwrap().is_empty(),
+            tree.spans(9..12, &cancel).unwrap().is_empty(),
+            "past its end"
+        );
+        assert!(
+            tree.folds(&cancel).unwrap().is_empty(),
             "the fixture folds nothing"
         );
     }
