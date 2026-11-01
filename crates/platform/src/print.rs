@@ -73,41 +73,43 @@ const MARGIN: f32 = 15.0 * POINTS_PER_MM;
 /// the locale (`LC_PAPER`, `LC_ALL`, `LANG`): Letter in the Americas
 /// that use it and the Philippines, A4 elsewhere.
 pub fn paper() -> Paper {
+    Paper::named(paper_name()).unwrap_or_else(Paper::a4)
+}
+
+/// The name of [`paper`] (`Paper::NAMED`'s): what a dialog offers first.
+pub fn paper_name() -> &'static str {
     let named = std::env::var("PAPERSIZE").ok().or_else(|| {
         #[cfg(not(windows))]
         return std::fs::read_to_string("/etc/papersize").ok();
         #[cfg(windows)]
         return None;
     });
-    if let Some(paper) = named.as_deref().and_then(paper_named) {
-        return paper;
+    if let Some(name) = named.as_deref().and_then(name_in) {
+        return name;
     }
     let locale = ["LC_PAPER", "LC_ALL", "LANG"]
         .iter()
         .find_map(|name| std::env::var(name).ok().filter(|value| !value.is_empty()))
         .unwrap_or_default();
-    paper_of_locale(&locale)
+    name_of_locale(&locale)
 }
 
-/// libpaper's names that matter: the first word not a comment.
-fn paper_named(text: &str) -> Option<Paper> {
+/// libpaper's names that matter: the first word not a comment, among
+/// those Skwir knows.
+fn name_in(text: &str) -> Option<&'static str> {
     let name = text
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty() && !line.starts_with('#'))?
         .to_lowercase();
-    match name.as_str() {
-        "a4" => Some(Paper::a4()),
-        "letter" => Some(Paper::letter()),
-        "legal" => Some(Paper::mm(215.9, 355.6)),
-        "a3" => Some(Paper::mm(297.0, 420.0)),
-        "a5" => Some(Paper::mm(148.0, 210.0)),
-        _ => None,
-    }
+    Paper::NAMED
+        .iter()
+        .map(|(known, _)| *known)
+        .find(|known| *known == name)
 }
 
 /// A4, or Letter where the locale's region writes on Letter.
-fn paper_of_locale(locale: &str) -> Paper {
+fn name_of_locale(locale: &str) -> &'static str {
     const LETTER: [&str; 7] = ["US", "CA", "MX", "CL", "CO", "VE", "PH"];
     let region = locale
         .split(['.', '@'])
@@ -115,9 +117,9 @@ fn paper_of_locale(locale: &str) -> Paper {
         .and_then(|name| name.split('_').nth(1))
         .unwrap_or_default();
     if LETTER.contains(&region) {
-        Paper::letter()
+        "letter"
     } else {
-        Paper::a4()
+        "a4"
     }
 }
 
@@ -1246,12 +1248,14 @@ mod tests {
 
     #[test]
     fn the_paper_is_the_locale_s_unless_libpaper_says() {
-        assert_eq!(paper_of_locale("en_US.UTF-8"), Paper::letter());
-        assert_eq!(paper_of_locale("fr_CA.UTF-8@euro"), Paper::letter());
-        assert_eq!(paper_of_locale("fr_FR.UTF-8"), Paper::a4());
-        assert_eq!(paper_of_locale("C"), Paper::a4());
-        assert_eq!(paper_named("# a comment\nletter\n"), Some(Paper::letter()));
-        assert_eq!(paper_named("a4"), Some(Paper::a4()));
-        assert_eq!(paper_named("folio"), None);
+        assert_eq!(name_of_locale("en_US.UTF-8"), "letter");
+        assert_eq!(name_of_locale("fr_CA.UTF-8@euro"), "letter");
+        assert_eq!(name_of_locale("fr_FR.UTF-8"), "a4");
+        assert_eq!(name_of_locale("C"), "a4");
+        assert_eq!(name_in("# a comment\nletter\n"), Some("letter"));
+        assert_eq!(name_in("A5"), Some("a5"));
+        assert_eq!(name_in("tabloid"), None);
+        assert_eq!(Paper::named("a4"), Some(Paper::a4()));
+        assert_eq!(Paper::named("folio"), None);
     }
 }

@@ -16,7 +16,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use skwir_core::App;
 use skwir_core::cancel::CancelToken;
 use skwir_core::form::{Answer, Choice, Field, Form, Kind, Mark, Picture, Values};
-use skwir_core::print::booklet;
+use skwir_core::print::booklet::{self, PerSide};
 
 use crate::Arrange;
 
@@ -89,10 +89,14 @@ pub(crate) struct Chosen {
     /// The PDF saved made smaller, as Reduce Size's Screen makes it
     /// (ADR-112): its images at most 150 dpi.
     pub smaller: bool,
+    /// A booklet's pages to a side of a sheet.
+    pub per_side: PerSide,
+    /// The paper a PDF is laid out on, by name (`Paper::NAMED`).
+    pub paper: String,
 }
 
 /// What the next dialog opens on.
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 struct Remembered {
     to: To,
     layout: Arrange,
@@ -100,6 +104,8 @@ struct Remembered {
     trim: bool,
     together: bool,
     smaller: bool,
+    per_side: PerSide,
+    paper: Option<String>,
 }
 
 /// The last dialog's choices, but its pages.
@@ -123,6 +129,8 @@ const FOLD: &str = "fold";
 const TRIM: &str = "trim";
 const TOGETHER: &str = "together";
 const SMALLER: &str = "smaller";
+const PER_SIDE: &str = "per_side";
+const PAPER: &str = "paper";
 
 /// Ask the dialog until it is answered with choices that hold: `None`
 /// when it was cancelled, or no window can show it.
@@ -141,6 +149,8 @@ pub(crate) fn ask(app: &App, offers: &Offers, cancel: &CancelToken) -> Option<Ch
                     trim: chosen.trim,
                     together: chosen.together,
                     smaller: chosen.smaller,
+                    per_side: chosen.per_side,
+                    paper: Some(chosen.paper.clone()),
                 });
                 return Some(chosen);
             }
@@ -151,7 +161,7 @@ pub(crate) fn ask(app: &App, offers: &Offers, cancel: &CancelToken) -> Option<Ch
 
 /// The dialog for `offers`, on the last choices where they are offered.
 pub(crate) fn form(offers: &Offers) -> Form {
-    let last = last().unwrap_or_default();
+    let last = last().clone().unwrap_or_default();
     let mut form = Form::new(format!("Print {}", offers.what), "Print…");
     if let Some(count) = offers.count {
         form = form.intro(pages(count));
@@ -205,15 +215,19 @@ pub(crate) fn form(offers: &Offers) -> Form {
                 .required()
                 .when(PAGES, &["ranges"]),
         );
+    let paper = last
+        .paper
+        .clone()
+        .unwrap_or_else(|| skwir_platform::print::paper_name().to_owned());
     if offers.listing() {
-        return form.field(smaller(last.smaller));
+        return form.field(papers(&paper)).field(smaller(last.smaller));
     }
     let mut layouts = vec![
         Choice::new("as_shown", "As shown")
             .detail("Each page on a sheet")
             .picture(as_shown()),
         Choice::new("booklet", "Booklet")
-            .detail("Two pages a side, folded")
+            .detail("Pages on both sides, folded")
             .picture(folded()),
     ];
     if offers.sheet() {
@@ -234,8 +248,34 @@ pub(crate) fn form(offers: &Offers) -> Form {
         _ => "whole",
     };
     let count = offers.count;
+    let per_side = last.per_side.count().to_string();
     form = form
         .field(Field::new(LAYOUT, "Layout", Kind::Row { choices: layouts }).value(layout))
+        .field(
+            Field::new(
+                PER_SIDE,
+                "Pages a side",
+                Kind::Row {
+                    choices: PerSide::ALL
+                        .into_iter()
+                        .map(|side| {
+                            Choice::new(
+                                side.count().to_string(),
+                                format!("{} a side", side.count()),
+                            )
+                            .detail(match side {
+                                PerSide::Two => "Folded once",
+                                PerSide::Four => "Folded twice, its top cut",
+                                PerSide::Eight => "Folded three times, cut",
+                            })
+                            .picture(per_side_picture(side))
+                        })
+                        .collect(),
+                },
+            )
+            .value(per_side)
+            .when(LAYOUT, &["booklet"]),
+        )
         .field(
             Field::new(
                 FOLD,
@@ -258,7 +298,8 @@ pub(crate) fn form(offers: &Offers) -> Form {
                 },
             )
             .value(fold)
-            .when(LAYOUT, &["booklet"]),
+            .when(LAYOUT, &["booklet"])
+            .when(PER_SIDE, &["2"]),
         )
         .field(
             Field::new(TRIM, "Trim white margins", Kind::Toggle)
@@ -284,7 +325,24 @@ pub(crate) fn form(offers: &Offers) -> Form {
             .when(LAYOUT, &["as_shown", "booklet"]),
         );
     }
-    form.field(smaller(last.smaller))
+    form.field(papers(&paper)).field(smaller(last.smaller))
+}
+
+/// The paper a PDF is laid out on, offered when it is saved: a printer's
+/// is chosen in the system's dialog.
+fn papers(chosen: &str) -> Field {
+    Field::new(
+        PAPER,
+        "Paper",
+        Kind::Row {
+            choices: skwir_core::print::Paper::NAMED
+                .iter()
+                .map(|(name, title)| Choice::new(*name, *title))
+                .collect(),
+        },
+    )
+    .value(chosen)
+    .when(TO, &["pdf"])
 }
 
 /// The PDF saved made smaller, offered when it is saved.
@@ -324,9 +382,11 @@ fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, String> {
         }
     };
     let booklet = layout == Arrange::Booklet;
+    // Sets of pages folded together are a booklet's of two a side.
+    let two = values.get(PER_SIDE).is_empty() || values.get(PER_SIDE) == "2";
     let signature = match values.get(FOLD) {
-        "16" if booklet => Some(16),
-        "32" if booklet => Some(32),
+        "16" if booklet && two => Some(16),
+        "32" if booklet && two => Some(32),
         _ => None,
     };
     Ok(Chosen {
@@ -337,6 +397,19 @@ fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, String> {
         trim: booklet && values.on(TRIM),
         together: offers.several() && to == To::Pdf && values.get(TOGETHER) == "one",
         smaller: to == To::Pdf && values.on(SMALLER),
+        per_side: values
+            .get(PER_SIDE)
+            .parse()
+            .ok()
+            .and_then(PerSide::of_count)
+            .filter(|_| booklet)
+            .unwrap_or_default(),
+        paper: Some(values.get(PAPER))
+            .filter(|name| skwir_core::print::Paper::named(name).is_some())
+            .map_or_else(
+                || skwir_platform::print::paper_name().to_owned(),
+                str::to_owned,
+            ),
     })
 }
 
@@ -422,6 +495,44 @@ fn contact_sheet() -> Picture {
 }
 
 /// The most sheets a fold's stack is drawn with, and folds drawn.
+/// A sheet of `per_side` pages a side: its front, the first sheet's
+/// pages where they print, those printed upside down shaded.
+fn per_side_picture(per_side: PerSide) -> Picture {
+    let pages: Vec<u32> = (0..per_side.per_sheet()).collect();
+    let first = booklet::sheets(&pages, None, per_side)
+        .into_iter()
+        .next()
+        .map(|sheet| sheet.front)
+        .unwrap_or_default();
+    let (columns, rows) = per_side.grid();
+    // The sheet in the picture's 64 × 36, as it lies.
+    let (cell_w, cell_h): (u16, u16) = match per_side {
+        PerSide::Two => (22, 32),
+        PerSide::Four => (15, 17),
+        PerSide::Eight => (14, 16),
+    };
+    let width = cell_w * u16::try_from(columns).unwrap_or(1);
+    let height = cell_h * u16::try_from(rows).unwrap_or(1);
+    let (left, top) = ((64 - width) / 2, (36 - height) / 2);
+    let mut marks = Vec::new();
+    for (at, cell) in first.iter().enumerate() {
+        let at = u16::try_from(at).unwrap_or(0);
+        let columns = u16::try_from(columns).unwrap_or(1);
+        let x = left + (at % columns) * cell_w;
+        let y = top + (at / columns) * cell_h;
+        marks.push(boxed(x, y, cell_w, cell_h, cell.turned));
+        let page = cell
+            .page
+            .map_or_else(String::new, |page| (page + 1).to_string());
+        marks.push(text(x, y, cell_w, cell_h, page));
+    }
+    Picture {
+        width: 64,
+        height: 36,
+        marks,
+    }
+}
+
 const STACK: u16 = 6;
 const FOLDS: usize = 3;
 
@@ -437,19 +548,25 @@ fn fold_picture(count: Option<u32>, signature: Option<u32>) -> Picture {
     let (front, back, folds): ([String; 2], [String; 2], Vec<u16>) = match count {
         Some(count) => {
             let order: Vec<u32> = (0..count.max(1)).collect();
-            let sheets = booklet::sheets(&order, signature);
-            let first = sheets.first().copied().unwrap_or(booklet::Sheet {
-                front: [None, Some(0)],
-                back: [None, None],
-            });
+            let sheets = booklet::sheets(&order, signature, PerSide::Two);
+            let pages = |cells: Option<&Vec<booklet::Cell>>| -> [Option<u32>; 2] {
+                let page = |at: usize| {
+                    cells
+                        .and_then(|cells| cells.get(at))
+                        .and_then(|cell| cell.page)
+                };
+                [page(0), page(1)]
+            };
+            let front = pages(sheets.first().map(|sheet| &sheet.front));
+            let back = pages(sheets.first().map(|sheet| &sheet.back));
             let per = signature.map_or(sheets.len(), |size| (size as usize).div_ceil(4));
             let folds = sheets
                 .chunks(per.max(1))
                 .map(|fold| u16::try_from(fold.len()).unwrap_or(u16::MAX))
                 .collect();
             (
-                [named(first.front[0]), named(first.front[1])],
-                [named(first.back[0]), named(first.back[1])],
+                [named(front[0]), named(front[1])],
+                [named(back[0]), named(back[1])],
                 folds,
             )
         }
@@ -528,7 +645,12 @@ mod tests {
         forget();
         let form = form(&offers());
         let keys: Vec<&str> = form.fields.iter().map(|f| f.key.as_str()).collect();
-        assert_eq!(keys, [TO, PAGES, RANGES, LAYOUT, FOLD, TRIM, SMALLER]);
+        assert_eq!(
+            keys,
+            [
+                TO, PAGES, RANGES, LAYOUT, PER_SIDE, FOLD, TRIM, PAPER, SMALLER
+            ]
+        );
         assert_eq!(form.title, "Print “notes.md”");
         assert_eq!(form.intro, "12 pages");
         let titles = |key: &str| -> Vec<String> {
@@ -553,7 +675,9 @@ mod tests {
         let keys: Vec<&str> = several.fields.iter().map(|f| f.key.as_str()).collect();
         assert_eq!(
             keys,
-            [TO, PAGES, RANGES, LAYOUT, FOLD, TRIM, TOGETHER, SMALLER]
+            [
+                TO, PAGES, RANGES, LAYOUT, PER_SIDE, FOLD, TRIM, TOGETHER, PAPER, SMALLER
+            ]
         );
         assert_eq!(
             several.fields[3].choices().len(),
@@ -566,7 +690,7 @@ mod tests {
             ..offers()
         });
         let keys: Vec<&str> = listing.fields.iter().map(|f| f.key.as_str()).collect();
-        assert_eq!(keys, [TO, PAGES, RANGES, SMALLER]);
+        assert_eq!(keys, [TO, PAGES, RANGES, PAPER, SMALLER]);
     }
 
     /// The answer read: pages typed checked, what is hidden ignored (a
@@ -596,6 +720,8 @@ mod tests {
                 trim: false,
                 together: false,
                 smaller: false,
+                per_side: PerSide::Two,
+                paper: skwir_platform::print::paper_name().to_owned(),
             }
         );
         let wrong = values(&[(PAGES, "ranges"), (RANGES, "3-1")]);
@@ -674,6 +800,8 @@ mod tests {
             trim: true,
             together: false,
             smaller: true,
+            per_side: PerSide::Four,
+            paper: Some("a5".to_owned()),
         });
         let form = form(&offers());
         let value = |key: &str| {
@@ -690,6 +818,8 @@ mod tests {
         assert_eq!(value(FOLD), "16");
         assert_eq!(value(TRIM), "true");
         assert_eq!(value(SMALLER), "true");
+        assert_eq!(value(PER_SIDE), "4");
+        assert_eq!(value(PAPER), "a5");
         forget();
         assert_eq!(super::form(&offers()).fields[0].value, "printer");
     }

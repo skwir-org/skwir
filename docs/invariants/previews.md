@@ -1644,8 +1644,19 @@ is still to come are in `docs/preview-frame.md`.
   is meant to hold (no control, format, private use or unassigned one),
   4,096 at most, each font's map read once.
 - **Paper is light.** A document Skwir makes is in the light look and the
-  light code theme whatever the window's; a booklet's page is half its
-  sheet, laid out at that size.
+  light code theme whatever the window's; a booklet's page is a cell of
+  its sheet (`Paper::page_of`), laid out at that size.
+- **A booklet is folded, never looked up** (ADR-111, revised): 2, 4 or 8
+  pages a side (`booklet::PerSide`), where each lands found by folding a
+  sheet in simulation (`booklet::sheets`), which lays a printer's
+  signatures; the pages of a top row are upside down in place, turned
+  about their own middle. A sheet folded an odd number of times is
+  landscape. Four or eight a side, a sheet is a gathering of its own (no
+  signatures, no nesting), its folds marked in the front's margins, and
+  how to fold it is said with what was made.
+- **The paper of a PDF is the user's**: chosen when saving (one of
+  `Paper::NAMED`, the system's first, `paper_name`), `paper` from a
+  script; a printer's is its dialog's. Never a size assumed elsewhere.
 - **The window names no plugin**: a plugin's items of the preview's menu
   (`MenuItem::menu` `preview`) run through `ui.preview_invoke`, which adds
   the entry shown (a link itself, as the file menu names it: what is

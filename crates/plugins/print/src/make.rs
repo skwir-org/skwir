@@ -68,9 +68,11 @@ fn unscaled(scale: f32) -> bool {
     (scale - 1.0).abs() < 1e-3
 }
 
-/// How a booklet folds (ADR-111): in signatures of `signature` pages (one
-/// for all without), its pages' white margins trimmed, its backs turned
-/// half a turn for a printer that turns the sheet over its long edge.
+/// How a booklet folds (ADR-111): `per_side` pages to a side of a sheet
+/// (2, folded once, in signatures of `signature` pages, one for all
+/// without; 4 or 8, folded twice or three times, a gathering a sheet), its
+/// pages' white margins trimmed, its backs turned half a turn for a
+/// printer that turns the sheet over the other edge.
 #[derive(
     Clone,
     Copy,
@@ -83,6 +85,8 @@ fn unscaled(scale: f32) -> bool {
     schemars::JsonSchema,
 )]
 pub struct Booklet {
+    #[serde(default)]
+    pub per_side: paper::booklet::PerSide,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signature: Option<u32>,
     #[serde(default)]
@@ -104,6 +108,8 @@ pub(crate) struct Ready {
     pub pages: Option<u32>,
     /// What was left out (a text cut at its bound), to say.
     pub notice: Option<String>,
+    /// How to fold its sheets, for a booklet folded more than once.
+    pub folding: Option<&'static str>,
 }
 
 /// The PDF of `paths` as `layout` asks, made in `work` (a folder of its
@@ -261,8 +267,22 @@ fn laid_out(
 /// what Skwir lays out is not shrunk.
 fn page_paper(layout: &Layout) -> Paper {
     match layout.booklet {
-        Some(_) => layout.paper.half(),
+        Some(booklet) => layout.paper.page_of(booklet.per_side),
         None => layout.paper,
+    }
+}
+
+/// How to fold a booklet of `per_side` pages a side, said once it is
+/// made: none for one fold, which a booklet's sheets show.
+pub(crate) fn folding(per_side: paper::booklet::PerSide) -> Option<&'static str> {
+    match per_side {
+        paper::booklet::PerSide::Two => None,
+        paper::booklet::PerSide::Four => Some(
+            "Fold each sheet in half twice, page 1 outside and upright, cut its top fold open, and put the sheets one after another",
+        ),
+        paper::booklet::PerSide::Eight => Some(
+            "Fold each sheet in half three times, page 1 outside and upright, cut its closed folds open, and put the sheets one after another",
+        ),
     }
 }
 
@@ -285,7 +305,12 @@ fn picked(
     } = whole;
     // Every page in order at its size: the file as it is, uncounted.
     if layout.as_it_is() {
-        return Ok(Ready { pdf, pages, notice });
+        return Ok(Ready {
+            pdf,
+            pages,
+            notice,
+            folding: None,
+        });
     }
     let count = match pages {
         Some(count) => count,
@@ -314,13 +339,14 @@ fn picked(
     // and the order chosen applied to its sheets' sides.
     let (pdf, count, picked) = match layout.booklet {
         Some(booklet) => {
-            let sheets = paper::booklet::sheets(&picked.pages, booklet.signature);
-            let sheet = layout.paper.landscape();
+            let sheets = paper::booklet::sheets(&picked.pages, booklet.signature, booklet.per_side);
+            let sheet = layout.paper.sheet_of(booklet.per_side);
             let folded = work.join("booklet.pdf");
             let sides = skwir_platform::document::compose(
                 &pdf,
                 Compose::Booklet {
                     sheets,
+                    per_side: booklet.per_side,
                     width: sheet.width,
                     height: sheet.height,
                     fold,
@@ -337,6 +363,8 @@ fn picked(
         }
         None => (pdf, count, picked.pages),
     };
+    // How to fold it, said once it is made.
+    let folding = layout.booklet.and_then(|b| folding(b.per_side));
     // The system dialog's range, of what is sent: by place, as its sides
     // are.
     let picked = match &layout.sent {
@@ -372,6 +400,7 @@ fn picked(
             pdf,
             pages: Some(count),
             notice,
+            folding,
         });
     }
     let out = work.join("pages.pdf");
@@ -390,6 +419,7 @@ fn picked(
         pdf: out,
         pages: Some(pages),
         notice,
+        folding,
     })
 }
 

@@ -4,7 +4,9 @@ Status: accepted 2026-10-31 with the user (GitHub #2); built the same
 day, as `docs/PLAN.md` ("Grammars and printing") records: checked on
 Linux, compiled for Windows and macOS (`just lint-all`), not run there.
 Decisions 2 and 5 revised 2026-11-01 with the user, after trying it:
-one Print…, Skwir's own dialog first (see Revision).
+one Print…, Skwir's own dialog first (see Revision). Decision 4 revised
+the same evening: four and eight pages a side, the paper of a PDF
+chosen.
 
 ## Context
 
@@ -173,3 +175,45 @@ than one thing to do.
 - **Through the preview, the entry shown**: `ui.preview_invoke` names a
   link itself, as the file menu does; Save as PDF goes beside it, and
   what is read is what it opens, typed by that file's name.
+
+## Revision (2026-11-01, evening): four and eight pages a side, the paper of a PDF
+
+Asked by the user: booklets of 8 and 16 pages a sheet, and which paper a
+PDF or a booklet is made on, chosen rather than assumed.
+
+- **Pages a side: 2, 4 or 8** (`print::booklet::PerSide`, the dialog's
+  "Pages a side" row with a picture of each, `per_side` of `print.print`
+  and `print.save_pdf`, any other count refused). The sheet is folded in
+  half once, twice or three times. Where each page lands is found by
+  folding a sheet in simulation (`booklet::sheets`: the last fold left
+  over right, before it top over bottom, before that right over left),
+  never by a table: it lays a printer's 8- and 16-page signatures (front
+  5, 4 / 8, 1 and back 3, 6 / 2, 7 for four a side), which the tests
+  check. Each sheet is a gathering of its own; the sheets are put one
+  after another, not one inside the other (a folded sheet of 4 or 8 a
+  side is too thick to nest), so signatures and "Folded as" are offered
+  for 2 a side alone.
+- **The pages of a top row are upside down**, turned about their own
+  middle in their place: folded, they read upright. A sheet folded an
+  odd number of times (2, 8 a side) is laid landscape, else upright; the
+  backs are laid for a sheet turned over its vertical edge, turned back
+  when the printer turns it over the other (`turn_backs`, from the sides
+  the system's dialog chose). A saved booklet is laid for that edge.
+- **A page is a cell of the sheet**, as large as the grid leaves it
+  (`Paper::page_of`): a document Skwir makes is laid out at that size, so
+  its text is not shrunk; its margins at most a tenth of the cell's
+  narrower side. Four or eight a side, PDFium places each page
+  (`Compose::Booklet`'s `per_side`) and the folds are marked by short
+  grey ticks in the front's margins, where a guillotine takes them.
+- **How to fold is said** with what was made, for 4 and 8 a side: page 1
+  outside and upright, the closed folds cut open, the sheets one after
+  another. Said in the plan's own toast after what it did
+  (`StepContext::say`, new in core), or after what was sent to a printer;
+  never a notification of its own, which the toast would cover.
+- **The paper of a PDF is chosen** in the dialog when saving (A4,
+  Letter, A5, A3, Legal: `Paper::NAMED`), the system's own first
+  (`skwir_platform::print::paper_name`: the locale's, as before), the
+  last chosen kept until Skwir quits; `paper` of `print.save_pdf` names
+  it for a script. Printing, the system's dialog chooses it, as before.
+- **Rejected for now**: a one-sheet zine (eight pages on one side, cut
+  in the middle and folded), offered and not asked.

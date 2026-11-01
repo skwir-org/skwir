@@ -451,12 +451,19 @@ archives, and the bytes of any file.
     trash).
   - **Pages**: all, the page the preview shows, what is selected in it,
     or pages typed (`1-3, 7, 10-`).
-  - **Layout**: as shown, or a booklet: two pages to a side of the sheet,
-    in the order they fold in, so the printed sheets, folded and put one
-    inside the other, read in order. Each way to fold (one booklet, sets
-    of 16 or 32 pages) is drawn with the pages where they land; white
-    margins can be trimmed. A text, a source file or a Markdown document
-    is laid out at half a sheet, its text not shrunk.
+  - **Layout**: as shown, or a booklet, its pages in the order they fold
+    in. **Pages a side**: two (the sheet folded once; the sheets, put one
+    inside the other, read in order; one booklet, or sets of 16 or 32
+    pages), four (folded twice, its top fold cut open: 8 pages a sheet)
+    or eight (folded three times, its closed folds cut: 16 pages a
+    sheet; the sheets put one after another). Each is drawn with the
+    pages where they land; the top row's pages print upside down, which
+    folding sets upright, and the folds are marked in the margins. Skwir
+    says how to fold when it is done. White margins can be trimmed. A
+    text, a source file or a Markdown document is laid out at the size
+    of its page on the sheet, its text not shrunk.
+  - **Paper**, saving a PDF: A4, Letter, A5, A3 or Legal, your system's
+    first. Printing, your system's dialog chooses it.
 
   Up and Down (or Space) change the choice that has the keyboard, Enter
   prints. A printer is then chosen in your system's own dialog, with the
@@ -473,7 +480,8 @@ archives, and the bytes of any file.
   window open:
   `skwir cmd --apply print.save_pdf '{"entries": ["/path/to/notes.md"]}'`
   (`"together": true` makes one PDF of several files; `"pages": "1-3"`;
-  `"layout": "booklet"`, `"contact_sheet"` or `"listing"`). A PDF saved
+  `"layout": "booklet"`, `"contact_sheet"` or `"listing"`; `"per_side":
+  4` or `8` for a booklet; `"paper": "a5"`, `letter`, `a3`, `legal`). A PDF saved
   can be made smaller as it is saved: **Smaller file** in the dialog,
   `"smaller": "screen"` from a script.
 - **Reduce Size…** (Compress in the menu of pictures and PDFs, the

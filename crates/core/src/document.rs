@@ -262,14 +262,19 @@ pub enum Compose {
     /// dialog's scale.
     Pages { pages: Vec<Option<u32>>, scale: f32 },
     /// A booklet: `sheets` in the order they print (`print::booklet::sheets`),
-    /// each its front then its back, two pages to a side, on sheets `width` ×
-    /// `height` points (landscape); each page fitted in its half within
-    /// `edge` of the sheet's edges and `fold` of the fold; `trim` fits the
-    /// pages' ink rather than their whole page (one box for every page, so
-    /// they scale alike); `turn_backs` turns each back half a turn, for a
-    /// printer turning the sheet over its long edge.
+    /// each its front then its back, `per_side` pages to a side in its grid
+    /// (each upside down where its cell says), on sheets `width` × `height`
+    /// points (as `Paper::sheet_of` turns them); each page fitted in its
+    /// place within `edge` of the sheet's edges and `fold` of each fold;
+    /// `trim` fits the pages' ink rather than their whole page (one box for
+    /// every page, so they scale alike); `turn_backs` turns each back half a
+    /// turn, for a printer turning the sheet over the edge the backs were
+    /// not laid for. Four or eight to a side, the folds are marked in the
+    /// front's margins.
     Booklet {
         sheets: Vec<crate::print::booklet::Sheet>,
+        #[serde(default)]
+        per_side: crate::print::booklet::PerSide,
         width: f32,
         height: f32,
         fold: f32,

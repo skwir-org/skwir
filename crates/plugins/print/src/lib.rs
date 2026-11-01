@@ -110,6 +110,10 @@ pub struct PrintArgs {
     /// (one box for every page, so they scale alike).
     #[serde(default)]
     pub trim: bool,
+    /// A booklet's pages to a side of a sheet: 2 (folded once, without), 4
+    /// (folded twice, 8 pages a sheet) or 8 (three times, 16 a sheet).
+    #[serde(default)]
+    pub per_side: Option<u32>,
     /// Chosen already: Print… goes straight to the system's dialog
     /// instead of asking Skwir's first.
     #[serde(default)]
@@ -133,6 +137,10 @@ pub struct SaveArgs {
     /// images at most this quality's dpi (`print`, `screen`, `small`).
     #[serde(default)]
     pub smaller: Option<Quality>,
+    /// The paper it is laid out on: `a4`, `letter`, `a5`, `a3`, `legal`;
+    /// the system's without.
+    #[serde(default)]
+    pub paper: Option<String>,
 }
 
 #[derive(Default)]
@@ -206,12 +214,19 @@ impl Plugin for PrintPlugin {
                 |a, app| {
                     let request = request(app, &a.print)?;
                     let dest = a.dest.as_ref().map(|PathArg(dest)| dest.as_path());
+                    if let Some(paper) = a.paper.as_deref() {
+                        anyhow::ensure!(
+                            skwir_core::print::Paper::named(paper).is_some(),
+                            "“{paper}” is no paper: a4, letter, a5, a3 or legal"
+                        );
+                    }
                     Ok(Outcome::Plan(plan_of(
                         app,
                         &request,
                         dest,
                         a.together,
                         a.smaller,
+                        a.paper.as_deref(),
                     )?))
                 },
             )
@@ -371,7 +386,13 @@ fn request(app: &App, args: &PrintArgs) -> anyhow::Result<Request> {
         },
         other => other,
     };
+    let per_side = match args.per_side {
+        None => skwir_core::print::booklet::PerSide::default(),
+        Some(count) => skwir_core::print::booklet::PerSide::of_count(count)
+            .with_context(|| format!("{count} pages a side: a booklet has 2, 4 or 8"))?,
+    };
     let booklet = (args.layout == Arrange::Booklet).then_some(Booklet {
+        per_side,
         signature: args.signature,
         trim: args.trim,
         turn_backs: false,
@@ -533,6 +554,7 @@ fn chosen_then(
         layout: chosen.layout,
         signature: chosen.signature,
         trim: chosen.trim,
+        per_side: Some(chosen.per_side.count()),
         asked: true,
         ..args
     };
@@ -541,7 +563,14 @@ fn chosen_then(
         dialog::To::Printer => print(app, request, cancel),
         dialog::To::Pdf => {
             let smaller = chosen.smaller.then_some(Quality::Screen);
-            app.apply_whole(plan_of(app, &request, None, chosen.together, smaller)?);
+            app.apply_whole(plan_of(
+                app,
+                &request,
+                None,
+                chosen.together,
+                smaller,
+                Some(chosen.paper.as_str()),
+            )?);
             Ok(None)
         }
     }
@@ -625,10 +654,16 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
     let Some(chosen) = skwir_platform::print::ask(&ask, cancel)? else {
         return Ok(None);
     };
-    // A printer turning the sheet over its long edge turns a booklet's
-    // backs upside down: they are turned back.
+    // A booklet's backs are laid for a sheet turned over its vertical
+    // edge: the short one of a landscape sheet, the long one of an upright
+    // one. A printer turning it over the other turns them upside down:
+    // they are turned back.
     let booklet = booklet.map(|booklet| Booklet {
-        turn_backs: chosen.duplex == skwir_core::print::Duplex::LongEdge,
+        turn_backs: if booklet.per_side.landscape() {
+            chosen.duplex == skwir_core::print::Duplex::LongEdge
+        } else {
+            chosen.duplex == skwir_core::print::Duplex::ShortEdge
+        },
         ..booklet
     });
     let layout = Layout {
@@ -663,7 +698,11 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
         let ready = made_ready(&app, made, &title, &layout, work.path(), &token, &follow)?;
         held.went(0.9);
         skwir_platform::print::send(&sent_as, &title, &ready.pdf, &token)?;
-        Ok((ready.pages, ready.notice))
+        let notice = [ready.notice, ready.folding.map(str::to_owned)];
+        Ok((
+            ready.pages,
+            notice.into_iter().flatten().collect::<Vec<_>>(),
+        ))
     });
     drop(task);
     // Cancelled by its card, not by Skwir closing: said, as no error.
@@ -688,7 +727,7 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
             "{said}. A booklet is printed on both sides: on one side, print the odd sides, turn the sheets over, then the even"
         );
     }
-    if let Some(notice) = notice {
+    for notice in notice {
         said = format!("{said}. {notice}");
     }
     Ok(Some(said))
@@ -763,6 +802,7 @@ fn plan_of(
     dest: Option<&Path>,
     together: bool,
     smaller: Option<Quality>,
+    paper: Option<&str>,
 ) -> anyhow::Result<Plan> {
     let booklet = request.booklet;
     let what = if booklet.is_some() { "booklet" } else { "PDF" };
@@ -782,6 +822,7 @@ fn plan_of(
         pages: request.pages.clone(),
         booklet,
         smaller,
+        paper: paper.map(str::to_owned),
     };
     let plan = match &request.what {
         What::Files { entries, shown } => {
@@ -902,6 +943,10 @@ pub struct MakePdf {
     /// quality, before it is kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub smaller: Option<Quality>,
+    /// The paper it is laid out on, by name (`Paper::NAMED`); the system's
+    /// without.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paper: Option<String>,
 }
 
 /// What a PDF is made of.
@@ -1105,7 +1150,11 @@ impl op::Effect for MakePdf {
             of => display_name(&of.from()),
         };
         let layout = Layout {
-            paper: skwir_platform::print::paper(),
+            paper: self
+                .paper
+                .as_deref()
+                .and_then(skwir_core::print::Paper::named)
+                .unwrap_or_else(skwir_platform::print::paper),
             pages: self.pages.clone(),
             sent: Pages::All,
             page_set: PageSet::All,
@@ -1194,6 +1243,14 @@ impl op::Effect for MakePdf {
             return Err(op::Cancelled.into());
         }
         result?;
+        // What was left out, and how to fold it, said with what was made:
+        // the folding once for several booklets alike.
+        if let Some(notice) = &ready.notice {
+            ctx.say(format!("“{}”: {notice}", display_name(&target)));
+        }
+        if let Some(folding) = ready.folding {
+            ctx.say(folding);
+        }
         let made = EntryRef::from_path(&target)
             .with_context(|| format!("“{}” went missing as it was made", display_name(&target)))?;
         // Undone to the trash, as a copy is: it may have been changed since.

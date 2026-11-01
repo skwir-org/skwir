@@ -309,7 +309,12 @@ fn written(half: &[Read]) -> String {
 fn booklet(count: u32, trim: bool, turn_backs: bool) -> WorkerRequest {
     let pages: Vec<u32> = (0..count).collect();
     WorkerRequest::Compose(Compose::Booklet {
-        sheets: skwir_core::print::booklet::sheets(&pages, None),
+        sheets: skwir_core::print::booklet::sheets(
+            &pages,
+            None,
+            skwir_core::print::booklet::PerSide::Two,
+        ),
+        per_side: skwir_core::print::booklet::PerSide::Two,
         width: 842.0,
         height: 595.0,
         fold: 12.0,
@@ -425,7 +430,12 @@ fn a_booklet_of_five_pages_leaves_three_halves_blank_and_honours_a_page_s_turn()
     assert!(one.angle.abs() < 1.0, "{one:?}");
     // A page past the end is refused, and the helper goes on.
     let past = WorkerRequest::Compose(Compose::Booklet {
-        sheets: skwir_core::print::booklet::sheets(&[0, 1, 2, 9], None),
+        sheets: skwir_core::print::booklet::sheets(
+            &[0, 1, 2, 9],
+            None,
+            skwir_core::print::booklet::PerSide::Two,
+        ),
+        per_side: skwir_core::print::booklet::PerSide::Two,
         width: 842.0,
         height: 595.0,
         fold: 0.0,
@@ -630,5 +640,99 @@ fn pages_are_drawn_at_the_scale_asked_about_their_middle() {
             "{scale}: {reply:?}"
         );
     }
+    worker.end();
+}
+
+/// What each place of a side writes, row by row from the top left, and
+/// whether its writing is upside down: the side's characters by where
+/// they are, in a grid of `columns` × `rows`.
+fn places(pdfium: &Pdfium, path: &Path, columns: usize, rows: usize) -> Vec<Vec<(String, bool)>> {
+    let document = pdfium.load_pdf_from_file(path, None).unwrap();
+    document
+        .pages()
+        .iter()
+        .map(|page| {
+            let (width, height) = (page.width().value, page.height().value);
+            let mut cells = vec![(String::new(), false); columns * rows];
+            let text = page.text().unwrap();
+            for ch in text.chars().iter() {
+                let Some(written) = ch.unicode_string().filter(|t| !t.trim().is_empty()) else {
+                    continue;
+                };
+                let b = ch.tight_bounds().unwrap();
+                let x = f32::midpoint(b.left().value, b.right().value);
+                let y = f32::midpoint(b.bottom().value, b.top().value);
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let column = ((x / width) * columns as f32) as usize;
+                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let row = (((height - y) / height) * rows as f32) as usize;
+                let cell = &mut cells[row.min(rows - 1) * columns + column.min(columns - 1)];
+                cell.0.push_str(&written);
+                cell.1 = (ch.angle_degrees().unwrap_or_default() - 180.0).abs() < 1.0;
+            }
+            cells
+        })
+        .collect()
+}
+
+/// Four to a side, on upright A4: a printer's 8-page signature, the top
+/// row upside down, page 1 on the front's bottom right; the folds marked
+/// in the front's margins and not on the back.
+#[test]
+fn a_booklet_of_four_a_side_lays_a_printer_s_signature() {
+    let Some(pdfium) = pdfium() else {
+        eprintln!("skipped: no PDFium (SKWIR_PDFIUM_LIBRARY)");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let (pdf, scratch) = (tmp.path().join("eight.pdf"), tmp.path().join("work"));
+    std::fs::create_dir(&scratch).unwrap();
+    numbered(&pdfium, &pdf, 8, &[], false);
+    let composed = scratch.join(COMPOSED_FILE);
+    let mut worker = Worker::start(&pdf, &scratch);
+    let pages: Vec<u32> = (0..8).collect();
+    let four = skwir_core::print::booklet::PerSide::Four;
+    let reply = worker.ask(WorkerRequest::Compose(Compose::Booklet {
+        sheets: skwir_core::print::booklet::sheets(&pages, None, four),
+        per_side: four,
+        width: 595.0,
+        height: 842.0,
+        fold: 12.0,
+        edge: 18.0,
+        trim: false,
+        turn_backs: false,
+    }));
+    assert!(
+        matches!(reply, WorkerReply::Composed { pages: 2 }),
+        "{reply:?}"
+    );
+    assert_eq!(pages_and_size(&pdfium, &composed), (2, (595.0, 842.0)));
+    let read = places(&pdfium, &composed, 2, 2);
+    let said = |side: &[(String, bool)]| -> Vec<String> {
+        side.iter()
+            .map(|(text, turned)| {
+                if *turned {
+                    format!("{text}T")
+                } else {
+                    text.clone()
+                }
+            })
+            .collect()
+    };
+    assert_eq!(said(&read[0]), ["5T", "4T", "8", "1"]);
+    assert_eq!(said(&read[1]), ["3T", "6T", "2", "7"]);
+    let document = pdfium.load_pdf_from_file(&composed, None).unwrap();
+    let lines = |at: PdfPageIndex| {
+        document
+            .pages()
+            .get(at)
+            .unwrap()
+            .objects()
+            .iter()
+            .filter(|object| object.object_type() == PdfPageObjectType::Path)
+            .count()
+    };
+    assert_eq!(lines(0), 4, "each fold marked at both ends on the front");
+    assert_eq!(lines(1), 0, "nothing marked on the back");
     worker.end();
 }

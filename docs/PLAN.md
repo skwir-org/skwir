@@ -2195,8 +2195,14 @@ screen reader reads, from the window or a script.
   system's dialog asked only for the printer, the paper and the sides;
   `print.print` and `print.save_pdf` the only commands; the preview's
   menu applying the plans its items answer.
+- **P6. Four and eight pages a side, and the paper of a PDF**
+  (2026-11-01, asked after P5, ADR-111 revised): booklets of 8 and 16
+  pages a sheet, the order found by folding a sheet in simulation, the
+  top rows upside down, the folds marked; the "Pages a side" row with
+  pictures, how to fold said in the plan's toast; A4, Letter, A5, A3 or
+  Legal chosen when saving, the system's first (`per_side`, `paper`).
 
-**Status:** planned 2026-10-31. Built: G0 to G7, P1 to P4 (2026-10-31); `just lint-all` and `just test-all` pass on main after it. Checked on Linux; Windows and macOS compiled only. Deviation: P3, the print helper, came before P1, whose print path builds on it. Revised 2026-11-01 (G8): a grammar chosen for each language, the lists in Settings drawn as lists. Revised 2026-11-01 (P5): the four print items and the booklet prompt became one Print… and Skwir's own dialog, pages no longer left to the desktop's dialog (KDE's hides them); checked on Linux with GTK's portal on a display of its own, KDE's portal not tried; macOS and Windows compiled only.
+**Status:** planned 2026-10-31. Built: G0 to G7, P1 to P4 (2026-10-31); `just lint-all` and `just test-all` pass on main after it. Checked on Linux; Windows and macOS compiled only. Deviation: P3, the print helper, came before P1, whose print path builds on it. Revised 2026-11-01 (G8): a grammar chosen for each language, the lists in Settings drawn as lists. Revised 2026-11-01 (P5): the four print items and the booklet prompt became one Print… and Skwir's own dialog, pages no longer left to the desktop's dialog (KDE's hides them); checked on Linux with GTK's portal on a display of its own, KDE's portal not tried; macOS and Windows compiled only. Built 2026-11-01 (P6): 4 and 8 a side, the paper of a PDF; checked on Linux by tests (the signatures, PDFium's placing, A5 upright) and in a window of its own (4 a side on A4, 8 a side on A3, saved, drawn and looked at; the folding toast); not printed on paper, nor folded; macOS and Windows compiled only. Left: a one-sheet zine (offered, not asked); a printer's own paper sizes beyond the five named when saving.
 
 ---
 
@@ -2247,6 +2253,11 @@ and `release-check` not run.
   task's card (`App::tasks`) with Cancel while its PDF is made and sent.
   Left: what Skwir prepares before a helper starts (a long text read and
   colored) says nothing; a picture's copy moves in one step.
+  Revised the same evening: what a copy's step says (not made, not under
+  the size asked) follows what was made in the plan's own toast
+  (`StepContext::say`), no longer a notification 1.5 s later that covered
+  it and its Undo; a toast stays at least as long as its words take to
+  read.
 
 ---
 

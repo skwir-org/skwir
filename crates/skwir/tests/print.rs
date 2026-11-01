@@ -249,6 +249,102 @@ fn a_booklet_saved_folds_two_pages_to_a_landscape_side() {
     }
 }
 
+/// Four to a side on A5 asked: the sides are upright A5 sheets, a
+/// gathering of eight pages each, the text laid out at a quarter of one.
+#[test]
+fn a_booklet_of_four_a_side_is_saved_on_the_paper_asked() {
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(app) = app(tmp.path()) else { return };
+    let dir = tmp.path().join("files");
+    std::fs::create_dir(&dir).unwrap();
+    let code = dir.join("short.rs");
+    let source = (1..=60).fold(String::new(), |mut source, n| {
+        use std::fmt::Write as _;
+        let _ = writeln!(source, "let value_{n} = {n};");
+        source
+    });
+    std::fs::write(&code, source).unwrap();
+    let invocation = Invocation::new("print.save_pdf")
+        .with(
+            "entries",
+            [EntryArg::from(EntryRef::from_path(&code).unwrap())],
+        )
+        .with("layout", "booklet")
+        .with("per_side", 4)
+        .with("paper", "a5");
+    let Outcome::Plan(plan) = app.dispatch(&invocation).unwrap() else {
+        panic!("Save as PDF makes a plan");
+    };
+    let result = app.executor.execute_blocking(&plan, app.lifetime());
+    if result
+        .error
+        .as_deref()
+        .is_some_and(|error| error.contains("needs PDFium"))
+    {
+        eprintln!("skipped: no PDF helper or PDFium to fold with");
+        return;
+    }
+    assert!(result.error.is_none(), "{:?}", result.error);
+    // How to fold it is said with what was made: the plan's end carries
+    // it, for its toast and a script's answer.
+    let said = app
+        .executor
+        .events()
+        .try_iter()
+        .find_map(|event| match event {
+            skwir_core::op::ExecEvent::Finished { plan: id, said, .. } if id == plan.id => {
+                Some(said)
+            }
+            _ => None,
+        })
+        .expect("the plan's end was told");
+    assert!(
+        said.iter()
+            .any(|note| note.starts_with("Fold each sheet in half twice")),
+        "{said:?}"
+    );
+    let booklet = dir.join("short (booklet).pdf");
+    let document = lopdf::Document::load(&booklet).unwrap();
+    let pages = document.get_pages();
+    assert!(pages.len().is_multiple_of(2), "{} sides", pages.len());
+    for (_, page) in pages {
+        let media: Vec<f32> = document
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"MediaBox")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|n| n.as_float().unwrap_or_else(|_| n.as_i64().unwrap() as f32))
+            .collect();
+        let (width, height) = (media[2] - media[0], media[3] - media[1]);
+        // A5 is 148 × 210 mm: 419.5 × 595.3 points, upright.
+        assert!((width - 419.53).abs() < 1.0, "{width} wide");
+        assert!((height - 595.28).abs() < 1.0, "{height} high");
+    }
+    // An unknown paper, or pages a side a booklet has not, are refused.
+    let refused = app.dispatch(
+        &Invocation::new("print.save_pdf")
+            .with(
+                "entries",
+                [EntryArg::from(EntryRef::from_path(&code).unwrap())],
+            )
+            .with("paper", "tabloid"),
+    );
+    assert!(refused.is_err());
+    let refused = app.dispatch(
+        &Invocation::new("print.save_pdf")
+            .with(
+                "entries",
+                [EntryArg::from(EntryRef::from_path(&code).unwrap())],
+            )
+            .with("layout", "booklet")
+            .with("per_side", 6),
+    );
+    assert!(refused.is_err());
+}
+
 #[test]
 fn several_files_are_saved_each_as_a_pdf_or_together_as_one() {
     let tmp = tempfile::tempdir().unwrap();
@@ -524,7 +620,9 @@ fn print_asks_skwir_s_dialog_and_saves_the_pdf_it_chose() {
     let keys: Vec<&str> = asked.form.fields.iter().map(|f| f.key.as_str()).collect();
     assert_eq!(
         keys,
-        ["to", "pages", "ranges", "layout", "fold", "trim", "smaller"]
+        [
+            "to", "pages", "ranges", "layout", "per_side", "fold", "trim", "paper", "smaller"
+        ]
     );
     let pages_offered: Vec<&str> = asked.form.fields[1]
         .choices()

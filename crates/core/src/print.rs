@@ -284,15 +284,92 @@ impl Paper {
         }
     }
 
+    /// The same sheet stood upright.
+    #[must_use]
+    pub fn portrait(self) -> Paper {
+        if self.width <= self.height {
+            return self;
+        }
+        Paper {
+            width: self.height,
+            height: self.width,
+            margins: Margins {
+                top: self.margins.right,
+                right: self.margins.bottom,
+                bottom: self.margins.left,
+                left: self.margins.top,
+            },
+        }
+    }
+
     /// Half of this sheet turned landscape: a booklet's page, its margins
     /// kept.
     #[must_use]
     pub fn half(self) -> Paper {
-        let sheet = self.landscape();
+        self.page_of(booklet::PerSide::Two)
+    }
+
+    /// The sheet a booklet of `per_side` pages a side is printed on: turned
+    /// landscape when folded an odd number of times, upright else.
+    #[must_use]
+    pub fn sheet_of(self, per_side: booklet::PerSide) -> Paper {
+        if per_side.landscape() {
+            self.landscape()
+        } else {
+            self.portrait()
+        }
+    }
+
+    /// A page of a booklet of `per_side` pages a side on this sheet: its
+    /// share of the sheet, its margins kept but never more than a tenth of
+    /// its narrower side (a page of an eighth of a sheet keeps room for its
+    /// text).
+    #[must_use]
+    pub fn page_of(self, per_side: booklet::PerSide) -> Paper {
+        let sheet = self.sheet_of(per_side);
+        let (columns, rows) = per_side.grid();
+        #[allow(clippy::cast_precision_loss)]
+        let (width, height) = (sheet.width / columns as f32, sheet.height / rows as f32);
+        let most = width.min(height) / 10.0;
+        let kept = |margin: f32| {
+            if per_side == booklet::PerSide::Two {
+                margin
+            } else {
+                margin.min(most)
+            }
+        };
         Paper {
-            width: sheet.width / 2.0,
-            height: sheet.height,
-            margins: self.margins,
+            width,
+            height,
+            margins: Margins {
+                top: kept(self.margins.top),
+                right: kept(self.margins.right),
+                bottom: kept(self.margins.bottom),
+                left: kept(self.margins.left),
+            },
+        }
+    }
+
+    /// The papers a PDF may be saved on, by name: what a dialog offers and
+    /// a script names (`a4`, `letter`…), and what it is called.
+    pub const NAMED: [(&'static str, &'static str); 5] = [
+        ("a4", "A4"),
+        ("letter", "Letter"),
+        ("a5", "A5"),
+        ("a3", "A3"),
+        ("legal", "Legal"),
+    ];
+
+    /// The paper called `name` (as [`Paper::NAMED`] and libpaper name them,
+    /// case ignored).
+    pub fn named(name: &str) -> Option<Paper> {
+        match name.trim().to_lowercase().as_str() {
+            "a4" => Some(Paper::a4()),
+            "letter" => Some(Paper::letter()),
+            "legal" => Some(Paper::mm(215.9, 355.6)),
+            "a3" => Some(Paper::mm(297.0, 420.0)),
+            "a5" => Some(Paper::mm(148.0, 210.0)),
+            _ => None,
         }
     }
 }
@@ -314,39 +391,291 @@ pub enum Duplex {
 pub mod booklet {
     use super::{Deserialize, JsonSchema, Serialize};
 
-    /// One sheet, folded in the middle: its front's left and right pages,
-    /// its back's left and right, each a page of the document (from 0) or
-    /// a blank (`None`).
+    /// How many pages a side of a sheet holds: 2, the sheet folded once (4
+    /// pages a sheet, a booklet's); 4, folded twice (8, the top fold cut
+    /// open); 8, folded three times (16, the top and outer folds cut).
+    #[derive(
+        Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema,
+    )]
+    #[serde(rename_all = "snake_case")]
+    pub enum PerSide {
+        #[default]
+        Two,
+        Four,
+        Eight,
+    }
+
+    impl PerSide {
+        pub const ALL: [PerSide; 3] = [PerSide::Two, PerSide::Four, PerSide::Eight];
+
+        pub fn count(self) -> u32 {
+            match self {
+                PerSide::Two => 2,
+                PerSide::Four => 4,
+                PerSide::Eight => 8,
+            }
+        }
+
+        pub fn of_count(count: u32) -> Option<PerSide> {
+            PerSide::ALL.into_iter().find(|side| side.count() == count)
+        }
+
+        /// How many times a sheet is folded.
+        pub fn folds(self) -> u32 {
+            match self {
+                PerSide::Two => 1,
+                PerSide::Four => 2,
+                PerSide::Eight => 3,
+            }
+        }
+
+        /// Pages a sheet holds, both sides.
+        pub fn per_sheet(self) -> u32 {
+            self.count() * 2
+        }
+
+        /// The pages across a side and down it.
+        pub fn grid(self) -> (u32, u32) {
+            match self {
+                PerSide::Two => (2, 1),
+                PerSide::Four => (2, 2),
+                PerSide::Eight => (4, 2),
+            }
+        }
+
+        /// Whether its sheet lies landscape: folded an odd number of times,
+        /// its pages are portrait either way.
+        pub fn landscape(self) -> bool {
+            self.folds() % 2 == 1
+        }
+    }
+
+    /// A page's place on a side: the document's page (from 0) or a blank,
+    /// and whether it is printed upside down, as it comes right once
+    /// folded.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+    pub struct Cell {
+        pub page: Option<u32>,
+        #[serde(default, skip_serializing_if = "is_false")]
+        pub turned: bool,
+    }
+
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    fn is_false(value: &bool) -> bool {
+        !*value
+    }
+
+    /// One sheet: the pages of its front (the side page 1 is on, the
+    /// outside once folded) and of its back, row by row from the top left
+    /// ([`PerSide::grid`]), the back as it shows once the sheet is turned
+    /// over its vertical edge.
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
     pub struct Sheet {
-        pub front: [Option<u32>; 2],
-        pub back: [Option<u32>; 2],
+        pub front: Vec<Cell>,
+        pub back: Vec<Cell>,
     }
 
     /// The sheets of `pages` pages (from 0, in the order they read) folded
-    /// as a booklet, in signatures of `signature` pages (rounded up to a
-    /// multiple of 4; all of them in one without), blanks at the end. Laid
-    /// in this order, folded, each signature put after the one before,
-    /// they read in order.
-    pub fn sheets(pages: &[u32], signature: Option<u32>) -> Vec<Sheet> {
-        let total = pages.len().div_ceil(4) * 4;
-        let size = signature
-            .map_or(total, |size| (size.max(4) as usize).div_ceil(4) * 4)
-            .max(4);
+    /// as `per_side` says, blanks at the end. Two a side: in signatures of
+    /// `signature` pages (a multiple of 4; all of them in one without),
+    /// sheets put one inside another. Four or eight a side: each sheet its
+    /// own gathering, folded, its closed folds cut, put after the one
+    /// before. Laid in this order, folded, they read in order.
+    pub fn sheets(pages: &[u32], signature: Option<u32>, per_side: PerSide) -> Vec<Sheet> {
         let page = |at: usize| pages.get(at).copied();
-        let mut sheets = Vec::new();
-        let mut start = 0;
-        while start < total {
-            let n = size.min(total - start);
-            for i in 0..n / 4 {
-                sheets.push(Sheet {
-                    front: [page(start + n - 1 - 2 * i), page(start + 2 * i)],
-                    back: [page(start + 2 * i + 1), page(start + n - 2 - 2 * i)],
-                });
+        let upright = |page: Option<u32>| Cell {
+            page,
+            turned: false,
+        };
+        if per_side == PerSide::Two {
+            let total = pages.len().div_ceil(4) * 4;
+            let size = signature
+                .map_or(total, |size| (size.max(4) as usize).div_ceil(4) * 4)
+                .max(4);
+            let mut sheets = Vec::new();
+            let mut start = 0;
+            while start < total {
+                let n = size.min(total - start);
+                for i in 0..n / 4 {
+                    sheets.push(Sheet {
+                        front: vec![
+                            upright(page(start + n - 1 - 2 * i)),
+                            upright(page(start + 2 * i)),
+                        ],
+                        back: vec![
+                            upright(page(start + 2 * i + 1)),
+                            upright(page(start + n - 2 - 2 * i)),
+                        ],
+                    });
+                }
+                start += n;
             }
-            start += n;
+            return sheets;
         }
-        sheets
+        let (front, back) = folded(per_side);
+        let each = per_side.per_sheet() as usize;
+        let count = pages.len().div_ceil(each).max(1);
+        (0..count)
+            .map(|sheet| {
+                let laid = |cells: &[(usize, bool)]| {
+                    cells
+                        .iter()
+                        .map(|&(at, turned)| Cell {
+                            page: page(sheet * each + at),
+                            turned,
+                        })
+                        .collect()
+                };
+                Sheet {
+                    front: laid(&front),
+                    back: laid(&back),
+                }
+            })
+            .collect()
+    }
+
+    /// A fold: the half that moves goes over the other, turned over.
+    #[derive(Clone, Copy)]
+    enum Fold {
+        /// The right half over the left.
+        RightOverLeft,
+        /// The left half over the right: the spine on the left.
+        LeftOverRight,
+        /// The top half down over the bottom: the head closed.
+        TopOverBottom,
+    }
+
+    /// A part of the sheet: its place on the sheet (front, as printed),
+    /// where it lies now, how it is turned ([x, y], each 1 or -1: a
+    /// mirror along that axis), and whether its front faces up.
+    #[derive(Clone, Copy)]
+    struct Part {
+        column: usize,
+        row: usize,
+        at: (usize, usize),
+        axes: [i8; 2],
+        front_up: bool,
+    }
+
+    /// Where the pages of one sheet folded as `per_side` says go: for its
+    /// front and its back (as [`Sheet`] lays them), each place's page
+    /// within the sheet's (from 0) and whether it is upside down.
+    ///
+    /// Worked out by folding: each part of the sheet (one page's place) is
+    /// followed as the sheet is folded, the folds of a printer's
+    /// signature: for 16 pages right over left, top down, left over right;
+    /// for 8, top down, left over right; the last fold always left over
+    /// right, its fold the spine. Folded, the parts lie in a stack: the
+    /// top one's upper face is page 1, its lower face page 2 (the leaf
+    /// turned), the next one's upper face page 3, and so on; a face reads
+    /// upside down when the folds turned it half a turn.
+    fn folded(per_side: PerSide) -> (Vec<(usize, bool)>, Vec<(usize, bool)>) {
+        let folds: &[Fold] = match per_side {
+            PerSide::Two => &[Fold::LeftOverRight],
+            PerSide::Four => &[Fold::TopOverBottom, Fold::LeftOverRight],
+            PerSide::Eight => &[
+                Fold::RightOverLeft,
+                Fold::TopOverBottom,
+                Fold::LeftOverRight,
+            ],
+        };
+        let (columns, rows) = per_side.grid();
+        let (columns, rows) = (columns as usize, rows as usize);
+        // Each place where parts lie, its stack from the top down.
+        let mut stacks: Vec<Vec<Part>> = (0..columns * rows)
+            .map(|at| {
+                vec![Part {
+                    column: at % columns,
+                    row: at / columns,
+                    at: (at % columns, at / columns),
+                    axes: [1, 1],
+                    front_up: true,
+                }]
+            })
+            .collect();
+        let (mut width, mut height) = (columns, rows);
+        for fold in folds {
+            let mut next: Vec<Vec<Part>> = vec![Vec::new(); columns * rows];
+            for stack in stacks.iter().filter(|stack| !stack.is_empty()) {
+                let (x, y) = stack[0].at;
+                let moves = match fold {
+                    Fold::RightOverLeft => x >= width / 2,
+                    Fold::LeftOverRight => x < width / 2,
+                    Fold::TopOverBottom => y < height / 2,
+                };
+                let to = match fold {
+                    Fold::RightOverLeft | Fold::LeftOverRight if moves => (width - 1 - x, y),
+                    Fold::TopOverBottom if moves => (x, height - 1 - y),
+                    _ => (x, y),
+                };
+                // What stays keeps its place; what moves lands on it turned
+                // over, its stack's order reversed.
+                let to = match fold {
+                    Fold::RightOverLeft => to,
+                    Fold::LeftOverRight => (to.0 - width / 2, to.1),
+                    Fold::TopOverBottom => (to.0, to.1 - height / 2),
+                };
+                let landed = &mut next[to.1 * columns + to.0];
+                if moves {
+                    let turned = stack.iter().rev().map(|part| {
+                        let mut part = *part;
+                        match fold {
+                            Fold::TopOverBottom => part.axes[1] = -part.axes[1],
+                            _ => part.axes[0] = -part.axes[0],
+                        }
+                        part.front_up = !part.front_up;
+                        part.at = to;
+                        part
+                    });
+                    let below = std::mem::take(landed);
+                    landed.extend(turned);
+                    landed.extend(below);
+                } else {
+                    landed.extend(stack.iter().map(|part| Part { at: to, ..*part }));
+                }
+            }
+            stacks = next;
+            match fold {
+                Fold::TopOverBottom => height /= 2,
+                _ => width /= 2,
+            }
+        }
+        let stack: Vec<Part> = stacks.into_iter().flatten().collect();
+        // A face reads upright when, seen as it is read, it is turned as
+        // printed; else it is half a turn round (folds along the axes give
+        // nothing else). Its back is printed mirrored along x (the sheet
+        // turned over its vertical edge); a lower face is read with the
+        // leaf turned over the spine, a mirror along x.
+        let turned = |part: &Part, front: bool, upper: bool| {
+            let mut x = part.axes[0];
+            let y = part.axes[1];
+            if !front {
+                x = -x;
+            }
+            if !upper {
+                x = -x;
+            }
+            debug_assert_eq!(x, y, "a fold along an axis turns a face half a turn or not");
+            x < 0
+        };
+        let mut front = vec![(0, false); columns * rows];
+        let mut back = vec![(0, false); columns * rows];
+        for (depth, part) in stack.iter().enumerate() {
+            for (upper, page) in [(true, 2 * depth), (false, 2 * depth + 1)] {
+                // The face read is the front of the sheet when the front
+                // faces up and it is the upper face, or neither.
+                let is_front = part.front_up == upper;
+                let turned = turned(part, is_front, upper);
+                // Page 1's side is the sheet's front as `Sheet` names it:
+                // the printed back here, seen turned over its vertical edge.
+                if is_front {
+                    back[part.row * columns + part.column] = (page, turned);
+                } else {
+                    front[part.row * columns + (columns - 1 - part.column)] = (page, turned);
+                }
+            }
+        }
+        (front, back)
     }
 }
 
@@ -632,7 +961,35 @@ pub struct Made {
 
 #[cfg(test)]
 mod tests {
-    use super::booklet::{Sheet, sheets};
+    use super::booklet::{Cell, PerSide, Sheet, sheets};
+
+    fn upright(pages: &[Option<u32>]) -> Vec<Cell> {
+        pages
+            .iter()
+            .map(|&page| Cell {
+                page,
+                turned: false,
+            })
+            .collect()
+    }
+
+    /// A sheet's pages, 1-based as a printer's diagrams number them, an
+    /// upside-down one marked `T`.
+    fn said(cells: &[Cell]) -> Vec<String> {
+        cells
+            .iter()
+            .map(|cell| {
+                let page = cell
+                    .page
+                    .map_or_else(|| "-".to_owned(), |page| (page + 1).to_string());
+                if cell.turned {
+                    format!("{page}T")
+                } else {
+                    page
+                }
+            })
+            .collect()
+    }
     use super::*;
 
     fn range(first: u32, last: Option<u32>) -> Range {
@@ -697,32 +1054,64 @@ mod tests {
     fn a_booklet_of_eight_pages_folds_two_sheets() {
         let pages: Vec<u32> = (0..8).collect();
         assert_eq!(
-            sheets(&pages, None),
+            sheets(&pages, None, PerSide::Two),
             [
                 Sheet {
-                    front: [Some(7), Some(0)],
-                    back: [Some(1), Some(6)]
+                    front: upright(&[Some(7), Some(0)]),
+                    back: upright(&[Some(1), Some(6)])
                 },
                 Sheet {
-                    front: [Some(5), Some(2)],
-                    back: [Some(3), Some(4)]
+                    front: upright(&[Some(5), Some(2)]),
+                    back: upright(&[Some(3), Some(4)])
                 },
             ]
         );
         // Five pages: three blanks at the end.
         assert_eq!(
-            sheets(&[0, 1, 2, 3, 4], None),
+            sheets(&[0, 1, 2, 3, 4], None, PerSide::Two),
             [
                 Sheet {
-                    front: [None, Some(0)],
-                    back: [Some(1), None]
+                    front: upright(&[None, Some(0)]),
+                    back: upright(&[Some(1), None])
                 },
                 Sheet {
-                    front: [None, Some(2)],
-                    back: [Some(3), Some(4)]
+                    front: upright(&[None, Some(2)]),
+                    back: upright(&[Some(3), Some(4)])
                 },
             ]
         );
+    }
+
+    /// Folded twice and three times, a sheet lays its pages as a
+    /// printer's 8- and 16-page signatures do (the top row upside down),
+    /// page 1 on the front; each sheet its own gathering, blanks at the end.
+    #[test]
+    fn a_sheet_folded_twice_or_three_times_lays_a_printer_s_signature() {
+        let eight: Vec<u32> = (0..8).collect();
+        let [sheet] = sheets(&eight, None, PerSide::Four).try_into().unwrap();
+        assert_eq!(said(&sheet.front), ["5T", "4T", "8", "1"]);
+        assert_eq!(said(&sheet.back), ["3T", "6T", "2", "7"]);
+        let sixteen: Vec<u32> = (0..16).collect();
+        let [sheet] = sheets(&sixteen, None, PerSide::Eight).try_into().unwrap();
+        assert_eq!(
+            said(&sheet.front),
+            ["5T", "12T", "9T", "8T", "4", "13", "16", "1"]
+        );
+        assert_eq!(
+            said(&sheet.back),
+            ["7T", "10T", "11T", "6T", "2", "15", "14", "3"]
+        );
+        // Ten pages, four a side: two sheets, the second of pages 9 and 10.
+        let ten: Vec<u32> = (0..10).collect();
+        let laid = sheets(&ten, None, PerSide::Four);
+        assert_eq!(laid.len(), 2);
+        assert_eq!(said(&laid[1].front), ["-T", "-T", "-", "9"]);
+        assert_eq!(said(&laid[1].back), ["-T", "-T", "10", "-"]);
+        // Folding once, the fold gives what the booklet's own order gives.
+        let four: Vec<u32> = (0..4).collect();
+        let [sheet] = sheets(&four, None, PerSide::Two).try_into().unwrap();
+        assert_eq!(said(&sheet.front), ["4", "1"]);
+        assert_eq!(said(&sheet.back), ["2", "3"]);
     }
 
     /// Every page is printed once, blanks only where the count was
@@ -732,10 +1121,11 @@ mod tests {
         for count in 0..60u32 {
             for signature in [None, Some(4), Some(8), Some(10), Some(16)] {
                 let pages: Vec<u32> = (100..100 + count).collect();
-                let sheets = sheets(&pages, signature);
+                let sheets = sheets(&pages, signature, PerSide::Two);
                 let slots: Vec<Option<u32>> = sheets
                     .iter()
-                    .flat_map(|sheet| sheet.front.into_iter().chain(sheet.back))
+                    .flat_map(|sheet| sheet.front.iter().chain(&sheet.back))
+                    .map(|cell| cell.page)
                     .collect();
                 let mut printed: Vec<u32> = slots.iter().flatten().copied().collect();
                 printed.sort_unstable();
@@ -751,10 +1141,10 @@ mod tests {
                     let n = group.len();
                     let mut order = vec![None; n * 4];
                     for (i, sheet) in group.iter().enumerate() {
-                        order[2 * i] = sheet.front[1];
-                        order[2 * i + 1] = sheet.back[0];
-                        order[n * 4 - 2 - 2 * i] = sheet.back[1];
-                        order[n * 4 - 1 - 2 * i] = sheet.front[0];
+                        order[2 * i] = sheet.front[1].page;
+                        order[2 * i + 1] = sheet.back[0].page;
+                        order[n * 4 - 2 - 2 * i] = sheet.back[1].page;
+                        order[n * 4 - 1 - 2 * i] = sheet.front[0].page;
                     }
                     read.extend(order);
                 }
@@ -818,5 +1208,22 @@ mod tests {
         assert!((half.width - 841.89 / 2.0).abs() < 0.01);
         assert!((half.height - 595.276).abs() < 0.01);
         assert_eq!(Paper::a4().landscape().landscape(), Paper::a4().landscape());
+        assert_eq!(Paper::a4().landscape().portrait(), Paper::a4());
+        // A quarter of A4 is A6, upright; an eighth A7, upright too.
+        let quarter = Paper::a4().page_of(PerSide::Four);
+        assert!((quarter.width - 595.276 / 2.0).abs() < 0.01);
+        assert!((quarter.height - 841.89 / 2.0).abs() < 0.01);
+        let eighth = Paper::a4().page_of(PerSide::Eight);
+        assert!(eighth.height > eighth.width);
+        assert!(eighth.margins.left <= eighth.width / 10.0);
+        assert_eq!(
+            half.margins,
+            Paper::a4().margins,
+            "half a sheet keeps its margins"
+        );
+        for (name, _) in Paper::NAMED {
+            assert!(Paper::named(name).is_some(), "{name}");
+        }
+        assert_eq!(Paper::named(" A4 "), Some(Paper::a4()));
     }
 }

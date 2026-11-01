@@ -9000,3 +9000,63 @@ code file read and colored, 20 s in the debug build) shows the bar at 0;
 `tree_sitter::tests::reads_are_answered_beside_a_parse` (commit 7bdb5362,
 not this change) fails here on its timing; Windows and macOS for these
 changes beyond clippy of the crates touched.
+
+### Four and eight pages a side, the paper of a PDF (2026-11-01, P6)
+
+Asked by the user after S6: booklets of 8 and 16 pages a sheet, and the
+paper a PDF or a booklet is made on, chosen. ADR-111 revised.
+
+- Core: `print::booklet::PerSide` (2, 4, 8; grid, folds, landscape),
+  `Cell` (a page, upside down or not), `Sheet` of cells; `sheets` folds a
+  sheet in simulation for 4 and 8 a side (a gathering a sheet), keeps the
+  nested signatures for 2. `Paper::page_of` and `sheet_of`, `NAMED`,
+  `named`. `Compose::Booklet` gains `per_side`.
+- `StepContext::say`, new: what a step says beside what it did rides on
+  its plan's end (`ExecEvent::Finished`'s `said`, each note once; a
+  script's `Verdict`), said by the toast after what was done, alone when
+  nothing else was. A toast stays at least as long as its words take to
+  read (3 a second).
+- The PDF helper places each page in its cell with PDFium (turned about
+  its own middle where its cell says) and marks the folds by grey ticks
+  in the front's margins. The platform's `paper_name` names the
+  system's paper.
+- The print plugin: `per_side` and `paper` arguments (others refused),
+  the backs turned by the sheet's orientation and the sides chosen, how
+  to fold said (`StepContext::say` when saved, after what was sent when
+  printed); the dialog's "Pages a side" row with pictures, "Folded as"
+  and signatures for 2 a side alone, a Paper row when saving, both
+  remembered until Skwir quits.
+- Reduce Size's notes moved to `StepContext::say` from a notification
+  sent 1.5 s after the steps, which covered the plan's toast and its
+  Undo; its delayed teller is gone.
+- Found on the way: Reduce Size's commit (ce3ee1d1) moved pdfium-render's
+  `windows = "0"` to 0.62 (the newest in the tree), so the print helper's
+  own 0.57 HDC no longer matched and its Windows build failed; the helper
+  now names 0.62, the platform's and gpui's (`GetDeviceCaps` takes an
+  `Option<HDC>` there).
+
+**Checked:** tests: the signatures of 4 and 8 a side against a printer's
+(front 5T 4T / 8 1, back 3T 6T / 2 7; front 5T 12T 9T 8T / 4 13 16 1,
+back 7T 10T 11T 6T / 2 15 14 3), the cells and placing in the PDF
+helper, a 4-a-side booklet composed by PDFium (pages placed, four fold
+ticks on the front, none on the back), a booklet of 60 lines of code
+saved 4 a side on A5 upright (419.5 × 595.3 pt) with its folding words
+at the plan's end, `tabloid` and 6 a side refused, a step's words and an
+`Unneeded`'s at the plan's end, the toast's sentence then words, a long
+toast's time; 1528 tests of the changed crates (1527 passed: the
+`tree_sitter` timing test, as before), then 1072 of core, the UI and
+the plugins after the rework, the binary's print, shrink and
+plugins_toggle (19); clippy and rustfmt; clippy for Windows and macOS of
+the changed crates. In a window on Xvfb: the dialog's pictures for 2, 4
+and 8 a side, Folded as hidden past 2; a 15-page PDF saved 4 a side on
+A4 and 8 a side on A3, drawn by mutool and looked at (the top rows upside
+down, page 1 bottom right, the blank 16th in place, the fold ticks at
+the edges' middles, A3 landscape); the toast "Saved “report.pdf” as
+“report (booklet) (2).pdf”. Fold each sheet in half three times, …" with
+Undo; Reduce Size of a photo at most 10 KB: "Made …, a smaller copy of
+“walk.jpg”. “walk.jpg” could not be brought under the size asked: its
+smallest copy is 61 KB", nothing covering it after.
+
+**Not checked:** printed on paper and folded; Print… to a printer with 4
+or 8 a side (the sides' turning is tested, not printed); Windows and
+macOS beyond clippy; the toast's new reading time in the window.

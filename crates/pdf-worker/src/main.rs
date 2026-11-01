@@ -148,6 +148,7 @@ fn composed<'a>(
         }
         Compose::Booklet {
             sheets,
+            per_side,
             width,
             height,
             fold,
@@ -156,6 +157,7 @@ fn composed<'a>(
             turn_backs,
         } => {
             let layout = Layout {
+                per_side: *per_side,
                 width: *width,
                 height: *height,
                 fold: *fold,
@@ -278,6 +280,7 @@ fn scale_about(scale: f32, middle: (f32, f32)) -> PdfMatrix {
 
 /// How a booklet's sheets are laid out (`Compose::Booklet`).
 struct Layout {
+    per_side: skwir_core::print::booklet::PerSide,
     width: f32,
     height: f32,
     fold: f32,
@@ -286,8 +289,8 @@ struct Layout {
     turn_backs: bool,
 }
 
-/// The most sheets a booklet is made of, four pages each: a request
-/// listing more is refused (its line's bound holds fewer anyway).
+/// The most sheets a booklet is made of, up to sixteen pages each: a
+/// request listing more is refused (its line's bound holds fewer anyway).
 const MOST_SHEETS: usize = 50_000;
 /// The largest a sheet may be, in points: PDF's own limit (200 inches).
 const LARGEST_SHEET: f32 = 14_400.0;
@@ -302,59 +305,121 @@ struct Area {
     height: f32,
 }
 
-/// The two halves of a sheet of `layout`, left then right, upwards: within
-/// `edge` of the sheet's edges and `fold` of its middle, both bounded so
-/// each half keeps some room.
-fn halves(layout: &Layout) -> [Area; 2] {
+/// The places of a side's pages on a sheet of `layout`, row by row from
+/// the top left (`PerSide::grid`), upwards: within `edge` of the sheet's
+/// edges and `fold` of each fold, both bounded so each place keeps some
+/// room.
+fn cells(layout: &Layout) -> Vec<Area> {
+    let (columns, rows) = layout.per_side.grid();
+    #[allow(clippy::cast_precision_loss)]
+    let (columns, rows) = (columns as f32, rows as f32);
     let (width, height) = (layout.width, layout.height);
+    let (across, down) = (width / columns, height / rows);
     let edge = layout.edge.clamp(0.0, width.min(height) / 4.0);
-    let fold = layout.fold.clamp(0.0, width / 8.0);
-    let half = (width / 2.0 - fold - edge).max(1.0);
-    let tall = (height - 2.0 * edge).max(1.0);
-    [
-        Area {
-            x: edge,
-            y: edge,
-            width: half,
-            height: tall,
-        },
-        Area {
-            x: width / 2.0 + fold,
-            y: edge,
-            width: half,
-            height: tall,
-        },
-    ]
+    let fold = layout.fold.clamp(0.0, across.min(down) / 8.0);
+    let mut cells = Vec::new();
+    let mut row = 0.0;
+    while row < rows {
+        let mut column = 0.0;
+        while column < columns {
+            let left = if column == 0.0 { edge } else { fold };
+            let right = if column + 1.0 >= columns { edge } else { fold };
+            let top = if row == 0.0 { edge } else { fold };
+            let bottom = if row + 1.0 >= rows { edge } else { fold };
+            cells.push(Area {
+                x: column * across + left,
+                y: height - (row + 1.0) * down + bottom,
+                width: (across - left - right).max(1.0),
+                height: (down - top - bottom).max(1.0),
+            });
+            column += 1.0;
+        }
+        row += 1.0;
+    }
+    cells
 }
 
 /// What draws a page of `width` × `height` (its form's own space, upwards
-/// from its bottom left) fitted in `half`, keeping its proportions,
-/// centred; turned half a turn about the sheet's centre when `turned`.
-fn placed(width: f32, height: f32, half: Area, turned: bool, sheet: (f32, f32)) -> PdfMatrix {
-    let scale = (half.width / width.max(0.01)).min(half.height / height.max(0.01));
-    let x = half.x + (half.width - width * scale) / 2.0;
-    let y = half.y + (half.height - height * scale) / 2.0;
+/// from its bottom left) fitted in `cell`, keeping its proportions,
+/// centred; turned half a turn about its own middle when `turned`.
+fn placed(width: f32, height: f32, cell: Area, turned: bool) -> PdfMatrix {
+    let scale = (cell.width / width.max(0.01)).min(cell.height / height.max(0.01));
+    let x = cell.x + (cell.width - width * scale) / 2.0;
+    let y = cell.y + (cell.height - height * scale) / 2.0;
     if turned {
-        PdfMatrix::new(-scale, 0.0, 0.0, -scale, sheet.0 - x, sheet.1 - y)
+        PdfMatrix::new(
+            -scale,
+            0.0,
+            0.0,
+            -scale,
+            x + width * scale,
+            y + height * scale,
+        )
     } else {
         PdfMatrix::new(scale, 0.0, 0.0, scale, x, y)
     }
 }
 
+/// Where the `at`th page of a side goes, and whether it is upside down: as
+/// its cell says, or, on a back turned half a turn with its sheet, in the
+/// place across the sheet's middle from it, turned once more.
+fn place_of(at: usize, count: usize, turned: bool, back_turned: bool) -> (usize, bool) {
+    if back_turned {
+        (count - 1 - at, !turned)
+    } else {
+        (at, turned)
+    }
+}
+
+/// The folds of a sheet of `layout` (four or eight pages to a side),
+/// marked in its margins: a short grey line at each end of every fold.
+fn mark_folds(side: &mut PdfPage<'_>, layout: &Layout) -> anyhow::Result<()> {
+    let (columns, rows) = layout.per_side.grid();
+    let (width, height) = (layout.width, layout.height);
+    let long = (layout.edge * 0.6).clamp(3.0, 14.0);
+    let grey = PdfColor::new(150, 150, 150, 255);
+    let mut line = |x1: f32, y1: f32, x2: f32, y2: f32| -> anyhow::Result<()> {
+        side.objects_mut().create_path_object_line(
+            PdfPoints::new(x1),
+            PdfPoints::new(y1),
+            PdfPoints::new(x2),
+            PdfPoints::new(y2),
+            grey,
+            PdfPoints::new(0.5),
+        )?;
+        Ok(())
+    };
+    for column in 1..columns {
+        #[allow(clippy::cast_precision_loss)]
+        let x = width * column as f32 / columns as f32;
+        line(x, 0.0, x, long)?;
+        line(x, height - long, x, height)?;
+    }
+    for row in 1..rows {
+        #[allow(clippy::cast_precision_loss)]
+        let y = height * row as f32 / rows as f32;
+        line(0.0, y, long, y)?;
+        line(width - long, y, width, y)?;
+    }
+    Ok(())
+}
+
 /// A booklet of `document`'s pages, `sheets` in their order, each its
 /// front then its back, written at `path`; how many sides it has.
 ///
-/// The pages are copied in the order their halves print in (front left,
-/// front right, back left, back right, a sheet after another), blanks
-/// where a half has none, in one import, so what they share (fonts,
-/// pictures) is copied once; with `trim`, each copy is cut to the box of
-/// every page's ink (its crop box set to it). `PDFium` then draws them two
-/// to a side as forms of themselves (`FPDF_ImportNPagesToOne`, which
-/// copies what they share once again, turns each as its `/Rotate` says
-/// and clips it to its crop box), and each form is placed again where
-/// `layout` says: in its half, within the edges and off the fold, the
-/// back turned half a turn for a printer turning sheets over their long
-/// edge. Stops when a newer request waits.
+/// The pages are copied in the order their places print in (a front's,
+/// row by row, then its back's, a sheet after another), blanks where a
+/// place has none, in one import, so what they share (fonts, pictures) is
+/// copied once; with `trim`, each copy is cut to the box of every page's
+/// ink (its crop box set to it). `PDFium` then draws them two, four or
+/// eight to a side as forms of themselves (`FPDF_ImportNPagesToOne`,
+/// which copies what they share once again, turns each as its `/Rotate`
+/// says and clips it to its crop box), and each form is placed again where
+/// `layout` says: in its place, within the edges and off the folds,
+/// upside down where its cell says, the back turned half a turn for a
+/// printer turning sheets over the other edge; four or eight to a side,
+/// the folds are marked in the front's margins. Stops when a newer
+/// request waits.
 fn booklet(
     pdfium: &Pdfium,
     document: &PdfDocument<'_>,
@@ -375,12 +440,21 @@ fn booklet(
     anyhow::ensure!(!sheets.is_empty(), "a booklet of nothing");
     anyhow::ensure!(sheets.len() <= MOST_SHEETS, "too many sheets");
     let count = document.pages().len();
-    // The halves in the order they print.
-    let mut order: Vec<Option<PdfPageIndex>> = Vec::with_capacity(sheets.len() * 4);
-    for page in sheets
+    let per_side = layout.per_side.count() as usize;
+    anyhow::ensure!(
+        sheets
+            .iter()
+            .all(|sheet| sheet.front.len() == per_side && sheet.back.len() == per_side),
+        "a sheet of other than {per_side} pages a side"
+    );
+    // The places in the order they print, a side after another.
+    let cells_in_order: Vec<skwir_core::print::booklet::Cell> = sheets
         .iter()
-        .flat_map(|sheet| sheet.front.into_iter().chain(sheet.back))
-    {
+        .flat_map(|sheet| sheet.front.iter().chain(&sheet.back))
+        .copied()
+        .collect();
+    let mut order: Vec<Option<PdfPageIndex>> = Vec::with_capacity(cells_in_order.len());
+    for page in cells_in_order.iter().map(|cell| cell.page) {
         order.push(match page {
             Some(page) => {
                 let index = PdfPageIndex::try_from(page).context("page out of range")?;
@@ -434,20 +508,21 @@ fn booklet(
     }
     anyhow::ensure!(!superseded(), "composing superseded");
     let sheet = (layout.width, layout.height);
+    let (columns, rows) = layout.per_side.grid();
     let tiled = ordered
         .pages()
         .tile_into_new_document(
-            1,
-            2,
+            u8::try_from(rows).context("too many rows")?,
+            u8::try_from(columns).context("too many columns")?,
             PdfPagePaperSize::Custom(PdfPoints::new(sheet.0), PdfPoints::new(sheet.1)),
         )
-        .context("lay the pages two to a side")?;
-    let halves = halves(layout);
+        .context("lay the pages out on their sides")?;
+    let places = cells(layout);
     for (number, mut side) in tiled.pages().iter().enumerate() {
         if number % 16 == 0 {
             anyhow::ensure!(!superseded(), "composing superseded");
         }
-        let turned = layout.turn_backs && number % 2 == 1;
+        let back_turned = layout.turn_backs && number % 2 == 1;
         side.set_content_regeneration_strategy(PdfPageContentRegenerationStrategy::Manual);
         {
             let mut forms: Vec<PdfPageObject<'_>> = side
@@ -456,20 +531,26 @@ fn booklet(
                 .filter(|object| object.object_type() == PdfPageObjectType::XObjectForm)
                 .collect();
             anyhow::ensure!(
-                forms.len() == 2,
-                "a side holds {} pages, not two",
+                forms.len() == per_side,
+                "a side holds {} pages, not {per_side}",
                 forms.len()
             );
             for (k, form) in forms.iter_mut().enumerate() {
-                let Some(Some((width, height))) = sizes.get(number * 2 + k) else {
+                let at = number * per_side + k;
+                let Some(Some((width, height))) = sizes.get(at) else {
                     continue;
                 };
-                let matrix = placed(*width, *height, halves[k], turned, sheet);
+                let turned = cells_in_order.get(at).is_some_and(|cell| cell.turned);
+                let (place, turned) = place_of(k, per_side, turned, back_turned);
+                let matrix = placed(*width, *height, places[place], turned);
                 form.as_x_object_form_object_mut()
                     .context("a page's form")?
                     .reset_matrix(matrix)?;
             }
             drop(forms);
+        }
+        if layout.per_side != skwir_core::print::booklet::PerSide::Two && number % 2 == 0 {
+            mark_folds(&mut side, layout)?;
         }
         side.regenerate_content()?;
     }
@@ -866,6 +947,7 @@ mod tests {
 
     fn layout(turn_backs: bool) -> super::Layout {
         super::Layout {
+            per_side: skwir_core::print::booklet::PerSide::Two,
             width: 842.0,
             height: 595.0,
             fold: 10.0,
@@ -877,7 +959,7 @@ mod tests {
 
     #[test]
     fn a_sheet_s_halves_keep_off_its_edges_and_its_fold() {
-        let [left, right] = super::halves(&layout(false));
+        let [left, right] = super::cells(&layout(false)).try_into().unwrap();
         assert_eq!((left.x, left.y), (20.0, 20.0));
         assert_eq!(left.width, 421.0 - 10.0 - 20.0);
         assert_eq!(right.x, 431.0);
@@ -887,9 +969,10 @@ mod tests {
 
     #[test]
     fn a_page_is_fitted_centred_in_its_half_and_turned_with_the_back() {
-        let [left, _] = super::halves(&layout(false));
+        let halves = super::cells(&layout(false));
+        let left = halves[0];
         // A page half as wide as tall, in a half 391 × 555.
-        let matrix = super::placed(200.0, 400.0, left, false, (842.0, 595.0));
+        let matrix = super::placed(200.0, 400.0, left, false);
         let point = |m: &pdfium_render::prelude::PdfMatrix, x: f32, y: f32| {
             let (a, b, c, d, e, f) = (m.a(), m.b(), m.c(), m.d(), m.e(), m.f());
             (a * x + c * y + e, b * x + d * y + f)
@@ -903,13 +986,49 @@ mod tests {
             (f32::midpoint(x0, x1) - (20.0 + 391.0 / 2.0)).abs() < 0.01,
             "centred"
         );
-        // Turned, its corners land where the sheet turned half a turn
-        // puts them: the left half's page in the right half, upside down.
-        let turned = super::placed(200.0, 400.0, left, true, (842.0, 595.0));
+        // On a back turned with its sheet, its corners land where the sheet
+        // turned half a turn puts them: the left half's page in the right
+        // half, upside down.
+        let (place, turned) = super::place_of(0, 2, false, true);
+        let turned = super::placed(200.0, 400.0, halves[place], turned);
         let (tx0, ty0) = point(&turned, 0.0, 0.0);
         assert!((tx0 - (842.0 - x0)).abs() < 0.01 && (ty0 - (595.0 - y0)).abs() < 0.01);
         let (tx1, _) = point(&turned, 200.0, 400.0);
         assert!(tx1 < tx0, "upside down");
+        // A page upside down in its place stays in it: turned about its
+        // middle, its corners swap within the same box.
+        let own = super::placed(200.0, 400.0, left, true);
+        let (ox0, oy0) = point(&own, 0.0, 0.0);
+        let (ox1, oy1) = point(&own, 200.0, 400.0);
+        assert!((ox0 - x1).abs() < 0.01 && (oy0 - y1).abs() < 0.01);
+        assert!((ox1 - x0).abs() < 0.01 && (oy1 - y0).abs() < 0.01);
+    }
+
+    /// Four to a side on an upright sheet: four places, the top ones above
+    /// the bottom ones, each off the edges and the folds.
+    #[test]
+    fn four_to_a_side_make_four_places_off_the_folds() {
+        let layout = super::Layout {
+            per_side: skwir_core::print::booklet::PerSide::Four,
+            width: 595.0,
+            height: 842.0,
+            fold: 10.0,
+            edge: 20.0,
+            trim: false,
+            turn_backs: false,
+        };
+        let cells = super::cells(&layout);
+        assert_eq!(cells.len(), 4);
+        let [top_left, top_right, bottom_left, bottom_right] = cells.try_into().unwrap();
+        assert!(
+            top_left.y > bottom_left.y,
+            "rows from the top down, upwards"
+        );
+        assert_eq!((top_left.x, bottom_left.y), (20.0, 20.0));
+        assert!((top_left.y + top_left.height - (842.0 - 20.0)).abs() < 0.01);
+        assert!((top_right.x - (297.5 + 10.0)).abs() < 0.01);
+        assert!((bottom_right.x + bottom_right.width - (595.0 - 20.0)).abs() < 0.01);
+        assert!((top_left.y - (421.0 + 10.0)).abs() < 0.01);
     }
 
     /// A page drawn at half its size keeps its middle where it is: its
