@@ -4459,21 +4459,39 @@ impl Shell {
             return Vec::new();
         }
         let tokens = self.preview_tokens();
+        let all = self.app.registry.menus.all();
+        // `kind:` and `has:` read the type of the file shown, as its name
+        // says it, worked out only when an item asks.
+        let asks = all
+            .iter()
+            .any(|item| item.menu == "preview" && crate::menu::asks_types(item.when.as_deref()));
+        let types = if asks {
+            let name = self
+                .preview
+                .key
+                .as_ref()
+                .and_then(|key| key.path.file_name().map(std::ffi::OsStr::to_owned))
+                .unwrap_or_default();
+            crate::menu::SelectionTypes::of([(name.as_os_str(), None)])
+        } else {
+            crate::menu::SelectionTypes::default()
+        };
+        let token = |token: &str| {
+            types
+                .token(token)
+                .unwrap_or_else(|| tokens.contains(&token))
+        };
         // Each word must hold; `a|b` when either does, `!a` when it does not.
         let holds = |when: Option<&str>| {
             when.is_none_or(|when| {
                 when.split_whitespace()
                     .all(|word| match word.strip_prefix('!') {
-                        Some(not) => !tokens.contains(&not),
-                        None => word.split('|').any(|one| tokens.contains(&one)),
+                        Some(not) => !token(not),
+                        None => word.split('|').any(&token),
                     })
             })
         };
-        let mut items: Vec<_> = self
-            .app
-            .registry
-            .menus
-            .all()
+        let mut items: Vec<_> = all
             .into_iter()
             .filter(|item| item.menu == "preview" && holds(item.when.as_deref()))
             .collect();

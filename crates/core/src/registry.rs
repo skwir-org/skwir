@@ -482,9 +482,12 @@ pub struct Aspect {
 /// desktop groups types, the query's `kind:`), a MIME type matched with
 /// its parents and by any of its names (`text/plain` holds for source
 /// code; `image/*`; a type's alias as well as its name), or an
-/// extension (`.gpx`). A file whose name says nothing is of no kind: it
-/// fails `kind:` and does not count for `has:`. These two are for menus:
-/// a key binding's `when` is the pane's key context, which has no types.
+/// extension (`.gpx`); several, after commas, when any of them will do
+/// (`kind:application/pdf,image/jpeg`: every entry a PDF or a JPEG). A
+/// file whose name says nothing is of no kind: it fails `kind:` and does
+/// not count for `has:`. These two are for menus: a key binding's `when`
+/// is the pane's key context, which has no types. The preview's menu
+/// (`preview`) reads them of the file it shows.
 ///
 /// `submenu` moves a rarely used item under a row of that name, after the
 /// other groups, which opens its items beside it. `icon` names a bundled

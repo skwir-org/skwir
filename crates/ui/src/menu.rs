@@ -117,11 +117,7 @@ fn token_holds(token: &str, ctx: SelectionCtx, types: &SelectionTypes) -> bool {
     if let Some(not) = token.strip_prefix('!') {
         return !token_holds(not, ctx, types);
     }
-    match token.split_once(':') {
-        Some(("kind", what)) => types.every(what),
-        Some(("has", what)) => types.some(what),
-        _ => ctx.holds(token),
-    }
+    types.token(token).unwrap_or_else(|| ctx.holds(token))
 }
 
 /// Whether `when` says anything about the selection's types, which are
@@ -190,14 +186,31 @@ impl SelectionTypes {
         SelectionTypes { types }
     }
 
-    /// `kind:`: every selected entry is `what`.
-    fn every(&self, what: &str) -> bool {
-        !self.types.is_empty() && self.types.iter().all(|t| t.is(what))
+    /// Whether a `kind:` or `has:` token holds of these types; `None` for
+    /// a token about something else.
+    pub fn token(&self, token: &str) -> Option<bool> {
+        match token.split_once(':') {
+            Some(("kind", what)) => Some(self.every(what)),
+            Some(("has", what)) => Some(self.some(what)),
+            _ => None,
+        }
     }
 
-    /// `has:`: one selected entry at least is `what`.
+    /// `kind:`: every selected entry is `what`, or one of its types when
+    /// it lists several (`application/pdf,image/png`).
+    fn every(&self, what: &str) -> bool {
+        !self.types.is_empty()
+            && self
+                .types
+                .iter()
+                .all(|t| what.split(',').any(|one| t.is(one)))
+    }
+
+    /// `has:`: one selected entry at least is `what`, or one of its types.
     fn some(&self, what: &str) -> bool {
-        self.types.iter().any(|t| t.is(what))
+        self.types
+            .iter()
+            .any(|t| what.split(',').any(|one| t.is(one)))
     }
 }
 
@@ -2121,6 +2134,13 @@ mod tests {
         assert!(holds("has:image/png", &photos));
         assert!(!holds("kind:image/png", &photos));
         assert!(!holds("kind:video", &photos));
+        // A list: every entry one of its types.
+        assert!(holds("kind:image/jpeg,image/png", &photos));
+        assert!(holds("kind:application/pdf,image/jpeg,image/png", &photos));
+        let with_pdf = [("a.jpg", false), ("report.pdf", false)];
+        assert!(holds("kind:application/pdf,image/jpeg", &with_pdf));
+        assert!(!holds("kind:application/pdf,image/png", &with_pdf));
+        assert!(holds("has:video,application/pdf", &with_pdf));
         let with_track = [("a.jpg", false), ("walk.GPX", false)];
         assert!(!holds("kind:image", &with_track));
         assert!(holds("has:image has:.gpx", &with_track));
