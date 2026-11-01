@@ -486,11 +486,6 @@ impl op::Effect for ShrinkCopy {
             .context("Smaller copies need the plugin on")?;
         let cancel = ctx.cancel_token();
         let source = self.entry.resolve()?;
-        // Its size announced, so the window shows the copy being made, with
-        // Cancel, however long it takes: one file is one step, which shows
-        // nothing otherwise.
-        let size = std::fs::metadata(&source).map_or(1, |meta| meta.len().max(1));
-        ctx.add_total(size);
         // Made in a folder of this machine's, in the lane of what it reads:
         // only the copy goes where it is kept, staged there and put in place.
         let work = tempfile::Builder::new()
@@ -514,16 +509,32 @@ impl op::Effect for ShrinkCopy {
                 .and_then(|extension| extension.to_str())
                 .unwrap_or("bin")
         );
-        let (weak, token, at) = (app.weak(), cancel.clone(), work.path().to_owned());
+        let (weak, token, at, gauge) = (
+            app.weak(),
+            cancel.clone(),
+            work.path().to_owned(),
+            ctx.gauge(),
+        );
         let made = in_lane(&app, &source, "shrink", cancel, move || {
             let app = weak.upgrade().context("Skwir is closing")?;
-            skwir_platform::shrink_job::made(&app, job, &at, &name, &token)
+            // Its size announced, read here in its lane, so the window
+            // shows the copy being made, with Cancel, however long it takes:
+            // one file is one step, which shows nothing otherwise. The
+            // helper says how far it went, held while the plan is paused.
+            let size = std::fs::metadata(&job.input).map_or(1, |meta| meta.len().max(1));
+            gauge.announce(size);
+            let metered = skwir_platform::process::Metered::new(gauge, size);
+            let went = |fraction: f64| metered.went(fraction);
+            let held = || metered.held();
+            let follow = skwir_platform::process::Follow::new(&went, &held);
+            let made = skwir_platform::shrink_job::made(&app, job, &at, &name, &token, &follow);
+            metered.went(1.0);
+            made
         });
         if cancel.is_cancelled() && made.is_err() {
             return Err(op::Cancelled.into());
         }
         let (copy, made) = made?;
-        ctx.advance(size);
         let what = display_name(&self.entry.path);
         let Some(copy) = copy else {
             let why = match made.notes.first() {

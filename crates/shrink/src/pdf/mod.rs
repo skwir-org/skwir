@@ -24,8 +24,9 @@ const MOST_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
 /// A smaller copy of the PDF `job.input` at `job.output`, as `job` asks;
 /// none when it would not be smaller, or the PDF is one not made smaller
-/// (said in the notes).
-pub fn shrink(job: &Job) -> Result<Made> {
+/// (said in the notes). `progress` is told the images gone through, of
+/// all those each try goes through.
+pub fn shrink(job: &Job, progress: &mut dyn FnMut(u64, u64)) -> Result<Made> {
     let size = std::fs::metadata(&job.input)
         .with_context(|| format!("{} could not be read", job.input.display()))?
         .len();
@@ -66,8 +67,15 @@ pub fn shrink(job: &Job) -> Result<Made> {
         rules.extend(PDF_STEPS);
     }
     let mut best: Option<(Vec<u8>, Vec<Changed>)> = None;
-    for rule in rules {
-        let (written, changed) = attempt(doc.clone(), &rule, job.gray, &keep)?;
+    let attempts = rules.len() as u64;
+    for (before, rule) in rules.into_iter().enumerate() {
+        let before = before as u64;
+        let mut went = |done: u64, total: u64| {
+            // Each try a share of the whole; its writing out the last step.
+            let steps = total + 1;
+            progress(before * steps + done, attempts * steps);
+        };
+        let (written, changed) = attempt(doc.clone(), &rule, job.gray, &keep, &mut went)?;
         let smaller = best
             .as_ref()
             .is_none_or(|(kept, _)| written.len() < kept.len());
@@ -106,6 +114,7 @@ fn attempt(
     rule: &PdfRule,
     gray: bool,
     keep: &BTreeSet<u32>,
+    went: &mut dyn FnMut(u64, u64),
 ) -> Result<(Vec<u8>, Vec<Changed>)> {
     let placed = place::placements(&doc);
     let images: Vec<ObjectId> = doc
@@ -127,7 +136,9 @@ fn attempt(
         })
         .collect();
     let mut changed = Vec::new();
-    for id in images {
+    let count = images.len() as u64;
+    for (looked, id) in images.into_iter().enumerate() {
+        went(looked as u64, count);
         if masks.contains(&id) || keep.contains(&id.0) {
             continue;
         }
@@ -158,6 +169,8 @@ fn attempt(
             Err(error) => eprintln!("image {} left as it is: {error:#}", id.0),
         }
     }
+    // Every image gone through; what is left is writing it out.
+    went(count, count);
     pack::drop_thumbnails(&mut doc);
     pack::merge_duplicates(&mut doc);
     doc.prune_objects();

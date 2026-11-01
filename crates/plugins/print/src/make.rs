@@ -14,6 +14,7 @@ use skwir_core::op::EntryRef;
 use skwir_core::preview::{HeldSlot, PreviewRequest};
 use skwir_core::print::{self as paper, Face, Job, PageSet, Pages, Paper, Part};
 use skwir_platform::print_job::{self, Roles};
+use skwir_platform::process::Follow;
 
 /// The pages of a document drawn as pictures are drawn this large on
 /// their longer side: the most the readers draw (`document::MAX_SIDE`),
@@ -110,6 +111,7 @@ pub(crate) struct Ready {
 /// it is, else a new one. Several files are printed as one document, each
 /// whole, in their order (`joined`); what the preview shows of one
 /// (`shown`) is only ever one file's.
+#[allow(clippy::too_many_arguments)] // What is made, and how it is followed.
 pub(crate) fn ready(
     app: &App,
     paths: &[PathBuf],
@@ -117,6 +119,7 @@ pub(crate) fn ready(
     layout: &Layout,
     work: &Path,
     cancel: &CancelToken,
+    follow: &Follow<'_>,
 ) -> anyhow::Result<Ready> {
     // A booklet's page is half its sheet: what Skwir lays out is laid out
     // at that size, its text not shrunk.
@@ -130,11 +133,23 @@ pub(crate) fn ready(
                 current: shown.page.and_then(|page| page.checked_sub(1)),
             };
             (
-                whole(app, path, shown, Some(&picking), &paper, work, cancel)?,
+                whole(
+                    app,
+                    path,
+                    shown,
+                    Some(&picking),
+                    &paper,
+                    work,
+                    cancel,
+                    follow,
+                )?,
                 shown.clone(),
             )
         }
-        _ => (joined(app, paths, &paper, work, cancel)?, Shown::default()),
+        _ => (
+            joined(app, paths, &paper, work, cancel, follow)?,
+            Shown::default(),
+        ),
     };
     picked(app, whole, &shown, layout, work, cancel)
 }
@@ -194,6 +209,7 @@ pub(crate) fn made(
     layout: &Layout,
     work: &Path,
     cancel: &CancelToken,
+    follow: &Follow<'_>,
 ) -> anyhow::Result<Ready> {
     let named = named(&layout.pages, None);
     let whole = laid_out(
@@ -205,6 +221,7 @@ pub(crate) fn made(
         None,
         work,
         cancel,
+        follow,
     )?;
     picked(app, whole, &Shown::default(), layout, work, cancel)
 }
@@ -221,10 +238,11 @@ fn laid_out(
     notice: Option<String>,
     work: &Path,
     cancel: &CancelToken,
+    follow: &Follow<'_>,
 ) -> anyhow::Result<Whole> {
     let mut job = job(app, title, paper, parts);
     job.pages = named;
-    let made = print_job::make(&mut job, work, cancel)?;
+    let made = print_job::make(&mut job, work, cancel, follow)?;
     let clipped = job
         .pages
         .as_ref()
@@ -390,6 +408,7 @@ struct Whole {
 /// `path` as its preview shows it, made on `paper` in `work` when Skwir
 /// makes it: of the pages `picking` asks alone where they are known
 /// before it is made, whole without.
+#[allow(clippy::too_many_arguments)] // What is made, and how it is followed.
 fn whole(
     app: &App,
     path: &Path,
@@ -398,39 +417,45 @@ fn whole(
     paper: &Paper,
     work: &Path,
     cancel: &CancelToken,
+    follow: &Follow<'_>,
 ) -> anyhow::Result<Whole> {
-    Ok(match source(app, path, shown, picking, work, cancel)? {
-        Source::Pdf(pdf, pages) => Whole {
-            pdf,
-            pages,
-            notice: None,
-            made: false,
-            picked: false,
-        },
-        Source::Parts {
-            parts,
-            notice,
-            picked,
-        } => {
-            // Pages drawn as pictures were picked as they were drawn; text
-            // is laid out whole, the pages named written alone.
-            let named = picking
-                .filter(|_| !picked)
-                .and_then(|picking| named(picking.pages, picking.current));
-            let mut whole = laid_out(
-                app,
-                &display_name(path),
-                paper,
+    // A reader's pages drawn first, then laid out by the helper.
+    let (drawing, making) = (follow.part(0.0, 0.6), follow.part(0.6, 1.0));
+    Ok(
+        match source(app, path, shown, picking, work, cancel, &drawing)? {
+            Source::Pdf(pdf, pages) => Whole {
+                pdf,
+                pages,
+                notice: None,
+                made: false,
+                picked: false,
+            },
+            Source::Parts {
                 parts,
-                named,
                 notice,
-                work,
-                cancel,
-            )?;
-            whole.picked |= picked;
-            whole
-        }
-    })
+                picked,
+            } => {
+                // Pages drawn as pictures were picked as they were drawn; text
+                // is laid out whole, the pages named written alone.
+                let named = picking
+                    .filter(|_| !picked)
+                    .and_then(|picking| named(picking.pages, picking.current));
+                let mut whole = laid_out(
+                    app,
+                    &display_name(path),
+                    paper,
+                    parts,
+                    named,
+                    notice,
+                    work,
+                    cancel,
+                    &making,
+                )?;
+                whole.picked |= picked;
+                whole
+            }
+        },
+    )
 }
 
 /// Several files as one document, each whole as its preview shows it, in
@@ -443,6 +468,7 @@ fn joined(
     paper: &Paper,
     work: &Path,
     cancel: &CancelToken,
+    follow: &Follow<'_>,
 ) -> anyhow::Result<Whole> {
     let mut wholes: Vec<Whole> = Vec::with_capacity(paths.len());
     let mut said = Vec::new();
@@ -451,7 +477,19 @@ fn joined(
         let own = work.join(n.to_string());
         std::fs::create_dir(&own)?;
         let name = display_name(path);
-        match whole(app, path, &Shown::default(), None, paper, &own, cancel) {
+        #[allow(clippy::cast_precision_loss)]
+        let share = |at: usize| at as f64 / paths.len() as f64;
+        let part = follow.part(share(n), share(n + 1));
+        match whole(
+            app,
+            path,
+            &Shown::default(),
+            None,
+            paper,
+            &own,
+            cancel,
+            &part,
+        ) {
             Ok(mut part) => {
                 if let Some(notice) = part.notice.take() {
                     said.push(format!("“{name}”: {notice}"));
@@ -532,6 +570,7 @@ fn source(
     picking: Option<&Picking<'_>>,
     work: &Path,
     cancel: &CancelToken,
+    follow: &Follow<'_>,
 ) -> anyhow::Result<Source> {
     // What is read is what the entry opens (a link's target), typed by its
     // own name: the link's names where it goes and what it is called.
@@ -548,7 +587,7 @@ fn source(
     }
     if let Some(converted) = app.previews.converted(&request, cancel)? {
         // A plugin's own file in its place: printed as that file is.
-        return source(app, &converted.path, shown, picking, work, cancel);
+        return source(app, &converted.path, shown, picking, work, cancel, follow);
     }
     let view = InspectRequest::default();
     if let Some(inspection) = app.previews.inspect(&request, &view, cancel)? {
@@ -583,7 +622,7 @@ fn source(
             std::fs::copy(pdf, &copy).context("Keeping the document's PDF to print it")?;
             return Ok(Source::Pdf(copy, Some(session.info().pages)));
         }
-        return drawn(&*session, picking, work, cancel);
+        return drawn(&*session, picking, work, cancel, follow);
     }
     builtin(path, mime.as_deref(), &request, work, cancel)
 }
@@ -838,6 +877,7 @@ fn drawn(
     picking: Option<&Picking<'_>>,
     work: &Path,
     cancel: &CancelToken,
+    follow: &Follow<'_>,
 ) -> anyhow::Result<Source> {
     let count = session.info().pages;
     let chosen = match picking {
@@ -852,8 +892,12 @@ fn drawn(
         "No page of it is among those asked"
     );
     let mut pages = Vec::with_capacity(chosen.pages.len());
-    for page in chosen.pages.iter().map(|page| page + 1) {
+    #[allow(clippy::cast_precision_loss)]
+    let many = chosen.pages.len() as f64;
+    for (at, page) in chosen.pages.iter().map(|page| page + 1).enumerate() {
         anyhow::ensure!(!cancel.is_cancelled(), "Printing was cancelled");
+        #[allow(clippy::cast_precision_loss)]
+        follow.went(at as f64 / many);
         let drawn = session.render(page, PAGE_SIDE, cancel)?;
         let (width, height) = (drawn.width, drawn.height);
         let image = skwir_core::thumbs::Image {

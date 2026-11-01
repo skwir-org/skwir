@@ -31,6 +31,37 @@ pub struct Cancelled;
 #[error("{0}")]
 pub struct Unneeded(pub String);
 
+/// What a step's work done on another thread reports through and heeds (a
+/// helper program's, followed from a worker): the bytes it got through,
+/// as [`StepContext::advance`] counts them, and the plan's pause.
+#[derive(Clone)]
+pub struct Gauge {
+    meter: Arc<Meter>,
+    pause: Arc<Pause>,
+}
+
+impl Gauge {
+    /// Announce `bytes` of work the step is about to do, once known where
+    /// it is found out (a file's size, read in its remote's lane).
+    pub fn announce(&self, bytes: u64) {
+        self.meter.total.fetch_add(bytes, Ordering::Relaxed);
+        // The window shows the step's card from here on.
+        if let Some(wake) = &self.meter.wake {
+            wake();
+        }
+    }
+
+    /// Report `bytes` of work done.
+    pub fn advance(&self, bytes: u64) {
+        self.meter.advance(bytes);
+    }
+
+    /// Whether the plan is paused: the work elsewhere is held meanwhile.
+    pub fn is_paused(&self) -> bool {
+        self.pause.is_paused()
+    }
+}
+
 /// Why a step was given no secret ([`StepContext::ask_secret`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unanswered {
@@ -1423,6 +1454,15 @@ impl StepContext {
     /// obeys the executor's pause and cancellation between its children.
     pub fn control(&self) -> super::transfer::Control {
         super::transfer::Control::new(self.cancel.clone(), Arc::clone(&self.pause))
+    }
+
+    /// What reports work done, and heeds the pause, from another thread (a
+    /// helper followed from a worker).
+    pub fn gauge(&self) -> Gauge {
+        Gauge {
+            meter: Arc::clone(&self.meter),
+            pause: Arc::clone(&self.pause),
+        }
     }
 
     /// What reports work done from another thread (a batch's).

@@ -91,6 +91,9 @@ pub struct ToastState {
     /// a card, kept across frames: plans that share nothing run at once
     /// (ADR-079).
     card_focus: Vec<(gpui::FocusHandle, gpui::FocusHandle)>,
+    /// The Cancel of each task's card (`App::tasks`: work that is no plan,
+    /// a print), by task, kept while the task runs.
+    task_focus: std::collections::HashMap<u64, gpui::FocusHandle>,
 }
 
 fn name_of(path: &Path) -> String {
@@ -718,6 +721,76 @@ fn progress_card(
         )
 }
 
+/// The card of the task `task` (work under way that is no plan: a print),
+/// the `n`th: its title, how far it went, and Cancel, which `focus` holds.
+fn task_card(
+    card: gpui::Stateful<gpui::Div>,
+    task: &skwir_core::task::Running,
+    focus: &gpui::FocusHandle,
+    a11y: bool,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> gpui::Stateful<gpui::Div> {
+    #[allow(clippy::cast_possible_truncation)]
+    let fraction = task.went.unwrap_or(0.0) as f32;
+    let id = task.id;
+    let amount = task.went.map_or_else(String::new, |went| {
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let percent = (went * 100.0).round() as u32;
+        format!(" — {percent} %")
+    });
+    card.role(gpui::Role::ProgressIndicator)
+        .when(a11y, |d| {
+            d.aria_label(capitalized(&task.title))
+                .aria_numeric_value(f64::from(fraction) * 100.)
+                .aria_min_numeric_value(0.)
+                .aria_max_numeric_value(100.)
+        })
+        .py_2()
+        .child(
+            div()
+                .flex_1()
+                .min_w(px(240.))
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(format!("{}{amount}", capitalized(&task.title)))
+                .child(
+                    div()
+                        .h(px(4.))
+                        .w_full()
+                        .rounded_full()
+                        .bg(theme.border)
+                        .child(
+                            div()
+                                .h_full()
+                                .rounded_full()
+                                .bg(theme.accent)
+                                .w(gpui::relative(fraction)),
+                        ),
+                ),
+        )
+        .child(
+            controls::button(
+                format!("toast-task-cancel-{id}"),
+                if task.cancelling {
+                    "Stopping…"
+                } else {
+                    "Cancel"
+                },
+                None,
+                ButtonStyle::Plain,
+                focus,
+                theme,
+            )
+            .mr_2()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.app.tasks.cancel(id);
+                cx.notify();
+            })),
+        )
+}
+
 pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let theme = cx.global::<Theme>().clone();
     let close = shell
@@ -819,7 +892,15 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx))),
         )
     });
-    let content = if progress.is_empty() {
+    // Work that is no plan (a print), shown beside the plans: at most two,
+    // the cards after the plans' four.
+    let tasks: Vec<skwir_core::task::Running> =
+        shell.app.tasks.running().into_iter().take(2).collect();
+    shell
+        .toasts
+        .task_focus
+        .retain(|id, _| tasks.iter().any(|task| task.id == *id));
+    let content = if progress.is_empty() && tasks.is_empty() {
         said?
     } else {
         // What the user did meanwhile waits behind what it meets, and
@@ -861,6 +942,22 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
                 &running,
                 &transfer,
                 (&pause_focus, &focus),
+                a11y,
+                &theme,
+                cx,
+            ));
+        }
+        for (n, task) in tasks.iter().enumerate() {
+            let focus = shell
+                .toasts
+                .task_focus
+                .entry(task.id)
+                .or_insert_with(|| cx.focus_handle())
+                .clone();
+            cards = cards.child(task_card(
+                card(Tone::Info, 4 + n as u64),
+                task,
+                &focus,
                 a11y,
                 &theme,
                 cx,

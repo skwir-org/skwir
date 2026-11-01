@@ -252,6 +252,12 @@ The key is the owner's; the page is the subject's (ADR-072).
   work. A helper whose linked libraries are missing never starts, so it
   is not reported installed where only its program is. A new helper
   answers `--probe` too, with a test.
+- **A helper says how far it went** as lines `progress <done> <total>`
+  on its standard output (`process::PROGRESS`), at most every tenth of a
+  second, its answer the last line; Skwir follows them as it runs
+  (`process::run_helper`), with a time limit counted only while it runs.
+  The print helper says its pages drawn, and its shrink mode the images
+  it went through.
 - **Helpers answer `--build`** with the build of Skwir they are
   (`SKWIR_BUILD`: the version, plus the commit in a release build not made
   from the version's tag, from `tools/build/identity.rs`, which the

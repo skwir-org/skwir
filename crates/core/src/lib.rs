@@ -66,6 +66,7 @@ pub mod syntax;
 pub mod system;
 pub mod tabs;
 pub mod tally;
+pub mod task;
 pub mod terminal;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;

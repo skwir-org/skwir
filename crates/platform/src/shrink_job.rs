@@ -25,6 +25,7 @@ use skwir_core::op::EntryRef;
 use skwir_core::preview::{HeldSlot, PreviewRequest};
 use skwir_core::shrink::{Changed, Job, Kind, Made};
 
+use crate::process::Follow;
 use crate::sandbox::Otherwise;
 
 /// The job written in the working folder.
@@ -41,35 +42,53 @@ pub fn worker_path() -> Option<PathBuf> {
 /// stopped when `cancel` is cancelled, and when it takes far longer than
 /// the file's size should (`timeout`). Waits for the helper: a worker's
 /// work.
-pub fn run(job: &mut Job, work: &Path, name: &str, cancel: &CancelToken) -> Result<Made> {
+pub fn run(
+    job: &mut Job,
+    work: &Path,
+    name: &str,
+    cancel: &CancelToken,
+    follow: &Follow<'_>,
+) -> Result<Made> {
     let program = crate::print_job::WORKER.require("make smaller copies")?;
-    ran(&program, job, work, name, cancel)
+    ran(&program, job, work, name, cancel, follow)
         .map_err(|error| crate::process::explain(&program, cancel, error))
 }
 
 /// The copy the helper makes of `job.input` in `work` as `name`, checked
 /// when a PDF: an image on a page that looks different put back, the copy
 /// made again keeping it. The copy's path, `None` when it would not be
-/// smaller, and what the helper said of it. Waits: a worker's work.
+/// smaller, and what the helper said of it. `follow` hears how far it
+/// went: the helper's work, then the pages checked. Waits: a worker's work.
 pub fn made(
     app: &App,
     mut job: Job,
     work: &Path,
     name: &str,
     cancel: &CancelToken,
+    follow: &Follow<'_>,
 ) -> Result<(Option<PathBuf>, Made)> {
-    let mut made = run(&mut job, work, name, cancel)?;
-    if made.written && job.kind == Kind::Pdf && !made.changed.is_empty() {
-        let keep = drifted(app, &job.input, &job.output, &made.changed, cancel)?;
+    let checked = job.kind == Kind::Pdf;
+    let made_share = if checked { 0.8 } else { 1.0 };
+    let mut made = run(&mut job, work, name, cancel, &follow.part(0.0, made_share))?;
+    if made.written && checked && !made.changed.is_empty() {
+        let keep = drifted(
+            app,
+            &job.input,
+            &job.output,
+            &made.changed,
+            cancel,
+            &follow.part(0.8, 0.95),
+        )?;
         if !keep.is_empty() {
             tracing::info!(
                 images = keep.len(),
                 "images put back after their pages looked different"
             );
             job.keep = keep;
-            made = run(&mut job, work, name, cancel)?;
+            made = run(&mut job, work, name, cancel, &follow.part(0.95, 1.0))?;
         }
     }
+    follow.went(1.0);
     let copy = made.written.then(|| job.output.clone());
     Ok((copy, made))
 }
@@ -81,6 +100,7 @@ fn ran(
     work: &Path,
     name: &str,
     cancel: &CancelToken,
+    follow: &Follow<'_>,
 ) -> Result<Made> {
     let output = work.join(name);
     let _ = std::fs::remove_file(&output);
@@ -97,7 +117,7 @@ fn ran(
     job.output.clone_from(&output);
     written?;
     run.command.arg("--shrink").arg(run.work.join(JOB));
-    let finished = crate::process::run_to_exit(&mut run.command, None, cancel, timeout(size, job));
+    let finished = crate::process::run_helper(&mut run.command, cancel, timeout(size, job), follow);
     let _ = std::fs::remove_file(work.join(JOB));
     let finished = finished?;
     if !finished.status.success() {
@@ -170,6 +190,7 @@ fn drifted(
     copy: &Path,
     changed: &[Changed],
     cancel: &CancelToken,
+    follow: &Follow<'_>,
 ) -> Result<Vec<u32>> {
     // Each image on the first page showing it: one drawn right there is
     // drawn right wherever it is.
@@ -191,7 +212,11 @@ fn drifted(
         return Ok(Vec::new());
     };
     let mut keep = BTreeSet::new();
-    for (&page, objects) in &on {
+    #[allow(clippy::cast_precision_loss)]
+    let count = on.len() as f64;
+    for (looked, (&page, objects)) in on.iter().enumerate() {
+        #[allow(clippy::cast_precision_loss)]
+        follow.went(looked as f64 / count);
         anyhow::ensure!(!cancel.is_cancelled(), "Making the copy was cancelled");
         // A page the file's reader cannot draw is not compared; one the
         // copy's cannot is wrong.

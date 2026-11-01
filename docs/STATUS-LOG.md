@@ -8959,3 +8959,44 @@ jpeg-encoder); pdf.js and Apple's PDFKit reading the JBIG2 written; a
 picture's EXIF on real cameras' files (synthetic EXIF only); Windows and
 macOS (compiled only by the check above, not cross-built); the print
 helper's size grown by the engine (not measured).
+
+### Progress for long work (2026-11-01, S6)
+
+Asked after Smaller copies: whether heavy work shows progress. Plans'
+cards existed (copies, archives), but a plan of one step showed none
+unless it announced bytes, helpers said nothing until they ended, and a
+print to a printer, no plan, showed nothing.
+
+- Core: `op::Gauge` (`StepContext::gauge`): a step's worker announces
+  its bytes once known (`announce`, read in the file's lane) and counts
+  them; `task::Tasks` (`App::tasks`): work that is no plan, a card with
+  its title, how far it went and Cancel.
+- Platform: `process::run_helper` reads `progress <done> <total>` lines
+  as a helper writes them (`Follow`, parts of a whole), its other lines
+  its answer, bounded by a time counted while it runs; a paused plan's
+  helper held with every process under it (bubblewrap's `--new-session`
+  put the sandboxed helper out of the group the hold signalled);
+  `process::Metered` maps a helper's fraction onto a step's bytes.
+- The print helper says its pages drawn, its shrink mode its images;
+  the shrink job's check says the pages it looked at.
+- Reduce Size and Save as PDF announce and follow; Print… to a printer
+  holds a task while its PDF is made and sent, cancelled as no error.
+
+**Checked:** in a window on Xvfb: Reduce Size of a 195-page scan, its bar
+moving (634 KB, 2.1 MB, 4.8 MB of 6.1 MB); Save as PDF of a 30,000-line
+source file, its bar moving, Pause holding the sandboxed helper (state
+T, the bar still) and Resume going on, the PDF saved (469 pages); Print…
+to GTK's Print to File, the task's card ("Print “long.rs”", then 55 %,
+64 %), Cancel stopping the helper, no file written, "“long.rs” was not
+printed" said. Found there and fixed: Pause did not hold a sandboxed
+helper. Tests: the task registry, `run_helper`'s progress and time
+limit, a program's child held in a session of its own; the print
+helper's 56 (its answer now its last line); the binary's shrink, print,
+plugins_toggle and keymap_titles (21); 1490 of the changed crates' unit
+tests, the print helper's 15 fixed after; clippy and rustfmt.
+
+**Not checked:** what Skwir prepares before the helper starts (a long
+code file read and colored, 20 s in the debug build) shows the bar at 0;
+`tree_sitter::tests::reads_are_answered_beside_a_parse` (commit 7bdb5362,
+not this change) fails here on its timing; Windows and macOS for these
+changes beyond clippy of the crates touched.

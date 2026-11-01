@@ -333,7 +333,10 @@ pub fn write(
     let page_settings =
         PageSettings::from_wh(frame.width, frame.height).context("the paper has no size")?;
     let mut last: Option<usize> = None;
-    for &page in &written {
+    // Each page drawn, then the document written, said as it goes.
+    let steps = written.len() as u64 + 1;
+    for (drawn, &page) in written.iter().enumerate() {
+        crate::progress(drawn as u64, steps);
         let page = page as usize;
         let part = firsts.partition_point(|&first| first <= page) - 1;
         let mut sheet = document.start_page_with(page_settings.clone());

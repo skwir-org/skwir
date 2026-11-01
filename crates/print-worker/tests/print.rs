@@ -76,8 +76,13 @@ fn run_file(path: &Path, output: &Path) -> Result<(Made, Vec<u8>), (String, i32)
             result.status.code().unwrap_or(-1),
         ));
     }
-    let answer = String::from_utf8(result.stdout).unwrap();
-    assert_eq!(answer.lines().count(), 1, "one line: {answer}");
+    let said = String::from_utf8(result.stdout).unwrap();
+    // How far it went as it went, then its answer, the last line.
+    let (progress, answer) = said.trim_end().rsplit_once('\n').unwrap_or(("", &said));
+    assert!(
+        progress.lines().all(|line| line.starts_with("progress ")),
+        "progress lines, then the answer: {said}"
+    );
     let made: Made = serde_json::from_str(answer.trim()).unwrap();
     Ok((made, std::fs::read(output).unwrap()))
 }

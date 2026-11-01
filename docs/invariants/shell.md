@@ -624,7 +624,11 @@ of bars, split or not.
   in order, `Toast::actions`).
   Progress bars:
   [operations.md](operations.md); an answer said while plans run is drawn
-  under their cards, never hidden by them. It names the file a step acts
+  under their cards, never hidden by them. Work that is no plan and
+  nothing undoes (a print being made and sent) holds a task while it runs
+  (`App::tasks`, `task::Task`): its card is drawn beside the plans', its
+  title, how far it went and Cancel, gone when the task is dropped; a
+  task cancelled from its card says it was not done, as no error. It names the file a step acts
   on as the user knows it: an item of a trash by the name it had, which
   the executor reads from its record before the step takes it away
   (`Progress::named`), never by the trash's (`a.txt.2`, `$R…`).

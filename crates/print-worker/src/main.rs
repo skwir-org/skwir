@@ -118,6 +118,25 @@ fn answer<T: serde::Serialize>(made: Result<T>) {
     }
 }
 
+/// How far the work went, said on standard output as a line
+/// `progress <done> <total>` (`skwir_platform::process::PROGRESS`), which
+/// skwir follows as the helper goes: at most every tenth of a second, and
+/// always the end.
+pub fn progress(done: u64, total: u64) {
+    static LAST: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+    let now = std::time::Instant::now();
+    let mut last = LAST
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if done < total
+        && last.is_some_and(|then| now.duration_since(then) < std::time::Duration::from_millis(100))
+    {
+        return;
+    }
+    *last = Some(now);
+    println!("progress {done} {total}");
+}
+
 /// The smaller copy the job at `path` asks (ADR-112). A job is a few
 /// paths and choices: one past a mebibyte is refused before it is read.
 fn shrink(path: &Path) -> Result<skwir_core::shrink::Made> {
@@ -128,7 +147,7 @@ fn shrink(path: &Path) -> Result<skwir_core::shrink::Made> {
     }
     let job: skwir_core::shrink::Job = serde_json::from_reader(std::io::BufReader::new(file))
         .context("the job could not be read")?;
-    skwir_shrink::run(&job)
+    skwir_shrink::run(&job, &mut progress)
 }
 
 fn run(path: &Path) -> Result<Made> {

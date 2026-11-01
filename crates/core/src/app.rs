@@ -218,6 +218,8 @@ pub struct App {
     pub companions: Arc<crate::companions::Companions>,
     /// What copies to and from a remote in batches, plugins' (ADR-078).
     pub transfers: Arc<crate::op::transfer::Transfers>,
+    /// Work under way that is no plan, shown while it runs (a print).
+    pub tasks: Arc<crate::task::Tasks>,
     pub previews: Arc<crate::preview::Previews>,
     /// Where map backgrounds come from (the map-tiles plugin, ADR-020).
     pub tiles: Arc<crate::tiles::Tiles>,
@@ -310,6 +312,7 @@ impl App {
             notes: Arc::new(crate::notes::NoteStores::default()),
             companions: Arc::new(crate::companions::Companions::gated(Arc::clone(&gate))),
             transfers: Arc::default(),
+            tasks: Arc::default(),
             previews: Arc::new(crate::preview::Previews::default()),
             tiles: Arc::new(crate::tiles::Tiles::default()),
             maps: Arc::new(crate::map_points::MapSources::default()),
@@ -570,6 +573,7 @@ impl App {
     pub fn set_waker(&self, waker: Option<Waker>) {
         self.executor.set_waker(waker.clone());
         self.thumbnails.set_waker(waker.clone());
+        self.tasks.set_waker(waker.clone());
         *self.waker.write() = waker;
     }
 

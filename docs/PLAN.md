@@ -2237,9 +2237,16 @@ PDF's Smaller file) and against the trial's files; Windows and macOS
 compiled only. Deviation: S1 shrank, a PDF's pages being composed vector
 already; krilla's `pdf` feature, first planned for it, was not needed.
 Left: fonts subset or merged, JPEG 2000 and CMYK JPEGs written, MRC; a
-quicker Lossless over large pictures stored without loss; Save as PDF's
-progress for one file (a single step announces no size); `just test-all`
+quicker Lossless over large pictures stored without loss; `just test-all`
 and `release-check` not run.
+- **S6. Progress for long work** (2026-11-01, asked after S5): a step
+  whose work runs in a helper announces its size from its lane and counts
+  it as the helper says how far it went (`progress` lines, `run_helper`),
+  held with what it started while paused: Reduce Size and Save as PDF
+  show a moving bar with Pause and Cancel; Print… to a printer shows a
+  task's card (`App::tasks`) with Cancel while its PDF is made and sent.
+  Left: what Skwir prepares before a helper starts (a long text read and
+  colored) says nothing; a picture's copy moves in one step.
 
 ---
 

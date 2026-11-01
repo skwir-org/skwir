@@ -640,18 +640,38 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
         scale: chosen.scale,
         booklet,
     };
-    let (weak, token, sent_as) = (app.weak(), cancel.clone(), chosen.clone());
-    let (pages, notice) = in_lane(app, &lane, "print", cancel, move || {
+    // While it is made and sent, the window shows it, with Cancel: a
+    // print is no plan, and nothing else would show it.
+    let working = cancel.child();
+    let task = Arc::new(app.tasks.start(format!("Print {what}"), working.clone()));
+    let (weak, token, sent_as, held) = (
+        app.weak(),
+        working.clone(),
+        chosen.clone(),
+        Arc::clone(&task),
+    );
+    let printed = in_lane(app, &lane, "print", &working, move || {
         let app = weak.upgrade().context("Skwir is closing")?;
         let work = tempfile::Builder::new()
             .prefix("skwir-print-")
             .tempdir()
             .context("A folder to make the document in")?;
-        let ready = made_ready(&app, made, &title, &layout, work.path(), &token)?;
+        // Made, then sent: the sending its last tenth.
+        let went = |fraction: f64| held.went(fraction * 0.9);
+        let never = || false;
+        let follow = skwir_platform::process::Follow::new(&went, &never);
+        let ready = made_ready(&app, made, &title, &layout, work.path(), &token, &follow)?;
+        held.went(0.9);
         skwir_platform::print::send(&sent_as, &title, &ready.pdf, &token)?;
         Ok((ready.pages, ready.notice))
-    })
-    .with_context(|| format!("{} was not printed", capitalized(&what)))?;
+    });
+    drop(task);
+    // Cancelled by its card, not by Skwir closing: said, as no error.
+    if working.is_cancelled() && !cancel.is_cancelled() {
+        return Ok(Some(format!("{} was not printed", capitalized(&what))));
+    }
+    let (pages, notice) =
+        printed.with_context(|| format!("{} was not printed", capitalized(&what)))?;
     let sent = match pages {
         Some(1) => "1 page of ".to_owned(),
         Some(pages) => format!("{pages} pages of "),
@@ -699,21 +719,30 @@ fn made_ready(
     layout: &Layout,
     work: &Path,
     cancel: &CancelToken,
+    follow: &skwir_platform::process::Follow<'_>,
 ) -> anyhow::Result<make::Ready> {
     match made {
-        Make::Files(entries, shown) => {
-            make::ready(app, &resolve(&entries)?, &shown, layout, work, cancel)
-        }
+        Make::Files(entries, shown) => make::ready(
+            app,
+            &resolve(&entries)?,
+            &shown,
+            layout,
+            work,
+            cancel,
+            follow,
+        ),
         Make::Sheet(entries) => {
             make::sheet(&resolve(&entries)?, work, cancel).and_then(|(part, notice)| {
-                let ready = make::made(app, title, vec![part], layout, work, cancel)?;
+                let ready = make::made(app, title, vec![part], layout, work, cancel, follow)?;
                 Ok(make::Ready {
                     notice: ready.notice.or(notice),
                     ..ready
                 })
             })
         }
-        Make::Listing(title, table) => make::made(app, &title, vec![table], layout, work, cancel),
+        Make::Listing(title, table) => {
+            make::made(app, &title, vec![table], layout, work, cancel, follow)
+        }
     }
 }
 
@@ -1093,12 +1122,44 @@ impl op::Effect for MakePdf {
             .context("A folder to make the document in")?;
         let (weak, token, at) = (app.weak(), cancel.clone(), work.path().to_owned());
         let smaller = self.smaller;
+        let (gauge, inputs) = (ctx.gauge(), self.of.entries().to_vec());
         let ready = in_lane(&app, &self.of.from(), "print-save", cancel, move || {
             let app = weak.upgrade().context("Skwir is closing")?;
-            let mut ready = made_ready(&app, made, &title, &layout, &at, &token)?;
+            // What it is made of announced, read here in its lane, so the
+            // window shows it being made, with Cancel: one PDF is one step,
+            // which shows nothing otherwise. A listing reads no file.
+            let size: u64 = inputs
+                .iter()
+                .filter_map(|entry| std::fs::metadata(&entry.path).ok())
+                .map(|meta| meta.len())
+                .sum();
+            gauge.announce(size);
+            let metered = skwir_platform::process::Metered::new(gauge, size);
+            // Made, then made smaller when asked: each a share of the bar.
+            let making = if smaller.is_some() { 0.6 } else { 1.0 };
+            let went = |fraction: f64| metered.went(fraction);
+            let held = || metered.held();
+            let follow = skwir_platform::process::Follow::new(&went, &held);
+            let mut ready = made_ready(
+                &app,
+                made,
+                &title,
+                &layout,
+                &at,
+                &token,
+                &follow.part(0.0, making),
+            )?;
             if let Some(quality) = smaller {
-                ready.pdf = smaller_pdf(&app, ready.pdf, quality, &at, &token)?;
+                ready.pdf = smaller_pdf(
+                    &app,
+                    ready.pdf,
+                    quality,
+                    &at,
+                    &token,
+                    &follow.part(making, 1.0),
+                )?;
             }
+            metered.went(1.0);
             Ok(ready)
         });
         if cancel.is_cancelled() && ready.is_err() {
@@ -1149,6 +1210,7 @@ fn smaller_pdf(
     quality: Quality,
     work: &Path,
     cancel: &CancelToken,
+    follow: &skwir_platform::process::Follow<'_>,
 ) -> anyhow::Result<PathBuf> {
     let folder = work.join("smaller");
     std::fs::create_dir(&folder).context("A folder to make the PDF smaller in")?;
@@ -1162,8 +1224,9 @@ fn smaller_pdf(
         at_most: None,
         keep: Vec::new(),
     };
-    let (copy, _) = skwir_platform::shrink_job::made(app, job, &folder, "smaller.pdf", cancel)
-        .context("The PDF could not be made smaller")?;
+    let (copy, _) =
+        skwir_platform::shrink_job::made(app, job, &folder, "smaller.pdf", cancel, follow)
+            .context("The PDF could not be made smaller")?;
     Ok(copy.unwrap_or(pdf))
 }
 

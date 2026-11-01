@@ -16,9 +16,10 @@ use anyhow::{Context, Result};
 use skwir_core::shrink::{Job, Kind, Made};
 
 /// The smaller copy `job` asks: at `job.output` when `Made::written`.
-pub fn run(job: &Job) -> Result<Made> {
+/// `progress` is told how far it went, as done of a total, as it goes.
+pub fn run(job: &Job, progress: &mut dyn FnMut(u64, u64)) -> Result<Made> {
     match job.kind {
-        Kind::Pdf => pdf::shrink(job),
+        Kind::Pdf => pdf::shrink(job, progress),
         Kind::Picture => {
             let before = std::fs::metadata(&job.input)
                 .with_context(|| format!("{} could not be read", job.input.display()))?
@@ -29,7 +30,10 @@ pub fn run(job: &Job) -> Result<Made> {
                 strip: job.strip,
                 at_most: job.at_most,
             };
-            Ok(match picture::shrink(&job.input, &job.output, &options)? {
+            progress(0, 1);
+            let written = picture::shrink(&job.input, &job.output, &options)?;
+            progress(1, 1);
+            Ok(match written {
                 Some(written) => Made {
                     before,
                     after: written.bytes,

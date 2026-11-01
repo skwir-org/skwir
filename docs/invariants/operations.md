@@ -26,6 +26,13 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 - A step that changes metadata states its words (`op::Words`: what it
   will do, for the review; what it did, for the toast). What a plan left
   out goes in its note (`Plan::with_note`), never in its title.
+- **A long step shows how far it went.** A plan's card shows a single
+  step only when it announces its work: a step whose work runs elsewhere
+  (a helper, on a worker) announces its bytes once it knows them, in its
+  lane (`StepContext::gauge`, `Gauge::announce`: a size read on the
+  plan's thread could wait for a server), and counts them as its helper
+  says how far it went (`process::Metered`, `run_helper`); while the
+  plan is paused the helper is held, with every process under it.
 - A step that finds, as it runs, it has nothing to make (a smaller copy
   that would not be smaller, ADR-112), having changed nothing, returns
   `op::Unneeded` with why: the executor counts it done already, as a

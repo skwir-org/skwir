@@ -486,14 +486,26 @@ fn flow(
 /// stopped when `cancel` is cancelled, and when it takes far longer than
 /// the job should (`timeout`). A missing or empty PDF is refused. Waits
 /// for the helper: a worker's work.
-pub fn make(job: &mut Job, work: &Path, cancel: &CancelToken) -> Result<Made> {
+pub fn make(
+    job: &mut Job,
+    work: &Path,
+    cancel: &CancelToken,
+    follow: &crate::process::Follow<'_>,
+) -> Result<Made> {
     let program = WORKER.require("print")?;
-    made(&program, job, work, cancel)
+    made(&program, job, work, cancel, follow)
         .map_err(|error| crate::process::explain(&program, cancel, error))
 }
 
-/// [`make`], with the helper at `program`.
-fn made(program: &Path, job: &mut Job, work: &Path, cancel: &CancelToken) -> Result<Made> {
+/// [`make`], with the helper at `program`; `follow` hears how far it went
+/// (its pages laid out, then each drawn).
+fn made(
+    program: &Path,
+    job: &mut Job,
+    work: &Path,
+    cancel: &CancelToken,
+    follow: &crate::process::Follow<'_>,
+) -> Result<Made> {
     let output = work.join(OUTPUT);
     let _ = std::fs::remove_file(&output);
     // What it reads besides its folder, where it runs isolated: the faces,
@@ -540,7 +552,7 @@ fn made(program: &Path, job: &mut Job, work: &Path, cancel: &CancelToken) -> Res
     job.output.clone_from(&output);
     written?;
     run.command.arg(inside.join(JOB));
-    let finished = crate::process::run_to_exit(&mut run.command, None, cancel, timeout(job));
+    let finished = crate::process::run_helper(&mut run.command, cancel, timeout(job), follow);
     let _ = std::fs::remove_file(work.join(JOB));
     let finished = finished?;
     if !finished.status.success() {
@@ -1107,7 +1119,14 @@ mod tests {
             sheet: false,
         });
         let Some(mut job) = job(printed) else { return };
-        let made = made(&helper, &mut job, dir.path(), &CancelToken::new()).unwrap();
+        let made = made(
+            &helper,
+            &mut job,
+            dir.path(),
+            &CancelToken::new(),
+            &crate::process::Follow::none(),
+        )
+        .unwrap();
         assert_eq!(
             made,
             Made {
@@ -1152,9 +1171,15 @@ mod tests {
                 }],
             }],
         };
-        let error = made(&helper, &mut job, dir.path(), &CancelToken::new())
-            .unwrap_err()
-            .to_string();
+        let error = made(
+            &helper,
+            &mut job,
+            dir.path(),
+            &CancelToken::new(),
+            &crate::process::Follow::none(),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(error.contains("names no font"), "{error}");
         assert!(!dir.path().join(OUTPUT).exists());
     }
@@ -1200,7 +1225,13 @@ mod tests {
             false
         });
         let started = std::time::Instant::now();
-        let result = made(&helper, &mut job, dir.path(), &cancel);
+        let result = made(
+            &helper,
+            &mut job,
+            dir.path(),
+            &cancel,
+            &crate::process::Follow::none(),
+        );
         assert!(seen.join().unwrap(), "the helper was seen running");
         assert!(result.is_err(), "cancelled: {result:?}");
         assert!(started.elapsed() < Duration::from_secs(60));

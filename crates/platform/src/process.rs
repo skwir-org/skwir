@@ -368,7 +368,19 @@ impl ChildGuard {
             } else {
                 rustix::process::Signal::CONT
             };
-            let _ = rustix::process::kill_process_group(pid, signal);
+            // What it started in a session of its own (bubblewrap's
+            // `--new-session`, a helper isolated) is outside its group:
+            // each process under it is held too, the group first, and let
+            // go of last.
+            if held {
+                let _ = rustix::process::kill_process_group(pid, signal);
+            }
+            for under in descendants(pid) {
+                let _ = rustix::process::kill_process(under, signal);
+            }
+            if !held {
+                let _ = rustix::process::kill_process_group(pid, signal);
+            }
         }
         #[cfg(windows)]
         if self.child.try_wait().is_ok_and(|ended| ended.is_none()) {
@@ -777,6 +789,186 @@ pub fn run_watching(
     held: &dyn Fn() -> bool,
     watch: &mut (dyn FnMut(&[u8]) + Send),
 ) -> anyhow::Result<Finished> {
+    watched(command, input, cancel, None, held, watch)
+}
+
+/// How a helper's work is followed: told how far it went, from 0 to 1,
+/// and asked whether to hold it (a paused plan's). A part of a larger
+/// whole is followed as that part ([`Follow::part`]): a file of several,
+/// the helper's share of a step.
+#[derive(Clone, Copy)]
+pub struct Follow<'a> {
+    went: &'a (dyn Fn(f64) + Sync),
+    held: &'a (dyn Fn() -> bool + Sync),
+    from: f64,
+    share: f64,
+}
+
+impl<'a> Follow<'a> {
+    pub fn new(went: &'a (dyn Fn(f64) + Sync), held: &'a (dyn Fn() -> bool + Sync)) -> Self {
+        Follow {
+            went,
+            held,
+            from: 0.0,
+            share: 1.0,
+        }
+    }
+
+    /// Nothing follows it.
+    pub fn none() -> Follow<'static> {
+        fn nothing(_: f64) {}
+        fn never() -> bool {
+            false
+        }
+        Follow::new(&nothing, &never)
+    }
+
+    /// It went `fraction` (0 to 1) of its way.
+    pub fn went(&self, fraction: f64) {
+        (self.went)(self.from + self.share * fraction.clamp(0.0, 1.0));
+    }
+
+    /// Whether to hold it.
+    pub fn held(&self) -> bool {
+        (self.held)()
+    }
+
+    /// Its way from `start` to `end` (each 0 to 1), followed as a whole.
+    #[must_use]
+    pub fn part(&self, start: f64, end: f64) -> Follow<'a> {
+        Follow {
+            from: self.from + self.share * start,
+            share: self.share * (end - start).max(0.0),
+            ..*self
+        }
+    }
+}
+
+/// A step of a plan followed as it goes (`op::Gauge`): its work, `total`
+/// bytes announced, counted as a helper says how far it went; held while
+/// the plan is paused.
+pub struct Metered {
+    gauge: skwir_core::op::Gauge,
+    total: u64,
+    counted: std::sync::atomic::AtomicU64,
+}
+
+impl Metered {
+    pub fn new(gauge: skwir_core::op::Gauge, total: u64) -> Self {
+        Metered {
+            gauge,
+            total,
+            counted: std::sync::atomic::AtomicU64::new(0),
+        }
+    }
+
+    /// It went `fraction` of its way: what was not counted yet, counted.
+    pub fn went(&self, fraction: f64) {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
+        let reached = (fraction.clamp(0.0, 1.0) * self.total as f64) as u64;
+        let before = self
+            .counted
+            .fetch_max(reached, std::sync::atomic::Ordering::Relaxed);
+        if reached > before {
+            self.gauge.advance(reached - before);
+        }
+    }
+
+    /// Whether its plan is paused.
+    pub fn held(&self) -> bool {
+        self.gauge.is_paused()
+    }
+}
+
+/// What a helper of Skwir's says of how far it went, a line of its
+/// standard output: `progress <done> <total>`.
+pub const PROGRESS: &str = "progress ";
+
+/// A helper of Skwir's run as [`run_to_exit`] runs a program, followed as
+/// it goes: each line it writes `progress <done> <total>` ([`PROGRESS`])
+/// tells `follow` how far it went, the other lines are its output; it is
+/// held while `follow` says (on Unix), stopped when `cancel` fires or past
+/// `timeout`.
+///
+/// # Errors
+/// When it cannot start, is cancelled, takes too long or says too much.
+pub fn run_helper(
+    command: &mut Command,
+    cancel: &CancelToken,
+    timeout: Duration,
+    follow: &Follow<'_>,
+) -> anyhow::Result<Finished> {
+    let limit = usize::try_from(crate::inspection::limits::HELPER_OUTPUT).unwrap_or(usize::MAX);
+    let mut kept: Vec<u8> = Vec::new();
+    let mut line: Vec<u8> = Vec::new();
+    let mut too_much = false;
+    let follow = *follow;
+    let finished = {
+        let take = |line: &[u8], kept: &mut Vec<u8>, too_much: &mut bool| {
+            if let Some(said) = line.strip_prefix(PROGRESS.as_bytes()) {
+                let said = String::from_utf8_lossy(said);
+                let mut numbers = said.split_whitespace().map(str::parse::<u64>);
+                if let (Some(Ok(done)), Some(Ok(total))) = (numbers.next(), numbers.next())
+                    && total > 0
+                {
+                    #[allow(clippy::cast_precision_loss)]
+                    follow.went(done as f64 / total as f64);
+                }
+            } else if kept.len() + line.len() < limit {
+                kept.extend_from_slice(line);
+                kept.push(b'\n');
+            } else {
+                *too_much = true;
+            }
+        };
+        let mut watch = |bytes: &[u8]| {
+            for &byte in bytes {
+                if byte == b'\n' {
+                    take(&line, &mut kept, &mut too_much);
+                    line.clear();
+                } else if line.len() < limit {
+                    line.push(byte);
+                }
+            }
+        };
+        let finished = watched(
+            command,
+            None,
+            cancel,
+            Some(timeout),
+            &|| follow.held(),
+            &mut watch,
+        )?;
+        if !line.is_empty() {
+            take(&line, &mut kept, &mut too_much);
+        }
+        finished
+    };
+    let program = Path::new(command.get_program())
+        .file_name()
+        .unwrap_or(command.get_program())
+        .to_string_lossy()
+        .into_owned();
+    anyhow::ensure!(!too_much, "{program}: excessive output");
+    Ok(Finished {
+        stdout: kept,
+        ..finished
+    })
+}
+
+/// [`run_watching`], stopped past `timeout` when one is given.
+fn watched(
+    command: &mut Command,
+    input: Option<&[u8]>,
+    cancel: &CancelToken,
+    timeout: Option<Duration>,
+    held: &dyn Fn() -> bool,
+    watch: &mut (dyn FnMut(&[u8]) + Send),
+) -> anyhow::Result<Finished> {
     let program = Path::new(command.get_program())
         .file_name()
         .unwrap_or(command.get_program())
@@ -827,12 +1019,23 @@ pub fn run_watching(
             }
         });
         let mut holding = false;
+        // Held, it is not taking long: its time counts while it runs.
+        let mut ran = Duration::ZERO;
+        let mut since = Instant::now();
         loop {
             if cancel.is_cancelled() {
                 // Stopped with its group: the pipe's writers gone, the
                 // reader ends. A process held is killed as it is.
                 drop(child);
                 anyhow::bail!("{program} was cancelled");
+            }
+            if !holding {
+                ran += since.elapsed();
+            }
+            since = Instant::now();
+            if timeout.is_some_and(|timeout| ran >= timeout) {
+                drop(child);
+                anyhow::bail!("{program} timed out");
             }
             if child.exited()? {
                 break;
@@ -853,6 +1056,43 @@ pub fn run_watching(
         stdout: Vec::new(),
         stderr: String::from_utf8_lossy(&diagnostic).trim().to_owned(),
     })
+}
+
+/// The processes under `pid`, its children and theirs, as the system says
+/// (on Linux, `/proc`'s `children`); none where it does not, a group
+/// signal reaching what stays in its session there.
+#[cfg(unix)]
+fn descendants(pid: rustix::process::Pid) -> Vec<rustix::process::Pid> {
+    #[cfg(target_os = "linux")]
+    {
+        let mut found = Vec::new();
+        let mut next = vec![pid.as_raw_nonzero().get()];
+        while let Some(parent) = next.pop() {
+            let Ok(tasks) = std::fs::read_dir(format!("/proc/{parent}/task")) else {
+                continue;
+            };
+            for task in tasks.flatten() {
+                let Ok(children) = std::fs::read_to_string(task.path().join("children")) else {
+                    continue;
+                };
+                for child in children
+                    .split_whitespace()
+                    .filter_map(|c| c.parse::<i32>().ok())
+                {
+                    if let Some(child_pid) = rustix::process::Pid::from_raw(child) {
+                        found.push(child_pid);
+                        next.push(child);
+                    }
+                }
+            }
+        }
+        found
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        Vec::new()
+    }
 }
 
 /// What to do when a watched child exits. It runs on the reaper thread,
@@ -1410,6 +1650,93 @@ mod tests {
             &mut |_: &[u8]| {},
         );
         assert!(ran.is_err());
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// Held, a program holds what it started in a session of its own (as
+    /// bubblewrap's `--new-session` starts a helper), out of its group.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_program_held_holds_what_it_started_in_a_session_of_its_own() {
+        if Command::new("setsid").arg("--version").output().is_err() {
+            eprintln!("skipped: no setsid here");
+            return;
+        }
+        let said = std::sync::Mutex::new(String::new());
+        let hold = std::sync::atomic::AtomicBool::new(false);
+        let cancel = CancelToken::new();
+        let state = std::thread::scope(|s| {
+            let looker = s.spawn(|| {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                let pid = loop {
+                    if let Some(pid) = said.lock().unwrap().lines().next() {
+                        break pid.trim().to_owned();
+                    }
+                    assert!(Instant::now() < deadline, "no pid said");
+                    std::thread::sleep(Duration::from_millis(20));
+                };
+                hold.store(true, std::sync::atomic::Ordering::Relaxed);
+                std::thread::sleep(Duration::from_millis(400));
+                let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+                let state = stat
+                    .rsplit(')')
+                    .next()
+                    .and_then(|rest| rest.split_whitespace().next())
+                    .map(str::to_owned);
+                cancel.cancel();
+                // Let go of, so it ends with its group.
+                if let Ok(pid) = pid.parse::<i32>()
+                    && let Some(pid) = rustix::process::Pid::from_raw(pid)
+                {
+                    let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+                }
+                state
+            });
+            let _ = run_watching(
+                Command::new("sh").args(["-c", "setsid sleep 30 & echo $!; wait"]),
+                None,
+                &cancel,
+                &|| hold.load(std::sync::atomic::Ordering::Relaxed),
+                &mut |bytes: &[u8]| {
+                    said.lock()
+                        .unwrap()
+                        .push_str(&String::from_utf8_lossy(bytes));
+                },
+            );
+            looker.join().unwrap()
+        });
+        assert_eq!(state.as_deref(), Some("T"), "held, out of its group");
+    }
+
+    /// A helper's progress lines tell how far it went, as a part of the
+    /// whole; its other lines are its output; past its time it is stopped.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_s_progress_is_followed_and_its_answer_kept() {
+        let heard = std::sync::Mutex::new(Vec::new());
+        let went = |fraction: f64| heard.lock().unwrap().push(fraction);
+        let never = || false;
+        let whole = Follow::new(&went, &never);
+        let finished = run_helper(
+            Command::new("sh").args([
+                "-c",
+                "echo progress 1 4; echo progress 2 4; echo progress x; echo '{\"done\":true}'",
+            ]),
+            &CancelToken::new(),
+            Duration::from_secs(10),
+            &whole.part(0.5, 1.0),
+        )
+        .unwrap();
+        assert_eq!(*heard.lock().unwrap(), [0.625, 0.75]);
+        assert_eq!(finished.stdout, b"{\"done\":true}\n");
+        let started = Instant::now();
+        let ran = run_helper(
+            Command::new("sh").args(["-c", "sleep 30"]),
+            &CancelToken::new(),
+            Duration::from_millis(300),
+            &Follow::none(),
+        );
+        assert!(ran.unwrap_err().to_string().contains("timed out"));
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 
