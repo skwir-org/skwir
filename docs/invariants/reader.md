@@ -195,7 +195,13 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   type (`PreviewState::placeholder_page`). A page slow to draw shows
   blurred once the wait has lasted, then sharp in place; one quick to
   draw never shows it. It costs that small render: 2 ms on a page of
-  text, 0.3 s for the scans above, before their 3 s.
+  text, 0.3 s for the scans above, before their 3 s. Only a session
+  that draws small much more quickly says so
+  (`DocumentSession::draws_small_quickly`: the helpers, which draw at the
+  scale asked); a comic's or a fixed-layout book's page, a picture
+  decoded, is not drawn twice, and a JPEG page larger than asked is
+  decoded at a reduced scale (`inspection::picture`, through
+  `picture::decode_fitted`).
 - A cached page remembers the side it was asked at, so an engine with no
   more pixels (a small picture) is not asked again.
 

@@ -528,6 +528,12 @@ impl DocumentSession for WorkerSession {
     fn pdf(&self) -> Option<&Path> {
         self.pdf.as_deref()
     }
+    /// The helpers draw at the scale asked (`PDFium`, Poppler, `MuPDF`,
+    /// `DjVuLibre`), or keep what a page decoded for its next drawing
+    /// (djvu-rs).
+    fn draws_small_quickly(&self) -> bool {
+        true
+    }
     fn render(&self, page: u32, side: u32, cancel: &CancelToken) -> anyhow::Result<DocumentPage> {
         match self.request(WorkerRequest::Render { page, side }, cancel)? {
             Response::Page(page) => Ok(page),

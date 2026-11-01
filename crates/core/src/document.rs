@@ -195,6 +195,15 @@ pub trait DocumentSession: Send + Sync {
     fn pdf(&self) -> Option<&std::path::Path> {
         None
     }
+    /// Whether a page drawn small costs much less than drawn large: an
+    /// engine that draws at the scale asked (a PDF's, a `DjVu`'s, which
+    /// subsample what they hold). Such a page opening is drawn small first,
+    /// to stand in for it while it is drawn sharp; a page that costs about
+    /// as much either way (a picture decoded whole, a book laid out) is not
+    /// drawn twice.
+    fn draws_small_quickly(&self) -> bool {
+        false
+    }
 }
 
 /// Internal protocol: JSON lines for small requests/metadata, a private RGBA

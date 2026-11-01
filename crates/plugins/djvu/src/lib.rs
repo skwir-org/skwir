@@ -162,6 +162,9 @@ impl DocumentSession for Holding {
     fn closed_links(&self) -> Option<&str> {
         self.session.closed_links()
     }
+    fn draws_small_quickly(&self) -> bool {
+        self.session.draws_small_quickly()
+    }
 }
 
 /// A document's first page, for the grid. A fallback: a thumbnailer the

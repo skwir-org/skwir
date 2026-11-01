@@ -939,16 +939,37 @@ pub fn picture(bytes: &[u8], side: u32) -> anyhow::Result<Decoded> {
     if is_svg(bytes) {
         return svg(bytes, side);
     }
-    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
-    reader.limits(image_limits());
-    let mut img = crate::picture::decode(reader)?;
-    let own = (img.width(), img.height());
-    // Only shrink: `thumbnail` would otherwise scale a tiny icon up to the
-    // display side and hand the UI megabytes of pixels per embedded image.
-    let (width, height) = shown(img.width(), img.height(), side);
-    if (width, height) != (img.width(), img.height()) {
-        img = img.thumbnail_exact(width, height);
-    }
+    let reader = || -> anyhow::Result<_> {
+        let mut reader =
+            image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format()?;
+        reader.limits(image_limits());
+        Ok(reader)
+    };
+    let first = reader()?;
+    let jpeg = first.format() == Some(image::ImageFormat::Jpeg);
+    // Its own size, from its header, checked against the limits.
+    let own = crate::picture::size(reader()?)?;
+    // A JPEG larger than asked is decoded at the least of its reduced
+    // scales that still covers `side` (`picture::decode_fitted`): a comic's
+    // page asked small, or drawn small first while it is drawn sharp,
+    // computes a fraction of its pixels, as a thumbnail does. Only where
+    // the whole decode fits the bound with room to spare: the reduced
+    // decoder holds a progressive JPEG's coefficients whole (two bytes a
+    // sample, four samples a pixel at most), whatever the scale.
+    let reduced = jpeg && u64::from(own.0) * u64::from(own.1) * 8 <= limits::IMAGE_ALLOC;
+    let img = if reduced {
+        crate::picture::decode_fitted(first, side)?
+    } else {
+        let mut img = crate::picture::decode(first)?;
+        // Only shrink: `thumbnail` would otherwise scale a tiny icon up to
+        // the display side and hand the UI megabytes of pixels per
+        // embedded image.
+        let (width, height) = shown(img.width(), img.height(), side);
+        if (width, height) != (img.width(), img.height()) {
+            img = img.thumbnail_exact(width, height);
+        }
+        img
+    };
     let img = img.into_rgba8();
     Ok(Decoded {
         width: img.width(),
@@ -1530,6 +1551,38 @@ mod tests {
         assert_eq!(at(2400), (2400, 480));
         assert_eq!(at(u32::MAX), (limits::PICTURE_SIDE, 819), "bounded");
         assert_eq!(image(&bytes).map(|i| i.width).unwrap(), 1600);
+    }
+
+    /// A JPEG asked smaller than it is decodes reduced (a page of a comic
+    /// drawn small): at the side asked, its own size what 100% is, its
+    /// colors where they were; asked larger, whole and never enlarged.
+    #[test]
+    fn a_jpeg_asked_small_is_decoded_reduced_at_the_side_asked() {
+        let pixels = image::RgbImage::from_fn(2400, 1200, |x, _| {
+            if x < 1200 {
+                image::Rgb([255, 0, 0])
+            } else {
+                image::Rgb([0, 0, 255])
+            }
+        });
+        let mut bytes = Vec::new();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 90)
+            .encode_image(&pixels)
+            .unwrap();
+        let small = picture(&bytes, 512).unwrap();
+        assert_eq!(small.own, (2400, 1200));
+        assert_eq!((small.width, small.height), (512, 256));
+        assert_eq!(small.rgba.len() as u32, 512 * 256 * 4);
+        let at = |x: u32, y: u32| {
+            let i = ((y * small.width + x) * 4) as usize;
+            [small.rgba[i], small.rgba[i + 1], small.rgba[i + 2]]
+        };
+        let [r, _, b] = at(100, 128);
+        assert!(r > 200 && b < 60, "left should be red");
+        let [r, _, b] = at(400, 128);
+        assert!(r < 60 && b > 200, "right should be blue");
+        let whole = picture(&bytes, 4096).unwrap();
+        assert_eq!((whole.width, whole.height), (2400, 1200));
     }
 
     const DRAWING: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20">

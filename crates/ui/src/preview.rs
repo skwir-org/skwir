@@ -2972,9 +2972,11 @@ impl Shell {
                         // A document opening, before its page: the page
                         // drawn small, kept aside as the thumbnail is, to
                         // stand in for it once the wait has lasted. One
-                        // quick to draw never shows it.
+                        // quick to draw never shows it. Only where drawing
+                        // small is much quicker: a comic's page decoded
+                        // twice comes later, not sooner.
                         let small = crate::reader_scroll::draft_side(side)
-                            .filter(|_| show_thumbnail && !reused);
+                            .filter(|_| show_thumbnail && !reused && session.draws_small_quickly());
                         let draft = small
                             .and_then(|small| session.render(request.page, small, &cancel).ok())
                             .and_then(|draft| {

@@ -407,6 +407,9 @@ impl skwir_core::document::DocumentSession for Holding {
     fn closed_links(&self) -> Option<&str> {
         self.session.closed_links()
     }
+    fn draws_small_quickly(&self) -> bool {
+        self.session.draws_small_quickly()
+    }
 }
 
 #[cfg(test)]
