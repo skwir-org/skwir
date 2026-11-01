@@ -61,6 +61,23 @@ fn main() {
         eprintln!("usage: skwir-print-worker <job.json>");
         std::process::exit(2);
     };
+    // A panic says so on one line and ends the helper as an error does:
+    // skwir shows the first line of what it says.
+    std::panic::set_hook(Box::new(|info| {
+        let what = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|what| (*what).to_owned())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        let at = info
+            .location()
+            .map(|at| format!(" ({}:{})", at.file(), at.line()))
+            .unwrap_or_default();
+        let message = format!("the PDF could not be made: {what}{at}").replace('\n', " ");
+        eprintln!("{message}");
+        std::process::exit(1);
+    }));
     match run(Path::new(job)) {
         Ok(made) => match serde_json::to_string(&made) {
             Ok(line) => println!("{line}"),

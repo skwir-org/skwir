@@ -939,6 +939,48 @@ fn a_mark_above_a_capital_is_printed_above_it() {
 }
 
 #[test]
+fn a_table_whose_header_is_taller_than_a_page_goes_on_without_it() {
+    let Some(fonts) = fonts() else { return };
+    let dir = scratch();
+    // A header of hundreds of lines, then rows that need pages of their
+    // own: once it is too tall to repeat, they go on without it.
+    let header = "the words of a header ".repeat(1500);
+    let mut blocks = vec![row(&[&header], true)];
+    blocks.extend((0..200).map(|i| row(&[&format!("row number {i}")], false)));
+    let job = job(dir.path(), fonts, vec![Part::Flow { blocks }]);
+    let (made, document, pdf) = ok(dir.path(), &job);
+    assert!(made.pages >= 3, "{made:?}");
+    let last = text(&pdf, &document, made.pages, dir.path());
+    assert!(last.contains("row number 199"), "{last}");
+    assert!(!last.contains("words of a header"), "not repeated: {last}");
+}
+
+#[test]
+fn a_row_taller_than_a_page_shows_each_line_on_its_own_page() {
+    let Some(fonts) = fonts() else { return };
+    let dir = scratch();
+    // One cell of numbered words over several pages.
+    let words: Vec<String> = (0..6000).map(|i| format!("w{i:04}")).collect();
+    let blocks = vec![row(&["Words"], true), row(&[&words.join(" ")], false)];
+    let job = job(dir.path(), fonts, vec![Part::Flow { blocks }]);
+    let (made, document, pdf) = ok(dir.path(), &job);
+    assert!(made.pages >= 4, "{made:?}");
+    let mut found = vec![0u32; words.len()];
+    for page in 1..=made.pages {
+        let text = text(&pdf, &document, page, dir.path());
+        for word in text.split_whitespace() {
+            if let Some(n) = word.strip_prefix('w').and_then(|n| n.parse::<usize>().ok()) {
+                found[n] += 1;
+            }
+        }
+    }
+    // Every word on a page, and only on the one it shows on, or on two
+    // for a line a page's edge cuts.
+    assert!(found.iter().all(|&n| n >= 1), "a word lost");
+    assert!(found.iter().all(|&n| n <= 2), "a word on every page");
+}
+
+#[test]
 fn a_job_too_large_or_unreadable_is_refused_in_a_line() {
     let dir = scratch();
     let path = dir.path().join("job.json");

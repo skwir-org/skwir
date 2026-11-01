@@ -13,6 +13,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::num::NonZeroU16;
 use std::ops::Range;
+use std::rc::Rc;
 
 use anyhow::Result;
 use krilla::geom::{PathBuilder, Rect};
@@ -36,6 +37,9 @@ const CODE_SIZE: f32 = 9.0;
 const CODE_PAD: f32 = 6.0;
 const CELL_X: f32 = 4.0;
 const CELL_Y: f32 = 2.5;
+/// The lists a block is indented and tagged in, at most: a deeper one
+/// is an item of the deepest.
+const LIST_DEPTH: u8 = 12;
 /// Points to a pixel of a picture in a document, as a browser has it.
 const POINTS_PER_PIXEL: f32 = 0.75;
 
@@ -95,10 +99,13 @@ struct Item {
     before: f32,
     after: f32,
     keep: bool,
-    /// The groups it stands in, its own last.
-    path: Vec<(u64, TagKind)>,
-    /// A list item's groups, for its marker: the path to its item.
-    marker_path: Option<Vec<(u64, TagKind)>>,
+    /// The groups it stands in (a quote, lists), shared with the blocks
+    /// beside it in the same ones, then its own.
+    groups: Rc<[(u64, TagKind)]>,
+    own: Option<(u64, TagKind)>,
+    /// A list item's first block, whose marker is drawn in the groups up
+    /// to its item: `groups` but the last list's body.
+    marked: bool,
     /// Where a quote's bar is drawn.
     bar: Option<f32>,
     /// The height of the header repeated over the rows on a page after.
@@ -106,6 +113,22 @@ struct Item {
     /// A code block's text as it is laid out, its tabs turned to spaces,
     /// and its runs.
     code: Option<(String, Vec<Run>)>,
+}
+
+impl Item {
+    /// The groups it stands in, its own last.
+    fn path(&self) -> Vec<(u64, TagKind)> {
+        let mut path = Vec::with_capacity(self.groups.len() + 1);
+        path.extend_from_slice(&self.groups);
+        path.extend(self.own.clone());
+        path
+    }
+
+    /// The groups its marker stands in: those up to its list item.
+    fn marker_path(&self) -> Option<&[(u64, TagKind)]> {
+        self.marked
+            .then(|| &self.groups[..self.groups.len().saturating_sub(1)])
+    }
 }
 
 /// Rows of an item on a page: drawn with the first's top at `y` (from the
@@ -120,12 +143,23 @@ struct Piece {
 
 pub struct Flow<'a> {
     blocks: Cow<'a, [Block]>,
-    items: Vec<Item>,
+    /// Shared, so a page drawn borrows an item while it draws.
+    items: Rc<[Item]>,
     pages: Vec<Vec<Piece>>,
     frame: Frame,
     language: Option<Language>,
     cache: Option<(usize, Layout<Ink>, Vec<String>)>,
+    /// A table's row sliced over pages, by its block, its cells laid out
+    /// once for all its slices.
+    tall: Option<(usize, Vec<Option<Cell>>)>,
     structure: Structure,
+}
+
+/// A cell of a table's row laid out: its layout, text and links.
+struct Cell {
+    layout: Layout<Ink>,
+    text: String,
+    links: Vec<String>,
 }
 
 /// A block's text from `range`, with its runs in it moved to start there.
@@ -301,11 +335,12 @@ impl<'a> Flow<'a> {
         }
         Flow {
             blocks,
-            items,
+            items: Rc::from(items),
             pages,
             frame,
             language,
             cache: None,
+            tall: None,
             structure: Structure::default(),
         }
     }
@@ -334,7 +369,8 @@ impl<'a> Flow<'a> {
     }
 
     fn draw_piece(&mut self, cx: &mut PageCx, piece: &Piece) {
-        let item = self.items[piece.item].clone();
+        let items = Rc::clone(&self.items);
+        let item = &items[piece.item];
         let text_top = self.frame.text.y;
         let left = self.frame.text.x + item.x;
         let top = text_top + piece.y;
@@ -353,23 +389,31 @@ impl<'a> Flow<'a> {
                 }
             });
         }
-        if let Some((_, height)) = piece.clip
-            && let Some(rect) = Rect::from_xywh(
+        // A slice of a row too tall for a page shows what falls between
+        // its top and bottom, a table's header repeated above its first.
+        let above = if repeats_header(item, piece) {
+            item.head
+        } else {
+            0.0
+        };
+        let clipped = piece.clip.is_some_and(|(_, height)| {
+            let rect = Rect::from_xywh(
                 self.frame.text.x - 2.0,
-                top,
+                top - above,
                 self.frame.text.width + 4.0,
-                height,
-            )
-        {
-            let mut path = PathBuilder::new();
-            path.push_rect(rect);
-            if let Some(path) = path.finish() {
-                cx.surface.push_clip_path(&path, &FillRule::NonZero);
-            }
-        }
+                height + above,
+            );
+            let path = rect.and_then(|rect| {
+                let mut path = PathBuilder::new();
+                path.push_rect(rect);
+                path.finish()
+            });
+            path.inspect(|path| cx.surface.push_clip_path(path, &FillRule::NonZero))
+                .is_some()
+        });
         let origin_y = top - row_top - clip_shift;
         match &item.kind {
-            Kind::Text => self.draw_text(cx, piece, &item, (left, origin_y)),
+            Kind::Text => self.draw_text(cx, piece, item, (left, origin_y)),
             Kind::Code => {
                 cx.artifact(ArtifactType::Layout, |surface, _| {
                     let rect = Rect::from_xywh(left, top, item.width, (bottom - top).max(0.1));
@@ -377,7 +421,7 @@ impl<'a> Flow<'a> {
                         text::rect(surface, rect, CODE_BACK);
                     }
                 });
-                self.draw_code(cx, piece, &item, (left, origin_y));
+                self.draw_code(cx, piece, item, (left, origin_y));
             }
             Kind::Rule => {
                 cx.artifact(ArtifactType::Layout, |surface, _| {
@@ -392,7 +436,8 @@ impl<'a> Flow<'a> {
                     unreachable!("a picture's item is of a picture");
                 };
                 let picture = picture.clone();
-                self.structure.goto(cx, &item.path);
+                let mut path = item.path();
+                self.structure.goto(cx, &path);
                 let x = left + (item.width - width) / 2.0;
                 let area = Area {
                     x,
@@ -400,8 +445,8 @@ impl<'a> Flow<'a> {
                     width: *width,
                     height: *height,
                 };
-                let path = picture.path.clone();
-                cx.content(|surface, _| pictures::draw_picture(surface, &path, area));
+                let file = picture.path.clone();
+                cx.content(|surface, _| pictures::draw_picture(surface, &file, area));
                 if let Some(caption) = picture.caption.as_deref().filter(|c| !c.is_empty()) {
                     let mut spec = Spec::new(Role::Text, 8.0);
                     spec.color = GREY;
@@ -409,7 +454,6 @@ impl<'a> Flow<'a> {
                     spec.width = Some(item.width);
                     spec.language = self.language;
                     let layout = text::plain(cx.fonts, caption, &spec);
-                    let mut path = item.path.clone();
                     path.push((key(group::CAPTION, item.block), Tag::Caption.into()));
                     self.structure.goto(cx, &path);
                     cx.lines(
@@ -421,9 +465,12 @@ impl<'a> Flow<'a> {
                     );
                 }
             }
-            Kind::Table { .. } => self.draw_table(cx, piece, &item, (left, top - clip_shift)),
+            Kind::Table { .. } => {
+                let shown = piece.clip.map(|(_, height)| (top, top + height));
+                self.draw_table(cx, piece, item, (left, top - clip_shift), shown);
+            }
         }
-        if piece.clip.is_some() {
+        if clipped {
             cx.surface.pop();
         }
     }
@@ -432,7 +479,7 @@ impl<'a> Flow<'a> {
         self.layout(cx.fonts, piece.item);
         let block = &self.blocks[item.block];
         if piece.rows.start == 0
-            && let (Some(marker), Some(marker_path)) = (&block.marker, &item.marker_path)
+            && let (Some(marker), Some(marker_path)) = (&block.marker, item.marker_path())
         {
             // The marker hung left of the text, on its first baseline.
             let mut spec = self.spec(item);
@@ -445,7 +492,7 @@ impl<'a> Flow<'a> {
                 .and_then(|(_, layout, _)| layout.get(0))
                 .map_or(0.0, |line| line.metrics().baseline);
             let own = layout.get(0).map_or(0.0, |line| line.metrics().baseline);
-            let mut path = marker_path.clone();
+            let mut path = marker_path.to_vec();
             path.push((key(group::LABEL, item.block), Tag::Lbl.into()));
             self.structure.goto(cx, &path);
             cx.lines(
@@ -456,14 +503,14 @@ impl<'a> Flow<'a> {
                 (origin.0 - 4.0 - layout.width(), origin.1 + baseline - own),
             );
         }
-        self.structure.goto(cx, &item.path);
+        self.structure.goto(cx, &item.path());
         let (_, layout, links) = self.cache.as_ref().expect("laid out");
         cx.lines(layout, &block.text, links, piece.rows.clone(), origin);
     }
 
     fn draw_code(&mut self, cx: &mut PageCx, piece: &Piece, item: &Item, origin: (f32, f32)) {
         self.layout(cx.fonts, piece.item);
-        self.structure.goto(cx, &item.path);
+        self.structure.goto(cx, &item.path());
         let block = &self.blocks[item.block];
         let (text, _) = text_of(&self.blocks, item);
         let (_, layout, links) = self.cache.as_ref().expect("laid out");
@@ -513,7 +560,16 @@ impl<'a> Flow<'a> {
         });
     }
 
-    fn draw_table(&mut self, cx: &mut PageCx, piece: &Piece, item: &Item, (left, top): (f32, f32)) {
+    /// The rows of a table's piece, its top at `(left, top)`; `shown`,
+    /// for a slice of a row too tall for a page, what of it the page shows.
+    fn draw_table(
+        &mut self,
+        cx: &mut PageCx,
+        piece: &Piece,
+        item: &Item,
+        (left, top): (f32, f32),
+        shown: Option<(f32, f32)>,
+    ) {
         let Kind::Table {
             blocks,
             head,
@@ -527,22 +583,31 @@ impl<'a> Flow<'a> {
         let mut y = top;
         let mut rules = vec![];
         // The header again over a page after the first.
-        if piece.rows.start > *head && *head > 0 {
+        if repeats_header(item, piece) {
             y -= item.head;
             rules.push((y, 0.75));
             for row in 0..*head {
-                let height = self.cell_row(cx, blocks.start + row, columns, *size, (left, y), None);
+                let height = self.cell_row(
+                    cx,
+                    blocks.start + row,
+                    columns,
+                    *size,
+                    (left, y),
+                    None,
+                    None,
+                );
                 y += height;
             }
             rules.push((y, 0.75));
         } else if piece.rows.start == 0 {
             rules.push((y, 0.75));
         }
+        let path = item.path();
         for row in piece.rows.clone() {
             let block = blocks.start + row;
-            let mut path = item.path.clone();
+            let mut path = path.clone();
             path.push((key(group::ROW, block), Tag::TR.into()));
-            let height = self.cell_row(cx, block, columns, *size, (left, y), Some(&path));
+            let height = self.cell_row(cx, block, columns, *size, (left, y), Some(&path), shown);
             y += height;
             rules.push((y, if row + 1 == *head { 0.75 } else { 0.4 }));
         }
@@ -558,7 +623,10 @@ impl<'a> Flow<'a> {
     }
 
     /// A row of a table drawn at `(x, y)`, its cells marked under `path`
-    /// (a header repeated, not marked, without): its height.
+    /// (a header repeated, not marked, without): its height. A row sliced
+    /// over pages (`shown`, what of the page its slice shows) is laid out
+    /// once for all its slices, and each draws the lines it shows alone.
+    #[allow(clippy::too_many_arguments)] // A row, where, and what of it shows.
     fn cell_row(
         &mut self,
         cx: &mut PageCx,
@@ -566,48 +634,57 @@ impl<'a> Flow<'a> {
         columns: &[f32],
         size: f32,
         (left, y): (f32, f32),
-        path: Option<&Vec<(u64, TagKind)>>,
+        path: Option<&[(u64, TagKind)]>,
+        shown: Option<(f32, f32)>,
     ) -> f32 {
         let row = &self.blocks[block];
-        let BlockKind::Row { cells, header } = &row.kind else {
+        let BlockKind::Row { header, .. } = &row.kind else {
             return 0.0;
+        };
+        let header = *header;
+        let laid;
+        let cells: &[Option<Cell>] = if shown.is_some() {
+            if self.tall.as_ref().is_none_or(|(at, _)| *at != block) {
+                let cells = lay_out_row(cx.fonts, row, columns, size, self.language);
+                self.tall = Some((block, cells));
+            }
+            &self.tall.as_ref().expect("laid out").1
+        } else {
+            laid = lay_out_row(cx.fonts, row, columns, size, self.language);
+            &laid
         };
         let mut x = left;
         let mut height = 0.0f32;
-        for (column, &width) in columns.iter().enumerate() {
-            let Some(&(start, end)) = cells.get(column) else {
+        for (column, (&width, cell)) in columns.iter().zip(cells).enumerate() {
+            let Some(Cell {
+                layout,
+                text,
+                links,
+            }) = cell
+            else {
                 x += width;
                 continue;
             };
-            let (text, runs) = slice(&row.text, &row.runs, start as usize..end as usize);
-            let mut spec = Spec::new(Role::Text, size);
-            spec.bold = *header;
-            spec.width = Some((width - 2.0 * CELL_X).max(size));
-            spec.line_height = 1.3;
-            spec.language = self.language;
-            spec.align = align(row.align);
-            let mut layout = Layout::new();
-            let mut links = Vec::new();
-            text::lay_out(cx.fonts, &mut layout, &text, &runs, &spec, &mut links);
             let origin = (x + CELL_X, y + CELL_Y);
+            let lines = shown.map_or(0..layout.len(), |shown| between(layout, origin.1, shown));
             if let Some(path) = path {
-                let tag: TagKind = if *header {
+                let tag: TagKind = if header {
                     Tag::TH(TableHeaderScope::Column).into()
                 } else {
                     Tag::TD.into()
                 };
-                let mut path = path.clone();
+                let mut path = path.to_vec();
                 path.push((key(group::CELL, column), tag));
                 self.structure.goto(cx, &path);
-                cx.lines(&layout, &text, &links, 0..layout.len(), origin);
+                cx.lines(layout, text, links, lines, origin);
             } else {
                 cx.artifact(ArtifactType::PaginationOther, |surface, fonts| {
-                    for index in 0..layout.len() {
+                    for index in lines {
                         text::draw_line(
                             surface,
                             fonts,
-                            &layout,
-                            &text,
+                            layout,
+                            text,
                             index,
                             origin,
                             &mut |_, _| {},
@@ -621,6 +698,74 @@ impl<'a> Flow<'a> {
         }
         height
     }
+}
+
+/// Whether a piece of a table draws its header again above it: one that
+/// starts a page after the header's, where `paginate` left room for it
+/// (a slice of a tall row, on its first page only).
+fn repeats_header(item: &Item, piece: &Piece) -> bool {
+    let rows = head_rows(item);
+    rows > 0
+        && item.head > 0.0
+        && piece.rows.start >= rows
+        && piece.clip.is_none_or(|(offset, _)| offset <= 0.0)
+}
+
+/// The cells of a table's row laid out in `columns`, at `size`.
+fn lay_out_row(
+    fonts: &mut Fonts,
+    row: &Block,
+    columns: &[f32],
+    size: f32,
+    language: Option<Language>,
+) -> Vec<Option<Cell>> {
+    let BlockKind::Row { cells, header } = &row.kind else {
+        return Vec::new();
+    };
+    columns
+        .iter()
+        .enumerate()
+        .map(|(column, &width)| {
+            let &(start, end) = cells.get(column)?;
+            let (text, runs) = slice(&row.text, &row.runs, start as usize..end as usize);
+            let mut spec = Spec::new(Role::Text, size);
+            spec.bold = *header;
+            spec.width = Some((width - 2.0 * CELL_X).max(size));
+            spec.line_height = 1.3;
+            spec.language = language;
+            spec.align = align(row.align);
+            let mut layout = Layout::new();
+            let mut links = Vec::new();
+            text::lay_out(fonts, &mut layout, &text, &runs, &spec, &mut links);
+            Some(Cell {
+                layout,
+                text,
+                links,
+            })
+        })
+        .collect()
+}
+
+/// The lines of `layout`, drawn with its top at `top`, that show between
+/// `from` and `to` down the page: found by halving, as a row sliced over
+/// many pages has many lines.
+fn between(layout: &Layout<Ink>, top: f32, (from, to): (f32, f32)) -> Range<usize> {
+    let first_where = |test: &dyn Fn(usize) -> bool| {
+        let (mut low, mut high) = (0, layout.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if test(middle) {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        low
+    };
+    let metrics = |index: usize| layout.get(index).map(|line| *line.metrics());
+    let start = first_where(&|index| metrics(index).is_none_or(|m| top + m.block_max_coord > from));
+    let end = first_where(&|index| metrics(index).is_none_or(|m| top + m.block_min_coord >= to));
+    start..end.max(start)
 }
 
 /// The text an item of text or code lays out, and its runs.
@@ -659,6 +804,10 @@ fn spec_of(block: &Block, item: &Item, language: Option<Language>) -> Spec {
     spec
 }
 
+/// The groups blocks share: the quote they are in, the lists open, and
+/// the groups those make.
+type SharedGroups = (Option<usize>, Vec<(u8, usize, usize)>, Rc<[(u64, TagKind)]>);
+
 /// The groups a list's block stands in, kept from block to block: each
 /// open list's depth, the block that started it and the item it is in.
 struct Lists {
@@ -667,17 +816,13 @@ struct Lists {
 }
 
 impl Lists {
-    /// The groups of block `index` at `depth` (none outside a list), and
-    /// those of its item for its marker.
-    fn path(
-        &mut self,
-        index: usize,
-        block: &Block,
-    ) -> (Vec<(u64, TagKind)>, Option<Vec<(u64, TagKind)>>) {
-        let depth = block.list_depth;
+    /// Block `index` entered: the lists open as it stands in them (none
+    /// outside a list), at most [`LIST_DEPTH`] deep.
+    fn enter(&mut self, index: usize, block: &Block) {
+        let depth = block.list_depth.min(LIST_DEPTH);
         if depth == 0 {
             self.open.clear();
-            return (Vec::new(), None);
+            return;
         }
         while self.open.last().is_some_and(|(d, _, _)| *d > depth) {
             self.open.pop();
@@ -700,10 +845,12 @@ impl Lists {
                 self.numbering.insert(index, numbering);
             }
         }
-        let mut path = Vec::new();
-        let mut marker_path = None;
-        let last = self.open.len() - 1;
-        for (at, &(_, list, item)) in self.open.iter().enumerate() {
+    }
+
+    /// The groups of the lists open, each a list, its item and the item's
+    /// body.
+    fn groups(&self, path: &mut Vec<(u64, TagKind)>) {
+        for &(_, list, item) in &self.open {
             let numbering = self
                 .numbering
                 .get(&list)
@@ -711,12 +858,8 @@ impl Lists {
                 .unwrap_or(ListNumbering::None);
             path.push((key(group::LIST, list), Tag::L(numbering).into()));
             path.push((key(group::ITEM, item), Tag::LI.into()));
-            if at == last && block.marker.is_some() {
-                marker_path = Some(path.clone());
-            }
             path.push((key(group::BODY, item), Tag::LBody.into()));
         }
-        (path, marker_path)
     }
 }
 
@@ -734,31 +877,37 @@ fn items(
         numbering: HashMap::new(),
     };
     let mut quote: Option<usize> = None;
+    let mut shared: Option<SharedGroups> = None;
     let mut layout: Layout<Ink> = Layout::new();
     let mut index = 0;
     while index < blocks.len() {
         let block = &blocks[index];
         let scale = scale(block);
-        let mut path = Vec::new();
         if block.quote {
-            let id = *quote.get_or_insert(index);
-            path.push((key(group::QUOTE, id), Tag::BlockQuote.into()));
+            quote.get_or_insert(index);
         } else {
             quote = None;
         }
-        let (list_path, marker_path) = lists.path(index, block);
-        let marker_path = marker_path.map(|item| {
-            let mut full = path.clone();
-            full.extend(item);
-            full
-        });
-        path.extend(list_path);
+        lists.enter(index, block);
+        // Blocks in the same quote and list items share their groups.
+        if shared
+            .as_ref()
+            .is_none_or(|(at, open, _)| *at != quote || *open != lists.open)
+        {
+            let mut path = Vec::with_capacity(1 + 3 * lists.open.len());
+            if let Some(id) = quote {
+                path.push((key(group::QUOTE, id), Tag::BlockQuote.into()));
+            }
+            lists.groups(&mut path);
+            shared = Some((quote, lists.open.clone(), Rc::from(path)));
+        }
+        let groups = Rc::clone(&shared.as_ref().expect("made above").2);
         let mut x = block.indent.clamp(0.0, 20.0) * BODY * scale;
         let bar = block.quote.then_some(x);
         if block.quote {
             x += QUOTE_INDENT;
         }
-        x += f32::from(block.list_depth.min(12)) * LIST_INDENT;
+        x += f32::from(block.list_depth.min(LIST_DEPTH)) * LIST_INDENT;
         let x = x.min(frame.text.width * 0.6);
         let width = frame.text.width - x;
         let look = looks.get(index).cloned().flatten();
@@ -777,8 +926,9 @@ fn items(
             before: 0.0,
             after: 6.0 * scale,
             keep: false,
-            path: Vec::new(),
-            marker_path,
+            groups,
+            own: None,
+            marked: block.list_depth > 0 && block.marker.is_some(),
             bar,
             head: 0.0,
             code: None,
@@ -814,7 +964,7 @@ fn items(
                         item.after = 1.0;
                     }
                 }
-                path.push((key(group::BLOCK, index), own));
+                item.own = Some((key(group::BLOCK, index), own));
                 let spec = spec_of(block, &item, language);
                 text::lay_out(
                     fonts,
@@ -844,7 +994,7 @@ fn items(
                 };
                 item.before = 4.0;
                 item.after = 8.0;
-                path.push((key(group::BLOCK, index), Tag::Code.into()));
+                item.own = Some((key(group::BLOCK, index), Tag::Code.into()));
                 let spec = spec_of(block, &item, language);
                 let text = block.text.strip_suffix('\n').unwrap_or(&block.text);
                 let (text, runs) = crate::code::detab(text, &block.runs);
@@ -891,7 +1041,7 @@ fn items(
                 };
                 item.rows = vec![(0.0, height + caption)];
                 let alt = picture.alt.trim();
-                path.push((
+                item.own = Some((
                     key(group::BLOCK, index),
                     Tag::Figure((!alt.is_empty()).then(|| alt.to_owned())).into(),
                 ));
@@ -901,9 +1051,15 @@ fn items(
                     .iter()
                     .position(|b| !matches!(b.kind, BlockKind::Row { .. }))
                     .map_or(blocks.len(), |n| index + n);
-                path.push((key(group::TABLE, index), Tag::Table.into()));
-                table(&mut item, &blocks[index..end], index, fonts, language);
-                item.path = path;
+                item.own = Some((key(group::TABLE, index), Tag::Table.into()));
+                table(
+                    &mut item,
+                    &blocks[index..end],
+                    index,
+                    fonts,
+                    language,
+                    frame.text.height,
+                );
                 items.push(item);
                 // The rows of a table are one item; the lists and quotes
                 // they stand in are the first's.
@@ -911,7 +1067,6 @@ fn items(
                 continue;
             }
         }
-        item.path = path;
         items.push(item);
         index += 1;
     }
@@ -939,13 +1094,14 @@ fn picture_size(picture: &Picture, width: f32, height: f32) -> (f32, f32) {
     (fitted.width, fitted.height)
 }
 
-/// A table's columns and rows, from its row blocks.
+/// A table's columns and rows, from its row blocks, on pages of `room`.
 fn table(
     item: &mut Item,
     rows: &[Block],
     first: usize,
     fonts: &mut Fonts,
     language: Option<Language>,
+    room: f32,
 ) {
     let size = BODY * 0.9;
     let count = rows
@@ -1019,9 +1175,18 @@ fn table(
         .iter()
         .take_while(|row| matches!(row.kind, BlockKind::Row { header: true, .. }))
         .count();
-    item.head = heights
+    // The header is repeated over the rows on the pages after its own
+    // only when it leaves them half a page at least: one taller is not,
+    // and its rows go on alone. Decided here once, for the pages laid out
+    // and drawn alike.
+    let head_height: f32 = heights
         .get(..head)
         .map_or(0.0, |rows| rows.iter().map(|(t, b)| b - t).sum());
+    item.head = if head_height <= room / 2.0 {
+        head_height
+    } else {
+        0.0
+    };
     item.rows = heights;
     item.before = 4.0;
     item.after = 8.0;
@@ -1191,8 +1356,9 @@ mod tests {
             before: 0.0,
             after: 0.0,
             keep: false,
-            path: Vec::new(),
-            marker_path: None,
+            groups: Rc::from(Vec::new()),
+            own: None,
+            marked: false,
             bar: None,
             head: 0.0,
             code: None,
