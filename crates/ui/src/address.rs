@@ -1205,7 +1205,8 @@ fn pane_row(
         let filter = row.filter.as_deref();
         // Offered only where its keeper keeps what is shown (`keep`).
         let keeper = registry.keepers.find(|k| k.keeps(location, filter));
-        let kept = registry.places.find(|p| p.is_kept_as(location, filter));
+        // A remote folder is kept by its address (`App::kept_place`).
+        let kept = shell.app.kept_place(location, filter);
         let button = match (kept, keeper) {
             (Some(place), keeper) => {
                 let forget = place.forget.expect("kept");

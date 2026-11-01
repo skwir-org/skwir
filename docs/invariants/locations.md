@@ -204,7 +204,11 @@ and `notes.agree` are core `notes.*` commands.
     (`App::navigate_as_kept`, `navigate`'s `as_kept`, `tab.new`'s): a
     saved place by its filter alone, a saved or recent search by its
     own terms, the pane's lens left out; a bookmark or a pinned tag, kept
-    with none, takes the lens like any place gone to.
+    with none, takes the lens like any place gone to. Where a location
+    says it is reached (`ListingEvent::Redirect`) the step is shown as
+    it is, its filter whole (`App::follow_redirect`): a remote folder
+    kept with its filter is kept by its address (`App::kept_location`)
+    and filtered so once mounted.
   - A change of a search's lens alone is made in place of it; a change
     of its words is a step Back undoes.
   - A tab or a split opened from a pane takes its lens (`new_tab`,

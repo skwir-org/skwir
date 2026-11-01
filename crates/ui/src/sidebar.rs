@@ -606,12 +606,19 @@ pub fn render(
 ) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let current = shell.ui().address_shown.clone();
-    let filter = shell
-        .app
-        .workspace
-        .read()
-        .pane(shell.pane)
-        .and_then(|p| p.filter().map(str::to_owned));
+    let (shown, filter) = {
+        let ws = shell.app.workspace.read();
+        let p = ws.pane(shell.pane);
+        (
+            p.and_then(|p| p.location().cloned()),
+            p.and_then(|p| p.filter().map(str::to_owned)),
+        )
+    };
+    // A remote folder is also its address's place (a saved place keeps it
+    // so, ADR-077): asked once, outside the workspace's lock.
+    let current_kept = shown
+        .map(|shown| shell.app.kept_location(&shown).to_string())
+        .filter(|kept| *kept != current);
     // Groups in the user's order, those put away left out; places as the
     // user arranged them (`arrange`). A group whose places are all hidden
     // keeps its header, whose menu shows them again.
@@ -821,7 +828,8 @@ pub fn render(
         let menu_here = marked.as_ref() == Some(&item);
         // A saved place is the one shown only filtered as it was kept
         // (ADR-109); any other is its location's.
-        let is_current = place.location.to_string() == current
+        let named = place.location.to_string();
+        let is_current = (named == current || current_kept.as_ref() == Some(&named))
             && (place.is_its_location() || place.filter() == filter.as_deref());
         let color = place.color.as_deref().and_then(|c| {
             skwir_core::metadata::TAG_COLORS

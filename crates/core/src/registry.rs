@@ -363,7 +363,9 @@ impl Place {
 
     /// Whether it keeps `location` shown filtered by `filter` (the pane's,
     /// `None` for nothing): a place the user kept, of that place, filtered
-    /// so (ADR-109). A bookmarked folder shown filtered is not it.
+    /// so (ADR-109). A bookmarked folder shown filtered is not it. A remote
+    /// folder is kept by its address: ask `App::kept_place`, which compares
+    /// through it.
     pub fn is_kept_as(&self, location: &Location, filter: Option<&str>) -> bool {
         self.forget.is_some() && location.same_place(&self.location) && self.filter() == filter
     }

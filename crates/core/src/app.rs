@@ -1363,18 +1363,53 @@ impl App {
         let report = self.workspace.write().pump_report();
         for redirect in &report.redirects {
             let to = &redirect.to;
-            let redirected = Opening {
-                from: Some(&redirect.from),
-                ..Opening::default()
-            };
-            let shown = self.open_in(redirect.pane, to, redirected, |p, shown| {
-                p.replace_here(shown.clone());
-            });
-            if let Err(error) = shown {
+            if let Err(error) = self.follow_redirect(redirect.pane, &redirect.from, to) {
                 tracing::warn!(%to, "cannot show where a location leads: {error:#}");
             }
         }
         report
+    }
+
+    /// Show `to` in `pane` in place of `from`, which said it is reached
+    /// there (ADR-077), while the pane still shows `from`: the step as it
+    /// is, filtered as it is now (ADR-109). A place opened as kept or as
+    /// it was left keeps its words with its lens.
+    fn follow_redirect(&self, pane: PaneId, from: &Location, to: &Location) -> anyhow::Result<()> {
+        let filter = self
+            .workspace
+            .read()
+            .pane(pane)
+            .and_then(|p| p.filter_at(p.history_pos));
+        let redirected = Opening {
+            from: Some(from),
+            lensing: Lensing::AsLeft(filter.as_ref()),
+            ..Opening::default()
+        };
+        self.open_in(pane, to, redirected, |p, shown| {
+            p.replace_here(shown.clone());
+        })
+    }
+
+    /// `location` as the sidebar keeps it: a remote folder by its address
+    /// (ADR-077), which connects again once its mount is gone; anything
+    /// else as it is. What a saved place keeps and is compared by.
+    pub fn kept_location(&self, location: &Location) -> Location {
+        self.address_of(location)
+            .unwrap_or_else(|| location.clone())
+    }
+
+    /// The place the user kept of `location` shown filtered by `filter`
+    /// (`Place::is_kept_as`, ADR-109): by the location itself, or by its
+    /// address for a remote folder (`kept_location`).
+    pub fn kept_place(
+        &self,
+        location: &Location,
+        filter: Option<&str>,
+    ) -> Option<crate::registry::Place> {
+        let kept = self.kept_location(location);
+        self.registry
+            .places
+            .find(|p| p.is_kept_as(location, filter) || p.is_kept_as(&kept, filter))
     }
 
     /// Wait until `pane`'s listing is complete or failed, at most
@@ -3719,6 +3754,70 @@ mod tests {
         assert_eq!(app.pane_location(pane).as_ref(), Some(&c));
         let ws = app.workspace.read();
         assert_eq!(ws.pane(pane).unwrap().history.last(), Some(&c));
+    }
+
+    /// Where a location leads is shown as the step was (ADR-109): a place
+    /// opened as kept keeps its words there, not only its lens.
+    #[test]
+    fn a_redirect_shows_the_step_filtered_as_it_was() {
+        use crate::Location;
+        let tmp = tempfile::tempdir().unwrap();
+        let [a, b] = ["a", "it's b"].map(|name| {
+            let dir = tmp.path().join(name);
+            std::fs::create_dir(&dir).unwrap();
+            Location::from_path(dir)
+        });
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        let pane = app.workspace.read().active_id();
+        app.navigate_as_kept(pane, &a, Some("dunes été")).unwrap();
+        app.follow_redirect(pane, &a, &b).unwrap();
+        let ws = app.workspace.read();
+        let p = ws.pane(pane).unwrap();
+        assert_eq!(p.location(), Some(&b));
+        assert_eq!(p.filter(), Some("dunes été"));
+    }
+
+    /// A remote folder is kept by its address (ADR-077): what the sidebar
+    /// keeps of its mount's path names the address, and the place kept
+    /// there is found from the path the pane shows (ADR-109).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_remote_folder_is_kept_by_its_address() {
+        use crate::Location;
+        use crate::registry::{Opens, Place};
+        let tmp = tempfile::tempdir().unwrap();
+        let point = tmp.path().join("mount");
+        let photos = point.join("summer photos");
+        std::fs::create_dir_all(&photos).unwrap();
+        crate::fs::reach::pretend_remote(&point);
+        let app = super::App::new(super::AppConfig::ephemeral(tmp.path())).unwrap();
+        app.registry.remotes.add(
+            "test",
+            crate::fs::reach::Known {
+                point: point.clone(),
+                address: Some(Location::parse("sftp://me@example.com/")),
+                label: "me@example.com".into(),
+                thumbnails: crate::fs::reach::Thumbnails::default(),
+                forget: None,
+                trash: None,
+                looked_at: None,
+            },
+        );
+        let shown = Location::from_path(&photos);
+        let kept = app.kept_location(&shown);
+        assert_eq!(kept.to_string(), "sftp://me@example.com/summer photos");
+        let local = Location::from_path(tmp.path());
+        assert_eq!(app.kept_location(&local), local, "a local folder as it is");
+        app.registry.places.add(
+            "test",
+            Place {
+                forget: Some(super::Invocation::new("test.forget")),
+                opens: Opens::AsKept(Some("kind:image".into())),
+                ..Place::new("searches", "Summer", "folder", kept)
+            },
+        );
+        assert!(app.kept_place(&shown, Some("kind:image")).is_some());
+        assert!(app.kept_place(&shown, None).is_none(), "filtered so only");
     }
 
     /// A lens is read again wherever a location is shown (ADR-107): a date

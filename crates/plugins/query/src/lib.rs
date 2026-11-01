@@ -409,24 +409,29 @@ fn key_of(expr: String, at: Option<&PathArg>) -> Key {
 }
 
 /// What `pane` shows, as it is kept (ADR-109): its search, else its
-/// location with what filters it.
+/// location with what filters it, a remote folder by its address
+/// (`App::kept_location`, ADR-077), which connects again once its mount
+/// is gone.
 fn shown_key(app: &App, pane: PaneId) -> anyhow::Result<Key> {
-    let ws = app.workspace.read();
-    let p = ws
-        .pane(pane)
-        .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
-    let location = p
-        .location()
-        .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to save"))?;
+    let (location, filter) = {
+        let ws = app.workspace.read();
+        let p = ws
+            .pane(pane)
+            .ok_or_else(|| anyhow::anyhow!("no such pane"))?;
+        let location = p
+            .location()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("the pane shows nothing to save"))?;
+        (location, p.filter().map(str::to_owned))
+    };
     if &*location.scheme == SCHEME {
         return Ok(Key::from(location.rest.as_str()));
     }
-    let filter = p
-        .filter()
-        .ok_or_else(|| anyhow::anyhow!("the pane shows neither a search nor a filter"))?;
+    let filter =
+        filter.ok_or_else(|| anyhow::anyhow!("the pane shows neither a search nor a filter"))?;
     Ok(Key {
-        expr: filter.to_owned(),
-        at: Some(location.clone()),
+        expr: filter,
+        at: Some(app.kept_location(&location)),
     })
 }
 

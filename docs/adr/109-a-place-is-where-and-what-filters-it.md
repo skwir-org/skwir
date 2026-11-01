@@ -54,9 +54,11 @@ searches, and its amendment's Back and Forward.
    tag's place filtered by nothing a pinned tag; a search a saved
    search; any location shown with a filter a **saved place**, kept by
    the query plugin beside the saved searches, known by its filter and
-   where it applies (`SavedQuery::at`). The toast names it, with Undo.
-   The button is filled only for the place as shown, filter included
-   (`Place::is_kept_as`); a folder's own menu still bookmarks it plain.
+   where it applies (`SavedQuery::at`; a remote folder by its address,
+   as its bookmark is, ADR-077: `App::kept_location`). The toast names
+   it, with Undo. The button is filled only for the place as shown,
+   filter included (`App::kept_place`, `Place::is_kept_as`); a folder's
+   own menu still bookmarks it plain.
 6. **Saved searches and saved places are one list**, the sidebar's
    "Saved" section (its group stays `searches`, so what the user
    arranged there stays), in the user's order. Bookmarks stay the
