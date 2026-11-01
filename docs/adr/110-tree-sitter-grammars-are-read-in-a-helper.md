@@ -58,7 +58,16 @@ revised 2026-11-01: a choice for each language beside Automatic's rule.
    same language name, then from bat's grammar of that name, then takes
    its name as an extension; `languages.toml` in Skwir's folder maps the
    rest. A query that does not compile against the library is passed
-   over for the next.
+   over for the next source's (each source's queries are told, tried in
+   turn); a grammar none of whose highlights compile colors nothing, and
+   bat's grammar colors the text. Each file is named by its real path
+   and kept only where it really lies in its source's folders: a
+   repository's or an extension's for what a description names (a
+   `tree-sitter.json` may say any path, a clone may hold links), an
+   editor's or the system's for what is listed there (a link its package
+   manager left is followed). The helper reads those folders, and nothing
+   else of the user's. Helix's runtimes are read as Helix reads them,
+   file by file, the user's first.
 4. **A setting chooses the engine** where both know a language
    (`reading.grammars`): bat first (the default) or tree-sitter first.
    Revised 2026-11-01 with the user: that is Automatic's rule, and each

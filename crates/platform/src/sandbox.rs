@@ -311,6 +311,19 @@ pub fn fed(program: &Path, work: &Path, otherwise: Otherwise) -> anyhow::Result<
     Ok(plain(program, Path::new(""), work))
 }
 
+/// Whether an isolated program reads `path` whatever it is told: it lies
+/// in the system's folders, which every sandbox reads (Linux's `SYSTEM`,
+/// macOS's profile). Nothing is where nothing is isolated.
+pub fn reads_anyway(path: &Path) -> bool {
+    #[cfg(target_os = "linux")]
+    let system = SYSTEM;
+    #[cfg(target_os = "macos")]
+    let system = PROFILE_READS;
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let system: &[&str] = &[];
+    system.iter().any(|folder| path.starts_with(folder))
+}
+
 /// `fed`, the program also reading `readable` where it runs isolated
 /// (files or folders it needs beside the system's: the grammars a parser
 /// loads), read-only at their own paths. One that does not exist is left
@@ -529,6 +542,23 @@ const PROFILE: &str = r#"(version 1)
     (global-name "com.apple.cfprefsd.agent"))
 (allow user-preference-read)
 "#;
+
+/// The folders `PROFILE` lets every isolated program read, as it names
+/// them (`reads_anyway`).
+#[cfg(target_os = "macos")]
+const PROFILE_READS: &[&str] = &[
+    "/System",
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/Library/Fonts",
+    "/Library/Frameworks",
+    "/private/etc",
+    "/private/var/db/timezone",
+    "/opt/homebrew",
+    "/opt/local",
+    "/nix/store",
+];
 
 /// `sandbox-exec` with `PROFILE`: paths are the real ones, which the
 /// profile names (Seatbelt cannot move a file elsewhere), so the input is

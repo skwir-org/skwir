@@ -1527,6 +1527,16 @@ is still to come are in `docs/preview-frame.md`.
   none (a parser's folds win), passed through `tree::nest` so they keep
   the rule above; the outline is the contents of a file that has none,
   each entry leading to its line (`ui.inspect`, `line`).
+- **A grammar's files are where they really lie** (`grammars::find_in`,
+  `Confined`): each is named by its real path and kept only in its
+  source's folders. What a description names (a `tree-sitter.json`, an
+  extension's `config.toml`) and a clone's links never leave its
+  repository or extension; a link a package manager left in an editor's
+  or the system's folder is followed. The helper is told those folders
+  and reads nothing else of the user's. Each source's queries of a
+  language are told (`Grammar::lent`) and tried in turn where one does
+  not compile; a grammar none of whose highlights compile colors no
+  text, which bat's grammar then colors.
 
 ## Printing (ADR-111)
 

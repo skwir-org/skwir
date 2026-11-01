@@ -18,7 +18,7 @@
 //! Finding reads folders and small files: a worker's work, at start and
 //! when the settings open, as bat's themes are.
 use parking_lot::RwLock;
-use skwir_core::syntax::Grammar;
+use skwir_core::syntax::{self, Grammar};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,7 +28,7 @@ const LIMIT: u64 = 4 << 20;
 /// Grammars found at most, every source together.
 const MOST: usize = 2000;
 /// How many languages a query may inherit, through each other.
-const INHERITS: usize = 8;
+const INHERITS: usize = 16;
 
 /// Where a grammar was found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -148,32 +148,52 @@ pub struct Roots {
     pub emacs: Vec<PathBuf>,
 }
 
-/// Every source's grammar of each language, as last found; `None` before
-/// they are.
-static ALL: RwLock<Option<Arc<[Found]>>> = RwLock::new(None);
+/// The grammars as last found, the choices they were picked with, and the
+/// pick: one lock, so a pick is always of the grammars and the choices
+/// kept beside it.
+struct State {
+    /// Every source's grammar of each language; `None` before they are
+    /// found.
+    all: Option<Arc<[Found]>>,
+    /// The folders their files lie in, as they really are: what the helper
+    /// reads (`Found` files, `confine`).
+    folders: Vec<PathBuf>,
+    /// The languages whose grammar is chosen from a source.
+    chosen: BTreeMap<String, Source>,
+    /// The grammar used for each language, picked from `all` as `chosen`
+    /// says; `None` before the grammars are found.
+    found: Option<Arc<[Found]>>,
+}
 
-/// The grammar used for each language, as last chosen among `ALL`.
-static FOUND: RwLock<Option<Arc<[Found]>>> = RwLock::new(None);
+static STATE: RwLock<State> = RwLock::new(State {
+    all: None,
+    folders: Vec::new(),
+    chosen: BTreeMap::new(),
+    found: None,
+});
 
 /// The grammar used for each language, as last found and chosen. Finding
 /// them again (`find`) is a worker's work.
 pub fn found() -> Option<Arc<[Found]>> {
-    FOUND.read().clone()
+    STATE.read().found.clone()
 }
 
 /// Every source's grammar of each language, by language, in the order the
 /// sources come: what the Reading page offers to choose from.
 pub fn all() -> Option<Arc<[Found]>> {
-    ALL.read().clone()
+    STATE.read().all.clone()
 }
 
 /// Find the grammars again where this system keeps them, keep them for
 /// `all`, choose each language's as `chosen` says (`choose`), and answer
 /// those used.
 pub fn find(chosen: &BTreeMap<String, Source>) -> Arc<[Found]> {
-    let all: Arc<[Found]> = find_in(&Roots::here(), &bat_file_types()).into();
-    *ALL.write() = Some(all);
-    choose(chosen)
+    let (all, folders) = find_in(&Roots::here(), &bat_file_types());
+    let mut state = STATE.write();
+    state.all = Some(all.into());
+    state.folders = folders;
+    state.chosen.clone_from(chosen);
+    repick(&mut state)
 }
 
 /// Use, for each language `chosen` names (in lower case), its grammar from
@@ -184,17 +204,48 @@ pub fn find(chosen: &BTreeMap<String, Source>) -> Arc<[Found]> {
 /// helper told others is let go of, and the next text opened starts one
 /// told these.
 pub fn choose(chosen: &BTreeMap<String, Source>) -> Arc<[Found]> {
-    let all = ALL.read().clone().unwrap_or_default();
-    let found: Arc<[Found]> = pick(&all, chosen).into();
-    *FOUND.write() = Some(Arc::clone(&found));
-    crate::tree_sitter::shared().set_grammars(
-        found
-            .iter()
-            .filter(|found| found.problem.is_none())
-            .map(|found| found.grammar.clone())
-            .collect(),
-    );
+    let mut state = STATE.write();
+    state.chosen.clone_from(chosen);
+    repick(&mut state)
+}
+
+/// Pick the grammars used from those found as the choices kept say, and
+/// tell the shared helper, under the lock: two picks never tell it out of
+/// order. Telling it only compares and swaps what it keeps.
+fn repick(state: &mut State) -> Arc<[Found]> {
+    let all = state.all.clone().unwrap_or_default();
+    let found: Arc<[Found]> = pick(&all, &state.chosen).into();
+    state.found = Some(Arc::clone(&found));
+    let told: Vec<Grammar> = found
+        .iter()
+        .filter(|found| found.problem.is_none())
+        .map(|found| found.grammar.clone())
+        .collect();
+    let folders = folders_read(&told, &state.folders);
+    crate::tree_sitter::shared().set_grammars_reading(told, folders);
     found
+}
+
+/// The folders a helper told `grammars` reads: of `folders` (where the
+/// grammars found lie), those holding one of their files, and the folder
+/// of a file that lies in none of them (a link an editor's or the
+/// system's folder holds, `confine`).
+fn folders_read(grammars: &[Grammar], folders: &[PathBuf]) -> Vec<PathBuf> {
+    let mut read: Vec<PathBuf> = Vec::new();
+    let mut seen = HashSet::new();
+    for file in grammars.iter().flat_map(Grammar::files) {
+        let folder = folders
+            .iter()
+            .find(|folder| file.starts_with(folder))
+            .cloned()
+            .or_else(|| file.parent().map(Path::to_owned));
+        if let Some(folder) = folder
+            && seen.insert(folder.clone())
+        {
+            read.push(folder);
+        }
+    }
+    read
 }
 
 /// One grammar per language of `all` (by language, sources in order): the
@@ -286,31 +337,67 @@ fn bat_file_types() -> HashMap<String, Vec<String>> {
 impl Roots {
     /// Where this system keeps them.
     pub fn here() -> Roots {
-        let config = config_home();
-        let data = skwir_core::xdg::data_home();
+        let config = editor_config();
         let home = home();
         let mut roots = Roots {
             skwir: skwir_core::folders::data().map(|dir| dir.join("grammars")),
             ..Roots::default()
         };
-        // The CLI's own: `$TREE_SITTER_DIR`, else its configuration folder.
-        roots.tree_sitter_config = std::env::var_os("TREE_SITTER_DIR")
+        // The CLI's own: `$TREE_SITTER_DIR`, else its configuration folder
+        // (macOS's Application Support before 0.23, `~/.tree-sitter` before
+        // that), the first that holds one.
+        roots.tree_sitter_config = if let Some(dir) = std::env::var_os("TREE_SITTER_DIR")
             .map(PathBuf::from)
             .filter(|dir| dir.is_absolute())
-            .or_else(|| config.as_ref().map(|dir| dir.join("tree-sitter")))
-            .map(|dir| dir.join("config.json"));
+        {
+            Some(dir.join("config.json"))
+        } else {
+            let places: Vec<PathBuf> = config
+                .iter()
+                .map(|dir| dir.join("tree-sitter"))
+                .chain(legacy_config().map(|dir| dir.join("tree-sitter")))
+                .chain(home.iter().map(|home| home.join(".tree-sitter")))
+                .map(|dir| dir.join("config.json"))
+                .collect();
+            places
+                .iter()
+                .find(|path| path.is_file())
+                .or(places.first())
+                .cloned()
+        };
         roots.tree_sitter_libraries = std::env::var_os("TREE_SITTER_LIBDIR")
             .map(PathBuf::from)
             .filter(|dir| dir.is_absolute())
-            .or_else(|| skwir_core::xdg::cache_home().map(|dir| dir.join("tree-sitter/lib")));
-        roots.zed = zed_folders(data.as_deref(), home.as_deref());
+            .or_else(|| editor_cache().map(|dir| dir.join("tree-sitter/lib")));
+        roots.zed = zed_folders(home.as_deref());
         roots.helix_languages = config.as_ref().map(|dir| dir.join("helix/languages.toml"));
-        roots.helix = std::env::var_os("HELIX_RUNTIME")
-            .map(PathBuf::from)
-            .into_iter()
-            .chain(config.as_ref().map(|dir| dir.join("helix/runtime")))
-            .chain(program_prefix("hx").map(|prefix| prefix.join("lib/runtime")))
-            .chain(program_prefix("helix").map(|prefix| prefix.join("lib/runtime")))
+        // In Helix's order: the user's runtime, `$HELIX_RUNTIME`, then the
+        // one installed with it (beside `hx`, in its prefix's `lib` or
+        // `libexec`, Homebrew's), then the distributions' folders.
+        let installed = |name: &str| -> Vec<PathBuf> {
+            program(name)
+                .and_then(|exe| exe.parent().map(Path::to_owned))
+                .map(|bin| {
+                    let mut runtimes = vec![bin.join("runtime")];
+                    if let Some(prefix) = bin.parent() {
+                        runtimes.push(prefix.join("lib/runtime"));
+                        runtimes.push(prefix.join("libexec/runtime"));
+                        runtimes.push(prefix.join("share/helix/runtime"));
+                    }
+                    runtimes
+                })
+                .unwrap_or_default()
+        };
+        roots.helix = config
+            .iter()
+            .map(|dir| dir.join("helix/runtime"))
+            .chain(
+                std::env::var_os("HELIX_RUNTIME")
+                    .map(PathBuf::from)
+                    .filter(|dir| dir.is_absolute()),
+            )
+            .chain(installed("hx"))
+            .chain(installed("helix"))
             .chain(
                 [
                     "/usr/lib/helix/runtime",
@@ -321,12 +408,13 @@ impl Roots {
                 .map(PathBuf::from),
             )
             .collect();
-        let nvim = program_prefix("nvim");
-        roots.neovim_parsers = data
+        let nvim = program("nvim").and_then(|exe| Some(exe.parent()?.parent()?.to_owned()));
+        let nvim_data = neovim_data();
+        roots.neovim_parsers = nvim_data
             .iter()
             .flat_map(|data| {
-                let lazy = data.join("nvim/lazy/nvim-treesitter");
-                [data.join("nvim/site/parser"), lazy.join("parser")]
+                let lazy = data.join("lazy/nvim-treesitter");
+                [data.join("site/parser"), lazy.join("parser")]
             })
             .chain(nvim.iter().map(|prefix| prefix.join("lib/nvim/parser")))
             .chain(
@@ -338,12 +426,12 @@ impl Roots {
                 .map(PathBuf::from),
             )
             .collect();
-        roots.neovim_queries = data
+        roots.neovim_queries = nvim_data
             .iter()
             .flat_map(|data| {
-                let lazy = data.join("nvim/lazy/nvim-treesitter");
+                let lazy = data.join("lazy/nvim-treesitter");
                 [
-                    data.join("nvim/site/queries"),
+                    data.join("site/queries"),
                     lazy.join("queries"),
                     lazy.join("runtime/queries"),
                 ]
@@ -370,6 +458,7 @@ impl Roots {
         roots.emacs = home
             .iter()
             .map(|home| home.join(".emacs.d/tree-sitter"))
+            .chain(legacy_config().map(|dir| dir.join(".emacs.d/tree-sitter")))
             .chain(config.iter().map(|dir| dir.join("emacs/tree-sitter")))
             .chain(
                 [
@@ -394,17 +483,46 @@ fn home() -> Option<PathBuf> {
         .filter(|dir| dir.is_absolute())
 }
 
-/// The configuration folder editors use: XDG's on Linux and the BSDs,
-/// Application Support on macOS, the roaming `AppData` on Windows.
-fn config_home() -> Option<PathBuf> {
-    #[cfg(any(target_os = "macos", windows))]
+/// The configuration folder Helix, the tree-sitter CLI and Emacs use: XDG's
+/// on Linux, the BSDs and macOS (`~/.config`, as they ask `etcetera`), the
+/// roaming `AppData` on Windows.
+fn editor_config() -> Option<PathBuf> {
+    #[cfg(windows)]
     return dirs::config_dir();
-    #[cfg(not(any(target_os = "macos", windows)))]
+    #[cfg(not(windows))]
     return skwir_core::xdg::config_home();
 }
 
+/// The folder the tree-sitter CLI keeps the libraries it builds under:
+/// XDG's cache on Linux and macOS, the local `AppData` on Windows.
+fn editor_cache() -> Option<PathBuf> {
+    #[cfg(windows)]
+    return dirs::cache_dir();
+    #[cfg(not(windows))]
+    return skwir_core::xdg::cache_home();
+}
+
+/// The system's own configuration folder where it is not XDG's: macOS's
+/// Application Support (the CLI's before 0.23), Windows' roaming `AppData`
+/// (Emacs's home without `HOME`).
+fn legacy_config() -> Option<PathBuf> {
+    #[cfg(any(target_os = "macos", windows))]
+    return dirs::config_dir();
+    #[cfg(not(any(target_os = "macos", windows)))]
+    return None;
+}
+
+/// Neovim's data folder (`stdpath('data')`): `nvim` in XDG's data folder,
+/// `nvim-data` in the local `AppData` on Windows.
+fn neovim_data() -> Option<PathBuf> {
+    #[cfg(windows)]
+    return dirs::data_local_dir().map(|dir| dir.join("nvim-data"));
+    #[cfg(not(windows))]
+    return skwir_core::xdg::data_home().map(|dir| dir.join("nvim"));
+}
+
 /// Zed's installed extensions: in its data folder, its Flatpak's on Linux.
-fn zed_folders(data: Option<&Path>, home: Option<&Path>) -> Vec<PathBuf> {
+fn zed_folders(home: Option<&Path>) -> Vec<PathBuf> {
     let mut folders = Vec::new();
     #[cfg(target_os = "macos")]
     folders.extend(dirs::config_dir().map(|dir| dir.join("Zed/extensions/installed")));
@@ -412,24 +530,30 @@ fn zed_folders(data: Option<&Path>, home: Option<&Path>) -> Vec<PathBuf> {
     folders.extend(dirs::data_local_dir().map(|dir| dir.join("Zed/extensions/installed")));
     #[cfg(not(any(target_os = "macos", windows)))]
     {
-        folders.extend(data.map(|dir| dir.join("zed/extensions/installed")));
+        folders
+            .extend(skwir_core::xdg::data_home().map(|dir| dir.join("zed/extensions/installed")));
         folders.extend(
             home.map(|home| home.join(".var/app/dev.zed.Zed/data/zed/extensions/installed")),
         );
     }
-    let _ = (data, home);
+    let _ = home;
     folders
 }
 
-/// Where a program on `PATH` is installed: the folder above its `bin`, its
-/// links followed (a Nix profile's leads into its store path).
-fn program_prefix(name: &str) -> Option<PathBuf> {
+/// A program on `PATH`, its links followed (a Nix profile's leads into its
+/// store path, Homebrew's into its cellar): `name`, `name.exe` on Windows.
+fn program(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
+    let file = if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_owned()
+    };
     std::env::split_paths(&path)
-        .map(|dir| dir.join(name))
+        .map(|dir| dir.join(&file))
         .find(|path| path.is_file())
         .and_then(|path| std::fs::canonicalize(path).ok())
-        .and_then(|path| path.parent()?.parent().map(Path::to_path_buf))
+        .map(plain)
 }
 
 /// A library and its queries as one source holds them, before they are
@@ -460,52 +584,210 @@ impl Queries {
     fn is_empty(&self) -> bool {
         self.highlights.is_empty()
     }
+
+    fn kinds_mut(&mut self) -> [&mut Vec<PathBuf>; 5] {
+        [
+            &mut self.highlights,
+            &mut self.injections,
+            &mut self.locals,
+            &mut self.folds,
+            &mut self.outline,
+        ]
+    }
+}
+
+impl From<Queries> for syntax::Queries {
+    fn from(queries: Queries) -> Self {
+        syntax::Queries {
+            highlights: queries.highlights,
+            injections: queries.injections,
+            locals: queries.locals,
+            folds: queries.folds,
+            outline: queries.outline,
+        }
+    }
 }
 
 /// The grammars found in `roots`, merged by language, in the order of
-/// their names. `bat` names what bat's grammars color, by language.
-fn find_in(roots: &Roots, bat: &HashMap<String, Vec<String>>) -> Vec<Found> {
+/// their names, and the folders their files lie in, as they really are
+/// (`confine`). `bat` names what bat's grammars color, by language.
+fn find_in(roots: &Roots, bat: &HashMap<String, Vec<String>>) -> (Vec<Found>, Vec<PathBuf>) {
+    let mut confined = Confined::default();
     let mut candidates = Vec::new();
     if let Some(dir) = &roots.skwir {
         for repository in sorted(dir) {
-            candidates.extend(repository_grammars(Source::Skwir, &repository, None));
+            candidates.extend(confined.keep(
+                repository_grammars(Source::Skwir, &repository, None),
+                &[repository.as_path()],
+                Kept::Inside,
+            ));
         }
     }
     if let Some(config) = &roots.tree_sitter_config {
+        let libraries = roots.tree_sitter_libraries.as_deref();
         for dir in parser_directories(config) {
             for repository in sorted(&dir) {
-                candidates.extend(repository_grammars(
-                    Source::TreeSitter,
-                    &repository,
-                    roots.tree_sitter_libraries.as_deref(),
+                let folders: Vec<&Path> = std::iter::once(repository.as_path())
+                    .chain(libraries)
+                    .collect();
+                candidates.extend(confined.keep(
+                    repository_grammars(Source::TreeSitter, &repository, libraries),
+                    &folders,
+                    Kept::Inside,
                 ));
             }
         }
     }
     for dir in &roots.zed {
         for extension in sorted(dir) {
-            candidates.extend(zed_grammars(&extension));
+            candidates.extend(confined.keep(
+                zed_grammars(&extension),
+                &[extension.as_path()],
+                Kept::Inside,
+            ));
         }
     }
-    candidates.extend(helix_grammars(roots));
-    candidates.extend(parser_folder_grammars(
-        Source::Neovim,
-        &roots.neovim_parsers,
-        &roots.neovim_queries,
+    candidates.extend(confined.keep(
+        helix_grammars(roots),
+        &listed(&[&roots.helix]),
+        Kept::Listed,
     ));
-    candidates.extend(parser_folder_grammars(
-        Source::System,
-        &roots.system_parsers,
-        &roots.system_queries,
+    candidates.extend(confined.keep(
+        parser_folder_grammars(Source::Neovim, &roots.neovim_parsers, &roots.neovim_queries),
+        &listed(&[&roots.neovim_parsers, &roots.neovim_queries]),
+        Kept::Listed,
     ));
-    candidates.extend(emacs_grammars(&roots.emacs));
+    candidates.extend(confined.keep(
+        parser_folder_grammars(Source::System, &roots.system_parsers, &roots.system_queries),
+        &listed(&[&roots.system_parsers, &roots.system_queries]),
+        Kept::Listed,
+    ));
+    candidates.extend(confined.keep(
+        emacs_grammars(&roots.emacs),
+        &listed(&[&roots.emacs]),
+        Kept::Listed,
+    ));
     candidates.truncate(MOST);
     let mapped = roots
         .skwir
         .as_ref()
         .map(|dir| languages_toml(&dir.join("languages.toml")))
         .unwrap_or_default();
-    merge(candidates, &mapped, bat)
+    (merge(candidates, &mapped, bat), confined.folders)
+}
+
+/// Every folder of `folders`, as one list.
+fn listed<'a>(folders: &[&'a [PathBuf]]) -> Vec<&'a Path> {
+    folders
+        .iter()
+        .flat_map(|folders| folders.iter().map(PathBuf::as_path))
+        .collect()
+}
+
+/// How a source's files are kept to its folders.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kept {
+    /// Named by a description (a repository's `tree-sitter.json`, an
+    /// extension's `config.toml`), which may say any path and hold links:
+    /// each file really lies in the source's folders.
+    Inside,
+    /// Listed in an editor's or the system's folders, which its package
+    /// manager fills: a link there is followed wherever it leads (NixOS's
+    /// into its store, Arch's Neovim parsers into `/usr/lib/tree_sitter`),
+    /// but a name a file gives (`; inherits: ../x`) never leaves them.
+    Listed,
+}
+
+/// The folders grammars were found in, as they really are: what a helper
+/// told them reads, and nothing else (`tree_sitter::Helper`, ADR-110).
+#[derive(Default)]
+struct Confined {
+    folders: Vec<PathBuf>,
+}
+
+impl Confined {
+    /// `candidates` with each file named by its real path, and those that
+    /// do not lie in `folders` (as `kept` says) left out: a library left
+    /// out makes its grammar unusable, said in its problem. A file in the
+    /// system's folders, which an isolated helper reads anyway, is kept.
+    fn keep(
+        &mut self,
+        candidates: Vec<Candidate>,
+        folders: &[&Path],
+        kept: Kept,
+    ) -> Vec<Candidate> {
+        if candidates.is_empty() {
+            return candidates;
+        }
+        let home = home().and_then(|home| canonical(&home));
+        let roots: Vec<(&Path, PathBuf)> = folders
+            .iter()
+            .filter_map(|&found| Some((found, canonical(found)?)))
+            // A folder holding the home folder would hand the helper all of
+            // it (a repository linked to `~` or `/`).
+            .filter(|(_, real)| !home.as_ref().is_some_and(|home| home.starts_with(real)))
+            .collect();
+        for (_, real) in &roots {
+            if !self.folders.contains(real) {
+                self.folders.push(real.clone());
+            }
+        }
+        let inside = |file: &Path| -> Option<PathBuf> {
+            let real = canonical(file)?;
+            let kept_here = roots.iter().any(|(found, root)| {
+                real.starts_with(root)
+                    || (kept == Kept::Listed
+                        && file.starts_with(found)
+                        && file.components().all(|part| {
+                            !matches!(
+                                part,
+                                std::path::Component::ParentDir | std::path::Component::CurDir
+                            )
+                        }))
+            });
+            (kept_here || crate::sandbox::reads_anyway(&real)).then_some(real)
+        };
+        candidates
+            .into_iter()
+            .map(|mut candidate| {
+                if let Some(library) = candidate.library.take() {
+                    match inside(&library) {
+                        Some(real) => candidate.library = Some(real),
+                        None => {
+                            candidate.problem.get_or_insert_with(|| {
+                                format!("its library {} lies outside its folder", library.display())
+                            });
+                        }
+                    }
+                }
+                for files in candidate.queries.kinds_mut() {
+                    *files = files.iter().filter_map(|file| inside(file)).collect();
+                }
+                candidate
+            })
+            .collect()
+    }
+}
+
+/// `path` as it really is, its links followed; `None` when it is not there.
+fn canonical(path: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(path).ok().map(plain)
+}
+
+/// A real path as other programs take it: on Windows, without the `\\?\`
+/// that `canonicalize` puts before a drive's path.
+fn plain(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let bytes = path.as_os_str().as_encoded_bytes();
+        if let Some(rest) = bytes.strip_prefix(br"\\?\")
+            && rest.get(1) == Some(&b':')
+            && rest.first().is_some_and(u8::is_ascii_alphabetic)
+        {
+            return PathBuf::from(skwir_core::os_path::from_bytes(rest.to_vec()));
+        }
+    }
+    path
 }
 
 /// Each source's grammar of each language, by language, sources in order
@@ -558,7 +840,9 @@ fn merge(
             // unless no source has a library.
             let source = own.source.unwrap_or(Source::Skwir);
             let first_of_all = first.is_some_and(|first| std::ptr::eq(first, own));
-            if !sources.insert(source) || (own.library.is_none() && !first_of_all) {
+            // A source's candidate without a library (a repository not
+            // built) never hides one of the same source that has one.
+            if (own.library.is_none() && !first_of_all) || !sources.insert(source) {
                 continue;
             }
             found.push(alternative(own, candidates, &file_types));
@@ -572,22 +856,38 @@ fn merge(
 /// first line and injections, else another's; what makes it unusable.
 fn alternative(own: &Candidate, candidates: &[Candidate], file_types: &[String]) -> Found {
     let source = own.source.unwrap_or(Source::Skwir);
-    let (queries, queries_from) = if own.queries.is_empty() {
-        let mut lenders: Vec<&Candidate> = candidates
-            .iter()
-            .filter(|c| !c.queries.is_empty())
-            .collect();
-        lenders.sort_by_key(|c| {
-            let source = c.source.unwrap_or(Source::Skwir);
-            (!source.upstream(), lender_rank(source))
+    // Every source's queries of the language, its own first, then the
+    // others by rank: the helper tries them in turn where one does not
+    // compile against this library (ADR-110).
+    let mut lenders: Vec<&Candidate> = candidates
+        .iter()
+        .filter(|c| !c.queries.is_empty() && !std::ptr::eq(*c, own))
+        .collect();
+    lenders.sort_by_key(|c| {
+        let source = c.source.unwrap_or(Source::Skwir);
+        (!source.upstream(), lender_rank(source))
+    });
+    let mut sets = std::iter::once((&own.queries, own.source))
+        .filter(|(queries, _)| !queries.is_empty())
+        .chain(
+            lenders
+                .iter()
+                .map(|lender| (&lender.queries, lender.source)),
+        );
+    let (queries, queries_from) = sets
+        .next()
+        .map_or((Queries::default(), None), |(queries, from)| {
+            (queries.clone(), from)
         });
-        match lenders.first() {
-            Some(lender) => (lender.queries.clone(), lender.source),
-            None => (Queries::default(), None),
-        }
-    } else {
-        (own.queries.clone(), None)
-    };
+    let mut seen = vec![queries.clone()];
+    let lent: Vec<syntax::Queries> = sets
+        .filter(|(queries, _)| {
+            let new = !seen.contains(*queries);
+            seen.push((*queries).clone());
+            new
+        })
+        .map(|(queries, _)| queries.clone().into())
+        .collect();
     let first_line = own
         .first_line
         .clone()
@@ -617,6 +917,7 @@ fn alternative(own: &Candidate, candidates: &[Candidate], file_types: &[String])
             locals: queries.locals,
             folds: queries.folds,
             outline: queries.outline,
+            lent,
             injection_regex,
         },
         source,
@@ -871,51 +1172,66 @@ fn zed_grammars(extension: &Path) -> Vec<Candidate> {
     candidates
 }
 
-/// Helix's grammars: `grammars/<lang>.so` of each runtime, queries in its
-/// `queries/<lang>/` (`; inherits:` followed), file types from the user's
-/// `languages.toml`.
+/// Helix's grammars, its runtimes resolved as Helix resolves them: a
+/// language's library (`grammars/<grammar>.so`) from the first runtime
+/// holding it, each of its queries (`queries/<lang>/`) from the first
+/// runtime holding that file, `; inherits:` followed through every runtime;
+/// file types from the user's `languages.toml`.
 fn helix_grammars(roots: &Roots) -> Vec<Candidate> {
     let languages = roots
         .helix_languages
         .as_deref()
         .map(helix_languages)
         .unwrap_or_default();
-    let mut candidates = Vec::new();
-    let mut seen = HashSet::new();
+    let query_folders: Vec<PathBuf> = roots
+        .helix
+        .iter()
+        .map(|runtime| runtime.join("queries"))
+        .collect();
+    let mut names: Vec<String> = Vec::new();
     for runtime in &roots.helix {
-        let queries_dir = runtime.join("queries");
-        let mut names: Vec<String> = sorted(&runtime.join("grammars"))
-            .into_iter()
-            .filter(|path| is_library(path))
-            .filter_map(|path| Some(path.file_stem()?.to_string_lossy().into_owned()))
-            .collect();
+        names.extend(
+            sorted(&runtime.join("grammars"))
+                .into_iter()
+                .filter(|path| is_library(path))
+                .filter_map(|path| Some(path.file_stem()?.to_string_lossy().into_owned())),
+        );
         // Queries alone are lent to libraries found elsewhere.
         names.extend(
-            sorted(&queries_dir)
+            sorted(&runtime.join("queries"))
                 .into_iter()
                 .filter_map(|path| Some(path.file_name()?.to_string_lossy().into_owned())),
         );
-        names.sort();
-        names.dedup();
-        for name in names {
-            if !seen.insert(name.clone()) {
-                continue;
-            }
+    }
+    names.sort();
+    names.dedup();
+    names
+        .into_iter()
+        .map(|name| {
             let (file_types, grammar) = languages.get(&name).cloned().unwrap_or_default();
-            candidates.push(Candidate {
+            // A library is named by its grammar, which a language may name.
+            let library = grammar
+                .iter()
+                .chain(std::iter::once(&name))
+                .find_map(|grammar| {
+                    roots
+                        .helix
+                        .iter()
+                        .find_map(|runtime| library_in(&runtime.join("grammars"), grammar, false))
+                });
+            Candidate {
                 source: Some(Source::Helix),
                 name: grammar.unwrap_or_else(|| name.clone()),
-                library: library_in(&runtime.join("grammars"), &name, false),
+                library,
                 symbol: None,
-                queries: inherited_queries(std::slice::from_ref(&queries_dir), &name),
+                queries: inherited_queries(&query_folders, &name),
                 file_types,
                 first_line: None,
                 injection_regex: None,
                 problem: None,
-            });
-        }
-    }
-    candidates
+            }
+        })
+        .collect()
 }
 
 /// Helix's `languages.toml`: each language's file types (globs left out)
@@ -1046,11 +1362,14 @@ fn emacs_grammars(folders: &[PathBuf]) -> Vec<Candidate> {
 
 /// A language's queries in the first of `folders` holding them, a query
 /// it inherits (`; inherits: a,b`, Helix's and Neovim's way) coming first,
-/// and one that `; extends` it in later folders after.
+/// and one that `; extends` it in later folders after. A language is read
+/// once however many inherit it: a query inherited twice (`tsx` inherits
+/// `typescript` and `jsx`, both `ecma`) comes once, where first met, and
+/// a cycle ends.
 fn inherited_queries(folders: &[PathBuf], name: &str) -> Queries {
     let kind = |file: &str| -> Vec<PathBuf> {
         let mut files = Vec::new();
-        query_files(folders, name, file, &mut files, 0);
+        query_files(folders, name, file, &mut files, &mut HashSet::new());
         files
     };
     Queries {
@@ -1070,9 +1389,9 @@ fn query_files(
     name: &str,
     file: &str,
     files: &mut Vec<PathBuf>,
-    depth: usize,
+    seen: &mut HashSet<String>,
 ) {
-    if depth > INHERITS {
+    if seen.len() > INHERITS || !seen.insert(name.to_lowercase()) {
         return;
     }
     let mut base: Option<PathBuf> = None;
@@ -1087,7 +1406,7 @@ fn query_files(
             extending.push(path);
         } else if base.is_none() {
             for parent in inherits(&text) {
-                query_files(folders, &parent, file, files, depth + 1);
+                query_files(folders, &parent, file, files, seen);
             }
             base = Some(path);
         }
@@ -1160,7 +1479,7 @@ mod tests {
     #[test]
     fn grammars_are_found_where_each_source_keeps_them() {
         let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
+        let root = &canonical(tmp.path()).unwrap();
         // Skwir's own: a repository `tree-sitter build` ran in.
         write(
             &root.join("skwir/tree-sitter-gleam/tree-sitter.json"),
@@ -1251,7 +1570,9 @@ mod tests {
             emacs: vec![root.join("emacs")],
         };
         let bat = HashMap::from([("zig".to_owned(), vec!["zig".to_owned(), "zon".to_owned()])]);
-        let all = find_in(&roots, &bat);
+        let (all, folders) = find_in(&roots, &bat);
+        assert!(folders.contains(&root.join("skwir/tree-sitter-gleam")));
+        assert!(folders.contains(&root.join("helix")));
         // Each source's grammar of a language is kept, in their order.
         let nix: Vec<(Source, Option<Source>)> = all
             .iter()
@@ -1334,6 +1655,195 @@ mod tests {
         assert!(
             for_file(&found, "build.zig", None).is_none(),
             "zig has no queries"
+        );
+    }
+
+    /// A repository's description names files anywhere, and a repository
+    /// may hold links: a grammar keeps only the files that really lie in
+    /// its repository, and the helper reads its folders alone. A link in an
+    /// editor's folder is followed (NixOS's parsers lead into its store).
+    #[cfg(unix)]
+    #[test]
+    fn a_grammar_keeps_only_files_in_its_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = &canonical(tmp.path()).unwrap();
+        write(&root.join("private/secret.scm"), "(identifier) @variable");
+        write(&root.join("private/elsewhere.so"), "");
+        let repository = root.join("skwir/tree-sitter-hostile");
+        write(
+            &repository.join("tree-sitter.json"),
+            &format!(
+                r#"{{"grammars":[
+                    {{"name":"hostile","file-types":["hst"],
+                      "highlights":["{}","../../private/secret.scm","queries/linked.scm",
+                                    "queries/highlights.scm"]}},
+                    {{"name":"away","path":"{}","file-types":["away"]}}]}}"#,
+                root.join("private/secret.scm").display(),
+                root.join("private").display(),
+            ),
+        );
+        write(&repository.join("hostile.so"), "");
+        write(
+            &repository.join("queries/highlights.scm"),
+            "(identifier) @variable",
+        );
+        std::os::unix::fs::symlink(
+            root.join("private/secret.scm"),
+            repository.join("queries/linked.scm"),
+        )
+        .unwrap();
+        // Neovim's parser folder holds a link to a library elsewhere.
+        write(&root.join("store/lua.so"), "");
+        std::fs::create_dir_all(root.join("nvim/parser")).unwrap();
+        std::os::unix::fs::symlink(root.join("store/lua.so"), root.join("nvim/parser/lua.so"))
+            .unwrap();
+        write(
+            &root.join("nvim/queries/lua/highlights.scm"),
+            "(comment) @comment",
+        );
+        let roots = Roots {
+            skwir: Some(root.join("skwir")),
+            neovim_parsers: vec![root.join("nvim/parser")],
+            neovim_queries: vec![root.join("nvim/queries")],
+            ..Roots::default()
+        };
+        let (all, folders) = find_in(&roots, &HashMap::new());
+        let get = |name: &str| named(&all, name).unwrap();
+        assert_eq!(
+            get("hostile").grammar.highlights,
+            [repository.join("queries/highlights.scm")],
+            "only what lies in the repository"
+        );
+        assert!(get("hostile").problem.is_none());
+        let away = get("away");
+        assert!(
+            away.problem.as_deref().unwrap().contains("outside"),
+            "{away:?}"
+        );
+        assert!(away.grammar.library.as_os_str().is_empty());
+        assert_eq!(
+            get("lua").grammar.library,
+            root.join("store/lua.so"),
+            "a link in an editor's folder, followed"
+        );
+        assert!(
+            !folders
+                .iter()
+                .any(|folder| folder.starts_with(root.join("private")))
+        );
+        let told: Vec<Grammar> = all.iter().map(|found| found.grammar.clone()).collect();
+        let read = folders_read(&told, &folders);
+        assert!(read.contains(&repository), "{read:?}");
+        assert!(read.contains(&root.join("store")), "{read:?}");
+        assert!(
+            !read
+                .iter()
+                .any(|folder| folder.starts_with(root.join("private"))),
+            "{read:?}"
+        );
+    }
+
+    /// Helix's runtimes as Helix reads them: the user's overrides one query
+    /// of a language whose library and other queries the system's holds.
+    #[test]
+    fn helix_runtimes_are_read_file_by_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = &canonical(tmp.path()).unwrap();
+        let (user, system) = (root.join("user"), root.join("system"));
+        write(
+            &user.join("queries/rust/highlights.scm"),
+            "; inherits: base\n(identifier) @variable",
+        );
+        write(&system.join("grammars/rust.so"), "");
+        write(
+            &system.join("queries/rust/highlights.scm"),
+            "(comment) @comment",
+        );
+        write(
+            &system.join("queries/rust/injections.scm"),
+            "(macro) @injection.content",
+        );
+        write(
+            &system.join("queries/base/highlights.scm"),
+            "(string) @string",
+        );
+        let roots = Roots {
+            helix: vec![user.clone(), system.clone()],
+            ..Roots::default()
+        };
+        let (all, _) = find_in(&roots, &HashMap::new());
+        let rust = named(&all, "rust").unwrap();
+        assert_eq!(rust.grammar.library, system.join("grammars/rust.so"));
+        assert_eq!(
+            rust.grammar.highlights,
+            [
+                system.join("queries/base/highlights.scm"),
+                user.join("queries/rust/highlights.scm")
+            ],
+            "the user's, inheriting the system's"
+        );
+        assert_eq!(
+            rust.grammar.injections,
+            [system.join("queries/rust/injections.scm")]
+        );
+        assert!(rust.problem.is_none());
+    }
+
+    /// A query inherited twice comes once, and a cycle ends; a repository
+    /// not built never hides a built one of the same source.
+    #[test]
+    fn inheritance_reads_each_language_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = &canonical(tmp.path()).unwrap();
+        let queries = root.join("queries");
+        write(
+            &queries.join("tsx/highlights.scm"),
+            "; inherits: typescript,jsx\n(a) @b",
+        );
+        write(
+            &queries.join("typescript/highlights.scm"),
+            "; inherits: ecma\n(a) @b",
+        );
+        write(
+            &queries.join("jsx/highlights.scm"),
+            "; inherits: ecma\n(a) @b",
+        );
+        write(
+            &queries.join("ecma/highlights.scm"),
+            "; inherits: tsx\n(a) @b",
+        );
+        let files = inherited_queries(std::slice::from_ref(&queries), "tsx").highlights;
+        assert_eq!(
+            files,
+            ["ecma", "typescript", "jsx", "tsx"]
+                .map(|name| queries.join(name).join("highlights.scm"))
+        );
+        // Two repositories of one language in Skwir's folder: the first
+        // not built.
+        for (folder, built) in [("a-unbuilt", false), ("b-built", true)] {
+            let repository = root.join("skwir").join(folder);
+            write(
+                &repository.join("tree-sitter.json"),
+                r#"{"grammars":[{"name":"gleam","file-types":["gleam"]}]}"#,
+            );
+            write(&repository.join("queries/highlights.scm"), "(a) @b");
+            if built {
+                write(&repository.join("gleam.so"), "");
+            }
+        }
+        let roots = Roots {
+            skwir: Some(root.join("skwir")),
+            ..Roots::default()
+        };
+        let (all, _) = find_in(&roots, &HashMap::new());
+        let gleam: Vec<&Found> = all.iter().filter(|f| f.grammar.name == "gleam").collect();
+        assert_eq!(gleam.len(), 1, "{gleam:?}");
+        assert!(gleam[0].problem.is_none(), "{gleam:?}");
+        assert!(
+            gleam[0]
+                .grammar
+                .library
+                .starts_with(root.join("skwir/b-built"))
         );
     }
 

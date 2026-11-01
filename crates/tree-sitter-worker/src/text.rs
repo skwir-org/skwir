@@ -69,7 +69,12 @@ impl Worker {
                 let loaded = self.grammars.load(index)?;
                 Ok(Reply::Checked {
                     abi: loaded.abi,
-                    problems: loaded.problems.clone(),
+                    problems: loaded
+                        .problems
+                        .iter()
+                        .chain(&loaded.colorless)
+                        .cloned()
+                        .collect(),
                 })
             }
             Request::Open { doc, name, text } => {
@@ -119,6 +124,10 @@ impl Worker {
     fn open(&mut self, name: &str, path: &Path) -> anyhow::Result<(Document, u32, Vec<String>)> {
         let index = self.grammars.find(name)?;
         let loaded = self.grammars.load(index)?;
+        // Colored by nothing, the text is bat's grammar's to color.
+        if let Some(why) = &loaded.colorless {
+            anyhow::bail!("{name} colors nothing: {why}");
+        }
         let text = read_text(path)?;
         anyhow::ensure!(!self.cancelled(), "cancelled");
         if !self.stored && self.grammars.any_wasm() {

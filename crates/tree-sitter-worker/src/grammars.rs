@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use skwir_core::syntax::Grammar;
+use skwir_core::syntax::{Grammar, Queries};
 use tree_sitter::{Language, Query, QueryError, QueryErrorKind, WasmStore, wasmtime};
 use tree_sitter_highlight::HighlightConfiguration;
 
@@ -38,6 +38,10 @@ pub struct Loaded {
     pub outline: Option<Query>,
     /// What is wrong with a query, left out for it.
     pub problems: Vec<String>,
+    /// Why it colors nothing: no highlights query it was given compiles
+    /// against its library. A text is then not colored by it (bat's
+    /// grammar colors it), though it still parses what is injected.
+    pub colorless: Option<String>,
 }
 
 pub struct Grammars {
@@ -209,79 +213,51 @@ impl Grammars {
             .map_err(|error| anyhow::anyhow!("{error}"))
     }
 
-    /// The grammar's queries read and compiled against `language`. One
-    /// that does not compile is left out, said in `problems`, and the
-    /// grammar used without it: without highlights it colors nothing, but
-    /// injects and parses.
+    /// The grammar's queries read and compiled against `language`, its own
+    /// first, then each set lent to it (`Grammar::lent`): the first set
+    /// whose highlights compile colors it, and folds and an outline come
+    /// from the first set whose query of them compiles. A query that does
+    /// not compile is said in `problems` and passed over; with no
+    /// highlights at all, the grammar is `colorless`.
     fn queries(&mut self, grammar: &Grammar, language: Language, abi: u32) -> Loaded {
         let mut problems = Vec::new();
-        let mut read = |kind: &str, files: &[PathBuf]| match Joined::read(files) {
-            Ok(joined) => joined,
-            Err(error) => {
-                problems.push(format!("{kind}: {error:#}"));
-                Joined::default()
+        let sets = grammar.query_sets();
+        let mut highlight = None;
+        for set in sets.iter().filter(|set| !set.highlights.is_empty()) {
+            highlight = highlight_of(grammar, &language, set, &mut problems);
+            if highlight.is_some() {
+                break;
             }
-        };
-        let mut highlights = read("highlights", &grammar.highlights);
-        highlights.text = without_uncolored(&highlights.text);
-        let injections = read("injections", &grammar.injections);
-        let locals = read("locals", &grammar.locals);
-        let folds = read("folds", &grammar.folds);
-        let outline = read("outline", &grammar.outline);
-        let mut parts = [
-            ("highlights", highlights),
-            ("injections", injections),
-            ("locals", locals),
-        ];
-        let configure = |parts: &[(&str, Joined); 3]| {
-            HighlightConfiguration::new(
-                language.clone(),
-                grammar.name.clone(),
-                &parts[0].1.text,
-                &parts[1].1.text,
-                &parts[2].1.text,
-            )
-        };
-        let highlight = configure(&parts).or_else(|together| {
-            // Which one does not compile, each alone: it is left out.
-            for (kind, joined) in &mut parts {
-                if let Err(error) = Query::new(&language, &joined.text) {
-                    problems.push(joined.explain(kind, &error));
-                    *joined = Joined::default();
-                }
-            }
-            configure(&parts).or_else(|_| {
-                // Each compiles, not together: none is used.
-                problems.push(format!(
-                    "highlights, injections and locals together: {together}"
-                ));
-                for (_, joined) in &mut parts {
-                    *joined = Joined::default();
-                }
-                configure(&parts)
-            })
+        }
+        let colorless = highlight
+            .is_none()
+            .then(|| "none of its highlights queries compiles against it".to_owned());
+        let mut highlight = highlight.unwrap_or_else(|| {
+            HighlightConfiguration::new(language.clone(), grammar.name.clone(), "", "", "")
+                .expect("an empty query compiles")
         });
-        let mut highlight = match highlight {
-            Ok(highlight) => highlight,
-            Err(error) => {
-                // An empty query that does not compile: the language
-                // itself is wrong, which loading it would have said.
-                problems.push(format!("highlights: {error}"));
-                HighlightConfiguration::new(language.clone(), grammar.name.clone(), "", "", "")
-                    .expect("an empty query compiles")
-            }
-        };
         self.configure(&mut highlight);
-        let mut compile = |kind: &str, joined: &Joined| {
-            if joined.text.trim().is_empty() {
-                return None;
-            }
-            Query::new(&language, &joined.text)
-                .map_err(|error| problems.push(joined.explain(kind, &error)))
-                .ok()
+        let mut compiled = |kind: &str, files: fn(&Queries) -> &[PathBuf]| {
+            sets.iter().find_map(|set| {
+                let files = files(set);
+                if files.is_empty() {
+                    return None;
+                }
+                let joined = match Joined::read(files) {
+                    Ok(joined) if !joined.text.trim().is_empty() => joined,
+                    Ok(_) => return None,
+                    Err(error) => {
+                        problems.push(format!("{kind}: {error:#}"));
+                        return None;
+                    }
+                };
+                Query::new(&language, &joined.text)
+                    .map_err(|error| problems.push(joined.explain(kind, &error)))
+                    .ok()
+            })
         };
-        let folds = compile("folds", &folds);
-        let outline = compile("outline", &outline);
+        let folds = compiled("folds", |set| &set.folds);
+        let outline = compiled("outline", |set| &set.outline);
         Loaded {
             language,
             abi,
@@ -289,6 +265,7 @@ impl Grammars {
             folds,
             outline,
             problems,
+            colorless,
         }
     }
 
@@ -304,6 +281,70 @@ impl Grammars {
         }
         highlight.configure(&self.captures);
     }
+}
+
+/// The highlights of one set of queries, with its injections and locals:
+/// `None` when its highlights do not read or compile (said in `problems`),
+/// so the next set is tried. An injections or locals query that does not
+/// compile is left out, the highlights kept.
+fn highlight_of(
+    grammar: &Grammar,
+    language: &Language,
+    set: &Queries,
+    problems: &mut Vec<String>,
+) -> Option<HighlightConfiguration> {
+    let mut read = |kind: &str, files: &[PathBuf]| match Joined::read(files) {
+        Ok(joined) => Some(joined),
+        Err(error) => {
+            problems.push(format!("{kind}: {error:#}"));
+            None
+        }
+    };
+    let mut highlights = read("highlights", &set.highlights)?;
+    highlights.text = without_uncolored(&highlights.text);
+    if let Err(error) = Query::new(language, &highlights.text) {
+        problems.push(highlights.explain("highlights", &error));
+        return None;
+    }
+    let mut parts = [
+        (
+            "injections",
+            read("injections", &set.injections).unwrap_or_default(),
+        ),
+        ("locals", read("locals", &set.locals).unwrap_or_default()),
+    ];
+    let configure = |parts: &[(&str, Joined); 2]| {
+        HighlightConfiguration::new(
+            language.clone(),
+            grammar.name.clone(),
+            &highlights.text,
+            &parts[0].1.text,
+            &parts[1].1.text,
+        )
+    };
+    if let Ok(highlight) = configure(&parts) {
+        return Some(highlight);
+    }
+    // Which one does not compile, each alone: it is left out.
+    for (kind, joined) in &mut parts {
+        if let Err(error) = Query::new(language, &joined.text) {
+            problems.push(joined.explain(kind, &error));
+            *joined = Joined::default();
+        }
+    }
+    configure(&parts)
+        .or_else(|together| {
+            // Each compiles, not together: the highlights alone.
+            problems.push(format!(
+                "highlights, injections and locals together: {together}"
+            ));
+            for (_, joined) in &mut parts {
+                *joined = Joined::default();
+            }
+            configure(&parts)
+        })
+        .map_err(|error| problems.push(format!("highlights: {error}")))
+        .ok()
 }
 
 /// Whether a capture of a highlights query is a color: not one of those

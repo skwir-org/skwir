@@ -23,6 +23,8 @@ pub const MAX_LINES: u32 = 4096;
 pub const MAX_TEXT: u64 = 128 * 1024 * 1024;
 
 /// A grammar found (`skwir_platform::grammars`), as the helper loads it.
+/// Paths are written as `os_path` writes them, a name that is not UTF-8
+/// as its bytes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Grammar {
     /// The language's name, as injections name it (`rust`, `javascript`).
@@ -30,21 +32,116 @@ pub struct Grammar {
     /// The library: a shared library (`.so`, `.dylib`, `.dll`) exporting
     /// `symbol`, or a WebAssembly module (`.wasm`) whose language is
     /// `symbol` without its `tree_sitter_`.
+    #[serde(
+        serialize_with = "crate::os_path::serialize",
+        deserialize_with = "crate::os_path::deserialize"
+    )]
     pub library: PathBuf,
     /// `tree_sitter_<name>`, unless the grammar says otherwise.
     pub symbol: String,
     /// Each query's files, read in order and joined: a query a grammar
     /// inherits comes before its own.
+    #[serde(with = "paths")]
     pub highlights: Vec<PathBuf>,
+    #[serde(with = "paths")]
     pub injections: Vec<PathBuf>,
+    #[serde(with = "paths")]
     pub locals: Vec<PathBuf>,
+    #[serde(with = "paths")]
     pub folds: Vec<PathBuf>,
     /// Definitions for the outline: `tags.scm` (`@definition.*` and
     /// `@name`) or Zed's `outline.scm` (`@item` and `@name`).
+    #[serde(with = "paths")]
     pub outline: Vec<PathBuf>,
+    /// The queries other sources hold for its language, tried in order
+    /// where those before do not compile against its library (a query
+    /// written for another version of the grammar names nodes it lacks).
+    #[serde(default)]
+    pub lent: Vec<Queries>,
     /// What injected text in this language says it is
     /// (`tree-sitter.json`'s `injection-regex`); its name when `None`.
     pub injection_regex: Option<String>,
+}
+
+impl Grammar {
+    /// Its own queries (the fields above `lent`), then those lent, in the
+    /// order they are tried.
+    pub fn query_sets(&self) -> Vec<Queries> {
+        std::iter::once(Queries {
+            highlights: self.highlights.clone(),
+            injections: self.injections.clone(),
+            locals: self.locals.clone(),
+            folds: self.folds.clone(),
+            outline: self.outline.clone(),
+        })
+        .chain(self.lent.iter().cloned())
+        .collect()
+    }
+
+    /// Every file it names: its library and every query of every set.
+    pub fn files(&self) -> impl Iterator<Item = &PathBuf> {
+        std::iter::once(&self.library)
+            .chain(&self.highlights)
+            .chain(&self.injections)
+            .chain(&self.locals)
+            .chain(&self.folds)
+            .chain(&self.outline)
+            .chain(self.lent.iter().flat_map(Queries::files))
+            .filter(|file| !file.as_os_str().is_empty())
+    }
+}
+
+/// A grammar's queries as one source holds them: each kind's files, read
+/// in order and joined.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Queries {
+    #[serde(with = "paths")]
+    pub highlights: Vec<PathBuf>,
+    #[serde(with = "paths")]
+    pub injections: Vec<PathBuf>,
+    #[serde(with = "paths")]
+    pub locals: Vec<PathBuf>,
+    #[serde(with = "paths")]
+    pub folds: Vec<PathBuf>,
+    #[serde(with = "paths")]
+    pub outline: Vec<PathBuf>,
+}
+
+impl Queries {
+    /// Its files, every kind.
+    pub fn files(&self) -> impl Iterator<Item = &PathBuf> {
+        self.highlights
+            .iter()
+            .chain(&self.injections)
+            .chain(&self.locals)
+            .chain(&self.folds)
+            .chain(&self.outline)
+    }
+}
+
+/// A list of paths written as `os_path` writes each.
+mod paths {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::path::{Path, PathBuf};
+
+    struct Lossless<'a>(&'a Path);
+
+    impl Serialize for Lossless<'_> {
+        fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            crate::os_path::serialize(&self.0, s)
+        }
+    }
+
+    pub fn serialize<S: Serializer>(paths: &[PathBuf], s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(paths.iter().map(|path| Lossless(path)))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<PathBuf>, D::Error> {
+        Ok(Vec::<crate::os_path::PathArg>::deserialize(d)?
+            .into_iter()
+            .map(crate::os_path::PathArg::into_inner)
+            .collect())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -61,6 +158,10 @@ pub enum Request {
     Open {
         doc: u32,
         name: String,
+        #[serde(
+            serialize_with = "crate::os_path::serialize",
+            deserialize_with = "crate::os_path::deserialize"
+        )]
         text: PathBuf,
     },
     /// The colors of lines `from..to` of `doc` (`to - from` at most
@@ -135,4 +236,38 @@ pub struct Symbol {
     pub line: u32,
     /// How many definitions hold it.
     pub depth: u32,
+}
+
+// The names a test writes are Unix's bytes.
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// A grammar whose files are not named in UTF-8 is told whole, as are
+    /// the queries lent to it.
+    #[test]
+    fn names_that_are_not_utf8_are_told() {
+        use std::os::unix::ffi::OsStrExt;
+        let odd = PathBuf::from(std::ffi::OsStr::from_bytes(b"/g/\xff.so"));
+        let grammar = Grammar {
+            name: "odd".into(),
+            library: odd.clone(),
+            highlights: vec![odd.clone(), "/g/plain.scm".into()],
+            lent: vec![Queries {
+                folds: vec![odd.clone()],
+                ..Queries::default()
+            }],
+            ..Grammar::default()
+        };
+        let line = crate::jsonl::encode(&Request::Grammars(vec![grammar.clone()])).unwrap();
+        let back: Request = serde_json::from_slice(&line).unwrap();
+        assert_eq!(back, Request::Grammars(vec![grammar.clone()]));
+        assert_eq!(grammar.files().count(), 4);
+        // Told before `lent` was: none lent.
+        let old = r#"{"name":"x","library":"/x.so","symbol":"tree_sitter_x",
+            "highlights":[],"injections":[],"locals":[],"folds":[],"outline":[],
+            "injection_regex":null}"#;
+        let old: Grammar = serde_json::from_str(old).unwrap();
+        assert!(old.lent.is_empty());
+    }
 }

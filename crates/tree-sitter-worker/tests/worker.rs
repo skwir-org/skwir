@@ -8,7 +8,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::Duration;
 
 use skwir_core::document::Tagged;
-use skwir_core::syntax::{Grammar, MAX_LINES, MAX_REQUEST, Reply, Request, Span, Symbol};
+use skwir_core::syntax::{Grammar, MAX_LINES, MAX_REQUEST, Queries, Reply, Request, Span, Symbol};
 
 /// How long one answer may take: a debug build parses slowly.
 const ANSWER: Duration = Duration::from_secs(60);
@@ -429,12 +429,28 @@ fn a_grammar_that_fails_is_said_and_the_helper_goes_on() {
         "broken.scm",
         "(string) @string\n(number) @@not-a-capture\n",
     );
+    let good = json("json", wasm_library());
     let mut grammars = vec![
-        json("json", wasm_library()),
+        good.clone(),
         json("gone", dir.path().join("gone.wasm")),
         Grammar {
             highlights: vec![broken.clone()],
             ..json("broken", wasm_library())
+        },
+        // Its own highlights do not compile; another source's do.
+        Grammar {
+            highlights: vec![broken.clone()],
+            lent: vec![
+                Queries {
+                    highlights: vec![broken.clone()],
+                    ..Queries::default()
+                },
+                Queries {
+                    highlights: good.highlights.clone(),
+                    ..Queries::default()
+                },
+            ],
+            ..json("lent", wasm_library())
         },
     ];
     grammars.extend(native_failures(dir.path()));
@@ -457,24 +473,45 @@ fn a_grammar_that_fails_is_said_and_the_helper_goes_on() {
         assert!(future.contains("ABI is 99"), "{future}");
     }
     assert!(error(helper.open(1, "nobody", &text)).contains("no grammar named nobody"));
-    // A query that does not compile is left out, where it is said; the
-    // grammar parses all the same, colorless.
+    // A query that does not compile is passed over, where it is said; a
+    // grammar no highlights query of compiles colors no text (bat's
+    // grammar does).
     let Reply::Checked { abi, problems } = helper.ask(&Request::Check {
         name: "broken".into(),
     }) else {
         panic!("not checked");
     };
     assert_eq!(abi, 14);
-    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert_eq!(problems.len(), 2, "{problems:?}");
     assert!(
         problems[0].starts_with(&format!("highlights: {}, line 2", broken.display())),
         "{problems:?}"
     );
-    let Reply::Opened { lines, captures } = helper.open(1, "broken", &text) else {
+    assert!(
+        problems[1].contains("none of its highlights"),
+        "{problems:?}"
+    );
+    let colorless = error(helper.open(1, "broken", &text));
+    assert!(colorless.contains("colors nothing"), "{colorless}");
+    // The queries lent are tried in turn: the first that compiles colors.
+    let Reply::Opened { lines, captures } = helper.open(1, "lent", &text) else {
         panic!("not opened");
     };
-    assert!(captures.is_empty());
-    assert!(helper.colors(1, lines).iter().all(Vec::is_empty));
+    assert!(
+        captures.iter().any(|capture| capture == "number"),
+        "{captures:?}"
+    );
+    assert!(helper.colors(1, lines).iter().any(|line| !line.is_empty()));
+    let Reply::Checked { problems, .. } = helper.ask(&Request::Check {
+        name: "lent".into(),
+    }) else {
+        panic!("not checked");
+    };
+    assert_eq!(
+        problems.len(),
+        2,
+        "its own and the first lent: {problems:?}"
+    );
     // And the next works.
     let Reply::Checked { problems, .. } = helper.ask(&Request::Check {
         name: "JSON".into(),

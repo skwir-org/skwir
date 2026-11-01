@@ -122,8 +122,16 @@ struct Inner {
     starting: Mutex<()>,
 }
 
+/// What a helper is told: the grammars, and the folders their files lie
+/// in, which it reads where it runs isolated.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Told {
+    grammars: Vec<Grammar>,
+    folders: Vec<PathBuf>,
+}
+
 struct State {
-    grammars: Arc<Vec<Grammar>>,
+    grammars: Arc<Told>,
     /// The helper calls go to, told `grammars`; `None` once let go of.
     current: Option<Arc<Process>>,
     /// The last started, which texts still open in it keep running after
@@ -142,7 +150,7 @@ impl Helper {
                 isolate,
                 kept,
                 state: Mutex::new(State {
-                    grammars: Arc::new(Vec::new()),
+                    grammars: Arc::new(Told::default()),
                     current: None,
                     last: Weak::new(),
                     last_use: Instant::now(),
@@ -153,15 +161,26 @@ impl Helper {
         }
     }
 
-    /// The grammars found, in place of those before. A helper told others
-    /// is let go of: texts open in it keep it until they are dropped, and
-    /// the next text opened starts one told these, reading their folders.
+    /// The grammars found, in place of those before, read where their
+    /// files are (`set_grammars_reading`): tests, and a tool that names
+    /// grammars itself.
     pub fn set_grammars(&self, grammars: Vec<Grammar>) {
+        let folders = files_folders(&grammars);
+        self.set_grammars_reading(grammars, folders);
+    }
+
+    /// The grammars found, in place of those before, and the folders their
+    /// files lie in (`grammars::find`), which a helper told them reads
+    /// where it runs isolated, and nothing else of the user's. A helper
+    /// told others is let go of: texts open in it keep it until they are
+    /// dropped, and the next text opened starts one told these.
+    pub fn set_grammars_reading(&self, grammars: Vec<Grammar>, folders: Vec<PathBuf>) {
+        let told = Told { grammars, folders };
         let mut state = self.inner.state.lock();
-        if *state.grammars == grammars {
+        if *state.grammars == told {
             return;
         }
-        state.grammars = Arc::new(grammars);
+        state.grammars = Arc::new(told);
         let before = state.current.take();
         drop(state);
         drop(before);
@@ -372,7 +391,7 @@ fn unexpected(reply: &Reply) -> anyhow::Error {
 struct Process {
     jobs: crossbeam_channel::Sender<Job>,
     /// The grammars it was told.
-    grammars: Arc<Vec<Grammar>>,
+    grammars: Arc<Told>,
     executable: PathBuf,
     /// Its working folder, where skwir writes and where the helper reads.
     outside: PathBuf,
@@ -404,14 +423,14 @@ impl Process {
     /// A helper started, greeted and told `grammars`, and its thread.
     fn start(
         inner: &Inner,
-        grammars: Arc<Vec<Grammar>>,
+        grammars: Arc<Told>,
         cancel: &CancelToken,
     ) -> anyhow::Result<Arc<Process>> {
         let executable = match &inner.executable {
             Some(executable) => executable.clone(),
             None => WORKER.require("color code with tree-sitter grammars")?,
         };
-        let told = Request::Grammars(grammars.as_ref().clone());
+        let told = Request::Grammars(grammars.grammars.clone());
         anyhow::ensure!(
             skwir_core::jsonl::encode(&Tagged {
                 id: u64::MAX,
@@ -422,7 +441,7 @@ impl Process {
             "the grammars found are more than the tree-sitter helper is told at once"
         );
         let work = crate::file::memory_dir("skwir-tree-sitter-")?;
-        let folders = readable(&grammars);
+        let folders = readable(&grammars.folders);
         let folders: Vec<&Path> = folders.iter().map(PathBuf::as_path).collect();
         // A grammar is code, and a text nobody vouched for may target its
         // scanner: the helper reads the grammars and its own folder.
@@ -535,21 +554,13 @@ impl Process {
     }
 }
 
-/// The folders a helper told `grammars` reads: each of their files', those
-/// inside another left out.
-fn readable(grammars: &[Grammar]) -> Vec<PathBuf> {
-    let mut folders: Vec<PathBuf> = grammars
+/// The folders a helper reads of `folders`: those inside another left
+/// out, as each is bound with what it holds.
+fn readable(folders: &[PathBuf]) -> Vec<PathBuf> {
+    let mut folders: Vec<PathBuf> = folders
         .iter()
-        .flat_map(|grammar| {
-            std::iter::once(&grammar.library)
-                .chain(&grammar.highlights)
-                .chain(&grammar.injections)
-                .chain(&grammar.locals)
-                .chain(&grammar.folds)
-                .chain(&grammar.outline)
-        })
-        .filter_map(|file| file.parent().map(Path::to_owned))
         .filter(|folder| folder.is_absolute())
+        .cloned()
         .collect();
     // A folder sorts before what is inside it.
     folders.sort();
@@ -561,6 +572,16 @@ fn readable(grammars: &[Grammar]) -> Vec<PathBuf> {
         }
     }
     kept
+}
+
+/// The folders of `grammars`' files: what a helper told grammars named by
+/// hand reads.
+fn files_folders(grammars: &[Grammar]) -> Vec<PathBuf> {
+    grammars
+        .iter()
+        .flat_map(Grammar::files)
+        .filter_map(|file| file.parent().map(Path::to_owned))
+        .collect()
 }
 
 /// A text written in a helper's folder for it to read, removed once read.
@@ -932,14 +953,14 @@ mod tests {
     }
 
     #[test]
-    fn the_folders_read_are_those_of_the_grammars_files() {
+    fn the_folders_read_are_those_told_or_of_the_grammars_files() {
         let grammar = |library: &str, highlights: &[&str]| Grammar {
             library: library.into(),
             highlights: highlights.iter().map(PathBuf::from).collect(),
             ..Grammar::default()
         };
         assert_eq!(
-            readable(&[
+            readable(&files_folders(&[
                 grammar("/g/parser/rust.so", &["/g/queries/rust/highlights.scm"]),
                 grammar(
                     "/g/parser/c.so",
@@ -951,7 +972,7 @@ mod tests {
                 ),
                 grammar("/h/grammars/json.wasm", &["/h/grammars/queries/json.scm"]),
                 grammar("/g/parsers/y.so", &[]),
-            ]),
+            ])),
             [
                 "/g/parser",
                 "/g/parsers",
@@ -961,6 +982,11 @@ mod tests {
                 "/q"
             ]
             .map(PathBuf::from)
+        );
+        // Folders told are read as told, those inside another left out.
+        assert_eq!(
+            readable(&["/g/b", "/g", "/h/x", "relative"].map(PathBuf::from)),
+            ["/g", "/h/x"].map(PathBuf::from)
         );
     }
 }
