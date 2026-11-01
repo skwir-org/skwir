@@ -504,6 +504,81 @@ fn a_trimmed_booklet_fits_the_pages_ink_larger() {
     worker.end();
 }
 
+/// A page's stamps, notes and form fields scale with it: drawn into it
+/// first, as they print, never left at their own size over the page drawn
+/// smaller. At its own size a page keeps them as they are.
+#[test]
+fn a_page_s_annotations_scale_with_it() {
+    let Some(pdfium) = pdfium() else {
+        eprintln!("skipped: no PDFium (SKWIR_PDFIUM_LIBRARY)");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let (pdf, scratch) = (tmp.path().join("stamped.pdf"), tmp.path().join("work"));
+    std::fs::create_dir(&scratch).unwrap();
+    // A stamp, a 40-point black square printed at 20 points from the
+    // bottom left of 420 × 595, and nothing else on the page.
+    {
+        let mut document = pdfium.create_new_pdf().unwrap();
+        let mut page = document
+            .pages_mut()
+            .create_page_at_end(PdfPagePaperSize::Custom(
+                PdfPoints::new(420.0),
+                PdfPoints::new(595.0),
+            ))
+            .unwrap();
+        let square = PdfRect::new_from_values(20.0, 20.0, 60.0, 60.0);
+        let mut stamp = page.annotations_mut().create_stamp_annotation().unwrap();
+        stamp.set_bounds(square).unwrap();
+        stamp.set_is_printed(true).unwrap();
+        stamp
+            .objects_mut()
+            .create_path_object_rect(square, None, None, Some(PdfColor::BLACK))
+            .unwrap();
+        document.save_to_file(&pdf).unwrap();
+    }
+    let composed = scratch.join(COMPOSED_FILE);
+    let mut worker = Worker::start(&pdf, &scratch);
+    let at = |scale: f32| {
+        WorkerRequest::Compose(Compose::Pages {
+            pages: vec![Some(0)],
+            scale,
+        })
+    };
+    assert!(matches!(
+        worker.ask(at(1.0)),
+        WorkerReply::Composed { pages: 1 }
+    ));
+    {
+        let document = pdfium.load_pdf_from_file(&composed, None).unwrap();
+        let page = document.pages().get(0).unwrap();
+        assert_eq!(page.annotations().len(), 1, "a stamp still");
+    }
+    assert!(matches!(
+        worker.ask(at(0.5)),
+        WorkerReply::Composed { pages: 1 }
+    ));
+    let document = pdfium.load_pdf_from_file(&composed, None).unwrap();
+    let page = document.pages().get(0).unwrap();
+    assert_eq!(page.annotations().len(), 0, "drawn into the page");
+    let bounds: Vec<_> = page
+        .objects()
+        .iter()
+        .filter_map(|object| object.bounds().ok())
+        .collect();
+    assert_eq!(bounds.len(), 1, "{bounds:?}");
+    // Halfway to the middle (210, 297.5), as the page's own drawing is.
+    let (left, bottom, width) = (
+        bounds[0].left().value,
+        bounds[0].bottom().value,
+        bounds[0].width().value,
+    );
+    assert!((left - 115.0).abs() < 1.0, "{left}");
+    assert!((bottom - 158.75).abs() < 1.0, "{bottom}");
+    assert!((width - 20.0).abs() < 1.0, "{width}");
+    worker.end();
+}
+
 /// The print dialog's scale: each page drawn at that of its size about
 /// its middle, on a page of its own size; a scale that is none refused.
 #[test]

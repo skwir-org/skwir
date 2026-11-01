@@ -229,8 +229,9 @@ const LARGEST_SCALE: f32 = 10.0;
 
 /// Each page of `document` drawn at `scale` of its size about the middle
 /// of what it shows, clipped to that (its media box within its crop box),
-/// on a page of its own size: the print dialog's scale, which the system's
-/// printing leaves to the application. Stops when a newer request waits.
+/// its annotations drawn into it first, on a page of its own size: the
+/// print dialog's scale, which the system's printing leaves to the
+/// application. Stops when a newer request waits.
 fn scaled(
     document: &PdfDocument<'_>,
     scale: f32,
@@ -247,6 +248,10 @@ fn scaled(
         if number % 64 == 0 {
             anyhow::ensure!(!superseded(), "composing superseded");
         }
+        // Its notes, stamps and form fields drawn into it as they print
+        // (`FPDFPage_Flatten`, `FLAT_PRINT`), so they scale with it rather
+        // than print at their own size over it.
+        page.flatten()?;
         // Its content is rewritten here: never again from its objects.
         page.set_content_regeneration_strategy(PdfPageContentRegenerationStrategy::Manual);
         let shown = page.boundaries().bounding()?.bounds;
