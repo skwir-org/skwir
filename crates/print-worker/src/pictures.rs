@@ -246,14 +246,44 @@ pub struct Drawing {
     structure: Structure,
 }
 
+/// The drawing at `svg`, read and inflated within [`DRAWING_LIMIT`]: read
+/// before the job's fonts are found, as its text is written in them.
+pub fn read_drawing(svg: &Path) -> Result<Vec<u8>> {
+    read_bounded(svg, DRAWING_LIMIT)
+        .and_then(|data| inflated(data, DRAWING_LIMIT))
+        .with_context(|| format!("the drawing {} could not be read", svg.display()))
+}
+
+/// The text a drawing writes, its characters looked for in the fonts
+/// with the rest of the job's: its text nodes, or, where it cannot be
+/// read as XML, all of it.
+pub fn drawing_text(data: &[u8]) -> String {
+    let source = String::from_utf8_lossy(data);
+    let options = usvg::roxmltree::ParsingOptions {
+        allow_dtd: true,
+        ..usvg::roxmltree::ParsingOptions::default()
+    };
+    match usvg::roxmltree::Document::parse_with_options(&source, options) {
+        Ok(document) => document
+            .descendants()
+            .filter_map(|node| node.is_text().then(|| node.text()).flatten())
+            .collect(),
+        Err(_) => source.into_owned(),
+    }
+}
+
 impl Drawing {
-    pub fn plan(svg: &Path, alt: &str, fonts: &Fonts, frame: Frame) -> Result<Drawing> {
-        let data = read_bounded(svg, DRAWING_LIMIT)
-            .and_then(|data| inflated(data, DRAWING_LIMIT))
-            .with_context(|| format!("the drawing {} could not be read", svg.display()))?;
+    /// The drawing `data` (read from `svg`, [`read_drawing`]).
+    pub fn plan(
+        data: &[u8],
+        svg: &Path,
+        alt: &str,
+        fonts: &Fonts,
+        frame: Frame,
+    ) -> Result<Drawing> {
         let mut options = fonts.svg_options();
         options.image_href_resolver = bounded_images();
-        let tree = usvg::Tree::from_data(&data, &options)
+        let tree = usvg::Tree::from_data(data, &options)
             .with_context(|| format!("the drawing {} could not be read", svg.display()))?;
         Ok(Drawing {
             tree,
@@ -306,6 +336,14 @@ mod tests {
         small[16..24].copy_from_slice(&[0, 0, 0, 64, 0, 0, 0, 48]);
         assert!(decodable(&small));
         assert!(!decodable(b"not a picture"));
+    }
+
+    #[test]
+    fn a_drawing_s_text_is_its_text_nodes() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg"><!-- é -->
+  <text x="1" y="1">漢字 &#x416;</text><rect width="1" height="1"/></svg>"#;
+        assert_eq!(drawing_text(svg.as_bytes()), "\n  漢字 Ж");
+        assert_eq!(drawing_text(b"<not xml"), "<not xml");
     }
 
     #[test]

@@ -113,7 +113,17 @@ fn read_job(path: &Path) -> Result<Job> {
 
 /// The PDF of `job`, written to its output.
 pub fn make(job: &Job) -> Result<Made> {
-    let chars = characters(job);
+    // A drawing is read first: its text is written in the job's faces, and
+    // what of it they lack looked for with the rest.
+    let drawings = job
+        .parts
+        .iter()
+        .map(|part| match part {
+            Part::Drawing { svg, .. } => pictures::read_drawing(svg).map(Some),
+            _ => Ok(None),
+        })
+        .collect::<Result<Vec<Option<Vec<u8>>>>>()?;
+    let chars = characters(job, &drawings);
     let mut fonts = Fonts::load(job, &chars)?;
     let frame = Frame::new(&job.paper, job.header.is_some(), job.numbers);
     let language = job
@@ -124,7 +134,7 @@ pub fn make(job: &Job) -> Result<Made> {
     let mut headings: Vec<Heading> = Vec::new();
     let mut parts: Vec<Box<dyn out::Part + '_>> = Vec::new();
     let mut first = 0;
-    for part in &job.parts {
+    for (part, drawing) in job.parts.iter().zip(&drawings) {
         let planned: Box<dyn out::Part> = match part {
             Part::Flow { blocks } => Box::new(flow::Flow::plan(
                 blocks,
@@ -147,9 +157,13 @@ pub fn make(job: &Job) -> Result<Made> {
                 Box::new(pictures::Pictures::plan(pictures, *sheet, frame))
             }
             Part::Pages { pages } => Box::new(pictures::Pictures::plan(pages, false, frame)),
-            Part::Drawing { svg, alt } => {
-                Box::new(pictures::Drawing::plan(svg, alt, &fonts, frame)?)
-            }
+            Part::Drawing { svg, alt } => Box::new(pictures::Drawing::plan(
+                drawing.as_deref().unwrap_or_default(),
+                svg,
+                alt,
+                &fonts,
+                frame,
+            )?),
             Part::Specimen {
                 face,
                 name,
@@ -179,9 +193,10 @@ pub fn make(job: &Job) -> Result<Made> {
 }
 
 /// Every character the job writes in the faces it names (not a
-/// specimen's sample, written in its own face), so the fonts that hold
-/// what those lack are found once, before anything is laid out.
-fn characters(job: &Job) -> BTreeSet<char> {
+/// specimen's sample, written in its own face), its drawings' text
+/// (`drawings`, beside its parts) included, so the fonts that hold what
+/// those lack are found once, before anything is laid out.
+fn characters(job: &Job, drawings: &[Option<Vec<u8>>]) -> BTreeSet<char> {
     let mut seen = vec![0u64; (char::MAX as usize + 1).div_ceil(64)];
     let mut add = |text: &str| {
         for c in text.chars() {
@@ -228,6 +243,9 @@ fn characters(job: &Job) -> BTreeSet<char> {
             Part::Specimen { name, .. } => add(name),
             Part::Drawing { .. } | Part::Pages { .. } => {}
         }
+    }
+    for drawing in drawings.iter().flatten() {
+        add(&pictures::drawing_text(drawing));
     }
     let mut chars = BTreeSet::new();
     for (word, bits) in seen.iter().enumerate() {

@@ -864,6 +864,36 @@ fn a_character_no_role_font_has_is_found_in_the_fallback_folders() {
     assert!(page.contains("漢字"), "{page}");
 }
 
+#[test]
+fn a_drawing_s_text_no_role_font_has_is_found_in_the_fallback_folders() {
+    let Some(fonts) = fonts() else { return };
+    let Some(cjk) = matched(":lang=ja") else {
+        eprintln!("no Noto CJK font found by fc-match: not tried");
+        return;
+    };
+    let dir = scratch();
+    let svg = dir.path().join("drawing.svg");
+    std::fs::write(
+        &svg,
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">
+  <text x="10" y="50" font-size="20">Kanji &#x6F22;字</text>
+</svg>"#,
+    )
+    .unwrap();
+    let mut job = job(
+        dir.path(),
+        fonts,
+        vec![Part::Drawing {
+            svg,
+            alt: "Two characters".into(),
+        }],
+    );
+    job.fallback = vec![cjk.path.parent().unwrap().to_owned()];
+    let (_, document, pdf) = ok(dir.path(), &job);
+    let page = text(&pdf, &document, 1, dir.path());
+    assert!(page.contains("漢字"), "{page}");
+}
+
 /// The names of the fonts embedded.
 fn font_names(document: &Document) -> Vec<String> {
     let mut names: Vec<String> = document
