@@ -178,6 +178,32 @@ pub fn open_book(
 /// helper, else the system's (ADR-041).
 pub type PdfiumChoice = Arc<parking_lot::RwLock<Option<PathBuf>>>;
 
+/// The `PDFium` library the settings name (`documents.pdfium_library`),
+/// kept here for the whole program: the plugin that declares the setting
+/// sets it and clears it when turned off, and every `PDFium` helper
+/// started without one of its own is told it (`start`), so the reader,
+/// thumbnails and printing (its pages composed, Windows' printer) open the
+/// same library and no caller can forget it. The platform's because two
+/// plugins must agree on it, and neither reads the other's settings.
+static PDFIUM: std::sync::LazyLock<PdfiumChoice> = std::sync::LazyLock::new(PdfiumChoice::default);
+
+/// The `PDFium` library the program keeps ([`PDFIUM`]), shared: what the
+/// documents plugin fills from its setting.
+pub fn pdfium_choice() -> PdfiumChoice {
+    Arc::clone(&PDFIUM)
+}
+
+/// The library the `PDFium` helper `launch` starts is told: its own, else
+/// the one the program keeps; none for another engine's helper.
+fn pdfium_library(launch: &Launch) -> Option<PathBuf> {
+    let pdfium = || worker_path(Engine::Pdfium).is_some_and(|path| path == launch.executable);
+    launch
+        .setup
+        .library
+        .clone()
+        .or_else(|| pdfium().then(|| PDFIUM.read().clone()).flatten())
+}
+
 /// The engines `auto` tries, in its order: `PDFium` (the one skwir's
 /// packages carry), then Poppler. `MuPDF` only when chosen (ADR-014).
 pub const AUTO: [Engine; 2] = [Engine::Pdfium, Engine::Poppler];
@@ -252,9 +278,12 @@ pub fn first_page(
 }
 
 /// Write the pages of the PDF at `pdf` as `compose` lists them to `dest`
-/// (ADR-111), by `PDFium` (told `library` when the settings name one):
-/// the one engine that writes PDFs here. How many pages it holds; `None`
-/// when `PDFium` is not there. Called on a scheduler worker.
+/// (ADR-111), by `PDFium` (told `library`, else the one the program keeps,
+/// [`PDFIUM`]): the one engine that writes PDFs here. It is written in a
+/// folder of its own beside `dest`, on the caller's disk (a composed book
+/// is as large as the book, never one for memory), then put in its place.
+/// How many pages it holds; `None` when `PDFium` is not there. Called on a
+/// scheduler worker.
 pub fn compose(
     pdf: &Path,
     compose: skwir_core::document::Compose,
@@ -274,11 +303,19 @@ pub fn compose(
         also,
         ..Setup::default()
     };
+    let beside = dest
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let scratch = tempfile::Builder::new()
+        .prefix("compose-")
+        .tempdir_in(beside)
+        .context("a folder to compose the document in")?;
     let Some(session) = WorkerSession::start(
         executable,
         pdf.to_owned(),
         pdf.to_owned(),
-        crate::file::memory_dir("skwir-compose-")?,
+        scratch,
         setup,
         cancel.child(),
         true,
@@ -288,8 +325,8 @@ pub fn compose(
     };
     match session.request(WorkerRequest::Compose(compose), cancel)? {
         Response::Composed(path, pages) => {
-            // Copied before the session ends: its folder goes with it.
-            std::fs::copy(&path, dest).context("keep the composed document")?;
+            // Moved before the session ends: its folder goes with it.
+            std::fs::rename(&path, dest).context("keep the composed document")?;
             Ok(Some(pages))
         }
         _ => anyhow::bail!("unexpected document reply"),
@@ -298,8 +335,9 @@ pub fn compose(
 
 /// Print every page of the PDF at `pdf` on Windows' printer `printer`, its
 /// settings `devmode` as the print dialog left them, by `PDFium` drawing
-/// each page on the printer (ADR-111). How many pages it sent; `None`
-/// when `PDFium` is not there. Called on a scheduler worker.
+/// each page on the printer (ADR-111), told `library`, else the one the
+/// program keeps ([`PDFIUM`]). How many pages it sent; `None` when
+/// `PDFium` is not there. Called on a scheduler worker.
 pub fn print_on(
     pdf: &Path,
     printer: &str,
@@ -735,13 +773,16 @@ type Worker = crate::process::Helper<WorkerReply>;
 /// Start a worker for `launch`: it and its greeting.
 fn start(launch: &Launch, cancel: &CancelToken) -> anyhow::Result<(Worker, WorkerReply)> {
     anyhow::ensure!(!cancel.is_cancelled(), "document open cancelled");
+    // `PDFium`'s library: the one asked, else the one the settings name
+    // (`PDFIUM`), for every `PDFium` helper started.
+    let library = pdfium_library(launch);
     // A document is a file nobody vouched for: its engine runs isolated
     // where the system can (ADR-041), as skwir's other helpers on such
     // files do, reading its own folder (where a package carries
     // PDFium) and the library the settings name.
     let run = if launch.isolate {
         let mut readable: Vec<&Path> = launch.executable.parent().into_iter().collect();
-        readable.extend(launch.setup.library.as_deref());
+        readable.extend(library.as_deref());
         readable.extend(launch.setup.also.iter().map(PathBuf::as_path));
         crate::sandbox::untrusted_reading(
             &launch.executable,
@@ -778,7 +819,7 @@ fn start(launch: &Launch, cancel: &CancelToken) -> anyhow::Result<(Worker, Worke
     if launch.setup.first_page {
         command.arg(skwir_core::document::FIRST_PAGE);
     }
-    if let Some(library) = &launch.setup.library {
+    if let Some(library) = &library {
         command.env("SKWIR_PDFIUM_LIBRARY", library);
     }
     let mut worker = Worker::new(

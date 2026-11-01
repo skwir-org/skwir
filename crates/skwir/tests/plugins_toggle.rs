@@ -177,6 +177,33 @@ fn every_plugin_disables_without_a_trace_and_re_enables() {
     }
 }
 
+/// The `PDFium` library the documents plugin's setting names is the one
+/// the platform keeps for every `PDFium` helper (printing opens it too)
+/// while the plugin is on, and none once it is turned off.
+#[test]
+fn the_pdfium_library_named_goes_with_the_documents_plugin() {
+    let tmp = tempfile::tempdir().unwrap();
+    let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+    app.settings.set(
+        "documents.pdfium_library",
+        toml::Value::String("/example/libpdfium.so".into()),
+    );
+    let documents = all_plugins()
+        .into_iter()
+        .find(|plugin| plugin.id() == "documents")
+        .unwrap();
+    app.plugins.add(documents, &app);
+    let kept = skwir_platform::document::pdfium_choice();
+    assert_eq!(
+        kept.read().as_deref(),
+        Some(std::path::Path::new("/example/libpdfium.so"))
+    );
+    assert!(app.plugins.set_enabled("documents", false, &app));
+    assert_eq!(*kept.read(), None, "turned off, it leaves no trace");
+    assert!(app.plugins.set_enabled("documents", true, &app));
+    assert!(kept.read().is_some(), "turned on again, named again");
+}
+
 #[test]
 fn all_plugins_coexist_and_every_command_has_a_schema() {
     let tmp = tempfile::tempdir().unwrap();

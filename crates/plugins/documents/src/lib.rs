@@ -40,12 +40,20 @@ const READING_PROVIDER: &str = "documents.reading";
 /// The document reader (`DocumentPreviews`), which shows pages.
 const READER_PROVIDER: &str = "documents";
 
-#[derive(Default)]
 pub struct PreviewPlugin {
-    /// `PDFium`'s library as the settings name it: what the `PDFium`
-    /// requirement's probe and the PDF thumbnails tell the helper, as the
-    /// reader's launch does.
+    /// `PDFium`'s library as the settings name it: the one the platform
+    /// keeps for every `PDFium` helper (`document::pdfium_choice`: printing
+    /// opens it too), which the requirement's probe and the PDF thumbnails
+    /// tell the helper, as the reader's launch does.
     pdfium_library: skwir_platform::document::PdfiumChoice,
+}
+
+impl Default for PreviewPlugin {
+    fn default() -> Self {
+        Self {
+            pdfium_library: skwir_platform::document::pdfium_choice(),
+        }
+    }
 }
 
 impl Plugin for PreviewPlugin {
@@ -60,6 +68,11 @@ impl Plugin for PreviewPlugin {
     }
     fn category(&self) -> skwir_core::plugin::Category {
         skwir_core::plugin::Category::Previews
+    }
+    /// The library its setting named is the program's no more: turned
+    /// off, it leaves no trace.
+    fn on_disable(&self, _app: &App) {
+        *self.pdfium_library.write() = None;
     }
     /// Only the provider a key is about starts again: changing how text
     /// documents are shown leaves a PDF open in the reader as it is.
