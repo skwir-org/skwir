@@ -241,7 +241,8 @@ pub fn sync(chosen: &BTreeMap<String, Source>) -> Arc<[Found]> {
 fn repick(state: &mut State) -> Arc<[Found]> {
     let all = state.all.clone().unwrap_or_default();
     let found: Arc<[Found]> = pick(&all, &state.chosen).into();
-    if state.found.as_deref() != Some(&*found) {
+    // Never found and found nothing are alike: nothing is colored again.
+    if state.found.as_deref().unwrap_or_default() != &*found {
         state.generation += 1;
     }
     state.found = Some(Arc::clone(&found));
@@ -312,7 +313,32 @@ fn pick(all: &[Found], chosen: &BTreeMap<String, Source>) -> Vec<Found> {
 /// its extensions, longest first (`d.ts` before `ts`), then its first
 /// line when its name says nothing. Usable ones only.
 pub fn for_file<'a>(found: &'a [Found], name: &str, first_line: Option<&str>) -> Option<&'a Found> {
-    let usable = || found.iter().filter(|found| found.problem.is_none());
+    matching(found, name, first_line, true)
+}
+
+/// `for_file` among every grammar of `found`, those that cannot be used
+/// too: the language a file is of, whether a grammar of it colors or not
+/// (the key a language's choice is kept by).
+pub fn for_file_any<'a>(
+    found: &'a [Found],
+    name: &str,
+    first_line: Option<&str>,
+) -> Option<&'a Found> {
+    matching(found, name, first_line, false)
+}
+
+/// `for_file`'s rules, among usable grammars only or every one.
+fn matching<'a>(
+    found: &'a [Found],
+    name: &str,
+    first_line: Option<&str>,
+    usable_only: bool,
+) -> Option<&'a Found> {
+    let usable = || {
+        found
+            .iter()
+            .filter(move |found| !usable_only || found.problem.is_none())
+    };
     let lower = name.to_lowercase();
     if let Some(found) =
         usable().find(|found| found.file_types.iter().any(|t| t.to_lowercase() == lower))
@@ -1891,9 +1917,17 @@ mod tests {
             first_line: None,
             problem: None,
         };
-        // Before the grammars are found: none, the choice kept.
+        // Before the grammars are found: none, the choice kept; found
+        // none, nothing changed.
         let neovim = BTreeMap::from([("nix".to_owned(), Source::Neovim)]);
         assert!(sync(&neovim).is_empty());
+        let never = generation();
+        {
+            let mut state = STATE.write();
+            state.all = Some(Vec::new().into());
+            repick(&mut state);
+        }
+        assert_eq!(generation(), never, "found nothing");
         {
             let mut state = STATE.write();
             state.all = Some(vec![of(Source::Zed), of(Source::Neovim)].into());
@@ -1922,6 +1956,14 @@ mod tests {
             problem: None,
         }];
         assert!(for_file(&found, "setup", Some("#!/usr/bin/env fish")).is_some());
+        // Unusable, it is no grammar to color with, but still the file's.
+        let broken = [Found {
+            problem: Some("no library".into()),
+            ..found[0].clone()
+        }];
+        assert!(for_file(&broken, "config.fish", None).is_none());
+        assert!(for_file_any(&broken, "config.fish", None).is_some());
+        assert!(for_file_any(&broken, "setup", Some("#!/usr/bin/env fish")).is_some());
         assert!(for_file(&found, "setup", Some("#!/bin/sh")).is_none());
         // A name with an extension stays the name's (AGENTS.md).
         assert!(for_file(&found, "setup.txt", Some("#!/usr/bin/env fish")).is_none());
