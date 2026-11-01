@@ -204,6 +204,7 @@ pub fn edit(
     saving: &Arc<Mutex<()>>,
     edit: Pin,
     undo: bool,
+    unkept: Option<String>,
     lifetime: &skwir_core::cancel::CancelToken,
     then: impl FnOnce(&App) + Send + 'static,
 ) {
@@ -226,7 +227,16 @@ pub fn edit(
                 format!("The pinned tags were not saved: {error:#}"),
             );
         } else {
-            app.notify_undoable(edit.words(&was), undo, set_invocation(&was, !undo));
+            // A tag's place pinned plain: its filter is said to be left
+            // (the core `keep` with nothing that keeps a filter, ADR-109).
+            let words = match &unkept {
+                Some(filter) => format!(
+                    "{}; its filter “{filter}” is not kept with it",
+                    edit.words(&was)
+                ),
+                None => edit.words(&was),
+            };
+            app.notify_undoable(words, undo, set_invocation(&was, !undo));
         }
         then(&app);
         app.wake();

@@ -565,9 +565,21 @@ fn pinned_tag(address: &crate::location::Address) -> Option<&str> {
     address.tag.as_deref().filter(|_| plain)
 }
 
+/// What `tags.keep` is given: the core `keep`'s pane, and the filter left
+/// out when it keeps the place plain (ADR-109).
+#[derive(Clone, Debug, Default, serde::Deserialize, schemars::JsonSchema)]
+pub struct KeepArgs {
+    #[serde(default)]
+    pub pane: Option<PaneId>,
+    /// The filter the place was shown with, which nothing keeps: the
+    /// toast says it is not kept with the tag.
+    #[serde(default)]
+    pub unkept: Option<String>,
+}
+
 /// `tags.keep`, Ctrl+D in a tag location: its tag pinned, when it is one
 /// tag of the home folder, not narrowed (`keepable`).
-pub fn keep(app: &App, a: PaneOnly) -> anyhow::Result<Outcome> {
+pub fn keep(app: &App, a: &KeepArgs) -> anyhow::Result<Outcome> {
     let pane = app.pane_or_active(a.pane);
     let address = shown(app, pane, None)?;
     let Some(tag) = pinned_tag(&address).map(str::to_owned) else {
@@ -575,7 +587,7 @@ pub fn keep(app: &App, a: PaneOnly) -> anyhow::Result<Outcome> {
     };
     app.dispatch(&Invocation::with_args(
         "tags.pin",
-        &serde_json::json!({ "tag": tag }),
+        &serde_json::json!({ "tag": tag, "unkept": a.unkept }),
     ))
 }
 

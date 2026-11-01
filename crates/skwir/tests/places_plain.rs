@@ -77,3 +77,30 @@ fn without_a_keeper_of_filters_a_folder_is_bookmarked_plain() {
         "{said:?}"
     );
 }
+
+/// A tag's place pinned plain says so too: `tags.keep` hands the filter
+/// the core `keep` left out to `tags.pin`, whose toast names it.
+#[test]
+fn a_tag_pinned_plain_says_its_filter_was_not_kept() {
+    let tmp = home_tempdir();
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
+    let _ = app.take_notifications();
+    // Off the window's thread, the pin is saved before the command answers.
+    run(
+        &app,
+        "tags.pin",
+        &serde_json::json!({ "tag": "it's family", "unkept": "beach" }),
+    );
+    let said: Vec<String> = app
+        .take_notifications()
+        .into_iter()
+        .map(|n| n.text)
+        .collect();
+    assert!(
+        said.iter()
+            .any(|text| text.contains("it's family") && text.contains("“beach”")),
+        "{said:?}"
+    );
+}

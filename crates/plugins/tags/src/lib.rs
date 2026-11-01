@@ -249,6 +249,10 @@ struct PinArgs {
     /// Set by the toast's Undo, so the next toast offers Redo.
     #[serde(default)]
     undo: bool,
+    /// The filter the tag's place was shown with, which nothing keeps
+    /// (`tags.keep` from the core `keep`, ADR-109): its toast says so.
+    #[serde(default)]
+    unkept: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1013,9 +1017,17 @@ impl Plugin for TagsPlugin {
                         },
                     };
                     let publish = pins.clone();
-                    sidebar::edit(app, &pins.saving, edit, a.undo, &lifetime, move |app| {
-                        publish.publish(app);
-                    });
+                    sidebar::edit(
+                        app,
+                        &pins.saving,
+                        edit,
+                        a.undo,
+                        a.unkept,
+                        &lifetime,
+                        move |app| {
+                            publish.publish(app);
+                        },
+                    );
                     Ok(Outcome::Done)
                 },
             );
@@ -1330,13 +1342,13 @@ impl Plugin for TagsPlugin {
             "Tags of this folder, or back to it",
         )]);
         browsing.shows();
-        app.commands.register::<browse::PaneOnly, _>(
+        app.commands.register::<browse::KeepArgs, _>(
             ID,
             Topic::Notes,
             "tags.keep",
             "Pin the tag shown",
             "Pin the tag a pane's tag location shows: one tag of the home folder, not narrowed",
-            |a, app| browse::keep(app, a),
+            |a, app| browse::keep(app, &a),
         );
         {
             let places = Arc::clone(&places);
