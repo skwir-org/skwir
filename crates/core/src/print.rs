@@ -118,29 +118,36 @@ pub fn from_zero_based(text: &str) -> Result<Vec<Range>, String> {
     Ok(ranges)
 }
 
-/// `ranges` written as the print portal reads them, from 0.
+/// `ranges` written as the print portal reads them, from 0 (a page 0,
+/// which no range read has, as the first).
 pub fn to_zero_based(ranges: &[Range]) -> String {
     ranges
         .iter()
-        .map(|range| match range.last {
-            Some(last) if last == range.first => format!("{}", range.first - 1),
-            Some(last) => format!("{}-{}", range.first - 1, last - 1),
-            None => format!("{}-", range.first - 1),
+        .map(|range| {
+            let first = range.first.saturating_sub(1);
+            match range.last {
+                Some(last) if last == range.first => format!("{first}"),
+                Some(last) => format!("{first}-{}", last.saturating_sub(1)),
+                None => format!("{first}-"),
+            }
         })
         .collect::<Vec<_>>()
         .join(",")
 }
 
-/// Every number of `text` moved by `by`.
+/// Every number of `text` moved by `by`: one that would pass the largest
+/// page number is refused, as one past it typed is.
 fn shift(text: &str, by: u32) -> Result<String, String> {
     let mut out = String::new();
     let mut digits = String::new();
     let flush = |digits: &mut String, out: &mut String| -> Result<(), String> {
         if !digits.is_empty() {
-            let n: u32 = digits
-                .parse()
-                .map_err(|_| format!("“{digits}” is not a page"))?;
-            out.push_str(&(n + by).to_string());
+            let n = digits
+                .parse::<u32>()
+                .ok()
+                .and_then(|n| n.checked_add(by))
+                .ok_or_else(|| format!("“{digits}” is not a page"))?;
+            out.push_str(&n.to_string());
             digits.clear();
         }
         Ok(())
@@ -185,7 +192,7 @@ impl Pages {
                     if range.first > count || last > count {
                         clipped = true;
                     }
-                    for page in range.first..=last.min(count) {
+                    for page in range.first.max(1)..=last.min(count) {
                         if let Some(slot) = wanted.get_mut(page as usize - 1) {
                             *slot = true;
                         }
@@ -648,6 +655,18 @@ mod tests {
             [range(1, Some(3)), range(5, Some(5)), range(10, None)]
         );
         assert_eq!(to_zero_based(&ranges), "0-2,4,9-");
+        // The last page there is, moved to count from 1, is past any: a
+        // range refused, never one that wraps to page 0.
+        assert!(from_zero_based(&u32::MAX.to_string()).is_err());
+        assert!(from_zero_based("0-4294967295").is_err());
+        assert_eq!(
+            from_zero_based(&(u32::MAX - 1).to_string()).unwrap(),
+            [range(u32::MAX, Some(u32::MAX))]
+        );
+        assert_eq!(to_zero_based(&[range(0, Some(0))]), "0");
+        // A range from 0, which no text reads as, picks from the first page.
+        let zero = Pages::Ranges(vec![range(0, Some(2))]);
+        assert_eq!(zero.pick(5, None).pages, [0, 1]);
     }
 
     #[test]

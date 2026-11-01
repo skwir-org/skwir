@@ -50,9 +50,13 @@ enum System {
     /// The token the portal gave with the dialog's settings.
     #[cfg(target_os = "linux")]
     Portal(u32),
-    /// The printer, and what CUPS is told beside the file.
+    /// The printer's CUPS queue, and what CUPS is told beside the file.
     #[cfg(target_os = "macos")]
-    Cups { printer: String, copies: u32 },
+    Cups {
+        queue: String,
+        copies: u32,
+        media: Option<String>,
+    },
     /// The printer, and its settings as the dialog left them (`DEVMODEW`).
     #[cfg(windows)]
     Printer { name: String, devmode: Vec<u8> },
@@ -280,14 +284,19 @@ mod portal {
                 .map(|n| n as f32)
                 .filter(|n| n.is_finite() && *n >= 0.0)
         };
-        let pages = match text(&settings, "print-pages").as_deref() {
-            Some("current") => Pages::Current,
-            Some("selection") => Pages::Selection,
-            Some("ranges") => text(&settings, "page-ranges")
-                .and_then(|ranges| skwir_core::print::from_zero_based(&ranges).ok())
-                .map_or(Pages::All, Pages::Ranges),
-            _ => Pages::All,
-        };
+        // A range Skwir cannot read is an error, never every page.
+        let pages =
+            match text(&settings, "print-pages").as_deref() {
+                Some("current") => Pages::Current,
+                Some("selection") => Pages::Selection,
+                Some("ranges") => {
+                    let ranges = text(&settings, "page-ranges").unwrap_or_default();
+                    Pages::Ranges(skwir_core::print::from_zero_based(&ranges).map_err(
+                        |refused| anyhow::anyhow!("the print dialog's pages “{ranges}”: {refused}"),
+                    )?)
+                }
+                _ => Pages::All,
+            };
         let page_set = match text(&settings, "page-set").as_deref() {
             Some("even") => PageSet::Even,
             Some("odd") => PageSet::Odd,
@@ -360,6 +369,25 @@ mod portal {
         Ok(())
     }
 
+    /// What a request's listener heard.
+    enum Heard {
+        /// A request's `Response` on the object at `path`.
+        Response {
+            path: Option<String>,
+            code: u32,
+            results: Results,
+        },
+        /// The portal left the bus (its back end ended): no answer comes.
+        Gone,
+    }
+
+    /// Whether an answer on the object at `path` is a request's: the one
+    /// its token named (`expected`) or the one its call answered
+    /// (`handle`); any, on a connection with no name to expect one by.
+    fn answers(path: Option<&str>, expected: Option<&str>, handle: &str) -> bool {
+        expected.is_none_or(|expected| path.is_some_and(|path| path == expected || path == handle))
+    }
+
     /// A portal request: `call` made with a token of its own, then its
     /// `Response` waited for; its results when it answered 0, `None` when
     /// the user cancelled or `cancel` did (the request then closed).
@@ -372,43 +400,72 @@ mod portal {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let token = format!("skwir_print_{}", NEXT.fetch_add(1, Ordering::Relaxed));
         // The answer comes on the request's own object, whose path the
-        // token and the connection's name say: listened for before the
-        // call, so a dialog answering at once is not missed. A connection
-        // of its own to a portal (a test's) has no name: any answer is it.
+        // token and the connection's name say, or the one the call answers
+        // (a portal that names it otherwise): listened for before the call,
+        // so a dialog answering at once is not missed. A connection of its
+        // own to a portal (a test's) has no name: any answer is it.
         let expected = bus.unique_name().map(|name| {
             let sender = name.as_str().trim_start_matches(':').replace('.', "_");
             format!("{PATH}/request/{sender}/{token}")
         });
-        let rule = zbus::MatchRule::builder()
-            .msg_type(zbus::message::Type::Signal)
-            .interface(REQUEST)?
-            .member("Response")?
-            .build();
+        let mut rules = vec![
+            zbus::MatchRule::builder()
+                .msg_type(zbus::message::Type::Signal)
+                .interface(REQUEST)?
+                .member("Response")?
+                .build(),
+        ];
+        // The portal leaving the bus ends the wait: its answer never comes.
+        if let Some(destination) = destination {
+            rules.push(
+                zbus::MatchRule::builder()
+                    .msg_type(zbus::message::Type::Signal)
+                    .sender("org.freedesktop.DBus")?
+                    .interface("org.freedesktop.DBus")?
+                    .member("NameOwnerChanged")?
+                    .arg(0, destination.to_owned())?
+                    .build(),
+            );
+        }
         let (ready_tx, ready_rx) = bounded::<()>(1);
-        let (told_tx, told_rx) = bounded::<(u32, Results)>(1);
+        // Every answer is kept until the call says its object: one on
+        // another request's is passed over then.
+        let (told_tx, told_rx) = crossbeam_channel::unbounded::<Heard>();
         let stop = cancel.child();
         let listening = {
-            let (bus, stop, expected) = (bus.clone(), stop.clone(), expected.clone());
+            let (bus, stop) = (bus.clone(), stop.clone());
             std::thread::Builder::new()
                 .name("skwir-print-portal".into())
                 .spawn(move || {
                     crate::bus::listen(
                         &bus,
-                        vec![rule],
+                        rules,
                         &stop,
                         || {
                             let _ = ready_tx.send(());
                         },
                         |message| {
                             let header = message.header();
-                            let ours = expected.as_deref().is_none_or(|expected| {
-                                header.path().is_some_and(|path| path.as_str() == expected)
-                            });
-                            if ours
-                                && let Ok((code, results)) =
-                                    message.body().deserialize::<(u32, Results)>()
-                            {
-                                let _ = told_tx.try_send((code, results));
+                            let heard = match header.member().map(zbus::names::MemberName::as_str) {
+                                Some("Response") => message
+                                    .body()
+                                    .deserialize::<(u32, Results)>()
+                                    .ok()
+                                    .map(|(code, results)| Heard::Response {
+                                        path: header.path().map(|path| path.as_str().to_owned()),
+                                        code,
+                                        results,
+                                    }),
+                                Some("NameOwnerChanged") => message
+                                    .body()
+                                    .deserialize::<(String, String, String)>()
+                                    .ok()
+                                    .filter(|(_, _, owner)| owner.is_empty())
+                                    .map(|_| Heard::Gone),
+                                _ => None,
+                            };
+                            if let Some(heard) = heard {
+                                let _ = told_tx.send(heard);
                             }
                         },
                     );
@@ -433,20 +490,30 @@ mod portal {
                     )));
                 }
             };
+        let ours = |path: &Option<String>| answers(path.as_deref(), expected.as_deref(), &handle);
         let cancelled = cancel.subscribe();
-        crossbeam_channel::select! {
-            recv(told_rx) -> told => match told {
-                Ok((0, results)) => finish(Ok(Some(results))),
-                // 1: the user cancelled; 2: the dialog ended otherwise.
-                Ok((1, _)) => finish(Ok(None)),
-                Ok((code, _)) => finish(Err(anyhow::anyhow!("the print dialog ended ({code})"))),
-                Err(_) => finish(Err(anyhow::anyhow!("the print portal stopped answering"))),
-            },
-            recv(cancelled.receiver()) -> _ => {
-                let _ = bus.call_method(destination, handle.as_str(), Some(REQUEST), "Close", &());
-                finish(Ok(None))
+        let result = loop {
+            crossbeam_channel::select! {
+                recv(told_rx) -> told => match told {
+                    Ok(Heard::Response { path, code, results }) if ours(&path) => {
+                        break match code {
+                            0 => Ok(Some(results)),
+                            // 1: the user cancelled; 2: the dialog ended otherwise.
+                            1 => Ok(None),
+                            code => Err(anyhow::anyhow!("the print dialog ended ({code})")),
+                        };
+                    }
+                    Ok(Heard::Response { .. }) => {}
+                    Ok(Heard::Gone) => break Err(anyhow::anyhow!("the print portal stopped")),
+                    Err(_) => break Err(anyhow::anyhow!("the print portal stopped answering")),
+                },
+                recv(cancelled.receiver()) -> _ => {
+                    let _ = bus.call_method(destination, handle.as_str(), Some(REQUEST), "Close", &());
+                    break Ok(None);
+                }
             }
-        }
+        };
+        finish(result)
     }
 
     #[cfg(test)]
@@ -680,6 +747,37 @@ mod portal {
             assert_eq!(u32::try_from(&seen.options[1]["token"]).unwrap(), 7);
         }
 
+        /// A range the dialog sends that Skwir cannot read is an error,
+        /// never every page.
+        #[test]
+        fn a_range_refused_is_an_error_not_every_page() {
+            for refused in ["4294967295", "two", ""] {
+                let mut results = answer();
+                results.insert(
+                    "settings".to_owned(),
+                    dict(&[
+                        ("print-pages", value("ranges")),
+                        ("page-ranges", value(refused)),
+                    ]),
+                );
+                let error = chosen(&results).unwrap_err();
+                assert!(error.to_string().contains("pages"), "{refused}: {error:#}");
+            }
+        }
+
+        /// An answer is the request's on the object its token named or the
+        /// one its call answered, any other another's; with no name to
+        /// expect one by, any.
+        #[test]
+        fn the_answer_is_heard_on_either_object() {
+            let (expected, handle) = (Some("/r/a/skwir_print_1"), "/r/a/other");
+            assert!(answers(Some("/r/a/skwir_print_1"), expected, handle));
+            assert!(answers(Some("/r/a/other"), expected, handle));
+            assert!(!answers(Some("/r/b/skwir_print_2"), expected, handle));
+            assert!(!answers(None, expected, handle));
+            assert!(answers(Some("/anything"), None, handle));
+        }
+
         #[test]
         fn a_dialog_cancelled_chooses_nothing() {
             let seen = Arc::new(Mutex::new(Seen::default()));
@@ -748,7 +846,48 @@ mod macos {
         copies: i64,
         duplex: i64,
         scale: f64,
+        /// The printer as the panel names it, to say where it went.
         printer: String,
+        /// Its CUPS queue, which `lp` is told: a name of its own (spaces
+        /// and dashes made underscores), never the one the panel shows.
+        queue: Option<String>,
+        /// The paper as CUPS names it (`iso-a4`, `na-letter`).
+        paper: Option<String>,
+    }
+
+    // PrintCore, in ApplicationServices: the printer an `NSPrintInfo`'s
+    // session holds, and its queue's name (`PMPrinterGetID`, which CUPS
+    // knows it by; `NSPrinter`'s name is the one people read).
+    // Declared here, as AppKit's bindings name neither; called only from
+    // `queue_of`, whose SAFETY says why its calls hold.
+    #[allow(unsafe_code)]
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn PMSessionGetCurrentPrinter(
+            session: *mut std::ffi::c_void,
+            printer: *mut *mut std::ffi::c_void,
+        ) -> i32;
+        fn PMPrinterGetID(printer: *mut std::ffi::c_void)
+        -> *const objc2_core_foundation::CFString;
+    }
+
+    /// The CUPS queue of the printer `info`'s session holds.
+    fn queue_of(info: &NSPrintInfo) -> Option<String> {
+        let session = info.PMPrintSession();
+        let mut printer: *mut std::ffi::c_void = std::ptr::null_mut();
+        #[allow(unsafe_code)]
+        // SAFETY: the session is the print info's own, valid while `info`
+        // is; the printer and its ID follow PrintCore's Get rule (owned by
+        // the session, not released here) and are read before `info` goes.
+        let queue = unsafe {
+            if PMSessionGetCurrentPrinter(session.as_ptr(), &raw mut printer) != 0
+                || printer.is_null()
+            {
+                return None;
+            }
+            PMPrinterGetID(printer).as_ref().map(ToString::to_string)
+        };
+        queue.filter(|queue| !queue.is_empty())
     }
 
     #[allow(clippy::unnecessary_wraps)] // The other systems' dialogs may fail.
@@ -805,6 +944,11 @@ mod macos {
                 duplex,
                 scale: info.scalingFactor(),
                 printer: info.printer().name().to_string(),
+                queue: queue_of(&info),
+                paper: info
+                    .paperName()
+                    .map(|name| name.to_string())
+                    .filter(|name| !name.is_empty()),
             })
         });
         let Some(panel) = panel else {
@@ -838,8 +982,9 @@ mod macos {
             printer: Some(panel.printer.clone()),
             to_file: None,
             system: System::Cups {
-                printer: panel.printer,
+                queue: panel.queue.unwrap_or(panel.printer),
                 copies: u32::try_from(panel.copies.max(1)).unwrap_or(1),
+                media: panel.paper,
             },
         }))
     }
@@ -850,18 +995,26 @@ mod macos {
         pdf: &Path,
         cancel: &CancelToken,
     ) -> anyhow::Result<()> {
-        // On macOS what the panel keeps is the printer and its copies.
-        let System::Cups { printer, copies } = &chosen.system;
+        // On macOS what the panel keeps is the printer, its copies and its
+        // paper. The orientation is the PDF's own: its pages are laid out
+        // on the sheet turned as chosen, which CUPS turns to fit the paper.
+        let System::Cups {
+            queue,
+            copies,
+            media,
+        } = &chosen.system;
         let sides = match chosen.duplex {
             Duplex::Simplex => "one-sided",
             Duplex::LongEdge => "two-sided-long-edge",
             Duplex::ShortEdge => "two-sided-short-edge",
         };
         let mut lp = std::process::Command::new("/usr/bin/lp");
-        lp.args(["-d", printer, "-n", &copies.to_string(), "-t", title])
-            .args(["-o", &format!("sides={sides}")])
-            .arg("--")
-            .arg(pdf);
+        lp.args(["-d", queue, "-n", &copies.to_string(), "-t", title])
+            .args(["-o", &format!("sides={sides}")]);
+        if let Some(media) = media {
+            lp.args(["-o", &format!("media={media}")]);
+        }
+        lp.arg("--").arg(pdf);
         crate::process::run(&mut lp, cancel, std::time::Duration::from_secs(120))
             .map(|_| ())
             .map_err(|error| anyhow::anyhow!("the printer refused it: {error:#}"))

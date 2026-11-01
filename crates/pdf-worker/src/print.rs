@@ -1,7 +1,8 @@
 //! Printing on Windows (ADR-111): every page of the document drawn by
 //! `PDFium` on the printer Windows' print dialog chose, with its settings,
-//! each page fitted to the printable area. Compiled for Windows from Linux
-//! and tried under Wine, which has no printer (ADR-074).
+//! each page fitted to the printable area, turned to fit it (`placed`).
+//! Compiled for Windows from Linux and tried under Wine, which has no
+//! printer (ADR-074).
 use pdfium_render::prelude::PdfiumLibraryBindings;
 use std::path::Path;
 
@@ -23,6 +24,27 @@ pub(crate) fn print(
         let _ = (bindings, pdf, printer, devmode, title);
         anyhow::bail!("printing on a printer from here is Windows' own")
     }
+}
+
+/// Where a page of `page` points (width, height) is drawn in a printable
+/// area of `area` pixels: as large as it fits, centred, turned a quarter
+/// turn when it is wide and the area tall or the other way round (a
+/// booklet's landscape sheet on paper fed upright), as the system's
+/// printing turns a page to fit its paper elsewhere. `FPDF_RenderPage`'s
+/// left, top, width, height and turn (1: a quarter turn clockwise).
+#[cfg(any(windows, test))]
+fn placed(page: (f32, f32), area: (i32, i32)) -> (i32, i32, i32, i32, i32) {
+    let (page_width, page_height) = (page.0.max(0.01), page.1.max(0.01));
+    let turn = (page_width > page_height) != (area.0 > area.1);
+    // The page as it lands, turned or not.
+    let (width, height) = if turn {
+        (page_height, page_width)
+    } else {
+        (page_width, page_height)
+    };
+    let scale = (area.0 as f32 / width).min(area.1 as f32 / height);
+    let (w, h) = ((width * scale) as i32, (height * scale) as i32);
+    ((area.0 - w) / 2, (area.1 - h) / 2, w, h, i32::from(turn))
 }
 
 #[cfg(windows)]
@@ -100,22 +122,14 @@ mod windows {
                     continue;
                 }
                 StartPage(dc);
-                let (page_width, page_height) = (
-                    bindings.FPDF_GetPageWidthF(sheet),
-                    bindings.FPDF_GetPageHeightF(sheet),
+                let (x, y, w, h, turn) = super::placed(
+                    (
+                        bindings.FPDF_GetPageWidthF(sheet),
+                        bindings.FPDF_GetPageHeightF(sheet),
+                    ),
+                    (width, height),
                 );
-                let scale = (width as f32 / page_width).min(height as f32 / page_height);
-                let (w, h) = ((page_width * scale) as i32, (page_height * scale) as i32);
-                bindings.FPDF_RenderPage(
-                    dc,
-                    sheet,
-                    (width - w) / 2,
-                    (height - h) / 2,
-                    w,
-                    h,
-                    0,
-                    FLAGS,
-                );
+                bindings.FPDF_RenderPage(dc, sheet, x, y, w, h, turn, FLAGS);
                 EndPage(dc);
                 bindings.FPDF_ClosePage(sheet);
                 sent += 1;
@@ -125,5 +139,33 @@ mod windows {
             let _ = DeleteDC(dc);
             Ok(sent)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// A page fits the area as large as it can, centred; a wide page on an
+    /// upright area (a booklet's sheet on A4 fed upright) is turned a
+    /// quarter turn, so it fills the paper rather than its top half.
+    #[test]
+    fn a_page_is_turned_to_fit_paper_of_the_other_orientation() {
+        // A4 at 600 dpi, upright: 4960 × 7016 pixels.
+        let area = (4960, 7016);
+        let (x, y, w, h, turn) = super::placed((595.0, 842.0), area);
+        assert_eq!(turn, 0);
+        assert!((w - 4960).abs() <= 5 && (h - 7016).abs() <= 5, "{w} × {h}");
+        assert!(x.abs() <= 3 && y.abs() <= 3, "{x}, {y}");
+        // Landscape A4: turned, it fills the paper too.
+        let (x, y, w, h, turn) = super::placed((842.0, 595.0), area);
+        assert_eq!(turn, 1);
+        assert!((w - 4960).abs() <= 5 && (h - 7016).abs() <= 5, "{w} × {h}");
+        assert!(x.abs() <= 3 && y.abs() <= 3, "{x}, {y}");
+        // A wide page on wide paper is not turned; a square never is.
+        assert_eq!(super::placed((842.0, 595.0), (7016, 4960)).4, 0);
+        assert_eq!(super::placed((500.0, 500.0), area).4, 0);
+        // Smaller than the paper's shape, centred along its free side.
+        let (x, y, w, h, _) = super::placed((400.0, 400.0), area);
+        assert_eq!((x, w), (0, 4960));
+        assert_eq!(y, (7016 - h) / 2);
     }
 }
