@@ -77,7 +77,7 @@ pub struct Closed {
 }
 
 /// The window's tabs as the settings keep them: the location each pane
-/// showed, not their histories.
+/// showed and what filtered it there (ADR-109), not their histories.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SavedTabs {
@@ -92,6 +92,15 @@ pub struct SavedTab {
     pub panes: Vec<Location>,
     /// Index of the active pane.
     pub active: usize,
+    /// By pane, what filtered the location it showed (the `filter`
+    /// command's text), empty for nothing: a search's terms say its own.
+    /// Left out when nothing was filtered, as the file was before.
+    #[serde(skip_serializing_if = "filters_none")]
+    pub filters: Vec<String>,
+}
+
+fn filters_none(filters: &[String]) -> bool {
+    filters.iter().all(String::is_empty)
 }
 
 /// A tab as `tab.list` reports it.
@@ -534,13 +543,29 @@ impl App {
     /// tab, dormant: `resume_shown` opens the shown one once the UI is there
     /// to be woken. Returns false when there was nothing to restore.
     pub fn restore_tabs(&self, saved: &SavedTabs) -> bool {
+        // What filtered each pane, read before the workspace's lock: the
+        // reader is a plugin's (ADR-109).
+        let filters: Vec<Vec<_>> = saved
+            .tabs
+            .iter()
+            .map(|tab| {
+                tab.filters
+                    .iter()
+                    .take(2)
+                    .map(|text| {
+                        self.kept_filter(Some(text))
+                            .and_then(|filter| self.read_as_left(&filter))
+                    })
+                    .collect()
+            })
+            .collect();
         let mut ws = self.workspace.write();
         let Some(first) = ws.tabs().first().map(|t| t.id) else {
             return false;
         };
         let mut shown = None;
         let mut restored = 0;
-        for (i, saved_tab) in saved.tabs.iter().enumerate() {
+        for (i, (saved_tab, filters)) in saved.tabs.iter().zip(filters).enumerate() {
             if saved_tab.panes.is_empty() {
                 continue;
             }
@@ -554,6 +579,11 @@ impl App {
                     .map(|l| (l.clone(), SortSpec::default()))
                     .collect(),
             );
+            for (id, filter) in ids.iter().zip(filters) {
+                if let Some(p) = ws.pane_mut(*id) {
+                    p.filter_as_left(filter);
+                }
+            }
             if let (Some(t), Some(active)) = (ws.tab_mut(tab), ids.get(saved_tab.active)) {
                 t.active = *active;
             }
@@ -579,11 +609,14 @@ impl App {
         let shown = ws.active_tab().id;
         for tab in ws.tabs() {
             let mut panes = Vec::new();
+            let mut filters = Vec::new();
             let mut active = 0;
             for id in &tab.panes {
-                let Some(location) = ws.pane(*id).and_then(|p| p.shown()) else {
+                let pane = ws.pane(*id);
+                let Some(location) = pane.and_then(|p| p.shown()) else {
                     continue;
                 };
+                filters.push(pane.and_then(|p| p.filter()).unwrap_or_default().to_owned());
                 if *id == tab.active {
                     active = panes.len();
                 }
@@ -600,7 +633,15 @@ impl App {
             if tab.id == shown {
                 saved.shown = saved.tabs.len();
             }
-            saved.tabs.push(SavedTab { panes, active });
+            // Nothing filtered: written, and read back, as before.
+            if filters_none(&filters) {
+                filters.clear();
+            }
+            saved.tabs.push(SavedTab {
+                panes,
+                active,
+                filters,
+            });
         }
         saved
     }

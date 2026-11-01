@@ -1015,7 +1015,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
 - Per-pane plugin state ends with `location_lifetime`, which dormancy
   ends too.
 - Tabs are remembered only with `core.startup = last`
-  (`core.last_tabs`); only the shown tab opens at startup.
+  (`core.last_tabs`); only the shown tab opens at startup. Each pane
+  comes back showing its location filtered as it was (`SavedTab::filters`,
+  read again by the filter's reader, ADR-109); its history is not kept.
 
 ## What the window remembers
 
@@ -1025,7 +1027,9 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   and counts, zoom, Usage's levels and mode, column widths) is
   application data, not preference:
   `session.rs` keeps it under one key, written only when it changes. A
-  new pane opens in the current pane's view.
+  new pane opens in the current pane's view. The tabs, each pane's
+  location and filter, are remembered with `core.startup = last` (Tabs,
+  above).
 - **Edges** dragged to size an area are one element (`elements/edge.rs`):
   double click restores the default; shared room via `edge::share`.
 - The preview panel's width is bounded by what the panes and sidebar
