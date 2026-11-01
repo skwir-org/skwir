@@ -1,8 +1,9 @@
 //! What skwir and `skwir-tree-sitter-worker` say to each other (ADR-110):
 //! the grammars a text is parsed with, and the colors, folds and outline
-//! the helper answers. Lines are `document::Tagged`, as the readers'
-//! (`document::worker`): the greeting is reply 0, request `n` gets reply
-//! `n`, once and in order.
+//! the helper answers. Lines are `document::Tagged`: the greeting is
+//! reply 0, request `n` gets reply `n`, once, as soon as it is ready: what
+//! reads what the helper keeps (`Colors`, `Folds`, `Outline`) is answered
+//! beside a parse that runs, so replies need not come in order.
 //!
 //! The helper is told every grammar found once (`Grammars`), then opens
 //! texts by id; each text is a file skwir wrote in the helper's working
@@ -18,9 +19,18 @@ pub const MAX_REQUEST: usize = 4 * 1024 * 1024;
 pub const MAX_REPLY: usize = 32 * 1024 * 1024;
 /// Lines a `Colors` request asks at most.
 pub const MAX_LINES: u32 = 4096;
-/// Bytes of a text the helper parses at most: what a Full preview holds
-/// whole (`preview::held::WHOLE_FULL`).
-pub const MAX_TEXT: u64 = 128 * 1024 * 1024;
+/// Spans a `Colors` reply holds at most (a line's at least): each is
+/// written in under 32 bytes (`Span`), so a reply stays within
+/// `MAX_REPLY`. The lines after are asked again.
+pub const SPANS: usize = MAX_REPLY / 32;
+/// Bytes of a line the helper keeps colors of: a longer one is colored by
+/// bat's grammar where it is shown (`highlight::tree::LONGEST_LINE`).
+pub const MAX_LINE: usize = 1 << 20;
+/// Bytes of a text the helper parses at most: twice what a preview holds
+/// whole (`preview::held::WHOLE`). A longer one (a Full preview's) is
+/// colored by bat's grammar: its tree and spans would take the helper
+/// gigabytes.
+pub const MAX_TEXT: u64 = 32 * 1024 * 1024;
 
 /// A grammar found (`skwir_platform::grammars`), as the helper loads it.
 /// Paths are written as `os_path` writes them, a name that is not UTF-8
@@ -173,9 +183,10 @@ pub enum Request {
     Outline { doc: u32 },
     /// Forget `doc`. Answered `Done`.
     Close { doc: u32 },
-    /// Stop what runs now: a parse notices soon. Answered, like any
-    /// request, by an `Error`.
-    Cancel,
+    /// Stop request `request` (an `Open` or a `Check`): one that runs
+    /// notices soon, one that waits is answered at once, both by an
+    /// `Error`. Answered `Done`.
+    Cancel { request: u64 },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -215,13 +226,31 @@ pub enum Reply {
     Error(String),
 }
 
-/// A run of a line colored by one capture.
+/// A run of a line colored by one capture, written `[start, end,
+/// capture]`: a reply holds up to `SPANS` of them.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(from = "(u32, u32, u16)", into = "(u32, u32, u16)")]
 pub struct Span {
     pub start: u32,
     pub end: u32,
     /// An index into `Opened::captures`: the innermost capture.
     pub capture: u16,
+}
+
+impl From<(u32, u32, u16)> for Span {
+    fn from((start, end, capture): (u32, u32, u16)) -> Self {
+        Span {
+            start,
+            end,
+            capture,
+        }
+    }
+}
+
+impl From<Span> for (u32, u32, u16) {
+    fn from(span: Span) -> Self {
+        (span.start, span.end, span.capture)
+    }
 }
 
 /// A definition a grammar's outline query found.
@@ -238,13 +267,13 @@ pub struct Symbol {
     pub depth: u32,
 }
 
-// The names a test writes are Unix's bytes.
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
     /// A grammar whose files are not named in UTF-8 is told whole, as are
     /// the queries lent to it.
+    #[cfg(unix)]
     #[test]
     fn names_that_are_not_utf8_are_told() {
         use std::os::unix::ffi::OsStrExt;
@@ -269,5 +298,24 @@ mod tests {
             "injection_regex":null}"#;
         let old: Grammar = serde_json::from_str(old).unwrap();
         assert!(old.lent.is_empty());
+    }
+
+    /// A span is written short: `SPANS` of them fit a reply.
+    #[test]
+    fn spans_are_written_within_the_reply_limit() {
+        let widest = Span {
+            start: u32::MAX,
+            end: u32::MAX,
+            capture: u16::MAX,
+        };
+        let line = serde_json::to_string(&Reply::Colors {
+            lines: vec![vec![widest; 2]],
+        })
+        .unwrap();
+        assert!(line.contains("[4294967295,4294967295,65535]"), "{line}");
+        let each = serde_json::to_string(&widest).unwrap().len() + 1;
+        assert!(each * SPANS + 1024 <= MAX_REPLY, "{each}");
+        let back: Span = serde_json::from_str("[1,2,3]").unwrap();
+        assert_eq!((back.start, back.end, back.capture), (1, 2, 3));
     }
 }

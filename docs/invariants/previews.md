@@ -1537,6 +1537,16 @@ is still to come are in `docs/preview-frame.md`.
   language are told (`Grammar::lent`) and tried in turn where one does
   not compile; a grammar none of whose highlights compile colors no
   text, which bat's grammar then colors.
+- **The tree-sitter helper is let go of a minute after its last use**,
+  whatever is open in it (`tree_sitter::KEPT`): a `Doc` keeps its text
+  (`tree_sitter::Text`, shared with the preview's bytes), not the
+  helper, and is opened again from it in the next helper when asked.
+  One parse runs at a time; what reads what is kept (colors, folds, an
+  outline) is answered beside it, never behind it. Each call waits its
+  own bound from when it is asked, and its caller's token gives up on it
+  at once. The helper keeps no spans of a line past `syntax::MAX_LINE`
+  nor parses a text past `syntax::MAX_TEXT` (bat's grammar colors both),
+  and a reply holds `syntax::SPANS` spans at most.
 
 ## Printing (ADR-111)
 

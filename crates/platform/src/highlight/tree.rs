@@ -525,7 +525,7 @@ impl<'h> Tree<'h> {
         let mut from = lines.start;
         while from < lines.end.min(self.lines) {
             let to = from.saturating_add(MAX_LINES).min(lines.end);
-            spans.extend(self.helper.colors(&self.doc, from..to)?);
+            spans.extend(self.helper.colors(&self.doc, from..to, &CancelToken::new())?);
             from = to;
         }
         Ok(spans)
@@ -544,7 +544,7 @@ impl<'h> Tree<'h> {
     /// # Errors
     /// The helper's.
     pub fn folds(&self) -> anyhow::Result<Vec<Range<usize>>> {
-        Ok(nest(self.helper.folds(&self.doc)?))
+        Ok(nest(self.helper.folds(&self.doc, &CancelToken::new())?))
     }
 
     /// The definitions it holds, in the text's order.
@@ -552,7 +552,7 @@ impl<'h> Tree<'h> {
     /// # Errors
     /// The helper's.
     pub fn outline(&self) -> anyhow::Result<Vec<Symbol>> {
-        self.helper.outline(&self.doc)
+        self.helper.outline(&self.doc, &CancelToken::new())
     }
 }
 

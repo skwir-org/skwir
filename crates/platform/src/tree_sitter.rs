@@ -3,19 +3,26 @@
 //! the texts to parse, and answers colors, folds and outlines.
 //!
 //! One helper serves every caller ([`shared`]), started at the first call
-//! and let go of once no text is open in it and nothing was asked of it
-//! for [`KEPT`], as bat's grammars are (ADR-060); the next call starts it
-//! again. It runs isolated where the system can (`sandbox::fed_reading`),
+//! and let go of once nothing was asked of it for [`KEPT`], as bat's
+//! grammars are (ADR-060); the next call starts it again. A text open in
+//! it ([`Doc`]) keeps its text, not the helper: asked again once the
+//! helper was let go of, it is opened again in the next from that text.
+//! It runs isolated where the system can (`sandbox::fed_reading`),
 //! reading the grammars' folders and its own working folder, where each
 //! text is written for it to parse: the copy a preview holds (ADR-101),
 //! never the user's file read again. A thread owns the helper's process
 //! and its folder, so nothing here waits on the UI thread nor removes
-//! files there: dropping a [`Doc`] only sends. Calls block, and run on
-//! workers; none waits past its own bound.
+//! files there: dropping a [`Doc`] only sends.
+//!
+//! Calls block, and run on workers: each waits its own bound from when it
+//! is asked, and its caller's token gives up on it at once. One parse runs
+//! at a time, the others waiting their turn here; what reads what the
+//! helper keeps is sent at once and answered beside a parse that runs.
 
+use std::collections::{HashMap, VecDeque};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -24,7 +31,7 @@ use skwir_core::CancelToken;
 use skwir_core::document::Tagged;
 use skwir_core::syntax::{Grammar, MAX_REPLY, MAX_REQUEST, MAX_TEXT, Reply, Request, Span, Symbol};
 
-use crate::process::Failure;
+use crate::line_channel::LineChannel;
 use crate::sandbox::{self, Otherwise};
 
 /// The helper. Plugins that require it name this, not the literals.
@@ -38,8 +45,8 @@ pub fn worker_path() -> Option<PathBuf> {
     WORKER.find()
 }
 
-/// How long the helper is kept after its last answer, no text open in it:
-/// the next file looked at finds its grammar loaded.
+/// How long the helper is kept after its last answer: the next file
+/// looked at finds its grammar loaded.
 pub const KEPT: Duration = Duration::from_secs(60);
 /// The helper's start, its greeting and the grammars told.
 const STARTUP: Duration = Duration::from_secs(15);
@@ -71,6 +78,51 @@ pub fn with_program(executable: PathBuf) -> Helper {
     Helper::new(Some(executable), true, KEPT)
 }
 
+/// A text to parse: bytes from `start` of what a preview holds, shared
+/// with it (`Text::shared`), or a copy (`From<&[u8]>`, for a short text).
+/// Its `Doc` keeps it, to open it again in a helper started later.
+#[derive(Clone)]
+pub struct Text {
+    bytes: Arc<[u8]>,
+    start: usize,
+}
+
+impl Text {
+    /// The bytes of `bytes` from `start` (its end past it), shared.
+    pub fn shared(bytes: Arc<[u8]>, start: usize) -> Text {
+        let start = start.min(bytes.len());
+        Text { bytes, start }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[self.start..]
+    }
+}
+
+impl From<&[u8]> for Text {
+    fn from(bytes: &[u8]) -> Self {
+        Text::shared(bytes.into(), 0)
+    }
+}
+
+impl<const N: usize> From<&[u8; N]> for Text {
+    fn from(bytes: &[u8; N]) -> Self {
+        Text::from(&bytes[..])
+    }
+}
+
+impl From<&str> for Text {
+    fn from(text: &str) -> Self {
+        Text::from(text.as_bytes())
+    }
+}
+
+impl From<Arc<[u8]>> for Text {
+    fn from(bytes: Arc<[u8]>) -> Self {
+        Text::shared(bytes, 0)
+    }
+}
+
 /// A text the helper parsed: the handle that names it, how many lines it
 /// holds, and the capture names its spans index (`Span::capture`).
 pub struct Opened {
@@ -87,18 +139,32 @@ pub struct Checked {
     pub problems: Vec<String>,
 }
 
-/// A text open in the helper. Dropping it forgets it there without
-/// waiting; the helper it was opened in lives as long as it does.
+/// A text open in a helper, and what opens it again: its grammar's name,
+/// its text and the captures its spans index. Dropping it forgets it in
+/// the helper without waiting. It keeps no helper running: one let go of
+/// (unused for `KEPT`) or ended, the next question opens the text again
+/// in the helper then current.
 pub struct Doc {
+    name: String,
+    text: Text,
+    captures: Vec<String>,
+    place: Mutex<Place>,
+}
+
+/// Where a text is open: the helper, and its id there.
+struct Place {
+    process: Weak<Process>,
     id: u32,
-    process: Arc<Process>,
     closed: bool,
 }
 
 impl Drop for Doc {
     fn drop(&mut self) {
-        if !self.closed {
-            self.process.forget(self.id);
+        let place = self.place.get_mut();
+        if !place.closed
+            && let Some(process) = place.process.upgrade()
+        {
+            process.forget(place.id);
         }
     }
 }
@@ -134,8 +200,8 @@ struct State {
     grammars: Arc<Told>,
     /// The helper calls go to, told `grammars`; `None` once let go of.
     current: Option<Arc<Process>>,
-    /// The last started, which texts still open in it keep running after
-    /// it was let go of: calls go to it again rather than to another.
+    /// The last started, which a call that still runs in it keeps running
+    /// after it was let go of: calls go to it again rather than to another.
     last: Weak<Process>,
     last_use: Instant,
     /// Whether a thread waits to let go of `current`.
@@ -172,8 +238,7 @@ impl Helper {
     /// The grammars found, in place of those before, and the folders their
     /// files lie in (`grammars::find`), which a helper told them reads
     /// where it runs isolated, and nothing else of the user's. A helper
-    /// told others is let go of: texts open in it keep it until they are
-    /// dropped, and the next text opened starts one told these.
+    /// told others is let go of, and the next call starts one told these.
     pub fn set_grammars_reading(&self, grammars: Vec<Grammar>, folders: Vec<PathBuf>) {
         let told = Told { grammars, folders };
         let mut state = self.inner.state.lock();
@@ -188,17 +253,51 @@ impl Helper {
 
     /// Parse `text` with the grammar named `name` (one of those set) and
     /// keep its colors in the helper. `cancel` stops it: the helper is
-    /// told, and the call returns at once.
-    pub fn open(&self, name: &str, text: &[u8], cancel: &CancelToken) -> anyhow::Result<Opened> {
+    /// told, and the call returns at once. A grammar that colors nothing
+    /// (none of its highlights queries compiles) fails, for bat's grammar
+    /// to color the text.
+    pub fn open(
+        &self,
+        name: &str,
+        text: impl Into<Text>,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Opened> {
+        let text = text.into();
+        let (process, id, lines, captures) = self.open_in(name, &text, cancel)?;
+        Ok(Opened {
+            doc: Doc {
+                name: name.to_owned(),
+                text,
+                captures: captures.clone(),
+                place: Mutex::new(Place {
+                    process: Arc::downgrade(&process),
+                    id,
+                    closed: false,
+                }),
+            },
+            lines,
+            captures,
+        })
+    }
+
+    /// `text` opened in the helper calls go to: that helper, the text's id
+    /// there, its lines and its captures.
+    fn open_in(
+        &self,
+        name: &str,
+        text: &Text,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<(Arc<Process>, u32, u32, Vec<String>)> {
+        let bytes = text.as_bytes();
         anyhow::ensure!(
-            text.len() as u64 <= MAX_TEXT,
+            bytes.len() as u64 <= MAX_TEXT,
             "the text exceeds {} MiB",
             MAX_TEXT >> 20
         );
         let process = self.process(cancel)?;
         let id = process.next.fetch_add(1, Ordering::Relaxed);
-        let written = Written::new(&process, id, text)?;
-        let mib = u32::try_from(text.len().div_ceil(1 << 20)).unwrap_or(u32::MAX);
+        let written = Written::new(&process, id, bytes)?;
+        let mib = u32::try_from(bytes.len().div_ceil(1 << 20)).unwrap_or(u32::MAX);
         let asked = Request::Open {
             doc: id,
             name: name.to_owned(),
@@ -208,15 +307,7 @@ impl Helper {
         drop(written);
         self.used(&process);
         match answer {
-            Ok(Reply::Opened { lines, captures }) => Ok(Opened {
-                doc: Doc {
-                    id,
-                    process,
-                    closed: false,
-                },
-                lines,
-                captures,
-            }),
+            Ok(Reply::Opened { lines, captures }) => Ok((process, id, lines, captures)),
             // A parse cancelled may have ended before it heard so: what it
             // kept is forgotten.
             Ok(reply) => {
@@ -230,32 +321,46 @@ impl Helper {
         }
     }
 
-    /// The spans of `doc`'s `lines` (at most `syntax::MAX_LINES` of
-    /// them; those past its last left out), each line's in order.
-    pub fn colors(&self, doc: &Doc, lines: Range<u32>) -> anyhow::Result<Vec<Vec<Span>>> {
-        let asked = Request::Colors {
-            doc: doc.id,
-            from: lines.start,
-            to: lines.end,
-        };
-        match self.ask(doc, asked)? {
-            Reply::Colors { lines } => Ok(lines),
-            reply => Err(unexpected(&reply)),
+    /// The spans of `doc`'s `lines`, each line's in order; those past its
+    /// last left out.
+    pub fn colors(
+        &self,
+        doc: &Doc,
+        lines: Range<u32>,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Vec<Vec<Span>>> {
+        let mut spans = Vec::with_capacity(lines.len().min(1 << 16));
+        let mut from = lines.start;
+        while from < lines.end {
+            let to = from
+                .saturating_add(skwir_core::syntax::MAX_LINES)
+                .min(lines.end);
+            let reply = self.ask(doc, |id| Request::Colors { doc: id, from, to }, cancel)?;
+            let Reply::Colors { lines } = reply else {
+                return Err(unexpected(&reply));
+            };
+            // A reply holds `SPANS` spans at most: the rest is asked again.
+            if lines.is_empty() {
+                break;
+            }
+            from = from.saturating_add(u32::try_from(lines.len()).unwrap_or(u32::MAX));
+            spans.extend(lines);
         }
+        Ok(spans)
     }
 
     /// Where `doc` folds: lines `start..end` a fold hides after `start`,
     /// nested or apart, in order of `start`.
-    pub fn folds(&self, doc: &Doc) -> anyhow::Result<Vec<(u32, u32)>> {
-        match self.ask(doc, Request::Folds { doc: doc.id })? {
+    pub fn folds(&self, doc: &Doc, cancel: &CancelToken) -> anyhow::Result<Vec<(u32, u32)>> {
+        match self.ask(doc, |id| Request::Folds { doc: id }, cancel)? {
             Reply::Folds(folds) => Ok(folds),
             reply => Err(unexpected(&reply)),
         }
     }
 
     /// The definitions `doc` holds, in the text's order.
-    pub fn outline(&self, doc: &Doc) -> anyhow::Result<Vec<Symbol>> {
-        match self.ask(doc, Request::Outline { doc: doc.id })? {
+    pub fn outline(&self, doc: &Doc, cancel: &CancelToken) -> anyhow::Result<Vec<Symbol>> {
+        match self.ask(doc, |id| Request::Outline { doc: id }, cancel)? {
             Reply::Outline(symbols) => Ok(symbols),
             reply => Err(unexpected(&reply)),
         }
@@ -263,9 +368,17 @@ impl Helper {
 
     /// Forget `doc` in the helper, waiting for it to have: dropping it
     /// does the same without waiting.
-    pub fn close(&self, mut doc: Doc) -> anyhow::Result<()> {
-        doc.closed = true;
-        match self.ask(&doc, Request::Close { doc: doc.id })? {
+    pub fn close(&self, doc: Doc) -> anyhow::Result<()> {
+        let (process, id) = {
+            let mut place = doc.place.lock();
+            place.closed = true;
+            (place.process.upgrade(), place.id)
+        };
+        drop(doc);
+        let Some(process) = process else {
+            return Ok(());
+        };
+        match process.call(Request::Close { doc: id }, ANSWER, &CancelToken::new())? {
             Reply::Done => Ok(()),
             reply => Err(unexpected(&reply)),
         }
@@ -289,11 +402,48 @@ impl Helper {
         }
     }
 
-    /// `asked` of the helper `doc` was opened in.
-    fn ask(&self, doc: &Doc, asked: Request) -> anyhow::Result<Reply> {
-        let answer = doc.process.call(asked, ANSWER, &CancelToken::new());
-        self.used(&doc.process);
-        answer
+    /// `asked` (made with `doc`'s id) of the helper `doc` is open in,
+    /// opened again first in the helper calls go to when that one was let
+    /// go of or ended, and once more when it ends meanwhile.
+    fn ask(
+        &self,
+        doc: &Doc,
+        asked: impl Fn(u32) -> Request,
+        cancel: &CancelToken,
+    ) -> anyhow::Result<Reply> {
+        let mut tries = 0;
+        loop {
+            tries += 1;
+            let (process, id) = self.placed(doc, cancel)?;
+            let answer = process.call(asked(id), ANSWER, cancel);
+            self.used(&process);
+            match answer {
+                Err(_) if tries < 2 && process.ended.get().is_some() && !cancel.is_cancelled() => {}
+                answer => return answer,
+            }
+        }
+    }
+
+    /// The helper `doc` is open in and its id there: where it is, if that
+    /// helper runs; else opened again from its text in the helper calls
+    /// go to, which must color it with the same captures (the grammars it
+    /// was colored with).
+    fn placed(&self, doc: &Doc, cancel: &CancelToken) -> anyhow::Result<(Arc<Process>, u32)> {
+        let mut place = doc.place.lock();
+        anyhow::ensure!(!place.closed, "the text was closed");
+        if let Some(process) = place.process.upgrade()
+            && process.ended.get().is_none()
+        {
+            return Ok((process, place.id));
+        }
+        let (process, id, _, captures) = self.open_in(&doc.name, &doc.text, cancel)?;
+        if captures != doc.captures {
+            process.forget(id);
+            anyhow::bail!("the grammars changed since the text was colored");
+        }
+        place.process = Arc::downgrade(&process);
+        place.id = id;
+        Ok((process, id))
     }
 
     /// The helper calls go to: the one running, else one started now (a
@@ -325,8 +475,8 @@ impl Helper {
     }
 
     /// The helper calls go to, if it has not ended and was told the
-    /// grammars set: the one kept, else the last started, if a text open
-    /// in it keeps it running.
+    /// grammars set: the one kept, else the last started, if a call that
+    /// still runs keeps it.
     fn current(&self) -> Option<Arc<Process>> {
         let state = self.inner.state.lock();
         let process = state.current.clone().or_else(|| state.last.upgrade())?;
@@ -337,7 +487,7 @@ impl Helper {
     }
 
     /// `process` answered: kept for `kept` from now, by a thread that lets
-    /// go of it then. One let go of while a text kept it running is kept
+    /// go of it then. One let go of while a call kept it running is kept
     /// again.
     fn used(&self, process: &Arc<Process>) {
         let mut state = self.inner.state.lock();
@@ -361,7 +511,7 @@ impl Helper {
 }
 
 /// Wait until the helper has been unused for its `kept`, then let go of
-/// it: it ends once no text holds it.
+/// it: it ends once no call holds it.
 fn let_go_when_unused(inner: &Inner) {
     loop {
         let mut state = inner.state.lock();
@@ -386,8 +536,9 @@ fn unexpected(reply: &Reply) -> anyhow::Error {
 }
 
 /// A helper running, as calls reach it: its thread, which owns its
-/// process and its folder, takes one job at a time. The thread ends the
-/// helper, and removes the folder, once nothing holds this.
+/// process and its folder, sends what is asked and hands each reply to
+/// its caller. The thread ends the helper, and removes the folder, once
+/// nothing holds this.
 struct Process {
     jobs: crossbeam_channel::Sender<Job>,
     /// The grammars it was told.
@@ -398,12 +549,33 @@ struct Process {
     inside: PathBuf,
     /// The id of the next text opened.
     next: AtomicU32,
+    /// The key of the next call, which a caller giving up names.
+    keys: AtomicU64,
     /// Why it ended, once it did: what is asked of it is refused so.
     ended: Arc<OnceLock<String>>,
 }
 
-struct Job {
+/// Why a call's answer did not come.
+enum Failure {
+    Cancelled,
+    /// The helper cannot be trusted with another request: it timed out,
+    /// exited or broke the protocol.
+    Broken(anyhow::Error),
+}
+
+/// What a helper's thread is handed.
+enum Job {
+    Ask(Asked),
+    /// The caller of call `key` gave up on it (cancelled, or past its
+    /// bound): one waiting is dropped, a parse running is told to stop.
+    GiveUp(u64),
+}
+
+struct Asked {
+    key: u64,
     request: Request,
+    /// How long the helper may take once it was sent: past it, it is
+    /// wedged and ended.
     timeout: Duration,
     cancel: CancelToken,
     /// Where its answer goes: nowhere for what is not waited for (a text
@@ -411,11 +583,23 @@ struct Job {
     reply: Option<crossbeam_channel::Sender<Result<Reply, Failure>>>,
 }
 
-impl Job {
+impl Asked {
     fn answer(self, answer: Result<Reply, Failure>) {
         if let Some(reply) = self.reply {
             let _ = reply.send(answer);
         }
+    }
+
+    /// Whether it parses or changes what is kept: one at a time, in the
+    /// order asked. What reads what is kept goes at once.
+    fn parses(&self) -> bool {
+        matches!(
+            self.request,
+            Request::Grammars(_)
+                | Request::Check { .. }
+                | Request::Open { .. }
+                | Request::Close { .. }
+        )
     }
 }
 
@@ -451,30 +635,49 @@ impl Process {
             sandbox::plain(&executable, Path::new(""), work.path())
         };
         let explain = |error| crate::process::explain(&executable, cancel, error);
-        let mut helper = crate::process::Helper::new(
-            crate::line_channel::LineChannel::spawn(
-                &mut run.command,
-                MAX_REPLY,
-                "skwir-tree-sitter",
-            )?,
-            "tree-sitter helper",
-        );
+        let channel: LineChannel<Tagged<Reply>> =
+            LineChannel::spawn(&mut run.command, MAX_REPLY, "skwir-tree-sitter")?;
         let cancelled = cancel.subscribe();
         let deadline = crossbeam_channel::after(STARTUP);
-        match helper.wait(0, &cancelled, &deadline) {
-            Ok(Reply::Ready { .. }) => {}
-            Ok(Reply::Error(error) | Reply::Unavailable(error)) => anyhow::bail!("{error}"),
-            Ok(reply) => return Err(unexpected(&reply)),
-            Err(Failure::Cancelled) => anyhow::bail!("cancelled"),
-            Err(Failure::Broken(error)) => return Err(explain(error)),
+        let said = |id: u64| -> anyhow::Result<Reply> {
+            crossbeam_channel::select! {
+                recv(channel.replies()) -> reply => {
+                    let reply = reply
+                        .map_err(|_| anyhow::anyhow!("the tree-sitter helper exited unexpectedly"))?
+                        .map_err(explain)?;
+                    anyhow::ensure!(reply.id == id, "the tree-sitter helper answered out of order");
+                    Ok(reply.body)
+                }
+                recv(cancelled.receiver()) -> _ => anyhow::bail!("cancelled"),
+                recv(deadline) -> _ => Err(explain(anyhow::anyhow!("the tree-sitter helper did not start in {STARTUP:?}"))),
+            }
+        };
+        match said(0)? {
+            Reply::Ready { .. } => {}
+            Reply::Error(error) | Reply::Unavailable(error) => anyhow::bail!("{error}"),
+            reply => return Err(unexpected(&reply)),
         }
-        let id = helper.send(&told).map_err(explain)?;
-        match helper.wait(id, &cancelled, &deadline) {
-            Ok(Reply::Done) => {}
-            Ok(Reply::Error(error)) => anyhow::bail!("{error}"),
-            Ok(reply) => return Err(unexpected(&reply)),
-            Err(Failure::Cancelled) => anyhow::bail!("cancelled"),
-            Err(Failure::Broken(error)) => return Err(explain(error)),
+        let mut channel = channel;
+        channel
+            .send(&Tagged { id: 1, body: &told })
+            .map_err(|error| crate::process::explain(&executable, cancel, error))?;
+        let said = |id: u64| -> anyhow::Result<Reply> {
+            crossbeam_channel::select! {
+                recv(channel.replies()) -> reply => {
+                    let reply = reply
+                        .map_err(|_| anyhow::anyhow!("the tree-sitter helper exited unexpectedly"))?
+                        .map_err(|error| crate::process::explain(&executable, cancel, error))?;
+                    anyhow::ensure!(reply.id == id, "the tree-sitter helper answered out of order");
+                    Ok(reply.body)
+                }
+                recv(cancelled.receiver()) -> _ => anyhow::bail!("cancelled"),
+                recv(deadline) -> _ => Err(crate::process::explain(&executable, cancel, anyhow::anyhow!("the tree-sitter helper did not start in {STARTUP:?}"))),
+            }
+        };
+        match said(1)? {
+            Reply::Done => {}
+            Reply::Error(error) => anyhow::bail!("{error}"),
+            reply => return Err(unexpected(&reply)),
         }
         let ended = Arc::new(OnceLock::new());
         let (jobs, asked) = crossbeam_channel::unbounded();
@@ -484,8 +687,12 @@ impl Process {
             .name("skwir-tree-sitter".into())
             .spawn(move || {
                 Manager {
-                    helper: Some(helper),
+                    channel: Some(channel),
                     ended: said,
+                    sent: 1,
+                    flying: HashMap::new(),
+                    parsing: None,
+                    waiting: VecDeque::new(),
                 }
                 .run(&asked);
                 // The helper was ended (killed and reaped) on this thread;
@@ -499,13 +706,15 @@ impl Process {
             outside,
             inside: run.work,
             next: AtomicU32::new(1),
+            keys: AtomicU64::new(1),
             ended,
         }))
     }
 
-    /// `request` answered, within `timeout`; `cancel` gives up on it at
-    /// once and tells the helper to stop. A request's own failure is its
-    /// error; a helper that failed is ended, and says so to what follows.
+    /// `request` answered, within `timeout` from now; `cancel` gives up on
+    /// it at once, as does its bound, and a parse given up on is told to
+    /// stop. A request's own failure is its error; a helper that failed
+    /// is ended, and says so to what follows.
     fn call(
         &self,
         request: Request,
@@ -516,14 +725,16 @@ impl Process {
             anyhow::bail!("the tree-sitter helper ended: {why}");
         }
         anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
+        let key = self.keys.fetch_add(1, Ordering::Relaxed);
         let (reply, answered) = crossbeam_channel::bounded(1);
-        let job = Job {
+        let asked = Asked {
+            key,
             request,
             timeout,
             cancel: cancel.clone(),
             reply: Some(reply),
         };
-        if self.jobs.send(job).is_err() {
+        if self.jobs.send(Job::Ask(asked)).is_err() {
             anyhow::bail!("the tree-sitter helper ended");
         }
         let cancelled = cancel.subscribe();
@@ -532,11 +743,18 @@ impl Process {
                 Err(Failure::Broken(anyhow::anyhow!("the tree-sitter helper's thread ended")))
             }),
             recv(cancelled.receiver()) -> _ => Err(Failure::Cancelled),
+            recv(crossbeam_channel::after(timeout)) -> _ => {
+                let _ = self.jobs.send(Job::GiveUp(key));
+                anyhow::bail!("the tree-sitter helper did not answer in {timeout:?}");
+            }
         };
         match answer {
             Ok(Reply::Error(error) | Reply::Unavailable(error)) => Err(anyhow::anyhow!(error)),
             Ok(reply) => Ok(reply),
-            Err(Failure::Cancelled) => anyhow::bail!("cancelled"),
+            Err(Failure::Cancelled) => {
+                let _ = self.jobs.send(Job::GiveUp(key));
+                anyhow::bail!("cancelled")
+            }
             Err(Failure::Broken(error)) => {
                 Err(crate::process::explain(&self.executable, cancel, error))
             }
@@ -545,12 +763,13 @@ impl Process {
 
     /// Forget text `id` in the helper, without waiting for it to.
     fn forget(&self, id: u32) {
-        let _ = self.jobs.send(Job {
+        let _ = self.jobs.send(Job::Ask(Asked {
+            key: self.keys.fetch_add(1, Ordering::Relaxed),
             request: Request::Close { doc: id },
             timeout: ANSWER,
             cancel: CancelToken::new(),
             reply: None,
-        });
+        }));
     }
 }
 
@@ -611,87 +830,180 @@ impl Drop for Written {
 /// A helper's thread: the one owner of its process.
 struct Manager {
     /// `None` once it ended.
-    helper: Option<crate::process::Helper<Reply>>,
+    channel: Option<LineChannel<Tagged<Reply>>>,
     ended: Arc<OnceLock<String>>,
+    /// The id of the last request sent.
+    sent: u64,
+    /// What was sent and not answered, by id.
+    flying: HashMap<u64, Flying>,
+    /// The id of the parse sent and not answered: one at a time.
+    parsing: Option<u64>,
+    /// The parses asked while one runs, in order.
+    waiting: VecDeque<Asked>,
+}
+
+/// A request sent: who asked, and when the helper is wedged.
+struct Flying {
+    asked: Asked,
+    due: Instant,
+    /// Whether its caller gave up: its answer goes nowhere.
+    given_up: bool,
 }
 
 impl Manager {
-    /// Serve jobs until nothing holds the process. While none runs, the
-    /// helper says nothing: what it says then (its exit) ends it.
-    fn run(mut self, asked: &crossbeam_channel::Receiver<Job>) {
+    /// Serve jobs until nothing holds the process. What the helper says
+    /// that nothing asked (its exit) ends it.
+    fn run(mut self, jobs: &crossbeam_channel::Receiver<Job>) {
         loop {
-            let Some(replies) = self
-                .helper
-                .as_ref()
-                .map(|helper| helper.channel.replies().clone())
-            else {
-                let Ok(job) = asked.recv() else { return };
-                let why = self.ended.get().cloned().unwrap_or_default();
-                job.answer(Err(Failure::Broken(anyhow::anyhow!("{why}"))));
+            let Some(replies) = self.channel.as_ref().map(|c| c.replies().clone()) else {
+                let Ok(job) = jobs.recv() else { return };
+                if let Job::Ask(asked) = job {
+                    let why = self.ended.get().cloned().unwrap_or_default();
+                    asked.answer(Err(Failure::Broken(anyhow::anyhow!("{why}"))));
+                }
                 continue;
             };
+            let due = self
+                .flying
+                .values()
+                .map(|flying| flying.due)
+                .min()
+                .map_or_else(crossbeam_channel::never, crossbeam_channel::at);
             crossbeam_channel::select! {
-                recv(asked) -> job => {
-                    let Ok(job) = job else { return };
-                    self.handle(job);
-                }
-                recv(replies) -> reply => {
-                    let helper = self.helper.as_mut().expect("its replies were read");
-                    let why = match helper.accept(reply) {
-                        Err(error) => format!("{error:#}"),
-                        Ok(_) => "the tree-sitter helper answered what it was not asked".into(),
-                    };
-                    self.end(why);
-                }
+                recv(jobs) -> job => match job {
+                    Ok(Job::Ask(asked)) => self.ask(asked),
+                    Ok(Job::GiveUp(key)) => self.give_up(key),
+                    Err(_) => return,
+                },
+                recv(replies) -> reply => self.accept(reply),
+                recv(due) -> _ => self.end("the tree-sitter helper timed out"),
             }
         }
     }
 
-    fn handle(&mut self, job: Job) {
-        if job.cancel.is_cancelled() {
-            job.answer(Err(Failure::Cancelled));
+    fn ask(&mut self, asked: Asked) {
+        if asked.cancel.is_cancelled() {
+            asked.answer(Err(Failure::Cancelled));
+        } else if asked.parses() && self.parsing.is_some() {
+            self.waiting.push_back(asked);
+        } else {
+            self.send(asked);
+        }
+    }
+
+    /// Send `asked`, a parse once none runs.
+    fn send(&mut self, asked: Asked) {
+        let Some(channel) = self.channel.as_mut() else {
+            let why = self.ended.get().cloned().unwrap_or_default();
+            asked.answer(Err(Failure::Broken(anyhow::anyhow!("{why}"))));
+            return;
+        };
+        let id = self.sent + 1;
+        if let Err(error) = channel.send(&Tagged {
+            id,
+            body: &asked.request,
+        }) {
+            let why = format!("{error:#}");
+            asked.answer(Err(Failure::Broken(anyhow::anyhow!("{why}"))));
+            self.end(&why);
             return;
         }
-        let helper = self.helper.as_mut().expect("served while it runs");
-        let id = match helper.send(&job.request) {
-            Ok(id) => id,
-            Err(error) => {
-                let why = format!("{error:#}");
-                self.end(why.clone());
-                job.answer(Err(Failure::Broken(anyhow::anyhow!(why))));
-                return;
-            }
-        };
-        let cancelled = job.cancel.subscribe();
-        let deadline = crossbeam_channel::after(job.timeout);
-        match helper.wait(id, &cancelled, &deadline) {
-            Ok(reply) => job.answer(Ok(reply)),
-            Err(Failure::Cancelled) => {
-                job.answer(Err(Failure::Cancelled));
-                // Told to stop, it answers both; one busy past a moment is
-                // ended, its texts with it.
-                let never = CancelToken::new().subscribe();
-                let settled = helper
-                    .send(&Request::Cancel)
-                    .map_err(Failure::Broken)
-                    .and_then(|_| helper.settle(&never, &crossbeam_channel::after(CANCEL_GRACE)));
-                if let Err(Failure::Broken(error)) = settled {
-                    self.end(format!("{error:#}"));
-                }
-            }
-            Err(Failure::Broken(error)) => {
-                let why = format!("{error:#}");
-                self.end(why.clone());
-                job.answer(Err(Failure::Broken(anyhow::anyhow!(why))));
+        self.sent = id;
+        if asked.parses() {
+            self.parsing = Some(id);
+        }
+        let due = Instant::now() + asked.timeout;
+        self.flying.insert(
+            id,
+            Flying {
+                asked,
+                due,
+                given_up: false,
+            },
+        );
+    }
+
+    /// The next parse waiting, its caller still there, sent.
+    fn next_parse(&mut self) {
+        while self.parsing.is_none()
+            && let Some(asked) = self.waiting.pop_front()
+        {
+            if asked.cancel.is_cancelled() {
+                asked.answer(Err(Failure::Cancelled));
+            } else {
+                self.send(asked);
             }
         }
     }
 
-    /// End the helper (killed and reaped here), saying why to what asks.
-    fn end(&mut self, why: String) {
+    /// The caller of `key` gave up: dropped if it waits; told to stop if it
+    /// parses, given a moment to; its answer dropped if it reads.
+    fn give_up(&mut self, key: u64) {
+        if let Some(at) = self.waiting.iter().position(|asked| asked.key == key) {
+            self.waiting.remove(at);
+            return;
+        }
+        let Some(id) = self
+            .flying
+            .iter()
+            .find(|(_, flying)| flying.asked.key == key && !flying.given_up)
+            .map(|(&id, _)| id)
+        else {
+            return;
+        };
+        let parse = self.parsing == Some(id);
+        if let Some(flying) = self.flying.get_mut(&id) {
+            flying.given_up = true;
+            if parse {
+                flying.due = flying.due.min(Instant::now() + CANCEL_GRACE);
+            }
+        }
+        if parse {
+            self.send(Asked {
+                key: 0,
+                request: Request::Cancel { request: id },
+                timeout: CANCEL_GRACE,
+                cancel: CancelToken::new(),
+                reply: None,
+            });
+        }
+    }
+
+    fn accept(
+        &mut self,
+        reply: Result<anyhow::Result<Tagged<Reply>>, crossbeam_channel::RecvError>,
+    ) {
+        let reply = match reply {
+            Ok(Ok(reply)) => reply,
+            Ok(Err(error)) => return self.end(&format!("{error:#}")),
+            Err(_) => return self.end("the tree-sitter helper exited unexpectedly"),
+        };
+        let Some(flying) = self.flying.remove(&reply.id) else {
+            return self.end("the tree-sitter helper answered what it was not asked");
+        };
+        if self.parsing == Some(reply.id) {
+            self.parsing = None;
+        }
+        if !flying.given_up {
+            flying.asked.answer(Ok(reply.body));
+        }
+        self.next_parse();
+    }
+
+    /// End the helper (killed and reaped here), saying why to what asks,
+    /// what was asked and not answered too.
+    fn end(&mut self, why: &str) {
         tracing::debug!("tree-sitter helper ended: {why}");
-        let _ = self.ended.set(why);
-        self.helper = None;
+        let _ = self.ended.set(why.to_owned());
+        self.channel = None;
+        self.parsing = None;
+        let broken = || Failure::Broken(anyhow::anyhow!("{why}"));
+        for (_, flying) in self.flying.drain() {
+            flying.asked.answer(Err(broken()));
+        }
+        for asked in self.waiting.drain(..) {
+            asked.answer(Err(broken()));
+        }
     }
 }
 
@@ -748,6 +1060,23 @@ mod tests {
     #[cfg(target_os = "linux")]
     const TEXT: &str = "{\n  \"count\": 42,\n  \"ok\": [true, null]\n}\n";
 
+    /// The helper `doc` is open in, if it runs.
+    #[cfg(target_os = "linux")]
+    fn process_of(doc: &Doc) -> Option<Arc<Process>> {
+        doc.place.lock().process.upgrade()
+    }
+
+    /// JSON of about `bytes` bytes, long to parse.
+    #[cfg(target_os = "linux")]
+    fn large(bytes: usize) -> String {
+        let mut large = String::from("[\n");
+        while large.len() < bytes {
+            large.push_str("  {\"key\": \"value\", \"n\": [1, 2.5, true, null]},\n");
+        }
+        large.push_str("  {}\n]\n");
+        large
+    }
+
     /// A text opened in the helper, its grammar's folder read where it runs
     /// isolated, colored line by line, checked, closed.
     #[cfg(target_os = "linux")]
@@ -756,11 +1085,14 @@ mod tests {
         let Some(helper) = helper(KEPT) else { return };
         let cancel = CancelToken::new();
         let opened = helper.open("json", TEXT.as_bytes(), &cancel).unwrap();
+        let process = process_of(&opened.doc).unwrap();
         if sandbox::available() {
-            assert_eq!(opened.doc.process.inside, Path::new("/work"), "isolated");
+            assert_eq!(process.inside, Path::new("/work"), "isolated");
         }
         assert_eq!(opened.lines, 4);
-        let colors = helper.colors(&opened.doc, 0..opened.lines).unwrap();
+        let colors = helper
+            .colors(&opened.doc, 0..opened.lines, &cancel)
+            .unwrap();
         assert_eq!(colors.len(), 4);
         let at = |line: usize, text: &str| {
             let start = TEXT.lines().nth(line).unwrap().find(text).unwrap() as u32;
@@ -772,8 +1104,8 @@ mod tests {
         };
         assert_eq!(at(1, "42"), "number");
         assert_eq!(at(2, "true"), "constant.builtin");
-        assert_eq!(helper.folds(&opened.doc).unwrap(), []);
-        assert_eq!(helper.outline(&opened.doc).unwrap(), []);
+        assert_eq!(helper.folds(&opened.doc, &cancel).unwrap(), []);
+        assert_eq!(helper.outline(&opened.doc, &cancel).unwrap(), []);
         assert_eq!(
             helper.check("json", &cancel).unwrap(),
             Checked {
@@ -784,40 +1116,50 @@ mod tests {
         let error = helper.check("yaml", &cancel).unwrap_err().to_string();
         assert!(error.contains("no grammar named yaml"), "{error}");
         // Written for it to read, and removed once read.
-        let folder = opened.doc.process.outside.clone();
+        let folder = process.outside.clone();
         assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
         helper.close(opened.doc).unwrap();
         cancel.cancel();
         assert!(helper.open("json", TEXT.as_bytes(), &cancel).is_err());
     }
 
-    /// Unused for its `kept`, the helper is let go of, but not while a text
-    /// is open in it; it ends, and its folder goes, once both hold. The
-    /// next call starts another.
+    /// Unused for its `kept`, the helper is let go of, a text open in it
+    /// or not: it ends, and its folder goes. The text is opened again from
+    /// what its `Doc` keeps in the next helper, which the next call starts.
     #[cfg(target_os = "linux")]
     #[test]
-    fn the_helper_is_let_go_of_when_unused_and_started_again() {
+    fn the_helper_is_let_go_of_when_unused_and_texts_are_opened_again() {
         let kept = Duration::from_millis(300);
         let Some(helper) = helper(kept) else { return };
         let cancel = CancelToken::new();
         let opened = helper.open("json", TEXT.as_bytes(), &cancel).unwrap();
-        let folder = opened.doc.process.outside.clone();
-        std::thread::sleep(kept * 2);
-        assert!(folder.is_dir(), "a text open keeps it");
-        assert!(helper.inner.state.lock().current.is_none(), "let go of");
-        assert_eq!(helper.colors(&opened.doc, 0..1).unwrap().len(), 1);
-        // Asked again, it is the one calls go to.
-        let again = helper.open("json", TEXT.as_bytes(), &cancel).unwrap();
-        assert!(Arc::ptr_eq(&again.doc.process, &opened.doc.process));
-        drop(opened);
-        drop(again);
+        let colored = helper.colors(&opened.doc, 0..4, &cancel).unwrap();
+        let folder = process_of(&opened.doc).unwrap().outside.clone();
         until(|| !folder.exists());
-        let next = helper.open("json", TEXT.as_bytes(), &cancel).unwrap();
-        let other = next.doc.process.outside.clone();
+        assert!(helper.inner.state.lock().current.is_none(), "let go of");
+        assert!(process_of(&opened.doc).is_none(), "a text keeps no helper");
+        // Asked again: opened again, colored the same.
+        assert_eq!(helper.colors(&opened.doc, 0..4, &cancel).unwrap(), colored);
+        let other = process_of(&opened.doc).unwrap().outside.clone();
         assert_ne!(other, folder, "another helper");
-        assert_eq!(helper.colors(&next.doc, 0..4).unwrap().len(), 4);
-        drop(next);
+        // A text opened meanwhile goes to the same.
+        let again = helper.open("json", TEXT.as_bytes(), &cancel).unwrap();
+        assert!(Arc::ptr_eq(
+            &process_of(&again.doc).unwrap(),
+            &process_of(&opened.doc).unwrap()
+        ));
+        drop(again);
         until(|| !other.exists());
+        // Grammars that color it otherwise: refused, for bat to color it.
+        helper.set_grammars(vec![Grammar {
+            highlights: vec![
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../tree-sitter-worker/tests/fixtures/json/queries/folds.scm"),
+            ],
+            ..json()
+        }]);
+        let changed = helper.colors(&opened.doc, 0..4, &cancel);
+        assert!(changed.is_err(), "{changed:?}");
     }
 
     /// A parse cancelled returns at once; the helper stops it and serves
@@ -828,11 +1170,7 @@ mod tests {
         let Some(helper) = helper(KEPT) else { return };
         let cancel = CancelToken::new();
         let first = helper.open("json", TEXT.as_bytes(), &cancel).unwrap();
-        let mut large = String::from("[\n");
-        while large.len() < 4 << 20 {
-            large.push_str("  {\"key\": \"value\", \"n\": [1, 2.5, true, null]},\n");
-        }
-        large.push_str("  {}\n]\n");
+        let large = large(4 << 20);
         let cancelled = CancelToken::new();
         let later = cancelled.clone();
         std::thread::spawn(move || {
@@ -852,10 +1190,68 @@ mod tests {
         );
         let next = helper.open("json", TEXT.as_bytes(), &cancel).unwrap();
         assert!(
-            Arc::ptr_eq(&next.doc.process, &first.doc.process),
+            Arc::ptr_eq(
+                &process_of(&next.doc).unwrap(),
+                &process_of(&first.doc).unwrap()
+            ),
             "the same helper"
         );
-        assert_eq!(helper.colors(&first.doc, 0..4).unwrap().len(), 4);
+        assert_eq!(helper.colors(&first.doc, 0..4, &cancel).unwrap().len(), 4);
+    }
+
+    /// What reads what is kept is answered while a parse runs, and a call
+    /// waits its own bound from when it is asked (GE6).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn reads_are_answered_beside_a_parse() {
+        let Some(helper) = helper(KEPT) else { return };
+        let helper = Arc::new(helper);
+        let cancel = CancelToken::new();
+        let first = helper.open("json", TEXT.as_bytes(), &cancel).unwrap();
+        let large = large(8 << 20);
+        let parsing = CancelToken::new();
+        let parse = {
+            let (helper, parsing) = (Arc::clone(&helper), parsing.clone());
+            std::thread::spawn(move || helper.open("json", large.as_bytes(), &parsing).is_ok())
+        };
+        // Once it parses (its text written), read the first text.
+        let process = process_of(&first.doc).unwrap();
+        until(|| std::fs::read_dir(&process.outside).is_ok_and(|entries| entries.count() > 0));
+        let started = Instant::now();
+        assert_eq!(helper.colors(&first.doc, 0..4, &cancel).unwrap().len(), 4);
+        let read = started.elapsed();
+        parsing.cancel();
+        parse.join().unwrap();
+        assert!(read < Duration::from_millis(500), "read in {read:?}");
+        // A call bounded from when it is asked: one waiting behind a parse
+        // gives up in its own time.
+        let parsing = CancelToken::new();
+        let parse = {
+            let (helper, parsing) = (Arc::clone(&helper), parsing.clone());
+            let large = self::large(8 << 20);
+            std::thread::spawn(move || helper.open("json", large.as_bytes(), &parsing).is_ok())
+        };
+        until(|| std::fs::read_dir(&process.outside).is_ok_and(|entries| entries.count() > 0));
+        let started = Instant::now();
+        let waited = process.call(
+            Request::Check {
+                name: "json".into(),
+            },
+            Duration::from_millis(200),
+            &cancel,
+        );
+        assert!(waited.is_err(), "{waited:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        parsing.cancel();
+        parse.join().unwrap();
+        assert!(
+            process.ended.get().is_none(),
+            "giving up on a call that waits ends nothing"
+        );
     }
 
     /// Every grammar found is told at once, though the list is longer than
@@ -886,7 +1282,7 @@ mod tests {
     }
 
     /// A helper that died, answering or idle, is started again by the
-    /// next call, once; what was open in it says it ended.
+    /// next call, once; what was open in it is opened again there.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_helper_that_died_is_started_again() {
@@ -894,9 +1290,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let stand_in = dir.path().join("helper");
         let shell = crate::process::required("sh").unwrap();
-        // Greets, takes its grammars, opens anything; dies on a second
-        // Open, and after answering a second Check; tells each start in
-        // `started`.
+        // Greets, takes its grammars, opens anything, colors one line
+        // plain; dies on a second Open, and after answering a second
+        // Check; tells each start in `started`.
         let script = format!(
             concat!(
                 "#!{shell}\n",
@@ -909,6 +1305,7 @@ mod tests {
                 " case \"$line\" in\n",
                 " *Open*) [ $opened = 1 ] && exit 3; opened=1;",
                 " printf '{{\"id\":%s,\"body\":{{\"Opened\":{{\"lines\":1,\"captures\":[]}}}}}}\\n' \"$id\";;\n",
+                " *Colors*) printf '{{\"id\":%s,\"body\":{{\"Colors\":{{\"lines\":[[]]}}}}}}\\n' \"$id\";;\n",
                 " *Check*) printf '{{\"id\":%s,\"body\":{{\"Checked\":{{\"abi\":14,\"problems\":[]}}}}}}\\n' \"$id\";",
                 " [ $checked = 1 ] && exit 0; checked=1;;\n",
                 " *) printf '{{\"id\":%s,\"body\":\"Done\"}}\\n' \"$id\";;\n",
@@ -940,10 +1337,12 @@ mod tests {
             .to_string();
         assert!(died.contains("exited"), "{died}");
         assert_eq!(starts(), 1);
-        let ended = helper.colors(&opened.doc, 0..1).unwrap_err().to_string();
-        assert!(ended.contains("ended"), "{ended}");
-        assert_eq!(helper.check("x", &cancel).unwrap().abi, 14);
+        assert_eq!(
+            helper.colors(&opened.doc, 0..1, &cancel).unwrap(),
+            [Vec::<Span>::new()]
+        );
         assert_eq!(starts(), 2, "started again, once");
+        assert_eq!(helper.check("x", &cancel).unwrap().abi, 14);
         // Answered, then gone while nothing is asked: the next call does
         // not find it there.
         assert_eq!(helper.check("x", &cancel).unwrap().abi, 14);

@@ -46,7 +46,9 @@ revised 2026-11-01: a choice for each language beside Automatic's rule.
    answers colors by line, injected languages colored by the other
    grammars found, and folds and an outline when the grammar's queries
    say them. One helper for every view, let go of a minute after its last
-   use, as bat's grammars are (ADR-060).
+   use, as bat's grammars are (ADR-060), whatever is open in it: a text
+   asked again is opened again from the copy its view holds. What reads
+   a text parsed is answered beside a parse that runs.
 2. **One Wasmtime.** The module helper moves to Wasmtime 48, the version
    tree-sitter's WebAssembly grammars need, and follows tree-sitter's
    version from then on.
@@ -108,5 +110,6 @@ revised 2026-11-01: a choice for each language beside Automatic's rule.
 - Plugins from outside run on Wasmtime 48 (an LTS, patched like 50); a
   module compiled by 50 is compiled again once.
 - A new helper is packaged, probed and listed as the others are.
-- Parsing needs the whole text: past what a preview holds whole, a
-  tree-sitter-only language is plain.
+- Parsing needs the whole text: past what a preview holds whole, or past
+  32 MiB (`syntax::MAX_TEXT`, a Full preview's), a tree-sitter-only
+  language is plain; a line past 1 MiB is colored by bat's grammar.

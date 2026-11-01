@@ -46,6 +46,9 @@ pub struct Loaded {
 
 pub struct Grammars {
     list: Vec<Grammar>,
+    /// Each grammar's `injection_regex`, compiled once when told (`None`
+    /// without one, or for one that does not compile).
+    regexes: Vec<Option<regex::Regex>>,
     /// Each grammar of `list` once loaded, or why it could not be.
     loaded: HashMap<usize, Result<&'static Loaded, String>>,
     /// Which grammar an injection names, once asked (lowercase).
@@ -66,6 +69,7 @@ impl Grammars {
     pub fn new() -> Self {
         Grammars {
             list: Vec::new(),
+            regexes: Vec::new(),
             loaded: HashMap::new(),
             injected: HashMap::new(),
             captures: Vec::new(),
@@ -79,6 +83,16 @@ impl Grammars {
     /// loaded is kept (the texts open were colored with it) but no longer
     /// found by name.
     pub fn set(&mut self, list: Vec<Grammar>) {
+        self.regexes = list
+            .iter()
+            .map(|grammar| {
+                regex::RegexBuilder::new(grammar.injection_regex.as_deref()?)
+                    .case_insensitive(true)
+                    .size_limit(1 << 20)
+                    .build()
+                    .ok()
+            })
+            .collect();
         self.list = list;
         self.loaded.clear();
         self.injected.clear();
@@ -159,19 +173,22 @@ impl Grammars {
     /// whose `injection_regex` matches it, or without one whose name it
     /// is; else the first so named, whatever its regex says.
     fn injection(&self, name: &str) -> Option<usize> {
-        let says = |grammar: &Grammar| match &grammar.injection_regex {
-            Some(pattern) => regex::RegexBuilder::new(pattern)
-                .case_insensitive(true)
-                .size_limit(1 << 20)
-                .build()
-                .is_ok_and(|regex| regex.is_match(name)),
-            None => grammar.name.eq_ignore_ascii_case(name),
+        let says = |(grammar, regex): (&Grammar, &Option<regex::Regex>)| match (
+            &grammar.injection_regex,
+            regex,
+        ) {
+            (Some(_), regex) => regex.as_ref().is_some_and(|regex| regex.is_match(name)),
+            (None, _) => grammar.name.eq_ignore_ascii_case(name),
         };
-        self.list.iter().position(says).or_else(|| {
-            self.list
-                .iter()
-                .position(|grammar| grammar.name.eq_ignore_ascii_case(name))
-        })
+        self.list
+            .iter()
+            .zip(&self.regexes)
+            .position(says)
+            .or_else(|| {
+                self.list
+                    .iter()
+                    .position(|grammar| grammar.name.eq_ignore_ascii_case(name))
+            })
     }
 
     /// The grammar's language and its ABI: a shared library's symbol, or a

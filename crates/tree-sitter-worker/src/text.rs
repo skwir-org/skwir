@@ -1,15 +1,15 @@
 //! The texts open: each colored whole when it is opened, its spans kept by
 //! line, its folds and outline found then too, and the text and its tree
-//! let go of.
+//! let go of. What is kept is read beside a parse that runs (`Kept`).
 
 use std::collections::HashMap;
 use std::ops::ControlFlow;
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use anyhow::Context;
-use skwir_core::syntax::{Grammar, MAX_LINES, MAX_TEXT, Reply, Request, Span, Symbol};
+use skwir_core::syntax::{MAX_LINE, MAX_LINES, MAX_TEXT, Reply, Request, SPANS, Span, Symbol};
 use tree_sitter::{Node, ParseOptions, Parser, Query, QueryCursor, StreamingIterator, Tree};
 use tree_sitter_highlight::{Highlight, HighlightEvent, Highlighter};
 
@@ -20,20 +20,55 @@ const SYMBOLS: usize = 100_000;
 /// Characters of a definition's name kept.
 const NAME: usize = 200;
 
+/// The texts open, by id: what the parses' thread keeps, and what the
+/// requests' thread reads at once.
+#[derive(Clone, Default)]
+pub struct Kept(Arc<Mutex<HashMap<u32, Document>>>);
+
+impl Kept {
+    fn with<T>(&self, each: impl FnOnce(&mut HashMap<u32, Document>) -> T) -> T {
+        each(&mut self.0.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// A request that reads what is kept: `Colors`, `Folds`, `Outline`.
+    pub fn read(&self, request: Request) -> anyhow::Result<Reply> {
+        self.with(|documents| {
+            let document = |doc: u32| {
+                documents
+                    .get(&doc)
+                    .with_context(|| format!("no document {doc}"))
+            };
+            match request {
+                Request::Colors { doc, from, to } => {
+                    anyhow::ensure!(
+                        to.saturating_sub(from) <= MAX_LINES,
+                        "more than {MAX_LINES} lines asked"
+                    );
+                    Ok(Reply::Colors {
+                        lines: document(doc)?.colors(from, to),
+                    })
+                }
+                Request::Folds { doc } => Ok(Reply::Folds(document(doc)?.folds.clone())),
+                Request::Outline { doc } => Ok(Reply::Outline(document(doc)?.outline.clone())),
+                other => anyhow::bail!("{other:?} reads nothing kept"),
+            }
+        })
+    }
+}
+
+/// What parses: the grammars, loaded as texts need them, and the
+/// highlighter, used by one request at a time.
 pub struct Worker {
     grammars: Grammars,
     highlighter: Highlighter,
     /// Whether the highlighter's parser has a store to run WebAssembly
     /// grammars in.
     stored: bool,
-    documents: HashMap<u32, Document>,
-    /// Cancels waiting to be answered (`serve`): what runs gives up while
-    /// one does.
-    cancels: Arc<AtomicUsize>,
+    kept: Kept,
 }
 
 /// What is kept of a text opened.
-struct Document {
+pub struct Document {
     /// Where each line's spans begin in `spans`, and where the last ends.
     first: Vec<u32>,
     spans: Vec<Span>,
@@ -42,13 +77,12 @@ struct Document {
 }
 
 impl Worker {
-    pub fn new(cancels: Arc<AtomicUsize>) -> Self {
+    pub fn new(kept: Kept) -> Self {
         Worker {
             grammars: Grammars::new(),
             highlighter: Highlighter::new(),
             stored: false,
-            documents: HashMap::new(),
-            cancels,
+            kept,
         }
     }
 
@@ -58,10 +92,12 @@ impl Worker {
         self.stored = false;
     }
 
-    pub fn handle(&mut self, request: Request) -> anyhow::Result<Reply> {
+    /// A request that parses or changes what is kept, `cancel` set once a
+    /// `Cancel` names it.
+    pub fn handle(&mut self, request: Request, cancel: &AtomicUsize) -> anyhow::Result<Reply> {
         match request {
             Request::Grammars(list) => {
-                self.set_grammars(list);
+                self.grammars.set(list);
                 Ok(Reply::Done)
             }
             Request::Check { name } => {
@@ -79,49 +115,32 @@ impl Worker {
             }
             Request::Open { doc, name, text } => {
                 // In place of what it held: let go of first.
-                self.documents.remove(&doc);
-                let (document, lines, captures) = self.open(&name, &text)?;
-                self.documents.insert(doc, document);
+                self.kept.with(|documents| documents.remove(&doc));
+                let (document, lines, captures) = self.open(&name, &text, cancel)?;
+                self.kept.with(|documents| documents.insert(doc, document));
                 Ok(Reply::Opened { lines, captures })
             }
-            Request::Colors { doc, from, to } => {
-                anyhow::ensure!(
-                    to.saturating_sub(from) <= MAX_LINES,
-                    "more than {MAX_LINES} lines asked"
-                );
-                let document = self.document(doc)?;
-                Ok(Reply::Colors {
-                    lines: document.colors(from, to),
-                })
-            }
-            Request::Folds { doc } => Ok(Reply::Folds(self.document(doc)?.folds.clone())),
-            Request::Outline { doc } => Ok(Reply::Outline(self.document(doc)?.outline.clone())),
             Request::Close { doc } => {
-                self.documents.remove(&doc);
+                self.kept.with(|documents| documents.remove(&doc));
                 Ok(Reply::Done)
             }
-            // Answered by `serve`, which counts it.
-            Request::Cancel => Ok(Reply::Error("cancelled".into())),
+            read @ (Request::Colors { .. } | Request::Folds { .. } | Request::Outline { .. }) => {
+                self.kept.read(read)
+            }
+            // Answered where it is read (`serve`).
+            Request::Cancel { .. } => Ok(Reply::Done),
         }
-    }
-
-    fn set_grammars(&mut self, list: Vec<Grammar>) {
-        self.grammars.set(list);
-    }
-
-    fn document(&self, doc: u32) -> anyhow::Result<&Document> {
-        self.documents
-            .get(&doc)
-            .with_context(|| format!("no document {doc}"))
-    }
-
-    fn cancelled(&self) -> bool {
-        self.cancels.load(Ordering::SeqCst) != 0
     }
 
     /// The text at `path`, read and colored whole with the grammar `name`:
     /// what is kept of it, its lines and its capture names.
-    fn open(&mut self, name: &str, path: &Path) -> anyhow::Result<(Document, u32, Vec<String>)> {
+    fn open(
+        &mut self,
+        name: &str,
+        path: &Path,
+        cancel: &AtomicUsize,
+    ) -> anyhow::Result<(Document, u32, Vec<String>)> {
+        let cancelled = || cancel.load(Ordering::SeqCst) != 0;
         let index = self.grammars.find(name)?;
         let loaded = self.grammars.load(index)?;
         // Colored by nothing, the text is bat's grammar's to color.
@@ -129,7 +148,7 @@ impl Worker {
             anyhow::bail!("{name} colors nothing: {why}");
         }
         let text = read_text(path)?;
-        anyhow::ensure!(!self.cancelled(), "cancelled");
+        anyhow::ensure!(!cancelled(), "cancelled");
         if !self.stored && self.grammars.any_wasm() {
             let store = tree_sitter::WasmStore::new(self.grammars.engine())
                 .map_err(|error| anyhow::anyhow!("{error}"))?;
@@ -146,7 +165,6 @@ impl Worker {
             let Worker {
                 grammars,
                 highlighter,
-                cancels,
                 ..
             } = self;
             let events = highlighter
@@ -154,7 +172,7 @@ impl Worker {
                     &loaded.highlight,
                     text.as_bytes(),
                     None,
-                    Some(cancels),
+                    Some(cancel),
                     |injected| grammars.injected(injected),
                 )
                 .map_err(highlight_error)?;
@@ -191,14 +209,14 @@ impl Worker {
             .collect();
         let (first, spans) = spans.finish();
         let (folds, outline) = if loaded.folds.is_some() || loaded.outline.is_some() {
-            let tree = self.parse(loaded, &text)?;
+            let tree = self.parse(loaded, &text, cancel)?;
             let folds = loaded.folds.as_ref().map_or_else(Vec::new, |query| {
-                folds(query, &tree, text.as_bytes(), &self.cancels)
+                folds(query, &tree, text.as_bytes(), cancel)
             });
             let outline = loaded.outline.as_ref().map_or_else(Vec::new, |query| {
-                outline(query, &tree, text.as_bytes(), &self.cancels)
+                outline(query, &tree, text.as_bytes(), cancel)
             });
-            anyhow::ensure!(!self.cancelled(), "cancelled");
+            anyhow::ensure!(!cancelled(), "cancelled");
             (folds, outline)
         } else {
             (Vec::new(), Vec::new())
@@ -217,7 +235,7 @@ impl Worker {
     }
 
     /// The text's tree, for its folds and outline: highlighting kept none.
-    fn parse(&mut self, loaded: &Loaded, text: &str) -> anyhow::Result<Tree> {
+    fn parse(&mut self, loaded: &Loaded, text: &str, cancel: &AtomicUsize) -> anyhow::Result<Tree> {
         let parser: &mut Parser = self.highlighter.parser();
         // The highlighter left the ranges of the last language it parsed.
         parser
@@ -226,9 +244,8 @@ impl Worker {
         parser
             .set_language(&loaded.language)
             .map_err(|error| anyhow::anyhow!("{error}"))?;
-        let cancels = &self.cancels;
         let mut progress = |_: &tree_sitter::ParseState| {
-            if cancels.load(Ordering::SeqCst) == 0 {
+            if cancel.load(Ordering::SeqCst) == 0 {
                 ControlFlow::Continue(())
             } else {
                 ControlFlow::Break(())
@@ -265,15 +282,22 @@ fn read_text(path: &Path) -> anyhow::Result<String> {
 }
 
 impl Document {
-    /// The spans of lines `from..to`, those past the last left out.
+    /// The spans of lines `from..to`, those past the last left out, and
+    /// past `SPANS` spans in all (one line at least): a reply stays within
+    /// `MAX_REPLY`, and the lines after are asked again.
     fn colors(&self, from: u32, to: u32) -> Vec<Vec<Span>> {
         let lines = self.first.len().saturating_sub(1);
         let to = (to as usize).min(lines);
         let from = (from as usize).min(to);
+        let mut taken = 0;
         (from..to)
-            .map(|line| {
-                self.spans[self.first[line] as usize..self.first[line + 1] as usize].to_vec()
+            .map(|line| &self.spans[self.first[line] as usize..self.first[line + 1] as usize])
+            .take_while(|spans| {
+                let first = taken == 0;
+                taken += spans.len().max(1);
+                first || taken <= SPANS
             })
+            .map(<[Span]>::to_vec)
             .collect()
     }
 }
@@ -282,7 +306,8 @@ impl Document {
 /// line ending, or none, makes no line of its own.
 struct Lines<'t> {
     text: &'t [u8],
-    starts: Vec<usize>,
+    /// Where each begins: a text is no longer than `MAX_TEXT`, which fits.
+    starts: Vec<u32>,
 }
 
 impl<'t> Lines<'t> {
@@ -292,9 +317,9 @@ impl<'t> Lines<'t> {
             text.iter()
                 .enumerate()
                 .filter(|(_, byte)| **byte == b'\n')
-                .map(|(at, _)| at + 1),
+                .map(|(at, _)| u32::try_from(at + 1).unwrap_or(u32::MAX)),
         );
-        if starts.last() == Some(&text.len()) {
+        if starts.last().map(|&start| start as usize) == Some(text.len()) {
             starts.pop();
         }
         Lines { text, starts }
@@ -307,12 +332,11 @@ impl<'t> Lines<'t> {
     /// Where line `line` begins and its text ends, its ending (`\n` or
     /// `\r\n`) left out, and where the next begins.
     fn bounds(&self, line: usize) -> (usize, usize, usize) {
-        let start = self.starts[line];
+        let start = self.starts[line] as usize;
         let next = self
             .starts
             .get(line + 1)
-            .copied()
-            .unwrap_or(self.text.len());
+            .map_or(self.text.len(), |&next| next as usize);
         let mut end = next;
         if end > start && self.text[end - 1] == b'\n' {
             end -= 1;
@@ -348,14 +372,16 @@ impl<'l, 't> Colored<'l, 't> {
     /// ends, its line endings left out.
     fn add(&mut self, start: usize, end: usize, capture: u16) {
         let count = self.lines.count();
-        while self.line + 1 < count && self.lines.starts[self.line + 1] <= start {
+        while self.line + 1 < count && self.lines.starts[self.line + 1] as usize <= start {
             self.line += 1;
         }
         let mut line = self.line;
         while line < count {
             let (line_start, line_end, next) = self.lines.bounds(line);
             let (from, to) = (start.max(line_start), end.min(line_end));
-            if from < to {
+            // A line longer than any shown colored keeps no spans: it is
+            // bat's to color, and its spans could fill no reply.
+            if from < to && line_end - line_start <= MAX_LINE {
                 self.push(
                     line,
                     (from - line_start) as u32,
@@ -594,6 +620,39 @@ mod tests {
                 "{text:?}"
             );
         }
+    }
+
+    /// A line longer than any colored where it is shown keeps no spans; a
+    /// reply holds `SPANS` spans at most, a line's whole, the first at
+    /// least.
+    #[test]
+    fn what_is_kept_and_answered_is_bounded() {
+        let long = "x".repeat(MAX_LINE + 1);
+        let text = format!("ab\n{long}\ncd");
+        assert_eq!(
+            spans_of(&text, &[(0, text.len(), 1)]),
+            vec![vec![(0, 2, 1)], vec![], vec![(0, 2, 1)]]
+        );
+        let span = |start: u32| Span {
+            start,
+            end: start + 1,
+            capture: 0,
+        };
+        let many = u32::try_from(SPANS).unwrap();
+        let document = Document {
+            first: vec![0, many - 1, many + 1, many + 2],
+            spans: (0..many + 2).map(span).collect(),
+            folds: Vec::new(),
+            outline: Vec::new(),
+        };
+        let answered = document.colors(0, 3);
+        assert_eq!(answered.len(), 1, "the first line, then no more");
+        assert_eq!(document.colors(1, 3).len(), 2);
+        let alone = Document {
+            first: vec![0, many + 2],
+            ..document
+        };
+        assert_eq!(alone.colors(0, 1).len(), 1, "a line past it, whole");
     }
 
     #[test]

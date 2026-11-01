@@ -525,6 +525,51 @@ fn a_grammar_that_fails_is_said_and_the_helper_goes_on() {
     ));
 }
 
+/// What reads a text kept is answered while another parses; a parse
+/// waiting behind another and cancelled is answered without running.
+#[cfg(target_os = "linux")]
+#[test]
+fn reads_are_answered_while_a_text_parses() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut large = String::from("[\n");
+    while large.len() < 8 << 20 {
+        large.push_str("  {\"key\": \"value\", \"n\": [1, 2.5, true, null]},\n");
+    }
+    large.push_str("  {}\n]\n");
+    let large = write(dir.path(), "large", &large);
+    let small = write(dir.path(), "small", TEXT);
+    let mut helper = Helper::with(vec![json("json", native_library())]);
+    assert!(matches!(
+        helper.open(1, "json", &small),
+        Reply::Opened { .. }
+    ));
+    let parse = helper.send(&Request::Open {
+        doc: 2,
+        name: "json".into(),
+        text: large.clone(),
+    });
+    let waiting = helper.send(&Request::Open {
+        doc: 3,
+        name: "json".into(),
+        text: large,
+    });
+    let read = helper.send(&Request::Folds { doc: 1 });
+    assert_eq!(helper.reply(), Some((read, Reply::Folds(Vec::new()))));
+    let cancel_waiting = helper.send(&Request::Cancel { request: waiting });
+    let cancel_parse = helper.send(&Request::Cancel { request: parse });
+    let mut replies: Vec<(u64, Reply)> = (0..4).map(|_| helper.reply().unwrap()).collect();
+    replies.sort_by_key(|(id, _)| *id);
+    assert_eq!(
+        replies,
+        [
+            (parse, Reply::Error("cancelled".into())),
+            (waiting, Reply::Error("cancelled".into())),
+            (cancel_waiting, Reply::Done),
+            (cancel_parse, Reply::Done),
+        ]
+    );
+}
+
 /// A parse of several MiB stops when cancelled while it runs; the helper
 /// serves on. How long a parse takes here is measured first, on a text a
 /// sixteenth as long: the cancel is sent once the long one is surely
@@ -559,14 +604,18 @@ fn a_parse_is_cancelled_and_the_helper_serves_on() {
     let started = std::time::Instant::now();
     // Read, and parsing.
     std::thread::sleep(sample * 2);
-    let cancel = helper.send(&Request::Cancel);
-    for id in [open, cancel] {
-        assert_eq!(
-            helper.reply(),
-            Some((id, Reply::Error("cancelled".into()))),
-            "request {id}"
-        );
-    }
+    let cancel = helper.send(&Request::Cancel { request: open });
+    // Each answered when ready: the cancel at once, the parse once it
+    // noticed.
+    let mut replies = [helper.reply().unwrap(), helper.reply().unwrap()];
+    replies.sort_by_key(|(id, _)| *id);
+    assert_eq!(
+        replies,
+        [
+            (open, Reply::Error("cancelled".into())),
+            (cancel, Reply::Done)
+        ]
+    );
     // Sixteen times the sample's text would take about sixteen times as long.
     assert!(
         started.elapsed() < sample * 8,
