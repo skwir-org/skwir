@@ -454,8 +454,7 @@ impl<'a> Flow<'a> {
                     width: *width,
                     height: *height,
                 };
-                let file = picture.path.clone();
-                cx.content(|surface, _| pictures::draw_picture(surface, &file, area));
+                cx.content(|surface, _| pictures::draw_picture(surface, &picture, area));
                 if let Some(caption) = picture.caption.as_deref().filter(|c| !c.is_empty()) {
                     let mut spec = Spec::new(Role::Text, 8.0);
                     spec.color = GREY;
@@ -1179,7 +1178,8 @@ fn code_stretches(text: &str, runs: &[Run]) -> Vec<CodeText> {
 /// A picture's size in a document: its pixels as a browser shows them,
 /// smaller to fit the width and the page.
 fn picture_size(picture: &Picture, width: f32, height: f32) -> (f32, f32) {
-    if picture.width == 0 || picture.height == 0 {
+    let (shown_width, shown_height) = picture.shown();
+    if shown_width == 0 || shown_height == 0 {
         return (width.min(height), width.min(height) * 0.75);
     }
     let area = Area {
@@ -1189,8 +1189,8 @@ fn picture_size(picture: &Picture, width: f32, height: f32) -> (f32, f32) {
         height: height * 0.9,
     };
     let fitted = geometry::fit(
-        picture.width as f32,
-        picture.height as f32,
+        shown_width as f32,
+        shown_height as f32,
         area,
         POINTS_PER_PIXEL,
     );

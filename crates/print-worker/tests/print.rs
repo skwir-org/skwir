@@ -533,6 +533,7 @@ fn a_document_has_its_outline_links_lists_tables_and_pictures() {
             height: 200,
             alt: "A gradient".into(),
             caption: Some("A figure".into()),
+            orientation: 0,
         }),
         ..Block::default()
     });
@@ -687,6 +688,7 @@ fn pictures_go_a_page_each_or_on_a_contact_sheet() {
             height: 48,
             alt: format!("Picture {i}"),
             caption: Some(format!("picture-{i}.jpg")),
+            orientation: 0,
         });
     }
     let sheet = job(
@@ -725,6 +727,86 @@ fn pictures_go_a_page_each_or_on_a_contact_sheet() {
     let (made, document, _) = ok(dir.path(), &pages);
     assert_eq!(made.pages, 2);
     assert_eq!(images(&document).len(), 2);
+}
+
+/// The matrix each picture of page `page` is drawn with: what the content
+/// sets (`cm`, within `q` and `Q`) where it draws one (`Do`).
+fn picture_matrices(document: &Document, page: u32) -> Vec<[f32; 6]> {
+    let id = document.get_pages()[&page];
+    let content = document.get_and_decode_page_content(id).unwrap();
+    let number = |o: &Object| {
+        o.as_float()
+            .or_else(|_| o.as_i64().map(|i| i as f32))
+            .unwrap_or(0.0)
+    };
+    let mut matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
+    let mut saved = Vec::new();
+    let mut out = Vec::new();
+    for operation in &content.operations {
+        match operation.operator.as_str() {
+            "q" => saved.push(matrix),
+            "Q" => matrix = saved.pop().unwrap_or(matrix),
+            "cm" if operation.operands.len() == 6 => {
+                let m: Vec<f32> = operation.operands.iter().map(number).collect();
+                let c = matrix;
+                matrix = [
+                    m[0] * c[0] + m[1] * c[2],
+                    m[0] * c[1] + m[1] * c[3],
+                    m[2] * c[0] + m[3] * c[2],
+                    m[2] * c[1] + m[3] * c[3],
+                    m[4] * c[0] + m[5] * c[2] + c[4],
+                    m[4] * c[1] + m[5] * c[3] + c[5],
+                ];
+            }
+            "Do" => out.push(matrix),
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn a_picture_stored_sideways_prints_as_it_is_shown() {
+    let Some(fonts) = fonts() else { return };
+    let dir = scratch();
+    // Stored 80 wide and 60 high, its EXIF saying to turn it a quarter
+    // clockwise: shown 60 wide, 80 high.
+    let path = dir.path().join("turned.jpg");
+    write_jpeg(&path, 80, 60);
+    let picture = |orientation| Picture {
+        path: path.clone(),
+        width: 80,
+        height: 60,
+        alt: "A photo".into(),
+        caption: None,
+        orientation,
+    };
+    let job = job(
+        dir.path(),
+        fonts,
+        vec![Part::Pictures {
+            pictures: vec![picture(6), picture(1)],
+            sheet: false,
+        }],
+    );
+    let (made, document, _) = ok(dir.path(), &job);
+    assert_eq!(made.pages, 2);
+    let [turned] = picture_matrices(&document, 1)[..] else {
+        panic!("one picture on the first page");
+    };
+    let [a, b, c, d, ..] = turned;
+    assert!(
+        a.abs() < 1e-3 && d.abs() < 1e-3,
+        "a quarter turn: {turned:?}"
+    );
+    // Its width across the page is its stored height's: it stands up.
+    assert!(b.abs() > c.abs() * 1.2, "taller than wide: {turned:?}");
+    let [upright] = picture_matrices(&document, 2)[..] else {
+        panic!("one picture on the second page");
+    };
+    let [a, b, c, d, ..] = upright;
+    assert!(b.abs() < 1e-3 && c.abs() < 1e-3, "as stored: {upright:?}");
+    assert!(a.abs() > d.abs() * 1.2, "wider than tall: {upright:?}");
 }
 
 #[test]

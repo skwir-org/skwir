@@ -595,9 +595,25 @@ pub struct Picture {
     pub height: u32,
     pub alt: String,
     pub caption: Option<String>,
+    /// How it is turned to be shown, as the window shows it: its EXIF
+    /// Orientation (1 to 8) for a picture handed as its file stores it,
+    /// `width` and `height` then as stored; 0 (or 1) for one drawn as it
+    /// is, as skwir writes the pictures it decodes.
+    #[serde(default, skip_serializing_if = "is_zero_u8")]
+    pub orientation: u8,
 }
 
 impl Picture {
+    /// Its width and height as shown: a quarter turn (EXIF 5 to 8) swaps
+    /// them.
+    pub fn shown(&self) -> (u32, u32) {
+        if (5..=8).contains(&self.orientation) {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        }
+    }
+
     /// The most pixels a picture is decoded at to be printed, read from
     /// its header first: as many as a preview shown whole decodes (the
     /// platform's `limits::WHOLE_PICTURE_PIXELS`). The print helper draws

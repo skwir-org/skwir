@@ -711,8 +711,9 @@ fn specimen(path: &Path) -> Part {
     }
 }
 
-/// A picture: a JPEG, PNG, GIF or WebP as it is; another decoded and
-/// written as a PNG.
+/// A picture: a JPEG, PNG, GIF or WebP as it is, with how to turn it,
+/// when within `Picture::MOST_PIXELS`; another, or one larger, decoded
+/// and turned (within the platform's limits) and written as a PNG.
 fn picture(path: &Path, mime: Option<&str>, work: &Path) -> anyhow::Result<Part> {
     let alt = display_name(path);
     let reader = image::ImageReader::open(path)?.with_guessed_format()?;
@@ -720,13 +721,18 @@ fn picture(path: &Path, mime: Option<&str>, work: &Path) -> anyhow::Result<Part>
         mime,
         Some("image/jpeg" | "image/png" | "image/gif" | "image/webp")
     );
-    let (path, (width, height)) = if embedded {
-        (path.to_owned(), reader.into_dimensions()?)
+    // As it is, only within what the print helper decodes, and with how
+    // its EXIF says to turn it: the helper turns it as the window does.
+    let (width, height, orientation) = skwir_platform::picture::stored(reader)?;
+    let within = u64::from(width) * u64::from(height) <= paper::Picture::MOST_PIXELS;
+    let (path, (width, height), orientation) = if embedded && within {
+        (path.to_owned(), (width, height), orientation)
     } else {
+        let reader = image::ImageReader::open(path)?.with_guessed_format()?;
         let decoded = skwir_platform::picture::decode(reader)?;
         let png = work.join("picture.png");
         decoded.save_with_format(&png, image::ImageFormat::Png)?;
-        (png, (decoded.width(), decoded.height()))
+        (png, (decoded.width(), decoded.height()), 0)
     };
     Ok(Part::Pictures {
         pictures: vec![paper::Picture {
@@ -735,6 +741,7 @@ fn picture(path: &Path, mime: Option<&str>, work: &Path) -> anyhow::Result<Part>
             height,
             alt,
             caption: None,
+            orientation,
         }],
         sheet: false,
     })
@@ -820,6 +827,7 @@ fn sheet_picture(path: &Path, stem: &Path, name: &str) -> anyhow::Result<paper::
         height,
         alt: name.to_owned(),
         caption: Some(name.to_owned()),
+        orientation: 0,
     })
 }
 
@@ -861,6 +869,7 @@ fn drawn(
             height,
             alt: format!("Page {page}"),
             caption: None,
+            orientation: 0,
         });
     }
     Ok(Source::Parts {

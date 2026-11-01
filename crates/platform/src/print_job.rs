@@ -257,6 +257,7 @@ pub fn parts(
                     height: image.height,
                     alt: inspection.title.clone(),
                     caption: None,
+                    orientation: 0,
                 }],
                 sheet: false,
             });
@@ -439,6 +440,7 @@ fn flow(
                                 height,
                                 alt: block.alt.clone(),
                                 caption: None,
+                                orientation: 0,
                             }),
                             text: String::new(),
                             runs: Vec::new(),
@@ -1100,6 +1102,7 @@ mod tests {
                 height: 30,
                 alt: "A red box".into(),
                 caption: None,
+                orientation: 0,
             }],
             sheet: false,
         });

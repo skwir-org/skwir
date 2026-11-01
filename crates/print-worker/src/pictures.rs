@@ -2,7 +2,9 @@
 //! the text, or several to a page with their names, as a contact sheet;
 //! a document's pages drawn as pictures; an SVG drawing kept vector. A
 //! JPEG is embedded as it is, other pictures as krilla takes them in;
-//! each is a figure with its alternative text for a screen reader.
+//! each is a figure with its alternative text for a screen reader, turned
+//! as its EXIF orientation says (`Picture::orientation`): a picture
+//! prints as the window shows it.
 //!
 //! Everything decoded here is bounded first, from what its header says:
 //! a picture past [`Picture::MOST_PIXELS`] is not decoded (krilla decodes
@@ -67,7 +69,7 @@ impl Part for Pictures<'_> {
                 self.structure
                     .goto(cx, &[(key(1, page), figure(&picture.alt))]);
                 let area = picture_area(picture, self.frame.text);
-                cx.content(|surface, _| draw_picture(surface, &picture.path, area));
+                cx.content(|surface, _| draw_picture(surface, picture, area));
                 self.structure.close_all(cx);
             }
             return Ok(());
@@ -87,7 +89,7 @@ impl Part for Pictures<'_> {
             // On its name, however much higher the room goes.
             let mut area = picture_area(picture, room);
             area.y = room.y + room.height - area.height;
-            cx.content(|surface, _| draw_picture(surface, &picture.path, area));
+            cx.content(|surface, _| draw_picture(surface, picture, area));
             if let Some(caption) = picture.caption.as_deref().filter(|c| !c.is_empty()) {
                 let mut spec = Spec::new(Role::Text, 7.0);
                 spec.color = GREY;
@@ -121,26 +123,27 @@ fn figure(alt: &str) -> krilla::tagging::TagKind {
     Tag::Figure((!alt.is_empty()).then(|| alt.to_owned())).into()
 }
 
-/// Where a picture goes in `room`: its size as skwir wrote it fitted,
-/// centred.
+/// Where a picture goes in `room`: its size as shown fitted, centred.
 fn picture_area(picture: &Picture, room: Area) -> Area {
-    let (width, height) = if picture.width > 0 && picture.height > 0 {
-        (picture.width as f32, picture.height as f32)
+    let (width, height) = picture.shown();
+    let (width, height) = if width > 0 && height > 0 {
+        (width as f32, height as f32)
     } else {
         (room.width, room.height)
     };
     fit(width, height, room, f32::INFINITY)
 }
 
-/// The picture at `path` in `area`, a grey frame where it cannot be read.
-pub fn draw_picture(surface: &mut Surface, path: &Path, area: Area) {
-    let Some(size) = Size::from_wh(area.width.max(0.1), area.height.max(0.1)) else {
-        return;
-    };
-    if let Some(image) = read_picture(path) {
-        surface.push_transform(&Transform::from_translate(area.x, area.y));
-        surface.draw_image(image, size);
-        surface.pop();
+/// The picture in `area`, turned as it is shown, a grey frame where it
+/// cannot be read.
+pub fn draw_picture(surface: &mut Surface, picture: &Picture, area: Area) {
+    if let Some(image) = read_picture(&picture.path) {
+        let (turn, (width, height)) = turned(picture.orientation, area);
+        if let Some(size) = Size::from_wh(width.max(0.1), height.max(0.1)) {
+            surface.push_transform(&turn);
+            surface.draw_image(image, size);
+            surface.pop();
+        }
         return;
     }
     let mut frame = PathBuilder::new();
@@ -157,6 +160,30 @@ pub fn draw_picture(surface: &mut Surface, path: &Path, area: Area) {
         surface.draw_path(&path);
         surface.set_stroke(None);
     }
+}
+
+/// Where a picture stored sideways or mirrored is drawn so it shows in
+/// `area` as its EXIF `orientation` (1 to 8) says: the transform that
+/// puts it there, and the size it is drawn at as stored (a quarter turn
+/// swaps the two sides). Any other is drawn as it is stored.
+fn turned(orientation: u8, area: Area) -> (Transform, (f32, f32)) {
+    let (w, h) = (area.width, area.height);
+    // Each maps a point (u, v) of the picture as stored, drawn at its
+    // stored size, to where it shows: x = a u + c v + e, y = b u + d v + f.
+    let (stored, [a, b, c, d, e, f]) = match orientation {
+        2 => ((w, h), [-1.0, 0.0, 0.0, 1.0, w, 0.0]),
+        3 => ((w, h), [-1.0, 0.0, 0.0, -1.0, w, h]),
+        4 => ((w, h), [1.0, 0.0, 0.0, -1.0, 0.0, h]),
+        5 => ((h, w), [0.0, 1.0, 1.0, 0.0, 0.0, 0.0]),
+        6 => ((h, w), [0.0, 1.0, -1.0, 0.0, w, 0.0]),
+        7 => ((h, w), [0.0, -1.0, -1.0, 0.0, w, h]),
+        8 => ((h, w), [0.0, -1.0, 1.0, 0.0, 0.0, h]),
+        _ => ((w, h), [1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+    };
+    (
+        Transform::from_row(a, b, c, d, e + area.x, f + area.y),
+        stored,
+    )
 }
 
 /// Whether the picture `data` holds may be decoded: its size, read from
@@ -323,6 +350,41 @@ impl Part for Drawing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Where `turn` puts the stored point `(u, v)`.
+    fn at(turn: &Transform, (u, v): (f32, f32)) -> (f32, f32) {
+        (
+            turn.sx() * u + turn.kx() * v + turn.tx(),
+            turn.ky() * u + turn.sy() * v + turn.ty(),
+        )
+    }
+
+    #[test]
+    fn a_picture_stored_sideways_is_turned_into_its_area() {
+        let area = Area {
+            x: 10.0,
+            y: 20.0,
+            width: 60.0,
+            height: 80.0,
+        };
+        // 6: turned a quarter clockwise to show; stored 80 wide, 60 high.
+        let (turn, stored) = turned(6, area);
+        assert_eq!(stored, (80.0, 60.0));
+        // Its top left shows at the top right, its bottom left at the top
+        // left: its left column is the top row.
+        assert_eq!(at(&turn, (0.0, 0.0)), (70.0, 20.0));
+        assert_eq!(at(&turn, (0.0, 60.0)), (10.0, 20.0));
+        assert_eq!(at(&turn, (80.0, 60.0)), (10.0, 100.0));
+        // Every orientation fills the area, and nothing outside it.
+        for orientation in 0..=8 {
+            let (turn, (w, h)) = turned(orientation, area);
+            let corners = [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)].map(|p| at(&turn, p));
+            for (x, y) in corners {
+                assert!((10.0..=70.0).contains(&x) && (20.0..=100.0).contains(&y));
+            }
+            assert!(corners.contains(&(10.0, 20.0)) && corners.contains(&(70.0, 100.0)));
+        }
+    }
 
     #[test]
     fn a_picture_too_large_is_not_decoded() {

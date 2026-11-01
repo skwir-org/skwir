@@ -1627,6 +1627,12 @@ is still to come are in `docs/preview-frame.md`.
   page is laid out once, each page drawing the lines it shows; a table's
   header is repeated over the pages after its own only when it leaves
   half a page, decided once for laying out and drawing.
+- **A picture prints as the window shows it.** One handed to the helper
+  as its file stores it carries its EXIF orientation
+  (`print::Picture::orientation`, read by `picture::stored`, the reader
+  the window's pictures go through), and the helper turns it; one the
+  window decoded is handed upright. A drawing's text is written in the
+  job's faces and its characters looked for with the rest.
 - **What the helper writes keeps the shaper's placing.** parley's glyphs
   reach krilla through one conversion (`text::krilla_glyph`), which turns
   parley's downward vertical offset back into the shaper's upward one: a

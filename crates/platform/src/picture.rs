@@ -27,6 +27,15 @@ pub fn size<R: BufRead + Seek>(reader: ImageReader<R>) -> ImageResult<(u32, u32)
     Ok(turned(width, height, orientation(&mut decoder)))
 }
 
+/// The picture's width and height as stored, read from its header, and
+/// its EXIF Orientation (1 to 8): what the print helper needs to draw it
+/// turned as it is shown, from its own bytes.
+pub fn stored<R: BufRead + Seek>(reader: ImageReader<R>) -> ImageResult<(u32, u32, u8)> {
+    let mut decoder = reader.into_decoder()?;
+    let (width, height) = decoder.dimensions();
+    Ok((width, height, orientation(&mut decoder).to_exif()))
+}
+
 /// The picture decoded and turned, a floating-point one encoded as sRGB in
 /// eight bits. The reader's limits bound the decode as they would
 /// `ImageReader::decode`.
@@ -224,6 +233,12 @@ mod tests {
         ImageReader::new(Cursor::new(bytes))
             .with_guessed_format()
             .unwrap()
+    }
+
+    #[test]
+    fn a_picture_as_stored_says_how_to_turn_it() {
+        assert_eq!(stored(reader(&jpeg(6))).unwrap(), (3, 2, 6));
+        assert_eq!(stored(reader(&jpeg(1))).unwrap(), (3, 2, 1));
     }
 
     #[test]
