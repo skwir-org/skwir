@@ -163,6 +163,8 @@ struct State {
     /// The grammar used for each language, picked from `all` as `chosen`
     /// says; `None` before the grammars are found.
     found: Option<Arc<[Found]>>,
+    /// Counts the picks that changed `found` (`generation`).
+    generation: u64,
 }
 
 static STATE: RwLock<State> = RwLock::new(State {
@@ -170,6 +172,7 @@ static STATE: RwLock<State> = RwLock::new(State {
     folders: Vec::new(),
     chosen: BTreeMap::new(),
     found: None,
+    generation: 0,
 });
 
 /// The grammar used for each language, as last found and chosen. Finding
@@ -184,29 +187,52 @@ pub fn all() -> Option<Arc<[Found]>> {
     STATE.read().all.clone()
 }
 
+/// How many times the grammars used changed: found, found again
+/// differently, or picked otherwise. What was colored with others is
+/// colored again when it changed (a preview's `Version`).
+pub fn generation() -> u64 {
+    STATE.read().generation
+}
+
 /// Find the grammars again where this system keeps them, keep them for
-/// `all`, choose each language's as `chosen` says (`choose`), and answer
-/// those used.
-pub fn find(chosen: &BTreeMap<String, Source>) -> Arc<[Found]> {
+/// `all`, and pick each language's with the choices last given to `sync`:
+/// a choice made while they are found is the one used. The grammars used.
+pub fn find() -> Arc<[Found]> {
     let (all, folders) = find_in(&Roots::here(), &bat_file_types());
     let mut state = STATE.write();
     state.all = Some(all.into());
     state.folders = folders;
-    state.chosen.clone_from(chosen);
     repick(&mut state)
 }
 
-/// Use, for each language `chosen` names (in lower case), its grammar from
-/// the source it names where that one is usable, and for any other the
-/// first usable; keep them for `found`, tell the helper every caller
-/// shares those it can use (`tree_sitter::shared`: a grammar colors what
-/// it injects there too), and answer them. Telling it starts nothing: a
-/// helper told others is let go of, and the next text opened starts one
-/// told these.
-pub fn choose(chosen: &BTreeMap<String, Source>) -> Arc<[Found]> {
+/// The grammars used for these choices, by language in lower case (a
+/// language's grammar from the source it names where that one is usable,
+/// any other's the first usable): those kept when the choices are the
+/// ones kept, else picked again now and told the helper every caller
+/// shares (`tree_sitter::shared`: a grammar colors what it injects there
+/// too). Telling it starts nothing: a helper told others is let go of,
+/// and the next text opened starts one told these. Empty before the
+/// grammars are found.
+pub fn sync(chosen: &BTreeMap<String, Source>) -> Arc<[Found]> {
+    {
+        let state = STATE.read();
+        if state.chosen == *chosen
+            && let Some(found) = &state.found
+        {
+            return Arc::clone(found);
+        }
+        if state.all.is_none() && state.chosen == *chosen {
+            return Arc::default();
+        }
+    }
     let mut state = STATE.write();
-    state.chosen.clone_from(chosen);
-    repick(&mut state)
+    if state.chosen != *chosen {
+        state.chosen.clone_from(chosen);
+        if state.all.is_some() {
+            return repick(&mut state);
+        }
+    }
+    state.found.clone().unwrap_or_default()
 }
 
 /// Pick the grammars used from those found as the choices kept say, and
@@ -215,6 +241,9 @@ pub fn choose(chosen: &BTreeMap<String, Source>) -> Arc<[Found]> {
 fn repick(state: &mut State) -> Arc<[Found]> {
     let all = state.all.clone().unwrap_or_default();
     let found: Arc<[Found]> = pick(&all, &state.chosen).into();
+    if state.found.as_deref() != Some(&*found) {
+        state.generation += 1;
+    }
     state.found = Some(Arc::clone(&found));
     let told: Vec<Grammar> = found
         .iter()
@@ -1845,6 +1874,38 @@ mod tests {
                 .library
                 .starts_with(root.join("skwir/b-built"))
         );
+    }
+
+    /// The grammars used follow the choices each caller reads, picked again
+    /// only when they differ; each change counts in `generation`.
+    #[test]
+    fn the_pick_follows_the_choices_it_is_given() {
+        let of = |source: Source| Found {
+            grammar: Grammar {
+                name: "nix".into(),
+                ..Grammar::default()
+            },
+            source,
+            queries_from: None,
+            file_types: vec!["nix".into()],
+            first_line: None,
+            problem: None,
+        };
+        // Before the grammars are found: none, the choice kept.
+        let neovim = BTreeMap::from([("nix".to_owned(), Source::Neovim)]);
+        assert!(sync(&neovim).is_empty());
+        {
+            let mut state = STATE.write();
+            state.all = Some(vec![of(Source::Zed), of(Source::Neovim)].into());
+            repick(&mut state);
+        }
+        let found = generation();
+        assert_eq!(sync(&neovim)[0].source, Source::Neovim, "chosen before");
+        assert_eq!(generation(), found, "the same choices: nothing picked");
+        assert_eq!(sync(&BTreeMap::new())[0].source, Source::Zed);
+        assert_eq!(generation(), found + 1);
+        assert_eq!(sync(&BTreeMap::new())[0].source, Source::Zed);
+        assert_eq!(generation(), found + 1);
     }
 
     #[test]

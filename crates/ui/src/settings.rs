@@ -515,7 +515,7 @@ pub(crate) fn choose_grammar(app: &App, language: &str, grammar: &str) -> anyhow
         table.insert(language, grammar.to_owned());
     }
     let chosen = skwir_platform::highlight::tree::chosen_in(&table);
-    skwir_platform::grammars::choose(
+    skwir_platform::grammars::sync(
         &GrammarChoices {
             chosen: Arc::new(chosen),
             ..GrammarChoices::chosen(app)
@@ -562,9 +562,12 @@ pub(crate) fn list_code_themes(app: &Arc<App>) {
             let user = crate::code_preview::user_themes(true);
             skwir_platform::highlight::added::read();
             let Some(app) = weak.upgrade() else { return };
-            skwir_platform::grammars::find(
+            // The choices as they stand, then the grammars found: one made
+            // while they are found is the one picked (`grammars::find`).
+            skwir_platform::grammars::sync(
                 &skwir_platform::highlight::GrammarChoices::chosen(&app).sources(),
             );
+            skwir_platform::grammars::find();
             LANGUAGES.changed();
             for (dark, key) in [(false, CODE_LIGHT_KEY), (true, CODE_DARK_KEY)] {
                 let chosen = app
