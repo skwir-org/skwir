@@ -60,8 +60,17 @@ pub(crate) fn draft_side(side: u32) -> Option<u32> {
 /// that lays the area out for that preview having come meanwhile.
 #[derive(Default)]
 pub(crate) struct Area {
-    measured: parking_lot::Mutex<Option<(u64, u32)>>,
-    laid_out: parking_lot::Condvar,
+    state: parking_lot::Mutex<Measures>,
+}
+
+#[derive(Default)]
+struct Measures {
+    /// The generation of the preview the area was last laid out for, and
+    /// the side it gives a page.
+    measured: Option<(u64, u32)>,
+    /// The jobs waiting for the next measure: each a child of its job's
+    /// cancel, cancelled by the measure, so one wait ends on either.
+    waiting: Vec<skwir_core::cancel::CancelToken>,
 }
 
 impl Area {
@@ -71,29 +80,42 @@ impl Area {
 
     /// The area of the preview `generation` was laid out, at `side`.
     pub(crate) fn measured(&self, generation: u64, side: u32) {
-        let mut measured = self.measured.lock();
-        if *measured != Some((generation, side)) {
-            *measured = Some((generation, side));
-            self.laid_out.notify_all();
+        let mut state = self.state.lock();
+        if state.measured != Some((generation, side)) {
+            state.measured = Some((generation, side));
+            for waiting in state.waiting.drain(..) {
+                waiting.cancel();
+            }
         }
     }
 
-    /// The side measured for the preview `generation`, waiting `WAIT` at
-    /// most for the frame that lays its area out; else the last measured,
-    /// else the smallest step. Called on a worker.
-    pub(crate) fn side(&self, generation: u64) -> u32 {
+    /// The side measured for the preview `generation`, or for a later one
+    /// (the same area, laid out for the preview that followed), waiting
+    /// `WAIT` at most for the frame that lays it out; else the last
+    /// measured, else the smallest step. A job cancelled meanwhile (its
+    /// preview gone) waits no longer. Called on a worker.
+    pub(crate) fn side(&self, generation: u64, cancel: &skwir_core::cancel::CancelToken) -> u32 {
         let deadline = std::time::Instant::now() + Self::WAIT;
-        let mut measured = self.measured.lock();
-        while measured.is_none_or(|(laid_out, _)| laid_out != generation) {
-            if self
-                .laid_out
-                .wait_until(&mut measured, deadline)
-                .timed_out()
-            {
+        loop {
+            let woken = {
+                let mut state = self.state.lock();
+                if let Some((laid_out, side)) = state.measured
+                    && laid_out >= generation
+                {
+                    return side;
+                }
+                let woken = cancel.child();
+                state.waiting.push(woken.clone());
+                woken
+            };
+            let signal = woken.subscribe();
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if signal.receiver().recv_timeout(left).is_err() || cancel.is_cancelled() {
                 break;
             }
         }
-        measured.map_or(SIDE_STEP as u32, |(_, side)| side)
+        let state = self.state.lock();
+        state.measured.map_or(SIDE_STEP as u32, |(_, side)| side)
     }
 }
 
@@ -1330,19 +1352,46 @@ mod tests {
     /// draws nothing leaves it the side last measured, or the smallest.
     #[test]
     fn a_first_page_waits_for_its_own_area() {
+        let none = skwir_core::cancel::CancelToken::new();
         let area = Arc::new(Area::default());
-        assert_eq!(area.side(1), 512);
+        assert_eq!(area.side(1, &none), 512);
         area.measured(1, 2048);
         let started = std::time::Instant::now();
-        assert_eq!(area.side(2), 2048);
+        assert_eq!(area.side(2, &none), 2048);
         assert!(started.elapsed() >= Area::WAIT);
         // Laid out while the job waits: not the side measured before.
         let waiting = {
-            let area = Arc::clone(&area);
-            std::thread::spawn(move || area.side(2))
+            let (area, none) = (Arc::clone(&area), none.clone());
+            std::thread::spawn(move || area.side(2, &none))
         };
         area.measured(2, 1024);
         assert_eq!(waiting.join().unwrap(), 1024);
+    }
+
+    /// A later preview's area is the same area: a job whose own preview
+    /// was never laid out (another followed at once) takes it without
+    /// waiting, and a job cancelled while it waits stops waiting.
+    #[test]
+    fn a_first_page_waits_no_longer_than_its_preview_lasts() {
+        let none = skwir_core::cancel::CancelToken::new();
+        let area = Arc::new(Area::default());
+        area.measured(5, 1536);
+        let started = std::time::Instant::now();
+        assert_eq!(area.side(3, &none), 1536);
+        assert!(started.elapsed() < Area::WAIT);
+        let cancel = skwir_core::cancel::CancelToken::new();
+        let waiting = {
+            let (area, cancel) = (Arc::clone(&area), cancel.clone());
+            std::thread::spawn(move || {
+                let started = std::time::Instant::now();
+                (area.side(6, &cancel), started.elapsed())
+            })
+        };
+        // Before it waits or while it does: either way it stops.
+        cancel.cancel();
+        let (side, waited) = waiting.join().unwrap();
+        assert_eq!(side, 1536);
+        assert!(waited < Area::WAIT, "{waited:?}");
     }
 
     #[test]

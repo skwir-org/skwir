@@ -181,7 +181,9 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   never a fixed side: the area says it as it is laid out for that preview
   (`preview::watch_area`, `reader_scroll::Area`, by generation), and the
   preview's job reads it once the document is open, waiting a frame at
-  most. The page comes back with the side it was asked at
+  most: its own preview's measure or a later one's (the same area, laid
+  out for the preview that followed at once), never past its cancel. The
+  page comes back with the side it was asked at
   (`PreviewResult::page_side`), which is the reader's from then on. A
   fixed 2048 px drew a cover of two JPEG 2000 scans in 3 s in a panel
   that needed 512 px (0.3 s).

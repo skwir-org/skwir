@@ -2961,7 +2961,7 @@ impl Shell {
                         closed_links.replace(session.closed_links().map(str::to_owned));
                         // Before any page was shown, the side the content's
                         // area says, laid out for this preview meanwhile.
-                        let side = page_side.unwrap_or_else(|| area.side(generation));
+                        let side = page_side.unwrap_or_else(|| area.side(generation, &cancel));
                         // A document opening, before its page: the page
                         // drawn small, kept aside as the thumbnail is, to
                         // stand in for it once the wait has lasted. One
