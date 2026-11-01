@@ -2316,6 +2316,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fearless_simd"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "629c9d6b6f30b5604089e0980f4d924a013aacb1654a6cdf5d3d852224f68651"
+
+[[package]]
 name = "ferroni"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3541,6 +3547,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "hayro-ccitt"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2866f0d976e76497480b853d5e258dab6e4b89ecfe991124e08f15dfa8fd03ad"
+
+[[package]]
+name = "hayro-jbig2"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "000e025850f4592ddcaee85640db70704151f2bafd43b6f431aa5b6a2c6a35a9"
+dependencies = [
+ "fearless_simd",
+ "hayro-ccitt",
+ "image",
+]
+
+[[package]]
 name = "heapless"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4265,6 +4288,12 @@ name = "jpeg-decoder"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "00810f1d8b74be64b13dbf3db89ac67740615d6c891f0e7b6179326533011a07"
+
+[[package]]
+name = "jpeg-encoder"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0370574b86f7eca156b9f298392b5e69a23f8c86f3f865add60bbc2e79467a6"
 
 [[package]]
 name = "js-sys"
@@ -6143,7 +6172,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
- "windows 0.57.0",
+ "windows 0.62.2",
 ]
 
 [[package]]
@@ -7799,6 +7828,7 @@ dependencies = [
  "djvu-rs",
  "embed-resource",
  "flate2",
+ "image",
  "lopdf",
  "parking_lot",
  "proptest",
@@ -7839,6 +7869,7 @@ dependencies = [
  "skwir-plugin-rename-bulk",
  "skwir-plugin-shelf",
  "skwir-plugin-shell",
+ "skwir-plugin-shrink",
  "skwir-plugin-structured-data",
  "skwir-plugin-tables",
  "skwir-plugin-tags",
@@ -8625,6 +8656,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "skwir-plugin-shrink"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "schemars",
+ "serde",
+ "serde_json",
+ "skwir-core",
+ "skwir-platform",
+ "tempfile",
+ "tracing",
+]
+
+[[package]]
 name = "skwir-plugin-structured-data"
 version = "0.2.0"
 dependencies = [
@@ -8813,12 +8858,31 @@ dependencies = [
  "krilla-svg",
  "lopdf",
  "parley",
+ "serde",
  "serde_json",
  "skrifa 0.44.0",
  "skwir-core",
+ "skwir-shrink",
  "tempfile",
  "unicode-general-category",
  "usvg 0.47.0",
+]
+
+[[package]]
+name = "skwir-shrink"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "fax",
+ "flate2",
+ "hayro-ccitt",
+ "hayro-jbig2",
+ "image",
+ "jpeg-encoder",
+ "kamadak-exif",
+ "lopdf",
+ "skwir-core",
+ "tempfile",
 ]
 
 [[package]]

@@ -1,0 +1,36 @@
+[package]
+name = "skwir-shrink"
+description = "skwir's engine for smaller copies of pictures and PDFs, run by the print helper (ADR-112)"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+skwir-core.workspace = true
+anyhow.workspace = true
+# Pictures read (JPEG, PNG) with their orientation, colour profile and
+# EXIF, resized, and PNG written.
+image = { workspace = true, features = ["png", "jpeg"] }
+# JPEG written: 4:2:0, optimized Huffman tables, progressive. Its DCT and
+# tables come from the IJG's libjpeg (MIT or Apache-2.0, and IJG).
+jpeg-encoder = "0.7"
+# A PDF read and written object by object: its images replaced where they
+# are stored, its pages' drawing never rewritten.
+lopdf = { version = "0.46", default-features = false }
+# A scan's black-and-white pages (CCITT fax) read, to be written as JBIG2.
+hayro-ccitt = "0.4"
+# The EXIF a picture keeps: its date, without location or camera.
+kamadak-exif = "0.6"
+flate2 = "1"
+
+[dev-dependencies]
+tempfile.workspace = true
+# Reads back the JBIG2 written, to check it is what was encoded.
+hayro-jbig2 = "0.3"
+# Writes the Group 4 fax read in tests.
+fax = "0.2"
+
+[lints]
+workspace = true

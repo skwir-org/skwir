@@ -24,6 +24,7 @@ members = [
     "crates/kmtp-worker",
     "crates/tree-sitter-worker",
     "crates/print-worker",
+    "crates/shrink",
 ]
 # The native workers link Poppler, MuPDF, DjVuLibre, GStreamer and
 # libarchive. They are optional at runtime and stay out of the default build
@@ -49,6 +50,7 @@ default-members = [
     "crates/kmtp-worker",
     "crates/tree-sitter-worker",
     "crates/print-worker",
+    "crates/shrink",
 ]
 # Toolkit spikes live in their own workspace so their heavy dependency
 # trees never touch the main build.
@@ -68,6 +70,7 @@ publish = false
 [workspace.dependencies]
 skwir-core = { path = "crates/core" }
 skwir-platform = { path = "crates/platform" }
+skwir-shrink = { path = "crates/shrink" }
 skwir-alloc = { path = "crates/alloc" }
 skwir-ui = { path = "crates/ui" }
 skwir-plugin-places = { path = "crates/plugins/places" }
@@ -113,6 +116,7 @@ skwir-plugin-map-tiles = { path = "crates/plugins/map-tiles" }
 skwir-plugin-vim = { path = "crates/plugins/vim" }
 skwir-plugin-checksums = { path = "crates/plugins/checksums" }
 skwir-plugin-print = { path = "crates/plugins/print" }
+skwir-plugin-shrink = { path = "crates/plugins/shrink" }
 
 # UI toolkit (ADR-001): Zed's gpui at a commit of its main branch, vendored
 # with skwir's patches (ADR-064, vendor/zed/README.skwir.md). gpui_platform

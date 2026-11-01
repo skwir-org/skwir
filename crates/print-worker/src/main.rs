@@ -15,6 +15,11 @@
 //! names: its pictures and drawing, its font files, and font files in its
 //! fallback folders. `--probe` answers whether it runs, `--build` which
 //! build of skwir it is.
+//!
+//! `skwir-print-worker --shrink <job.json>` makes a smaller copy of a
+//! picture or a PDF instead (ADR-112, `skwir_core::shrink::Job`), by the
+//! engine linked here (`skwir-shrink`): the copy at the job's output when
+//! it is smaller, then a line of JSON (`skwir_core::shrink::Made`).
 
 mod code;
 mod flow;
@@ -57,28 +62,47 @@ fn main() {
     if args.first().is_some_and(|arg| arg == "--probe") {
         return;
     }
+    if args.first().is_some_and(|arg| arg == "--shrink") {
+        let [_, job] = args.as_slice() else {
+            eprintln!("usage: skwir-print-worker --shrink <job.json>");
+            std::process::exit(2);
+        };
+        said_on_panic("no smaller copy could be made");
+        answer(shrink(Path::new(job)));
+        return;
+    }
     let [job] = args.as_slice() else {
         eprintln!("usage: skwir-print-worker <job.json>");
         std::process::exit(2);
     };
-    // A panic says so on one line and ends the helper as an error does:
-    // skwir shows the first line of what it says.
-    std::panic::set_hook(Box::new(|info| {
-        let what = info
+    said_on_panic("the PDF could not be made");
+    answer(run(Path::new(job)));
+}
+
+/// A panic says so on one line, after `what`, and ends the helper as an
+/// error does: skwir shows the first line of what it says.
+fn said_on_panic(what: &'static str) {
+    std::panic::set_hook(Box::new(move |info| {
+        let why = info
             .payload()
             .downcast_ref::<&str>()
-            .map(|what| (*what).to_owned())
+            .map(|why| (*why).to_owned())
             .or_else(|| info.payload().downcast_ref::<String>().cloned())
             .unwrap_or_default();
         let at = info
             .location()
             .map(|at| format!(" ({}:{})", at.file(), at.line()))
             .unwrap_or_default();
-        let message = format!("the PDF could not be made: {what}{at}").replace('\n', " ");
+        let message = format!("{what}: {why}{at}").replace('\n', " ");
         eprintln!("{message}");
         std::process::exit(1);
     }));
-    match run(Path::new(job)) {
+}
+
+/// What was made, as a line of JSON on standard output; an error as a
+/// line on standard error, and exit 1.
+fn answer<T: serde::Serialize>(made: Result<T>) {
+    match made {
         Ok(made) => match serde_json::to_string(&made) {
             Ok(line) => println!("{line}"),
             Err(error) => {
@@ -92,6 +116,19 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+/// The smaller copy the job at `path` asks (ADR-112). A job is a few
+/// paths and choices: one past a mebibyte is refused before it is read.
+fn shrink(path: &Path) -> Result<skwir_core::shrink::Made> {
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("the job {} could not be opened", path.display()))?;
+    if file.metadata()?.len() > 1024 * 1024 {
+        bail!("the job is larger than a job may be");
+    }
+    let job: skwir_core::shrink::Job = serde_json::from_reader(std::io::BufReader::new(file))
+        .context("the job could not be read")?;
+    skwir_shrink::run(&job)
 }
 
 fn run(path: &Path) -> Result<Made> {
@@ -156,7 +193,7 @@ pub fn make(job: &Job) -> Result<Made> {
             Part::Pictures { pictures, sheet } => {
                 Box::new(pictures::Pictures::plan(pictures, *sheet, frame))
             }
-            Part::Pages { pages } => Box::new(pictures::Pictures::plan(pages, false, frame)),
+            Part::Pages { pages } => Box::new(pictures::Pictures::pages(pages, frame)),
             Part::Drawing { svg, alt } => Box::new(pictures::Drawing::plan(
                 drawing.as_deref().unwrap_or_default(),
                 svg,

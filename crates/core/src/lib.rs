@@ -60,6 +60,7 @@ pub mod registry;
 pub mod remotes;
 pub mod scheduler;
 pub mod settings;
+pub mod shrink;
 pub mod suggest;
 pub mod syntax;
 pub mod system;

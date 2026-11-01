@@ -9,6 +9,9 @@ rust-version.workspace = true
 
 [dependencies]
 skwir-core.workspace = true
+# Smaller copies of pictures and PDFs, the `--shrink` mode (ADR-112).
+skwir-shrink.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 # Writes the PDF: glyphs of embedded subset fonts with their text, images,

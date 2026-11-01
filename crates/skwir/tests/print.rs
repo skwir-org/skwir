@@ -522,7 +522,10 @@ fn print_asks_skwir_s_dialog_and_saves_the_pdf_it_chose() {
     assert_eq!(asked.form.title, "Print “main.rs”");
     assert_eq!(asked.form.intro, "7 pages");
     let keys: Vec<&str> = asked.form.fields.iter().map(|f| f.key.as_str()).collect();
-    assert_eq!(keys, ["to", "pages", "ranges", "layout", "fold", "trim"]);
+    assert_eq!(
+        keys,
+        ["to", "pages", "ranges", "layout", "fold", "trim", "smaller"]
+    );
     let pages_offered: Vec<&str> = asked.form.fields[1]
         .choices()
         .iter()

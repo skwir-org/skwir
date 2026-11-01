@@ -473,7 +473,28 @@ archives, and the bytes of any file.
   window open:
   `skwir cmd --apply print.save_pdf '{"entries": ["/path/to/notes.md"]}'`
   (`"together": true` makes one PDF of several files; `"pages": "1-3"`;
-  `"layout": "booklet"`, `"contact_sheet"` or `"listing"`).
+  `"layout": "booklet"`, `"contact_sheet"` or `"listing"`). A PDF saved
+  can be made smaller as it is saved: **Smaller file** in the dialog,
+  `"smaller": "screen"` from a script.
+- **Reduce Size…** (Compress in the menu of pictures and PDFs, the
+  preview's More menu) makes a smaller copy beside each file, named
+  after it with “(reduced)” and of its kind (`scan (reduced).pdf`), the
+  file itself untouched (Undo puts the copy in the trash). Choose how small:
+  - **Lossless**: nothing re-encoded at a loss; what a PDF stores twice
+    kept once (a form's fields often share an appearance), a scan's
+    black-and-white pages written as JBIG2.
+  - **Print**, **Screen**, **Small**: pictures at most 3840, 1920 or
+    1280 pixels across; a PDF's images at most 300, 150 or 96 dots per
+    inch, as drawn on its pages.
+
+  **In gray**, **Remove location and camera details** (a photo's date
+  stays) and **At most** a size (`2 MB`: smaller steps are tried until it
+  fits) are offered beside. A PDF keeps its text, links, forms and
+  outline: only its images change, and a page that would look different
+  keeps its own. A copy that would not be smaller is not made, and a
+  PDF protected by a password or signed is left as it is; Skwir says
+  so. From a script:
+  `skwir cmd --apply shrink.reduce '{"entries": ["/path/to/scan.pdf"], "quality": "small"}'`.
 
 [Previews](previews.md) lists every kind of file with its tools, keys
 and requirements.

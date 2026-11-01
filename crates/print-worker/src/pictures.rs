@@ -40,6 +40,9 @@ const GZIP: [u8; 2] = [0x1f, 0x8b];
 pub struct Pictures<'a> {
     all: &'a [Picture],
     sheet: bool,
+    /// Pages a document's reader drew: written as small as they read
+    /// (`skwir_shrink::page`), in gray or as JPEG, not as drawn.
+    drawn: bool,
     frame: Frame,
     grid: Grid,
     structure: Structure,
@@ -50,9 +53,18 @@ impl<'a> Pictures<'a> {
         Pictures {
             all: pictures,
             sheet,
+            drawn: false,
             frame,
             grid: Grid::new(frame.text),
             structure: Structure::default(),
+        }
+    }
+
+    /// A document's pages its reader drew, each on a page of its own.
+    pub fn pages(pages: &'a [Picture], frame: Frame) -> Pictures<'a> {
+        Pictures {
+            drawn: true,
+            ..Pictures::plan(pages, false, frame)
         }
     }
 }
@@ -69,7 +81,11 @@ impl Part for Pictures<'_> {
                 self.structure
                     .goto(cx, &[(key(1, page), figure(&picture.alt))]);
                 let area = picture_area(picture, self.frame.text);
-                cx.content(|surface, _| draw_picture(surface, picture, area));
+                if self.drawn {
+                    cx.content(|surface, _| draw_page(surface, picture, area));
+                } else {
+                    cx.content(|surface, _| draw_picture(surface, picture, area));
+                }
                 self.structure.close_all(cx);
             }
             return Ok(());
@@ -159,6 +175,30 @@ pub fn draw_picture(surface: &mut Surface, picture: &Picture, area: Area) {
         }));
         surface.draw_path(&path);
         surface.set_stroke(None);
+    }
+}
+
+/// A page a reader drew in `area`, written as small as it reads: in gray
+/// when it has no colour, as JPEG when it has; as it was drawn when it
+/// cannot be.
+fn draw_page(surface: &mut Surface, picture: &Picture, area: Area) {
+    let written = read_bounded(&picture.path, PICTURE_LIMIT)
+        .ok()
+        .filter(|data| data.starts_with(b"\x89PNG") && decodable(data))
+        .and_then(|data| skwir_shrink::page::drawn(&data).ok())
+        .and_then(|drawn| match drawn {
+            skwir_shrink::page::Drawn::Jpeg(data) => Image::from_jpeg(data.into(), true).ok(),
+            skwir_shrink::page::Drawn::Png(data) => Image::from_png(data.into(), true).ok(),
+        });
+    match written {
+        Some(image) => {
+            if let Some(size) = Size::from_wh(area.width.max(0.1), area.height.max(0.1)) {
+                surface.push_transform(&Transform::from_translate(area.x, area.y));
+                surface.draw_image(image, size);
+                surface.pop();
+            }
+        }
+        None => draw_picture(surface, picture, area),
     }
 }
 

@@ -8894,3 +8894,68 @@ was run for these fixes, no real printer or portal printed, nothing
 against a real server; the grammar helper's startup without bat's set
 was not measured with `just idle-pss`; `just bench-check` was not run
 (the sort bench was, for the NFD names: within budget).
+
+### Smaller copies (2026-11-01, ADR-112)
+
+After a trial of BentoPDF's Hyper Compress 1.0.3 (isolated, no network)
+against MuPDF 1.28, Ghostscript 10.08 and qpdf 12.4 on public files (an
+arXiv paper, an IRS form, two scanned NASA reports, six NASA photographs
+in a PDF, a stand-in for pages drawn), the user chose Skwir's own engine
+and asked for all five steps (S1 to S5 in PLAN).
+
+- **The engine** (`crates/shrink`, `skwir-shrink`): pictures (JPEG,
+  PNG) resized, upright, profile and date kept, location and camera
+  details left out when asked (`picture`, by a helper agent); a PDF
+  rewritten object by object (`pdf`: placements from the pages' drawing,
+  images replaced in their own space, palettes looked up, soft masks
+  resized, streams stored twice kept once, thumbnails dropped, object
+  streams); black and white as lossless JBIG2, one generic region, read
+  from CCITT by hayro-ccitt (`bitonal`, by a helper agent); pages a
+  reader drew written gray or as JPEG 90 (`page`). Run by the print
+  helper's `--shrink` mode (`skwir_platform::shrink_job`), which also
+  checks a PDF's copy page by page with the reader the settings choose.
+- **The plugin** (`shrink`): Reduce Size… in Compress and the preview's
+  menu, its dialog (four cards saying what they do to what is chosen,
+  gray, location, at most a size), a step a file undone to the trash,
+  `op::Unneeded` (core) for a copy not smaller, notes told once. Menus
+  learned `kind:` lists (`kind:application/pdf,image/jpeg`) and the
+  preview's menu its file's type; a form's row with details draws cards.
+- **Printing**: drawn pages through the engine; Save as PDF's "Smaller
+  file" (`smaller`).
+
+**Checked:**
+- JBIG2: decoded by hayro-jbig2 to exactly the input on synthetic
+  patterns and all 417 CCITT pages of the two reports; rendered beside
+  the originals by MuPDF, Ghostscript and PDFium with 0 pixels apart,
+  Poppler identically (the helper agent's check, its scripts in the
+  scratchpad); 72 and 76 % of the CCITT sizes; 60 to 69 ms a 2552×3304
+  page to write (release, machine loaded).
+- The engine on the trial's files, release build (ADR-112's table):
+  photographs 5.7 % at Screen (SSIM 0.976, 2.9 s), the 239-page scan
+  85 % without loss (33 s) and 43 % at Screen (0.979), pages drawn 35 %
+  (0.987); every copy passes `qpdf --check` and keeps its text, links,
+  fields, outline and tags (PyMuPDF). The IRS form carries usage rights
+  its maker signed (`/Perms /UR3`): left, as Hyper left it.
+- In a window on Xvfb (own XDG folders, private session bus): Reduce
+  Size… in a PDF's Compress, a photo's, a PDF and a photo together (cards
+  saying both), and the preview's More menu; Lossless hiding gray and the
+  size; a 195-page scan's copy (6.1 to 4.9 MB, checked by PDFium's
+  reader before it was kept); a photo's Small copy with location removed
+  (3.0 MB to 206 KB, 1280 pixels, EXIF of its date alone), its progress
+  card with Pause and Cancel, its toast with Undo; Print… to a PDF with
+  Smaller file (2.2 to 1.6 MB). Found and fixed there: a row's details
+  were not drawn (segments hold titles alone: cards since), a one-file
+  copy ran with no progress (its size now announced).
+- Tests: the engine's 40 (pictures 19, JBIG2 and CCITT 13, PDF and
+  samples 8), the plugin's 6, the platform's 2, core's executor and
+  shrink tests, the binary's shrink (4), print, plugins_toggle and
+  keymap_titles (21 with them); 1504, then 1151, unit tests of the
+  changed crates passing; clippy with `-D warnings` on every changed
+  crate and all targets; rustfmt.
+
+**Not checked:** `just lint-all` (the cross builds), `just test-all`,
+`release-check`, `deny` and `notices` (IJG newly accepted for
+jpeg-encoder); pdf.js and Apple's PDFKit reading the JBIG2 written; a
+picture's EXIF on real cameras' files (synthetic EXIF only); Windows and
+macOS (compiled only by the check above, not cross-built); the print
+helper's size grown by the engine (not measured).

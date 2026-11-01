@@ -1,0 +1,21 @@
+[package]
+name = "skwir-plugin-shrink"
+description = "skwir plugin: smaller copies of pictures and PDFs beside them, Reduce Size… (ADR-112)"
+version.workspace = true
+publish.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+skwir-core.workspace = true
+skwir-platform.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+tempfile.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

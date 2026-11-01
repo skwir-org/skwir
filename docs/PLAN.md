@@ -2200,6 +2200,49 @@ screen reader reads, from the window or a script.
 
 ---
 
+## Smaller copies
+
+Planned 2026-11-01 with the user, after a trial of BentoPDF's Hyper
+Compress against MuPDF, Ghostscript and qpdf (ADR-112 has its numbers).
+A step a commit's worth; checks and measurements in `docs/STATUS-LOG.md`.
+
+**Goal:** a smaller copy of a picture or a PDF beside it, from the
+Compress submenu or the preview's menu, as small as asked, its text,
+links, forms and look kept, by Skwir's own engine on every system; the
+print path's own PDFs no larger than they need be.
+
+- **S1. Pages a reader drew, printed as small as they read:** a DjVu's or
+  a comic's pages, written as gray PNG or JPEG 90 by the engine instead
+  of four-byte PNG (a PDF's pages were already composed vector by PDFium,
+  ADR-111).
+- **S2. The engine** (`skwir-shrink`, pure Rust, in the print helper's
+  `--shrink` mode) and **Reduce Size… for pictures** (JPEG, PNG): four
+  qualities, gray, location and camera details left out, at most a size;
+  upright, colour profile and date kept; `op::Unneeded` for a copy that
+  would not be smaller.
+- **S3. Reduce Size… for PDFs:** images replaced where they are stored,
+  in their own colour space, by the dpi they are drawn at; streams stored
+  twice kept once, object streams; checked with the reader the settings
+  choose, images put back where a page looks different; encrypted and
+  signed PDFs left.
+- **S4. ADR-112**, the guide and the invariants.
+- **S5. What the user asked beyond:** JBIG2 for black-and-white scans
+  (lossless, generic region), at most a size, gray, and Save as PDF's
+  "Smaller file".
+
+**Status:** planned and built 2026-11-01 (S1 to S5), with the user's
+"go for 1-5". Checked on Linux in a window of its own (both menus, the
+dialog, a copy's progress and toast, a photo's location removed, Save as
+PDF's Smaller file) and against the trial's files; Windows and macOS
+compiled only. Deviation: S1 shrank, a PDF's pages being composed vector
+already; krilla's `pdf` feature, first planned for it, was not needed.
+Left: fonts subset or merged, JPEG 2000 and CMYK JPEGs written, MRC; a
+quicker Lossless over large pictures stored without loss; Save as PDF's
+progress for one file (a single step announces no size); `just test-all`
+and `release-check` not run.
+
+---
+
 ## Phase 8: Polish and release
 
 **Scope** (ongoing):

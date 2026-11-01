@@ -33,6 +33,7 @@ use skwir_core::plugin::Plugin;
 use skwir_core::print::{PageSet, Pages};
 use skwir_core::registry::{KeyBinding, MenuItem};
 use skwir_core::scheduler::Priority;
+use skwir_core::shrink::Quality;
 use skwir_core::workspace::PaneId;
 
 mod dialog;
@@ -128,6 +129,10 @@ pub struct SaveArgs {
     /// first, as they print together.
     #[serde(default)]
     pub together: bool,
+    /// Each PDF made smaller as Reduce Size makes a copy (ADR-112): its
+    /// images at most this quality's dpi (`print`, `screen`, `small`).
+    #[serde(default)]
+    pub smaller: Option<Quality>,
 }
 
 #[derive(Default)]
@@ -201,7 +206,13 @@ impl Plugin for PrintPlugin {
                 |a, app| {
                     let request = request(app, &a.print)?;
                     let dest = a.dest.as_ref().map(|PathArg(dest)| dest.as_path());
-                    Ok(Outcome::Plan(plan_of(app, &request, dest, a.together)?))
+                    Ok(Outcome::Plan(plan_of(
+                        app,
+                        &request,
+                        dest,
+                        a.together,
+                        a.smaller,
+                    )?))
                 },
             )
             .plans();
@@ -529,7 +540,8 @@ fn chosen_then(
     match chosen.to {
         dialog::To::Printer => print(app, request, cancel),
         dialog::To::Pdf => {
-            app.apply_whole(plan_of(app, &request, None, chosen.together)?);
+            let smaller = chosen.smaller.then_some(Quality::Screen);
+            app.apply_whole(plan_of(app, &request, None, chosen.together, smaller)?);
             Ok(None)
         }
     }
@@ -721,6 +733,7 @@ fn plan_of(
     request: &Request,
     dest: Option<&Path>,
     together: bool,
+    smaller: Option<Quality>,
 ) -> anyhow::Result<Plan> {
     let booklet = request.booklet;
     let what = if booklet.is_some() { "booklet" } else { "PDF" };
@@ -739,6 +752,7 @@ fn plan_of(
         name,
         pages: request.pages.clone(),
         booklet,
+        smaller,
     };
     let plan = match &request.what {
         What::Files { entries, shown } => {
@@ -855,6 +869,10 @@ pub struct MakePdf {
     /// Folded as a booklet.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub booklet: Option<Booklet>,
+    /// Made smaller as Reduce Size makes a copy (ADR-112), at this
+    /// quality, before it is kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smaller: Option<Quality>,
 }
 
 /// What a PDF is made of.
@@ -1074,9 +1092,14 @@ impl op::Effect for MakePdf {
             .tempdir()
             .context("A folder to make the document in")?;
         let (weak, token, at) = (app.weak(), cancel.clone(), work.path().to_owned());
+        let smaller = self.smaller;
         let ready = in_lane(&app, &self.of.from(), "print-save", cancel, move || {
             let app = weak.upgrade().context("Skwir is closing")?;
-            made_ready(&app, made, &title, &layout, &at, &token)
+            let mut ready = made_ready(&app, made, &title, &layout, &at, &token)?;
+            if let Some(quality) = smaller {
+                ready.pdf = smaller_pdf(&app, ready.pdf, quality, &at, &token)?;
+            }
+            Ok(ready)
         });
         if cancel.is_cancelled() && ready.is_err() {
             return Err(op::Cancelled.into());
@@ -1115,6 +1138,33 @@ impl op::Effect for MakePdf {
         // Undone to the trash, as a copy is: it may have been changed since.
         Ok(Some(Box::new(op::Trash { entry: made })))
     }
+}
+
+/// The PDF at `pdf` made smaller at `quality` (ADR-112), by the print
+/// helper in a folder of its own in `work`, checked as Reduce Size checks
+/// a copy: the smaller copy, or `pdf` itself when it would not be smaller.
+fn smaller_pdf(
+    app: &App,
+    pdf: PathBuf,
+    quality: Quality,
+    work: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<PathBuf> {
+    let folder = work.join("smaller");
+    std::fs::create_dir(&folder).context("A folder to make the PDF smaller in")?;
+    let job = skwir_core::shrink::Job {
+        kind: skwir_core::shrink::Kind::Pdf,
+        input: pdf.clone(),
+        output: PathBuf::new(),
+        quality,
+        gray: false,
+        strip: false,
+        at_most: None,
+        keep: Vec::new(),
+    };
+    let (copy, _) = skwir_platform::shrink_job::made(app, job, &folder, "smaller.pdf", cancel)
+        .context("The PDF could not be made smaller")?;
+    Ok(copy.unwrap_or(pdf))
 }
 
 #[cfg(test)]

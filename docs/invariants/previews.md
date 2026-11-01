@@ -1652,3 +1652,39 @@ is still to come are in `docs/preview-frame.md`.
   read is what it opens), its page and page count and what is selected,
   is the user's alone, and runs the command as the window runs any
   (`Shell::run`): a plan it answers applies, never dropped.
+
+## Smaller copies (ADR-112)
+
+- **One engine, Skwir's** (`skwir-shrink`), run by the print helper's
+  `--shrink` mode, isolated as the helper is: a picture's copy and a
+  PDF's are made by it alone, never by a program found on the system.
+- **A PDF is rewritten object by object.** Its pages' drawing, text,
+  fonts, links, forms, outline, tags and metadata are never rewritten:
+  a content stream regenerated loses what its writer does not express.
+  An image is replaced where it is stored, in its own colour space (its
+  samples resized and re-encoded, its `Decode` kept), so every page
+  that draws it draws the new one. It is resized only by the dots per
+  inch its largest placement gives (read from the pages' drawing and the
+  forms it draws, `pdf::place`); an image no page's drawing reaches is
+  never resized. A palette's image is written as the colours its indexes
+  stand for, in the palette's space. What `pdf::image` does not read (a
+  stencil, a colour key, JPEG 2000, a CMYK JPEG) stays as it is, never
+  guessed at.
+- **Black and white is JBIG2 without loss**: one generic region a page,
+  never symbols matched, which swap characters.
+- **A copy is never larger, and never made in vain**: one that would
+  not be smaller is not written, its step `op::Unneeded`, and said; a
+  PDF protected by a password or signed is left, saying why.
+- **A PDF's copy is looked at before it is kept**
+  (`shrink_job::made`): each image written anew on the first page that
+  shows it, drawn from the file and from the copy by the reader the
+  settings choose; a page that looks different by more than detail lost
+  has its images put back. The thresholds measure losing detail, not
+  being the same: never tightened until a resized photograph fails them.
+- **A picture keeps what it is**: its format, its colour profile, its
+  date; turned upright, its orientation then 1. Location and camera
+  details go only when asked, and then all of them (GPS, make, model,
+  serial, lens, maker notes, XMP, the thumbnail EXIF holds).
+- **Pages a reader drew are printed as small as they read**
+  (`skwir_shrink::page`): gray when they have no colour, JPEG when they
+  have; a page that cannot be written so is printed as drawn.

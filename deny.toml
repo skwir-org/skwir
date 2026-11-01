@@ -50,6 +50,8 @@ allow = [
     "MPL-2.0",
     "0BSD",
     "MIT-0",
+    # jpeg-encoder's DCT and tables, from the IJG's libjpeg (ADR-112).
+    "IJG",
 ]
 confidence-threshold = 0.9
 

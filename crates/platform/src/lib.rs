@@ -66,6 +66,7 @@ pub mod print;
 pub mod print_job;
 pub mod process;
 pub mod sandbox;
+pub mod shrink_job;
 pub mod system_icons;
 pub mod system_thumbs;
 pub mod thumb_providers;

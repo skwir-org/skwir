@@ -86,6 +86,9 @@ pub(crate) struct Chosen {
     pub trim: bool,
     /// Several files saved as one PDF.
     pub together: bool,
+    /// The PDF saved made smaller, as Reduce Size's Screen makes it
+    /// (ADR-112): its images at most 150 dpi.
+    pub smaller: bool,
 }
 
 /// What the next dialog opens on.
@@ -96,6 +99,7 @@ struct Remembered {
     signature: Option<u32>,
     trim: bool,
     together: bool,
+    smaller: bool,
 }
 
 /// The last dialog's choices, but its pages.
@@ -118,6 +122,7 @@ const LAYOUT: &str = "layout";
 const FOLD: &str = "fold";
 const TRIM: &str = "trim";
 const TOGETHER: &str = "together";
+const SMALLER: &str = "smaller";
 
 /// Ask the dialog until it is answered with choices that hold: `None`
 /// when it was cancelled, or no window can show it.
@@ -135,6 +140,7 @@ pub(crate) fn ask(app: &App, offers: &Offers, cancel: &CancelToken) -> Option<Ch
                     signature: chosen.signature,
                     trim: chosen.trim,
                     together: chosen.together,
+                    smaller: chosen.smaller,
                 });
                 return Some(chosen);
             }
@@ -200,7 +206,7 @@ pub(crate) fn form(offers: &Offers) -> Form {
                 .when(PAGES, &["ranges"]),
         );
     if offers.listing() {
-        return form;
+        return form.field(smaller(last.smaller));
     }
     let mut layouts = vec![
         Choice::new("as_shown", "As shown")
@@ -278,7 +284,15 @@ pub(crate) fn form(offers: &Offers) -> Form {
             .when(LAYOUT, &["as_shown", "booklet"]),
         );
     }
-    form
+    form.field(smaller(last.smaller))
+}
+
+/// The PDF saved made smaller, offered when it is saved.
+fn smaller(last: bool) -> Field {
+    Field::new(SMALLER, "Smaller file", Kind::Toggle)
+        .help("Pictures in it at most 150 dpi, as Reduce Size's Screen")
+        .value(last.to_string())
+        .when(TO, &["pdf"])
 }
 
 /// What the dialog's `values` chose of `offers`, or why they are no
@@ -322,6 +336,7 @@ fn chosen(values: &Values, offers: &Offers) -> Result<Chosen, String> {
         signature,
         trim: booklet && values.on(TRIM),
         together: offers.several() && to == To::Pdf && values.get(TOGETHER) == "one",
+        smaller: to == To::Pdf && values.on(SMALLER),
     })
 }
 
@@ -513,7 +528,7 @@ mod tests {
         forget();
         let form = form(&offers());
         let keys: Vec<&str> = form.fields.iter().map(|f| f.key.as_str()).collect();
-        assert_eq!(keys, [TO, PAGES, RANGES, LAYOUT, FOLD, TRIM]);
+        assert_eq!(keys, [TO, PAGES, RANGES, LAYOUT, FOLD, TRIM, SMALLER]);
         assert_eq!(form.title, "Print “notes.md”");
         assert_eq!(form.intro, "12 pages");
         let titles = |key: &str| -> Vec<String> {
@@ -536,7 +551,10 @@ mod tests {
             ..offers()
         });
         let keys: Vec<&str> = several.fields.iter().map(|f| f.key.as_str()).collect();
-        assert_eq!(keys, [TO, PAGES, RANGES, LAYOUT, FOLD, TRIM, TOGETHER]);
+        assert_eq!(
+            keys,
+            [TO, PAGES, RANGES, LAYOUT, FOLD, TRIM, TOGETHER, SMALLER]
+        );
         assert_eq!(
             several.fields[3].choices().len(),
             3,
@@ -548,7 +566,7 @@ mod tests {
             ..offers()
         });
         let keys: Vec<&str> = listing.fields.iter().map(|f| f.key.as_str()).collect();
-        assert_eq!(keys, [TO, PAGES, RANGES]);
+        assert_eq!(keys, [TO, PAGES, RANGES, SMALLER]);
     }
 
     /// The answer read: pages typed checked, what is hidden ignored (a
@@ -577,6 +595,7 @@ mod tests {
                 signature: None,
                 trim: false,
                 together: false,
+                smaller: false,
             }
         );
         let wrong = values(&[(PAGES, "ranges"), (RANGES, "3-1")]);
@@ -654,6 +673,7 @@ mod tests {
             signature: Some(16),
             trim: true,
             together: false,
+            smaller: true,
         });
         let form = form(&offers());
         let value = |key: &str| {
@@ -669,6 +689,7 @@ mod tests {
         assert_eq!(value(LAYOUT), "booklet");
         assert_eq!(value(FOLD), "16");
         assert_eq!(value(TRIM), "true");
+        assert_eq!(value(SMALLER), "true");
         forget();
         assert_eq!(super::form(&offers()).fields[0].value, "printer");
     }
