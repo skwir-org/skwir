@@ -467,32 +467,84 @@ fn hue_of(ino: u64) -> usize {
     ((z ^ (z >> 31)) % BLOCK_HUES as u64) as usize
 }
 
-/// The hues of the folder shown's entries, by their files' numbers
-/// (`None`: an entry not drawn): each its number's (`hue_of`), or the
-/// next none of the others took, so that up to `BLOCK_HUES` entries wear
-/// one each. They are served in the order of their numbers, not of their
-/// sizes, so a hue stays with its entry as the map reflows.
-fn hues(numbers: &[Option<u64>]) -> Vec<usize> {
-    let mut order: Vec<(u64, usize)> = numbers
-        .iter()
-        .enumerate()
-        .filter_map(|(at, number)| number.map(|number| (number, at)))
-        .collect();
-    order.sort_unstable();
-    let mut hues = vec![0; numbers.len()];
-    let mut taken = [false; BLOCK_HUES];
-    for (served, (number, at)) in order.into_iter().enumerate() {
-        if served % BLOCK_HUES == 0 {
-            taken = [false; BLOCK_HUES];
-        }
-        let mut hue = hue_of(number);
-        while taken[hue] {
-            hue = (hue + 1) % BLOCK_HUES;
-        }
-        taken[hue] = true;
-        hues[at] = hue;
+/// What an entry of the folder shown wears its hue by: its file, or its
+/// name where it was not read.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum Wearer {
+    File(skwir_core::FileId),
+    Name(String),
+}
+
+impl Wearer {
+    fn of(node: &Node) -> Self {
+        node.id.map_or_else(
+            || Wearer::Name(node.name.clone()),
+            |id| Wearer::File(id.file),
+        )
     }
-    hues
+}
+
+/// The hues the folder shown's entries wear, kept while it is shown (the
+/// map is built again at each count, sort and selection). An entry is
+/// given one once, when it is first drawn: its number's (`hue_of`), or the
+/// next one the fewest entries drawn wear, so up to `BLOCK_HUES` entries
+/// wear one each. It keeps it while it is drawn, however the others come
+/// and go (a count trims the smallest into the rest, a hidden file shown)
+/// and however the map reflows. Another folder shown begins again.
+#[derive(Default)]
+struct Hues {
+    root: Option<PathBuf>,
+    worn: std::collections::HashMap<Wearer, usize>,
+}
+
+impl Hues {
+    /// The hue of each of `drawn`, entries of the folder `root` (each its
+    /// wearer and number; `None`: an entry not drawn, which gets 0).
+    fn wear(&mut self, root: &Path, drawn: &[Option<(Wearer, u64)>]) -> Vec<usize> {
+        if self.root.as_deref() != Some(root) {
+            self.root = Some(root.to_path_buf());
+            self.worn.clear();
+        }
+        // An entry no longer drawn gives its hue back.
+        let present: std::collections::HashSet<&Wearer> =
+            drawn.iter().flatten().map(|(wearer, _)| wearer).collect();
+        self.worn.retain(|wearer, _| present.contains(wearer));
+        let mut count = [0usize; BLOCK_HUES];
+        for &hue in self.worn.values() {
+            count[hue] += 1;
+        }
+        // Those first drawn now, by number: the same entries wear the same
+        // hues whatever order the map has them in.
+        let mut new: Vec<(u64, &Wearer)> = drawn
+            .iter()
+            .flatten()
+            .filter(|(wearer, _)| !self.worn.contains_key(wearer))
+            .map(|(wearer, number)| (*number, wearer))
+            .collect();
+        new.sort_unstable_by_key(|&(number, _)| number);
+        for (number, wearer) in new {
+            if self.worn.contains_key(wearer) {
+                // Two names of one file: one hue.
+                continue;
+            }
+            let least = count.iter().copied().min().unwrap_or(0);
+            let mut hue = hue_of(number);
+            while count[hue] != least {
+                hue = (hue + 1) % BLOCK_HUES;
+            }
+            count[hue] += 1;
+            self.worn.insert(wearer.clone(), hue);
+        }
+        drawn
+            .iter()
+            .map(|drawn| {
+                drawn
+                    .as_ref()
+                    .and_then(|(wearer, _)| self.worn.get(wearer).copied())
+                    .unwrap_or(0)
+            })
+            .collect()
+    }
 }
 
 /// The blocks of a breakdown, and what each stands for.
@@ -511,6 +563,8 @@ struct Build<'a> {
     root: &'a Path,
     tree: &'a Path,
     selected: &'a dyn Fn(EntryId) -> bool,
+    /// The hues of the folder shown's entries, kept between builds.
+    hues: &'a mut Hues,
     blocks: Vec<Block>,
 }
 
@@ -640,19 +694,20 @@ impl Build<'_> {
         let show_hidden = self.show_hidden;
         let shown = |child: &Node| show_hidden || !child.name.starts_with('.');
         // Colored by identity, so a block keeps its color as the map
-        // reflows.
-        let hues = match outer {
-            Some(_) => Vec::new(),
-            None => hues(
-                &node
-                    .children
-                    .iter()
-                    .enumerate()
-                    .map(|(index, child)| {
-                        shown(child).then(|| child.id.map_or(index as u64, |id| id.file.ino))
-                    })
-                    .collect::<Vec<_>>(),
-            ),
+        // reflows and as other entries come and go (`Hues`).
+        let hues = if outer.is_some() {
+            Vec::new()
+        } else {
+            let drawn: Vec<Option<(Wearer, u64)>> = node
+                .children
+                .iter()
+                .enumerate()
+                .map(|(index, child)| {
+                    let number = child.id.map_or(index as u64, |id| id.file.ino);
+                    shown(child).then(|| (Wearer::of(child), number))
+                })
+                .collect();
+            self.hues.wear(self.root, &drawn)
         };
         for (index, child) in node.children.iter().enumerate() {
             if !shown(child) {
@@ -804,6 +859,8 @@ pub struct UsageView {
     /// when that changes, not at each frame (a pointer moving over the
     /// map draws one).
     built: Option<Built>,
+    /// The hues the folder shown's entries wear, kept as it is built again.
+    hues: Hues,
 }
 
 /// The blocks of the map, built from `from`.
@@ -947,6 +1004,7 @@ fn render(view: &mut UsageView, shell: &mut Shell, cx: &mut Context<Shell>) -> A
                 root,
                 tree: &node.path,
                 selected: &selected,
+                hues: &mut view.hues,
                 blocks: Vec::new(),
             };
             items = build.level(node, 0, None);
@@ -1366,6 +1424,20 @@ mod tests {
         }
     }
 
+    /// The wearers and numbers of files numbered `numbers` (`None`: not
+    /// drawn).
+    fn wearers(numbers: &[Option<u64>]) -> Vec<Option<(Wearer, u64)>> {
+        numbers
+            .iter()
+            .map(|number| {
+                number.map(|ino| {
+                    let file = skwir_core::FileId::new(1, ino);
+                    (Wearer::File(file), ino)
+                })
+            })
+            .collect()
+    }
+
     #[test]
     fn entries_wear_a_hue_each_whatever_their_order() {
         // Eight files made one after the other, numbered one or eight
@@ -1373,7 +1445,7 @@ mod tests {
         for step in [1, 8] {
             let mut numbers: Vec<Option<u64>> = (0..8).map(|k| Some(1000 + k * step)).collect();
             numbers.insert(3, None);
-            let given = hues(&numbers);
+            let given = Hues::default().wear(Path::new("/r"), &wearers(&numbers));
             let mut worn: Vec<usize> = numbers
                 .iter()
                 .zip(&given)
@@ -1381,12 +1453,52 @@ mod tests {
                 .collect();
             worn.sort_unstable();
             assert_eq!(worn, (0..BLOCK_HUES).collect::<Vec<_>>(), "step {step}");
-            // Sized otherwise, the map reorders them: each keeps its hue.
+            // Sized otherwise, the map reorders them: each keeps its hue,
+            // drawn first that way or drawn again.
             numbers.reverse();
-            let mut again = hues(&numbers);
-            again.reverse();
-            assert_eq!(again, given, "step {step}");
+            let mut fresh = Hues::default().wear(Path::new("/r"), &wearers(&numbers));
+            fresh.reverse();
+            assert_eq!(fresh, given, "step {step}");
         }
+    }
+
+    /// An entry keeps its hue while it is drawn: another drawn or gone,
+    /// whatever its number, changes no one else's. Another folder shown
+    /// begins again.
+    #[test]
+    fn a_hue_stays_with_its_entry_as_others_come_and_go() {
+        let mut hues = Hues::default();
+        let root = Path::new("/r");
+        let numbers: Vec<Option<u64>> = (0..12).map(|k| Some(1000 + k)).collect();
+        let first = hues.wear(root, &wearers(&numbers));
+        // One numbered before them all comes (a count brought it back
+        // from the rest), and one goes.
+        let mut more = numbers.clone();
+        more.insert(0, Some(1));
+        more.remove(5);
+        let again = hues.wear(root, &wearers(&more));
+        let kept: Vec<usize> = first
+            .iter()
+            .enumerate()
+            .filter(|&(at, _)| at != 4)
+            .map(|(_, hue)| *hue)
+            .collect();
+        assert_eq!(again[1..], kept[..]);
+        // The one that came wears a hue the fewest of the others wear.
+        let worn = |hue| again[1..].iter().filter(|&&h| h == hue).count();
+        let least = (0..BLOCK_HUES).map(worn).min();
+        assert_eq!(Some(worn(again[0])), least);
+        // Shown as they were (the hidden one hidden again): the same hues.
+        let back: Vec<Option<u64>> = more
+            .iter()
+            .enumerate()
+            .map(|(at, number)| number.filter(|_| at != 0))
+            .collect();
+        let shown = hues.wear(root, &wearers(&back));
+        assert_eq!(shown[1..], again[1..]);
+        // Another folder: given anew, as if never seen.
+        let elsewhere = hues.wear(Path::new("/s"), &wearers(&more));
+        assert_eq!(elsewhere, Hues::default().wear(root, &wearers(&more)));
     }
 
     fn build(tree: &Node, show_hidden: bool, levels: usize) -> (Vec<TreemapItem>, Vec<Block>) {
@@ -1420,6 +1532,7 @@ mod tests {
             root: Path::new("/shown"),
             tree: &tree.path,
             selected: &|_| false,
+            hues: &mut Hues::default(),
             blocks: Vec::new(),
         };
         let items = build.level(tree, 0, None);

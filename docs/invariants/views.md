@@ -343,7 +343,12 @@ around the views is in [shell.md](shell.md).
   atomically; it may still be incomplete (read errors). Revalidation never
   brings back unknown blocks or busy flashes.
 - A block's hue follows its entry, never its rank by size or its place
-  (`usage::hues`): the map reflows as a scan goes on. Its fills and what
-  is written on them are the theme's (`Theme::block`, `block_age`,
-  `block_kind`, `block_text`), and a test holds that text at 4.5:1 on
-  every fill of both looks: a fill added is added to it.
+  (`usage::Hues`): the map reflows as a scan goes on. An entry of the
+  folder shown is given a hue once, when first drawn, and keeps it while
+  it is drawn, however others come and go (a count trims the smallest
+  into the rest, hidden files shown); another folder shown begins again.
+  Its fills and what is written on them are the theme's (`Theme::block`,
+  `block_age`, `block_kind`, `block_text`), and a test holds that text
+  at the ratio the desktop's contrast asks of text (4.5:1, 7:1 where it
+  asks for more) on every fill of both looks: a fill added is added to
+  it.
