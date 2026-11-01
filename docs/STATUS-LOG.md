@@ -8797,3 +8797,100 @@ tree-sitter grammar (grouping by name and file type is in the code, not
 looked at); Helix's ~200 grammars as a long list; a grammar chosen that
 then disappears, by hand (the list says it and the engine falls back,
 as the tests show); macOS and Windows (compiled only).
+
+### Review fixes (2026-11-01)
+
+The user asked for a review of what came after the last round
+(c4c7ca0c..a56c120d: tree-sitter grammars, printing, places, the UI's
+smaller pieces), then for every finding fixed with the recommendations
+it made. Six reviewers found 63; each was then the fixer of its own
+area, six at once in one tree, each owning its files; every fix was
+committed by the integrator after reading it, only the fixer's hunks
+staged where two shared a file (29d23c58..ddcee80f, 33 commits). The
+user's choices: the print dialog's scale is applied; the last window's
+tabs come back filtered; with the query plugin off Keep bookmarks plain
+and says so; startup finds a file's grammar from bat's names and file
+types, not its loaded set; a font that forbids embedding is passed
+over; the grammar helper's inputs are bounded now, its memory left to
+an ADR.
+
+- Grammars (`29d23c58`, `7bdb5362`, `9109fdba`, `eb315c51`, `baaf1343`,
+  `30cc36e7`, `4594a644`): Settings' languages reached bat's folders and
+  built its set on the window's thread; now on a worker, each language's
+  choice kept by the name Settings shows (a Plain or bat choice was
+  ignored). A grammar whose highlights fail gives way to bat. A
+  `tree-sitter.json`'s paths and a clone's links stay inside its own
+  folders, which are all the helper is shown. The helper answers a
+  text's colors beside its parse, is let go of while texts stay open,
+  bounds what it is handed, and keeps the modules Wasmtime compiles in
+  the cache (`wasmtime` namespace, bounded; ADR-110 says how far it is
+  trusted). Startup finds a file's language from a table of bat's names
+  and file types, never its loaded set, which stayed 60 s.
+- The print helper (`b8f7ea83`, `36f61664`, `4bf360bb`, `16347ae5`,
+  `a8703383`, `b9d92d7d`, `c7ddb318`, `708d77f9`, `ddcee80f`): marks and
+  accents printed mirrored across the baseline (parley's vertical offset
+  is downward, krilla's the shaper's); a photo stored sideways printed
+  sideways (EXIF orientation now carried and drawn); a table header
+  taller than a page panicked in krilla; a row taller than a page was
+  laid out again and drawn whole on each page; a code line or block of
+  megabytes was laid out at once (now 4 KiB pieces, the time limit
+  counting bytes); a picture is bounded by its header before krilla
+  decodes it, a `.svgz` inflated within 64 MiB; fonts whose `fsType`
+  forbids embedding are passed over; invisible characters no longer
+  search every fallback font; a font collection whose tables add up past
+  the file is refused; a drawing's text gets fallback fonts.
+- Printing (`0c2c7b66`, `e2fcf46c`, `e329d039`, `55a41190`, `51ae7ac2`,
+  `dfb0af8e`): the dialog's scale is applied (annotations flattened
+  first, so they scale too; ADR-111 revised); a PDF is counted only when
+  its pages are picked, by the reader the settings choose, and only the
+  pages picked are made; the PDFium library the settings name is the
+  platform's, cleared with the documents plugin; Save as PDF is made
+  here and only the finished file staged where kept; reads run in their
+  remote's lane; Windows turns a page to fit its paper, macOS tells
+  `lp` the CUPS queue and paper; the portal's answer is matched to its
+  request and an unreadable range is an error, never every page; a link
+  is saved beside itself.
+- Places (`9bced60a`, `59a7a3c2`, `85455732`, `c5e3b8f0`, `835447b9`,
+  `f42c6b33`): a remote folder's saved place is kept by its address and
+  shown filtered where it leads; refused attributes are remembered for a
+  FUSE mount only, let go of when it is unmounted or a write succeeds,
+  and with nothing remembered a read takes no lock (1,000,000 checks on
+  8 threads: 2 ms, against 790 ms for the mount-table lookup each read
+  made; one release test, not kept); the last window's tabs come back
+  filtered (ADR-109 amended); a saved place is kept once however its
+  folder is written; the saved list is read entry by entry, never
+  written over; Keep with no keeper of filters bookmarks or pins plain
+  and its toast says so. PL10 was not a defect: a search that does not
+  read is refused by `open` before the pane changes.
+- The UI (`468cc7b2`, `ba1b8972`, `8a65a207`, `c9422587`, `aa7737c3`):
+  names with accents stored apart (NFD) sort and are typed to as if
+  whole; Usage's labels reach 7:1 with more contrast asked and a block
+  keeps its hue as entries come and go; a document's wait for the
+  preview's area ends with the preview; a comic's first page is no
+  longer drawn twice, and a JPEG larger than asked is decoded reduced.
+
+**Checked:** by each fixer, for each fix: rustfmt on its files, clippy
+with `-D warnings` and all targets on every crate it touched, and their
+tests, each fix with a test where one could show it (the mark's place
+read back from a PDF's text matrices, a sideways JPEG's image matrix, an
+annotation drawn into a scaled page, 6,000 numbered words over pages, a
+remote kept by its address with a pretended mount). The print fixes'
+Windows and macOS code went through `cargo-zigbuild clippy` for both.
+Counts at the last runs: skwir-core 593, skwir-print-worker 65, the
+print and documents plugins and the PDF helper 9 and 15, the query,
+places and tags plugins 127 and 79, the binary's print, plugin, places
+and tags tests 14 and 24, skwir-platform's picture, document, print and
+inspection tests 23 and 29, comics, djvu and books 59; skwir-ui
+filtered to what changed (45, 44, 32).
+At the end, on 0bd98145 (the notices made again for
+unicode-general-category, new to skwir's packages): `just deny` passed
+(advisories, bans, licences, sources); `just lint-all` passed, with
+`check-cross` for Windows and macOS; `CARGO_INCREMENTAL=0 just
+test-all`: 2761 passed, 30 skipped, none failed (eight tests of the
+plugins from outside took more than 180 s each, reported slow).
+
+**Not checked:** see PLAN's "From the review of 2026-11-01": no window
+was run for these fixes, no real printer or portal printed, nothing
+against a real server; the grammar helper's startup without bat's set
+was not measured with `just idle-pss`; `just bench-check` was not run
+(the sort bench was, for the NFD names: within budget).

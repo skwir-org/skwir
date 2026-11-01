@@ -308,6 +308,23 @@ sent, a failed listing keeping the servers, rclone's SIGTERM exit a
 unit's stop, the tests' trash pruned ("The test fixes' leftovers
 fixed").
 
+## Review fixes (2026-11-01)
+
+A review of what came after the last round (c4c7ca0c..a56c120d:
+tree-sitter grammars, printing, places, the UI's smaller pieces) made 63
+findings, fixed the same day by six fixers at once
+(29d23c58..ddcee80f), one skipped as unable to happen (a search that
+does not read never holds a lens). Three were high: printed marks and accents mirrored across the
+baseline, phone photos printed sideways, and Settings reading grammars
+on the window's thread. Among the others: a grammar whose highlights
+fail gives way to bat, the helper's paths are checked and its compiled
+grammars kept in the cache (ADR-110), the print dialog's scale is
+applied and only the pages picked are made (ADR-111 revised), a remote
+folder's saved place is kept by its address, the last window's tabs come
+back filtered and Keep without the query plugin bookmarks plain
+(ADR-109 amended), and a refusal of attributes is remembered for a FUSE
+mount only. Checks in `docs/STATUS-LOG.md` (2026-11-01, "Review fixes").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -322,6 +339,60 @@ on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
 
+**From the review of 2026-11-01**:
+- A grammar that loads but whose queries fail is known only once it
+  colors: Reading's Grammars page does not check each grammar (the
+  helper's protocol has no check of one; a cheap way is to keep a
+  failure seen while coloring as the grammar's `Found::problem`).
+- The tree-sitter helper's inputs are bounded, its memory is not: a cap
+  waits for an ADR (on Linux `RLIMIT_DATA` near 2 GiB, set by the helper
+  as it starts, which spares the address space Wasmtime reserves where
+  `RLIMIT_AS` would not; a Job Object on Windows; none on macOS).
+- `deny.toml` ignores RUSTSEC-2026-0391, 0398 and 0403 (zstd, through
+  Wasmtime 48's compile cache, read only inside the sandboxed helper)
+  until Wasmtime moves to zstd 0.14.
+- Printing was checked by tests and stand-ins only: no real portal or
+  printer printed a page scaled, sides chosen or a booklet's turned
+  backs; the portal's wait ending when it leaves the bus has no test;
+  Windows' quarter turn (clockwise) and macOS's CUPS queue and paper
+  (`PMPrinterGetID`, `-o media=`) are compiled only; printing from a
+  server that stopped answering was not run. When every page asked is
+  past a text's end, the helper's message is shown, not the plugin's;
+  a book read by MuPDF may count its pages from another layout than the
+  one printed (as before).
+- A saved search whose `in:` names a remote folder's mount keeps the
+  path, not the address (a saved place keeps the address): its text's
+  `in:` would need writing again. A remote bookmark is kept as
+  `Location::parse` spells its address and a saved place through
+  `address_below`; whether the keep button compares the two alike where
+  they percent-encode differently was not checked (as before ADR-109).
+- Refused attributes are not remembered on macOS (macFUSE's mount type
+  does not start with `fuse`, so it is asked as a kernel's share: only
+  the saving is lost). A folder of GVfs's or kio-fuse's bridge shares
+  the bridge's mount number: a server unmounted and mounted again within
+  one bridge stays refused until the bridge goes.
+- Places were checked by commands and tests, with pretended mounts: not
+  in a window (the keep button filled, the sidebar's row of a saved
+  place at an address, the toasts drawn), not against a real server
+  (`just remote-check` has no such case).
+- The print helper: a line a page's edge cuts inside a table row taller
+  than a page is drawn on both pages; a long code line's tab stops start
+  again at each 4 KiB piece; fallback fonts are looked for 4,096
+  characters at most (more scripts than that draw only as the faces
+  found hold them); a face of a font collection is still copied out of
+  it (fontique registers no single face), now within bounds; a role
+  face or fallback whose licence forbids embedding is passed over
+  silently, only a specimen says so. Its gains in memory and time (long
+  lines, tall rows, fallback scans) were not measured, and its PDFs
+  were read back with lopdf and pdftotext only.
+- A comic's first page no longer drawn twice and a JPEG decoded at a
+  reduced scale were not timed on a real comic; a page past about 16.7
+  million pixels is decoded whole, as before.
+- Not looked at in a window: Reading's grammar picker after the fixes,
+  folds kept through a refresh, bat taking over from a grammar that
+  fails. The startup that no longer loads bat's grammars was not
+  measured with `just idle-pss`.
+
 **From grammars and printing (2026-10-31, ADR-110, ADR-111)**:
 - The text view, where code files open, does not fold: a grammar's folds
   reach only a structured-data code view without folds of its own.
@@ -335,15 +406,14 @@ leave (ADR-077).
   waiting; code blocks are colored as a document is built, so a helper
   starting delays its first paint. Folds a user closed are forgotten
   when the file is read again.
-- Printing: the scale the dialog chose is not applied; nothing asks
-  before printing hundreds of pages; the portal's dialog is not given
-  the window as its parent; a listing and several files were not
-  printed through a real dialog (a contact sheet and a booklet were
-  saved from Skwir's dialog, a booklet printed to a file through GTK's);
-  KDE's portal, the user's, was not tried with P5. The pages of a file
-  that is not a PDF (a text, a Markdown document) are not counted before
-  the dialog asks, so its booklet pictures say `n`. The preview's menu
-  shows no key beside Print… (Ctrl+P there).
+- Printing: nothing asks before printing hundreds of pages; the portal's
+  dialog is not given the window as its parent; a listing and several
+  files were not printed through a real dialog (a contact sheet and a
+  booklet were saved from Skwir's dialog, a booklet printed to a file
+  through GTK's); KDE's portal, the user's, was not tried with P5. The
+  pages of a file that is not a PDF (a text, a Markdown document) are
+  not counted before the dialog asks, so its booklet pictures say `n`.
+  The preview's menu shows no key beside Print… (Ctrl+P there).
 - macOS's print panel and Windows' print dialog are compiled only;
   Windows' printing and the two new helpers were not run under Wine.
 

@@ -196,7 +196,10 @@ server and network. Undo history is cleared when Skwir exits.
   **Saved** (the Searches section, renamed) with its filter, named after it
   ("Pictures · kind:image"); the button is filled only for it as filtered so. A
   saved one opens as it was kept, a bookmark with the filters you have on. A
-  closed tab opened again keeps its filters.
+  closed tab opened again keeps its filters, as do the last window's tabs when
+  Skwir starts. A server's folder is kept by its address, so it connects again;
+  with the query plugin off, `Ctrl+D` bookmarks a filtered folder alone and
+  says so.
 - **A tag's place** is searched and filtered at its own depths (ADR-108): the
   switch reads "This tag | With sub-tags", All Tags' "These tags | Every tagged
   file", the words typed filtering what each lists.
@@ -287,7 +290,9 @@ server and network. Undo history is cleared when Skwir exits.
   list's bottom edge moves it one row, not a page.
 - **Usage's map** is drawn in soft tiles: rounded blocks apart from each other,
   open folders as pale trays under a header, in tints of one lightness that
-  tell neighbours apart, the chosen block ringed in the accent.
+  tell neighbours apart, the chosen block ringed in the accent. A block keeps
+  its tint as files come and go, and where the desktop asks for more contrast
+  its labels read at 7:1.
 - **Zoom**: `Ctrl` and the wheel zoom the pane under the pointer, and the
   cursor stays in sight through a zoom.
 - **What you put in a folder is selected**, as in other file managers, and
@@ -370,7 +375,9 @@ server and network. Undo history is cleared when Skwir exits.
   the Trash still trashes, whatever keys are held. Undoing a move to the trash on
   another drive whose original stayed (it changed during the copy, or could
   not be removed) no longer fails with "is there again": the trash's copy is
-  taken back when nothing would be lost.
+  taken back when nothing would be lost. A name whose accents are stored apart
+  from their letters (as macOS writes them) sorts beside the same name written
+  whole, and typing finds it either way.
 - **Scripts and agents**: a file selected, a folder opened or a sort changed by
   `skwir cmd` or an agent shows in the window at once, not at the next move of
   the mouse. An agent's changes are always reviewed and its private folders
