@@ -594,17 +594,28 @@ fn paths(job: &mut Job, each: &mut dyn FnMut(&mut PathBuf)) {
 
 /// How long the helper may take: a minute, and far more than what it was
 /// measured to take for each line, row, block and picture (some 90 µs a
-/// line of code in a release build, ten times that in a debug one), so
-/// only a helper that hangs is stopped.
+/// line of code in a release build, ten times that in a debug one) and
+/// for each 32 bytes of text (some 2.3 µs a byte), so only a helper that
+/// hangs is stopped: a line of 128 MB, laid out a piece at a time, is
+/// given what its bytes take, never a short line's time. Three hours at
+/// most.
 fn timeout(job: &Job) -> Duration {
     let mut units: u64 = 0;
+    let mut bytes: u64 = 0;
     let mut pictures: u64 = 0;
     for part in &job.parts {
         match part {
-            Part::Code { lines, .. } => units += lines.len() as u64,
+            Part::Code { lines, .. } => {
+                units += lines.len() as u64;
+                bytes += lines.iter().map(|line| line.text.len() as u64).sum::<u64>();
+            }
             Part::Table { rows, .. } => units += rows.len() as u64,
             Part::Flow { blocks } => {
                 units += blocks.len() as u64 * 4;
+                bytes += blocks
+                    .iter()
+                    .map(|block| block.text.len() as u64)
+                    .sum::<u64>();
                 pictures += blocks
                     .iter()
                     .filter(|b| matches!(b.kind, print::BlockKind::Picture(_)))
@@ -616,6 +627,7 @@ fn timeout(job: &Job) -> Duration {
             Part::Drawing { .. } | Part::Specimen { .. } => pictures += 5,
         }
     }
+    let units = units.saturating_add(bytes / 32);
     let most = Duration::from_hours(3);
     (Duration::from_secs(60)
         + Duration::from_millis(units.saturating_mul(2))
@@ -976,6 +988,62 @@ mod tests {
             eprintln!("skipped: needs skwir-print-worker built beside the tests");
         }
         helper
+    }
+
+    /// A long line of text is given what its bytes take, not a short
+    /// line's time; nothing is given more than three hours.
+    #[test]
+    fn a_long_line_is_given_the_time_its_bytes_take() {
+        let code = |text: String| Job {
+            paper: print::Paper::a4(),
+            output: PathBuf::new(),
+            title: String::new(),
+            author: None,
+            language: None,
+            header: None,
+            numbers: false,
+            fonts: Fonts::default(),
+            fallback: Vec::new(),
+            pages: None,
+            parts: vec![Part::Code {
+                lines: vec![print::Line {
+                    text,
+                    runs: Vec::new(),
+                }],
+                numbers: false,
+                first: 1,
+            }],
+        };
+        let short = timeout(&code("let x = 1;".into()));
+        // 3.2 MB: 100,000 units of 2 ms beside the line's own.
+        let long = timeout(&code("x".repeat(3_200_000)));
+        assert_eq!(long.checked_sub(short), Some(Duration::from_secs(200)));
+        let flow = Job {
+            parts: vec![Part::Flow {
+                blocks: vec![print::Block {
+                    text: "y".repeat(320),
+                    ..print::Block::default()
+                }],
+            }],
+            ..code(String::new())
+        };
+        // A block's 4 units, and 10 for its 320 bytes.
+        assert_eq!(
+            timeout(&flow),
+            Duration::from_secs(60) + Duration::from_millis(28)
+        );
+        let pictures = Job {
+            parts: vec![Part::Pictures {
+                pictures: vec![print::Picture::default(); 11_000],
+                sheet: true,
+            }],
+            ..code(String::new())
+        };
+        assert_eq!(
+            timeout(&pictures),
+            Duration::from_hours(3),
+            "three hours at most"
+        );
     }
 
     fn job(parts: Vec<Part>) -> Option<Job> {
