@@ -99,6 +99,10 @@ pub enum ExecEvent {
         /// `Started` is told before the plan is checked, and says what
         /// was asked.
         items: Option<super::Items>,
+        /// What its steps said beside what they did (`StepContext::say`,
+        /// an `Unneeded`'s why), in order, each once: its answer says it
+        /// after what was done.
+        said: Vec<String>,
     },
     /// The server the plan `plan` stopped on does not answer: it goes on
     /// by itself once it does (ADR-080, 9).
@@ -126,6 +130,9 @@ pub enum Verdict {
         /// What stopped it, or made it apply nothing (a conflict).
         error: Option<String>,
         cancelled: bool,
+        /// What its steps said beside what they did, each once.
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        said: Vec<String>,
     },
     Dismissed,
 }
@@ -841,6 +848,7 @@ impl Executor {
             skipped,
             error,
             cancelled,
+            said,
             ..
         } = &ev
             && let Some(reply) = self.watched.lock().remove(plan)
@@ -850,6 +858,7 @@ impl Executor {
                 skipped: *skipped,
                 error: error.clone(),
                 cancelled: *cancelled,
+                said: said.clone(),
             });
         }
         let _ = self.tx.send(ev);
@@ -2005,6 +2014,7 @@ impl Executor {
             cancelled: false,
             undoable: false,
             items: plan.items.as_deref().cloned(),
+            said: Vec::new(),
         });
         ExecResult {
             applied: 0,
@@ -2028,6 +2038,7 @@ impl Executor {
             cancelled: true,
             undoable: false,
             items: None,
+            said: Vec::new(),
         });
         ExecResult {
             applied: 0,
@@ -2233,6 +2244,7 @@ impl Executor {
                 cancelled: false,
                 undoable: false,
                 items: None,
+                said: Vec::new(),
             });
             return Some(ExecResult {
                 applied: 0,
@@ -2351,6 +2363,8 @@ impl Executor {
         let mut error = None;
         let mut failed = None;
         let mut cancelled = false;
+        // What the steps said, each once (several booklets fold alike).
+        let (mut said, mut heard) = (Vec::new(), std::collections::HashSet::new());
         for (i, step) in plan.steps.iter().enumerate() {
             // Paused, the next step waits here.
             if ctx.check_cancelled().is_err() {
@@ -2408,6 +2422,7 @@ impl Executor {
                     // done already, as a step whose check found it so.
                     Err(e) if e.is::<super::Unneeded>() => {
                         skipped += 1;
+                        ctx.say(e.to_string());
                     }
                     Err(e) => {
                         tracing::warn!(plan = %plan.title, "a step failed: {e:#}");
@@ -2421,6 +2436,11 @@ impl Executor {
             // Failed, its record is still there: the toast names it too.
             if err.is_some() && named.is_none() {
                 named = self::named(&change);
+            }
+            for note in ctx.take_said() {
+                if heard.insert(note.clone()) {
+                    said.push(note);
+                }
             }
             meter.step_ended();
             self.emit_step(ExecEvent::Step(Progress {
@@ -2535,6 +2555,7 @@ impl Executor {
             cancelled,
             undoable: result.undoable,
             items: plan.items.as_deref().cloned(),
+            said,
         });
         if !held.is_empty() {
             for observer in self.observers.all() {
@@ -3390,7 +3411,8 @@ mod tests {
         fn check(&self, _: &StepContext) -> StepStatus {
             StepStatus::Pending { reversible: true }
         }
-        fn apply(&self, _: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+        fn apply(&self, ctx: &StepContext) -> anyhow::Result<Option<Box<dyn Operation>>> {
+            ctx.say("“needless” was read twice");
             Err(super::super::Unneeded("as small as it gets already".to_owned()).into())
         }
         fn clone_box(&self) -> Box<dyn Operation> {
@@ -3399,7 +3421,9 @@ mod tests {
     }
 
     /// A step with nothing to make is done already: the plan goes on, the
-    /// steps after it applied, and nothing failed or was cancelled.
+    /// steps after it applied, and nothing failed or was cancelled. What it
+    /// said, and why it made nothing, the plan's end carries, for its
+    /// answer.
     #[test]
     fn a_step_with_nothing_to_make_lets_the_plan_go_on() {
         let executor = Executor::new(Scheduler::new(1));
@@ -3415,6 +3439,15 @@ mod tests {
         assert_eq!((r.applied, r.skipped, r.error), (2, 1, None));
         assert!(!r.cancelled);
         assert_eq!(applied.load(Ordering::SeqCst), 2);
+        let ended = events_until(&executor, |e| matches!(e, ExecEvent::Finished { .. }));
+        assert!(
+            matches!(
+                ended.last(),
+                Some(ExecEvent::Finished { said, .. })
+                    if *said == ["“needless” was read twice", "as small as it gets already"]
+            ),
+            "{ended:?}"
+        );
     }
 
     /// The journal keeps the latest actions, never more than its bound,

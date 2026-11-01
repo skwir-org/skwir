@@ -58,7 +58,9 @@ Windows and macOS (`just lint-all`), not run there.
    `dest`), `name (reduced).ext`, a step of a plan undone to the trash.
    A copy that would not be smaller is not made: the step says so
    (`op::Unneeded`, new in core: the executor counts it done and the plan
-   goes on), and what the steps say is told in one notification.
+   goes on), and what the steps say is told in the plan's toast after
+   what was made (`StepContext::say`; first a notification of the plugin's
+   own, which covered the toast and its Undo, changed the same evening).
 2. **Four qualities** (`skwir_core::shrink::Quality`), each saying what
    it does to what is chosen: Lossless (nothing re-encoded at a loss),
    Print (pictures 3840 pixels across, a PDF's images 300 dpi from 450,

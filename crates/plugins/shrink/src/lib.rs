@@ -17,8 +17,8 @@
 //! Each copy is a step of a plan, undone to the trash, as a copy is.
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
-use std::time::{Duration, Instant};
+use std::sync::{Arc, RwLock, Weak};
+use std::time::Duration;
 
 use anyhow::Context as _;
 use schemars::JsonSchema;
@@ -163,7 +163,6 @@ impl Plugin for ShrinkPlugin {
 
     fn on_disable(&self, _app: &App) {
         dialog::forget();
-        said().clear();
     }
 }
 
@@ -546,20 +545,16 @@ impl op::Effect for ShrinkCopy {
                 ),
                 None => format!("“{what}” is as small as it gets already: no copy was made"),
             };
-            say(&app, why.clone());
             return Err(op::Unneeded(why).into());
         };
         if made.met == Some(false) {
-            say(
-                &app,
-                format!(
-                    "“{what}” could not be brought under the size asked: its smallest copy is {}",
-                    sized(made.after)
-                ),
-            );
+            ctx.say(format!(
+                "“{what}” could not be brought under the size asked: its smallest copy is {}",
+                sized(made.after)
+            ));
         }
         for note in made.notes {
-            say(&app, format!("“{what}”: {note}"));
+            ctx.say(format!("“{what}”: {note}"));
         }
         ctx.check_cancelled()?;
         let staging = ctx.stage(&self.dest_dir)?;
@@ -631,71 +626,6 @@ fn in_lane<T: Send + 'static>(
             Err(_) => anyhow::bail!("Making the copy was cancelled"),
         }
     }
-}
-
-/// What the steps said, waiting to be told together: several copies of a
-/// plan say what they left in one notification, not one each.
-struct Said {
-    notes: Vec<String>,
-    last: Option<Instant>,
-}
-
-static SAID: Mutex<Said> = Mutex::new(Said {
-    notes: Vec::new(),
-    last: None,
-});
-
-/// How long after the last note the notes are told.
-const QUIET: Duration = Duration::from_millis(1500);
-
-fn said() -> std::sync::MutexGuard<'static, Said> {
-    SAID.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-impl Said {
-    fn clear(&mut self) {
-        self.notes.clear();
-        self.last = None;
-    }
-}
-
-/// Tell `note` with those said just before it, once the steps have been
-/// quiet a moment.
-fn say(app: &Arc<App>, note: String) {
-    let first = {
-        let mut held = said();
-        held.notes.push(note);
-        let first = held.last.is_none();
-        held.last = Some(Instant::now());
-        first
-    };
-    if !first {
-        return;
-    }
-    let weak = Arc::downgrade(app);
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(QUIET / 3);
-            let notes = {
-                let mut held = said();
-                match held.last {
-                    Some(last) if last.elapsed() < QUIET => continue,
-                    Some(_) => {
-                        held.last = None;
-                        std::mem::take(&mut held.notes)
-                    }
-                    None => return,
-                }
-            };
-            if let Some(app) = weak.upgrade()
-                && !notes.is_empty()
-            {
-                app.notify(NotifyLevel::Info, notes.join(". "));
-                app.wake();
-            }
-            return;
-        }
-    });
 }
 
 #[cfg(test)]

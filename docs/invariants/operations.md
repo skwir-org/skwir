@@ -38,7 +38,16 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   `op::Unneeded` with why: the executor counts it done already, as a
   step whose check found it so, and the plan goes on. Never an error for
   it: an error stops the plan, and a batch would stop at its first such
-  file. Why is told by the step's own plugin, once for the plan's steps.
+  file. Its why is said as the step's words are.
+- **What a step says beside what it did** (what it left out, how to
+  fold what it made, why it made nothing) it says through its context
+  (`StepContext::say`): the plan's end carries it, each note once
+  (`ExecEvent::Finished`'s `said`, a script's `Verdict`), and the plan's
+  toast says it after the sentence of what was done, alone when the steps
+  did nothing else.
+  Never a notification of its own from a step: the plan's toast, which
+  comes after, would cover it, or it would cover the toast and its Undo.
+  A toast stays at least as long as its words take to read.
 - **Unfolding.** A step whose steps depend on what it reads says them
   (`Operation::unfolds`: a notes edit and the rename of a name holding
   the file's tags). They replace it before anything is settled or

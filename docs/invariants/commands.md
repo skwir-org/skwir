@@ -101,7 +101,9 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   tool with nothing more.
 - An agent's plan is proposed, and its tool answers with the verdict
   (`App::propose_awaiting`). `skwir cmd` prints a plan, or applies it with
-  `--apply` as the user's own action.
+  `--apply` as the user's own action. A verdict carries what the steps
+  said beside what they did (`said`: how to fold a booklet, why a copy
+  was not made), as the window's toast says it.
 - Without a window (`skwir cmd` with none open) a skwir of its own runs
   the command and ends once it answers, so a command answers once its
   work is done (saved, applied). What it hands a worker on the window's

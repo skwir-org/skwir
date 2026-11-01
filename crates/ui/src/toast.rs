@@ -321,15 +321,28 @@ pub fn quit_question(running: Option<(&str, bool)>, others: usize, waiting: usiz
     format!("{what} {stop}{after}")
 }
 
+/// Words read in a second, unhurried.
+const WORDS_A_SECOND: u64 = 3;
+
+/// How many seconds `toast` stays: by its weight, and at least the time its
+/// words take to read.
+fn shown_for(toast: &Toast) -> u64 {
+    let weight = match (&toast.tone, toast.actions.is_empty()) {
+        (Tone::Error, _) => 10,
+        (_, false) => 8,
+        _ => 4,
+    };
+    let words = toast.text.split_whitespace().count() as u64;
+    weight.max(words.div_ceil(WORDS_A_SECOND))
+}
+
 impl Shell {
     /// Show `toast`, replacing the current one, for a time that fits its
-    /// weight: errors and anything with a button stay longer.
+    /// weight: errors and anything with a button stay longer, and a long
+    /// one (what a plan's steps said after what it did) as long as it
+    /// takes to read.
     pub fn toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
-        let seconds = match (&toast.tone, toast.actions.is_empty()) {
-            (Tone::Error, _) => 10,
-            (_, false) => 8,
-            _ => 4,
-        };
+        let seconds = shown_for(&toast);
         self.toasts.current = Some(toast);
         self.toasts.generation += 1;
         let generation = self.toasts.generation;
@@ -432,6 +445,7 @@ impl Shell {
                     cancelled,
                     undoable,
                     items,
+                    said,
                     ..
                 } => {
                     self.made(plan, error.is_none() && !cancelled, items.as_ref());
@@ -455,6 +469,7 @@ impl Shell {
                         cancelled,
                         items,
                         kept_in.as_deref(),
+                        &said,
                     );
                     let actions = finished_actions(
                         plan,
@@ -485,8 +500,29 @@ impl Shell {
 /// which `Started` could not say yet; else what it was asked), as far as
 /// its steps went when cut short; what stopped it; or that it was
 /// cancelled, before anything was done (a question about names taken
-/// answered Cancel) or after.
+/// answered Cancel) or after. What the steps said follows; alone when
+/// they did nothing else (a smaller copy not made).
 fn ended(
+    running: Running,
+    applied: usize,
+    error: Option<String>,
+    cancelled: bool,
+    items: Option<skwir_core::op::Items>,
+    kept_in: Option<&str>,
+    said: &[String],
+) -> (String, Tone) {
+    let said = said.join(". ");
+    let nothing_else = applied == 0 && error.is_none() && !cancelled;
+    let (text, tone) = ended_as(running, applied, error, cancelled, items, kept_in);
+    match (said.is_empty(), nothing_else) {
+        (true, _) => (text, tone),
+        (false, true) => (said, Tone::Info),
+        (false, false) => (format!("{text}. {said}"), tone),
+    }
+}
+
+/// What the toast of `running`, ended, says of what was done (`ended`).
+fn ended_as(
     running: Running,
     applied: usize,
     error: Option<String>,
@@ -1005,8 +1041,8 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 #[cfg(test)]
 mod tests {
     use super::{
-        Running, Tone, bar, describe, ended, failure, finished_actions, quit_question,
-        waiting_lines,
+        Action, Running, Toast, Tone, bar, describe, ended, failure, finished_actions,
+        quit_question, shown_for, waiting_lines,
     };
     use skwir_core::op::{Change, RunKind, Transfer};
     use std::path::PathBuf;
@@ -1042,21 +1078,110 @@ mod tests {
             placed: vec![PathBuf::from("/example/it's here/a.txt")],
         };
         assert_eq!(
-            ended(running(None), 2, None, false, Some(copied.clone()), None),
+            ended(
+                running(None),
+                2,
+                None,
+                false,
+                Some(copied.clone()),
+                None,
+                &[]
+            ),
             ("Copied “a.txt” to it's here".to_owned(), Tone::Success)
         );
         // Said as asked when nothing better comes.
         assert_eq!(
-            ended(running(Some(copied)), 2, None, false, None, None).0,
+            ended(running(Some(copied)), 2, None, false, None, None, &[]).0,
             "Copied “a.txt” to it's here"
         );
         assert_eq!(
-            ended(running(None), 0, None, true, None, None),
+            ended(running(None), 0, None, true, None, None, &[]),
             (
                 "Copy to /example/it's here: cancelled before anything was done".to_owned(),
                 Tone::Info
             )
         );
+    }
+
+    /// What the steps said follows what was done, in the plan's own toast:
+    /// nothing covers it, nor does it cover the Undo. Said alone when the
+    /// steps did nothing else.
+    #[test]
+    fn what_the_steps_said_follows_what_was_done() {
+        let running = || Running {
+            plan: skwir_core::op::Plan::new("save “it's.md” as booklet").id,
+            title: "save “it's.md” as booklet".into(),
+            run: RunKind::Apply,
+            total: 1,
+            first: Some(Change::Create {
+                path: PathBuf::from("/example/it's (booklet).pdf"),
+                directory: false,
+                words: Some(skwir_core::op::Words {
+                    will: "save “it's.md” as “it's (booklet).pdf”".into(),
+                    did: "saved “it's.md” as “it's (booklet).pdf”".into(),
+                }),
+            }),
+            first_named: None,
+            failed: None,
+            failed_named: None,
+            items: None,
+            paused: false,
+            cancelling: false,
+            going_on: false,
+        };
+        assert_eq!(
+            ended(
+                running(),
+                1,
+                None,
+                false,
+                None,
+                None,
+                &["Fold each sheet in half twice".to_owned()]
+            ),
+            (
+                "Saved “it's.md” as “it's (booklet).pdf”. Fold each sheet in half twice".to_owned(),
+                Tone::Success
+            )
+        );
+        assert_eq!(
+            ended(
+                running(),
+                0,
+                None,
+                false,
+                None,
+                None,
+                &["“it's.md” is as small as it gets".to_owned()]
+            ),
+            ("“it's.md” is as small as it gets".to_owned(), Tone::Info)
+        );
+    }
+
+    /// A toast stays by its weight, and a long one as long as it takes to
+    /// read.
+    #[test]
+    fn a_long_toast_stays_until_read() {
+        let toast = |text: &str, tone, actions: Vec<Action>| Toast {
+            text: text.to_owned(),
+            tone,
+            actions,
+        };
+        let undo = || {
+            vec![Action {
+                label: "Undo".into(),
+                command: "undo".into(),
+                args: serde_json::json!({}),
+            }]
+        };
+        assert_eq!(
+            shown_for(&toast("Renamed “a”", Tone::Success, Vec::new())),
+            4
+        );
+        assert_eq!(shown_for(&toast("Renamed “a”", Tone::Success, undo())), 8);
+        assert_eq!(shown_for(&toast("It failed", Tone::Error, Vec::new())), 10);
+        let folding = "Saved “it's.md” as “it's (booklet).pdf”. Fold each sheet in half three times, page 1 outside and upright, cut its closed folds open, and put the sheets one after another";
+        assert_eq!(shown_for(&toast(folding, Tone::Success, undo())), 10);
     }
 
     /// A toast's Undo takes back the plan it reports, by its id, as the

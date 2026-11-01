@@ -35,6 +35,7 @@ fn a_proposal_applied_answers_how_it_applied() {
             skipped: 0,
             error: None,
             cancelled: false,
+            said: Vec::new(),
         }
     );
     assert!(folder.is_dir());

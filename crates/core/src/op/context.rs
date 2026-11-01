@@ -26,7 +26,8 @@ pub struct Cancelled;
 /// The error a step returns when it found, as it ran, that it had nothing
 /// to make (a smaller copy that would not be smaller), having changed
 /// nothing: the executor counts it done already, as a step whose check
-/// found it so, and the plan goes on. Its words say why, to the user.
+/// found it so, and the plan goes on. Its words say why, to the user: the
+/// executor says them for the step ([`StepContext::say`]).
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
 pub struct Unneeded(pub String);
@@ -267,6 +268,9 @@ pub struct StepContext {
     /// what the check read is what is there. Each step starts without
     /// ([`Self::step_begins`]); a dry run never applies.
     checked: RefCell<Option<Box<dyn std::any::Any>>>,
+    /// What the step under way said for its plan's answer to carry
+    /// ([`Self::say`]), taken by the executor when it ends.
+    said: RefCell<Vec<String>>,
     /// The copies this plan made of files with several names, by the file
     /// copied: a later name of one is linked to its copy (ADR-049).
     copies: RefCell<HashMap<crate::FileId, Copied>>,
@@ -640,6 +644,7 @@ impl StepContext {
             #[cfg(target_os = "linux")]
             trashes: super::put_trash::Trashes::default(),
             checked: RefCell::default(),
+            said: RefCell::default(),
             copies: RefCell::default(),
             copied_order: RefCell::default(),
             listings: RefCell::default(),
@@ -761,6 +766,20 @@ impl StepContext {
         kept.downcast::<T>().ok().map(|kept| *kept)
     }
 
+    /// Say `note` with what the step did, for the user: the end of its
+    /// plan carries it, each note once (`ExecEvent::Finished`'s `said`:
+    /// the toast after the sentence of what was done, a script's
+    /// `Verdict`), never a notification of its own, which that answer
+    /// would cover or follow. What it left out, how to use what it made.
+    pub fn say(&self, note: impl Into<String>) {
+        self.said.borrow_mut().push(note.into());
+    }
+
+    /// What the step under way said ([`Self::say`]), taken.
+    pub(super) fn take_said(&self) -> Vec<String> {
+        std::mem::take(&mut *self.said.borrow_mut())
+    }
+
     /// The step `step` begins: what the last one's check kept is not its
     /// own, and the trees the last one applied to may have changed. Past
     /// the steps a look ahead found references for, where it found them is
@@ -768,6 +787,7 @@ impl StepContext {
     pub(super) fn step_begins(&self, step: usize) {
         self.step.set(step);
         self.checked.borrow_mut().take();
+        self.said.borrow_mut().clear();
         self.states.borrow_mut().clear();
         if step >= self.resolved_until.get() {
             self.resolved.borrow_mut().clear();
