@@ -43,7 +43,10 @@ pub fn shrink(job: &Job, progress: &mut dyn FnMut(u64, u64)) -> Result<Made> {
         ..Made::default()
     };
     let doc = Document::load_mem(&bytes).context("It could not be read as a PDF")?;
-    if doc.is_encrypted() || doc.trailer.has(b"Encrypt") {
+    // A PDF protected by an owner password alone (its user password
+    // empty) is read decrypted, its `/Encrypt` taken out: it was encrypted
+    // all the same, and a copy would no longer forbid what it forbids.
+    if doc.was_encrypted() || doc.is_encrypted() || doc.trailer.has(b"Encrypt") {
         return Ok(not_made(
             "it is protected by a password, which a smaller copy would not keep",
         ));
@@ -239,4 +242,124 @@ fn signed(doc: &Document) -> Option<Signed> {
         return Some(Signed::Signature);
     }
     perms.is_some().then_some(Signed::Rights)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lopdf::{Dictionary, Stream, dictionary};
+    use skwir_core::shrink::{Kind, Quality};
+
+    /// A folder for a test's files on the home filesystem.
+    fn scratch() -> tempfile::TempDir {
+        let base = std::env::home_dir()
+            .expect("a home")
+            .join(".cache")
+            .join("skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        tempfile::Builder::new()
+            .prefix("shrink-")
+            .tempdir_in(base)
+            .unwrap()
+    }
+
+    /// A page drawing a gray gradient of 1200 × 1200 pixels over 2 inches
+    /// (600 dpi), which Screen brings to 150 dpi.
+    fn gradient_pdf() -> Document {
+        let mut doc = Document::with_version("1.5");
+        let side = 1200u32;
+        let samples: Vec<u8> = (0..side * side)
+            .map(|n| u8::try_from((n % side + n / side) * 255 / (2 * side)).unwrap())
+            .collect();
+        let image = Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Image",
+                "Width" => i64::from(side),
+                "Height" => i64::from(side),
+                "ColorSpace" => "DeviceGray",
+                "BitsPerComponent" => 8,
+                "Filter" => "FlateDecode",
+            },
+            crate::samples::deflate(&samples),
+        );
+        let image_id = doc.add_object(image);
+        let content = doc.add_object(Stream::new(
+            Dictionary::new(),
+            b"q 144 0 0 144 72 72 cm /Im0 Do Q".to_vec(),
+        ));
+        let tree_id = doc.new_object_id();
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => tree_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => content,
+            "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => image_id } },
+        });
+        doc.objects.insert(
+            tree_id,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => vec![page_id.into()],
+                "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree_id });
+        doc.trailer.set("Root", catalog);
+        let id = Object::String(
+            b"0123456789abcdef".to_vec(),
+            lopdf::StringFormat::Hexadecimal,
+        );
+        doc.trailer.set("ID", Object::Array(vec![id.clone(), id]));
+        doc
+    }
+
+    fn job(input: &std::path::Path, output: &std::path::Path) -> Job {
+        Job {
+            kind: Kind::Pdf,
+            input: input.to_owned(),
+            output: output.to_owned(),
+            quality: Quality::Screen,
+            gray: false,
+            strip: false,
+            at_most: None,
+            keep: Vec::new(),
+        }
+    }
+
+    /// A PDF protected by an owner password alone opens without one, and
+    /// lopdf reads it decrypted: it is still not made smaller, as a copy
+    /// would drop what it forbids. The same PDF unprotected is.
+    #[test]
+    fn a_pdf_with_an_owner_password_alone_is_not_made_smaller() {
+        let dir = scratch();
+        let plain = dir.path().join("plain.pdf");
+        gradient_pdf().save(&plain).unwrap();
+        let mut doc = gradient_pdf();
+        let state = lopdf::EncryptionState::try_from(lopdf::EncryptionVersion::V2 {
+            document: &doc,
+            owner_password: "owner",
+            user_password: "",
+            key_length: 128,
+            permissions: lopdf::Permissions::PRINTABLE,
+        })
+        .unwrap();
+        doc.encrypt(&state).unwrap();
+        let protected = dir.path().join("protected.pdf");
+        doc.save(&protected).unwrap();
+        let read = Document::load(&protected).unwrap();
+        assert!(read.was_encrypted() && !read.trailer.has(b"Encrypt"));
+
+        let copy = dir.path().join("copy.pdf");
+        let made = shrink(&job(&plain, &copy), &mut |_, _| {}).unwrap();
+        assert!(made.written, "the plain PDF is made smaller");
+        std::fs::remove_file(&copy).unwrap();
+        let made = shrink(&job(&protected, &copy), &mut |_, _| {}).unwrap();
+        assert!(!made.written && !copy.exists());
+        assert!(
+            made.notes.iter().any(|note| note.contains("password")),
+            "{:?}",
+            made.notes
+        );
+    }
 }
