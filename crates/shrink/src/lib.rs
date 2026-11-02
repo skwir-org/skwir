@@ -41,6 +41,7 @@ pub fn run(job: &Job, progress: &mut dyn FnMut(u64, u64)) -> Result<Made> {
                     met: written.met,
                     changed: Vec::new(),
                     notes: written.notes,
+                    rule: None,
                 },
                 None => Made {
                     before,

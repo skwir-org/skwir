@@ -18,6 +18,13 @@ const DEPTH: usize = 12;
 /// and stops being followed there.
 const OPERATIONS: usize = 4_000_000;
 
+/// The most bytes of drawing read on a page, its forms' each time they
+/// are drawn included: what is read is decoded whole before its
+/// operations are counted, some fifteen times its size in memory. A page
+/// past it is not followed further: an image only it would have placed is
+/// written again only without loss.
+const BYTES: usize = 16 * 1024 * 1024;
+
 /// Where an image is drawn: the largest width and height it is drawn at,
 /// in inches, and the pages (from 0) that show it.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -38,21 +45,26 @@ impl Placed {
     }
 }
 
-/// The images of `doc` drawn by its pages, by object.
-pub fn placements(doc: &Document) -> BTreeMap<ObjectId, Placed> {
+/// The images of `doc` drawn by its pages, by object. `beat` is called
+/// before each page, as many may take long.
+pub fn placements(doc: &Document, beat: &mut dyn FnMut()) -> BTreeMap<ObjectId, Placed> {
     let mut placed: BTreeMap<ObjectId, Placed> = BTreeMap::new();
     for (index, (_, &page_id)) in doc.get_pages().iter().enumerate() {
+        beat();
         let Ok(page) = doc.get_dictionary(page_id) else {
             continue;
         };
         let resources = resources_of(doc, page_id, page);
-        let content = doc.get_page_content(page_id);
+        let Ok(content) = doc.get_page_content_with_limit(page_id, BYTES) else {
+            continue;
+        };
         let mut walk = Walk {
             doc,
             page: u32::try_from(index).unwrap_or(u32::MAX),
             placed: &mut placed,
             seen: HashSet::new(),
             operations: 0,
+            bytes: 0,
         };
         walk.drawing(
             &content,
@@ -129,6 +141,8 @@ struct Walk<'a, 'b> {
     /// The forms being drawn, so one that draws itself stops there.
     seen: HashSet<ObjectId>,
     operations: usize,
+    /// Bytes of drawing read so far, against [`BYTES`].
+    bytes: usize,
 }
 
 impl Walk<'_, '_> {
@@ -139,6 +153,10 @@ impl Walk<'_, '_> {
         start: Matrix,
         depth: usize,
     ) {
+        self.bytes = self.bytes.saturating_add(content.len());
+        if self.bytes > BYTES {
+            return;
+        }
         let Ok(content) = Content::decode(content) else {
             return;
         };
@@ -212,10 +230,12 @@ impl Walk<'_, '_> {
                     .cloned();
                 // A form without resources of its own uses its page's.
                 let resources = own.as_ref().or(outer);
-                let content = stream
-                    .decompressed_content()
-                    .unwrap_or_else(|_| stream.content.clone());
-                self.drawing(&content, resources, then(form, ctm), depth + 1);
+                // A form whose drawing is not read here (a filter of
+                // another kind, past what is left to read) is not followed.
+                let left = BYTES.saturating_sub(self.bytes);
+                if let Ok(content) = stream.decompressed_content_with_limit(left) {
+                    self.drawing(&content, resources, then(form, ctm), depth + 1);
+                }
                 self.seen.remove(&id);
             }
             _ => {}
@@ -226,6 +246,47 @@ impl Walk<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lopdf::{Stream, dictionary};
+
+    /// A one-page document drawing an image 2 inches wide, `padding` bytes
+    /// of blanks before.
+    fn drawn(padding: usize) -> (Document, ObjectId) {
+        let mut doc = Document::with_version("1.5");
+        let image = doc.add_object(Stream::new(
+            dictionary! { "Subtype" => "Image", "Width" => 600, "Height" => 600 },
+            Vec::new(),
+        ));
+        let mut content = vec![b' '; padding];
+        content.extend_from_slice(b"q 144 0 0 144 72 72 cm /Im0 Do Q");
+        let content = doc.add_object(Stream::new(Dictionary::new(), content));
+        let tree = doc.new_object_id();
+        let page = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => tree,
+            "Contents" => content,
+            "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => image } },
+        });
+        doc.objects.insert(
+            tree,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1,
+            }),
+        );
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree });
+        doc.trailer.set("Root", catalog);
+        (doc, image)
+    }
+
+    /// A page's drawing is read up to a bound: past it, nothing is placed.
+    #[test]
+    fn a_page_s_drawing_is_read_to_a_bound() {
+        let (doc, image) = drawn(0);
+        let placed = placements(&doc, &mut || {});
+        assert_eq!(placed[&image].dpi(600, 600), Some(300.0));
+        assert_eq!(placed[&image].pages, BTreeSet::from([0]));
+        let (doc, _) = drawn(BYTES);
+        assert!(placements(&doc, &mut || {}).is_empty());
+    }
 
     #[test]
     fn transforms_compose_as_a_page_draws_them() {

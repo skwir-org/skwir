@@ -330,6 +330,7 @@ mod tests {
             strip: false,
             at_most: None,
             keep: Vec::new(),
+            rule: None,
         }
     }
 

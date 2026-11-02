@@ -507,6 +507,7 @@ impl op::Effect for ShrinkCopy {
             strip: self.strip,
             at_most: self.at_most,
             keep: Vec::new(),
+            rule: None,
         };
         let name = format!(
             "copy.{}",

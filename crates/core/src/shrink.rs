@@ -262,6 +262,11 @@ pub struct Job {
     /// that looked different showed, after a first copy was checked.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keep: Vec<u32>,
+    /// Only this one of the rules a job tries (its place in their order,
+    /// from 0), as `Made::rule` named it: a PDF's second pass, after its
+    /// check put images back, keeps the first pass's rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<u32>,
 }
 
 /// What is made smaller.
@@ -290,6 +295,10 @@ pub struct Made {
     /// What was left as it was, and why: said to the user.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<String>,
+    /// Which of the rules tried made the copy (its place in their order,
+    /// from 0).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<u32>,
 }
 
 /// A PDF's image written anew: its object number, the pages showing it.
@@ -387,9 +396,10 @@ mod tests {
             strip: false,
             at_most: None,
             keep: Vec::new(),
+            rule: None,
         };
         let text = serde_json::to_string(&job).unwrap();
-        assert!(!text.contains("gray") && !text.contains("keep"));
+        assert!(!text.contains("gray") && !text.contains("keep") && !text.contains("rule"));
         let back: Job = serde_json::from_str(&text).unwrap();
         assert_eq!(back.quality, Quality::Screen);
     }

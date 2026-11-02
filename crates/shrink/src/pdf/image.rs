@@ -16,15 +16,19 @@
 
 use std::io::Read;
 
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, ensure};
 use lopdf::{Dictionary, Document, Object, ObjectId, Stream};
-use skwir_core::shrink::PdfRule;
+use skwir_core::shrink::{PdfRule, Quality};
 
 use crate::bitonal;
 use crate::samples::{self, JpegExtras, Samples};
 
 /// The most samples an image is decoded to: past it, it is left as it is.
 const MOST_BYTES: u64 = 512 * 1024 * 1024;
+
+/// The most bytes a palette's table is read to: 256 colours of 4 components
+/// fill a kilobyte.
+const PALETTE_MOST: usize = 64 * 1024;
 
 /// A JPEG kept only when it is this much smaller than what it replaces: a
 /// photograph written again at the same size loses a little each time.
@@ -37,8 +41,9 @@ const FLAT_QUALITY: u8 = 85;
 /// What became of an image.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Done {
-    /// Written anew, at this many bytes.
-    Written,
+    /// Written anew: these objects, it and its soft mask when that was
+    /// resized with it.
+    Written(Vec<ObjectId>),
     /// Left as it is: nothing smaller, or nothing asked of it.
     Kept,
 }
@@ -52,10 +57,13 @@ enum Stored {
 }
 
 /// The image `id` of `doc` written anew under `rule`, `dpi` the dots per
-/// inch it is drawn at (none when no page draws it: then it is never
-/// resized), `gray` asked; its soft mask, when it has one of its size,
-/// resized with it. Left as it is when it is of a kind not written here,
-/// or when nothing written is smaller.
+/// inch it is drawn at, `gray` asked; its soft mask, when it has one of
+/// its size, resized with it. Left as it is when it is of a kind not
+/// written here, or when nothing written is smaller.
+///
+/// An image no page's drawing reaches (`dpi` none: an annotation's, a
+/// pattern's) is drawn where the copy's check does not look: it is never
+/// resized and only written again without loss, made gray when asked.
 pub fn rewrite(
     doc: &mut Document,
     id: ObjectId,
@@ -71,6 +79,14 @@ pub fn rewrite(
     if flag(dict, b"ImageMask") || dict.has(b"Mask") && !mask_is_stream(doc, dict) {
         return Ok(Done::Kept);
     }
+    // Colours preblended with its soft mask's matte colour are read with
+    // that mask at the image's size and in its colour space: resized or
+    // made gray without it, its edges would turn.
+    if matted(doc, dict) {
+        return Ok(Done::Kept);
+    }
+    let lossless = Quality::Lossless.pdf();
+    let rule = if dpi.is_some() { rule } else { &lossless };
     let width = int(dict, b"Width").context("an image without a width")?;
     let height = int(dict, b"Height").context("an image without a height")?;
     let bits = int(dict, b"BitsPerComponent").unwrap_or(8);
@@ -102,6 +118,9 @@ fn bitonal_written(
     height: u32,
 ) -> Result<Done> {
     let dict = &stream.dict;
+    if u64::from(width).div_ceil(8) * u64::from(height) > MOST_BYTES {
+        return Ok(Done::Kept);
+    }
     // Which sample is black, as its `Decode` reads it: 0 unless inverted.
     let zero_is_black = match dict.get(b"Decode").and_then(Object::as_array) {
         Ok(decode) => decode.first().and_then(number).unwrap_or(0.0) < 0.5,
@@ -118,7 +137,7 @@ fn bitonal_written(
             image
         }
         Stored::Deflate { params } => {
-            let data = predicted_back(&inflated(&stream.content)?, params.as_ref(), 1, 1, width)?;
+            let data = deflated_samples(&stream.content, params.as_ref(), 1, 1, width, height)?;
             bitonal::Bits::from_samples(width, height, &data, zero_is_black)?
         }
         Stored::Raw => bitonal::Bits::from_samples(width, height, &stream.content, zero_is_black)?,
@@ -134,7 +153,7 @@ fn bitonal_written(
     // JBIG2Decode reads black as 0, as DeviceGray's default `Decode` does.
     dict.remove(b"Decode");
     replace(doc, id, dict, jbig2);
-    Ok(Done::Written)
+    Ok(Done::Written(vec![id]))
 }
 
 /// An image of 8-bit samples written anew.
@@ -151,7 +170,13 @@ fn samples_written(
     dpi: Option<f64>,
     gray: bool,
 ) -> Result<Done> {
-    let bytes = u64::from(width) * u64::from(height) * u64::from(space.components);
+    // A palette's indexes become its colours: the larger of the two.
+    let components = space
+        .palette
+        .as_ref()
+        .map_or(space.components, |palette| palette.components)
+        .max(space.components);
+    let bytes = u64::from(width) * u64::from(height) * u64::from(components);
     if bytes > MOST_BYTES {
         return Ok(Done::Kept);
     }
@@ -177,12 +202,13 @@ fn samples_written(
                 .context("its JPEG is not the size it says")?
         }
         Stored::Deflate { params } => {
-            let data = predicted_back(
-                &inflated(&stream.content)?,
+            let data = deflated_samples(
+                &stream.content,
                 params.as_ref(),
                 space.components,
                 8,
                 width,
+                height,
             )?;
             Samples::new(width, height, space.components, data)?
         }
@@ -210,9 +236,6 @@ fn samples_written(
     };
     let resized = (new_width, new_height) != (width, height);
     let made_gray = gray && grayable && !space.decoded;
-    if was_jpeg && !resized && !made_gray && rule.jpeg.is_none() {
-        return Ok(Done::Kept);
-    }
     let mut samples = samples.resized(new_width, new_height)?;
     if made_gray {
         samples = samples.gray();
@@ -287,11 +310,14 @@ fn samples_written(
         }
     };
     // Its soft mask, drawn over the same square, follows its size.
+    let mut written = vec![id];
     if resized {
-        resize_mask(doc, &dict, width, height, new_width, new_height);
+        written.extend(resize_mask(
+            doc, &dict, width, height, new_width, new_height,
+        ));
     }
     replace(doc, id, dict, data);
-    Ok(Done::Written)
+    Ok(Done::Written(written))
 }
 
 enum Written {
@@ -318,8 +344,9 @@ fn predictor(samples: &Samples) -> Object {
 }
 
 /// The soft mask the image `dict` names, resized from `width` × `height`
-/// to the image's new size when it was the image's size; left as it is
-/// otherwise (it is drawn over the same square at its own resolution).
+/// to the image's new size when it was the image's size, and its object;
+/// left as it is otherwise (it is drawn over the same square at its own
+/// resolution).
 fn resize_mask(
     doc: &mut Document,
     dict: &Dictionary,
@@ -327,34 +354,30 @@ fn resize_mask(
     height: u32,
     new_width: u32,
     new_height: u32,
-) {
-    let Ok(mask_id) = dict.get(b"SMask").and_then(Object::as_reference) else {
-        return;
-    };
+) -> Option<ObjectId> {
+    let mask_id = dict.get(b"SMask").and_then(Object::as_reference).ok()?;
     let Ok(Object::Stream(mask)) = doc.get_object(mask_id) else {
-        return;
+        return None;
     };
     let mask = mask.clone();
     let md = &mask.dict;
     if int(md, b"Width") != Some(width)
         || int(md, b"Height") != Some(height)
         || int(md, b"BitsPerComponent").unwrap_or(8) != 8
-        || md.has(b"Matte")
     {
-        return;
+        return None;
     }
     let data = match stored(doc, md) {
-        Some(Stored::Deflate { params }) => inflated(&mask.content)
-            .and_then(|data| predicted_back(&data, params.as_ref(), 1, 8, width)),
+        Some(Stored::Deflate { params }) => {
+            deflated_samples(&mask.content, params.as_ref(), 1, 8, width, height)
+        }
         Some(Stored::Raw) => Ok(mask.content.clone()),
-        _ => return,
+        _ => return None,
     };
-    let Ok(resized) = data
+    let resized = data
         .and_then(|data| Samples::new(width, height, 1, data))
         .and_then(|samples| samples.resized(new_width, new_height))
-    else {
-        return;
-    };
+        .ok()?;
     let mut md = mask.dict.clone();
     md.set("Width", Object::Integer(i64::from(new_width)));
     md.set("Height", Object::Integer(i64::from(new_height)));
@@ -362,6 +385,7 @@ fn resize_mask(
     md.set("DecodeParms", predictor(&resized));
     let data = samples::predicted(&resized);
     replace(doc, mask_id, md, data);
+    Some(mask_id)
 }
 
 /// The image `id` replaced by `dict` and `data`, written as they are.
@@ -431,9 +455,9 @@ fn space(doc: &Document, dict: &Dictionary) -> Option<Space> {
         let hival = usize::try_from(items.get(2)?.as_i64().ok()?).ok()?.min(255);
         let table = match doc.dereference(items.get(3)?).ok()?.1 {
             Object::String(bytes, _) => bytes.clone(),
-            Object::Stream(stream) => stream
-                .decompressed_content()
-                .unwrap_or_else(|_| stream.content.clone()),
+            // A filter not read here, or a table past any palette's, is
+            // no palette read here.
+            Object::Stream(stream) => stream.decompressed_content_with_limit(PALETTE_MOST).ok()?,
             _ => return None,
         };
         return Some(Space {
@@ -559,6 +583,15 @@ fn mask_is_stream(doc: &Document, dict: &Dictionary) -> bool {
         .is_some_and(|(_, mask)| matches!(mask, Object::Stream(_)))
 }
 
+/// Whether the image `dict`'s soft mask has a matte colour (`Matte`), which
+/// its colours were preblended with.
+fn matted(doc: &Document, dict: &Dictionary) -> bool {
+    dict.get(b"SMask")
+        .ok()
+        .and_then(|mask| doc.dereference(mask).ok())
+        .is_some_and(|(_, mask)| matches!(mask, Object::Stream(mask) if mask.dict.has(b"Matte")))
+}
+
 /// `data` inflated (zlib), bounded.
 fn inflated(data: &[u8]) -> Result<Vec<u8>> {
     let mut out = Vec::new();
@@ -569,26 +602,24 @@ fn inflated(data: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// `data` with its predictor (`params`: PNG's, 10 to 15, or TIFF's, 2)
-/// taken off: samples of `colors` components of `bits` each, rows of
-/// `width`.
-fn predicted_back(
+/// The samples Deflate `data` holds, with its predictor (`params`: PNG's,
+/// 10 to 15, or TIFF's, 2) taken off: `height` rows of `width` samples of
+/// `colors` components of `bits` each. PNG's rows are taken off as they
+/// are inflated, never held filtered beside what they become.
+fn deflated_samples(
     data: &[u8],
     params: Option<&Dictionary>,
     colors: u8,
     bits: u32,
     width: u32,
+    height: u32,
 ) -> Result<Vec<u8>> {
-    let Some(params) = params else {
-        return Ok(data.to_vec());
-    };
     let predictor = params
-        .get(b"Predictor")
-        .and_then(Object::as_i64)
+        .and_then(|params| params.get(b"Predictor").and_then(Object::as_i64).ok())
         .unwrap_or(1);
-    if predictor <= 1 {
-        return Ok(data.to_vec());
-    }
+    let Some(params) = params.filter(|_| predictor > 1) else {
+        return inflated(data);
+    };
     let colors = int(params, b"Colors").unwrap_or(u32::from(colors)) as usize;
     let bits = int(params, b"BitsPerComponent").unwrap_or(bits) as usize;
     let columns = int(params, b"Columns").unwrap_or(width) as usize;
@@ -600,7 +631,7 @@ fn predicted_back(
             bits == 8,
             "TIFF's predictor on {bits}-bit samples is not read here"
         );
-        let mut out = data.to_vec();
+        let mut out = inflated(data)?;
         for line in out.chunks_exact_mut(row) {
             for x in bpp..row {
                 line[x] = line[x].wrapping_add(line[x - bpp]);
@@ -609,48 +640,11 @@ fn predicted_back(
         return Ok(out);
     }
     ensure!(predictor >= 10, "predictor {predictor} is not read here");
-    let mut out = Vec::with_capacity(data.len());
-    let mut previous = vec![0u8; row];
-    for line in data.chunks(row + 1) {
-        if line.len() < row + 1 {
-            break;
-        }
-        let (kind, filtered) = (line[0], &line[1..]);
-        let mut current = vec![0u8; row];
-        for x in 0..row {
-            let a = if x >= bpp { current[x - bpp] } else { 0 };
-            let b = previous[x];
-            let c = if x >= bpp { previous[x - bpp] } else { 0 };
-            let predicted = match kind {
-                0 => 0,
-                1 => a,
-                2 => b,
-                3 => a.midpoint(b),
-                4 => paeth(a, b, c),
-                other => bail!("PNG filter {other} is none"),
-            };
-            current[x] = filtered[x].wrapping_add(predicted);
-        }
-        out.extend_from_slice(&current);
-        previous = current;
-    }
+    let mut out = Vec::new();
+    let mut input = flate2::read::ZlibDecoder::new(data).take(MOST_BYTES);
+    samples::unfilter_rows(&mut input, row, bpp, height as usize, &mut out)
+        .context("its Deflate data could not be read")?;
     Ok(out)
-}
-
-fn paeth(a: u8, b: u8, c: u8) -> u8 {
-    let p = i16::from(a) + i16::from(b) - i16::from(c);
-    let (pa, pb, pc) = (
-        (p - i16::from(a)).abs(),
-        (p - i16::from(b)).abs(),
-        (p - i16::from(c)).abs(),
-    );
-    if pa <= pb && pa <= pc {
-        a
-    } else if pb <= pc {
-        b
-    } else {
-        c
-    }
 }
 
 fn int(dict: &Dictionary, key: &[u8]) -> Option<u32> {
@@ -695,8 +689,110 @@ mod tests {
         let Object::Dictionary(params) = predictor(&samples) else {
             unreachable!()
         };
-        let back = predicted_back(&inflated(&predicted).unwrap(), Some(&params), 3, 8, 7).unwrap();
+        let back = deflated_samples(&predicted, Some(&params), 3, 8, 7, 3).unwrap();
         assert_eq!(back, samples.data);
+    }
+
+    /// An image dictionary of `width` × `height` 8-bit RGB samples.
+    fn rgb_dict(width: u32, height: u32, filter: &str) -> Dictionary {
+        let mut dict = Dictionary::new();
+        dict.set("Type", Object::Name(b"XObject".to_vec()));
+        dict.set("Subtype", Object::Name(b"Image".to_vec()));
+        dict.set("Width", Object::Integer(i64::from(width)));
+        dict.set("Height", Object::Integer(i64::from(height)));
+        dict.set("BitsPerComponent", Object::Integer(8));
+        dict.set("ColorSpace", Object::Name(b"DeviceRGB".to_vec()));
+        dict.set("Filter", Object::Name(filter.as_bytes().to_vec()));
+        dict
+    }
+
+    /// A photograph's samples: gradients and grain.
+    fn photo(width: u32, height: u32) -> Samples {
+        let mut seed = 0x2545_f491_u32;
+        let data = (0..width * height * 3)
+            .map(|n| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                let shade = (n / 3 % width + n / 3 / width) * 200 / (width + height);
+                u8::try_from(shade + seed % 32).unwrap()
+            })
+            .collect();
+        Samples::new(width, height, 3, data).unwrap()
+    }
+
+    /// A JPEG drawn by a page is written again at Screen's quality; one no
+    /// page draws (an annotation's) is not, as no check would look at it.
+    #[test]
+    fn an_image_no_page_draws_is_written_only_without_loss() {
+        let rule = skwir_core::shrink::Quality::Screen.pdf();
+        let jpeg = samples::jpeg(&photo(600, 400), 95, &JpegExtras::default()).unwrap();
+        for placed in [false, true] {
+            let mut doc = Document::with_version("1.5");
+            let id = doc.add_object(Stream::new(rgb_dict(600, 400, "DCTDecode"), jpeg.clone()));
+            let done = rewrite(&mut doc, id, &rule, placed.then_some(150.0), false).unwrap();
+            let written = if placed {
+                Done::Written(vec![id])
+            } else {
+                Done::Kept
+            };
+            assert_eq!(done, written);
+        }
+    }
+
+    /// An image preblended with its soft mask's matte colour is left as
+    /// it is, even drawn at more dots per inch than asked.
+    #[test]
+    fn an_image_of_a_matted_mask_is_left_as_it_is() {
+        let mut doc = Document::with_version("1.5");
+        let mut mask = Dictionary::new();
+        mask.set("Type", Object::Name(b"XObject".to_vec()));
+        mask.set("Subtype", Object::Name(b"Image".to_vec()));
+        mask.set("Width", Object::Integer(600));
+        mask.set("Height", Object::Integer(400));
+        mask.set("BitsPerComponent", Object::Integer(8));
+        mask.set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
+        mask.set(
+            "Matte",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(0),
+            ]),
+        );
+        let mask_id = doc.add_object(Stream::new(mask, vec![128; 600 * 400]));
+        let mut dict = rgb_dict(600, 400, "FlateDecode");
+        dict.set("SMask", Object::Reference(mask_id));
+        let id = doc.add_object(Stream::new(dict, samples::deflate(&photo(600, 400).data)));
+        let rule = skwir_core::shrink::Quality::Screen.pdf();
+        assert_eq!(
+            rewrite(&mut doc, id, &rule, Some(600.0), true).unwrap(),
+            Done::Kept
+        );
+    }
+
+    /// A black-and-white image claiming more pixels than memory holds is
+    /// left as it is, never decoded.
+    #[test]
+    fn a_fax_claiming_too_many_pixels_is_left_as_it_is() {
+        let mut doc = Document::with_version("1.5");
+        let mut dict = Dictionary::new();
+        dict.set("Subtype", Object::Name(b"Image".to_vec()));
+        dict.set("Width", Object::Integer(2_000_000_000));
+        dict.set("Height", Object::Integer(2_000_000_000));
+        dict.set("BitsPerComponent", Object::Integer(1));
+        dict.set("ColorSpace", Object::Name(b"DeviceGray".to_vec()));
+        dict.set("Filter", Object::Name(b"CCITTFaxDecode".to_vec()));
+        let mut params = Dictionary::new();
+        params.set("K", Object::Integer(-1));
+        params.set("Columns", Object::Integer(2_000_000_000));
+        dict.set("DecodeParms", Object::Dictionary(params));
+        let id = doc.add_object(Stream::new(dict, vec![0; 64]));
+        let rule = skwir_core::shrink::Quality::Screen.pdf();
+        assert_eq!(
+            rewrite(&mut doc, id, &rule, Some(600.0), false).unwrap(),
+            Done::Kept
+        );
     }
 
     /// A gray palette's image drawn at 600 dpi, brought to 150 dpi at
@@ -729,7 +825,7 @@ mod tests {
         let rule = skwir_core::shrink::Quality::Screen.pdf();
         assert_eq!(
             rewrite(&mut doc, id, &rule, Some(600.0), false).unwrap(),
-            Done::Written
+            Done::Written(vec![id])
         );
         let Ok(Object::Stream(stream)) = doc.get_object(id) else {
             panic!("an image");

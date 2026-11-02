@@ -1292,6 +1292,7 @@ fn smaller_pdf(
         strip: false,
         at_most: None,
         keep: Vec::new(),
+        rule: None,
     };
     let (copy, _) =
         skwir_platform::shrink_job::made(app, job, &folder, "smaller.pdf", cancel, follow)
