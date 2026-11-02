@@ -458,8 +458,12 @@ impl Meter {
         let now = Instant::now();
         let sample = self.sample(now);
         self.samples.lock().note(sample);
-        // A plan counted by its steps goes as they end.
-        self.stalls_from(now);
+        // A plan of several steps may be counted by its steps, which go as
+        // they end; one of a single step says nothing of them (a rename
+        // starts no thread).
+        if self.items.load(Ordering::Relaxed) > 1 {
+            self.stalls_from(now);
+        }
     }
 
     /// Count `bytes` done and wake, at most every `WAKE_EVERY`; no bytes
@@ -2587,6 +2591,18 @@ mod tests {
             "and no more"
         );
         drop(meter);
+        // A step that ends moves nothing: a plan of one step, counted by
+        // its bytes alone, arms nothing; one of several is counted by its
+        // steps too.
+        let woken = || Some(Arc::new(|| {}) as Waker);
+        let one = Meter::new(woken());
+        one.begin(1);
+        one.step_ended();
+        assert!(!one.stall.0.state.lock().started, "no thread");
+        let several = Meter::new(woken());
+        several.begin(3);
+        several.step_ended();
+        assert!(several.stall.0.state.lock().started);
     }
 
     /// Writing into a mount that sends to its server after, its end waits
