@@ -88,6 +88,10 @@ unsafe fn build_classes() {
                 should_handle_reopen as extern "C-unwind" fn(_, Sel, *mut AnyObject, Bool) -> Bool,
             );
             decl.add_method(
+                sel!(applicationShouldTerminate:),
+                should_terminate as extern "C-unwind" fn(_, Sel, *mut AnyObject) -> usize,
+            );
+            decl.add_method(
                 sel!(applicationWillTerminate:),
                 will_terminate as extern "C-unwind" fn(_, Sel, *mut AnyObject),
             );
@@ -174,6 +178,7 @@ pub(crate) struct MacPlatformState {
     general_pasteboard: Pasteboard,
     find_pasteboard: Pasteboard,
     reopen: Option<Box<dyn FnMut()>>,
+    should_quit: Option<Box<dyn FnMut() -> bool>>,
     on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     thermal_observer: Option<ProcessInfoObserver>,
     power_mode_observer: Option<ProcessInfoObserver>,
@@ -244,6 +249,7 @@ impl MacPlatform {
             general_pasteboard: Pasteboard::general(),
             find_pasteboard: Pasteboard::find(),
             reopen: None,
+            should_quit: None,
             quit: None,
             menu_command: None,
             validate_menu_command: None,
@@ -1039,6 +1045,10 @@ impl Platform for MacPlatform {
         self.0.lock().quit = Some(callback);
     }
 
+    fn on_should_quit(&self, callback: Box<dyn FnMut() -> bool>) {
+        self.0.lock().should_quit = Some(callback);
+    }
+
     fn on_reopen(&self, callback: Box<dyn FnMut()>) {
         self.0.lock().reopen = Some(callback);
     }
@@ -1384,6 +1394,22 @@ extern "C-unwind" fn should_handle_reopen(
         }
     }
     Bool::YES
+}
+
+/// `NSApplicationTerminateReply`: whether the application may quit, as the
+/// handler answers (`App::on_should_quit`); `NSTerminateNow` without one.
+extern "C-unwind" fn should_terminate(this: &AnyObject, _: Sel, _: *mut AnyObject) -> usize {
+    const TERMINATE_CANCEL: usize = 0;
+    const TERMINATE_NOW: usize = 1;
+    let platform = unsafe { get_mac_platform(this) };
+    let mut lock = platform.0.lock();
+    let Some(mut callback) = lock.should_quit.take() else {
+        return TERMINATE_NOW;
+    };
+    drop(lock);
+    let may = callback();
+    platform.0.lock().should_quit.get_or_insert(callback);
+    if may { TERMINATE_NOW } else { TERMINATE_CANCEL }
 }
 
 extern "C-unwind" fn will_terminate(this: &AnyObject, _: Sel, _: *mut AnyObject) {

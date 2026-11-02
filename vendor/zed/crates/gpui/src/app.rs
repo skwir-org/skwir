@@ -331,6 +331,31 @@ impl Application {
         self
     }
 
+    /// Asks a handler whether the application may quit when the system
+    /// asks it to (macOS: Quit from the Dock or the menu, logging out,
+    /// restarting, `App::quit` included): false keeps it running, and the
+    /// system is told so (a log out is cancelled). Not asked while the
+    /// application is borrowed: it quits as before.
+    pub fn on_should_quit<F>(&self, mut callback: F) -> &Self
+    where
+        F: 'static + FnMut(&mut App) -> bool,
+    {
+        let this = Rc::downgrade(&self.0);
+        self.0
+            .borrow_mut()
+            .platform
+            .on_should_quit(Box::new(move || {
+                let Some(app) = this.upgrade() else {
+                    return true;
+                };
+                let Ok(mut app) = app.try_borrow_mut() else {
+                    return true;
+                };
+                callback(&mut app)
+            }));
+        self
+    }
+
     /// Invokes a handler when an already-running application is launched.
     /// On macOS, this can occur when the application icon is double-clicked or the app is launched via the dock.
     pub fn on_reopen<F>(&self, mut callback: F) -> &Self

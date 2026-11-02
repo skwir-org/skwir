@@ -73,6 +73,7 @@ at the vendored commit.
 | `0041-key-binding-for-a-system` | `KeyBinding::new_for_os` binds any string, its `secondary-` the given system's, without a keyboard mapper (`KeyBinding::new` takes a static string, and `load` maps keys by the layout) | — |
 | `0042-list-overdraw-set-later` | `ListState::set_overdraw`: a list about to scroll up by more than its overdraw measures that far first, and crosses heights known rather than hinted | — |
 | `0043-activate-with-token` | `Window::activate_window_with_token`: the window brought forward with the token the desktop gave (Wayland's xdg-activation, a notification clicked) | — |
+| `0044-should-quit` | `Application::on_should_quit`: macOS's `applicationShouldTerminate:` asks the application whether it may quit (Quit from the Dock, a log out, a restart) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -694,6 +695,20 @@ actions (ADR-114) bring the window forward when clicked.
 `xdg_activation_v1::activate` on Wayland; elsewhere, and on a compositor
 without the protocol, it activates as before. `Window::activate_window_with_token`
 takes the token if there is one.
+
+### 0044: Should quit
+
+macOS asks a program whether it may quit before it does: Quit from the
+Dock's menu or the application menu, a log out, a restart, `App::quit`
+too (`applicationShouldTerminate:`). Upstream's delegate does not answer,
+so the program quits at once. Skwir finishes what runs without its window
+(ADR-115): while something is under way it answers no and asks the user,
+and a log out is cancelled, the system saying by which program.
+
+`Application::on_should_quit` registers the handler; macOS's delegate
+answers `NSTerminateCancel` when it says no, `NSTerminateNow` otherwise or
+without one, or while the application is borrowed. Other platforms never
+ask and ignore it (`Platform::on_should_quit` has a default).
 
 ## Adding or changing a patch
 
