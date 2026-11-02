@@ -141,6 +141,15 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   runs last drawn first, and what is drawn over the pages still comes
   before it). A touchpad's pixels, a wheel turned sideways and one with a
   modifier (Ctrl's zoom) are left as they come (`wheel_step`).
+- **Only a wheel's notches are lines whole** (`notches`): gpui says
+  lines for a touchpad too on X11 (all of XInput's smooth scrolling is
+  lines) and through Windows' wheel messages, and for a high-resolution
+  wheel's steps between notches, each a part of a line; a notch is
+  `SCROLL_LINES` whole on Wayland, X11 and Windows. Lines in parts go as
+  gpui counts them, and never turn a page without the pixels a touchpad
+  gathers (`WheelTurn`). gpui marks no source beyond that (its
+  `ScrollSource` tells a touchscreen alone): a touchpad's step that comes
+  as whole lines is taken as a notch.
 - **The wheel turns a page a notch** a page at a time, past the page's
   edge: a page that fits (Fit) is at both its edges, so every notch turns
   it. The wheel and the arrows ask one question, `at_page_edge`, in

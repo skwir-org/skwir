@@ -4451,6 +4451,21 @@ impl Shell {
         tokens
     }
 
+    /// What the entry the preview shows is, for a menu's `kind:` and
+    /// `has:` ([`shown_types`]), its entry as its pane lists it.
+    fn preview_types(&self) -> crate::menu::SelectionTypes {
+        let Some(key) = self.preview.key.as_ref() else {
+            return crate::menu::SelectionTypes::default();
+        };
+        let listed = {
+            let ws = self.app.workspace.read();
+            ws.pane(key.pane)
+                .and_then(|pane| pane.entry(key.id))
+                .map(|entry| (entry.type_name().to_owned(), entry.inode_type()))
+        };
+        shown_types(listed, key.content.as_ref())
+    }
+
     /// The plugins' items of the preview's menu (`MenuItem::menu`
     /// `preview`) that hold for what it shows, in their order: title, icon
     /// and what they run.
@@ -4460,19 +4475,13 @@ impl Shell {
         }
         let tokens = self.preview_tokens();
         let all = self.app.registry.menus.all();
-        // `kind:` and `has:` read the type of the file shown, as its name
-        // says it, worked out only when an item asks.
+        // `kind:` and `has:` read the type of the entry shown, worked out
+        // only when an item asks.
         let asks = all
             .iter()
             .any(|item| item.menu == "preview" && crate::menu::asks_types(item.when.as_deref()));
         let types = if asks {
-            let name = self
-                .preview
-                .key
-                .as_ref()
-                .and_then(|key| key.path.file_name().map(std::ffi::OsStr::to_owned))
-                .unwrap_or_default();
-            crate::menu::SelectionTypes::of([(name.as_os_str(), None)])
+            self.preview_types()
         } else {
             crate::menu::SelectionTypes::default()
         };
@@ -4920,6 +4929,24 @@ impl Shell {
                     this.remember_session();
                 }),
             )
+    }
+}
+
+/// What the entry the preview shows is, for a menu's `kind:` and `has:`,
+/// as the file menu reads a selection's (`selection_types`): `listed`, the
+/// listed entry's type name (a link's target's) and the type it has
+/// whatever its name (a folder, a pipe, a device). An entry no longer
+/// listed is typed by the name of what is read to show it (`content`,
+/// `Entry::content`); when nothing is read (a pipe, a link that leads
+/// nowhere), it is no type a menu names.
+fn shown_types(
+    listed: Option<(std::ffi::OsString, Option<&'static str>)>,
+    content: Option<&EntryRef>,
+) -> crate::menu::SelectionTypes {
+    let named = listed.or_else(|| Some((content?.path.file_name()?.to_owned(), None)));
+    match named {
+        Some((name, inode)) => crate::menu::SelectionTypes::of([(name.as_os_str(), inode)]),
+        None => crate::menu::SelectionTypes::default(),
     }
 }
 
@@ -6373,6 +6400,32 @@ mod tests {
             fit: None,
             held: super::HeldSlot::default(),
         }
+    }
+
+    /// The preview's menu types what it shows as the file menu does: a
+    /// link by its target's name, a pipe by what it is whatever its name;
+    /// an entry no longer listed by what is read to show it, and nothing
+    /// when nothing is.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_preview_s_menu_types_a_link_by_its_target_and_a_pipe_as_one() {
+        use skwir_core::entry::{Entry, EntryId, EntryKind, FileId, LinkTarget};
+        let id = EntryId::at_path(FileId::new(1, 2), std::path::Path::new("/docs/scan"));
+        let mut link = Entry::new(id, "scan", EntryKind::Symlink);
+        link.target = Some(LinkTarget {
+            kind: EntryKind::File,
+            id: FileId::new(1, 3),
+            path: Some("/docs/scan-2026.pdf".into()),
+        });
+        let listed = |entry: &Entry| Some((entry.type_name().to_owned(), entry.inode_type()));
+        let pdf = "kind:application/pdf";
+        let holds = |types: &crate::menu::SelectionTypes| types.token(pdf) == Some(true);
+        assert!(holds(&super::shown_types(listed(&link), None)));
+        let pipe = Entry::new(id, "a.pdf", EntryKind::Fifo);
+        assert!(!holds(&super::shown_types(listed(&pipe), None)));
+        let gone = skwir_core::op::EntryRef::new(FileId::new(1, 4), "/docs/b.pdf");
+        assert!(holds(&super::shown_types(None, Some(&gone))));
+        assert!(!holds(&super::shown_types(None, None)));
     }
 
     /// What a preview holds of the file at `path` (ADR-101).

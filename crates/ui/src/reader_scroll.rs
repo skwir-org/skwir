@@ -327,17 +327,34 @@ impl WheelTurn {
 /// a time: 40 px, so a notch (three lines on Linux) goes 120 px, as
 /// Chromium's does there (its PDF viewer's). gpui's list counts a line
 /// 20 px, a `div` the window's line height (26 px): both crawled through
-/// a page. A touchpad's pixels go as they come.
+/// a page. Only a wheel's notches go at it ([`notches`]).
 pub(crate) const WHEEL_LINE: gpui::Pixels = px(40.);
 
+/// Whether `delta` is a wheel's notches: lines, each axis that moves a
+/// whole number of them. gpui says lines for a touchpad too on X11 (all of
+/// `XInput`'s smooth scrolling) and through Windows' wheel messages, and for
+/// a high-resolution wheel's steps between notches, but those come as
+/// parts of a line; a notch is `SCROLL_LINES` whole (Wayland's, X11's and
+/// Windows' lines a notch). A touchpad's pixels, and lines in parts, go as
+/// gpui counts them.
+fn notches(delta: &gpui::ScrollDelta) -> bool {
+    let gpui::ScrollDelta::Lines(lines) = delta else {
+        return false;
+    };
+    let whole =
+        |n: f32| n.is_finite() && (n == 0. || (n.abs() >= 1. && (n - n.round()).abs() < 1e-3));
+    (lines.x != 0. || lines.y != 0.) && whole(lines.x) && whole(lines.y)
+}
+
 /// How far a plain wheel moves the column down (up when negative): its
-/// lines at `WHEEL_LINE`, `None` for what is left to gpui's own scrolling
-/// (a touchpad's pixels, a wheel turned sideways, one with a modifier).
+/// notches at `WHEEL_LINE`, `None` for what is left to gpui's own
+/// scrolling (a touchpad's pixels or its lines in parts, a wheel turned
+/// sideways, one with a modifier).
 fn wheel_step(event: &ScrollEvent) -> Option<f32> {
     let gpui::ScrollDelta::Lines(lines) = event.delta else {
         return None;
     };
-    (!event.modifiers.modified() && lines.x == 0. && lines.y != 0. && lines.y.is_finite())
+    (!event.modifiers.modified() && lines.x == 0. && notches(&event.delta))
         .then(|| -lines.y * f32::from(WHEEL_LINE))
 }
 
@@ -592,7 +609,15 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let delta = event.delta.pixel_delta(WHEEL_LINE);
+        // A wheel's notches at a document's step, the rest as a `div`
+        // counts them.
+        let wheel = notches(&event.delta);
+        let line = if wheel {
+            WHEEL_LINE
+        } else {
+            window.line_height()
+        };
+        let delta = event.delta.pixel_delta(line);
         let pending = self.preview.phase != crate::preview::PreviewPhase::Idle;
         let scroll = &mut self.preview.reader.scroll;
         let offset = scroll.single.offset();
@@ -616,11 +641,7 @@ impl Shell {
             cx.stop_propagation();
             return;
         }
-        let turn = scroll.wheel.turn(
-            f32::from(delta.y),
-            matches!(event.delta, gpui::ScrollDelta::Lines(_)),
-            pending,
-        );
+        let turn = scroll.wheel.turn(f32::from(delta.y), wheel, pending);
         // Keep edge gestures out of the surrounding file list even at page 1/N.
         cx.stop_propagation();
         if turn != 0 {
@@ -1588,6 +1609,23 @@ mod tests {
         assert_eq!(wheel_step(&wheel(lines(0., f32::NAN), plain)), None);
         let ctrl = gpui::Modifiers::control();
         assert_eq!(wheel_step(&wheel(lines(0., -3.), ctrl)), None);
+        // Lines in parts are a touchpad's (X11 says lines for it) or a
+        // high-resolution wheel's steps between notches: gpui's too.
+        assert_eq!(wheel_step(&wheel(lines(0., -0.4), plain)), None);
+        assert_eq!(wheel_step(&wheel(lines(0., -1.7), plain)), None);
+        // Two notches at once, and one an X11 valuator gives a hair off.
+        assert_eq!(wheel_step(&wheel(lines(0., -6.), plain)), Some(240.));
+        let off = wheel_step(&wheel(lines(0., -3.000_000_4), plain));
+        assert!(
+            off.is_some_and(|step| (step - 120.).abs() < 0.01),
+            "{off:?}"
+        );
+        // A page at a time, a notch sideways goes at a document's step
+        // too; lines in parts are counted as a `div` counts them.
+        assert!(notches(&lines(-3., 0.)));
+        assert!(!notches(&lines(0.5, -3.)));
+        assert!(!notches(&lines(0., 0.)));
+        assert!(!notches(&pixels));
     }
 
     #[test]
