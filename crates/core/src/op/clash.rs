@@ -916,6 +916,52 @@ mod tests {
         assert_eq!(kinds, ["uncopy"]);
     }
 
+    /// What a Replace settled when a copy's turn comes puts in the trash
+    /// is within what the copy claimed before (ADR-079): an action that
+    /// keeps the trash whole (a restore) meets the plan as it was asked,
+    /// not only as it was settled.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn what_a_replace_puts_aside_is_claimed_before_its_turn() {
+        use super::super::footprint::{Footprint, TRASH, Volumes};
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let tmp = tempfile::tempdir_in(base).unwrap();
+        let (src, dest) = (tmp.path().join("here"), tmp.path().join("there"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dest).unwrap();
+        std::fs::write(src.join("it's a.txt"), "mine").unwrap();
+        std::fs::write(dest.join("it's a.txt"), "theirs").unwrap();
+        let copy: Box<dyn Operation> = Box::new(Copy {
+            entry: EntryRef::from_path(src.join("it's a.txt")).unwrap(),
+            dest_dir: dest.clone(),
+            new_name: None,
+            preserve_attributes: true,
+        });
+        let replace = Answer::all(Policy {
+            files: FileChoice::Replace,
+            folders: FolderChoice::Merge,
+        });
+        let volumes = Volumes::now();
+        let asked = Footprint::of_steps([copy.footprint(&volumes)]);
+        let settled = settle(&[copy], &replace, &StepContext::detached());
+        let kinds: Vec<&str> = settled.steps.iter().map(|s| s.kind()).collect();
+        assert_eq!(kinds, ["trash", "copy"]);
+        let done = Footprint::of_steps(settled.steps.iter().map(|s| s.footprint(&volumes)));
+        let restore = Footprint::default()
+            .made(&tmp.path().join("elsewhere/b.txt"))
+            .store(TRASH);
+        let beside = Footprint::default().made(&dest.join("other.txt"));
+        let same = Footprint::default().made(&dest.join("it's a.txt"));
+        for (probe, meets) in [(&restore, true), (&beside, false), (&same, true)] {
+            assert_eq!(done.conflicts(probe), meets, "{probe:?}");
+            assert_eq!(asked.conflicts(probe), meets, "claimed before: {probe:?}");
+        }
+        // Two such copies elsewhere still run at once: records never meet.
+        let other = Footprint::default().settles_name(&tmp.path().join("far/b.txt"), true);
+        assert!(!asked.conflicts(&other));
+    }
+
     #[test]
     fn a_copy_is_named_as_gnome_names_it() {
         assert_eq!(named("notes.txt", false, &[]), "notes (copy).txt");

@@ -298,9 +298,13 @@ impl Footprint {
     /// comes: its own, or one kept beside it where its own is taken
     /// (`name (copy).ext`, ADR-054), which begins as
     /// `clash::kept_prefixes` says; and, where it `stages` (a copy, what a step makes), the
-    /// staging folders made beside it first.
+    /// staging folders made beside it first. What it replaces there, or in
+    /// a folder it merges into, is put in the trash by a step of its own
+    /// (`clash::put_aside`), whose record it claims: what its plan touches
+    /// is claimed before its names are settled.
     #[must_use]
     pub fn settles_name(mut self, path: &Path, stages: bool) -> Self {
+        self = self.record_in(TRASH);
         let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
             return self.made(path);
         };

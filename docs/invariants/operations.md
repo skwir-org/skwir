@@ -199,8 +199,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   starts at once. A name settled only when its plan's turn comes (a
   copy's, a move's, a link's, what a plugin makes, kept beside one taken
   as `name (copy).ext`) claims its own and every name it may be kept as
-  (those beginning as `clash::kept_prefixes` says), and the staging
-  folders a copy makes there (`Footprint::settles_name`). A store several actions keep (a volume's trash,
+  (those beginning as `clash::kept_prefixes` says), the staging
+  folders a copy makes there, and the trash's record of what a Replace
+  puts aside there (`Footprint::settles_name`). A store several actions keep (a volume's trash,
   the notes') is kept whole by a step that reads, takes or empties what
   it holds (a restore, an item deleted for good or moved), which meets
   every action keeping it; a file trashed adds an item of its own (its

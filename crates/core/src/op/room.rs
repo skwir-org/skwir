@@ -6,6 +6,7 @@
 //! anyway rather than refuse: a network share may say it has less than
 //! it has. A drive filled meanwhile still fails the copy, in words.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::cancel::CancelToken;
@@ -91,20 +92,45 @@ impl Sized {
     /// if one: volumes told apart by their device, `free` saying what one
     /// has free. A folder the plan makes itself (a merge's, a new
     /// folder's) is on the volume of the nearest folder above it that is
-    /// there.
+    /// there. Each folder is asked its device once a plan, however many
+    /// steps write into it (100,000 copies into one folder: one look).
     pub fn short(&self, free: &dyn Fn(&Path) -> Option<u64>) -> Option<Short> {
+        self.short_with(free, &|folder| Some(crate::fs::stat::id_of(folder)?.dev))
+    }
+
+    /// [`Sized::short`], each folder's device as `device` says.
+    fn short_with(
+        &self,
+        free: &dyn Fn(&Path) -> Option<u64>,
+        device: &dyn Fn(&Path) -> Option<u64>,
+    ) -> Option<Short> {
+        // The bytes written into each folder, in the order first written.
+        let mut into: Vec<(&Path, u64)> = Vec::new();
+        let mut at: HashMap<&Path, usize> = HashMap::new();
+        for (dest, bytes) in self.writes.iter().flatten() {
+            if let Some(&i) = at.get(dest.as_path()) {
+                into[i].1 = into[i].1.saturating_add(*bytes);
+            } else {
+                at.insert(dest, into.len());
+                into.push((dest, *bytes));
+            }
+        }
+        // Each folder's device, asked once: a folder the plan makes shares
+        // the look at the folders above it with its siblings.
+        let mut devices: HashMap<&Path, Option<u64>> = HashMap::new();
         // (device, the first folder written into there, the folder there it
         // is on, bytes)
         let mut volumes: Vec<(u64, PathBuf, PathBuf, u64)> = Vec::new();
-        for (dest, bytes) in self.writes.iter().flatten() {
-            let Some((on, device)) = dest.ancestors().find_map(|folder| {
-                Some((folder.to_path_buf(), crate::fs::stat::id_of(folder)?.dev))
+        for (dest, bytes) in into {
+            let Some((on, dev)) = dest.ancestors().find_map(|folder| {
+                let known = *devices.entry(folder).or_insert_with(|| device(folder));
+                Some((folder, known?))
             }) else {
                 continue;
             };
-            match volumes.iter_mut().find(|(d, ..)| *d == device) {
-                Some((.., sum)) => *sum = sum.saturating_add(*bytes),
-                None => volumes.push((device, dest.clone(), on, *bytes)),
+            match volumes.iter_mut().find(|(d, ..)| *d == dev) {
+                Some((.., sum)) => *sum = sum.saturating_add(bytes),
+                None => volumes.push((dev, dest.to_path_buf(), on.to_path_buf(), bytes)),
             }
         }
         volumes.into_iter().find_map(|(_, dest, on, needs)| {
@@ -138,6 +164,44 @@ mod tests {
             new_name: None,
             preserve_attributes: true,
         })
+    }
+
+    /// Each folder written into is asked its device once a plan, however
+    /// many steps write there (AGENTS.md, Scale), the folders above a
+    /// folder the plan makes too, shared with its siblings.
+    #[test]
+    fn each_folder_written_into_is_looked_at_once() {
+        let into = |dest: &str, bytes: u64| Some((PathBuf::from(dest), bytes));
+        let mut writes: Vec<Option<(PathBuf, u64)>> = (0..10_000)
+            .map(|_| into("/example/stick/photos", 10))
+            .collect();
+        writes.push(None);
+        writes.extend((0..10).map(|i| into(&format!("/example/stick/new/it's {i}"), 1)));
+        let sized = Sized {
+            work: vec![0; writes.len()],
+            writes,
+        };
+        let asked = std::sync::Mutex::new(Vec::new());
+        // Only the stick is there: what the plan makes inside it is not.
+        let device = |folder: &Path| {
+            asked.lock().unwrap().push(folder.to_path_buf());
+            (folder == Path::new("/example/stick")).then_some(7)
+        };
+        let short = sized.short_with(&|_| Some(50_000), &device);
+        assert_eq!(
+            short,
+            Some(Short {
+                dest: PathBuf::from("/example/stick/photos"),
+                needs: 100_010,
+                free: 50_000,
+            })
+        );
+        let mut asked = asked.into_inner().unwrap();
+        let looks = asked.len();
+        asked.sort();
+        asked.dedup();
+        assert_eq!(looks, asked.len(), "no folder asked twice: {asked:?}");
+        assert_eq!(looks, 13, "{asked:?}");
     }
 
     /// A plan's copies onto one volume are added up against what it has

@@ -835,6 +835,10 @@ pub(super) enum Stamp {
     Link(PathBuf),
     /// A folder a batch made in place (ADR-083).
     Folder,
+    /// A file or link a batch made in place whose stamp cannot be read (a
+    /// camera giving no time, or one before 1970): what it made while one
+    /// is there. Never what a step copies twice.
+    Made,
 }
 
 impl Stamp {
@@ -1280,16 +1284,17 @@ fn batch_in_place(
     let ran = run(from, (&here, is_alone(taken)), dest, &aside, &told, ctx);
     let cancelled = ctx.cancel_token().is_cancelled();
     if ran.is_ok() && !cancelled {
+        // Each made, as the transfer said: its step takes it as placed,
+        // whatever can be read of it (left to its step, it would be
+        // copied, and counted, again).
         for t in &here {
             let target = dest.join(&t.name);
             let stamp = if t.folder {
-                Some(Stamp::Folder)
+                Stamp::Folder
             } else {
-                Stamp::of(&target)
+                Stamp::of(&target).unwrap_or(Stamp::Made)
             };
-            if let Some(stamp) = stamp {
-                made_by_batch(t, Batched::Placed(target, stamp));
-            }
+            made_by_batch(t, Batched::Placed(target, stamp));
         }
         return Ok(());
     }
@@ -1446,6 +1451,7 @@ pub(super) fn take_back_unclaimed(ctx: &StepContext) {
         if let Batched::Placed(at, stamp) = what {
             let still = match &stamp {
                 Stamp::Folder => std::fs::symlink_metadata(&at).is_ok_and(|m| m.is_dir()),
+                Stamp::Made => std::fs::symlink_metadata(&at).is_ok_and(|m| !m.is_dir()),
                 _ => Stamp::of(&at).as_ref() == Some(&stamp),
             };
             if still {
@@ -2246,6 +2252,74 @@ mod tests {
             let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
             assert!(undone.error.is_none(), "{:?}", undone.error);
         }
+        assert!(names(&dest).is_empty(), "each step's undo takes its copy");
+    }
+
+    /// A transfer that writes onto a camera as Skwir's own copy does, and
+    /// leaves each file a time that cannot be read as one (before 1970).
+    struct Untimed;
+
+    impl Transfer for Untimed {
+        fn name(&self) -> &'static str {
+            "untimed"
+        }
+        fn serves(&self, _: &Path, _: &Path) -> bool {
+            true
+        }
+        fn writes_in_place(&self, _: &Path) -> bool {
+            true
+        }
+        fn copy(
+            &self,
+            from: &Path,
+            names: &[OsString],
+            into: &Path,
+            aside: &Aside<'_>,
+            told: &Told<'_>,
+            control: &Control,
+        ) -> anyhow::Result<()> {
+            copy_at_once(from, names, into, aside, told, control)?;
+            let old = std::time::UNIX_EPOCH - Duration::from_hours(24);
+            for name in names {
+                let made = into.join(name);
+                // Read-only, a file's owner gives it its time all the same.
+                if std::fs::symlink_metadata(&made)?.is_file() {
+                    std::fs::File::open(&made)?.set_modified(old)?;
+                }
+            }
+            Ok(())
+        }
+    }
+
+    /// A file a batch made on a camera whose time cannot be read as one is
+    /// placed all the same: never copied, nor counted, again by its step;
+    /// its undo takes it.
+    #[test]
+    fn a_copy_made_on_a_camera_without_a_time_is_placed_once() {
+        let tmp = home_tempdir();
+        let entries = served(tmp.path());
+        let dest = camera(tmp.path());
+        let transfers = Arc::new(Transfers::default());
+        transfers.register("test", Arc::new(Untimed));
+        let executor = Executor::new(Scheduler::new(2));
+        executor.set_transfers(transfers);
+        let r = executor.execute_blocking(&copies(&entries, &dest), &CancelToken::new());
+        assert!(r.error.is_none(), "{:?}", r.error);
+        assert_eq!(BATCHES.load(Ordering::Relaxed), 1);
+        assert!(Stamp::of(&dest.join("run.sh")).is_none(), "no time read");
+        assert_eq!(
+            names(&dest),
+            ["it's a.txt", "kept.txt", "run.sh", "sub folder", "to a"],
+            "each once"
+        );
+        let moved = executor.events().try_iter().find_map(|e| match e {
+            ExecEvent::Finished { moved, .. } => Some(moved),
+            _ => None,
+        });
+        let bytes: u64 = entries.iter().map(|e| file_bytes(e)).sum();
+        assert_eq!(moved, Some(bytes), "each byte counted once");
+        let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
+        assert!(undone.error.is_none(), "{:?}", undone.error);
         assert!(names(&dest).is_empty(), "each step's undo takes its copy");
     }
 
