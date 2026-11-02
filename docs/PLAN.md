@@ -862,6 +862,22 @@ above; each with the design its fixer proposed):
 - Not exercised in a window: a reader's or a converter's failure shown
   as source (2026-10-15); after a step read ahead, a HiDPI panel asking a
   sharper picture, a slow disk (2026-10-19).
+- The wheel glided over pages (2026-11-02, weighed, left for later): a
+  notch moves the readers' pages 120 px at once (`WHEEL_LINE`), where a
+  browser glides it over 100 to 150 ms so the eye keeps its line; not
+  in lists, where one looks for a row. A notch during a glide extends
+  its target; any other scroll (a touchpad, keys, the scrollbar, zoom, a
+  page's height arriving) ends it; a page turned at a notch still turns
+  at once. The animation rule (`docs/invariants/shell.md`) is amended
+  first, and frames and CPU are measured against a frame a notch (a
+  glide draws the whole window at the display's rate while it lasts;
+  PDFium renders no more). It comes with the desktop's reduced motion
+  (the portal's `org.freedesktop.appearance` `reduced-motion`; macOS's
+  and Windows' own), which keeps today's steps. Not by gpui's
+  `App::set_reduce_motion` alone: it holds every `with_animation` at its
+  end, fades too, so the player's play/pause flash (whose end is
+  transparent) would never show; reduced motion asks for no movement,
+  not for no feedback.
 
 **The window:**
 - Terminal (ADR-019): mouse reporting, an input method's text while
