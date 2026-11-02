@@ -9332,3 +9332,50 @@ such (their build counted no arrivals at all); a release build; GVfs,
 kio-fuse and rclone mounts throttled (their large files go through
 `ranges` too); Windows under Wine. A batch's items still count at its
 end ("0 of 3 items" while its bytes go).
+
+## Items counted as they come (2026-11-02)
+
+Asked by the user after "Cancel within a file": the item count left to
+do. A batch (ADR-078) copies the files of several steps at once, and
+each step places its copy after it: a card said "0 of 3 items" until the
+batch ended, its bar moving by the bytes meanwhile.
+
+- **Built:** the meter keeps the steps a batch finished before their
+  turn (`Meter::finished_ahead`, from its threads through
+  `StepContext::finishing`), and a reading counts them beside the steps
+  ended (`Transfer::finished`, which the card says; its fallback
+  fraction still counts the steps ended). A transfer tells each name it
+  placed once whole (`Told::placed`) and, new, each entry made whole in
+  the batch's folder (`Told::made`). Skwir's own copy tells a tree once
+  its last file is made (a folder of none at once); rsync logs each file
+  after its transfer (`%b` in its `--out-format`, where it logged
+  `skwir-placed:` as each began), with `--8-bit-output` so names past
+  ASCII come as they are, and a folder is told once it goes on to the
+  next entry. Whatever a run made counts once it returns, whatever its
+  transfer told. Said only: nothing acts on the count. Names are found
+  by a map a run (`steps_of`).
+
+**Checked:** the meter (`a_batch_s_items_count_as_they_come_whole`: each
+counted once, before and after its step ends), Skwir's own copy
+(`a_batch_tells_each_entry_once_whole`: an empty folder at once, a tree
+and a file once each, a file placed beside once), rsync's lines
+(`what_rsync_made_is_told_by_its_entry_once_whole`), the card's words
+(`2 of 3 items` while the bar goes by bytes). rsync's order checked by
+hand (rsync 3.5.0): files logged as each finished, a folder's after it,
+in name order. The probe of "Cancel within a file" (temporary, not
+committed), 12/4 MiB/s, 30 ms: three files of 48 MiB down by rsync, one
+item more at 5.6 s, 10.1 s and 14.6 s (0 until the end before); forty
+of 3 MiB from a server allowing SFTP alone (Skwir's own copy, sixteen at
+once), 16 items at 4.6 s, 32 at 8.6 s, 38 at 10.6 s; three of 48 MiB
+that way all end together, 0 until then. Tests of the core, UI and
+remote crates (1199), clippy. The binary's `remote_folders` against
+servers on this machine (rsync batches, copies cut short and gone on
+from) and `plugins_toggle`: 43 of 44, `a_folder_mounted_again_holds_other_files_by_number_and_the_same_by_path`
+out of its 60 s waiting for an rclone mount at a load near 50 (no copy
+in it), then passing alone twice in 1.2 s. Clippy of core and remote for
+Windows and macOS, of the UI for Windows (compiled only).
+
+**Not checked:** sftp, gio, kio and rclone batches as they go (they tell
+nothing before their run returns); rsync's redo of a file whose
+checksum failed, which would come after its folder was counted (said
+only); a window (the card's words are `toast::bar`'s, tested).

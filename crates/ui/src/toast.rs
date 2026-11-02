@@ -263,9 +263,11 @@ pub fn bar(items: usize, t: &Transfer) -> (f32, String) {
     }
     if let Some(planned) = t.planned.filter(|&planned| planned > 0) {
         let whole = planned.max(t.done);
+        // Items as they come whole, a batch's before their steps place
+        // them (`Transfer::finished`).
         let words = format!(
             "{} of {} · {} of {}",
-            format::thousands(t.ended),
+            format::thousands(t.finished),
             format::count(items, "item"),
             format::size(t.done),
             format::size(whole)
@@ -279,7 +281,7 @@ pub fn bar(items: usize, t: &Transfer) -> (f32, String) {
     };
     let count = format!(
         "{} of {}",
-        format::thousands(t.ended),
+        format::thousands(t.finished),
         format::count(items, "item")
     );
     let words = if t.done > 0 {
@@ -1351,6 +1353,7 @@ mod tests {
             done: 82_304,
             total: 82_368,
             ended: 1286,
+            finished: 1286,
             step_done: 0,
             step_total: 64,
             ..Transfer::default()
@@ -1363,6 +1366,7 @@ mod tests {
             done: 3 << 30,
             total: 4 << 30,
             ended: 1,
+            finished: 1,
             step_done: 1 << 30,
             step_total: 2 << 30,
             ..Transfer::default()
@@ -1386,6 +1390,17 @@ mod tests {
         assert_eq!(
             bar(3, &sized),
             (0.375, "1 of 3 items · 3.0 GB of 8.0 GB".into())
+        );
+        // Items a batch finished before their steps place them count as
+        // they come whole; the bar still by the bytes.
+        let batched = Transfer {
+            ended: 0,
+            finished: 2,
+            ..sized
+        };
+        assert_eq!(
+            bar(3, &batched),
+            (0.375, "2 of 3 items · 3.0 GB of 8.0 GB".into())
         );
         // One item sized before it began: what it was sized at.
         let one_sized = Transfer {

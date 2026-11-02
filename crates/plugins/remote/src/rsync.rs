@@ -149,8 +149,49 @@ impl Drop for Empty {
     }
 }
 
-/// What begins a line of rsync's naming a file it made (`--out-format`).
+/// What begins a line of rsync's naming what it made, once whole
+/// (`--out-format`, logged after each transfer as it names `%b`): the
+/// bytes it moved, then the path.
 const PLACED: &str = "skwir-placed:";
+
+/// The path a line of rsync's names as made (`PLACED`), after its bytes.
+fn made_of(line: &[u8]) -> Option<&[u8]> {
+    let rest = line.strip_prefix(PLACED.as_bytes())?;
+    let at = rest.iter().position(|&b| b == b':')?;
+    rest[..at]
+        .iter()
+        .all(u8::is_ascii_digit)
+        .then(|| &rest[at + 1..])
+}
+
+/// Of the paths rsync says it made in order, in a folder it copies whole
+/// entries into, which entry each finished: a file of its own at once, a
+/// folder once rsync goes on to another (it copies them one after
+/// another, a folder's files after it).
+#[derive(Default)]
+struct Entries {
+    open: Option<Vec<u8>>,
+}
+
+impl Entries {
+    /// `path` was made: the entries finished by it.
+    fn made(&mut self, path: &[u8]) -> Vec<Vec<u8>> {
+        let mut finished = Vec::new();
+        let (top, inside) = match path.iter().position(|&b| b == b'/') {
+            Some(at) => (&path[..at], true),
+            None => (path, false),
+        };
+        if self.open.as_deref().is_some_and(|open| open != top) {
+            finished.extend(self.open.take());
+        }
+        if inside {
+            self.open = Some(top.to_vec());
+        } else {
+            finished.push(top.to_vec());
+        }
+        finished
+    }
+}
 
 /// `word` in single quotes, as rsync's own splitting of `-e` reads them:
 /// a quote inside is doubled. Backslashes are literal, not shell escapes.
@@ -285,7 +326,7 @@ impl Transfer for Rsync {
         told: &Told<'_>,
         control: &Control,
     ) -> anyhow::Result<()> {
-        let (copied, placed, temp) = (told.copied, told.placed, aside.temp);
+        let (copied, placed, made, temp) = (told.copied, told.placed, told.made, aside.temp);
         let rsync = program().ok_or_else(|| anyhow::anyhow!("rsync is not installed"))?;
         let (remote_side, local_side, upward) = match (self.mount_of(from), self.mount_of(into)) {
             (None, Some(mount)) => (mount, from, true),
@@ -320,6 +361,9 @@ impl Transfer for Rsync {
                 "--protect-args",
                 "--no-human-readable",
                 "--info=progress2",
+                // Names as they are, not escaped past ASCII: what it made
+                // is told by its name.
+                "--8-bit-output",
                 "--files-from=-",
                 "--from0",
                 "-e",
@@ -345,14 +389,15 @@ impl Transfer for Rsync {
         if partial.starts_with('/') {
             command.arg(format!("--partial-dir={partial}"));
         }
+        // Each thing it made said on a line of its own once whole: those
+        // placed, the entries made.
+        command.arg(format!("--out-format={PLACED}%b:%n"));
         // Beside what is there: nothing replaced, a file written in the
         // staging folder until whole (on the destination's side).
         if let Some(temp) = temp {
-            // Each file it makes said on a line of its own: those placed.
             command
                 .arg("--ignore-existing")
-                .arg(format!("--temp-dir={}", receiving(temp)?))
-                .arg(format!("--out-format={PLACED}%n"));
+                .arg(format!("--temp-dir={}", receiving(temp)?));
         }
         if upward {
             command.arg(&local).arg(&remote);
@@ -365,6 +410,7 @@ impl Transfer for Rsync {
             list.push(0);
         }
         let mut line = Vec::new();
+        let mut entries = Entries::default();
         let finished = skwir_platform::process::run_watching(
             &mut command,
             Some(&list),
@@ -374,8 +420,16 @@ impl Transfer for Rsync {
             &mut |bytes: &[u8]| {
                 for &b in bytes {
                     if b == b'\r' || b == b'\n' {
-                        if let Some(name) = line.strip_prefix(PLACED.as_bytes()) {
-                            placed(&skwir_core::os_path::from_bytes_ref(name));
+                        if let Some(path) = made_of(&line) {
+                            // Beside what is there, files alone: each
+                            // placed. In a folder of its own, the entries.
+                            if temp.is_some() {
+                                placed(&skwir_core::os_path::from_bytes_ref(path));
+                            } else {
+                                for entry in entries.made(path) {
+                                    made(&skwir_core::os_path::from_bytes_ref(&entry));
+                                }
+                            }
                         } else if let Some(n) = copied_of(&line) {
                             copied(n);
                         }
@@ -413,6 +467,26 @@ impl Transfer for Rsync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_rsync_made_is_told_by_its_entry_once_whole() {
+        assert_eq!(
+            made_of(b"skwir-placed:41948199:it's a: name.bin"),
+            Some(&b"it's a: name.bin"[..])
+        );
+        assert_eq!(made_of(b"skwir-placed:x:y"), None);
+        assert_eq!(made_of(b"      1048576  45%"), None);
+        // Files of their own at once; a folder once another begins.
+        let mut entries = Entries::default();
+        let mut made = |path: &[u8]| entries.made(path);
+        assert_eq!(made(b"a.bin"), vec![b"a.bin".to_vec()]);
+        assert!(made(b"tree/").is_empty());
+        assert!(made(b"tree/y.bin").is_empty());
+        assert!(made(b"tree/sub/").is_empty());
+        assert_eq!(made(b"z.bin"), vec![b"tree".to_vec(), b"z.bin".to_vec()]);
+        assert!(made(b"other/x").is_empty());
+        assert_eq!(made(b"last/x"), vec![b"other".to_vec()]);
+    }
 
     #[test]
     fn rsync_says_how_far_it_went_in_digits() {

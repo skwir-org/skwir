@@ -146,6 +146,10 @@ pub(super) struct Meter {
     /// The most [`Self::reading`] said was moved: what arrived and was let
     /// go of (the copy stopped) never takes a bar back.
     shown: AtomicU64,
+    /// The steps a batch finished before their turn (ADR-078): their items
+    /// count as done as each comes whole, not when the steps place them
+    /// after the batch. Said, never acted on.
+    finished_ahead: Mutex<std::collections::BTreeSet<usize>>,
     /// The steps of the plan, once it began ([`Self::begin`]).
     items: AtomicUsize,
     /// What its steps were sized at before it began, when they were.
@@ -232,6 +236,13 @@ impl Meter {
             && let Some(work) = ahead.work.get_mut(step)
         {
             ahead.rest = ahead.rest.saturating_sub(std::mem::take(work));
+        }
+    }
+
+    /// The step `step`'s copy was finished ahead of its turn, by a batch.
+    pub(super) fn finished_ahead(&self, step: usize) {
+        if self.finished_ahead.lock().insert(step) {
+            self.moved_now();
         }
     }
 
@@ -448,8 +459,12 @@ impl Meter {
             let now = self.sample(Instant::now());
             self.samples.lock().reading(now, left)
         };
+        // Its items done: the steps ended, and those after them a batch
+        // finished already.
+        let finished = steps.ended + self.finished_ahead.lock().range(steps.ended..).count();
         Reading {
             steps,
+            finished,
             done,
             total,
             planned,
@@ -464,6 +479,9 @@ impl Meter {
 /// A plan's meter, read ([`Meter::reading`]).
 pub(super) struct Reading {
     pub(super) steps: Steps,
+    /// The plan's items done: its steps ended, and those a batch finished
+    /// before their turn.
+    pub(super) finished: usize,
     pub(super) done: u64,
     pub(super) total: u64,
     pub(super) planned: Option<u64>,
@@ -1842,6 +1860,14 @@ impl StepContext {
         self.meter.counted(step);
     }
 
+    /// What says, from a batch's threads, that the copy of a step after
+    /// the one under way is whole: its item counts as done from then
+    /// (ADR-078). Said only, never acted on.
+    pub(super) fn finishing(&self) -> impl Fn(usize) + Send + Sync + use<> {
+        let meter = Arc::clone(&self.meter);
+        move |step| meter.finished_ahead(step)
+    }
+
     /// The size of what the step under way copies, as the copy counts it,
     /// when the plan was sized before it began (`room::sized`): taken once,
     /// so that its tree is not walked again (on a server, a round trip a
@@ -2279,6 +2305,25 @@ mod tests {
         assert_eq!(meter.done.load(Ordering::Relaxed), 300);
         meter.advance(400);
         assert_eq!(shown(), 700);
+    }
+
+    /// A batch's copies count their items done as each comes whole, before
+    /// their steps place them; each counted once, as its step ends too.
+    #[test]
+    fn a_batch_s_items_count_as_they_come_whole() {
+        let meter = Meter::new(None);
+        meter.begin(3);
+        let finished = || meter.reading(false).finished;
+        assert_eq!(finished(), 0);
+        meter.finished_ahead(2);
+        meter.finished_ahead(1);
+        meter.finished_ahead(1);
+        assert_eq!(finished(), 2, "the second and the third, once each");
+        meter.step_ended();
+        assert_eq!(finished(), 3);
+        meter.step_ended();
+        meter.step_ended();
+        assert_eq!(finished(), 3, "their steps ended: counted once");
     }
 
     /// Writing into a mount that sends to its server after, its end waits

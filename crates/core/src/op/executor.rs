@@ -172,6 +172,10 @@ pub struct Transfer {
     pub total: u64,
     /// Steps ended (applied, found done, or failed).
     pub ended: usize,
+    /// Its items done: the steps ended, and those whose copy a batch
+    /// finished before their turn (ADR-078), which their steps place
+    /// after it. What a card counts.
+    pub finished: usize,
     /// The bytes of the step under way: moved, and announced.
     pub step_done: u64,
     pub step_total: u64,
@@ -1062,6 +1066,7 @@ impl Executor {
                     done: read.done,
                     total: read.total,
                     ended: read.steps.ended,
+                    finished: read.finished,
                     step_done: read.done.saturating_sub(read.steps.done),
                     step_total: read.total.saturating_sub(read.steps.total),
                     sending: read.sending,

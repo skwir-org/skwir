@@ -367,7 +367,11 @@ stalls were the bar's, the bytes coming throughout (ADR-113, amended).
 rsync's progress is read as it comes, not a second late; a plan says it
 finished once its staging folders are gone; a card stopping says so,
 its Cancel inert (`docs/invariants/shell.md`). Checks in
-`docs/STATUS-LOG.md` (2026-11-02, "Cancel within a file").
+`docs/STATUS-LOG.md` (2026-11-02, "Cancel within a file"). The same day,
+asked by the user: a batch's items count as each comes whole, before
+their steps place them at its end ("Items counted as they come").
+Left: sftp's sessions, gio, kio and rclone tell none as they go, so
+theirs count when their run returns.
 
 ## What is left
 
@@ -384,9 +388,6 @@ what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
 
 **From Cancel within a file (2026-11-02)**:
-- A batch's items are counted as its steps place them, at its end: "0 of
-  3 items" while its bytes go (its bar moves by them). rsync's `xfr#`
-  and Skwir's own copy's placed files could count them as they finish.
 - The 80 MiB stall the user saw was not reproduced as such (their build
   predates arrivals counted at all); sshfs, rsync and Skwir's own copy
   were measured through a relay on this machine, not a real network,

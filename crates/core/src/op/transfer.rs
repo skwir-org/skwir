@@ -264,8 +264,13 @@ pub(crate) struct LaidOut(Mutex<HashMap<PathBuf, Was>>);
 pub struct Told<'a> {
     /// The bytes copied so far, in all.
     pub copied: &'a (dyn Fn(u64) + Sync),
-    /// Each name it placed beside what is there.
+    /// Each name it placed beside what is there, once whole there.
     pub placed: &'a (dyn Fn(&OsStr) + Sync),
+    /// Each of the names it was given made whole in the folder it copies
+    /// into (a folder with all it holds), as it comes, where it can tell:
+    /// its item counts as done from then. Said only; one it never tells
+    /// counts once the transfer returns.
+    pub made: &'a (dyn Fn(&OsStr) + Sync),
 }
 
 /// What a transfer heeds as it goes: the plan's cancel and its pause.
@@ -994,7 +999,11 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
         .filter(|t| t.moving)
         .map(|t| (t.src.as_path(), CopiedAs(super::builtin::state_of(&t.src))))
         .collect();
+    // Each copy whole counts its item done as it comes (said only), and
+    // whatever its transfer told, once it is made or placed.
+    let finishing = ctx.finishing();
     let made_by_batch = |t: &Taken, what: Batched| {
+        finishing(t.step);
         ctx.batched(&t.src, what);
         if let Some(state) = states.get(t.src.as_path()) {
             ctx.batched_state(&t.src, *state);
@@ -1064,15 +1073,18 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
                 goes_on: &goes_on,
                 laid_out: Some(&laid_out),
             };
-            run(
-                from,
-                (&staged, alone),
-                &into,
-                &aside,
-                &staged_copied,
-                &|_| {},
-                ctx,
-            )?;
+            let steps = steps_of(&staged);
+            let made = |name: &OsStr| {
+                if let Some(&step) = steps.get(name) {
+                    finishing(step);
+                }
+            };
+            let told = Told {
+                copied: &staged_copied,
+                placed: &|_| {},
+                made: &made,
+            };
+            run(from, (&staged, alone), &into, &aside, &told, ctx)?;
             let made: u64 = staged.iter().map(|t| t.bytes).sum();
             staged_copied(made.saturating_sub(finished));
             for t in &staged {
@@ -1089,17 +1101,21 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
                 laid_out: None,
             };
             let said: Mutex<std::collections::HashSet<OsString>> = Mutex::default();
-            let ran = run(
-                from,
-                (&placed, alone),
-                dest,
-                &aside,
-                &placed_copied,
-                &|name: &OsStr| {
+            let steps = steps_of(&placed);
+            let made = |name: &OsStr| {
+                if let Some(&step) = steps.get(name) {
+                    finishing(step);
+                }
+            };
+            let told = Told {
+                copied: &placed_copied,
+                placed: &|name: &OsStr| {
                     said.lock().insert(name.to_owned());
+                    made(name);
                 },
-                ctx,
-            );
+                made: &made,
+            };
+            let ran = run(from, (&placed, alone), dest, &aside, &told, ctx);
             let said = said.into_inner();
             // What it placed, finished or not: what the transfer says it
             // placed; else, the name being free, a file there that is the
@@ -1166,6 +1182,12 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
     }
 }
 
+/// The step of each of `taken`, by its name: what a transfer tells by
+/// name, found at once.
+fn steps_of<'a>(taken: &[&'a Taken]) -> HashMap<&'a OsStr, usize> {
+    taken.iter().map(|t| (t.name.as_os_str(), t.step)).collect()
+}
+
 /// What a run of a batch says it copied so far, from its own start, told
 /// to `advance` as it grows: `told` holds the most it said.
 fn counted<'a>(told: &'a AtomicU64, advance: &'a (dyn Fn(u64) + Sync)) -> impl Fn(u64) + Sync + 'a {
@@ -1216,15 +1238,19 @@ fn batch_in_place(
         goes_on: &none,
         laid_out: None,
     };
-    let ran = run(
-        from,
-        (&here, is_alone(taken)),
-        dest,
-        &aside,
-        &copied,
-        &|_| {},
-        ctx,
-    );
+    let steps = steps_of(&here);
+    let finishing = ctx.finishing();
+    let made = |name: &OsStr| {
+        if let Some(&step) = steps.get(name) {
+            finishing(step);
+        }
+    };
+    let told = Told {
+        copied: &copied,
+        placed: &made,
+        made: &made,
+    };
+    let ran = run(from, (&here, is_alone(taken)), dest, &aside, &told, ctx);
     let cancelled = ctx.cancel_token().is_cancelled();
     if ran.is_ok() && !cancelled {
         for t in &here {
@@ -1517,8 +1543,7 @@ fn run(
     (taken, alone): (&[&Taken], bool),
     into: &Path,
     aside: &Aside<'_>,
-    copied: &(dyn Fn(u64) + Sync),
-    placed: &(dyn Fn(&OsStr) + Sync),
+    told: &Told<'_>,
     ctx: &StepContext,
 ) -> anyhow::Result<()> {
     let names: Vec<OsString> = taken.iter().map(|t| t.name.clone()).collect();
@@ -1531,7 +1556,12 @@ fn run(
     let moved = AtomicU64::new(0);
     let copied = &|so_far: u64| {
         moved.fetch_max(so_far, Ordering::Relaxed);
-        copied(so_far);
+        (told.copied)(so_far);
+    };
+    let told = &Told {
+        copied,
+        placed: told.placed,
+        made: told.made,
     };
     let read = |ran: anyhow::Result<()>| {
         if ran.is_ok() {
@@ -1570,8 +1600,7 @@ fn run(
             gone = true;
             aside.goes_on = &none;
         }
-        let told = Told { copied, placed };
-        match transfer.copy(from, &names, into, &aside, &told, &control) {
+        match transfer.copy(from, &names, into, &aside, told, &control) {
             // It made nothing: the next.
             Err(error) if error.is::<NotServed>() => {}
             ran => {
@@ -1592,10 +1621,8 @@ fn run(
         by = "skwir",
         "a batch of copies"
     );
-    read(copy_at_once(
-        from, &names, into, &aside, copied, placed, &control,
-    ))
-    .with_context(|| format!("skwir copying {} entries", names.len()))
+    read(copy_at_once(from, &names, into, &aside, told, &control))
+        .with_context(|| format!("skwir copying {} entries", names.len()))
 }
 
 /// Skwir's own batch copy (the [`Transfer::copy`] it does where no
@@ -1608,7 +1635,9 @@ fn run(
 /// makes its files in a folder of its own in `temp`: the kernel takes a
 /// folder's lock to make a name in it, and to rename one out of it, so
 /// one folder for all would make them one at a time. A file a run cut
-/// short was writing (`aside.goes_on`) is gone on from.
+/// short was writing (`aside.goes_on`) is gone on from. Each of `names`
+/// is told as it comes whole: placed beside what is there, or made in
+/// `into` with its last file (a folder of none, at once).
 ///
 /// # Errors
 /// The first copy that failed, or the cancel.
@@ -1617,10 +1646,10 @@ pub(super) fn copy_at_once(
     names: &[OsString],
     into: &Path,
     aside: &Aside<'_>,
-    copied: &(dyn Fn(u64) + Sync),
-    placed: &(dyn Fn(&OsStr) + Sync),
+    told: &Told<'_>,
     control: &Control,
 ) -> anyhow::Result<()> {
+    let (copied, placed, made_whole) = (told.copied, told.placed, told.made);
     let cancel = control.cancel();
     let temp = aside.temp;
     let goes_on = aside.goes_on;
@@ -1630,6 +1659,24 @@ pub(super) fn copy_at_once(
         None => Layout::made(from, names, into, aside)?,
     };
     let files = &layout.files;
+    // Made in `into`: the files each of `names` has left to make.
+    let left: HashMap<OsString, AtomicUsize> = if temp.is_none() {
+        let mut left: HashMap<OsString, usize> = names.iter().map(|n| (n.clone(), 0)).collect();
+        for (_, dst) in files {
+            if let Some(n) = top_of(dst, into).and_then(|top| left.get_mut(top)) {
+                *n += 1;
+            }
+        }
+        for (name, _) in left.iter().filter(|(_, n)| **n == 0) {
+            made_whole(name);
+        }
+        left.into_iter()
+            .map(|(name, n)| (name, AtomicUsize::new(n)))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+    let left = &left;
     let next = AtomicUsize::new(0);
     let total = AtomicU64::new(0);
     let failed: Mutex<Option<anyhow::Error>> = Mutex::new(None);
@@ -1689,7 +1736,14 @@ pub(super) fn copy_at_once(
                                 }
                             })
                         }
-                        None => copy_one(src, dst, goes_on.from(dst), &wrote, control),
+                        None => copy_one(src, dst, goes_on.from(dst), &wrote, control).map(|()| {
+                            if let Some((top, n)) =
+                                top_of(dst, into).and_then(|top| left.get_key_value(top))
+                                && n.fetch_sub(1, Ordering::Relaxed) == 1
+                            {
+                                made_whole(top);
+                            }
+                        }),
                     };
                     if let Err(error) = made {
                         stop.store(true, Ordering::Relaxed);
@@ -1704,6 +1758,15 @@ pub(super) fn copy_at_once(
     }
     anyhow::ensure!(!cancel.is_cancelled(), "cancelled");
     layout.finish()
+}
+
+/// The entry of `into` that `path` is in, or is.
+fn top_of<'a>(path: &'a Path, into: &Path) -> Option<&'a OsStr> {
+    path.strip_prefix(into)
+        .ok()?
+        .components()
+        .next()
+        .map(std::path::Component::as_os_str)
 }
 
 /// What a batch's copy makes of the entries `names` of a folder in
@@ -1966,6 +2029,13 @@ mod tests {
     use crate::op::{EntryRef, ExecEvent, Executor, Plan};
     use crate::scheduler::Scheduler;
 
+    /// What a test's batch tells no one.
+    const NOTHING_TOLD: Told<'static> = Told {
+        copied: &|_| {},
+        placed: &|_| {},
+        made: &|_| {},
+    };
+
     /// A folder of the test's on the home's file system, which keeps
     /// links, modes and attributes as a disk does.
     fn home_tempdir() -> tempfile::TempDir {
@@ -2219,7 +2289,7 @@ mod tests {
             control: &Control,
         ) -> anyhow::Result<()> {
             self.into.lock().push(into.to_path_buf());
-            copy_at_once(from, names, into, aside, told.copied, told.placed, control)
+            copy_at_once(from, names, into, aside, told, control)
         }
     }
 
@@ -2412,7 +2482,7 @@ mod tests {
             told: &Told<'_>,
             control: &Control,
         ) -> anyhow::Result<()> {
-            let (copied, placed, temp) = (told.copied, told.placed, aside.temp);
+            let temp = aside.temp;
             if let Some((name, at)) = self.cuts.lock().take() {
                 return Self::cut(from, names, into, aside, (&name, at), told, control);
             }
@@ -2421,30 +2491,14 @@ mod tests {
                 cancel.cancel();
                 anyhow::bail!("cancelled");
             }
-            copy_at_once(
-                from,
-                &names[..names.len() / 2],
-                into,
-                aside,
-                copied,
-                placed,
-                control,
-            )?;
+            copy_at_once(from, &names[..names.len() / 2], into, aside, told, control)?;
             let broken = self.breaks.lock().take();
             if let Some(broken) = &broken {
                 use std::os::unix::fs::PermissionsExt;
                 std::fs::set_permissions(broken, std::fs::Permissions::from_mode(0o000))?;
             }
             anyhow::ensure!(!self.fails && broken.is_none(), "the server went away");
-            copy_at_once(
-                from,
-                &names[names.len() / 2..],
-                into,
-                aside,
-                copied,
-                placed,
-                control,
-            )?;
+            copy_at_once(from, &names[names.len() / 2..], into, aside, told, control)?;
             if let Some(cancel) = self.cancels_after.as_ref().filter(|_| temp.is_some()) {
                 cancel.cancel();
                 anyhow::bail!("cancelled");
@@ -2880,9 +2934,8 @@ mod tests {
                 laid_out: None,
             };
             std::thread::scope(|s| {
-                let copying = s.spawn(|| {
-                    copy_at_once(&from, &listed, into, &aside, &|_| {}, &|_| {}, &control)
-                });
+                let copying =
+                    s.spawn(|| copy_at_once(&from, &listed, into, &aside, &NOTHING_TOLD, &control));
                 std::thread::sleep(Duration::from_millis(300));
                 let waiting = !copying.is_finished() && !into.join("run.sh").exists();
                 if resume {
@@ -2906,6 +2959,61 @@ mod tests {
         assert!(copied.is_err(), "cancelled while paused, it stops");
         assert!(!cancelled.join("run.sh").exists());
         drop(pause.resume());
+    }
+
+    /// Skwir's own copy tells each entry as it comes whole: made in its
+    /// folder (a folder of none at once, a tree with its last file), or
+    /// placed beside what is there; each once.
+    #[test]
+    fn a_batch_tells_each_entry_once_whole() {
+        let tmp = home_tempdir();
+        let from = tmp.path().join("served");
+        std::fs::create_dir_all(from.join("a tree/deeper")).unwrap();
+        std::fs::create_dir_all(from.join("empty/inside")).unwrap();
+        std::fs::write(from.join("a tree/one.txt"), "one").unwrap();
+        std::fs::write(from.join("a tree/deeper/two.txt"), "two").unwrap();
+        std::fs::write(from.join("it's alone.txt"), "alone").unwrap();
+        let names: Vec<OsString> = ["a tree", "empty", "it's alone.txt"]
+            .into_iter()
+            .map(OsString::from)
+            .collect();
+        let control = Control::new(CancelToken::new(), Arc::default());
+        let none = GoesOn::default();
+        let into = tmp.path().join("made");
+        std::fs::create_dir(&into).unwrap();
+        let told: Mutex<Vec<(&str, OsString)>> = Mutex::default();
+        let aside = Aside {
+            temp: None,
+            partial: &into,
+            goes_on: &none,
+            laid_out: None,
+        };
+        let made = |name: &OsStr| told.lock().push(("made", name.to_owned()));
+        let placed = |name: &OsStr| told.lock().push(("placed", name.to_owned()));
+        let tells = Told {
+            copied: &|_| {},
+            placed: &placed,
+            made: &made,
+        };
+        copy_at_once(&from, &names, &into, &aside, &tells, &control).unwrap();
+        let mut said = std::mem::take(&mut *told.lock());
+        // A folder of no file, at once, before any file is copied.
+        assert_eq!(said.first(), Some(&("made", OsString::from("empty"))));
+        said.sort();
+        let made_all: Vec<(&str, OsString)> = names.iter().map(|n| ("made", n.clone())).collect();
+        assert_eq!(said, made_all, "each made once");
+        // Beside what is there, files placed, each once.
+        let dest = tmp.path().join("dest");
+        let staging = tmp.path().join("staging");
+        std::fs::create_dir(&dest).unwrap();
+        std::fs::create_dir(&staging).unwrap();
+        let beside = Aside {
+            temp: Some(&staging),
+            ..aside
+        };
+        let alone = [OsString::from("it's alone.txt")];
+        copy_at_once(&from, &alone, &dest, &beside, &tells, &control).unwrap();
+        assert_eq!(*told.lock(), [("placed", OsString::from("it's alone.txt"))]);
     }
 
     /// Cancelled partway through a large file, Skwir's own copy stops

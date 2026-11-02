@@ -236,7 +236,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   describes: another plan, a redo, makes the same (ops-basic's paste on
   a tag). Both are withdrawn with their owner (`App::unregister_owner`).
 - The bar counts items, the current item's bytes moving it between two
-  counts; a one-item plan counts bytes (`toast::bar`).
+  counts; a one-item plan counts bytes (`toast::bar`). An item counts as
+  done when its step ends, or, copied by a batch, when the batch says it
+  is whole (`Transfer::finished`), before its step places it.
 - **Quit** asks while a plan runs (its key or the window's close button,
   `Shell::quit`), then cancels and waits, out of sight, for partial work
   to be taken back (`Executor::wind_down`): a copy cut short leaves
@@ -391,7 +393,14 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   earlier: a look during the plan may have kept what it held then. A step whose source a batch took finds it
   where the batch did (`StepContext::resolve`) and looks for no
   companion beside it (the batch read its folder). A batch's bytes are
-  counted once, by the batch. A cancel during a batch ends the plan and
+  counted once, by the batch, and its items as each comes whole: a
+  transfer tells each name it placed once it is whole (`Told::placed`;
+  rsync logs a file after its transfer, its format naming `%b`) and each
+  entry made whole in the batch's folder (`Told::made`: Skwir's own copy
+  with a tree's last file, rsync once it goes on to the next entry); what
+  one tells nothing of as it goes (sftp's sessions; gio, kio and rclone
+  place theirs at their end) counts once its run returns
+  (`StepContext::finishing`, said only, never acted on). A cancel during a batch ends the plan and
   takes back what it placed; a failed batch is logged and left to the
   steps; a plan
   that ends before the steps of copies its batch placed takes them back
