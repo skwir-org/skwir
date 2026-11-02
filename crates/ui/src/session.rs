@@ -77,6 +77,9 @@ pub struct Session {
     pub timeline_date: String,
     /// How tall the pinned player's dock was dragged.
     pub player_height: f32,
+    /// Whether Activity stands above the footer while something runs
+    /// (ADR-114), rather than opening over the files when asked.
+    pub activity_pinned: bool,
     /// Whether the terminal was open under the panes.
     pub terminal: bool,
     /// How tall its edge was dragged; 0 until then.
@@ -119,6 +122,7 @@ impl Shell {
             timeline_size: self.timeline.measure == crate::timeline::Measure::Size,
             timeline_date: crate::timeline::DATES[self.timeline.date].0.to_owned(),
             player_height: self.player.height,
+            activity_pinned: self.activity.pinned,
             terminal: self.terminal.open,
             terminal_height: self.terminal.height.unwrap_or(0.),
             column_widths: crate::views::list::COLUMNS

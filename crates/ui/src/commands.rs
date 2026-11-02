@@ -166,6 +166,16 @@ mod args {
         pointer: bool,
     }
 
+    /// Activity's toggle: `close` closes it (`pointer`: by a press outside
+    /// it), and never opens it.
+    #[derive(Deserialize, JsonSchema)]
+    pub(super) struct Toggle {
+        #[serde(default)]
+        close: bool,
+        #[serde(default)]
+        pointer: bool,
+    }
+
     /// A dialog's toggle: `close` closes it, and never opens it.
     #[derive(Deserialize, JsonSchema)]
     pub(super) struct Close {
@@ -489,7 +499,7 @@ use args::{
     Amount, Ask, Bucket, Close, Continue, CopyText, Count, Cursor, Delta, Dir, Find, Fold, Folders,
     History, Key, Layout, ListMoveArgs, Object, On, Pace, Page, PageLink, Pages, Pan, Pick, Player,
     Pointer, Popup, PreviewScroll, Scrub, Settings, Split, Submit, TagsPrompt, TerminalPaste, Text,
-    TimelineCursor, TimelineDate, Toward, Url, UsageMode, View, ViewButton,
+    TimelineCursor, TimelineDate, Toggle, Toward, Url, UsageMode, View, ViewButton,
 };
 
 /// The window's commands an agent may run (ADR-044): they change only
@@ -548,6 +558,8 @@ const SHOWS: &[&str] = &[
     "ui.focus_next_part",
     "ui.toggle_sidebar",
     "ui.toolbar_menu",
+    "ui.activity",
+    "ui.activity_pin",
     "ui.toolbar_close",
     "ui.toolbar_next",
     "ui.toolbar_prev",
@@ -1802,6 +1814,19 @@ pub fn declare_all(app: &App) {
         "ui.toolbar_activate",
         "Press the button",
         "Press the button that has the keyboard",
+    );
+    declare::<Toggle>(
+        app,
+        Topic::Window,
+        "ui.activity",
+        "Activity",
+        "Open or close Activity, above its strip in the footer: what runs, with Pause and Cancel, what waits, and what ended this session, with Undo or Retry (ADR-114). Pinned and shown, it takes the keyboard",
+    );
+    none(
+        Topic::Window,
+        "ui.activity_pin",
+        "Keep Activity open",
+        "Keep Activity open above the footer while something runs, taking room rather than covering the files; again to let it close",
     );
     none(
         Topic::Window,

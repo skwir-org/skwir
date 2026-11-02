@@ -635,27 +635,57 @@ of bars, split or not.
   asked after it touched what it did), Redo after an undo, Retry first
   for a plan a step's error stopped (ADR-080; a toast holds its buttons
   in order, `Toast::actions`).
-  Progress bars:
-  [operations.md](operations.md); an answer said while plans run is drawn
-  under their cards, never hidden by them. A card's bar moves by the
-  plan's bytes where its total is known (sized before it began), its
-  items counted beside; under the bar, quieter, its speed and time left
-  as the core read them (`toast::pace`, ADR-113: never reckoned in the
-  window), hidden while paused; into a mount that sends after, "then
-  sent to the server". Cancelled, a card says it stops ("stopping at"),
-  its bar muted, no speed nor time left, and its Cancel becomes
-  "Stopping…", said, not offered (muted, no pointer, nothing to press,
-  disabled for assistive technology, the focus kept), until the plan
-  let go of what it held (operations.md, "Running"). A plan that ran 5 s or more and moved bytes says
-  them in its toast, and how long it ran ("4.8 GB in 3 min 20 s"). A
-  toast stays at least as long as its words take to read. Work that is no plan and
-  nothing undoes (a print being made and sent) holds a task while it runs
+- **What runs is docked, never over the files** (`activity.rs`,
+  ADR-114). Work under way is the window's state: a strip at the end of
+  the last pane's footer, before Undo, says how far it has gone in as
+  many words as the footer has room for (`Fit`: what and how, how, the
+  share alone), with Pause and Cancel for a single action; several are
+  summed (their bytes where each was sized, else each one's share alike;
+  the longest time left). A click, or `ui.activity` (Ctrl+Shift+J),
+  opens Activity above it (one popup at a time, `toggle_popup`): each
+  action's card, what waits, and Earlier, this session's answers with
+  their Undo and Retry, twenty at most, in memory only. Pinned
+  (`ui.activity_pin`, remembered with the window's shape), Activity
+  stands above the last pane's footer while something is under way,
+  waits or stopped, at most half the pane's height, and the strip steps
+  aside. An action an error stopped stays in the strip, in the error's
+  colour, until retried (from anywhere), Activity opened, or dismissed;
+  only one that was a card there. Progress bars:
+  [operations.md](operations.md). A card's bar moves by the plan's bytes
+  where its total is known (sized before it began), its items counted
+  beside; under the bar, quieter, its speed and time left as the core
+  read them (`toast::pace`, ADR-113: never reckoned in the window),
+  hidden while paused; into a mount that sends after, "then sent to the
+  server". Cancelled, a card says it stops ("stopping at"), its bar
+  muted, no speed nor time left, and its Cancel becomes "Stopping…",
+  said, not offered (muted, no pointer, nothing to press, disabled for
+  assistive technology, the focus kept), until the plan let go of what
+  it held (operations.md, "Running"). Work that is no plan and nothing
+  undoes (a print being made and sent) holds a task while it runs
   (`App::tasks`, `task::Task`): its card is drawn beside the plans', its
   title, how far it went and Cancel, gone when the task is dropped; a
-  task cancelled from its card says it was not done, as no error. It names the file a step acts
-  on as the user knows it: an item of a trash by the name it had, which
-  the executor reads from its record before the step takes it away
-  (`Progress::named`), never by the trash's (`a.txt.2`, `$R…`).
+  task cancelled from its card says it was not done, as no error.
+- **One answer at a time** (`toast.rs`), over the files at the last
+  pane's lower right, above the strip or Activity pinned, where the list
+  shows sizes and dates rather than names; over the preview on the whole
+  screen. Not while Activity is open: Earlier holds it. A plan that ran
+  5 s or more and moved bytes says them in its toast, and how long it
+  ran ("4.8 GB in 3 min 20 s"). A toast stays at least as long as its
+  words take to read. It names the file a step acts on as the user knows
+  it: an item of a trash by the name it had, which the executor reads
+  from its record before the step takes it away (`Progress::named`),
+  never by the trash's (`a.txt.2`, `$R…`).
+- **The desktop is told of long actions it was not watched for**
+  (ADR-114, `skwir_platform::desktop`): an action that ran 5 s or more
+  and finished or stopped, or one waiting for a server, while the window
+  does not have the focus (`Shell::window_active`), is a notification,
+  one at a time, replacing the last, withdrawn once the window has the
+  focus or a waiting one goes on; a click brings the window forward and
+  opens Activity. A cancelled one tells nothing, and nothing is undone
+  from a notification. While something runs, the taskbar's entry shows
+  how far, and the machine is kept awake unless all of it is paused
+  (`ui.notify_desktop`, `ui.keep_awake`). Every call to the desktop
+  returns at once; nothing is told from a headless run.
 - `Shell::set_status` is a toast; `set_status_about` (core:
   `App::notify_about_setting`) links to the setting that fixes it.
   Toasts are drawn under the overlays, but over the preview on the whole
@@ -668,8 +698,8 @@ of bars, split or not.
   stats only what neither knows; a size learnt adds up again once the
   request running has answered; `PaneView::weighs` for a view that
   measures folders). The window's state (Undo, pending paste, plugin
-  counts via `tally::Tally`, proposals, the player's strip) ends the last
-  pane's footer. Side panels have no footer.
+  counts via `tally::Tally`, proposals, the player's strip, what runs)
+  ends the last pane's footer. Side panels have no footer.
 - A key whose command needs a selection has `selection` in its `when`,
   so it does nothing rather than report "nothing selected".
 - **Animation:** only a bounded entrance under 200 ms, plus the player's

@@ -11,3 +11,4 @@ StartupWMClass=org.skwir.skwir
 Categories=System;FileTools;FileManager;
 MimeType=inode/directory;
 Keywords=files;folders;browser;tags;search;
+X-GNOME-UsesNotifications=true

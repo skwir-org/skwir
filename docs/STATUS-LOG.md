@@ -9379,3 +9379,124 @@ Windows and macOS, of the UI for Windows (compiled only).
 nothing before their run returns); rsync's redo of a file whose
 checksum failed, which would come after its folder was counted (said
 only); a window (the card's words are `toast::bar`'s, tested).
+
+## Activity, docked (2026-11-02)
+
+Asked by the user: the toasts piled up at the window's foot and hid the
+files at the end of a list; could they move, fold away with a summary
+docked "similar to what we do when the player is docked", and should
+Skwir tell the desktop of long actions? A page of mock-ups compared three
+places (a footer strip, a top button, a tray taking room), what other
+file managers and browsers do, and the desktop's practice; the user took
+each point: the footer, a popover that can be pinned, the strip alone
+when an action starts, an Earlier list, answers above the strip,
+notifications as proposed, taskbar progress and sleep held off (ADR-114).
+
+- **Built, the window** (`activity.rs`): the strip at the end of the last
+  pane's footer, before Undo (a `Fit` of three versions: what and how,
+  how, the share; Pause and Cancel for one action; "2 actions · …" with
+  their bytes summed where sized); Activity above it (`ui.activity`,
+  Ctrl+Shift+J), its cards moved from `toast.rs` unchanged in what they
+  say, what waits, and Earlier (twenty answers, Undo and Retry while it
+  can be); pinned (`ui.activity_pin`, in the window's shape) it stands
+  above the footer while something is under way, at most half the pane.
+  An action an error stopped after it was shown stays in the strip, red,
+  until retried from anywhere (`Executor::can_retry` turning false), seen
+  or dismissed. The answer, alone, at the last pane's lower right, above
+  the strip or the pinned panel (over the preview on the whole screen as
+  before); not drawn while Activity is open. Every control of Activity is
+  pressed through `modal::pressed`, its focus handle a Tab stop of its
+  own (`stop`): an element tracking a handle takes its stop from the
+  handle, not from its own `tab_index`.
+- **Built, the desktop** (`skwir_platform::desktop`, by a helper agent,
+  reviewed and wired here): one thread, started on the first call, every
+  call returning at once. Linux: notices on the program's one session
+  bus (category `transfer.complete`, `transfer.error` or `transfer`,
+  `desktop-entry`, a default action), clicks and spec 1.2's activation
+  token followed, a notice closed by the server forgotten; the progress
+  as the Unity launcher entry's `Update`, whole percents at most about
+  four a second; logind's `Inhibit("sleep", …, "block")`, its descriptor
+  kept while held. Windows: WinRT toasts under `org.skwir.skwir`,
+  `ITaskbarList3`'s progress on the window's button, a system-required
+  power request. macOS: the user notification center (only from an
+  application bundle), the dock tile's badge, a user-initiated activity.
+  The shell tells it what ended unwatched (5 s or more, not cancelled,
+  one notice replacing the last: "3 actions finished, 1 stopped"), takes
+  notices back when the window has the focus (`Shell::window_active`) or
+  a waiting action goes on, and opens Activity on a click, bringing the
+  window forward with the desktop's token (gpui patch 0043,
+  `Window::activate_window_with_token`). Two settings, General ›
+  Actions: `ui.notify_desktop`, `ui.keep_awake`, both on.
+- **Packaging:** the desktop file says `X-GNOME-UsesNotifications=true`;
+  the Windows installer registers `HKCU\Software\Classes\AppUserModelId\org.skwir.skwir`
+  (DisplayName), wixl rejecting a shortcut's `ShortcutProperty` (tried:
+  "unhandled child Shortcut node ShortcutProperty"); the process keeps
+  the id Windows gives it, so a pinned shortcut and the window share
+  their button.
+
+**Checked in a window** (Xvfb :93, lavapipe, fixture XDG folders, a
+session bus of the check's own with `dbus-monitor` and dunst drawing on
+the test display; 200,000 files of 32 B copied, 5 to 11 s each):
+
+- the strip as a copy runs ("Copy to …/dest2 · 2 %" to "73 %", Pause
+  and Cancel), paused from the strip ("paused at 14 %", muted bar,
+  Resume), Activity opened by a click and by Ctrl+Shift+J (the card
+  "2.8 MB of 6.1 MB" moving, Earlier with its times and Undo), pinned
+  (the panel above the footer, the list shorter, the strip gone; Resume
+  from it; folded away at the end, the answer at the lower right);
+- Tab from Activity's own focus to the pin, Enter unpinning it
+  (remembered `false`), Escape giving the keyboard back (F9 then
+  answered). Before the fix, Tab left the popup for the window's first
+  button and Enter closed it with the keyboard left nowhere: no key
+  answered until a click;
+- an error after the strip showed (the destination made read-only
+  during the copy): "Copy to …/dest9: stopped" in red with Retry and
+  Dismiss; Retry from the strip ran the rest; a copy that failed at once
+  left its answer and Retry, no strip; Undo from Earlier ("Undid: copy
+  to …", Redo);
+- with the focus given to xeyes, a 6 s copy's end on the bus: `Notify`
+  ("skwir", 0, "org.skwir.skwir", "Finished", "Copied “big” to dest4
+  (6.1 MB in 6 s)", ["default", "Show"], category `transfer.complete`,
+  `desktop-entry`, urgency 1, -1), shown by dunst; a click on it:
+  `ActionInvoked`, and Activity open in the window (dunst on X11 sends no
+  activation token, and no window manager on the test display moves the
+  X focus); the focus given back with a notice shown: `CloseNotification`
+  from Skwir, none left on screen;
+- 110 launcher `Update` signals over four copies, `progress` 0 to 0.99
+  by about 0.04, then hidden;
+- on the machine's own logind (the only check that reached past the
+  test display, a few seconds): `systemd-inhibit --list` showed
+  `skwir … sleep  Copy to …/dest4  block` while the copy ran, nothing
+  after.
+
+**Tests:** `activity.rs` (the share never full before the end; plans
+summed by bytes when each was sized, alike otherwise, the longest time
+left; the strip's words as room allows, paused, stopping, sending).
+`desktop.rs` (the helper's, 9): against a private `dbus-daemon` with
+stand-in notification and logind servers, a notice's call and hints, one
+replacing the last, withdrawn (and not when another key is asked, nor
+once the server closed it), a click with its token told and another
+id's not, the launcher's progress paced to the last value, the
+inhibitor held and let go, everything let go when dropped; pacing,
+rounding and escaping alone. Repeated 16 times. Under Wine
+(`just test-windows -p skwir-platform desktop`): 8 of 8, the power
+request held and let go; Wine has no toasts ("Failed to find library",
+logged) and stubs the taskbar. One of 17 Wine runs crashed (SIGSEGV) as
+the test process exited, after its tests passed; 95 runs after did not,
+cause unknown. Of the crates touched: core, platform and UI, 1434 of
+1435 (`tree_sitter::tests::reads_are_answered_beside_a_parse`, on its
+timing, as on 2026-11-01; alone it passes); `plugins_toggle` 5 of 5;
+`settings_keys`' key filter test moved to Ctrl+Alt+J, Ctrl+J's words
+now also finding Activity's Ctrl+Shift+J; rustfmt; clippy of platform,
+UI and the binary; for Windows, clippy of platform, UI and the binary;
+for macOS, of platform (the UI is not compiled for macOS here).
+
+**Not checked:** a real desktop: GNOME's and Plasma's notification
+servers, Plasma's taskbar showing the launcher's progress, a Wayland
+compositor taking the activation token (patch 0043 is compiled, its
+Wayland path not run; `just gpui-check` not run); Windows' toasts and
+taskbar (compiled, the installer's registration not installed
+anywhere); macOS at all (compiled); the strip's narrowest versions in a
+narrow footer (the words are tested, `Fit` chooses as elsewhere); the
+answer over a full-screen preview (unchanged path); a screen reader
+on the strip and Activity.

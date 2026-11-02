@@ -8917,6 +8917,7 @@ dependencies = [
  "jiff",
  "nucleo-matcher",
  "parking_lot",
+ "raw-window-handle",
  "schemars",
  "serde",
  "serde_json",

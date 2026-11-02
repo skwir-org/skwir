@@ -15,6 +15,12 @@ pub fn exact_time(t: SystemTime) -> String {
     local(t, "%Y-%m-%d %H:%M:%S")
 }
 
+/// `HH:MM`, the time of day, in the local time zone: when something
+/// happened this session.
+pub fn clock(t: SystemTime) -> String {
+    local(t, "%H:%M")
+}
+
 /// `YYYY-MM-DD`.
 pub fn day(t: SystemTime) -> String {
     local(t, "%Y-%m-%d")

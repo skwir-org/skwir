@@ -86,6 +86,12 @@ pub const TABS_IN_SIDEBAR: &str = "sidebar";
 /// Whether a folder's trail starts at the root rather than at the
 /// sidebar's folder that holds it (`Shell::sync_roots`).
 pub const FULL_PATH_KEY: &str = "ui.full_path";
+/// Whether the desktop is told of a long action that ended while the
+/// window was in the background (ADR-114).
+pub const NOTIFY_DESKTOP_KEY: &str = "ui.notify_desktop";
+/// Whether the computer is kept from sleeping while an action runs
+/// (ADR-114).
+pub const KEEP_AWAKE_KEY: &str = "ui.keep_awake";
 /// How documents are read: one scrolling column, or a page at a time.
 pub const READER_CONTINUOUS_KEY: &str = "reading.continuous";
 /// How what is read is: one scrolling column, or a screen at a time
@@ -650,6 +656,26 @@ pub fn declare(app: &App) {
         .page(page::GENERAL)
         .section("Address"),
     );
+    app.settings.declare(
+        SettingSpec::toggle(
+            NOTIFY_DESKTOP_KEY,
+            "Tell the desktop when a long action ends",
+            "When an action that ran 5 seconds or more finishes or stops, or waits for a server that stopped answering, while skwir's window is in the background, the desktop shows a notification. A click on it brings the window back with Activity open. Notifications are taken back once you are back in the window.",
+            true,
+        )
+        .page(page::GENERAL)
+        .section("Actions"),
+    );
+    app.settings.declare(
+        SettingSpec::toggle(
+            KEEP_AWAKE_KEY,
+            "Keep the computer awake while an action runs",
+            "While a copy, a move or another action runs, and is not paused, the computer does not go to sleep by itself. Closing a laptop's lid still puts it to sleep.",
+            true,
+        )
+        .page(page::GENERAL)
+        .section("Actions"),
+    );
     // Narrow folders, as 0.2 named it, is Quick filters (ADR-107).
     app.settings
         .rename(NARROW_FOLDERS_FORMER_KEY, QUICK_FILTERS_KEY);
@@ -1128,9 +1154,16 @@ static BUILTIN: [Builtin; 12] = [
         owner: Some(CORE_OWNER),
         title: "General",
         icon: "sliders",
-        intro: "What skwir does at startup, with tabs, the split and the address, and with what you drag and drop. Changes apply as you make them.",
+        intro: "What skwir does at startup, with tabs, the split and the address, with what you drag and drop, and while an action runs. Changes apply as you make them.",
         when_used: false,
-        sections: &["Startup", "Tabs", "Split", "Address", "Drag and drop"],
+        sections: &[
+            "Startup",
+            "Tabs",
+            "Split",
+            "Address",
+            "Drag and drop",
+            "Actions",
+        ],
     },
     Builtin {
         page: Page::Appearance,
@@ -2814,7 +2847,14 @@ mod tests {
         assert_eq!(sections(&specs, &Page::Appearance), [""]);
         assert_eq!(
             sections(&specs, &Page::General),
-            ["Startup", "Tabs", "Split", "Address", "Drag and drop"]
+            [
+                "Startup",
+                "Tabs",
+                "Split",
+                "Address",
+                "Drag and drop",
+                "Actions"
+            ]
         );
         // The core's and the shell's settings of a subject meet.
         assert!(

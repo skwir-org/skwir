@@ -1,10 +1,11 @@
 //! Each pane's footer: what it lists and what is selected there. The
 //! window's own state (what plays while the preview is closed, the files
-//! waiting for a paste, proposals to review, the shelf, Undo) ends the
-//! footer of the last pane, at the window's bottom right whichever way a
-//! split runs. The side panels have none: the sidebar's facts are on its
-//! rows and the preview's in Properties, so they run to the window's foot.
-//! Messages are toasts (`set_status`), never a footer's.
+//! waiting for a paste, proposals to review, the shelf, what runs, Undo)
+//! ends the footer of the last pane, at the window's bottom right
+//! whichever way a split runs. The side panels have none: the sidebar's
+//! facts are on its rows and the preview's in Properties, so they run to
+//! the window's foot. Messages are toasts (`set_status`), never a
+//! footer's.
 
 use gpui::{AnyElement, Context, div, prelude::*, px};
 use skwir_core::location::AsOf;
@@ -110,7 +111,7 @@ fn as_of_said(as_of: &AsOf, now: &jiff::Zoned) -> (String, String) {
 
 /// The footer of the pane being rendered; `window` adds the window's own
 /// state at its end (the last pane's).
-pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElement {
+pub fn render(shell: &mut Shell, window: bool, cx: &mut Context<Shell>) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let selection = shell.selection_ctx();
     let (count, complete, error, is_query, sweep, total, as_of, reads) = {
@@ -324,6 +325,10 @@ pub fn render(shell: &Shell, window: bool, cx: &mut Context<Shell>) -> AnyElemen
                 }))
                 .child(format!("{}: {}", tally.label, tally.count)),
         );
+    }
+    // What runs, docked: its strip, and Activity opened above it (ADR-114).
+    if let Some(strip) = crate::activity::strip(shell, &theme, cx) {
+        bar = bar.child(strip);
     }
     // What Undo takes: the last thing asked, once it ends (ADR-079).
     if let Some((title, running)) = shell.app.executor.undo_target() {

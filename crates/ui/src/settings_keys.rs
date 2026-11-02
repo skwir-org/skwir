@@ -834,7 +834,7 @@ mod tests {
         let (_tmp, app) = app();
         let mine = [record(&[
             ("id", "1"),
-            ("keys", "ctrl-j"),
+            ("keys", "ctrl-alt-j"),
             ("command", "toggle_hidden"),
         ])];
         let (keyboard, _) = read(&app, &mine);
@@ -861,7 +861,7 @@ mod tests {
             })
             .collect();
         assert_eq!(titles, ["Toggle hidden files"]);
-        let found = rows(&keyboard, Show::Keyed, "", "", Some("ctrl-j"), false);
+        let found = rows(&keyboard, Show::Keyed, "", "", Some("ctrl-alt-j"), false);
         assert!(found.contains(&Row::Place("Anywhere".into())));
         // A search finds actions without keys too.
         let searched = rows(&keyboard, Show::Keyed, "sort by rating", "", None, false);
@@ -881,7 +881,7 @@ mod tests {
         };
         let filtered = rows(&keyboard, Show::Keyed, "", "hidden files", None, false);
         assert_eq!(titles(&filtered), ["Toggle hidden files"]);
-        let by_keys = rows(&keyboard, Show::Keyed, "", "ctrl+j", None, false);
+        let by_keys = rows(&keyboard, Show::Keyed, "", "ctrl+alt+j", None, false);
         assert_eq!(titles(&by_keys), ["Toggle hidden files"]);
         let keyed = rows(&keyboard, Show::Keyed, "", "sort by rating", None, false);
         assert!(

@@ -15,6 +15,7 @@
 )]
 
 mod about;
+mod activity;
 pub mod address;
 mod archive_preview;
 mod backdrop;

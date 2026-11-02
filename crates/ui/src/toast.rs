@@ -1,8 +1,9 @@
-//! Toasts: what just happened, with the way back. One message at a time sits
-//! above the panes' footers; a running operation shows its progress there with
-//! Pause and Cancel buttons and turns into its result ("Moved 3 items to
-//! Trash", Undo). A message said while operations run is drawn under their
-//! cards, never behind them.
+//! Toasts: what just happened, with the way back. One answer at a time,
+//! drawn over the files at the last pane's lower right, above Activity's
+//! strip (`activity.rs`, ADR-114), or over the preview on the whole screen.
+//! What runs is not a toast: Activity shows it, docked at the window's foot.
+//! A plan's answer is built here as it ends ("Moved 3 items to Trash",
+//! Undo), and kept in Activity's `Earlier` too.
 //!
 //! The only animation is a short entrance that ends by itself; nothing here
 //! keeps the UI awake.
@@ -63,11 +64,32 @@ pub struct Running {
     /// checked: what the result says when `Finished` says nothing better.
     items: Option<skwir_core::op::Items>,
     /// Waiting where it would answer Cancel, until resumed.
-    paused: bool,
-    cancelling: bool,
+    pub(crate) paused: bool,
+    pub(crate) cancelling: bool,
     /// What a plan its server stopped had left, going on by itself once
     /// the server answered again (ADR-080, 9).
-    going_on: bool,
+    pub(crate) going_on: bool,
+}
+
+#[cfg(test)]
+impl Running {
+    /// A plan just started, for tests elsewhere.
+    pub(crate) fn for_test(plan: PlanId, title: &str, run: RunKind, total: usize) -> Self {
+        Running {
+            plan,
+            title: title.to_owned(),
+            run,
+            total,
+            first: None,
+            first_named: None,
+            failed: None,
+            failed_named: None,
+            items: None,
+            paused: false,
+            cancelling: false,
+            going_on: false,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -83,17 +105,6 @@ pub struct ToastState {
     close: Option<gpui::FocusHandle>,
     /// Kept across frames, so Tab can reach the toast's buttons.
     action_focus: Vec<gpui::FocusHandle>,
-    /// Pause and Resume, one button: its focus stays as its label changes.
-    pause_focus: Option<gpui::FocusHandle>,
-    /// The first card's Cancel.
-    cancel_focus: Option<gpui::FocusHandle>,
-    /// The Pause and Cancel buttons of the cards after the first, one pair
-    /// a card, kept across frames: plans that share nothing run at once
-    /// (ADR-079).
-    card_focus: Vec<(gpui::FocusHandle, gpui::FocusHandle)>,
-    /// The Cancel of each task's card (`App::tasks`: work that is no plan,
-    /// a print), by task, kept while the task runs.
-    task_focus: std::collections::HashMap<u64, gpui::FocusHandle>,
 }
 
 fn name_of(path: &Path) -> String {
@@ -107,7 +118,7 @@ fn folder_of(path: &Path) -> String {
     path.parent().map_or_else(String::new, name_of)
 }
 
-fn capitalized(text: &str) -> String {
+pub(crate) fn capitalized(text: &str) -> String {
     let mut chars = text.chars();
     chars.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(chars).collect()
@@ -414,13 +425,15 @@ impl Shell {
                         going_on: self.toasts.going_on.remove(&plan),
                     });
                 }
-                ExecEvent::GoesOn { next, .. } => {
+                ExecEvent::GoesOn { plan, next, .. } => {
                     self.toasts.going_on.insert(next);
+                    self.tell_goes_on(plan);
                 }
                 // Its toast says it goes on by itself, while it is the
                 // one shown (its Retry names the plan).
                 ExecEvent::WaitsForServer { plan } => {
                     let said = WAITS_FOR_SERVER;
+                    self.tell_waits_for_server(plan, said);
                     if let Some(toast) = self.toasts.current.as_mut()
                         && toast.actions.iter().any(|a| {
                             a.command == "retry" && a.args["plan"] == serde_json::json!(plan)
@@ -473,6 +486,8 @@ impl Shell {
                     };
                     let running = self.toasts.running.remove(index);
                     let run = running.run;
+                    let title = running.title.clone();
+                    let stopped_by_error = error.is_some() && !cancelled;
                     // Deleted where its server keeps a trash (ADR-086).
                     let kept_in = match &running.first {
                         Some(Change::Delete { path }) => {
@@ -500,6 +515,8 @@ impl Shell {
                         run == RunKind::Apply && self.app.executor.can_retry(plan),
                         run == RunKind::Undo && self.app.executor.can_redo(),
                     );
+                    self.activity_ended(plan, &title, (&text, tone, &actions), stopped_by_error);
+                    self.tell_ended(plan, &text, stopped_by_error, cancelled, ran);
                     self.toast(
                         Toast {
                             text,
@@ -511,6 +528,7 @@ impl Shell {
                 }
             }
         }
+        self.sync_activity();
         if any {
             cx.notify();
         }
@@ -651,7 +669,7 @@ fn finished_actions(
 /// What waits its turn, a line each under the cards of what runs (ADR-079,
 /// 12): "Rename to b.txt — waits for copy to /media/stick". The first
 /// few, then how many more.
-fn waiting_lines(waiting: &[skwir_core::op::Waiting]) -> Vec<String> {
+pub(crate) fn waiting_lines(waiting: &[skwir_core::op::Waiting]) -> Vec<String> {
     use skwir_core::op::WaitsFor;
     const SHOWN: usize = 3;
     let mut lines: Vec<String> = waiting
@@ -683,7 +701,7 @@ fn waiting_lines(waiting: &[skwir_core::op::Waiting]) -> Vec<String> {
 
 /// What a plan copying onto a mount that sends later says while the
 /// server takes what it wrote.
-fn sending(files: usize) -> String {
+pub(crate) fn sending(files: usize) -> String {
     match files {
         0 => "sending to the server".to_owned(),
         n => format!("sending {} to the server", format::count(n, "file")),
@@ -705,201 +723,15 @@ pub fn pace(t: &Transfer) -> Option<String> {
 /// answering (`ExecEvent::WaitsForServer`).
 const WAITS_FOR_SERVER: &str = ". It goes on by itself once the server answers again";
 
-/// The card of the running plan `running`, the `n`th: its title, how far
-/// it is, what waits (`waiting`), and its Pause and Cancel buttons, which
-/// `focus` holds.
-#[allow(clippy::too_many_arguments)] // One card's parts, each its own.
-fn progress_card(
-    card: gpui::Stateful<gpui::Div>,
-    n: usize,
-    running: &Running,
-    transfer: &skwir_core::op::Transfer,
-    focus: (&gpui::FocusHandle, &gpui::FocusHandle),
-    a11y: bool,
-    theme: &Theme,
-    cx: &mut Context<Shell>,
-) -> gpui::Stateful<gpui::Div> {
-    let (pause_focus, cancel_focus) = focus;
-    let (fraction, amount) = bar(running.total, transfer);
-    let plan = running.plan;
-    let paused = running.paused;
-    // Cancelled, it stops where it next answers Cancel and takes back what
-    // it was in the middle of: no speed nor time left any more, and
-    // nothing more to ask of it.
-    let stopping = running.cancelling;
-    let state = match (paused, running.going_on, transfer.sending) {
-        _ if stopping => "stopping at ".to_owned(),
-        (true, ..) => "paused at ".to_owned(),
-        // Copied onto a mount that sends to its server after: what the
-        // server still has to take before the copy is done (ADR-102).
-        (false, _, Some(files)) => format!("{}, ", sending(files)),
-        (false, true, None) => "going on, ".to_owned(),
-        (false, false, None) => String::new(),
-    };
-    // What runs, said by its title; how far, as a value, said when asked,
-    // never at each step.
-    card.role(gpui::Role::ProgressIndicator)
-        .when(a11y, |d| {
-            d.aria_label(capitalized(&running.title))
-                .aria_numeric_value(f64::from(fraction) * 100.)
-                .aria_min_numeric_value(0.)
-                .aria_max_numeric_value(100.)
-        })
-        .py_2()
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(240.))
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(format!("{} — {state}{amount}", capitalized(&running.title)))
-                .child(
-                    div()
-                        .h(px(4.))
-                        .w_full()
-                        .rounded_full()
-                        .bg(theme.border)
-                        .child(
-                            div()
-                                .h_full()
-                                .rounded_full()
-                                .bg(if paused || stopping {
-                                    theme.text_muted
-                                } else {
-                                    theme.accent
-                                })
-                                .w(gpui::relative(fraction)),
-                        ),
-                )
-                // How fast, how long: under the bar, quieter than what it
-                // is and how far (ADR-113).
-                .when_some(
-                    pace(transfer).filter(|_| !paused && !stopping),
-                    |d, pace| d.child(div().text_xs().text_color(theme.text_muted).child(pace)),
-                ),
-        )
-        .when(!stopping, |card| {
-            card.child(
-                controls::button(
-                    format!("toast-pause-{n}"),
-                    if paused { "Resume" } else { "Pause" },
-                    None,
-                    ButtonStyle::Plain,
-                    pause_focus,
-                    theme,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if paused {
-                        this.app.executor.resume(plan);
-                    } else {
-                        this.app.executor.pause(plan);
-                    }
-                    cx.notify();
-                })),
-            )
-        })
-        .child(if stopping {
-            // Said, not offered: nothing more to ask of it.
-            controls::inert_button(
-                format!("toast-cancel-{n}"),
-                "Stopping…",
-                cancel_focus,
-                theme,
-            )
-            .mr_2()
-        } else {
-            controls::button(
-                format!("toast-cancel-{n}"),
-                "Cancel",
-                None,
-                ButtonStyle::Plain,
-                cancel_focus,
-                theme,
-            )
-            .mr_2()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if this.app.executor.cancel(plan)
-                    && let Some(running) = this.toasts.running.iter_mut().find(|r| r.plan == plan)
-                {
-                    running.cancelling = true;
-                }
-                cx.notify();
-            }))
-        })
-}
-
-/// The card of the task `task` (work under way that is no plan: a print),
-/// the `n`th: its title, how far it went, and Cancel, which `focus` holds.
-fn task_card(
-    card: gpui::Stateful<gpui::Div>,
-    task: &skwir_core::task::Running,
-    focus: &gpui::FocusHandle,
-    a11y: bool,
-    theme: &Theme,
-    cx: &mut Context<Shell>,
-) -> gpui::Stateful<gpui::Div> {
-    #[allow(clippy::cast_possible_truncation)]
-    let fraction = task.went.unwrap_or(0.0) as f32;
-    let id = task.id;
-    let amount = task.went.map_or_else(String::new, |went| {
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let percent = (went * 100.0).round() as u32;
-        format!(" — {percent} %")
-    });
-    card.role(gpui::Role::ProgressIndicator)
-        .when(a11y, |d| {
-            d.aria_label(capitalized(&task.title))
-                .aria_numeric_value(f64::from(fraction) * 100.)
-                .aria_min_numeric_value(0.)
-                .aria_max_numeric_value(100.)
-        })
-        .py_2()
-        .child(
-            div()
-                .flex_1()
-                .min_w(px(240.))
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(format!("{}{amount}", capitalized(&task.title)))
-                .child(
-                    div()
-                        .h(px(4.))
-                        .w_full()
-                        .rounded_full()
-                        .bg(theme.border)
-                        .child(
-                            div()
-                                .h_full()
-                                .rounded_full()
-                                .bg(theme.accent)
-                                .w(gpui::relative(fraction)),
-                        ),
-                ),
-        )
-        .child(
-            controls::button(
-                format!("toast-task-cancel-{id}"),
-                if task.cancelling {
-                    "Stopping…"
-                } else {
-                    "Cancel"
-                },
-                None,
-                ButtonStyle::Plain,
-                focus,
-                theme,
-            )
-            .mr_2()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.app.tasks.cancel(id);
-                cx.notify();
-            })),
-        )
-}
-
-pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
+/// The answer said last, as a card: what it says, its buttons, and Close.
+/// Its caller places it: over the files at the last pane's lower right,
+/// above Activity's strip, or over the preview on the whole screen. Not
+/// while Activity is open, which holds it in `Earlier`.
+pub fn render_answer(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
+    if shell.activity_open() {
+        return None;
+    }
+    let toast = shell.toasts.current.clone()?;
     let theme = cx.global::<Theme>().clone();
     let close = shell
         .toasts
@@ -908,205 +740,82 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
         .clone();
     let generation = shell.toasts.generation;
     let a11y = shell.a11y;
-    let card = |tone: Tone, n: u64| {
-        div()
-            .id(("toast-card", generation * 8 + n))
-            .max_w(px(560.))
-            .min_w(px(260.))
-            .pl_3()
-            .pr_1()
-            .py_1()
-            .flex()
-            .items_center()
-            .gap_3()
-            .rounded_lg()
-            .border_1()
-            .border_color(match tone {
-                Tone::Error => theme.error,
-                _ => theme.border,
-            })
-            .bg(theme.bg)
-            .shadow_lg()
-            .occlude()
-            // A click on the toast leaves the keyboard where it was: the
-            // toast stays up while its plan is paused, and the keys must go
-            // on acting on the pane. Tab still reaches its buttons.
-            .capture_any_mouse_down(|_, window, _| window.prevent_default())
-    };
-    let glyph = |tone: Tone| match tone {
+    // Said as it appears: a failure at once, the rest after what is being
+    // said.
+    let error = matches!(toast.tone, Tone::Error);
+    let glyph = match toast.tone {
         Tone::Success => controls::glyph("check", theme.success, 15.),
         Tone::Error => controls::glyph("warning", theme.error, 15.),
         Tone::Info => controls::glyph("info", theme.text_muted, 15.),
     };
-    // A plan with a single step finishes before anyone could read a bar,
-    // unless the step moves bytes (one large copy): then the bytes are the
-    // bar. Plans that share nothing run at once: a card each (ADR-079).
-    let progress: Vec<(Running, skwir_core::op::Transfer)> = shell
-        .toasts
-        .running
-        .iter()
-        .filter_map(|running| {
-            let transfer = shell.app.executor.transfer(running.plan)?;
-            (running.total > 1 || transfer.total > 0).then(|| (running.clone(), transfer))
+    let mut card = div()
+        .id(("toast-card", generation))
+        .max_w(px(480.))
+        .min_w(px(220.))
+        .pl_3()
+        .pr_1()
+        .py_1()
+        .flex()
+        .items_center()
+        .gap_3()
+        .rounded_lg()
+        .border_1()
+        .border_color(if error { theme.error } else { theme.border })
+        .bg(theme.bg)
+        .shadow_lg()
+        .occlude()
+        // A click on the toast leaves the keyboard where it was: the keys
+        // must go on acting on the pane. Tab still reaches its buttons.
+        .capture_any_mouse_down(|_, window, _| window.prevent_default())
+        .role(if error {
+            gpui::Role::Alert
+        } else {
+            gpui::Role::Status
         })
-        .collect();
-    // What was said: alone, or under the cards of what runs, never hidden
-    // by them (a rename beside a long copy, an error).
-    let said = shell.toasts.current.clone().map(|toast| {
-        // Said as it appears: a failure at once, the rest after what is
-        // being said.
-        let error = matches!(toast.tone, Tone::Error);
-        let mut card = card(toast.tone, 6)
-            .role(if error {
-                gpui::Role::Alert
-            } else {
-                gpui::Role::Status
-            })
-            .aria_live(if error {
-                gpui::Live::Assertive
-            } else {
-                gpui::Live::Polite
-            })
-            .when(a11y, |d| d.aria_label(toast.text.clone()))
-            .child(glyph(toast.tone))
-            .child(div().flex_1().min_w_0().py_1().child(toast.text.clone()));
-        for (n, action) in toast.actions.into_iter().enumerate() {
-            while shell.toasts.action_focus.len() <= n {
-                shell.toasts.action_focus.push(cx.focus_handle());
-            }
-            let focus = shell.toasts.action_focus[n].clone();
-            let label = action.label.clone();
-            card = card.child(
-                controls::button(
-                    format!("toast-action-{n}"),
-                    label,
-                    None,
-                    ButtonStyle::Plain,
-                    &focus,
-                    &theme,
-                )
-                // Its buttons are not part of what is announced.
-                .aria_live(gpui::Live::Off)
-                .text_color(theme.accent_text)
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.dismiss_toast(cx);
-                    this.run(&action.command, action.args.clone(), window, cx);
-                })),
-            );
+        .aria_live(if error {
+            gpui::Live::Assertive
+        } else {
+            gpui::Live::Polite
+        })
+        .when(a11y, |d| d.aria_label(toast.text.clone()))
+        .child(glyph)
+        .child(div().flex_1().min_w_0().py_1().child(toast.text.clone()));
+    for (n, action) in toast.actions.into_iter().enumerate() {
+        while shell.toasts.action_focus.len() <= n {
+            shell.toasts.action_focus.push(cx.focus_handle());
         }
-        card.child(
-            controls::icon_button("toast-close", "close", "Close", &close, &theme)
-                .aria_live(gpui::Live::Off)
-                .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx))),
-        )
-    });
-    // Work that is no plan (a print), shown beside the plans: at most two,
-    // the cards after the plans' four.
-    let tasks: Vec<skwir_core::task::Running> =
-        shell.app.tasks.running().into_iter().take(2).collect();
-    shell
-        .toasts
-        .task_focus
-        .retain(|id, _| tasks.iter().any(|task| task.id == *id));
-    let content = if progress.is_empty() && tasks.is_empty() {
-        said?
-    } else {
-        // What the user did meanwhile waits behind what it meets, and
-        // paused, for as long as it stays paused: said under the cards,
-        // each with what it waits for.
-        let waiting = waiting_lines(&shell.app.executor.waiting());
-        let mut cards = div()
-            .id(("toast-cards", generation))
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap_2();
-        for (n, (running, transfer)) in progress.into_iter().enumerate() {
-            let (pause_focus, focus) = if n == 0 {
-                (
-                    shell
-                        .toasts
-                        .pause_focus
-                        .get_or_insert_with(|| cx.focus_handle())
-                        .clone(),
-                    shell
-                        .toasts
-                        .cancel_focus
-                        .get_or_insert_with(|| cx.focus_handle())
-                        .clone(),
-                )
-            } else {
-                while shell.toasts.card_focus.len() < n {
-                    shell
-                        .toasts
-                        .card_focus
-                        .push((cx.focus_handle(), cx.focus_handle()));
-                }
-                shell.toasts.card_focus[n - 1].clone()
-            };
-            cards = cards.child(progress_card(
-                card(Tone::Info, n as u64),
-                n,
-                &running,
-                &transfer,
-                (&pause_focus, &focus),
-                a11y,
-                &theme,
-                cx,
-            ));
-        }
-        for (n, task) in tasks.iter().enumerate() {
-            let focus = shell
-                .toasts
-                .task_focus
-                .entry(task.id)
-                .or_insert_with(|| cx.focus_handle())
-                .clone();
-            cards = cards.child(task_card(
-                card(Tone::Info, 4 + n as u64),
-                task,
+        let focus = shell.toasts.action_focus[n].clone();
+        let label = action.label.clone();
+        card = card.child(
+            controls::button(
+                format!("toast-action-{n}"),
+                label,
+                None,
+                ButtonStyle::Plain,
                 &focus,
-                a11y,
                 &theme,
-                cx,
-            ));
-        }
-        if !waiting.is_empty() {
-            cards = cards.child(
-                // The last of a generation's eight: the cards are the first
-                // four (`op::ACTIONS_AT_ONCE`), what was said the seventh.
-                card(Tone::Info, 7)
-                    .role(gpui::Role::Status)
-                    .when(a11y, |d| d.aria_label(waiting.join(". ")))
-                    .py_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .text_color(theme.text_muted)
-                            .children(waiting),
-                    ),
-            );
-        }
-        cards.children(said)
-    };
+            )
+            // Its buttons are not part of what is announced.
+            .aria_live(gpui::Live::Off)
+            .text_color(theme.accent_text)
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.dismiss_toast(cx);
+                this.run(&action.command, action.args.clone(), window, cx);
+            })),
+        );
+    }
+    let card = card.child(
+        controls::icon_button("toast-close", "close", "Close", &close, &theme)
+            .aria_live(gpui::Live::Off)
+            .on_click(cx.listener(|this, _, _, cx| this.dismiss_toast(cx))),
+    );
     Some(
-        div()
-            .absolute()
-            .bottom(px(38.))
-            .left_0()
-            .right_0()
-            .flex()
-            .justify_center()
-            .child(content.with_animation(
-                ("toast", generation),
-                Animation::new(Duration::from_millis(140)).with_easing(gpui::ease_out_quint()),
-                |card, delta| card.opacity(delta).mt(px(8. * (1. - delta))),
-            ))
-            .into_any_element(),
+        card.with_animation(
+            ("toast", generation),
+            Animation::new(Duration::from_millis(140)).with_easing(gpui::ease_out_quint()),
+            |card, delta| card.opacity(delta).relative().top(px(8. * (1. - delta))),
+        )
+        .into_any_element(),
     )
 }
 

@@ -373,6 +373,32 @@ their steps place them at its end ("Items counted as they come").
 Left: sftp's sessions, gio, kio and rclone tell none as they go, so
 theirs count when their run returns.
 
+## Activity, docked (2026-11-02)
+
+Asked by the user: the toasts piled up over the files and hid the last
+rows. Brainstormed on a page of mock-ups (three places, what other
+programs do, the desktop's notifications); the user chose each point
+(ADR-114). What runs is a strip at the end of the last pane's footer,
+as the player's is: how far, how long, Pause and Cancel for one action,
+in as many words as the footer has room for. A click or Ctrl+Shift+J
+opens Activity above it: each action's card, what waits, and Earlier,
+this session's answers with Undo or Retry. Pinned, Activity stands
+above the footer while something runs, taking room rather than
+covering the files. An action an error stopped stays in the strip,
+red, until retried, seen or dismissed. One answer at a time, at the
+last pane's lower right. A long action that ends, stops or waits for its
+server while the window is in the background is a notification, taken
+back once the window has the focus; a click brings the window forward
+(gpui patch 0043, the desktop's activation token) with Activity open.
+The taskbar's entry shows how far what runs has gone, and the machine is
+kept awake meanwhile (`skwir_platform::desktop`). Rules in
+`docs/invariants/shell.md` ("Feedback"); checks in `docs/STATUS-LOG.md`
+(2026-11-02, "Activity, docked"). Left: a real desktop (GNOME's and
+Plasma's notification servers and taskbar, a Wayland compositor taking
+the token), Windows' toasts and taskbar, macOS at all; KDE's job tracker
+(`org.kde.JobViewServerV2`, Dolphin's way to Plasma's tray) set aside in
+ADR-114.
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of

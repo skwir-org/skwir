@@ -190,6 +190,8 @@ const BUILTIN: &[(&str, &str, Option<&str>)] = &[
     ("secondary-shift-n", "ui.create_here", Some("pane creates")),
     ("secondary-l", "ui.focus_address", None),
     ("secondary-shift-p", "ui.palette", None),
+    // Chrome's key for its downloads (Ctrl+J is Jump's).
+    ("secondary-shift-j", "ui.activity", None),
     ("secondary-q", "ui.quit", None),
     ("ctrl-h", "toggle_hidden", None),
     // Dolphin's key for it, beside GNOME's.

@@ -32,6 +32,11 @@ skwir-platform.workspace = true
 image = { workspace = true, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
 smallvec = "1"
 
+# The window's handle, for its taskbar button's progress (ADR-114): the
+# version gpui implements it in.
+[target.'cfg(windows)'.dependencies]
+raw-window-handle = "0.6"
+
 [dev-dependencies]
 # A test's stand-in location sends its listing as core's do.
 crossbeam-channel.workspace = true

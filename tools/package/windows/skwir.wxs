@@ -32,6 +32,11 @@
           <!-- What a per-user component is known by: a value of its own. -->
           <RegistryValue Root="HKCU" Key="Software\skwir" Name="StartMenu" Type="integer"
                          Value="1" KeyPath="yes" />
+          <!-- The name Windows shows the program's toasts under (ADR-114):
+               wixl gives a shortcut no AppUserModelID, so the program's id
+               is registered as unpackaged programs register theirs. -->
+          <RegistryValue Root="HKCU" Key="Software\Classes\AppUserModelId\org.skwir.skwir"
+                         Name="DisplayName" Type="string" Value="skwir" />
         </Component>
       </Directory>
     </Directory>

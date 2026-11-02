@@ -74,8 +74,10 @@ like `AGENTS.md`.
   toast, polite, or assertive for a failure, named by its message, and
   an answer said where it was asked, the same way (a preview's find:
   `preview_bar::find_popup`). Its buttons are `Live::Off`, or they are
-  announced with it. A running plan's toast is a progress indicator,
-  never live: it would speak at every step. A status that changes with
+  announced with it. A running plan's card in Activity is a progress
+  indicator, never live: it would speak at every step; Activity's strip
+  is a button named by what it says ("Activity: 42 % · about 3 min
+  left"), read when asked. A status that changes with
   every key (the footer) is a status line read when asked, never live.
 
 ## Previews and the terminal
@@ -135,7 +137,8 @@ like `AGENTS.md`.
 | dialogs, confirmations | dialog, alert dialog | its title or question |
 | settings | dialog; its pages a tab list; its controls | "Settings"; each control its setting's title |
 | toolbars, tabs | buttons; a tab list of tabs | their titles; each tab its location |
-| toasts | status (alert for a failure), live; progress indicator | the message; what runs |
+| toasts | status (alert for a failure), live | the message |
+| Activity | its strip a button; a group of progress indicators, a list of what ended | what runs and how far; each card its plan's title |
 | preview panel | landmark (complementary) | "Preview", described by the file and its facts |
 | Peek, the whole screen | modal dialog | the file; its facts and keys |
 | a picture, a film | image (its size), video | the file |

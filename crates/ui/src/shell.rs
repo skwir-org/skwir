@@ -224,6 +224,11 @@ pub struct Preferences {
     pub close_split: crate::layout::CloseSplit,
     /// How audio and video play.
     pub player: crate::player::PlayerPrefs,
+    /// `ui.notify_desktop`: a long action that ended unwatched is a
+    /// notification (ADR-114).
+    pub notify_desktop: bool,
+    /// `ui.keep_awake`: the computer kept awake while an action runs.
+    pub keep_awake: bool,
 }
 
 impl Default for Preferences {
@@ -244,6 +249,8 @@ impl Default for Preferences {
             contents_pinned: false,
             close_split: crate::layout::CloseSplit::Other,
             player: crate::player::PlayerPrefs::default(),
+            notify_desktop: true,
+            keep_awake: true,
         }
     }
 }
@@ -430,6 +437,16 @@ pub struct Shell {
     /// Panes side by side or stacked, the preview at the right or the bottom.
     pub layout: crate::layout::Layout,
     pub toasts: crate::toast::ToastState,
+    /// What runs, docked at the window's foot, and what ended (ADR-114).
+    pub activity: crate::activity::ActivityState,
+    /// What the desktop is told of long actions (ADR-114): made for the
+    /// window, never in a headless run.
+    pub(crate) desktop: Option<skwir_platform::desktop::Desktop>,
+    /// The notices clicked, taken at the next sync.
+    pub(crate) clicked: std::sync::Arc<parking_lot::Mutex<Vec<skwir_platform::desktop::Clicked>>>,
+    /// Whether the window has the focus: what ends while it has not is
+    /// told to the desktop.
+    pub(crate) window_active: bool,
     /// This frame's snapshot of what waits for a paste; rows and cells test
     /// membership here instead of taking the lock each.
     pub pending: Arc<skwir_core::pending::Pending>,
@@ -559,9 +576,12 @@ impl Shell {
         // A server does not say what changed on it: the folders shown on a
         // remote are read again as the window comes back (ADR-077).
         subs.push(cx.observe_window_activation(window, |this, window, _| {
-            if window.is_window_active() {
+            let active = window.is_window_active();
+            if active {
                 this.app.refresh_remote();
             }
+            // Looked at again: what the desktop was told is taken back.
+            this.window_activated(active);
         }));
         // A film's frames are sent only while the window is shown: on
         // another workspace or minimized, nothing would draw them
@@ -758,6 +778,10 @@ impl Shell {
             terminal: crate::terminal::TerminalState::new(cx.focus_handle()),
             layout: crate::layout::Layout::default(),
             toasts: crate::toast::ToastState::default(),
+            activity: crate::activity::ActivityState::default(),
+            desktop: None,
+            clicked: std::sync::Arc::default(),
+            window_active: window.is_window_active(),
             pending: Arc::default(),
             shortcuts: None,
             about: None,
@@ -805,6 +829,7 @@ impl Shell {
             shell.set_status(format!("{e:#}"), true, cx);
         }
         shell.restore_session(initial_given, window, cx);
+        shell.desktop = Some(crate::activity::desktop(&shell.app, &shell.clicked, window));
         // Scripts and agents reach the window from now on: what they ask
         // comes after what it starts on.
         shell.app.set_window_shown();
@@ -866,6 +891,7 @@ impl Shell {
         self.preview.source_types = session.source_types;
         self.preview.turned_types = session.turned_types;
         self.layout.split = session.split_panes;
+        self.activity.pinned = session.activity_pinned;
         if session.player_height > 0. {
             self.player.height = session.player_height;
         }
@@ -2249,6 +2275,8 @@ impl Shell {
                 self.reveal_focused_row(window, cx);
             }
             "toolbar_menu" => self.toggle_toolbar_menu(args, window, cx),
+            "activity" => self.toggle_activity(args, window, cx),
+            "activity_pin" => self.toggle_activity_pin(window, cx),
             "history_menu" => self.toggle_history_menu(args, window, cx),
             "subfolder_menu" => self.toggle_subfolder_menu(args, window, cx),
             "parents_menu" => self.toggle_parents_menu(args, window, cx),
@@ -2882,6 +2910,8 @@ impl Shell {
         self.sync_views();
         self.sync_keymap(cx);
         self.drain_executor(cx);
+        self.tell_desktop();
+        self.take_clicked(window, cx);
         for n in self.app.take_notifications() {
             let error = matches!(n.level, NotifyLevel::Error | NotifyLevel::Warning);
             match (n.setting, n.action) {
@@ -2958,6 +2988,16 @@ impl Shell {
                 .settings
                 .get::<bool>(crate::settings::FULL_PATH_KEY)
                 .unwrap_or(false);
+            self.prefs.notify_desktop = self
+                .app
+                .settings
+                .get::<bool>(crate::settings::NOTIFY_DESKTOP_KEY)
+                .unwrap_or(true);
+            self.prefs.keep_awake = self
+                .app
+                .settings
+                .get::<bool>(crate::settings::KEEP_AWAKE_KEY)
+                .unwrap_or(true);
             self.prefs.drag_image = crate::dragicon::Layout::read(
                 self.app
                     .settings
@@ -3266,6 +3306,39 @@ impl Shell {
         self.sync_weight(window, cx);
         let last = self.panes.last().map(|p| p.id) == Some(id);
         let footer = status::render(self, last, cx);
+        // The window's own, with its state: Activity pinned above the
+        // footer, and the last answer over the files at their lower right,
+        // where the list shows sizes and dates rather than names. On the
+        // whole screen the answer is said over the preview instead.
+        let tray = last
+            .then(|| crate::activity::tray(self, &theme, cx))
+            .flatten();
+        let answer = (last && self.preview.fullscreen.is_none())
+            .then(|| crate::toast::render_answer(self, cx))
+            .flatten();
+        let file_area = if last {
+            div()
+                .relative()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(file_area)
+                .children(answer.map(|answer| {
+                    div()
+                        .absolute()
+                        .left(px(8.))
+                        .right(px(8.))
+                        .bottom(px(8.))
+                        .flex()
+                        .justify_end()
+                        .child(answer)
+                }))
+                .into_any_element()
+        } else {
+            file_area
+        };
         self.pane = saved;
         // Split panes are told apart by the edge they share: the left one
         // side by side, the top one stacked. The active pane's is the accent.
@@ -3306,6 +3379,7 @@ impl Shell {
             .children(banner)
             .child(file_area)
             .children(strip)
+            .children(tray)
             .child(footer)
             .children(edge)
             .into_any_element()
@@ -3462,13 +3536,23 @@ impl Render for Shell {
             .clone()
             .map(gpui::IntoElement::into_any_element);
         // The whole screen covers the window: what answers the user is
-        // said over it, else under the overlays, as ever.
-        let toast = crate::toast::render(self, cx);
-        let (toast_under, toast_over) = if self.preview.fullscreen.is_some() {
-            (None, toast)
-        } else {
-            (toast, None)
-        };
+        // said over it (else over the last pane's files, `render_pane`).
+        let toast_over = self
+            .preview
+            .fullscreen
+            .is_some()
+            .then(|| crate::toast::render_answer(self, cx))
+            .flatten()
+            .map(|answer| {
+                div()
+                    .absolute()
+                    .bottom(px(38.))
+                    .left_0()
+                    .right_0()
+                    .flex()
+                    .justify_center()
+                    .child(answer)
+            });
         let sequence = crate::sequence::render(self, cx);
         let shortcuts = crate::shortcuts::render(self, window, cx);
         let about = crate::about::render(self, cx);
@@ -3568,7 +3652,6 @@ impl Render for Shell {
                     ),
             )
             .children(about)
-            .children(toast_under)
             .children(sequence)
             .children(overlays.into_iter().flatten())
             .children(toast_over)

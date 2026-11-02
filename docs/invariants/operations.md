@@ -190,7 +190,7 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   record made new) and a notes edit writes its file's record
   (`Footprint::record_in`): two such meet only where their paths do,
   and a toast's Undo of one is not refused for the other. Each running
-  plan has its bar; what waits is listed under them, each saying what it waits for (`Executor::waiting`:
+  plan has its bar in Activity (ADR-114); what waits is listed under them, each saying what it waits for (`Executor::waiting`:
   an action asked before it that it meets, by its title; the disk; the
   server; one of the four to end); a paused plan keeps what it holds. The journal keeps
   the order asked (`JournalEntry::seq`): Undo takes the last plan asked,
