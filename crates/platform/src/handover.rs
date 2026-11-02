@@ -143,16 +143,41 @@ pub fn take_over(taken: impl Fn(Opening) + Send + Sync + 'static) -> Option<Taki
 pub struct TakingOver {
     gate: Arc<Gate>,
     #[cfg(target_os = "linux")]
-    _held: linux::Held,
+    held: Option<linux::Held>,
     #[cfg(windows)]
-    _held: pipe::Held,
+    held: Option<pipe::Held>,
+}
+
+impl TakingOver {
+    /// Stop as a drop does, what serves launches taken down on a thread of
+    /// its own (the name, the object and our marker on Linux, a call on
+    /// the bus; the pipe on Windows, up to [`PATIENCE`]): the window's
+    /// thread does not wait for it. Once this returns, `taken` is not
+    /// called again, and a launch meanwhile goes on as a process of its
+    /// own.
+    pub fn stop_aside(self) {
+        self.gate.close();
+        #[cfg(any(target_os = "linux", windows))]
+        {
+            let mut this = self;
+            if let Some(held) = this.held.take() {
+                // Without a thread, taken down here (the closure dropped).
+                let spawned = std::thread::Builder::new()
+                    .name("skwir-let-go".into())
+                    .spawn(move || drop(held));
+                if let Err(error) = spawned {
+                    tracing::debug!("what took launches over is let go here: {error}");
+                }
+            }
+        }
+    }
 }
 
 impl Drop for TakingOver {
     fn drop(&mut self) {
         // Closed first: a launch being taken is done before this goes on,
         // and none is taken after, whatever the bus or the pipe still
-        // delivers while what serves it stops (`_held`, dropped next).
+        // delivers while what serves it stops (`held`, dropped next).
         self.gate.close();
     }
 }
@@ -337,10 +362,10 @@ mod linux {
             .ok()?;
         let taking = TakingOver {
             gate,
-            _held: Held {
+            held: Some(Held {
                 stop,
                 thread: Some(thread),
-            },
+            }),
         };
         // Not served (dropped: stopped and waited for), or no bus (the
         // thread ended without a word).
@@ -439,10 +464,16 @@ mod pipe {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
 
-    use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
+    use windows_sys::Win32::Foundation::{CloseHandle, ERROR_PIPE_BUSY, HANDLE};
+    use windows_sys::Win32::Security::TOKEN_QUERY;
     use windows_sys::Win32::Storage::FileSystem::SECURITY_IDENTIFICATION;
-    use windows_sys::Win32::System::Pipes::{GetNamedPipeServerProcessId, PeekNamedPipe};
+    use windows_sys::Win32::System::Pipes::{
+        GetNamedPipeServerProcessId, GetNamedPipeServerSessionId, PeekNamedPipe,
+    };
     use windows_sys::Win32::System::RemoteDesktop::ProcessIdToSessionId;
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
     use windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow;
 
     use super::{Gate, Opening, PATIENCE, TakingOver, frame};
@@ -499,13 +530,17 @@ mod pipe {
         let Some(mut connected) = connect(pipe, deadline) else {
             return false;
         };
-        let mut server = 0u32;
-        // SAFETY: the pipe just opened, and an out value.
-        if unsafe { GetNamedPipeServerProcessId(connected.as_raw_handle(), &raw mut server) } != 0 {
-            // SAFETY: a process id, nothing else. Allowed or not, the
-            // window still opens.
-            unsafe { AllowSetForegroundWindow(server) };
-        }
+        // Anyone may make a pipe of a name not taken: one another user
+        // made first would be told what this launch opens, answer it
+        // taken, and keep Skwir from starting. Nothing is said, and no
+        // window let forward, before the pipe is known to be this user's.
+        let Some(server) = our_server(&connected) else {
+            tracing::debug!("the pipe of that name is not this user's: not handed over");
+            return false;
+        };
+        // SAFETY: a process id, nothing else. Allowed or not, the window
+        // still opens.
+        unsafe { AllowSetForegroundWindow(server) };
         // Within the pipe's buffer: written at once, read or not.
         if connected.write_all(&message).is_err() {
             return false;
@@ -514,6 +549,46 @@ mod pipe {
         matches!(wait(&connected, 1, deadline, None), Waited::Ready)
             && connected.read_exact(&mut answer).is_ok()
             && answer[0] == frame::TAKEN
+    }
+
+    /// The process serving `connected`, where it is this user's in this
+    /// session. Who runs it is asked, not whose the pipe is (its owner):
+    /// Wine makes that the user's primary group, Windows the
+    /// Administrators group for a user running elevated, while the
+    /// process's own user is the user in both; another user's process
+    /// cannot be opened to ask.
+    pub(super) fn our_server(connected: &File) -> Option<u32> {
+        let (mut ours, mut theirs, mut server) = (0u32, 0u32, 0u32);
+        // SAFETY: this process's id, the pipe just opened, and out values.
+        let known = unsafe {
+            ProcessIdToSessionId(std::process::id(), &raw mut ours) != 0
+                && GetNamedPipeServerSessionId(connected.as_raw_handle(), &raw mut theirs) != 0
+                && GetNamedPipeServerProcessId(connected.as_raw_handle(), &raw mut server) != 0
+        };
+        let user = crate::windows::user_sid();
+        (known && theirs == ours && user.is_some() && user_of(server) == user).then_some(server)
+    }
+
+    /// The user the process `pid` runs as, by their SID; `None` where it
+    /// cannot be opened to ask (another user's, or none).
+    pub(super) fn user_of(pid: u32) -> Option<String> {
+        // SAFETY: a process id; the handle, if any, closed below.
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if process.is_null() {
+            return None;
+        }
+        let mut token: HANDLE = std::ptr::null_mut();
+        // SAFETY: the process just opened, and an out pointer.
+        let opened = unsafe { OpenProcessToken(process, TOKEN_QUERY, &raw mut token) } != 0;
+        // SAFETY: the process's handle, closed once.
+        unsafe { CloseHandle(process) };
+        if !opened {
+            return None;
+        }
+        let user = crate::windows::token_sid(token);
+        // SAFETY: the token just opened, closed once.
+        unsafe { CloseHandle(token) };
+        user
     }
 
     enum Waited {
@@ -605,11 +680,11 @@ mod pipe {
         };
         Some(TakingOver {
             gate,
-            _held: Held {
+            held: Some(Held {
                 pipe,
                 stop,
                 thread: Some(thread),
-            },
+            }),
         })
     }
 
@@ -1150,6 +1225,23 @@ mod linux_tests {
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "4194304\n");
     }
 
+    /// Stopped aside, it takes no launch from then on, and lets go of the
+    /// name and of its marker on a thread of its own.
+    #[test]
+    fn stopped_aside_it_takes_nothing_and_lets_go_soon() {
+        let folder = folder();
+        let listen = format!("unix:dir={}", folder.path().display());
+        let bus = bus_or_skip!(folder.path(), &listen);
+        let marker = folder.path().join("skwir").join("finishing");
+        let (told, taken) = taker();
+        let taking = take_over_with(connector(&bus.address), marker.clone(), taken).unwrap();
+        taking.stop_aside();
+        assert!(!hand_over_at(&marker, patient(&bus.address), &opening()));
+        assert!(told.lock().is_empty(), "nothing taken once stopped");
+        until("the name let go of", &|| !held(&bus.address));
+        until("the marker removed", &|| !marker.exists());
+    }
+
     /// While one Skwir takes launches over, another cannot, on a
     /// connection of its own (another process) or on the same (this one
     /// asking twice), and the first goes on taking them; once it lets go,
@@ -1334,6 +1426,30 @@ mod windows_tests {
         drop(taking);
         assert!(started.elapsed() < PATIENCE, "{:?}", started.elapsed());
         drop(silent);
+    }
+
+    /// A launch hands itself only to a pipe served by a process of this
+    /// user: one whose process cannot be opened to ask (another user's,
+    /// here one that is not there) has no user, and this one is the
+    /// user's. (Another user's pipe cannot be made in a test.)
+    #[test]
+    fn only_a_process_of_this_user_is_handed_launches() {
+        let user = crate::windows::user_sid();
+        assert!(user.is_some());
+        assert_eq!(pipe::user_of(std::process::id()), user);
+        assert_eq!(pipe::user_of(u32::MAX - 3), None);
+        // The pipe a Skwir taking over serves is found to be its own.
+        let pipe = test_pipe();
+        let (_, taken) = taker();
+        let taking = pipe::take_over_at(pipe.clone(), taken).unwrap();
+        let connected = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&pipe)
+            .unwrap();
+        assert_eq!(pipe::our_server(&connected), Some(std::process::id()));
+        drop(connected);
+        drop(taking);
     }
 
     /// While one Skwir takes launches over, another cannot.

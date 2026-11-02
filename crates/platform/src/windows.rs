@@ -50,7 +50,8 @@ pub fn user_sid() -> Option<String> {
     sid
 }
 
-fn token_sid(token: HANDLE) -> Option<String> {
+/// The user `token` names, by their SID: its `TokenUser`.
+pub(crate) fn token_sid(token: HANDLE) -> Option<String> {
     let mut needed = 0u32;
     // SAFETY: asks the size only: a null buffer of length 0.
     unsafe { GetTokenInformation(token, TokenUser, std::ptr::null_mut(), 0, &raw mut needed) };
