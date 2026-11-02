@@ -720,7 +720,7 @@ struct Ended<'a>(&'a Executor, u64);
 
 impl Drop for Ended<'_> {
     fn drop(&mut self) {
-        {
+        let idle = {
             let mut lane = self.0.lane.lock();
             if let Some(at) = lane.started.iter().position(|b| b.seq == self.1) {
                 let begun = lane.started.remove(at);
@@ -728,9 +728,17 @@ impl Drop for Ended<'_> {
                     lane.targeted.retain(|t| *t != target);
                 }
             }
-            if lane.started.is_empty() && lane.queue.is_empty() {
+            let idle = lane.started.is_empty() && lane.queue.is_empty();
+            if idle {
                 self.0.idle.notify_all();
             }
+            idle
+        };
+        // Its end was told (`Finished`) while it was still among those
+        // started: whoever waits for nothing to run (a program without a
+        // window, ADR-115) hears it now, once, with no lock held.
+        if idle {
+            self.0.wake();
         }
         self.0.dispatch();
     }
@@ -3522,6 +3530,38 @@ mod tests {
         assert!(logged(&log, "undid /stick/photos"));
     }
 
+    /// Once the last plan running is let go of, whoever waits for nothing
+    /// to run is woken, and finds nothing running: its end, told while it
+    /// was still among those started, is never the last word (ADR-115).
+    #[test]
+    fn the_executor_wakes_once_nothing_runs() {
+        let executor = Executor::new(Scheduler::new(1));
+        let seen: Arc<parking_lot::Mutex<Vec<bool>>> = Arc::default();
+        let me = Arc::downgrade(&executor);
+        let heard = Arc::clone(&seen);
+        executor.set_waker(Some(Arc::new(move || {
+            if let Some(executor) = me.upgrade() {
+                heard.lock().push(executor.busy_or_waiting());
+            }
+        })));
+        let applied = Arc::new(AtomicUsize::new(0));
+        let probe = Probe {
+            applied: Arc::clone(&applied),
+            conflict: false,
+        };
+        executor.execute(
+            Plan::with_steps("probe", vec![Box::new(probe)]),
+            CancelToken::new(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while seen.lock().last() != Some(&false) {
+            assert!(Instant::now() < deadline, "{:?}", seen.lock());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(applied.load(Ordering::SeqCst), 1);
+        assert!(!executor.busy_or_waiting());
+    }
+
     /// Cancel all cancels at once what waits its turn when asked, each
     /// once, nothing that runs, and says how many it cancelled.
     #[test]
@@ -3581,7 +3621,10 @@ mod tests {
             })
             .unwrap();
         assert!(!executor.waits_for_server(plan));
-        assert!(executor.busy_or_waiting() && executor.is_busy(), "handed over");
+        assert!(
+            executor.busy_or_waiting() && executor.is_busy(),
+            "handed over"
+        );
         let cancel = CancelToken::new();
         executor.enqueue(work, cancel.clone(), None);
         drop(handing);
