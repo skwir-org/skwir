@@ -9132,3 +9132,55 @@ hidden, "paused at"; Resumed, "Copied 2 items … (60.0 MB in 26 s)", the
 of no bytes reckoned by its steps in a window (tested); macOS's clone
 (compiled); the card's speed line to a screen reader; Windows and macOS
 beyond clippy.
+
+## The address card fits the window (2026-11-02)
+
+Asked by the user: `tag:` typed in the address field, over a folder of
+many tags, ran the card past the window's foot, nothing to scroll, and
+"other similar bugs we could have in the omnibox".
+
+- **Found:** the card's wrapper had the window's room as its greatest
+  height (`popup_around`), but nothing in it shrank or scrolled: every
+  row was a child of the card, drawn past the window, the footer with
+  them. Whatever offered many rows ran off: `tag:`'s values (every tag
+  the listing read, unbounded), a kind's, the tabs before anything is
+  typed, any list in a short window or a lower pane. The arrows reached
+  rows out of sight. And every row was built at each frame: over 2,100
+  tags the debug build's window stopped answering for over 30 s.
+- **Built:** the card's rows scroll in what the window leaves, between
+  the depth line and the footer, under a scrollbar; a `gpui::list`
+  builds only the pieces in view (`draw_piece`), told a row's height
+  until built; a piece is a row, a section's title with its first row,
+  or a strip whole (`pieces`), so the row the arrows reach is brought
+  into view with what it is (`Omni::reveal`); rows for another text,
+  scope or list of scopes start from their top, rows that came later
+  for the same keep where they were scrolled. The card is never wider
+  than the window (`popup_around`).
+
+**Checked:** in a window on Xvfb (1280×800, debug build), a folder of
+150 files each tagged (synthetic tags), `tag:`: before, the card ran
+past the window's foot with no footer; after, it stops 8 px above it,
+its footer shown, rows 30 px with a scrollbar; Down 25 times brings the
+25th row to the card's foot; Page Up twice reaches the first row with
+its "Complete" title; the wheel reaches the last section ("Search in");
+`tag:s` after scrolling shows its two rows from the top; a press on a
+row the wheel brought into view runs it (`tag:orchard-005`, 1 of 150
+items shown). A folder of 30
+files carrying 2,100 tags: the card lists them, the thumb small; idle
+with it open, the window's thread at about 2 % (21 ticks in 10 s); a
+Down in the card over 2,100 tags, no file shown behind it, 0.16 to 0.2 s
+of the window's thread in the debug build on a loaded machine (load
+average 17 to 27), a frame of the whole window included. The same folder
+showing its files costs about 1.7 s a key whether the card is open or
+not (70 tags a file: recorded in PLAN, not looked into). A window of
+900×380: the card ends 8 px above its foot; of 400 px wide: the card
+384 px, 8 px from each edge. The empty field's card: its "Add a term"
+strip under its title, the card as tall as what it holds. Tests:
+`pieces` (titles travel with first rows, a strip is one child), the
+UI's 450 tests; `just a11y-check --skwir target/debug/skwir` passed, its
+suggestions read as a list box's options; clippy, rustfmt; clippy of
+the UI for Windows and macOS (compiled only).
+
+**Not checked:** the lower of two panes split one above the other; a
+screen reader reading options scrolled out of the list (only the built
+ones are in the tree, the list box says how many there are).

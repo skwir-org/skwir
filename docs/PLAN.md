@@ -325,6 +325,20 @@ back filtered and Keep without the query plugin bookmarks plain
 (ADR-109 amended), and a refusal of attributes is remembered for a FUSE
 mount only. Checks in `docs/STATUS-LOG.md` (2026-11-01, "Review fixes").
 
+## The address card fits the window (2026-11-02)
+
+The user found that `tag:` in the address field, over a folder of many
+tags, ran its card off the window, with nothing to scroll. The card now
+never leaves the window: no wider than it, no taller than what it leaves
+under the field, its rows scrolling there under a scrollbar between the
+depth line and the footer, which stay in sight. Its rows are a list that
+builds only those in view, so two thousand tags cost what a screenful
+does, and the row the keys reach is brought into view with its section's
+title (`docs/invariants/shell.md`). Every long list of the card gains it:
+a kind's values, the tabs before anything is typed, any list in a short
+window or the lower of two panes. Checks in `docs/STATUS-LOG.md`
+(2026-11-02, "The address card fits the window").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -338,6 +352,18 @@ printing](#grammars-and-printing) (2026-10-31); skwird's steps (ADR-050); the de
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
+
+**From the address card (2026-11-02)**:
+- `tag:` offers the tags of the files whose tags the listing read (the
+  rows on screen: 30 of 150 in the check), and the folder's alone in a
+  search below it or in another scope: the user's other tags (the tags
+  plugin's vocabulary, the All Tags place) are not offered.
+- A folder whose files carry many tags each redraws slowly in the debug
+  build: 70 tags a file, about 1.7 s of the window's thread for a key
+  moving the cursor (a loaded machine, lavapipe), the omnibox closed.
+  Not looked into.
+- The lower of two panes split one above the other was not tried: its
+  card has what the window leaves under its field, at least 120 px.
 
 **From the review of 2026-11-01**:
 - A grammar that loads but whose queries fail is known only once it

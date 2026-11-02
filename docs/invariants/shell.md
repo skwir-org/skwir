@@ -358,6 +358,19 @@ of bars, split or not.
   `render`. While words are typed, or about to be, the card's first line
   is how deep they look (above) and what they keep there, the folder's
   count or the search's: the card hides the list's top.
+- **The card never leaves the window**: never wider than it, and never
+  taller than what it leaves under the field (`popup_around`'s room).
+  Its rows scroll there, under a scrollbar, between the depth line and
+  the footer, which stay in sight; however many a source offers (every
+  tag a folder's files carry, for `tag:`), each is reached by the wheel
+  and the keys. They are a `gpui::list` that builds only the rows in
+  view (`omnibox::draw_piece`), never a child per row: two thousand tags
+  cost what a screenful does. A child of the list is a piece
+  (`omnibox::pieces`): a row, a section's title travelling with its first
+  row, a strip of buttons whole. The row the arrows reach is brought into
+  view with what it is (`Omni::reveal`); rows for another text start
+  from their top, and rows that come later for the same stay where they
+  were scrolled.
 - **`?` alone** lists what the field takes: the shell's grammar (a path,
   a place's address from the schemes providers open, `@`, words, `>`)
   and the query plugin's terms with examples; Enter or Tab writes how the

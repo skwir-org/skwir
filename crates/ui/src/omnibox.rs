@@ -62,6 +62,7 @@
 //! taking the focus. The UI knows no query syntax.
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -97,6 +98,11 @@ const LIVE_PAUSE: Duration = Duration::from_millis(400);
 const CARD_PAD: f32 = 5.;
 /// The least width of the field's card, in a narrow pane.
 const CARD_LEAST: f32 = 430.;
+/// A row of the card, and what a piece of its list counts as until built.
+const ROW_HEIGHT: f32 = 30.;
+/// How far beyond what the card shows its list builds rows, so that a
+/// screenful scrolled shows built rows.
+const LIST_OVERDRAW: f32 = 300.;
 /// Where the field's card is drawn among deferred draws (the popups'): the
 /// field's text draws one above it.
 pub(crate) const CARD_PRIORITY: usize = 3;
@@ -165,6 +171,15 @@ pub struct Omni {
     chosen: bool,
     /// The rows for the text, in the order shown (`refresh_rows`).
     rows: Vec<Row>,
+    /// The rows as the list draws them (`pieces`).
+    pieces: Vec<Piece>,
+    /// What the rows were made for: the text, the scope, and whether they
+    /// list the scopes. Rows made for another start from their top.
+    listed: Option<(String, Option<Location>, bool)>,
+    /// The rows scroll in what the window leaves under the field, between
+    /// how deep words look and the footer; the row the arrows reach is
+    /// brought into view (`reveal`).
+    list: Listed,
     /// What Tab fills in: the text with the part the names typed share.
     shared: Option<String>,
     /// Words that leave one name shown: its path as text, and the path.
@@ -194,6 +209,19 @@ pub struct Omni {
     held: Option<Held>,
 }
 
+/// The list of a field's rows: only those in view are built.
+struct Listed(gpui::ListState);
+
+impl Default for Listed {
+    fn default() -> Self {
+        Listed(gpui::ListState::new(
+            0,
+            gpui::ListAlignment::Top,
+            px(LIST_OVERDRAW),
+        ))
+    }
+}
+
 /// A key that takes a row, held until the names it chooses among are read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Held {
@@ -204,6 +232,16 @@ enum Held {
 }
 
 impl Omni {
+    /// Bring row `row` into view, scrolling the least that shows it, in
+    /// the prepaint of the frame that draws it; its section's title with
+    /// it when it is the first of its section.
+    fn reveal(&self, row: usize) {
+        let child = self.pieces.partition_point(|p| p.rows.end <= row);
+        if child < self.pieces.len() {
+            self.list.0.scroll_to_reveal_item(child);
+        }
+    }
+
     /// Whether every source has answered `text` in the scope as it is: the
     /// rows are the text's own.
     fn answered(&self, text: &str) -> bool {
@@ -344,6 +382,37 @@ impl Row {
         };
         (self.section(), title)
     }
+}
+
+/// A child of the list of rows, which scrolls: a row, or a section drawn
+/// as a strip of buttons with every row of it; the section's title before
+/// it when it is the section's first. A title travels with its first row,
+/// so that the row brought into view shows what it is.
+#[derive(Debug, PartialEq)]
+struct Piece {
+    rows: Range<usize>,
+    title: Option<&'static str>,
+    strip: bool,
+}
+
+/// The children of the list of `rows`, in their order.
+fn pieces(rows: &[Row]) -> Vec<Piece> {
+    let mut pieces: Vec<Piece> = Vec::new();
+    let mut section = None;
+    for (i, row) in rows.iter().enumerate() {
+        let sec = row.section();
+        let first = section != Some(sec);
+        section = Some(sec);
+        match pieces.last_mut() {
+            Some(last) if !first && sec.is_strip() => last.rows.end = i + 1,
+            _ => pieces.push(Piece {
+                rows: i..i + 1,
+                title: sec.title().filter(|_| first),
+                strip: sec.is_strip(),
+            }),
+        }
+    }
+    pieces
 }
 
 /// What a row answering an earlier text adds after `text`: the rest of its
@@ -1482,6 +1551,7 @@ impl Shell {
         let Some(omni) = self.ui_mut().omni.as_mut() else {
             return;
         };
+        let was = omni.highlighted;
         let kept = omni
             .highlighted
             .filter(|_| omni.chosen)
@@ -1507,7 +1577,26 @@ impl Shell {
             omni.chosen = false;
             omni.highlighted = first;
         }
+        let moved = omni.highlighted != was;
+        // Rows for another text, scope or list start from their top; rows
+        // that came for the same stay where they were scrolled, and the row
+        // the arrows chose in view as rows come before it.
+        let listed = Some((text.clone(), omni.scope.clone(), omni.scopes));
+        if omni.rows != rows || omni.listed != listed {
+            let kept = (omni.listed == listed).then(|| omni.list.0.logical_scroll_top());
+            omni.pieces = pieces(&rows);
+            omni.list
+                .0
+                .reset_with_uniform_height(omni.pieces.len(), px(ROW_HEIGHT));
+            if let Some(top) = kept {
+                omni.list.0.scroll_to(top);
+            }
+            omni.listed = listed;
+        }
         omni.rows = rows;
+        if let Some(row) = omni.highlighted.filter(|_| omni.chosen && moved) {
+            omni.reveal(row);
+        }
         omni.shared = shared;
         omni.one_shown = one_shown;
         self.show_rest(cx);
@@ -1611,6 +1700,9 @@ impl Shell {
                 None => count - 1,
             });
             omni.chosen = true;
+            if let Some(row) = omni.highlighted {
+                omni.reveal(row);
+            }
             self.show_rest(cx);
             cx.notify();
         }
@@ -3160,56 +3252,39 @@ fn depth_line(shell: &Shell, typed: Typed, cx: &mut Context<Shell>) -> Option<An
     )
 }
 
-/// The dropdown under the field of the pane being rendered, while it is
-/// typed in and something is offered; `anchor` is the field's. It hangs
-/// from the field's right end, so the names the typing filters stay in
-/// sight at the left. Its rows are a list box beside the field, which
-/// keeps the keyboard: the row the arrows reach is its active descendant.
-pub fn dropdown(
-    shell: &Shell,
-    anchor: &PopoverAnchor,
-    cx: &mut Context<Shell>,
-) -> Option<AnyElement> {
-    let rows = shell.suggestions();
-    if rows.is_empty() {
-        return None;
-    }
-    let omni = shell.ui().omni.as_ref()?;
+/// Piece `ix` of the rows of the pane being rendered (`pieces`), for
+/// `text`: built only while in view, at each frame it is, as wide as the
+/// list (laid out alone, it would be as wide as what it says).
+fn draw_piece(shell: &Shell, ix: usize, text: &str, cx: &mut Context<Shell>) -> AnyElement {
+    let Some((omni, piece)) = shell
+        .ui()
+        .omni
+        .as_ref()
+        .and_then(|omni| Some((omni, omni.pieces.get(ix)?)))
+    else {
+        return div().into_any_element();
+    };
+    let rows = &omni.rows;
     let theme = cx.global::<Theme>().clone();
-    let text = shell.omni_text(cx).trim().to_owned();
-    let typed = shell.typed_of(&text, omni.edited);
     let pane = shell.pane;
     let a11y = shell.a11y;
     let field = gpui::Focusable::focus_handle(shell.ui().address.read(cx), cx);
-    let mut list = crate::modal::options("omnibox-rows", "Suggestions", rows.len(), a11y)
-        .flex()
-        .flex_col();
-    let mut section: Option<Section> = None;
-    let mut strip: Option<gpui::Div> = None;
-    for (i, row) in rows.iter().enumerate() {
-        let sec = row.section();
-        let first_row = i == 0 && sec == Section::Run;
-        if section != Some(sec) {
-            if let Some(done) = strip.take() {
-                list = list.child(done);
-            }
-            if let Some(title) = sec.title().filter(|_| !first_row) {
-                list = list.child(
-                    div()
-                        .px_2()
-                        .pt_2()
-                        .pb_1()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(title),
-                );
-            }
-            section = Some(sec);
-            if sec.is_strip() {
-                strip = Some(div().px_2().pb_1().flex().flex_wrap().gap(px(6.)));
-            }
-        }
-        let d = drawn(shell, row, &text);
+    let title = piece.title.map(|title| {
+        div()
+            .px_2()
+            .pt_2()
+            .pb_1()
+            .text_xs()
+            .text_color(theme.text_muted)
+            .child(title)
+    });
+    let mut strip = piece
+        .strip
+        .then(|| div().px_2().pb_1().flex().flex_wrap().gap(px(6.)));
+    let mut line: Option<AnyElement> = None;
+    for i in piece.rows.clone() {
+        let row = &rows[i];
+        let d = drawn(shell, row, text);
         let highlighted = omni.highlighted == Some(i);
         let hover = theme.hover;
         let named = a11y.then(|| match &d.detail {
@@ -3308,7 +3383,7 @@ pub fn dropdown(
             d.keys.clone()
         };
         let error = d.error;
-        list = list.child(
+        line = Some(
             // Said as focused once the arrows reach it: while typing, the
             // field reads back its text and caret.
             crate::modal::option(
@@ -3321,7 +3396,8 @@ pub fn dropdown(
                 highlighted && omni.chosen,
                 &field,
             )
-            .h(px(30.))
+            .w_full()
+            .h(px(ROW_HEIGHT))
             .px_2()
             .flex()
             .items_center()
@@ -3376,12 +3452,60 @@ pub fn dropdown(
                     .text_xs()
                     .text_color(muted)
                     .child(keys)
-            })),
+            }))
+            .into_any_element(),
         );
     }
-    if let Some(done) = strip.take() {
-        list = list.child(done);
+    match (title, strip, line) {
+        (None, None, Some(line)) => line,
+        (title, strip, line) => div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .children(title)
+            .children(strip)
+            .children(line)
+            .into_any_element(),
     }
+}
+
+/// The dropdown under the field of the pane being rendered, while it is
+/// typed in and something is offered; `anchor` is the field's. It hangs
+/// from the field's right end, so the names the typing filters stay in
+/// sight at the left. Its rows are a list box beside the field, which
+/// keeps the keyboard: the row the arrows reach is its active descendant.
+pub fn dropdown(
+    shell: &Shell,
+    anchor: &PopoverAnchor,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
+    let rows = shell.suggestions();
+    if rows.is_empty() {
+        return None;
+    }
+    let omni = shell.ui().omni.as_ref()?;
+    let theme = cx.global::<Theme>().clone();
+    let text = shell.omni_text(cx).trim().to_owned();
+    let typed = shell.typed_of(&text, omni.edited);
+    let pane = shell.pane;
+    // The rows scroll in what the window leaves, and only the pieces in
+    // view are built (`draw_piece`), as they come into it: thousands of tags
+    // offered cost what a screenful does. Each piece is told its height
+    // once built; until then it counts as a row.
+    let said = text.clone();
+    let list = gpui::list(
+        omni.list.0.clone(),
+        cx.processor(move |shell: &mut Shell, ix: usize, _, cx| {
+            shell.with_pane(pane, |shell| draw_piece(shell, ix, &said, cx))
+        }),
+    )
+    .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
+    .min_h_0();
+    let list = crate::modal::options("omnibox-rows", "Suggestions", rows.len(), shell.a11y)
+        .flex()
+        .flex_col()
+        .min_h_0()
+        .child(list);
     // A folder that takes a moment to read (a disk asleep) says so.
     let reading = omni
         .reading
@@ -3391,17 +3515,33 @@ pub fn dropdown(
     // How deep words look, and what they keep there.
     let depth = depth_line(shell, typed, cx);
     // The field's card: its top is the field, which draws itself above it
-    // (`Shell::omnibox_card`), the rows under a line.
+    // (`Shell::omnibox_card`), the rows under a line. As tall as the window
+    // leaves under the field at most (`PopoverAnchor::popup_around`): the
+    // rows scroll there, under a scrollbar, between how deep words look and
+    // the footer, which stay in sight.
     let rows = div()
         .p_1()
         .flex()
         .flex_col()
+        .min_h_0()
         .border_t_1()
         .border_color(theme.border)
-        .children(depth)
-        .child(list)
+        .children(depth.map(|depth| div().flex_none().child(depth)))
+        .child(
+            div()
+                .relative()
+                .flex()
+                .flex_col()
+                .min_h_0()
+                .child(list)
+                .child(crate::elements::scrollbar::vertical(
+                    "omnibox-rows-scrollbar",
+                    crate::elements::scrollbar::Scrolls::Items(omni.list.0.clone()),
+                )),
+        )
         .children(reading.map(|reading| {
             div()
+                .flex_none()
                 .px_2()
                 .py_1()
                 .text_xs()
@@ -3410,6 +3550,7 @@ pub fn dropdown(
         }))
         .child(
             div()
+                .flex_none()
                 .mt_1()
                 .px_2()
                 .pt_2()
@@ -3424,6 +3565,7 @@ pub fn dropdown(
         .w_full()
         .flex()
         .flex_col()
+        .min_h_0()
         .rounded_xl()
         .border_1()
         .border_color(theme.border)
@@ -3442,7 +3584,10 @@ pub fn dropdown(
 
 #[cfg(test)]
 mod tests {
-    use super::{Answer, Location, Omni, Section, Suggestion, rest_after, scheme_of, scheme_start};
+    use super::{
+        Answer, Location, Omni, Piece, Row, Section, Suggestion, pieces, rest_after, scheme_of,
+        scheme_start,
+    };
 
     #[test]
     fn schemes_are_told_from_words() {
@@ -3490,5 +3635,32 @@ mod tests {
         assert!(!omni.answered("dunes k"), "an answer to the text before");
         omni.scope = Some(Location::from_path(std::path::Path::new("/srv")));
         assert!(!omni.answered("dunes"), "an answer in another scope");
+    }
+
+    /// The list's children: a section's title travels with its first row,
+    /// and a strip's rows are one child, so the row the arrows reach is
+    /// brought into view with what it is.
+    #[test]
+    fn a_title_travels_with_its_first_row_and_a_strip_is_one_child() {
+        let row = |section, title: &str| Row::Source(Box::new(Suggestion::new(section, title)));
+        let rows = vec![
+            row(Section::Run, "Search"),
+            row(Section::Complete, "alpine"),
+            row(Section::Complete, "canyon"),
+            row(Section::Go, "Music"),
+            row(Section::SearchIn, "Home"),
+            row(Section::SearchIn, "Disk"),
+        ];
+        let piece = |rows, title, strip| Piece { rows, title, strip };
+        assert_eq!(
+            pieces(&rows),
+            vec![
+                piece(0..1, None, false),
+                piece(1..2, Some("Complete"), false),
+                piece(2..3, None, false),
+                piece(3..4, Some("Go to"), false),
+                piece(4..6, Some("Search in"), true),
+            ]
+        );
     }
 }

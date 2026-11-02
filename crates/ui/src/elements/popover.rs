@@ -42,8 +42,10 @@ impl PopoverAnchor {
     }
 
     /// `panel` around what the anchor is over: `pad` before, above and
-    /// after it, at least `least` wide, moved left to stay in the window
-    /// but never short of the anchor's right edge. The address field's
+    /// after it, at least `least` wide but never wider than the window,
+    /// moved left to stay in it but never short of the anchor's right edge,
+    /// as tall as the window leaves under its top at most (a panel that
+    /// scrolls shrinks to it). The address field's
     /// card (ADR-098): its top is the field, which draws itself above the
     /// card (deferred at a higher priority), so the text stays where it is
     /// typed.
@@ -61,7 +63,11 @@ impl PopoverAnchor {
                 move |_, window, cx| {
                     let bounds = anchor.get()?;
                     let viewport = window.viewport_size();
-                    let width = (bounds.size.width + pad * 2.).max(least);
+                    // Never wider than the window, a narrow one included.
+                    let width = (bounds.size.width + pad * 2.)
+                        .max(least)
+                        .min(viewport.width - MARGIN * 2.)
+                        .max(px(0.));
                     let right = (viewport.width - MARGIN).max(bounds.right() + pad);
                     let left = (bounds.left() - pad).min(right - width).max(px(0.));
                     let top = bounds.top() - pad;
