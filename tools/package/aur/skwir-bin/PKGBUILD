@@ -17,7 +17,7 @@ _repo='https://github.com/skwir-org/skwir'
 # skwir's own, PDFium's, the Poppler and DjVuLibre readers' (ADR-042,
 # ADR-061) and the MuPDF engine's (ADR-014). The libraries it carries keep
 # their notices in /opt/skwir/usr/share/doc.
-license=('Apache-2.0' 'BSD-3-Clause' 'GPL-3.0-only' 'AGPL-3.0-or-later')
+license=('Apache-2.0' 'BSD-3-Clause' 'GPL-3.0-only' 'AGPL-3.0-or-later' 'LGPL-2.1-only')
 # What the tarball leaves to the system (ADR-052): the C and C++
 # runtimes, the display's and the sound's libraries, a Vulkan driver, and
 # the font configuration its fontconfig reads.

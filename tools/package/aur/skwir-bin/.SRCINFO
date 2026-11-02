@@ -8,6 +8,7 @@ pkgbase = skwir-bin
 	license = BSD-3-Clause
 	license = GPL-3.0-only
 	license = AGPL-3.0-or-later
+	license = LGPL-2.1-only
 	depends = glibc
 	depends = libgcc
 	depends = libstdc++

@@ -55,7 +55,7 @@ them by topic.
 | [039](039-isolation-on-macos-and-windows.md) | Isolating converters on macOS and Windows | macOS compiled only; Windows not built |
 | [040](040-linux-packages.md) | Linux packages: Debian, RPM, AUR | built |
 | [041](041-pdfium-carried-and-what-each-system-brings.md) | PDFium carried; what each system brings | built on Linux |
-| [042](042-apache-2.0.md) | Skwir is under the Apache License 2.0 | in force |
+| [042](042-apache-2.0.md) | Skwir is under the Apache License 2.0 | in force (amended 2026-11-02: LGPL crates built in) |
 | [043](043-agents-and-scripts-drive-the-window.md) | Agents and scripts drive the running window | built |
 | [044](044-the-permission-layer.md) | The permission layer (amended 2026-10-25: no host reached unasked) | built |
 | [045](045-plugins-from-outside-as-programs.md) | Plugins from outside, run as programs | built on Linux |

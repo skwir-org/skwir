@@ -1,6 +1,7 @@
 # ADR-042: Skwir is under the Apache License 2.0
 
-Status: accepted, 2026-10-06, as the user chose. Replaces the dual
+Status: accepted, 2026-10-06, as the user chose; amended 2026-11-02, as
+the user chose (a crate under the LGPL may be built in). Replaces the dual
 licence (MIT or Apache-2.0) held since the first commit; amends ADR-014,
 ADR-037 and ADR-040 where they name it.
 
@@ -55,3 +56,28 @@ ADR-037 and ADR-040 where they name it.
 - shared-mime-info's data (GPL-2.0-or-later) stays beside Skwir, never
   built in (ADR-037).
 - Once others contribute, changing the licence needs all of them.
+
+## Amendment (2026-11-02): crates under the LGPL
+
+- **Context:** ogeom, the model helper's STEP reader (ADR-069), moved
+  from MIT-or-Apache-2.0 to LGPL-2.1-only with 0.12. Decision 2 admitted
+  no copyleft crate built in, so keeping it would have meant staying on
+  0.11 for good. The user: the LGPL is fine.
+- **Decision:** a crate under the LGPL may be built into a program of
+  Skwir's, statically as Rust links. The program stays under its own
+  licence, which allows changing it and reverse engineering it to debug
+  such changes (LGPL-2.1 section 6); what the LGPL asks of an executable
+  holding the library, that its user can build it again with the library
+  changed, is met by the complete source of every release published at
+  the place its builds are (section 6 d; LGPL-3.0 section 4 d, by
+  GPL-3.0 section 6 d). `deny.toml` and `tools/package/about.toml` allow
+  the LGPL versions met so far (LGPL-2.1-only); another is added on the
+  same terms when a crate brings it.
+- **The packages say so:** a package holding such a program names the
+  LGPL beside its other licences (the RPM and PKGBUILD fields, the Nix
+  package's meta, the Debian copyright's comment), and its notices carry
+  the LGPL's text with the crate's.
+- **Consequences:** a build handed on without the source beside it (a
+  copy of one program alone) must point to that source. A crate under
+  the GPL is still not built into an Apache-2.0 program: only a helper
+  under the GPL takes it, as decision 3 says.

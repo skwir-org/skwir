@@ -6,9 +6,14 @@ Comment: skwir's own code is under the Apache License 2.0. It carries PDFium
  pdfium-binaries under PDFium's licence (BSD-3-Clause) with those of what
  it includes (FreeType, HarfBuzz, ICU, libjpeg-turbo, OpenJPEG, libpng,
  LittleCMS, zlib, Abseil and others, all permissive): their texts are in
- /usr/share/doc/skwir/pdfium. The Poppler, DjVuLibre and MuPDF readers,
- which link libraries under the GPL and the AGPL, are packages of their
- own (skwir-poppler, skwir-djvulibre, skwir-mupdf).
+ /usr/share/doc/skwir/pdfium. The 3D model helper
+ (usr/lib/skwir/skwir-model-worker) is built with ogeom, under the GNU
+ Lesser General Public License 2.1 only (its text in
+ /usr/share/common-licenses/LGPL-2.1): the source of this release, to
+ build it again with ogeom changed, is at https://skwir.org/source. The
+ Poppler, DjVuLibre and MuPDF readers, which link libraries under the GPL
+ and the AGPL, are packages of their own (skwir-poppler, skwir-djvulibre,
+ skwir-mupdf).
 
 Files: *
 Copyright: The skwir authors

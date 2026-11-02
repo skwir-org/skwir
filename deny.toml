@@ -52,6 +52,11 @@ allow = [
     "MIT-0",
     # jpeg-encoder's DCT and tables, from the IJG's libjpeg (ADR-112).
     "IJG",
+    # ogeom's STEP reader in the model helper (ADR-069), built in: the
+    # LGPL's terms for a program linking it are met by the source published
+    # beside every build (ADR-042, amended 2026-11-02). Another LGPL
+    # version is taken on the same terms when one comes.
+    "LGPL-2.1-only",
 ]
 confidence-threshold = 0.9
 

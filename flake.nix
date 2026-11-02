@@ -247,8 +247,9 @@
             # The words every package says skwir in.
             inherit ((builtins.fromTOML (builtins.readFile ./crates/skwir/Cargo.toml)).package) description;
             # skwir's own; the Poppler, DjVuLibre and MuPDF readers, which
-            # link libraries under the GPL and the AGPL (ADR-042, ADR-061).
-            license = with lib.licenses; [asl20 gpl3Only agpl3Plus];
+            # link libraries under the GPL and the AGPL (ADR-042, ADR-061);
+            # the model helper's STEP reader (ogeom), under the LGPL.
+            license = with lib.licenses; [asl20 gpl3Only agpl3Plus lgpl21Only];
             mainProgram = "skwir";
           };
         };

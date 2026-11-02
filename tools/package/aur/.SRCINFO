@@ -36,6 +36,7 @@ pkgname = skwir
 	license = Apache-2.0
 	license = BSD-3-Clause
 	license = GPL-3.0-only
+	license = LGPL-2.1-only
 	depends = libgcc
 	depends = glibc
 	depends = libxcb

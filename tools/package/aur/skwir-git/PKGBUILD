@@ -108,7 +108,7 @@ package_skwir-git() {
   # skwir's own, PDFium's, and the Poppler and DjVuLibre readers': a
   # program linking Poppler (GPL v2 or v3) or DjVuLibre (GPL v2 or later)
   # with code under Apache-2.0 is under the GPL v3 (ADR-042, ADR-061).
-  license=('Apache-2.0' 'BSD-3-Clause' 'GPL-3.0-only')
+  license=('Apache-2.0' 'BSD-3-Clause' 'GPL-3.0-only' 'LGPL-2.1-only')
   cd skwir
   install -Dm755 target/dist/skwir "$pkgdir/usr/bin/skwir"
   while read -r program; do

@@ -232,7 +232,7 @@ assets = [
 # holds its own: skwir's, and the GPL's or the AGPL's for the readers
 # that link Poppler, DjVuLibre or MuPDF (the FSF's texts,
 # tools/package/licenses).
-license = "Apache-2.0 AND BSD-3-Clause"
+license = "Apache-2.0 AND BSD-3-Clause AND LGPL-2.1-only"
 url = "https://skwir.org"
 auto-req = "auto"
 assets = [
