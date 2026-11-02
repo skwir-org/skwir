@@ -14,13 +14,13 @@
 //! An action an error stopped stays in the strip, in the error's colour,
 //! until it is retried, Activity is opened, or it is dismissed.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, SystemTime};
 
 use gpui::{AnyElement, Context, FocusHandle, SharedString, Window, div, prelude::*, px};
 use skwir_core::op::{PlanId, Transfer};
 
-use skwir_platform::desktop::{Clicked, Desktop, Kind, Notice, Progress, State};
+use skwir_platform::desktop::Asked;
 
 use crate::controls::{self, ButtonStyle};
 use crate::elements::adaptive::Fit;
@@ -29,12 +29,13 @@ use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
 use crate::toast::{Action, Running, Tone, bar, capitalized, pace, sending, waiting_lines};
+use crate::work::{Seen, Watched};
 
 /// Activity's popup, as `Shell::toggle_popup` and `toolbar_menu` know it.
 pub const POPUP: &str = "activity";
 
 /// What `Earlier` keeps: the answers of this session, newest first.
-const EARLIER: usize = 20;
+pub(crate) const EARLIER: usize = 20;
 
 /// The bar's width in the strip: as much words as the footer has room for
 /// beside it, then less bar.
@@ -63,6 +64,21 @@ pub struct Stopped {
     retries: bool,
 }
 
+impl Stopped {
+    pub(crate) fn new(plan: PlanId, title: &str, retries: bool) -> Stopped {
+        Stopped {
+            plan,
+            title: title.to_owned(),
+            retries,
+        }
+    }
+
+    /// Whether it could be retried when it stopped.
+    pub(crate) fn retries(&self) -> bool {
+        self.retries
+    }
+}
+
 /// The strip's buttons: one handle each, kept as its words change.
 struct StripFocus {
     open: FocusHandle,
@@ -72,15 +88,13 @@ struct StripFocus {
     dismiss: FocusHandle,
 }
 
+/// Activity as the window shows it; what runs and what was said of it is
+/// `Work`'s (`work.rs`), which outlives the window.
 #[derive(Default)]
 pub struct ActivityState {
-    pub earlier: VecDeque<Ended>,
-    pub stopped: Option<Stopped>,
     /// Activity stands above the footer while something is under way,
     /// rather than opening over the files (remembered with the window).
     pub pinned: bool,
-    /// The plans shown as a card: one an error stops stays in the strip.
-    carded: HashSet<PlanId>,
     anchor: PopoverAnchor,
     /// Each card's Pause and Cancel, by plan; each task's Cancel.
     cards: HashMap<PlanId, (FocusHandle, FocusHandle)>,
@@ -91,19 +105,6 @@ pub struct ActivityState {
     pin: Option<FocusHandle>,
     /// What `ui.activity` gives the keyboard to while pinned and shown.
     tray: Option<FocusHandle>,
-    /// What ended while the window was not looked at, since it last was.
-    away: Away,
-    /// The progress the taskbar's entry was last told.
-    told: Option<Progress>,
-    /// Whether the machine is kept awake.
-    awake: bool,
-}
-
-/// What ended unwatched: one notice says them all.
-#[derive(Clone, Copy, Debug, Default)]
-struct Away {
-    finished: usize,
-    stopped: usize,
 }
 
 /// What runs and is shown: the plans worth a card, then the tasks (a print).
@@ -113,11 +114,11 @@ pub(crate) struct Under {
 }
 
 impl Under {
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.plans.is_empty() && self.tasks.is_empty()
     }
 
-    fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.plans.len() + self.tasks.len()
     }
 }
@@ -212,7 +213,7 @@ fn how(summary: &Summary, sending_files: Option<usize>) -> String {
 
 /// The strip's words, richest first: what runs and how, how alone, the
 /// share alone.
-fn words(under: &Under, summary: &Summary) -> [String; 3] {
+pub(crate) fn words(under: &Under, summary: &Summary) -> [String; 3] {
     let sending_files = if let [(_, t)] = under.plans.as_slice()
         && under.tasks.is_empty()
     {
@@ -235,23 +236,9 @@ fn words(under: &Under, summary: &Summary) -> [String; 3] {
 }
 
 impl Shell {
-    /// What runs and is shown as a card: a plan of a single step ends
-    /// before anyone could read a bar, unless the step moves bytes (one
-    /// large copy).
+    /// What runs and is shown as a card (`Work::under_way`).
     pub(crate) fn under_way(&self) -> Under {
-        let plans = self
-            .toasts
-            .running
-            .iter()
-            .filter_map(|running| {
-                let transfer = self.app.executor.transfer(running.plan)?;
-                (running.total > 1 || transfer.total > 0).then(|| (running.clone(), transfer))
-            })
-            .collect();
-        Under {
-            plans,
-            tasks: self.app.tasks.running(),
-        }
+        self.work.under_way(&self.app)
     }
 
     /// Whether Activity's popup is open.
@@ -265,7 +252,7 @@ impl Shell {
     /// under way, waiting, or stopped to show.
     pub(crate) fn activity_tray_shown(&self) -> bool {
         self.activity.pinned
-            && (self.activity.stopped.is_some()
+            && (self.work.stopped.is_some()
                 || !self.under_way().is_empty()
                 || !self.app.executor.waiting().is_empty())
     }
@@ -295,7 +282,7 @@ impl Shell {
         if self.toggle_popup(POPUP, args, window, cx) {
             self.toolbar_menu = Some(crate::toolbar::Popup::new(POPUP, window, cx));
             // Seen: the strip says it no more.
-            self.activity.stopped = None;
+            self.work.stopped = None;
         }
         cx.notify();
     }
@@ -312,52 +299,12 @@ impl Shell {
         cx.notify();
     }
 
-    /// An action ended, as its answer says it (`text`, `tone`, `actions`):
-    /// kept in `Earlier`; one an error stopped stays in the strip, if it
-    /// was shown there.
-    pub(crate) fn activity_ended(
-        &mut self,
-        plan: PlanId,
-        title: &str,
-        answer: (&str, Tone, &[Action]),
-        stopped_by_error: bool,
-    ) {
-        let (text, tone, actions) = answer;
-        let carded = self.activity.carded.remove(&plan);
-        self.activity.earlier.push_front(Ended {
-            plan,
-            text: text.to_owned(),
-            tone,
-            actions: actions
-                .iter()
-                .filter(|action| action.command != "redo")
-                .cloned()
-                .collect(),
-            at: SystemTime::now(),
-        });
-        self.activity.earlier.truncate(EARLIER);
-        let kept: HashSet<PlanId> = self.activity.earlier.iter().map(|e| e.plan).collect();
+    /// `Earlier`'s rows' buttons, kept for the answers it still holds.
+    pub(crate) fn forget_earlier_rows(&mut self) {
+        let kept: HashSet<PlanId> = self.work.earlier.iter().map(|e| e.plan).collect();
         self.activity
             .rows
             .retain(|(plan, _), _| kept.contains(plan));
-        if stopped_by_error && carded {
-            self.activity.stopped = Some(Stopped {
-                plan,
-                title: title.to_owned(),
-                retries: self.app.executor.can_retry(plan),
-            });
-        }
-    }
-
-    /// A stopped action retried, wherever from (its toast, the palette, an
-    /// agent): the strip says it no more.
-    pub(crate) fn sync_activity(&mut self) {
-        if let Some(stopped) = &self.activity.stopped
-            && stopped.retries
-            && !self.app.executor.can_retry(stopped.plan)
-        {
-            self.activity.stopped = None;
-        }
     }
 
     fn strip_focus(&mut self, cx: &mut Context<Self>) -> &StripFocus {
@@ -386,7 +333,7 @@ impl Shell {
         for id in tasks {
             self.activity.tasks.entry(id).or_insert_with(|| stop(cx));
         }
-        self.activity.carded.extend(plans);
+        self.work.carded.extend(plans);
     }
 }
 
@@ -549,7 +496,7 @@ fn strip_buttons(
                     .px_2()
                     .press(
                         move |this, window, cx| {
-                            this.activity.stopped = None;
+                            this.work.stopped = None;
                             this.run("retry", serde_json::json!({ "plan": plan }), window, cx);
                         },
                         cx,
@@ -567,7 +514,7 @@ fn strip_buttons(
                 )
                 .press(
                     |this, _, cx| {
-                        this.activity.stopped = None;
+                        this.work.stopped = None;
                         cx.notify();
                     },
                     cx,
@@ -589,7 +536,7 @@ pub fn strip(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Optio
     }
     let under = shell.under_way();
     let open = shell.activity_open();
-    if under.is_empty() && shell.activity.stopped.is_none() && !open {
+    if under.is_empty() && shell.work.stopped.is_none() && !open {
         return None;
     }
     shell.card_focus(&under, cx);
@@ -626,7 +573,7 @@ pub fn strip(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Optio
                 offers,
             )
         }
-        None => match shell.activity.stopped.clone() {
+        None => match shell.work.stopped.clone() {
             // Stopped by an error, nothing else under way: said until
             // seen, retried or dismissed.
             Some(stopped) => {
@@ -886,7 +833,7 @@ fn body(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
                 .into_any_element(),
         );
     }
-    let earlier: Vec<Ended> = shell.activity.earlier.iter().cloned().collect();
+    let earlier: Vec<Ended> = shell.work.earlier.iter().cloned().collect();
     if !earlier.is_empty() {
         parts.push(
             div()
@@ -1240,196 +1187,74 @@ impl Shell {
     /// it let go of what it held (operations.md, "Running").
     pub(crate) fn cancel_plan(&mut self, plan: PlanId) {
         if self.app.executor.cancel(plan)
-            && let Some(running) = self.toasts.running.iter_mut().find(|r| r.plan == plan)
+            && let Some(running) = self.work.running.iter_mut().find(|r| r.plan == plan)
         {
             running.cancelling = true;
         }
     }
 }
 
-/// From how long an action ran the desktop is told that it ended: the
-/// same 5 s from which its answer says what it moved in how long (ADR-113).
-const LONG: Duration = Duration::from_secs(5);
-
-/// What the desktop is told for the window (ADR-114): a click on a notice
-/// is kept in `clicked`, for the next sync, and wakes the window.
-pub(crate) fn desktop(
-    app: &std::sync::Arc<skwir_core::App>,
-    clicked: &std::sync::Arc<parking_lot::Mutex<Vec<Clicked>>>,
-    window: &Window,
-) -> Desktop {
-    let (wake, clicks) = (app.waker_handle(), std::sync::Arc::clone(clicked));
-    let desktop = Desktop::new(skwir_core::APP_ID, "skwir", move |click| {
-        clicks.lock().push(click);
-        wake();
-    });
-    // The taskbar's button shows the progress of the window's own.
-    #[cfg(windows)]
-    if let Ok(handle) = raw_window_handle::HasWindowHandle::window_handle(window)
-        && let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw()
-    {
-        desktop.set_window(win32.hwnd.get());
-    }
-    #[cfg(not(windows))]
-    let _ = window;
-    desktop
-}
-
-/// What the machine is kept awake for, as the desktop lists it.
-fn why(under: &Under) -> String {
-    match (under.plans.as_slice(), under.tasks.as_slice()) {
-        ([(running, _)], []) => capitalized(&running.title),
-        ([], [task]) => capitalized(&task.title),
-        _ => format!("{} under way", format::count(under.count(), "action")),
-    }
-}
-
 impl Shell {
+    /// How the desktop is told while this window is up (`work.rs`).
+    pub(crate) fn watched(&self) -> Watched {
+        Watched {
+            seen: if self.window_active {
+                Seen::LookedAt
+            } else {
+                Seen::Away
+            },
+            notify: self.prefs.notify_desktop,
+            keep_awake: self.prefs.keep_awake,
+        }
+    }
+
     /// The window has the focus again, or lost it: looked at again, what
     /// the desktop was told is taken back.
     pub(crate) fn window_activated(&mut self, active: bool) {
         self.window_active = active;
         if active {
-            self.activity.away = Away::default();
-            if let Some(desktop) = &self.desktop {
-                desktop.withdraw();
-            }
+            self.work.looked_at();
         }
     }
 
-    /// An action ended as `answer` says, after `ran`: told to the desktop
-    /// if it ran long, while the window was not looked at, and was not
-    /// cancelled. One notice says what ended since the window was last
-    /// looked at.
-    pub(crate) fn tell_ended(
-        &mut self,
-        plan: PlanId,
-        answer: &str,
-        stopped: bool,
-        cancelled: bool,
-        ran: Duration,
-    ) {
-        if self.window_active || cancelled || ran < LONG || !self.prefs.notify_desktop {
-            return;
-        }
-        let Some(desktop) = &self.desktop else {
-            return;
-        };
-        let away = &mut self.activity.away;
-        if stopped {
-            away.stopped += 1;
-        } else {
-            away.finished += 1;
-        }
-        let title = match (away.finished, away.stopped) {
-            (1, 0) => "Finished".to_owned(),
-            (0, 1) => "Stopped".to_owned(),
-            (finished, 0) => format!("{finished} actions finished"),
-            (0, stopped) => format!("{stopped} actions stopped"),
-            (finished, stopped) => format!(
-                "{} finished, {stopped} stopped",
-                format::count(finished, "action")
-            ),
-        };
-        let kind = if away.stopped > 0 {
-            Kind::Stopped
-        } else {
-            Kind::Finished
-        };
-        desktop.notify(
-            plan.0,
-            Notice {
-                title,
-                body: answer.to_owned(),
-                kind,
-            },
-        );
-    }
-
-    /// An action its server stopped waits for it to answer again: told to
-    /// the desktop while the window is not looked at.
-    pub(crate) fn tell_waits_for_server(&mut self, plan: PlanId, said: &str) {
-        if self.window_active || !self.prefs.notify_desktop {
-            return;
-        }
-        let Some(desktop) = &self.desktop else {
-            return;
-        };
-        let what = self
-            .activity
-            .earlier
-            .iter()
-            .find(|ended| ended.plan == plan)
-            .map_or_else(String::new, |ended| ended.text.clone());
-        desktop.notify(
-            plan.0,
-            Notice {
-                title: "Waiting for the server".to_owned(),
-                body: format!("{what}{said}"),
-                kind: Kind::Waiting,
-            },
-        );
-    }
-
-    /// A stopped action goes on by itself: what the desktop was told of
-    /// its wait is taken back.
-    pub(crate) fn tell_goes_on(&mut self, plan: PlanId) {
-        if let Some(desktop) = &self.desktop {
-            desktop.withdraw_key(plan.0);
-        }
-    }
-
-    /// The taskbar's entry shows how far what runs has gone, stopped by an
-    /// error in its colour where the system has one; the machine is kept
-    /// awake while something runs and is not paused. Told only as it
-    /// changes.
+    /// The taskbar's entry, the machine kept awake, the session's end held
+    /// off, as what runs goes (`Work::tell`).
     pub(crate) fn tell_desktop(&mut self) {
-        let Some(desktop) = &self.desktop else {
-            return;
-        };
         let under = self.under_way();
-        let summary = summary(&under);
-        let progress = match summary {
-            Some(summary) => Some(Progress {
-                fraction: summary.fraction,
-                state: if summary.paused {
-                    State::Paused
-                } else {
-                    State::Normal
-                },
-            }),
-            None => self.activity.stopped.as_ref().map(|_| Progress {
-                fraction: self.activity.told.map_or(1., |told| told.fraction),
-                state: State::Error,
-            }),
-        };
-        // A thousandth is all a taskbar's bar shows.
-        let moved = match (progress, self.activity.told) {
-            (Some(now), Some(told)) => {
-                now.state != told.state || (now.fraction - told.fraction).abs() >= 0.001
-            }
-            (now, told) => now.is_some() != told.is_some(),
-        };
-        if moved {
-            desktop.progress(progress);
-            self.activity.told = progress;
-        }
-        let awake = (self.prefs.keep_awake && summary.is_some_and(|s| !s.paused && !s.stopping))
-            .then(|| why(&under));
-        if awake.is_some() != self.activity.awake {
-            self.activity.awake = awake.is_some();
-            desktop.keep_awake(awake);
-        }
+        let watched = self.watched();
+        self.work.tell(&self.app, &under, watched);
     }
 
-    /// A notice clicked: the window comes forward, with the token the
-    /// desktop gave where it gave one, and Activity opens.
-    pub(crate) fn take_clicked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let clicked = std::mem::take(&mut *self.clicked.lock());
-        let Some(last) = clicked.last() else {
+    /// What the desktop asked: a notice or the presence clicked brings the
+    /// window forward, with the token the desktop gave where it gave one,
+    /// and opens Activity; its menu pauses, lets go on or stops what runs
+    /// (`finishing::act`).
+    pub(crate) fn take_asked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let mut token = None;
+        let mut shown = false;
+        for asked in self.work.take_asked() {
+            match asked {
+                Asked::Notice(clicked) => {
+                    shown = true;
+                    token = clicked.token.or(token);
+                }
+                Asked::Open { token: given } => {
+                    shown = true;
+                    token = given.or(token);
+                }
+                Asked::PauseAll | Asked::GoOn => {
+                    crate::finishing::act(&self.app, &self.work, &asked);
+                }
+                Asked::StopAll => {
+                    self.stop_and_quit(window, cx);
+                    return;
+                }
+            }
+        }
+        if !shown {
             return;
-        };
-        window.activate_window_with_token(last.token.as_deref());
+        }
+        window.activate_window_with_token(token.as_deref());
         if !self.activity_open() && !self.activity_tray_shown() {
             self.toggle_activity(&serde_json::json!({}), window, cx);
         }

@@ -686,6 +686,23 @@ of bars, split or not.
   how far, and the machine is kept awake unless all of it is paused
   (`ui.notify_desktop`, `ui.keep_awake`). Every call to the desktop
   returns at once; nothing is told from a headless run.
+- **What runs outlives the window** (ADR-115, `finishing.rs`). What runs
+  and what was said of it is `Work` (`work.rs`): the shell's while a
+  window is up, kept by the program once the last one closes while
+  something keeps it (under way, paused, waiting for its server, stopped
+  since, a question waiting). The close button closes, asking nothing;
+  Quit asks while something is under way: Finish in the background (the
+  default), Stop and quit, Keep the window (`Confirmed::Quit`). Without
+  a window the program takes the executor's events in as the window
+  did, tells the desktop every end, however short, shows its presence
+  (`Desktop::presence`: the tray's or notification area's icon, else a
+  notice that stays; the Dock on macOS), and takes later launches over
+  (`skwir_platform::handover`); its panes sleep. The window opened again
+  takes `Work` back. Closing, the window answers Cancel to what it was
+  asking (`Shell::leave`), and an action stopped it showed is let go.
+  The core's wakes go through one loop for the program's life
+  (`finishing::listen`), never one of the window's: a window opened
+  again would miss what the closed one's loop took.
 - `Shell::set_status` is a toast; `set_status_about` (core:
   `App::notify_about_setting`) links to the setting that fixes it.
   Toasts are drawn under the overlays, but over the preview on the whole

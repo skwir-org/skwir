@@ -115,6 +115,9 @@ pub struct ConfirmState {
     pub(crate) listed: Option<crate::deleting::Deleting>,
     pub focus: FocusHandle,
     cancel: FocusHandle,
+    /// The second answer, between Cancel and the first: Quit's "Stop and
+    /// quit".
+    other: FocusHandle,
     accept: FocusHandle,
     back: FocusReturn,
 }
@@ -168,12 +171,15 @@ impl PromptState {
 
 impl ConfirmState {
     /// The panel's own focus, which Enter and Escape answer from, and what
-    /// Tab walks from there: Cancel, then the answer.
+    /// Tab walks from there: Cancel, the second answer where there is
+    /// one, then the first.
     pub(crate) fn walk(&self) -> (FocusHandle, Vec<FocusHandle>) {
-        (
-            self.focus.clone(),
-            vec![self.cancel.clone(), self.accept.clone()],
-        )
+        let mut stops = vec![self.cancel.clone()];
+        if matches!(self.then, Confirmed::Quit) {
+            stops.push(self.other.clone());
+        }
+        stops.push(self.accept.clone());
+        (self.focus.clone(), stops)
     }
 }
 
@@ -183,7 +189,9 @@ pub enum Confirmed {
     /// the question was asked: what the user read about is what happens,
     /// whatever the selection or the active pane is by then.
     Apply(Plan),
-    /// Quit, stopping the plans that run (`Shell::quit`).
+    /// Quit while plans run (`Shell::quit`, ADR-115): yes finishes them
+    /// without the window, then quits; the second answer stops them and
+    /// quits now.
     Quit,
 }
 
@@ -455,7 +463,7 @@ impl Shell {
 
     /// A step's question closed unanswered: it hears none (nothing, when
     /// it was answered already).
-    fn give_up_secret(&self, kind: PromptKind) {
+    pub(crate) fn give_up_secret(&self, kind: PromptKind) {
         if let PromptKind::Secret { id } = kind {
             self.app.answer_secret(id, None);
         }
@@ -505,6 +513,7 @@ impl Shell {
             listed: None,
             focus,
             cancel: cx.focus_handle(),
+            other: cx.focus_handle(),
             accept: cx.focus_handle(),
             back,
         });
@@ -517,9 +526,22 @@ impl Shell {
             match c.then {
                 // Asked and answered: applied as it is.
                 Confirmed::Apply(plan) => self.app.apply_whole(plan),
-                Confirmed::Quit => window.remove_window(),
+                // Finished without the window (`finishing.rs`).
+                Confirmed::Quit => {
+                    self.leave(window, cx);
+                    window.remove_window();
+                }
             }
             cx.notify();
+        }
+    }
+
+    /// The second answer: Quit's "Stop and quit".
+    pub fn confirm_other(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(c) = self.confirm.take()
+            && matches!(c.then, Confirmed::Quit)
+        {
+            self.stop_and_quit(window, cx);
         }
     }
 
@@ -641,9 +663,13 @@ pub fn render_prompt(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElemen
 pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
     let c = shell.confirm.as_ref()?;
     let theme = cx.global::<Theme>().clone();
-    let (yes, icon) = match c.then {
-        Confirmed::Apply(_) => ("Delete", Some("trash")),
-        Confirmed::Quit => ("Quit", None),
+    let (yes, icon, style) = match c.then {
+        Confirmed::Apply(_) => ("Delete", Some("trash"), ButtonStyle::Danger),
+        Confirmed::Quit => ("Finish in the background", None, ButtonStyle::Plain),
+    };
+    let (no, other) = match c.then {
+        Confirmed::Apply(_) => ("Cancel", None),
+        Confirmed::Quit => ("Keep the window", Some("Stop and quit")),
     };
     // A question that asks before something is done says itself at once.
     let width = if c.listed.is_some() { 640. } else { 560. };
@@ -661,12 +687,15 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
                 .map(|listed| crate::deleting::render(listed, shell, &theme, cx)),
         )
         .child(modal::footer(
-            "Enter to confirm, Escape to cancel",
+            match c.then {
+                Confirmed::Apply(_) => "Enter to confirm, Escape to cancel",
+                Confirmed::Quit => "Enter to finish in the background",
+            },
             [
-                modal::pressed(
+                Some(modal::pressed(
                     controls::button(
                         "confirm-no",
-                        "Cancel",
+                        no,
                         None,
                         ButtonStyle::Plain,
                         &c.cancel,
@@ -674,20 +703,29 @@ pub fn render_confirm(shell: &Shell, cx: &mut Context<Shell>) -> Option<AnyEleme
                     ),
                     Shell::confirm_dismiss,
                     cx,
-                ),
-                modal::pressed(
-                    controls::button(
-                        "confirm-yes",
-                        yes,
-                        icon,
-                        ButtonStyle::Danger,
-                        &c.accept,
-                        &theme,
-                    ),
+                )),
+                other.map(|other| {
+                    modal::pressed(
+                        controls::button(
+                            "confirm-other",
+                            other,
+                            None,
+                            ButtonStyle::Danger,
+                            &c.other,
+                            &theme,
+                        ),
+                        Shell::confirm_other,
+                        cx,
+                    )
+                }),
+                Some(modal::pressed(
+                    controls::button("confirm-yes", yes, icon, style, &c.accept, &theme),
                     Shell::confirm_accept,
                     cx,
-                ),
-            ],
+                )),
+            ]
+            .into_iter()
+            .flatten(),
             &theme,
         ));
     Some(modal::modal(

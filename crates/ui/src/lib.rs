@@ -35,6 +35,7 @@ pub mod dnd;
 pub mod dock;
 mod dragicon;
 pub mod elements;
+mod finishing;
 pub mod fonts;
 pub mod form;
 pub mod format;
@@ -109,14 +110,12 @@ pub mod usage;
 pub mod view;
 pub mod views;
 mod weight;
+mod work;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use gpui::{Bounds, TitlebarOptions, WindowBounds, WindowOptions, prelude::*, px, size};
 use skwir_core::{App, Location};
-
-use crate::shell::Shell;
 
 /// How many times the core has woken the window: what a wake brought is
 /// told apart from a draw the user asked (the timeline's count in the
@@ -204,72 +203,41 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
     desktop_style::start(&app);
 
     // The system's backend, with AccessKit (ADR-064).
-    gpui_platform::application()
-        .with_assets(icons::FsAssets)
-        .run(move |cx: &mut gpui::App| {
-            tracing::debug!(
-                ms = started.elapsed().as_millis() as u64,
-                "gpui run callback"
-            );
-            let keymap =
-                keymap::install(&app, skwir_core::keymap::user_bindings(&app.settings), cx);
-            // A key that begins a binding of several strokes waits for the
-            // next as long as it takes; `sequence.rs` shows what can follow.
-            cx.set_key_sequence_timeout(None);
-            // A key that types a character hides the pointer until the mouse
-            // moves, as Windows and macOS do while typing; keys that only move
-            // (the arrows through files) leave it, which gpui's default would not.
-            cx.set_cursor_hide_mode(gpui::CursorHideMode::OnTyping);
-            // Debug aid: `RUST_LOG=skwir_ui=trace` shows every keystroke GPUI saw.
-            cx.observe_keystrokes(|ev, _, _| {
-                tracing::trace!(keystroke = %keymap::unparse(&ev.keystroke), "keystroke");
-            })
-            .detach();
-            // Every way out (Quit, the window's close button) closes the
-            // last window first, so nothing is left on screen while the
-            // plans wind down.
-            let stats_app = Arc::clone(&app);
-            cx.on_window_closed(move |cx, _| {
-                if cx.windows().is_empty() {
-                    remember_location(&stats_app);
-                    let (decoded, skipped, bytes) = stats_app.thumbnails.stats();
-                    tracing::info!(decoded, skipped, cached_bytes = bytes, "thumbnail stats");
-                    cx.quit();
-                }
-            })
-            .detach();
-            let quitting = Arc::clone(&app);
-            cx.on_app_quit(move |_| {
-                wind_down(&quitting);
-                async {}
-            })
-            .detach();
-
-            let bounds = Bounds::centered(None, size(px(1200.), px(800.)), cx);
-            let window = cx
-                .open_window(
-                    WindowOptions {
-                        window_bounds: Some(WindowBounds::Windowed(bounds)),
-                        titlebar: Some(TitlebarOptions {
-                            title: Some("skwir".into()),
-                            ..Default::default()
-                        }),
-                        app_id: Some(skwir_core::APP_ID.into()),
-                        ..Default::default()
-                    },
-                    |window, cx| {
-                        cx.new(|cx| Shell::new(app, initial, started, keymap, wake_rx, window, cx))
-                    },
-                )
-                .expect("open window");
-            tracing::debug!(ms = started.elapsed().as_millis() as u64, "window opened");
-            window
-                .update(cx, |shell, window, cx| {
-                    window.focus(&shell.ui().focus, cx);
-                    cx.activate(true);
-                })
-                .ok();
-        });
+    let application = gpui_platform::application().with_assets(icons::FsAssets);
+    // macOS: the Dock's icon clicked with no window up (ADR-115).
+    application.on_reopen(|cx| finishing::reopen(cx, None, false));
+    // macOS: Quit from the Dock, a log out, a restart, asked first while
+    // something is under way (gpui patch 0044).
+    application.on_should_quit(finishing::may_quit);
+    application.run(move |cx: &mut gpui::App| {
+        tracing::debug!(
+            ms = started.elapsed().as_millis() as u64,
+            "gpui run callback"
+        );
+        let keymap = keymap::install(&app, skwir_core::keymap::user_bindings(&app.settings), cx);
+        // A key that begins a binding of several strokes waits for the
+        // next as long as it takes; `sequence.rs` shows what can follow.
+        cx.set_key_sequence_timeout(None);
+        // A key that types a character hides the pointer until the mouse
+        // moves, as Windows and macOS do while typing; keys that only move
+        // (the arrows through files) leave it, which gpui's default would not.
+        cx.set_cursor_hide_mode(gpui::CursorHideMode::OnTyping);
+        // Debug aid: `RUST_LOG=skwir_ui=trace` shows every keystroke GPUI saw.
+        cx.observe_keystrokes(|ev, _, _| {
+            tracing::trace!(keystroke = %keymap::unparse(&ev.keystroke), "keystroke");
+        })
+        .detach();
+        // Every way out passes here: Quit and Stop and quit, the last
+        // window closing with nothing left, a signal (`finishing.rs`).
+        let quitting = Arc::clone(&app);
+        cx.on_app_quit(move |_| {
+            wind_down(&quitting);
+            async {}
+        })
+        .detach();
+        // The window, and what outlives it (ADR-115).
+        finishing::start(cx, app, keymap, started, wake_rx, initial);
+    });
     Ok(())
 }
 
@@ -281,16 +249,15 @@ pub fn run_from(app: Arc<App>, initial: Option<Location>, started: Instant) -> a
 /// unseen.
 const WIND_DOWN: Duration = Duration::from_secs(30);
 
-/// Stop every plan before the process ends: a copy cut short by Quit
-/// leaves nothing in its destination. A plan is cancelled, never finished
-/// unseen: with no window, nothing would show it or let it be stopped.
+/// Stop every plan before the process ends: a copy cut short by Stop and
+/// quit, or a signal, leaves nothing in its destination. What the program
+/// finishes without its window it finishes before it gets here
+/// (`finishing.rs`, ADR-115).
 ///
 /// Run by GPUI's quit handler, the one place every system passes through
-/// as the application ends (on Linux the event loop stops by itself when
-/// the last window closes, so nothing can wait on it). GPUI gives the
-/// future a handler returns 100 ms; the handler itself it runs to the end,
-/// which is why the waiting is here and not in that future. The windows
-/// are gone by then: Quit closes them first.
+/// as the application ends. GPUI gives the future a handler returns
+/// 100 ms; the handler itself it runs to the end, which is why the waiting
+/// is here and not in that future. The windows are gone by then.
 fn wind_down(app: &App) {
     if !app.executor.wind_down(WIND_DOWN) {
         tracing::warn!("quitting while a plan still runs: what it left stays");
@@ -300,4 +267,15 @@ fn wind_down(app: &App) {
 /// Note where the window is, for "open the folders and tabs left open".
 pub(crate) fn remember_location(app: &App) {
     skwir_core::tabs::remember(app);
+}
+
+/// What a launch's argument opens (`skwir <arg>`), read against `cwd`: a
+/// location a plugin opens (`trash:`, `tags:/family`), else a folder.
+pub fn location_of(app: &App, arg: &std::ffi::OsStr, cwd: &std::path::Path) -> Location {
+    let location = Location::parse_os(arg);
+    if !location.is_path() && app.provider(&location.scheme).is_some() {
+        return location;
+    }
+    let path = cwd.join(arg);
+    Location::from_path(std::path::absolute(&path).unwrap_or(path))
 }

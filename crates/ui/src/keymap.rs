@@ -1846,7 +1846,9 @@ pub struct Bound {
 }
 
 /// The keymap as the shell knows it: what GPUI binds, what the palette,
-/// menus and F1 show, and what it was built from.
+/// menus and F1 show, and what it was built from. Kept for a window
+/// opened again (ADR-115).
+#[derive(Clone)]
 pub struct Keymap {
     pub hints: Vec<KeyHint>,
     /// Every binding, those hidden too, in the order of their layers.

@@ -2026,7 +2026,12 @@ pub fn declare_all(app: &App) {
     ] {
         declare::<Delta>(app, Topic::Window, name, title, "A key in the settings");
     }
-    none(Topic::Skwir, "ui.quit", "Quit", "Close the window");
+    none(
+        Topic::Skwir,
+        "ui.quit",
+        "Quit",
+        "Quit, finishing what runs without the window or stopping it",
+    );
     // The preview.
     none(
         Topic::View,

@@ -399,6 +399,34 @@ the token), Windows' toasts and taskbar, macOS at all; KDE's job tracker
 (`org.kde.JobViewServerV2`, Dolphin's way to Plasma's tray) set aside in
 ADR-114.
 
+## What runs outlives the window (2026-11-02)
+
+Asked by the user: what happens to actions under way when Skwir is
+closed mid-way, what other file managers and browsers do, and whether a
+taskbar icon should show them finishing. Compared in the terminal
+(Nautilus, Nemo, Dolphin, Explorer, Finder hold their work; browsers ask
+and cancel); the user took points 1 to 6 (ADR-115). Closing the window
+stops nothing: Skwir finishes without it, its panes asleep, then ends.
+Quit asks while something is under way: Finish in the background (the
+default), Stop and quit, Keep the window. Meanwhile an icon in the tray
+or notification area (a notice that stays where there is no tray, the
+Dock on macOS) shows it, its badge filling, with a menu (Open, Pause all
+or Go on, Stop all and quit). A later launch is handed to it and its
+window opens again with what runs (`skwir_platform::handover`). Paused,
+stopped by an error, waiting for a server or asking a question, it waits
+for the user. Log out and shutdown are held off with the action's words;
+a signal to end stops cleanly; macOS asks first (gpui patch 0044). Rules
+in `docs/invariants/shell.md` ("Feedback") and `operations.md`; checks
+in `docs/STATUS-LOG.md` (2026-11-02, "What runs outlives the window").
+Left: real tray hosts (Plasma, waybar, GNOME with AppIndicator), GNOME's
+own notification and session dialogs, the portal's inhibitor on a real
+desktop, a Wayland compositor taking the token on reopening, Windows'
+notification area and shutdown screen on real Windows, macOS at all
+(the Dock's click, `applicationShouldTerminate:`), a plan waiting for its
+server without a window, two graphical sessions sharing one user bus
+(a launch in one handed to a Skwir finishing in the other); going on
+after a restart set aside in ADR-115.
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of

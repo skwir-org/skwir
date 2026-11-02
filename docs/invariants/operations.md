@@ -239,10 +239,14 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   counts; a one-item plan counts bytes (`toast::bar`). An item counts as
   done when its step ends, or, copied by a batch, when the batch says it
   is whole (`Transfer::finished`), before its step places it.
-- **Quit** asks while a plan runs (its key or the window's close button,
-  `Shell::quit`), then cancels and waits, out of sight, for partial work
-  to be taken back (`Executor::wind_down`): a copy cut short leaves
-  nothing in its destination.
+- **Closing the window stops nothing** (ADR-115): the program finishes
+  what runs and waits its turn without it (`finishing.rs`). **Quit** asks
+  while something is under way (`Shell::quit`): finish without the
+  window, or stop now, which cancels and waits, out of sight, for partial
+  work to be taken back (`Executor::wind_down`): a copy cut short leaves
+  nothing in its destination. A signal to end (Unix), or the session
+  ending anyway, stops as Stop and quit does; meanwhile the session's end
+  is held off (`Desktop::hold_session`).
 
 ## Staging
 

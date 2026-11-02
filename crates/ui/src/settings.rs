@@ -660,7 +660,7 @@ pub fn declare(app: &App) {
         SettingSpec::toggle(
             NOTIFY_DESKTOP_KEY,
             "Tell the desktop when a long action ends",
-            "When an action that ran 5 seconds or more finishes or stops, or waits for a server that stopped answering, while skwir's window is in the background, the desktop shows a notification. A click on it brings the window back with Activity open. Notifications are taken back once you are back in the window.",
+            "The desktop shows a notification when an action that ran 5 seconds or more ends, or waits for its server, while skwir's window is in the background. With the window closed, every action that ends is told. A click on it brings the window back with Activity open. Notifications are taken back once you are back in the window.",
             true,
         )
         .page(page::GENERAL)

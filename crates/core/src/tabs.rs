@@ -173,6 +173,17 @@ impl App {
         self.resume_shown()
     }
 
+    /// Let every pane sleep (`Pane::suspend`): the window closed while
+    /// actions finish without it (ADR-115). Nothing is listed or watched
+    /// meanwhile; a window opened again resumes the shown tab
+    /// (`resume_tabs`), as at startup.
+    pub fn suspend_panes(&self) {
+        self.hold_tabs(false);
+        let mut ws = self.workspace.write();
+        let panes: Vec<PaneId> = ws.panes().iter().map(|p| p.id).collect();
+        suspend(&mut ws, panes);
+    }
+
     /// Whether the tab left stays open until `settle_tabs`: set by a UI
     /// that keeps drawing it while the tab shown lists (ADR-018 addendum).
     /// Without one, a tab left is suspended at once.

@@ -9,7 +9,9 @@
 //! - [`access`]: what the system adds to a file's mode (access lists, capabilities, a security label).
 //! - [`bat`]: where bat, the pager, keeps the themes its user added.
 //! - [`calendar`]: the user's time zone and first weekday, for dates people read.
-//! - [`desktop`]: what the desktop is told while long actions run: notices, progress, sleep held off.
+//! - [`desktop`]: what the desktop is told while long actions run: notices, progress, sleep and
+//!   the session's end held off, the presence of a Skwir finishing without its window.
+//! - [`handover`]: a later launch handed to a Skwir finishing without its window.
 //! - [`icons`]: XDG icon theme lookup with caching.
 //! - [`picture`]: picture files decoded and sized the way their EXIF Orientation turns them.
 //! - [`thumbnails`]: the freedesktop thumbnail cache: lookup, load, store.
@@ -45,6 +47,7 @@ pub mod fonts;
 pub mod grammars;
 #[cfg(target_os = "linux")]
 mod gtk_theme;
+pub mod handover;
 pub mod highlight;
 #[cfg(target_os = "linux")]
 mod icon_theme;

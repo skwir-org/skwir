@@ -428,6 +428,13 @@ pub(crate) struct Forms {
     replies: parking_lot::Mutex<HashMap<u64, crossbeam_channel::Sender<Option<Answer>>>>,
 }
 
+impl Forms {
+    /// Whether a form waits for the window, untaken.
+    pub(crate) fn waiting(&self) -> bool {
+        !self.asked.lock().is_empty()
+    }
+}
+
 /// How often a filler looks whether its wait was cancelled.
 const LOOK: Duration = Duration::from_millis(100);
 

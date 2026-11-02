@@ -9500,3 +9500,147 @@ anywhere); macOS at all (compiled); the strip's narrowest versions in a
 narrow footer (the words are tested, `Fit` chooses as elsewhere); the
 answer over a full-screen preview (unchanged path); a screen reader
 on the strip and Activity.
+
+## What runs outlives the window (2026-11-02)
+
+Asked by the user: what happens to actions under way when Skwir is
+closed mid-way, what other file managers and browsers do, should a
+taskbar icon show them finishing? Until now the close button and Quit
+asked and then stopped everything, throwing away the file a copy was in
+the middle of, and a log out or a kill ended the process unasked. Read
+for the answer: Nautilus's `nautilus-progress-persistence-handler.c` and
+`nautilus-application.c` (the application held while operations run, a
+notification while no window is open, Quit closing the windows), Nemo's
+`nemo-progress-ui-handler.c` (its progress window closed into a tray
+icon), KDE's KJob event-loop lock and Dolphin's bug 458709 (a question
+after the window closed), the browsers' quitting with downloads. The
+user took points 1 to 6 as proposed (ADR-115).
+
+- **Built, the program** (`finishing.rs`, `work.rs`, by me): what runs
+  and what was said of it moved out of the shell into `Work` (the
+  executor's events taken in by `Work::take` for the window and without
+  one, the desktop told through it); one loop takes the core's wakes for
+  the program's life, the window's shell syncing while one is up; gpui's
+  quit mode explicit. The close button closes, asking nothing; Quit asks
+  while something is under way, with three answers (`Confirmed::Quit`,
+  `ConfirmState::other`); closing answers Cancel to what the window asks
+  (`Shell::leave`). Without a window the panes sleep
+  (`App::suspend_panes`), every end is told, a question waiting
+  (`App::waits_for_answer`) is told once, the presence shown, later
+  launches taken over on a worker; it ends once nothing keeps it, after
+  taking over stopped and a launch handed just before is opened rather
+  than lost. SIGTERM, SIGINT and SIGHUP stop as Stop and quit does (twice:
+  at once). macOS: the Dock's click reopens (`on_reopen`), and gpui patch
+  0044 (`Application::on_should_quit`, `applicationShouldTerminate:`)
+  asks before Quit from the Dock or a log out while something is under
+  way. `skwir <arg>` and a launch handed over read their argument alike
+  (`skwir_ui::location_of`).
+- **Built, the desktop** (`skwir_platform::desktop`, by a helper agent,
+  reviewed and wired here; now a folder module): `Desktop::presence`
+  (Linux: a StatusNotifierItem with its icon's badge, tooltip and
+  `com.canonical.dbusmenu` menu where a watcher has a host, registered
+  again when the watcher comes back, a resident notice after 3 s without
+  a tray; Windows: the notification area's icon on a hidden top-level
+  window's thread; macOS: nothing), `hold_session` (the portal's
+  `Inhibit` for log out; logind's shutdown block only without
+  `org.gnome.SessionManager` or `org.kde.ksmserver`; Windows'
+  `ShutdownBlockReasonCreate` and `WM_QUERYENDSESSION` answered no),
+  `finish`, the `Asked` callback. The icon is Skwir's, its badge drawn
+  over it (`desktop/icon.rs`).
+- **Built, the handover** (`skwir_platform::handover`, by a second
+  helper agent): Linux, `org.skwir.skwir` with `Open(ay, ay, s)` on the
+  shared connection and a marker in the runtime folder (no marker: one
+  stat, no connection); Windows, a named pipe per user and session with
+  a framed message (UTF-16 paths, unpaired surrogates kept) and
+  `AllowSetForegroundWindow`.
+
+**Checked in a window** (Xvfb :93, lavapipe, fixture XDG and runtime
+folders, a session bus of the check's own with `dbus-monitor`, dunst on
+the test display, a stand-in StatusNotifierWatcher with a host written in
+dbus-next; 600,000 files of 32 B copied, 16 to 19 s each):
+
+- Ctrl+Q during a copy: the question with Keep the window, Stop and
+  quit, Finish in the background; Enter: the window gone, the process
+  alive, the tray item registered, the copy finished without a window,
+  `Finished` "Copied 2 items to dest2 (18.3 MB in 17 s)" told, the item
+  let go, the process ended by itself 4.6 s after;
+- Pause all from the tray's menu (`Event` 3): the tooltip "Finishing 1
+  action / Copy to …/dest2 · paused at 11 %", the menu's entry "Go on",
+  the 48 px icon's badge an amber wedge outlined (looked at on light and
+  dark grounds), the handover marker holding the pid;
+- a second `skwir …/dest3` launched meanwhile: exit 0, the first one's
+  window opened on dest3 with the paused copy's strip (Resume, Cancel),
+  the item and the marker let go;
+- the close button (`WM_DELETE_WINDOW`, sent as a window manager would):
+  no question, a new item; Go on from its menu: 24 %, then all 600,000
+  files, the staging folder gone, one `Finished`, the process ended;
+- logind on this machine (seconds): paused without a window,
+  `shutdown … Actions under way … block` and no sleep inhibitor; going
+  on, both; after, none. The hold kept its first reason, "Actions under
+  way", told before the plan's card; fixed to be told again as its
+  reason changes, then seen as "Copy to …/dest2" on both;
+- Stop all and quit from the menu: the process gone in about 2 s, the
+  destination empty (what it was in the middle of taken back), the
+  inhibitors let go;
+- SIGTERM during a copy with the window up: "asked to end: stopping what
+  runs", gone in about 1 s, the staging folder removed;
+- no tray host: the resident notice "Finishing 1 action / Copy to
+  …/dest3" (`resident`, actions Open Skwir and Stop all, category
+  `transfer`); clicked in dunst: `ActionInvoked` "default", the window
+  open on dest3 with Activity, the copy ending there and kept in Earlier;
+- a paste queued behind a copy into the same folder, finding a name
+  taken by another file once its turn came without a window: "Skwir
+  needs an answer" told, the presence "An action needs an answer"; the
+  notice clicked: the window open with the question "1 name already in
+  “dest4”" and Earlier holding the copy that ended meanwhile; the window
+  closed on the question: answered Cancel, the file there unchanged,
+  nothing told, the process ended. (The same paste of identical files
+  first applied nothing, "Copied 0 items to dest4": a plan applied again
+  is a no-op.)
+- an error without a window (the destination made read-only while
+  paused, then Go on): the item `NeedsAttention`, "An action stopped /
+  Copy to …/dest2: stopped", its menu without Pause, `Stopped`
+  "Couldn't copy “many” to dest2: permission denied" told, the process
+  kept; `ProvideXdgActivationToken` then `Activate`: the window with
+  Activity, Earlier holding the failure with Retry; closed: the process
+  ended.
+- The check's own bus, started with the session's environment at
+  first, activated the session's portals on it (xdg-desktop-portal, its
+  document portal through `fusermount3`, the GTK, KDE and Hyprland
+  portals): stopped by pid, the bus started again from a configuration
+  with no service directories. One KDE portal left from the Activity
+  check this morning was stopped too. The session's own portals were
+  untouched.
+
+**Tests:** `work.rs` (a plan followed to its answer in Earlier, one an
+error stopped kept only as a card, a pause and a wait for a server
+followed), `finishing.rs` (the presence's words as the strip's, paused,
+stopped, asking), `toast.rs` (the question's words). The helpers': the
+desktop's 21 on Linux against stand-in watcher, host, notification,
+portal and logind servers (registration and properties, Activate with
+its token, the menu's layout and events, a watcher restarted, a tray
+gone and back, the resident notice, the holds, `finish`), run 5 times;
+under Wine 13, the hidden window run by hand on an Xvfb display of its
+own (the hold answering 0 then 1, NIN_SELECT telling Open). The
+handover's 9 on Linux against a dbus-daemon of each test's own (exact
+round trips with non-UTF-8 paths, a stale marker, drop, a second taker
+refused, the bus restarted) and 9 under Wine. Of the crates touched:
+UI, binary and core, 1260 run, 1259 passing, the one failing,
+`settings::every_setting_has_a_title_and_a_description_in_sentences`,
+caught `ui.notify_desktop`'s first sentence at 32 words (this morning's,
+the binary's test not run then): shortened, passing; a later run, 643 of
+644, `remote_folders::a_mount_let_go_of_elsewhere_is_disconnected_all_the_same`
+failing at 16 s under the window check's load, passing alone in 0.4 s.
+rustfmt; clippy of core, platform, UI and the binary on Linux, for
+Windows, and for macOS with Apple's SDK (the UI and the binary too,
+gpui_macos with patch 0044).
+
+**Not checked:** a real tray host (Plasma, waybar, GNOME with
+AppIndicator), GNOME's notification and end-of-session dialog listing
+the portal's inhibitor, KDE's portal on a real desktop (on the test bus
+it answered "No entry for inhibit" and found no power management), a
+Wayland compositor taking the token on reopening, Windows' notification
+area, menu and shutdown screen on real Windows (Wine stubs
+`ShutdownBlockReasonCreate`), macOS at all, a plan waiting for its
+server without a window, the UI's tests under Wine, a window opened
+again while one is up (a launch handed over in that instant).

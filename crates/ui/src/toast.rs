@@ -12,12 +12,13 @@ use std::path::Path;
 use std::time::Duration;
 
 use gpui::{Animation, AnimationExt, AnyElement, Context, div, prelude::*, px};
-use skwir_core::op::{Change, ExecEvent, PlanId, RunKind, Transfer};
+use skwir_core::op::{Change, PlanId, RunKind, Transfer};
 
 use crate::controls::{self, ButtonStyle};
 use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
+use crate::work::{Taken, WAITS_FOR_SERVER};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tone {
@@ -71,36 +72,61 @@ pub struct Running {
     pub(crate) going_on: bool,
 }
 
-#[cfg(test)]
 impl Running {
-    /// A plan just started, for tests elsewhere.
-    pub(crate) fn for_test(plan: PlanId, title: &str, run: RunKind, total: usize) -> Self {
+    /// A plan just started (`ExecEvent::Started`): `going_on` when it goes
+    /// on from one its server stopped (`ExecEvent::GoesOn`).
+    pub(crate) fn started(
+        plan: PlanId,
+        title: String,
+        run: RunKind,
+        total: usize,
+        items: Option<skwir_core::op::Items>,
+        going_on: bool,
+    ) -> Self {
         Running {
             plan,
-            title: title.to_owned(),
+            title,
             run,
             total,
             first: None,
             first_named: None,
             failed: None,
             failed_named: None,
-            items: None,
+            items,
             paused: false,
             cancelling: false,
-            going_on: false,
+            going_on,
         }
+    }
+
+    /// A step made (`ExecEvent::Step`): the count, and the change that
+    /// names what was done or what could not be.
+    pub(crate) fn stepped(&mut self, progress: &skwir_core::op::Progress) {
+        self.total = progress.total;
+        if progress.error.is_some() {
+            self.failed = Some(progress.change.clone());
+            self.failed_named.clone_from(&progress.named);
+        } else if self.first.is_none() {
+            self.first = Some(progress.change.clone());
+            self.first_named.clone_from(&progress.named);
+        }
+    }
+
+    /// The first change applied.
+    pub(crate) fn first(&self) -> Option<&Change> {
+        self.first.as_ref()
+    }
+
+    /// A plan just started, for tests elsewhere.
+    #[cfg(test)]
+    pub(crate) fn for_test(plan: PlanId, title: &str, run: RunKind, total: usize) -> Self {
+        Running::started(plan, title.to_owned(), run, total, None, false)
     }
 }
 
 #[derive(Default)]
 pub struct ToastState {
     pub current: Option<Toast>,
-    /// Plans started and not finished, oldest first. Events name their
-    /// plan, and each is matched to its own: a second plan starting never
-    /// takes over the first one's bar or result.
-    pub running: Vec<Running>,
-    /// The runs about to start that go on by themselves (`ExecEvent::GoesOn`).
-    going_on: std::collections::HashSet<PlanId>,
     generation: u64,
     close: Option<gpui::FocusHandle>,
     /// Kept across frames, so Tab can reach the toast's buttons.
@@ -304,18 +330,16 @@ pub fn bar(items: usize, t: &Transfer) -> (f32, String) {
     (fraction.clamp(0., 1.), words)
 }
 
-/// What Quit asks while a plan runs: which (`running`: its title, and
-/// whether it is paused, when it has begun), and what quitting does to it
-/// and to the `waiting` ones behind it. No figures: the bar under the
+/// What Quit asks while a plan runs (ADR-115): which (`running`: its
+/// title, and whether it is paused, when it has begun), and the two ways
+/// on, for it and the `waiting` ones behind it: Skwir finishes without its
+/// window, then quits; or stops now. No figures: the bar under the
 /// question goes on with them.
 pub fn quit_question(running: Option<(&str, bool)>, others: usize, waiting: usize) -> String {
-    let (what, stop) = match (running, others) {
+    let (what, them) = match (running, others) {
         (Some((title, paused)), 0) => {
             let state = if paused { "paused" } else { "still running" };
-            let what = format!("{} is {state}.", capitalized(title));
-            let stop = "Quit and stop it? What it finished stays; what it was in the middle \
-                        of is taken back.";
-            (what, stop)
+            (format!("{} is {state}.", capitalized(title)), false)
         }
         // Plans that share nothing run at once (ADR-079).
         (Some((title, paused)), others) => {
@@ -325,27 +349,23 @@ pub fn quit_question(running: Option<(&str, bool)>, others: usize, waiting: usiz
                 capitalized(title),
                 format::count(others, "other action")
             );
-            let stop = "Quit and stop them? What they finished stays; what they were in the \
-                        middle of is taken back.";
-            (what, stop)
+            (what, true)
         }
-        (None, _) => (
-            "A change is about to begin.".to_owned(),
-            "Quit before it does?",
-        ),
+        (None, _) => ("A change is about to begin.".to_owned(), false),
     };
-    let after = match (waiting, others) {
-        (0, _) => String::new(),
-        (n, 0) => format!(
-            " The {} waiting after it will not run.",
-            format::count(n, "action")
-        ),
-        (n, _) => format!(
-            " The {} waiting after them will not run.",
+    let (it, its) = if them { ("them", "they") } else { ("it", "it") };
+    let after = match waiting {
+        0 => String::new(),
+        n => format!(
+            ", and the {} waiting after {it},",
             format::count(n, "action")
         ),
     };
-    format!("{what} {stop}{after}")
+    format!(
+        "{what} Skwir can finish {it}{after} without its window, then quit. Or stop now: \
+         what {its} finished stays, what {its} {was} in the middle of is taken back.",
+        was = if them { "were" } else { "was" }
+    )
 }
 
 /// Words read in a second, unhurried.
@@ -395,45 +415,22 @@ impl Shell {
         cx.notify();
     }
 
-    /// Apply pending executor events: progress while a plan runs, then one
+    /// Apply pending executor events (`Work::take`): what runs and what
+    /// was said follow them; the window shows what a plan made, and one
     /// toast saying what it did and offering the way back.
     pub fn drain_executor(&mut self, cx: &mut Context<Self>) {
         let rx = self.app.executor.events().clone();
+        let watched = self.watched();
         let mut any = false;
         while let Ok(event) = rx.try_recv() {
             any = true;
-            match event {
-                ExecEvent::Started {
-                    plan,
-                    title,
-                    total,
-                    run,
-                    items,
-                } => {
-                    self.toasts.running.push(Running {
-                        plan,
-                        title,
-                        run,
-                        total,
-                        first: None,
-                        first_named: None,
-                        failed: None,
-                        failed_named: None,
-                        items,
-                        paused: false,
-                        cancelling: false,
-                        going_on: self.toasts.going_on.remove(&plan),
-                    });
-                }
-                ExecEvent::GoesOn { plan, next, .. } => {
-                    self.toasts.going_on.insert(next);
-                    self.tell_goes_on(plan);
-                }
+            match self.work.take(&self.app, event, watched) {
+                Taken::Nothing => {}
+                Taken::Step(progress) => self.made_step(&progress),
                 // Its toast says it goes on by itself, while it is the
                 // one shown (its Retry names the plan).
-                ExecEvent::WaitsForServer { plan } => {
+                Taken::WaitsForServer(plan) => {
                     let said = WAITS_FOR_SERVER;
-                    self.tell_waits_for_server(plan, said);
                     if let Some(toast) = self.toasts.current.as_mut()
                         && toast.actions.iter().any(|a| {
                             a.command == "retry" && a.args["plan"] == serde_json::json!(plan)
@@ -443,92 +440,21 @@ impl Shell {
                         toast.text.push_str(said);
                     }
                 }
-                ExecEvent::Paused { plan } | ExecEvent::Resumed { plan } => {
-                    let paused = matches!(event, ExecEvent::Paused { .. });
-                    if let Some(running) = self.toasts.running.iter_mut().find(|r| r.plan == plan) {
-                        running.paused = paused;
-                    }
-                }
-                ExecEvent::Step(progress) => {
-                    self.made_step(&progress);
-                    if let Some(running) = self
-                        .toasts
-                        .running
-                        .iter_mut()
-                        .find(|r| r.plan == progress.plan)
-                    {
-                        running.total = progress.total;
-                        if progress.error.is_some() {
-                            running.failed = Some(progress.change);
-                            running.failed_named = progress.named;
-                        } else if running.first.is_none() {
-                            running.first = Some(progress.change);
-                            running.first_named = progress.named;
-                        }
-                    }
-                }
-                ExecEvent::Finished {
+                Taken::Ended {
                     plan,
-                    applied,
-                    error,
-                    cancelled,
-                    undoable,
+                    done,
                     items,
-                    said,
-                    moved,
-                    ran,
-                    ..
+                    answer,
                 } => {
-                    self.made(plan, error.is_none() && !cancelled, items.as_ref());
-                    let Some(index) = self.toasts.running.iter().position(|r| r.plan == plan)
-                    else {
-                        continue;
-                    };
-                    let running = self.toasts.running.remove(index);
-                    let run = running.run;
-                    let title = running.title.clone();
-                    let stopped_by_error = error.is_some() && !cancelled;
-                    // Deleted where its server keeps a trash (ADR-086).
-                    let kept_in = match &running.first {
-                        Some(Change::Delete { path }) => {
-                            self.app.remote(path).and_then(|(_, known)| known?.trash)
-                        }
-                        _ => None,
-                    };
-                    let (text, tone) = ended(
-                        running,
-                        End {
-                            applied,
-                            error,
-                            cancelled,
-                            items,
-                            kept_in: kept_in.as_deref(),
-                            said: &said,
-                            moved,
-                            ran,
-                        },
-                    );
-                    let actions = finished_actions(
-                        plan,
-                        run,
-                        undoable && applied > 0,
-                        run == RunKind::Apply && self.app.executor.can_retry(plan),
-                        run == RunKind::Undo && self.app.executor.can_redo(),
-                    );
-                    self.activity_ended(plan, &title, (&text, tone, &actions), stopped_by_error);
-                    self.tell_ended(plan, &text, stopped_by_error, cancelled, ran);
-                    self.toast(
-                        Toast {
-                            text,
-                            tone,
-                            actions,
-                        },
-                        cx,
-                    );
+                    self.made(plan, done, items.as_ref());
+                    if let Some(answer) = answer {
+                        self.forget_earlier_rows();
+                        self.toast(answer, cx);
+                    }
                 }
             }
         }
-        self.sync_activity();
+        self.work.sync_stopped(&self.app);
         if any {
             cx.notify();
         }
@@ -542,7 +468,7 @@ impl Shell {
 /// cancelled, before anything was done (a question about names taken
 /// answered Cancel) or after. What the steps said follows; alone when
 /// they did nothing else (a smaller copy not made).
-fn ended(running: Running, end: End<'_>) -> (String, Tone) {
+pub(crate) fn ended(running: Running, end: End<'_>) -> (String, Tone) {
     let End {
         applied,
         error,
@@ -572,16 +498,16 @@ const AVERAGED_FROM: Duration = Duration::from_secs(5);
 
 /// How a plan ended, as `ExecEvent::Finished` says it, for its toast.
 #[derive(Default)]
-struct End<'a> {
-    applied: usize,
-    error: Option<String>,
-    cancelled: bool,
-    items: Option<skwir_core::op::Items>,
+pub(crate) struct End<'a> {
+    pub applied: usize,
+    pub error: Option<String>,
+    pub cancelled: bool,
+    pub items: Option<skwir_core::op::Items>,
     /// Deleted where its server keeps a trash (ADR-086): that trash.
-    kept_in: Option<&'a str>,
-    said: &'a [String],
-    moved: u64,
-    ran: Duration,
+    pub kept_in: Option<&'a str>,
+    pub said: &'a [String],
+    pub moved: u64,
+    pub ran: Duration,
 }
 
 /// What the toast of `running`, ended, says of what was done (`ended`).
@@ -635,7 +561,7 @@ fn ended_as(
 /// reports, never the last one asked (a rename beside a long copy): taken
 /// back alone when nothing asked after it touched what it did, else its
 /// run says why (`Executor::undo_of`).
-fn finished_actions(
+pub(crate) fn finished_actions(
     plan: PlanId,
     run: RunKind,
     undoes: bool,
@@ -718,10 +644,6 @@ pub fn pace(t: &Transfer) -> Option<String> {
     let said: Vec<String> = [speed, left.or(then)].into_iter().flatten().collect();
     (!said.is_empty()).then(|| said.join(" · "))
 }
-
-/// What a stopped plan's toast adds once its server is found not
-/// answering (`ExecEvent::WaitsForServer`).
-const WAITS_FOR_SERVER: &str = ". It goes on by itself once the server answers again";
 
 /// The answer said last, as a card: what it says, its buttons, and Close.
 /// Its caller places it: over the files at the last pane's lower right,
@@ -1030,27 +952,30 @@ mod tests {
     }
 
     #[test]
-    fn quitting_while_a_plan_runs_says_what_stops_and_what_stays() {
+    fn quitting_while_a_plan_runs_says_what_finishes_and_what_stops() {
         assert_eq!(
             quit_question(Some(("copy to /media/stick", true)), 0, 2),
-            "Copy to /media/stick is paused. Quit and stop it? What it finished stays; \
-             what it was in the middle of is taken back. The 2 actions waiting after it \
-             will not run."
-        );
-        assert_eq!(
-            quit_question(Some(("move to Trash", false)), 0, 0),
-            "Move to Trash is still running. Quit and stop it? What it finished stays; \
+            "Copy to /media/stick is paused. Skwir can finish it, and the 2 actions waiting \
+             after it, without its window, then quit. Or stop now: what it finished stays, \
              what it was in the middle of is taken back."
         );
         assert_eq!(
+            quit_question(Some(("move to Trash", false)), 0, 0),
+            "Move to Trash is still running. Skwir can finish it without its window, then \
+             quit. Or stop now: what it finished stays, what it was in the middle of is \
+             taken back."
+        );
+        assert_eq!(
             quit_question(Some(("copy to /media/stick", false)), 2, 1),
-            "Copy to /media/stick is still running, and 2 other actions beside it. Quit and \
-             stop them? What they finished stays; what they were in the middle of is taken \
-             back. The 1 action waiting after them will not run."
+            "Copy to /media/stick is still running, and 2 other actions beside it. Skwir can \
+             finish them, and the 1 action waiting after them, without its window, then \
+             quit. Or stop now: what they finished stays, what they were in the middle of \
+             is taken back."
         );
         assert_eq!(
             quit_question(None, 0, 0),
-            "A change is about to begin. Quit before it does?"
+            "A change is about to begin. Skwir can finish it without its window, then quit. \
+             Or stop now: what it finished stays, what it was in the middle of is taken back."
         );
     }
 

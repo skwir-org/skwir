@@ -439,11 +439,10 @@ pub struct Shell {
     pub toasts: crate::toast::ToastState,
     /// What runs, docked at the window's foot, and what ended (ADR-114).
     pub activity: crate::activity::ActivityState,
-    /// What the desktop is told of long actions (ADR-114): made for the
-    /// window, never in a headless run.
-    pub(crate) desktop: Option<skwir_platform::desktop::Desktop>,
-    /// The notices clicked, taken at the next sync.
-    pub(crate) clicked: std::sync::Arc<parking_lot::Mutex<Vec<skwir_platform::desktop::Clicked>>>,
+    /// What runs and what was said of it, the desktop told (ADR-114): the
+    /// window's while it is up, kept by the program once it closes while
+    /// something is left (ADR-115).
+    pub(crate) work: crate::work::Work,
     /// Whether the window has the focus: what ends while it has not is
     /// told to the desktop.
     pub(crate) window_active: bool,
@@ -520,12 +519,12 @@ pub struct Shell {
 }
 
 impl Shell {
-    pub fn new(
+    pub(crate) fn new(
         app: Arc<App>,
         initial: Option<Location>,
         started: Instant,
         keymap: keymap::Keymap,
-        wake_rx: flume::Receiver<()>,
+        work: crate::work::Work,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -620,50 +619,13 @@ impl Shell {
             });
         }));
 
-        // The window's close button quits as Quit does: asking first
-        // while a plan runs.
+        // The window's close button closes it, asking nothing: what runs
+        // goes on without it (ADR-115, `finishing.rs`).
         let shell = cx.weak_entity();
         window.on_window_should_close(cx, move |window, cx| {
-            shell
-                .update(cx, |shell, cx| !shell.ask_before_closing(window, cx))
-                .unwrap_or(true)
+            shell.update(cx, |shell, cx| shell.leave(window, cx)).ok();
+            true
         });
-
-        // Wake-up, not polling: the core signals, the shell applies what it
-        // sent, GPUI re-renders. Applying is done here, not left to the draw
-        // that `notify` asks for: a window the compositor is not showing (a
-        // workspace that is not on screen) is never asked to draw, and what
-        // the core sent (a media key's request, a track that ended) must not
-        // wait until it is. `render` syncs too, for what the user did since.
-        cx.spawn_in(window, async move |this, cx| {
-            loop {
-                if wake_rx.recv_async().await.is_err() {
-                    break;
-                }
-                loop {
-                    while wake_rx.try_recv().is_ok() {}
-                    let Ok(backlog) = this.update_in(cx, |this, window, cx| {
-                        this.sync(window, cx);
-                        cx.notify();
-                        this.backlog
-                    }) else {
-                        return;
-                    };
-                    if !backlog {
-                        break;
-                    }
-                    // A listing is still being applied, a slice per sync
-                    // (`PUMP_BUDGET`): give the event loop a turn, so the
-                    // window draws what has arrived, then go on. The wait
-                    // must go through the platform's loop: a zero timer is
-                    // a ready task in gpui, and yields to nothing.
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(1))
-                        .await;
-                }
-            }
-        })
-        .detach();
 
         // Friendly dates say "Today" and "Yesterday": repaint once when the
         // day changes. One timer per day, not a clock.
@@ -779,8 +741,7 @@ impl Shell {
             layout: crate::layout::Layout::default(),
             toasts: crate::toast::ToastState::default(),
             activity: crate::activity::ActivityState::default(),
-            desktop: None,
-            clicked: std::sync::Arc::default(),
+            work,
             window_active: window.is_window_active(),
             pending: Arc::default(),
             shortcuts: None,
@@ -829,7 +790,8 @@ impl Shell {
             shell.set_status(format!("{e:#}"), true, cx);
         }
         shell.restore_session(initial_given, window, cx);
-        shell.desktop = Some(crate::activity::desktop(&shell.app, &shell.clicked, window));
+        // The taskbar's button shows the progress of this window's.
+        shell.work.shown_in(Some(window));
         // Scripts and agents reach the window from now on: what they ask
         // comes after what it starts on.
         shell.app.set_window_shown();
@@ -2186,9 +2148,16 @@ impl Shell {
         cx.notify();
     }
 
-    /// Quit: close the window, which ends skwir once the plans running
-    /// have stopped (`lib.rs`). While one runs, ask first, saying what
-    /// stops; asked already, Quit again answers yes.
+    /// Whether a listing is still being applied, a slice per sync
+    /// (`PUMP_BUDGET`): the wake loop syncs again after a turn.
+    pub(crate) fn backlog(&self) -> bool {
+        self.backlog
+    }
+
+    /// Quit (ADR-115). While something runs or waits its turn, ask: Skwir
+    /// finishes it without its window (the answer Enter gives, and Quit
+    /// again), or stops now. With nothing under way, quit at once: an
+    /// action an error stopped, still shown in the strip, is let go.
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self
             .confirm
@@ -2196,26 +2165,67 @@ impl Shell {
             .is_some_and(|c| matches!(c.then, Confirmed::Quit))
         {
             self.confirm_accept(window, cx);
-        } else if !self.ask_before_closing(window, cx) {
-            window.remove_window();
+        } else if crate::finishing::under_way(&self.app, &self.work) {
+            let running = self.work.running.first().map(|running| {
+                let paused = self.app.executor.is_paused(running.plan);
+                (running.title.as_str(), paused)
+            });
+            let others = self.work.running.len().saturating_sub(1);
+            let waiting = self.app.executor.queued();
+            let question = crate::toast::quit_question(running, others, waiting);
+            self.open_confirm(question, Confirmed::Quit, window, cx);
+        } else {
+            self.stop_and_quit(window, cx);
         }
     }
 
-    /// While a plan runs, ask whether to quit and stop it, and say so:
-    /// the window's close button closes it only when this says no.
-    pub fn ask_before_closing(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        if !self.app.executor.is_busy() {
-            return false;
+    /// Stop what runs and quit: the window closes at once, and the program
+    /// ends once its plans took back what they were in the middle of
+    /// (`lib.rs`, `wind_down`).
+    pub(crate) fn stop_and_quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        crate::finishing::stopping(cx);
+        self.leave(window, cx);
+        window.remove_window();
+    }
+
+    /// The window is about to close (its close button, Quit): what it asks
+    /// and was not answered is answered Cancel, as its own Close would;
+    /// what runs and what was said of it go to the program, which finishes
+    /// without the window (`finishing.rs`) or ends.
+    pub(crate) fn leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.decline_held();
+        self.work.shown_in(None);
+        let _ = window;
+        crate::finishing::left(std::mem::take(&mut self.work), cx);
+    }
+
+    /// What the window took to ask and was not answered: Cancel each.
+    fn decline_held(&mut self) {
+        for review in self.reviews.drain(..) {
+            match review {
+                crate::review::Review::Plan { plan, .. } => {
+                    self.app.dismissed(plan.id);
+                }
+                crate::review::Review::Question(question) => {
+                    self.app.answer(question.id, false);
+                }
+                crate::review::Review::Clashes(clashes) => {
+                    self.app.answer_clashes(clashes.question.id, None);
+                }
+            }
         }
-        let running = self.toasts.running.first().map(|running| {
-            let paused = self.app.executor.is_paused(running.plan);
-            (running.title.as_str(), paused)
-        });
-        let others = self.toasts.running.len().saturating_sub(1);
-        let waiting = self.app.executor.queued();
-        let question = crate::toast::quit_question(running, others, waiting);
-        self.open_confirm(question, Confirmed::Quit, window, cx);
-        true
+        if let Some(prompt) = self.prompt.take() {
+            self.give_up_secret(prompt.kind);
+        }
+        for secret in self.secrets.drain(..) {
+            self.app.answer_secret(secret.id, None);
+        }
+        if let Some(form) = self.form.take() {
+            self.app.answer_form(form.id, None);
+        }
+        for form in self.forms.drain(..) {
+            self.app.answer_form(form.id, None);
+        }
     }
 
     /// Dispatch and hand back a `Value` (for plugin queries the UI renders).
@@ -2911,7 +2921,7 @@ impl Shell {
         self.sync_keymap(cx);
         self.drain_executor(cx);
         self.tell_desktop();
-        self.take_clicked(window, cx);
+        self.take_asked(window, cx);
         for n in self.app.take_notifications() {
             let error = matches!(n.level, NotifyLevel::Error | NotifyLevel::Warning);
             match (n.setting, n.action) {

@@ -1,0 +1,909 @@
+//! Linux: the desktop's servers on the program's session bus (`bus`), and
+//! logind on the system's.
+
+use std::collections::HashMap;
+use std::os::fd::OwnedFd;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use crossbeam_channel::{Receiver, Sender};
+use parking_lot::Mutex;
+use skwir_core::CancelToken;
+use zbus::blocking::Connection;
+use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+
+use super::icon::Icons;
+use super::{
+    Asked, Clicked, Kind, Notice, OnAsked, Presence, Progress, Setup, Shown, Standing, State,
+};
+
+mod tray;
+
+/// The notification server: its name, object and interface.
+const NOTICES: (&str, &str, &str) = (
+    "org.freedesktop.Notifications",
+    "/org/freedesktop/Notifications",
+    "org.freedesktop.Notifications",
+);
+/// logind's manager on the system bus.
+const LOGIN: (&str, &str, &str) = (
+    "org.freedesktop.login1",
+    "/org/freedesktop/login1",
+    "org.freedesktop.login1.Manager",
+);
+/// The bus itself.
+const DBUS: (&str, &str, &str) = (
+    "org.freedesktop.DBus",
+    "/org/freedesktop/DBus",
+    "org.freedesktop.DBus",
+);
+/// The tray's watcher, which items register with and hosts read
+/// (`StatusNotifierItem`, KDE's specification).
+const WATCHER: (&str, &str, &str) = (
+    "org.kde.StatusNotifierWatcher",
+    "/StatusNotifierWatcher",
+    "org.kde.StatusNotifierWatcher",
+);
+/// The desktop portal's inhibitor.
+const PORTAL: (&str, &str, &str) = (
+    "org.freedesktop.portal.Desktop",
+    "/org/freedesktop/portal/desktop",
+    "org.freedesktop.portal.Inhibit",
+);
+/// What a portal's call answers: closed, its inhibition ends.
+const REQUEST: &str = "org.freedesktop.portal.Request";
+/// The portal's inhibitor flag for the session's end.
+const LOGOUT: u32 = 1;
+/// The session managers that show a dialog of their own at the session's
+/// end, listing what the portal holds: logind's block is not asked where
+/// one is.
+const SESSION_MANAGERS: [&str; 2] = ["org.gnome.SessionManager", "org.kde.ksmserver"];
+const LAUNCHER_ENTRY: &str = "com.canonical.Unity.LauncherEntry";
+/// The action a click on the notice itself invokes.
+const DEFAULT: &str = "default";
+const ACTIONS: [&str; 2] = [DEFAULT, "Show"];
+/// The notice that stays's other action.
+const STOP: &str = "stop";
+const RESIDENT_ACTIONS: [&str; 4] = [DEFAULT, "Open Skwir", STOP, "Stop all"];
+/// How long a server is waited for: the session's connection is
+/// shared and has no timeout of its own, and one that hangs would
+/// hold every later ask.
+const ANSWER: Duration = Duration::from_secs(5);
+/// How long the server's signals are waited to be listened to before
+/// the first notice, so no click on it is missed.
+const LISTENING: Duration = Duration::from_secs(2);
+/// How long a tray that went is waited for before the presence becomes a
+/// notice: a panel started again (waybar, plasmashell) is back within it.
+const LOST: Duration = Duration::from_secs(3);
+
+pub(super) type Connect = Arc<dyn Fn() -> zbus::Result<Connection> + Send + Sync>;
+
+/// Where the session's and the system's connections come from.
+#[derive(Clone)]
+pub(super) struct Buses {
+    /// The session's: the program's own (`bus::session`), as its
+    /// notification server may tell its signals to the connection that
+    /// showed the notice alone.
+    pub(super) session: Connect,
+    /// The system's, made for a call and closed after it.
+    pub(super) system: Connect,
+}
+
+impl Buses {
+    pub(super) fn the_programs() -> Buses {
+        Buses {
+            session: Arc::new(crate::bus::session),
+            system: Arc::new(Connection::system),
+        }
+    }
+}
+
+/// The notices shown, as the server knows them: shared with the thread
+/// that follows its signals.
+#[derive(Default)]
+pub(super) struct Showing {
+    /// The notice shown one at a time: the server's id of it, and the key
+    /// it was shown with.
+    pub(super) shown: Option<(u32, u64)>,
+    /// The token the server gave last, for the notice of that id.
+    token: Option<(u32, String)>,
+    /// The presence's notice that stays, while there is no tray: the
+    /// server's id of it, until the user closes it.
+    pub(super) resident: Option<u32>,
+}
+
+impl Showing {
+    fn is(&self, id: u32) -> bool {
+        self.shown.is_some_and(|(shown, _)| shown == id)
+    }
+
+    /// The token given for `id`, taken.
+    fn token(&mut self, id: u32) -> Option<String> {
+        self.token
+            .take_if(|(of, _)| *of == id)
+            .map(|(_, token)| token)
+    }
+}
+
+/// What shows the presence.
+enum Shows {
+    Nothing,
+    /// An item in the tray.
+    Tray(tray::Served),
+    /// The notice that stays.
+    Notice,
+}
+
+/// The presence's notice that stays, as last shown.
+#[derive(Default)]
+struct Resident {
+    /// What it said: shown again only when this changes, never for a
+    /// percent, and not after the user closed it until then.
+    said: Option<(String, String, Standing)>,
+    /// The connection it was shown on: a bus started again shows it anew.
+    on: Option<String>,
+}
+
+/// The session's end held off.
+struct SessionHold {
+    why: String,
+    /// The connection the portal was asked on: its inhibition ends with it.
+    on: Option<String>,
+    /// The portal's request, closed to let go.
+    portal: Option<OwnedObjectPath>,
+    /// logind's descriptor.
+    logind: Option<OwnedFd>,
+}
+
+pub(super) struct Backend {
+    app_id: String,
+    app_name: String,
+    asked: OnAsked,
+    buses: Buses,
+    showing: Arc<Mutex<Showing>>,
+    /// The program's entry, as the launcher's signal names it.
+    entry: String,
+    /// The object the launcher's signal is said from.
+    path: String,
+    /// The thread following the bus's signals, once something was shown
+    /// or held, until this ends.
+    following: Option<CancelToken>,
+    /// Told by that thread when the tray came or went, or the bus started
+    /// again: this looks again ([`Backend::woken`]). This keeps a sender,
+    /// so the receiver is never disconnected.
+    wake: (Sender<()>, Receiver<()>),
+    /// logind's descriptor, while the machine is kept awake.
+    inhibitor: Option<OwnedFd>,
+    /// Whether the last progress could not be told: said once, until
+    /// one can.
+    untold: bool,
+    icons: Icons,
+    /// The presence asked last.
+    wanted: Option<Presence>,
+    shows: Shows,
+    /// Tray items served so far, naming the next.
+    items: u32,
+    /// When the presence becomes a notice if no tray came back by then.
+    lost: Option<Instant>,
+    resident: Resident,
+    session: Option<SessionHold>,
+    /// Portal requests asked so far, naming the next.
+    requests: u32,
+}
+
+/// The progress as the launcher shows it: whole percents, none for an
+/// error (it has no such state); paused shown as it was.
+pub(super) fn shown(progress: Option<Progress>) -> Option<Shown> {
+    progress
+        .filter(|progress| progress.state != State::Error)
+        .map(|progress| Shown {
+            permille: super::permille(progress.fraction, 10),
+            state: State::Normal,
+        })
+}
+
+impl Backend {
+    pub(super) fn new(setup: &Setup) -> Backend {
+        let path = setup
+            .app_id
+            .split('.')
+            .filter(|part| !part.is_empty())
+            .map(|part| {
+                part.chars()
+                    .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+                    .collect::<String>()
+            })
+            .fold(String::new(), |path, part| path + "/" + &part);
+        Backend {
+            app_id: setup.app_id.clone(),
+            app_name: setup.app_name.clone(),
+            asked: Arc::clone(&setup.asked),
+            buses: setup.buses.clone(),
+            showing: Arc::clone(&setup.showing),
+            entry: format!("application://{}.desktop", setup.app_id),
+            path: path + "/LauncherEntry",
+            following: None,
+            wake: crossbeam_channel::unbounded(),
+            inhibitor: None,
+            untold: false,
+            icons: Icons::new(setup.icon),
+            wanted: None,
+            shows: Shows::Nothing,
+            items: 0,
+            lost: None,
+            resident: Resident::default(),
+            session: None,
+            requests: 0,
+        }
+    }
+
+    /// What tells this to look again: the tray or the bus changed.
+    pub(super) fn wakes(&self) -> Receiver<()> {
+        self.wake.1.clone()
+    }
+
+    /// When this wants [`Backend::tick`]: a tray gone, waited for.
+    pub(super) fn due(&self) -> Option<Instant> {
+        self.lost
+    }
+
+    pub(super) fn tick(&mut self, now: Instant) {
+        if self.lost.is_some_and(|lost| now >= lost) {
+            self.settle();
+        }
+    }
+
+    /// The tray or the bus changed: look again, once for all told.
+    pub(super) fn woken(&mut self) {
+        while self.wake.1.try_recv().is_ok() {}
+        self.settle();
+    }
+
+    pub(super) fn notify(&mut self, key: u64, notice: &Notice) {
+        let bus = match (self.buses.session)() {
+            Ok(bus) => bus,
+            Err(error) => {
+                tracing::debug!("the notice was not shown: no session bus: {error}");
+                return;
+            }
+        };
+        self.follow();
+        let replaces = self.showing.lock().shown.map_or(0, |(id, _)| id);
+        let category = match notice.kind {
+            Kind::Finished => "transfer.complete",
+            Kind::Stopped => "transfer.error",
+            Kind::Waiting => "transfer",
+        };
+        let hints = HashMap::from([
+            ("category", Value::from(category)),
+            ("desktop-entry", Value::from(self.app_id.as_str())),
+            ("urgency", Value::U8(1)),
+        ]);
+        let shown = self.show_notice(
+            &bus,
+            replaces,
+            (&notice.title, &notice.body),
+            &ACTIONS,
+            hints,
+            -1,
+        );
+        match shown {
+            Ok(id) => self.showing.lock().shown = Some((id, key)),
+            Err(error) => tracing::debug!("the notice was not shown: {error}"),
+        }
+    }
+
+    /// Show a notice in place of `replaces` (0 for none): its id.
+    fn show_notice(
+        &self,
+        bus: &Connection,
+        replaces: u32,
+        (summary, body): (&str, &str),
+        actions: &[&str],
+        hints: HashMap<&str, Value<'_>>,
+        timeout: i32,
+    ) -> zbus::Result<u32> {
+        // Escaped only for a server that reads markup: another shows
+        // the body as written.
+        let markup = call(bus, NOTICES, "GetCapabilities", &())
+            .and_then(|reply| reply.body().deserialize::<Vec<String>>())
+            .is_ok_and(|capabilities| capabilities.iter().any(|c| c == "body-markup"));
+        let body = if markup {
+            super::escape(body)
+        } else {
+            body.to_owned()
+        };
+        call(
+            bus,
+            NOTICES,
+            "Notify",
+            &(
+                self.app_name.as_str(),
+                replaces,
+                self.app_id.as_str(),
+                summary,
+                body.as_str(),
+                actions,
+                hints,
+                timeout,
+            ),
+        )
+        .and_then(|reply| reply.body().deserialize::<u32>())
+    }
+
+    pub(super) fn withdraw(&mut self, key: Option<u64>) {
+        let id = {
+            let mut showing = self.showing.lock();
+            match showing.shown {
+                Some((id, shown)) if key.is_none_or(|key| key == shown) => {
+                    showing.shown = None;
+                    id
+                }
+                _ => return,
+            }
+        };
+        let closed =
+            (self.buses.session)().and_then(|bus| call(&bus, NOTICES, "CloseNotification", &id));
+        if let Err(error) = closed {
+            tracing::debug!("the notice was not taken back: {error}");
+        }
+    }
+
+    pub(super) fn progress(&mut self, shown: Option<Shown>) {
+        let progress = shown.map_or(0.0, |shown| f64::from(shown.permille) / 1000.0);
+        let properties = HashMap::from([
+            ("progress", Value::F64(progress)),
+            ("progress-visible", Value::Bool(shown.is_some())),
+        ]);
+        let told = (self.buses.session)().and_then(|bus| {
+            bus.emit_signal(
+                None::<&str>,
+                self.path.as_str(),
+                LAUNCHER_ENTRY,
+                "Update",
+                &(self.entry.as_str(), properties),
+            )
+        });
+        match told {
+            Ok(()) => self.untold = false,
+            Err(error) => {
+                if !std::mem::replace(&mut self.untold, true) {
+                    tracing::debug!("the progress is not shown on the program's entry: {error}");
+                }
+            }
+        }
+    }
+
+    /// Ask logind to hold off sleep, on a system connection made for
+    /// the call: the descriptor it answers outlives the connection.
+    pub(super) fn hold(&mut self, why: &str) {
+        match self.inhibit("sleep", why) {
+            Ok(fd) => self.inhibitor = Some(fd),
+            Err(error) => tracing::debug!("the machine may sleep meanwhile: {error}"),
+        }
+    }
+
+    pub(super) fn let_go(&mut self) {
+        self.inhibitor = None;
+    }
+
+    /// logind's block of `what`, with `why`.
+    fn inhibit(&self, what: &str, why: &str) -> zbus::Result<OwnedFd> {
+        (self.buses.system)()
+            .and_then(|bus| {
+                call(
+                    &bus,
+                    LOGIN,
+                    "Inhibit",
+                    &(what, self.app_name.as_str(), why, "block"),
+                )
+            })
+            .and_then(|reply| reply.body().deserialize::<zbus::zvariant::OwnedFd>())
+            .map(OwnedFd::from)
+    }
+
+    /// Show `presence` where it shows (the tray, else a notice that stays),
+    /// or take it back.
+    pub(super) fn presence(&mut self, presence: Option<&Presence>) {
+        self.wanted = presence.cloned();
+        let Some(presence) = presence else {
+            self.take_back();
+            return;
+        };
+        let bus = match (self.buses.session)() {
+            Ok(bus) => bus,
+            Err(error) => {
+                tracing::debug!("nothing shows the program at work: no session bus: {error}");
+                return;
+            }
+        };
+        self.follow();
+        match &mut self.shows {
+            Shows::Tray(served) if served.is_on(&bus) => served.show(presence, &mut self.icons),
+            Shows::Notice => self.resident(&bus, presence),
+            // What was served on a bus that ended went with it.
+            Shows::Tray(_) | Shows::Nothing => {
+                self.shows = Shows::Nothing;
+                let tray = tray_host(&bus);
+                self.show(&bus, tray, presence);
+            }
+        }
+    }
+
+    /// Show `presence` in the tray whose watcher `tray` names, else as a
+    /// notice that stays: nothing showing it yet.
+    fn show(&mut self, bus: &Connection, tray: Option<String>, presence: &Presence) {
+        if let Some(watcher) = tray {
+            self.items += 1;
+            // Unique to the process and to the presence: a host that knew
+            // the last one's name forgets it before taking this one.
+            let name = format!(
+                "org.kde.StatusNotifierItem-{}-{}",
+                std::process::id(),
+                self.items
+            );
+            let app = (self.app_id.as_str(), self.app_name.as_str());
+            match tray::Served::on(bus, name, app, presence, &mut self.icons, &self.asked) {
+                Ok(mut served) => {
+                    if served.register(watcher) {
+                        self.shows = Shows::Tray(served);
+                        return;
+                    }
+                }
+                Err(error) => tracing::debug!("the program is not shown in the tray: {error}"),
+            }
+        }
+        self.shows = Shows::Notice;
+        self.resident(bus, presence);
+    }
+
+    /// Look again at where the presence shows and what holds the session,
+    /// the tray or the bus having changed: register again with a watcher
+    /// started again, become a notice once the tray is gone for [`LOST`],
+    /// go back to the tray once there is one, show everything anew on a
+    /// bus started again.
+    fn settle(&mut self) {
+        let bus = match (self.buses.session)() {
+            Ok(bus) => bus,
+            Err(error) => {
+                tracing::debug!("no session bus: {error}");
+                return;
+            }
+        };
+        self.hold_again(&bus);
+        let Some(wanted) = self.wanted.clone() else {
+            self.lost = None;
+            return;
+        };
+        let tray = tray_host(&bus);
+        match &mut self.shows {
+            Shows::Tray(served) if served.is_on(&bus) => {
+                if let Some(watcher) = tray {
+                    self.lost = None;
+                    if served.watcher() != Some(watcher.as_str()) {
+                        served.register(watcher);
+                    }
+                    return;
+                }
+                let now = Instant::now();
+                match self.lost {
+                    None => {
+                        self.lost = Some(now + LOST);
+                        return;
+                    }
+                    Some(lost) if now < lost => return,
+                    Some(_) => {}
+                }
+                tracing::debug!("no tray came back: the program at work is shown in a notice");
+                self.lost = None;
+                // The item taken back with it.
+                self.shows = Shows::Notice;
+                self.resident(&bus, &wanted);
+            }
+            Shows::Notice if tray.is_some() => {
+                self.close_resident(&bus);
+                self.shows = Shows::Nothing;
+                self.show(&bus, tray, &wanted);
+            }
+            // Shown anew on a bus started again.
+            Shows::Notice => self.resident(&bus, &wanted),
+            Shows::Tray(_) | Shows::Nothing => {
+                self.lost = None;
+                self.shows = Shows::Nothing;
+                self.show(&bus, tray, &wanted);
+            }
+        }
+    }
+
+    /// The presence as a notice that stays: shown again only when its
+    /// title, what it is about or how it stands changed, never for a
+    /// percent; once the user closed it, not until then.
+    fn resident(&mut self, bus: &Connection, presence: &Presence) {
+        let on = unique(bus);
+        if self.resident.on != on {
+            // Shown on a bus that ended, or never: gone with it.
+            self.resident = Resident { said: None, on };
+            self.showing.lock().resident = None;
+        }
+        let said = (
+            presence.title.clone(),
+            presence.about.clone(),
+            presence.standing,
+        );
+        if self.resident.said.as_ref() == Some(&said) {
+            return;
+        }
+        let replaces = self.showing.lock().resident.unwrap_or(0);
+        let hints = HashMap::from([
+            ("category", Value::from("transfer")),
+            ("desktop-entry", Value::from(self.app_id.as_str())),
+            ("resident", Value::Bool(true)),
+            ("urgency", Value::U8(1)),
+        ]);
+        let shown = self.show_notice(
+            bus,
+            replaces,
+            (&presence.title, &presence.about),
+            &RESIDENT_ACTIONS,
+            hints,
+            0,
+        );
+        match shown {
+            Ok(id) => self.showing.lock().resident = Some(id),
+            // Not asked again until it says something new: a server that
+            // hangs would hold every ask meanwhile, each second.
+            Err(error) => tracing::debug!("nothing shows the program at work: {error}"),
+        }
+        self.resident.said = Some(said);
+    }
+
+    /// Close the notice that stays, if shown.
+    fn close_resident(&mut self, bus: &Connection) {
+        self.resident.said = None;
+        let id = self.showing.lock().resident.take();
+        if let Some(id) = id
+            && let Err(error) = call(bus, NOTICES, "CloseNotification", &id)
+        {
+            tracing::debug!("the notice that stays was not taken back: {error}");
+        }
+    }
+
+    /// Take back what shows the presence: the item's name and objects, or
+    /// the notice that stays.
+    fn take_back(&mut self) {
+        self.lost = None;
+        match std::mem::replace(&mut self.shows, Shows::Nothing) {
+            Shows::Notice => match (self.buses.session)() {
+                Ok(bus) => self.close_resident(&bus),
+                Err(error) => tracing::debug!("the notice that stays stays: {error}"),
+            },
+            // Dropped: its name and objects taken back.
+            Shows::Tray(served) => drop(served),
+            Shows::Nothing => {}
+        }
+    }
+
+    /// Hold off the session's end with `why` (in place of the last), or
+    /// let go: the new hold taken before the last is let go of, so none
+    /// lapses between.
+    pub(super) fn hold_session(&mut self, why: Option<&str>) {
+        let before = self.session.take();
+        if let Some(why) = why {
+            self.session = Some(self.hold_off(why));
+        }
+        if let Some(before) = before {
+            self.let_session_go(before);
+        }
+    }
+
+    /// The portal's inhibitor of the session's end, which GNOME's session
+    /// lists in its log-out and power-off dialogs, with `why`; and logind's
+    /// shutdown block, but only where no session manager showing a dialog
+    /// of its own is on the bus. GNOME mishandles logind's block
+    /// inhibitors: power-off silently does nothing, or polkit asks for a
+    /// password without saying why
+    /// (<https://discussion.fedoraproject.org/t/poweroff-reboot-doesnt-work-in-gnome-when-an-inhibitor-is-held/148592>).
+    fn hold_off(&mut self, why: &str) -> SessionHold {
+        let bus = (self.buses.session)()
+            .inspect_err(|error| tracing::debug!("no session bus: {error}"))
+            .ok();
+        if bus.is_some() {
+            // To ask the portal again on a bus started again.
+            self.follow();
+        }
+        let portal = bus.as_ref().and_then(|bus| self.ask_portal(bus, why));
+        let showing_its_own = bus.as_ref().and_then(|bus| {
+            SESSION_MANAGERS
+                .into_iter()
+                .find(|name| has_owner(bus, name))
+        });
+        let logind = match showing_its_own {
+            Some(manager) => {
+                tracing::debug!("logind is not asked: {manager} shows the session's end itself");
+                None
+            }
+            None => self
+                .inhibit("shutdown", why)
+                .inspect_err(|error| tracing::debug!("logind does not hold off shutdown: {error}"))
+                .ok(),
+        };
+        if portal.is_none() && logind.is_none() {
+            tracing::debug!("the session may end while actions run: nothing holds it off");
+        }
+        SessionHold {
+            why: why.to_owned(),
+            on: bus.as_ref().and_then(unique),
+            portal,
+            logind,
+        }
+    }
+
+    /// The portal's inhibitor of logging out, with `why`: its request.
+    fn ask_portal(&mut self, bus: &Connection, why: &str) -> Option<OwnedObjectPath> {
+        self.requests += 1;
+        let token = format!("skwir_session_{}", self.requests);
+        let options = HashMap::from([
+            ("reason", Value::from(why)),
+            ("handle_token", Value::from(token.as_str())),
+        ]);
+        call(bus, PORTAL, "Inhibit", &("", LOGOUT, options))
+            .and_then(|reply| reply.body().deserialize::<OwnedObjectPath>())
+            .inspect_err(|error| {
+                tracing::debug!("the portal does not hold off the session's end: {error}");
+            })
+            .ok()
+    }
+
+    /// Ask the portal again on a bus started again: what it held went with
+    /// the connection that asked.
+    fn hold_again(&mut self, bus: &Connection) {
+        let on = unique(bus);
+        let why = match &self.session {
+            Some(hold) if hold.on != on => hold.why.clone(),
+            _ => return,
+        };
+        let portal = self.ask_portal(bus, &why);
+        if let Some(hold) = &mut self.session {
+            hold.portal = portal;
+            hold.on = on;
+        }
+    }
+
+    fn let_session_go(&self, hold: SessionHold) {
+        if let Some(request) = hold.portal {
+            // On a bus that ended, it went with the connection.
+            let closed = (self.buses.session)()
+                .ok()
+                .filter(|bus| unique(bus) == hold.on)
+                .map(|bus| call(&bus, (PORTAL.0, request.as_str(), REQUEST), "Close", &()));
+            if let Some(Err(error)) = closed {
+                tracing::debug!("the portal's hold was not let go of: {error}");
+            }
+        }
+        drop(hold.logind);
+    }
+
+    /// Follow the bus's signals on a thread of their own, for the
+    /// program's life (`bus::keep`): started with the first notice,
+    /// presence or hold, which waits until they are listened to. The
+    /// server's are taken there; the tray's, and the bus started again,
+    /// wake this.
+    fn follow(&mut self) {
+        if self.following.is_some() {
+            return;
+        }
+        let stop = CancelToken::new();
+        self.following = Some(stop.clone());
+        let (ready, listening) = crossbeam_channel::bounded::<()>(1);
+        let connect = Arc::clone(&self.buses.session);
+        let showing = Arc::clone(&self.showing);
+        let asked = Arc::clone(&self.asked);
+        let wake = self.wake.0.clone();
+        let started = std::thread::Builder::new()
+            .name("skwir-notices".into())
+            .spawn(move || {
+                let rules = match rules() {
+                    Ok(rules) => rules,
+                    Err(error) => {
+                        tracing::debug!("the desktop's signals are not followed: {error}");
+                        return;
+                    }
+                };
+                let mut again = false;
+                crate::bus::keep(
+                    || connect(),
+                    &stop,
+                    |bus| {
+                        if std::mem::replace(&mut again, true) {
+                            // The bus started again, and its servers with
+                            // it: what was shown went with them, and what
+                            // was served and held is asked anew.
+                            *showing.lock() = Showing::default();
+                            let _ = wake.send(());
+                        }
+                        let ready = ready.clone();
+                        crate::bus::listen(
+                            bus,
+                            rules.clone(),
+                            &stop,
+                            move || {
+                                let _ = ready.try_send(());
+                            },
+                            |message| told(message, &showing, &asked, &wake),
+                        );
+                    },
+                );
+            });
+        match started {
+            Ok(_) => {
+                let _ = listening.recv_timeout(LISTENING);
+            }
+            Err(error) => tracing::debug!("the desktop's signals are not followed: {error}"),
+        }
+    }
+}
+
+impl Drop for Backend {
+    fn drop(&mut self) {
+        // Taken back by the module's thread before; anything left with it.
+        self.take_back();
+        if let Some(hold) = self.session.take() {
+            self.let_session_go(hold);
+        }
+        if let Some(following) = self.following.take() {
+            following.cancel();
+        }
+    }
+}
+
+/// The signals followed: the notification server's (a notice clicked,
+/// the token given with the click, a notice closed), the tray's watcher's
+/// owner changing, and a host coming to or leaving the watcher.
+fn rules() -> zbus::Result<Vec<zbus::MatchRule<'static>>> {
+    let signal = || zbus::MatchRule::builder().msg_type(zbus::message::Type::Signal);
+    let host = |member| -> zbus::Result<zbus::MatchRule<'static>> {
+        Ok(signal()
+            .interface(WATCHER.2)?
+            .path(WATCHER.1)?
+            .member(member)?
+            .build())
+    };
+    Ok(vec![
+        signal().interface(NOTICES.2)?.path(NOTICES.1)?.build(),
+        signal()
+            .sender(DBUS.0)?
+            .interface(DBUS.2)?
+            .member("NameOwnerChanged")?
+            .arg(0, WATCHER.0)?
+            .build(),
+        host("StatusNotifierHostRegistered")?,
+        host("StatusNotifierHostUnregistered")?,
+    ])
+}
+
+/// A signal followed, taken at once: the notification server's handled
+/// here, the tray's told to the module's thread, which asks the bus.
+fn told(message: &zbus::Message, showing: &Mutex<Showing>, asked: &OnAsked, wake: &Sender<()>) {
+    let header = message.header();
+    let (Some(interface), Some(member)) = (header.interface(), header.member()) else {
+        return;
+    };
+    if interface.as_str() == NOTICES.2 {
+        noticed(member.as_str(), message, showing, asked);
+    } else {
+        let _ = wake.send(());
+    }
+}
+
+/// A signal of the notification server's: a click on a notice of ours told
+/// with the token given just before it (spec 1.2), a notice closed
+/// forgotten. Others' notices are none of ours.
+fn noticed(member: &str, message: &zbus::Message, showing: &Mutex<Showing>, asked: &OnAsked) {
+    let body = message.body();
+    match member {
+        "ActivationToken" => {
+            let Ok((id, token)) = body.deserialize::<(u32, String)>() else {
+                return;
+            };
+            let mut showing = showing.lock();
+            if showing.is(id) || showing.resident == Some(id) {
+                showing.token = Some((id, token));
+            }
+        }
+        "ActionInvoked" => {
+            let Ok((id, action)) = body.deserialize::<(u32, String)>() else {
+                return;
+            };
+            let what = {
+                let mut showing = showing.lock();
+                match showing.shown {
+                    Some((shown, key)) if shown == id => (action == DEFAULT).then(|| {
+                        Asked::Notice(Clicked {
+                            key,
+                            token: showing.token(id),
+                        })
+                    }),
+                    _ if showing.resident == Some(id) => match action.as_str() {
+                        DEFAULT => Some(Asked::Open {
+                            token: showing.token(id),
+                        }),
+                        STOP => Some(Asked::StopAll),
+                        _ => None,
+                    },
+                    _ => None,
+                }
+            };
+            if let Some(what) = what {
+                asked(what);
+            }
+        }
+        "NotificationClosed" => {
+            let Ok((id, _reason)) = body.deserialize::<(u32, u32)>() else {
+                return;
+            };
+            let mut showing = showing.lock();
+            if showing.is(id) {
+                showing.shown = None;
+            }
+            // Closed by the user: not shown again until it says something
+            // new.
+            if showing.resident == Some(id) {
+                showing.resident = None;
+            }
+            showing.token.take_if(|(of, _)| *of == id);
+        }
+        _ => {}
+    }
+}
+
+/// The tray's watcher's owner, if a host shows the items registered there:
+/// what is asked is whether the desktop can, never which desktop it is.
+fn tray_host(bus: &Connection) -> Option<String> {
+    let owner = call(bus, DBUS, "GetNameOwner", &WATCHER.0)
+        .and_then(|reply| reply.body().deserialize::<String>())
+        .ok()?;
+    let hosted = call(
+        bus,
+        (WATCHER.0, WATCHER.1, "org.freedesktop.DBus.Properties"),
+        "Get",
+        &(WATCHER.2, "IsStatusNotifierHostRegistered"),
+    )
+    .and_then(|reply| reply.body().deserialize::<OwnedValue>())
+    .is_ok_and(|hosted| bool::try_from(&hosted).unwrap_or(false));
+    hosted.then_some(owner)
+}
+
+fn has_owner(bus: &Connection, name: &str) -> bool {
+    call(bus, DBUS, "NameHasOwner", &name)
+        .and_then(|reply| reply.body().deserialize::<bool>())
+        .unwrap_or(false)
+}
+
+/// The connection's own name on the bus: another once the bus started
+/// again.
+fn unique(bus: &Connection) -> Option<String> {
+    bus.unique_name().map(ToString::to_string)
+}
+
+/// Call `method` of `(name, path, interface)` on `bus`, waiting at most
+/// [`ANSWER`]: the reply given up on, zbus drops it when it comes.
+fn call<B>(
+    bus: &Connection,
+    (name, path, interface): (&str, &str, &str),
+    method: &str,
+    body: &B,
+) -> zbus::Result<zbus::Message>
+where
+    B: serde::Serialize + zbus::zvariant::DynamicType,
+{
+    let answered = bus
+        .inner()
+        .call_method(Some(name), path, Some(interface), method, body);
+    zbus::block_on(futures_lite::future::or(answered, async {
+        async_io::Timer::after(ANSWER).await;
+        Err(zbus::Error::Failure(format!(
+            "{name} did not answer {method} within {} s",
+            ANSWER.as_secs()
+        )))
+    }))
+}

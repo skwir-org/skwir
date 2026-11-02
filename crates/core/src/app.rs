@@ -1902,6 +1902,17 @@ impl App {
         self.proposals.lock().len()
     }
 
+    /// Whether something waits for the window to ask the user, untaken: a
+    /// question, names taken, a password, a form, a proposal. While no
+    /// window is up (ADR-115) they wait for the next one.
+    pub fn waits_for_answer(&self) -> bool {
+        !self.questions.lock().is_empty()
+            || !self.clashes.lock().is_empty()
+            || !self.secrets.lock().is_empty()
+            || self.forms.waiting()
+            || !self.proposals.lock().is_empty()
+    }
+
     /// A weak handle for background work that outlives a command handler's
     /// `&App` (upgrade before use; `None` once the app is gone).
     pub fn weak(&self) -> std::sync::Weak<App> {

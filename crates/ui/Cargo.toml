@@ -37,6 +37,11 @@ smallvec = "1"
 [target.'cfg(windows)'.dependencies]
 raw-window-handle = "0.6"
 
+# A signal to end (a log out, a shutdown) stops what runs as Stop and quit
+# does (ADR-115): the version already in the tree.
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.4"
+
 [dev-dependencies]
 # A test's stand-in location sends its listing as core's do.
 crossbeam-channel.workspace = true

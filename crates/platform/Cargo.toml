@@ -68,16 +68,18 @@ mime.workspace = true
 oo7 = { version = "0.6", default-features = false, features = ["async-std", "native_crypto"] }
 
 # Windows' own calls (ADR-035): the drives, the user's SID, the types
-# the registry knows (ADR-037), the askpass's pipe.
+# the registry knows (ADR-037), the askpass's pipe, a later launch's pipe
+# (ADR-115).
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Globalization", "Win32_NetworkManagement_WNet", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Globalization", "Win32_NetworkManagement_WNet", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Credentials", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Registry", "Win32_System_RemoteDesktop", "Win32_System_Threading", "Win32_System_WindowsProgramming", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 # The shell's thumbnails (ADR-041): its COM interfaces, through the
 # version of `windows` gpui already links.
 # The shell's icons, from the system image list (system_icons).
 # The print dialog and the memory it hands back (ADR-111).
 # What the desktop is told (`desktop`): toasts, the taskbar's progress, a
-# power request; the WinRT features gpui's own toasts already build.
-windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Memory", "Win32_System_Power", "Win32_System_Threading", "Win32_UI_Controls", "Win32_UI_Controls_Dialogs", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+# power request; the WinRT features gpui's own toasts already build. The
+# notification area's icon and the session's end held off (ADR-115).
+windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Power", "Win32_System_Shutdown", "Win32_System_Threading", "Win32_UI_Controls", "Win32_UI_Controls_Dialogs", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 # macOS's own calls (ADR-035): the calendar's first weekday, the
 # Keychain, the types the system knows (ADR-037). The versions already in

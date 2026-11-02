@@ -60,6 +60,18 @@ fn main() -> anyhow::Result<()> {
     if let Some(code) = skwir::cli::run(&args) {
         std::process::exit(code);
     }
+    // A Skwir finishing what runs without its window takes this launch
+    // over: it opens its window again, showing what this was asked to
+    // (ADR-115). Where none is, this costs a look at one file.
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let opening = skwir_platform::handover::Opening {
+        location: args.first().cloned(),
+        cwd: cwd.clone(),
+        token: skwir_platform::handover::launch_token(),
+    };
+    if skwir_platform::handover::hand_over(&opening) {
+        return Ok(());
+    }
     // Before any GPU work: keep the Vulkan loader from mapping drivers for
     // hardware that is not here (ADR-002).
     let restricted = gpu::restrict_vulkan_drivers();
@@ -86,15 +98,8 @@ fn main() -> anyhow::Result<()> {
     // chosen folder, or the folders and tabs left open.
     let folder =
         |path: std::path::PathBuf| Location::from_path(std::path::absolute(&path).unwrap_or(path));
-    let initial = match std::env::args_os().nth(1) {
-        Some(arg) => {
-            let location = Location::parse_os(&arg);
-            if !location.is_path() && app.provider(&location.scheme).is_some() {
-                Some(location)
-            } else {
-                Some(folder(arg.into()))
-            }
-        }
+    let initial = match args.first() {
+        Some(arg) => Some(skwir_ui::location_of(&app, arg, &cwd)),
         None => match skwir_core::tabs::last_tabs(&app.settings) {
             Some(saved) if app.restore_tabs(&saved) => None,
             _ => {

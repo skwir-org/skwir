@@ -560,7 +560,7 @@ fn file_element(path: &Path, size: f32) -> AnyElement {
 
 /// skwir's own icon, the one its packages install
 /// (`assets/org.skwir.skwir.svg`).
-const APP_ICON: &[u8] = include_bytes!("../assets/org.skwir.skwir.svg");
+pub(crate) const APP_ICON: &[u8] = include_bytes!("../assets/org.skwir.skwir.svg");
 
 /// skwir's icon at `size` px, rasterized for the side it is drawn at, as
 /// a theme's SVG is.
