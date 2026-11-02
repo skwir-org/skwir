@@ -6,7 +6,8 @@
 
 use anyhow::{Context, Result, bail, ensure};
 use image::imageops::FilterType;
-use std::io::Write;
+use image::{ImageBuffer, Luma, Rgb, Rgba};
+use std::io::{Read, Write};
 
 /// Pixels row by row, `components` bytes each (1 gray, 3 RGB or any
 /// three-component space, 4 CMYK), no padding.
@@ -45,21 +46,18 @@ impl Samples {
         fitted(self.width, self.height, longest)
     }
 
-    /// Resized to `width` × `height`, each component alone (a filter whose
-    /// reach grows as the image shrinks, so every source pixel counts).
-    /// Itself when the size is its own.
-    pub fn resized(&self, width: u32, height: u32) -> Result<Samples> {
+    /// Resized to `width` × `height` by [`resize`]; itself when the size
+    /// is its own.
+    pub fn resized(self, width: u32, height: u32) -> Result<Samples> {
         if (width, height) == (self.width, self.height) {
-            return Ok(self.clone());
+            return Ok(self);
         }
-        ensure!(width > 0 && height > 0, "an empty size");
-        let filter = FilterType::Triangle;
-        let data = match self.components {
-            1 => image::imageops::resize(&self.luma()?, width, height, filter).into_raw(),
-            3 => image::imageops::resize(&self.rgb()?, width, height, filter).into_raw(),
-            4 => image::imageops::resize(&self.rgba()?, width, height, filter).into_raw(),
-            n => bail!("{n} components a pixel"),
-        };
+        let data = resize(
+            &self.data,
+            (self.width, self.height),
+            self.components,
+            (width, height),
+        )?;
         Samples::new(width, height, self.components, data)
     }
 
@@ -146,21 +144,36 @@ impl Samples {
         let background = f64::from(top) / f64::from(taken.max(1)) >= BACKGROUND;
         background || (self.components > 1 && seen.len() <= FLAT)
     }
+}
 
-    fn luma(&self) -> Result<image::GrayImage> {
-        image::GrayImage::from_raw(self.width, self.height, self.data.clone())
-            .context("gray samples of the wrong size")
-    }
-
-    fn rgb(&self) -> Result<image::RgbImage> {
-        image::RgbImage::from_raw(self.width, self.height, self.data.clone())
-            .context("three-component samples of the wrong size")
-    }
-
-    fn rgba(&self) -> Result<image::RgbaImage> {
-        image::RgbaImage::from_raw(self.width, self.height, self.data.clone())
-            .context("four-component samples of the wrong size")
-    }
+/// `data`, pixels of `components` bytes (1, 3 or 4) at `size`, resized to
+/// `to`, each component alone (a filter whose reach grows as the image
+/// shrinks, so every source pixel counts), read where they are: an image
+/// is never copied to be resized.
+pub fn resize(
+    data: &[u8],
+    (width, height): (u32, u32),
+    components: u8,
+    (new_width, new_height): (u32, u32),
+) -> Result<Vec<u8>> {
+    ensure!(new_width > 0 && new_height > 0, "an empty size");
+    let filter = FilterType::Triangle;
+    let wrong = "samples of the wrong size";
+    Ok(match components {
+        1 => {
+            let view = ImageBuffer::<Luma<u8>, _>::from_raw(width, height, data).context(wrong)?;
+            image::imageops::resize(&view, new_width, new_height, filter).into_raw()
+        }
+        3 => {
+            let view = ImageBuffer::<Rgb<u8>, _>::from_raw(width, height, data).context(wrong)?;
+            image::imageops::resize(&view, new_width, new_height, filter).into_raw()
+        }
+        4 => {
+            let view = ImageBuffer::<Rgba<u8>, _>::from_raw(width, height, data).context(wrong)?;
+            image::imageops::resize(&view, new_width, new_height, filter).into_raw()
+        }
+        n => bail!("{n} components a pixel"),
+    })
 }
 
 /// `width` × `height` brought so the longer side is at most `longest`,
@@ -239,44 +252,127 @@ pub fn deflate(bytes: &[u8]) -> Vec<u8> {
 /// `samples` filtered row by row as PNG does (each row the filter that
 /// leaves its smallest sum, `Predictor 15`), then compressed by Deflate:
 /// what a flat image is written as, with the `DecodeParms` that read it.
+/// The rows filtered go to Deflate as they are made, never held whole.
 pub fn predicted(samples: &Samples) -> Vec<u8> {
     let bpp = usize::from(samples.components);
     let stride = samples.width as usize * bpp;
-    let mut out = Vec::with_capacity(samples.data.len() + samples.height as usize);
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
+    // Writing to a vector does not fail.
+    let _ = filter_rows(&samples.data, stride, bpp, true, &mut encoder);
+    encoder.finish().unwrap_or_default()
+}
+
+/// The most bytes of filtered rows gathered before they are written on.
+const ROWS_BATCH: usize = 64 * 1024;
+
+/// PNG's filters (0 none, 1 sub, 2 up, 3 average, 4 Paeth) over rows of
+/// `stride` bytes, pixels `bpp` bytes apart (at least 1, as PNG has it for
+/// pixels smaller than a byte): `data`'s rows written to `out`, each after
+/// its filter byte, the filter that leaves the smallest sum (bytes read as
+/// signed) or, when not `adaptive`, none. What a PNG's pixels and a PDF's
+/// `Predictor 15` are stored as.
+pub fn filter_rows(
+    data: &[u8],
+    stride: usize,
+    bpp: usize,
+    adaptive: bool,
+    out: &mut impl Write,
+) -> std::io::Result<()> {
+    if stride == 0 {
+        return Ok(());
+    }
+    let bpp = bpp.max(1);
+    let mut batch = Vec::with_capacity(ROWS_BATCH + stride + 1);
     let zero = vec![0u8; stride];
     let mut previous: &[u8] = &zero;
-    let mut candidates = vec![vec![0u8; stride]; 5];
-    for row in samples.data.chunks_exact(stride.max(1)) {
-        for (kind, filtered) in candidates.iter_mut().enumerate() {
-            for x in 0..stride {
-                let a = if x >= bpp { row[x - bpp] } else { 0 };
-                let b = previous[x];
-                let c = if x >= bpp { previous[x - bpp] } else { 0 };
-                let predicted = match kind {
-                    0 => 0,
-                    1 => a,
-                    2 => b,
-                    3 => a.midpoint(b),
-                    _ => paeth(a, b, c),
-                };
-                filtered[x] = row[x].wrapping_sub(predicted);
+    let mut candidates = vec![vec![0u8; stride]; if adaptive { 5 } else { 0 }];
+    let cost = |row: &[u8]| -> u64 {
+        row.iter()
+            .map(|&v| u64::from(v.cast_signed().unsigned_abs()))
+            .sum()
+    };
+    for row in data.chunks_exact(stride) {
+        if adaptive {
+            for (kind, filtered) in (0u8..).zip(candidates.iter_mut()) {
+                for x in 0..stride {
+                    let (a, c) = if x >= bpp {
+                        (row[x - bpp], previous[x - bpp])
+                    } else {
+                        (0, 0)
+                    };
+                    filtered[x] = row[x].wrapping_sub(prediction(kind, a, previous[x], c));
+                }
             }
+            let (kind, best) = (0u8..)
+                .zip(&candidates)
+                .min_by_key(|(_, row)| cost(row))
+                .unwrap_or((0, &candidates[0]));
+            batch.push(kind);
+            batch.extend_from_slice(best);
+        } else {
+            batch.push(0);
+            batch.extend_from_slice(row);
         }
-        let cost = |row: &[u8]| -> u64 {
-            row.iter()
-                .map(|&v| u64::from(v.cast_signed().unsigned_abs()))
-                .sum()
-        };
-        let (kind, best) = candidates
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, row)| cost(row))
-            .unwrap_or((0, &candidates[0]));
-        out.push(u8::try_from(kind).unwrap_or(0));
-        out.extend_from_slice(best);
         previous = row;
+        if batch.len() >= ROWS_BATCH {
+            out.write_all(&batch)?;
+            batch.clear();
+        }
     }
-    deflate(&out)
+    out.write_all(&batch)
+}
+
+/// PNG's filters taken off `rows` rows read from `input`, each `stride`
+/// bytes after its filter byte, pixels `bpp` bytes apart (as
+/// [`filter_rows`] writes them), appended to `out`. A row cut short, or a
+/// filter PNG does not have, refused.
+pub fn unfilter_rows(
+    input: &mut impl Read,
+    stride: usize,
+    bpp: usize,
+    rows: usize,
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    let bpp = bpp.max(1);
+    out.reserve(stride.saturating_mul(rows));
+    let zero = vec![0u8; stride];
+    let mut line = vec![0u8; stride + 1];
+    for y in 0..rows {
+        input
+            .read_exact(&mut line)
+            .context("a row of pixels is cut short")?;
+        let (kind, filtered) = (line[0], &line[1..]);
+        ensure!(kind <= 4, "PNG filter {kind} is none");
+        let start = out.len();
+        out.resize(start + stride, 0);
+        let (done, row) = out.split_at_mut(start);
+        let previous = if y == 0 {
+            &zero[..]
+        } else {
+            &done[start - stride..]
+        };
+        for x in 0..stride {
+            let (a, c) = if x >= bpp {
+                (row[x - bpp], previous[x - bpp])
+            } else {
+                (0, 0)
+            };
+            row[x] = filtered[x].wrapping_add(prediction(kind, a, previous[x], c));
+        }
+    }
+    Ok(())
+}
+
+/// What PNG's filter `kind` predicts of a byte from the one a pixel before
+/// it (`a`), the one above (`b`) and the one above that one (`c`).
+fn prediction(kind: u8, a: u8, b: u8, c: u8) -> u8 {
+    match kind {
+        0 => 0,
+        1 => a,
+        2 => b,
+        3 => a.midpoint(b),
+        _ => paeth(a, b, c),
+    }
 }
 
 fn paeth(a: u8, b: u8, c: u8) -> u8 {
@@ -324,13 +420,49 @@ mod tests {
     #[test]
     fn samples_are_resized_and_made_gray() {
         let photo = gradient(300, 200);
+        assert!(!photo.looks_gray(4));
+        // Read where they are, as the picture library resizes a copy.
+        let library = image::imageops::resize(
+            &image::RgbImage::from_raw(300, 200, photo.data.clone()).unwrap(),
+            150,
+            100,
+            FilterType::Triangle,
+        )
+        .into_raw();
         let small = photo.resized(150, 100).unwrap();
         assert_eq!((small.width, small.height, small.components), (150, 100, 3));
-        assert_eq!(small.data.len(), 150 * 100 * 3);
+        assert_eq!(small.data, library);
         let gray = small.gray();
         assert_eq!((gray.components, gray.data.len()), (1, 150 * 100));
         assert!(gray.looks_gray(0));
-        assert!(!photo.looks_gray(4));
+        let same = gray.clone().resized(150, 100).unwrap();
+        assert_eq!(same, gray);
+    }
+
+    #[test]
+    fn rows_filtered_are_read_back() {
+        // Rows of odd lengths, pixels of one to eight bytes, more rows than
+        // one batch holds.
+        for (stride, bpp, rows) in [(1, 1, 3), (7, 1, 50), (12, 3, 40), (64, 8, 2000)] {
+            let data: Vec<u8> = (0..stride * rows)
+                .map(|i| u8::try_from((i * 37 + i / stride * 11) % 251).unwrap())
+                .collect();
+            for adaptive in [false, true] {
+                let mut filtered = Vec::new();
+                filter_rows(&data, stride, bpp, adaptive, &mut filtered).unwrap();
+                assert_eq!(filtered.len(), (stride + 1) * rows);
+                assert!(filtered.chunks_exact(stride + 1).all(|row| row[0] <= 4));
+                if !adaptive {
+                    assert!(filtered.chunks_exact(stride + 1).all(|row| row[0] == 0));
+                }
+                let mut back = Vec::new();
+                unfilter_rows(&mut &filtered[..], stride, bpp, rows, &mut back).unwrap();
+                assert_eq!(back, data);
+            }
+        }
+        let mut short = Vec::new();
+        assert!(unfilter_rows(&mut &[0u8, 1, 2][..], 4, 1, 1, &mut short).is_err());
+        assert!(unfilter_rows(&mut &[5u8, 1][..], 1, 1, 1, &mut short).is_err());
     }
 
     #[test]
