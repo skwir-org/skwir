@@ -5,11 +5,15 @@
 Skwir 0.3 reaches servers, phones and cameras: type an address and it mounts
 the server with a tool you have, lists the servers your network announces and
 the phones you plug in, and copies to and from them in batches, going on from
-where a server stopped. The address field is now one field to go somewhere,
-filter the folder and search below it as you type, and what you filter by
-stays as you go. Menus open their submenus beside them, F1 lists keys by topic,
-and a tag looks the same everywhere. FB2 and Kindle books open beside EPUB.
-Each release now offers builds to try on Windows and macOS.
+where a server stopped. What runs stands in the footer, saying how fast it goes
+and how long it has left, and closing the window no longer stops it. The
+address field is now one field to go somewhere, filter the folder and search
+below it as you type, and what you filter by stays as you go. Skwir prints
+what it previews, booklets included, makes smaller copies of pictures and
+PDFs, and colors code with the tree-sitter grammars your editors installed.
+Menus open their submenus beside them, F1 lists keys by topic, and a tag looks
+the same everywhere. FB2 and Kindle books open beside EPUB. Each release now
+offers builds to try on Windows and macOS.
 
 [Installation instructions](README.md#installing)
 
@@ -24,6 +28,11 @@ Each release now offers builds to try on Windows and macOS.
 - **Copies** to and from a server go in batches, a large file in parts, and
   within one server on the server. Actions that share nothing run at once, and
   an action an error stopped is retried from where it stopped.
+- **What runs** stands at the end of the footer, saying how fast it goes and
+  how long it has left; `Ctrl+Shift+J` opens Activity, with each action, what
+  waits its turn and what was done this session. Closing the window stops
+  nothing: Skwir finishes without it, an icon in the tray, and the desktop is
+  told when a long action ends.
 - **The address field**: `Ctrl+Shift+F` filters this folder and `Ctrl+F`
   searches it and its subfolders, both as you type, one switch between them.
   The field offers places, tags, tabs, history and commands; `#tag` finds a
@@ -47,6 +56,16 @@ Each release now offers builds to try on Windows and macOS.
 - **Encrypted drives** can remember their passphrase in your keyring.
 - **Books** in FB2 and Mobipocket (MOBI, AZW3) open as EPUBs do, and text can
   be read a screen at a time, the wheel turning a page.
+- **Printing**: Print… (`Ctrl+P`) prints what a preview shows, or makes a PDF
+  of it: the pages you pick, a booklet of two, four or eight pages a side, a
+  contact sheet of pictures, a folder's listing, several files as one job
+  ([the guide](docs/guide.md#previews)).
+- **Smaller copies**: Reduce Size… makes a smaller copy of a picture or a PDF
+  beside it; a PDF keeps its text, links and forms, and a scan's black and
+  white is written without loss.
+- **Code** is colored by the tree-sitter grammars your editors or your system
+  installed (Zed, Helix, Neovim, Emacs) as well as by bat's, chosen language by
+  language, and folded and outlined as its grammar says.
 - **Typing a name** goes to the next one starting so each time, accents and
   case aside, and brings it to the middle of the view.
 - **Builds to try on Windows and macOS** (Apple silicon, macOS 12 or later)
@@ -56,6 +75,16 @@ Each release now offers builds to try on Windows and macOS.
 
 Changed from 0.2, which you may notice:
 
+- Closing the window stops nothing that runs: Skwir finishes it without the
+  window, then ends. Quit asks while something runs: Finish in the background,
+  Stop and quit, or Keep the window.
+- What runs is in the footer and in Activity (`Ctrl+Shift+J`), no longer in
+  cards piled over the last files of the list; toasts say one answer at a time.
+- While an action runs the computer does not go to sleep by itself, and one
+  that ran 5 s or more and ends while you are in another window is a desktop
+  notification (Settings › General › Actions turns either off).
+- A notch of the wheel moves a document 120 px, as browsers do, where it moved
+  60; a touchpad moves it as before.
 - `Ctrl+F` searches the folder and its subfolders as you type, after a short
   pause; a search that reads contents (`content:`), or the subfolders of a
   server, waits for `Enter`. `Ctrl+Shift+F` filters the folder alone, as words
@@ -152,7 +181,9 @@ server and network. Undo history is cleared when Skwir exits.
   long copy it shares nothing with, and copies between different disks or
   servers run together (four actions at most); two long ones on one disk still
   take turns, which ends sooner than sharing it. Moves to the trash, and tag
-  changes in different folders, run together too. Undo takes back the last
+  changes in different folders, run together too. A folder made in the
+  folder a long copy goes into is made at once: an action waits only for one
+  making the same names. Undo takes back the last
   thing you asked for, and waits for it if it still runs; a toast's Undo takes
   back the action it reports, even after an unrelated move to the trash or tag
   change.
@@ -164,6 +195,41 @@ server and network. Undo history is cleared when Skwir exits.
   copies start it again). Undo takes the whole action back. An action a server
   stopped goes on by itself once the server answers again: its message says it
   waits, and its bar says it goes on.
+- **How fast, how long** (ADR-113): an action's bar says how much of how much,
+  and under it how fast it goes and how long it has left (`23.4 MB/s · about 3
+  min left`), measured from its first byte over the last few seconds, its
+  total known from its start. Onto a mount that sends what is copied after
+  (rclone's caches) it says "then sent to the server", then the sending's own
+  speed and time left. A long action's answer says how much it moved in how
+  long ("30.0 MB in 17 s"), and `skwir cmd running` says what runs. Cancel
+  stops a copy within a second or two, in the middle of a large file from a
+  slow server too; a server's bytes show as they arrive, and a batch counts
+  its files as each comes whole.
+- **Activity** (ADR-114): what runs is a strip at the end of the last pane's
+  footer, before Undo, in as many words as there is room for ("Copy 3 items
+  to Backup · 42 % · about 3 min left"), with Pause and Cancel for one action,
+  several summed. A click or `Ctrl+Shift+J` opens Activity above it: each
+  action's card, what waits its turn (each with Cancel, or Cancel all), and
+  Earlier, this session's answers with Undo or Retry. Pinned, it stands above
+  the footer while something runs, taking room rather than covering the files.
+  An action an error stopped stays in the strip, in red, until it is retried,
+  seen or dismissed. Toasts say one answer at a time, at the last pane's lower
+  right.
+- **The desktop is told** (ADR-114): an action that ran 5 s or more and ends,
+  stops or waits for its server while you are in another window is a
+  notification, taken back once you come back; a click brings the window
+  forward with Activity open. Plasma's task manager, Windows' taskbar and the
+  Dock show the progress, and the computer stays awake while something runs
+  and is not paused (a closed lid still sleeps). Settings › General › Actions
+  turns the notifications, or keeping awake, off.
+- **Without the window** (ADR-115): closing the window stops nothing; Skwir
+  finishes what runs, then ends by itself. Meanwhile an icon in the tray, or a
+  notification that stays where there is no tray, shows how far it went, with
+  Open, Pause all and Stop all and quit; every end is told, and a question
+  waits there for you. Starting Skwir again opens its window on what runs.
+  Quit asks while something runs: Finish in the background, Stop and quit, or
+  Keep the window. Logging out or shutting down is held off, naming the
+  action, where the desktop lets a program ask (Plasma 6.8 lets none).
 - **Encrypted drives**: the passphrase question offers to remember it in your
   keyring, as for a server's password; the drive then opens without asking,
   until its passphrase changes. Forget Passphrase is in its menu. One Nautilus
@@ -178,7 +244,9 @@ server and network. Undo history is cleared when Skwir exits.
   is tinted as you type, and what it cannot read is underlined. A scope stands
   before the text: the folder shown, or another chosen with a click,
   `Alt+Down` or `@` (the folder above, home, the whole disk, a sidebar folder,
-  a tag, Recent).
+  a tag, Recent). Its list stays within the window, scrolling, and `tag:` or
+  `#` offers every tag you have, the folder's first, as quickly where each
+  file carries dozens.
 - **Filters that stay** (ADR-107): what of a filter or a search the files
   hold (a kind, an extension, a tag, a date, a size, a rating) is kept wherever
   you go, a folder below or above, a search, the Trash, a tag, a tab or a split
@@ -345,8 +413,10 @@ server and network. Undo history is cleared when Skwir exits.
   chapters, a font's character sheets) keeps both arrows and its tools
   (Contents, the text size, Full preview) as you go from one to the next. Read
   a page at a time, a notch of the wheel turns one page, from a page that fits
-  the panel too. Find says that nothing matches in its own popup, under what
-  you typed, rather than at the bottom of the window; so does the hex view's
+  the panel too; read continuously, it moves the pages 120 px, as browsers do,
+  where it moved 60, a touchpad as before. Find says that nothing matches in
+  its own popup, under what you typed, rather than at the bottom of the
+  window; so does the hex view's
   "Match at 0x…". A protected EPUB says so rather than show its encrypted
   chapters, and a film made to be stretched (anamorphic) shows its poster in
   its own shape. Mermaid's architecture diagrams are drawn, and a STEP or IGES
@@ -359,6 +429,52 @@ server and network. Undo history is cleared when Skwir exits.
   blurred, then sharp, and its first page is drawn at the size the panel needs
   rather than a fixed large one. The wheel past the end of a font, or of any
   file, opened from an archive turns that file's view, no longer closing it.
+- **Printing** (ADR-111): Print… (`Ctrl+P`, the file's menu, the preview's
+  More menu) prints a file as its preview shows it: a PDF as it is, an office
+  document as its pages, a text or source file numbered and colored, a table
+  with its header on every page, a Markdown document or a book as it reads, a
+  picture fitted to the page. Skwir's dialog asks first: to a printer or a PDF
+  beside the file; all pages, the page shown, what is selected or pages typed
+  (`1-3, 7, 10-`); as shown, or a booklet of two, four or eight pages a side,
+  each drawn with the pages where they land, its folds marked in the margins
+  and how to fold said once it is made; for a PDF, its paper. Your system's
+  dialog then chooses the printer, the paper, the copies and the sides.
+  Several files selected print as one job, or make one PDF or one each; with
+  pictures among them, a contact sheet prints them several to a page; with
+  nothing selected, Print… prints the folder's listing as a table. A print
+  shows its progress, with Cancel, while its PDF is made, and a PDF saved can
+  be made smaller (Smaller file). Scripts save PDFs with or without the window
+  open (`skwir cmd --apply print.save_pdf`).
+- **Smaller copies** (ADR-112): Reduce Size… (Compress in the menu of JPEG
+  and PNG pictures and PDFs, the preview's More menu) makes a smaller copy
+  beside each file, `scan (reduced).pdf`, the file itself untouched (Undo puts
+  the copy in the trash): Lossless, Print, Screen or Small, in gray if you
+  like, without a photo's location and camera details (its date stays), or at
+  most a size. A PDF keeps its text, links, forms and outline: only its images
+  change (at most 300, 150 or 96 dots per inch as its pages draw them, below
+  Lossless), a scan's black and white written without loss (JBIG2), and a
+  page that would look different keeps its own. A copy that would not be
+  smaller is not made, and a PDF protected by a password or signed is left as
+  it is; Skwir says so. It shows its progress with Pause and Cancel, and is
+  made by Skwir's own engine, the same on every system; `shrink.reduce` makes
+  the plan for scripts and agents.
+- **Code colored by grammars** (ADR-110): code is colored with bat's grammars,
+  those you added to bat or Sublime Text, or a tree-sitter grammar: one in
+  Skwir's grammars folder (`~/.local/share/skwir/grammars`), or one an editor
+  or your system installed (Zed's extensions, Helix, Neovim, Emacs, the
+  tree-sitter CLI, `/usr/lib/tree_sitter`). Settings › Reading › Grammars lists
+  the languages with the files each colors and what colors it: Automatic (bat
+  first, unless you choose otherwise), bat, the tree-sitter grammar of each
+  place one was found, or Plain text; a language bat does not know, such as
+  Svelte, is colored by its tree-sitter grammar. Both wear one theme. A
+  tree-sitter grammar reads the file whole, so a string open across a jump is
+  colored right; the code view folds where it says, and Contents lists the
+  file's definitions, each leading to its line. Code blocks in documents are
+  colored the same way. Grammars are read by a helper of their own, sandboxed,
+  let go of a minute after its last answer.
+- **Settings' lists** (map tile servers, rclone's remotes, the languages and
+  their grammars) are drawn as lists inside their card, saying so when empty,
+  a long one with a filter and its rows folded past eight.
 - **Faster with many files**: selecting all of 100,000 files and acting on
   them, a plan's checks, the tags index, a tag's places, a listing's renames
   and a filter's tests stay in proportion to what changed: finding a whole
@@ -402,15 +518,20 @@ server and network. Undo history is cleared when Skwir exits.
   made on Linux, Windows' tried under Wine, macOS's looked over: neither has
   ever run on its system.
 - **Under the hood**: gpui from Zed's main of 2026-10-27, built with Rust
-  1.99.1; PDFium chromium/8125 in the packages. tokio, rustls-webpki and
-  Wasmtime were updated for security advisories (RUSTSEC-2026-0422, 0423
-  and 0424); plugins from outside now run on Wasmtime 48.0.8, a long-term
+  1.99.1; PDFium chromium/8125 in the packages; every other dependency at the
+  newest release the others allow. tokio, rustls-webpki, Wasmtime and
+  pulldown-cmark were updated for security advisories (RUSTSEC-2026-0422,
+  0423, 0424 and 0433, a Markdown file of nested wikilinks that could hold a
+  worker); plugins from outside now run on Wasmtime 48.0.8, a long-term
   release supported until 2028 and the one tree-sitter's grammars run on
   (ADR-110), and each is compiled once more, on its first start after the
-  update. The packages
-  suggest the tools remote folders use (sshfs, rclone, GVfs's backends,
-  kio-fuse, rsync, FUSE, Avahi, wsdd).
-<!-- The review fixes of 2026-10-28 go above: an item each a user notices. -->
+  update. Two helpers are new in the `skwir` package:
+  `skwir-tree-sitter-worker` reads grammars, `skwir-print-worker` makes PDFs
+  to print and smaller copies.
+  The 3D model helper is built with ogeom 0.14, under the LGPL 2.1, its source
+  published beside every build (ADR-042, amended). The packages suggest the
+  tools remote folders use (sshfs, rclone, GVfs's backends, kio-fuse, rsync,
+  FUSE, Avahi, wsdd).
 
 ## 0.2.0 (2026-10-20)
 
