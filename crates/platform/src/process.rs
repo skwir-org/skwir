@@ -12,6 +12,7 @@
 use std::io::{self, Read, Seek, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -789,7 +790,7 @@ pub fn run_watching(
     held: &dyn Fn() -> bool,
     watch: &mut (dyn FnMut(&[u8]) + Send),
 ) -> anyhow::Result<Finished> {
-    watched(command, input, cancel, None, held, watch)
+    watched(command, input, cancel, Limit::None, held, watch)
 }
 
 /// How a helper's work is followed: told how far it went, from 0 to 1,
@@ -892,7 +893,7 @@ pub const PROGRESS: &str = "progress ";
 /// it goes: each line it writes `progress <done> <total>` ([`PROGRESS`])
 /// tells `follow` how far it went, the other lines are its output; it is
 /// held while `follow` says (on Unix), stopped when `cancel` fires or past
-/// `timeout`.
+/// `timeout` of the time it ran (held, it does not run).
 ///
 /// # Errors
 /// When it cannot start, is cancelled, takes too long or says too much.
@@ -902,21 +903,59 @@ pub fn run_helper(
     timeout: Duration,
     follow: &Follow<'_>,
 ) -> anyhow::Result<Finished> {
+    helper(command, cancel, Bound::Total(timeout), follow)
+}
+
+/// [`run_helper`], stopped once it said nothing of how far it went (no
+/// `progress` line, its start counting as one) for `stall` of the time it
+/// ran, or past `ceiling` in all: a helper whose work cannot be told
+/// ahead (a document's pages, a picture's) is given what it takes while
+/// it goes, and stopped once it stops going.
+///
+/// # Errors
+/// As [`run_helper`]'s; stalled, its words say for how long.
+pub fn run_helper_stalling(
+    command: &mut Command,
+    cancel: &CancelToken,
+    stall: Duration,
+    ceiling: Duration,
+    follow: &Follow<'_>,
+) -> anyhow::Result<Finished> {
+    helper(command, cancel, Bound::Stalled { stall, ceiling }, follow)
+}
+
+/// How long a helper may run, its held time left out.
+#[derive(Clone, Copy)]
+enum Bound {
+    Total(Duration),
+    Stalled { stall: Duration, ceiling: Duration },
+}
+
+/// [`run_helper`] within `bound`.
+fn helper(
+    command: &mut Command,
+    cancel: &CancelToken,
+    bound: Bound,
+    follow: &Follow<'_>,
+) -> anyhow::Result<Finished> {
     let limit = usize::try_from(crate::inspection::limits::HELPER_OUTPUT).unwrap_or(usize::MAX);
     let mut kept: Vec<u8> = Vec::new();
     let mut line: Vec<u8> = Vec::new();
     let mut too_much = false;
     let follow = *follow;
+    // The progress lines it wrote: a stall is told by their count.
+    let said = AtomicU64::new(0);
     let finished = {
         let take = |line: &[u8], kept: &mut Vec<u8>, too_much: &mut bool| {
-            if let Some(said) = line.strip_prefix(PROGRESS.as_bytes()) {
-                let said = String::from_utf8_lossy(said);
-                let mut numbers = said.split_whitespace().map(str::parse::<u64>);
-                if let (Some(Ok(done)), Some(Ok(total))) = (numbers.next(), numbers.next())
-                    && total > 0
-                {
-                    #[allow(clippy::cast_precision_loss)]
-                    follow.went(done as f64 / total as f64);
+            if let Some(progress) = line.strip_prefix(PROGRESS.as_bytes()) {
+                let progress = String::from_utf8_lossy(progress);
+                let mut numbers = progress.split_whitespace().map(str::parse::<u64>);
+                if let (Some(Ok(done)), Some(Ok(total))) = (numbers.next(), numbers.next()) {
+                    said.fetch_add(1, Ordering::Relaxed);
+                    if total > 0 {
+                        #[allow(clippy::cast_precision_loss)]
+                        follow.went(done as f64 / total as f64);
+                    }
                 }
             } else if kept.len() + line.len() < limit {
                 kept.extend_from_slice(line);
@@ -935,14 +974,15 @@ pub fn run_helper(
                 }
             }
         };
-        let finished = watched(
-            command,
-            None,
-            cancel,
-            Some(timeout),
-            &|| follow.held(),
-            &mut watch,
-        )?;
+        let limit = match bound {
+            Bound::Total(timeout) => Limit::Total(timeout),
+            Bound::Stalled { stall, ceiling } => Limit::Stalled {
+                stall,
+                ceiling,
+                said: &said,
+            },
+        };
+        let finished = watched(command, None, cancel, limit, &|| follow.held(), &mut watch)?;
         if !line.is_empty() {
             take(&line, &mut kept, &mut too_much);
         }
@@ -960,12 +1000,35 @@ pub fn run_helper(
     })
 }
 
-/// [`run_watching`], stopped past `timeout` when one is given.
+/// How long a program [`watched`] may run, its held time left out.
+#[derive(Clone, Copy)]
+enum Limit<'a> {
+    None,
+    /// In all.
+    Total(Duration),
+    /// Since `said` last grew (its start counting), and in all.
+    Stalled {
+        stall: Duration,
+        ceiling: Duration,
+        said: &'a AtomicU64,
+    },
+}
+
+/// `time` as a stall is said: whole minutes past one, else seconds.
+fn said_for(time: Duration) -> String {
+    let (n, unit) = match time.as_secs() {
+        secs @ 60.. => (secs.saturating_add(30) / 60, "minute"),
+        secs => (secs.max(1), "second"),
+    };
+    format!("{n} {unit}{}", if n == 1 { "" } else { "s" })
+}
+
+/// [`run_watching`], stopped past its `limit`.
 fn watched(
     command: &mut Command,
     input: Option<&[u8]>,
     cancel: &CancelToken,
-    timeout: Option<Duration>,
+    limit: Limit<'_>,
     held: &dyn Fn() -> bool,
     watch: &mut (dyn FnMut(&[u8]) + Send),
 ) -> anyhow::Result<Finished> {
@@ -1022,6 +1085,8 @@ fn watched(
         // Held, it is not taking long: its time counts while it runs.
         let mut ran = Duration::ZERO;
         let mut since = Instant::now();
+        // The progress lines heard, and how long it had run then.
+        let mut heard = (0, Duration::ZERO);
         loop {
             if cancel.is_cancelled() {
                 // Stopped with its group: the pipe's writers gone, the
@@ -1033,9 +1098,33 @@ fn watched(
                 ran += since.elapsed();
             }
             since = Instant::now();
-            if timeout.is_some_and(|timeout| ran >= timeout) {
+            let stalled = match limit {
+                Limit::None => None,
+                Limit::Total(timeout) => (ran >= timeout).then(|| format!("{program} timed out")),
+                Limit::Stalled {
+                    stall,
+                    ceiling,
+                    said,
+                } => {
+                    let now = said.load(Ordering::Relaxed);
+                    if now != heard.0 {
+                        heard = (now, ran);
+                    }
+                    if ran >= ceiling {
+                        Some(format!("{program} timed out"))
+                    } else {
+                        (ran.saturating_sub(heard.1) >= stall).then(|| {
+                            format!(
+                                "{program} stopped: it said nothing of its progress for {}",
+                                said_for(stall)
+                            )
+                        })
+                    }
+                }
+            };
+            if let Some(stalled) = stalled {
                 drop(child);
-                anyhow::bail!("{program} timed out");
+                anyhow::bail!(stalled);
             }
             if child.exited()? {
                 break;
@@ -1738,6 +1827,55 @@ mod tests {
         );
         assert!(ran.unwrap_err().to_string().contains("timed out"));
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// A helper stopped once it stalls: given what it takes while it says
+    /// how far it went, stopped once it says nothing for the stall, or past
+    /// the ceiling however it goes; the stall said in its words.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_is_stopped_once_it_says_nothing_of_its_progress() {
+        let run = |script: &str, stall: u64, ceiling: u64| {
+            let started = Instant::now();
+            let ran = run_helper_stalling(
+                Command::new("sh").args(["-c", script]),
+                &CancelToken::new(),
+                Duration::from_millis(stall),
+                Duration::from_millis(ceiling),
+                &Follow::none(),
+            );
+            (ran, started.elapsed())
+        };
+        // Going on longer than the stall, saying how far it went.
+        let (ran, _) = run(
+            "for i in 1 2 3 4 5 6 7 8; do echo progress $i 8; sleep 0.1; done; echo done",
+            500,
+            20_000,
+        );
+        assert_eq!(ran.unwrap().stdout, b"done\n");
+        // Silent after its first line.
+        let (ran, took) = run("echo progress 1 4; sleep 30", 400, 20_000);
+        let said = ran.unwrap_err().to_string();
+        assert!(
+            said.contains("said nothing of its progress for 1 second"),
+            "{said}"
+        );
+        assert!(took < Duration::from_secs(10), "{took:?}");
+        // Never a line: its start counts as one.
+        let (ran, took) = run("sleep 30", 300, 20_000);
+        assert!(ran.unwrap_err().to_string().contains("said nothing"));
+        assert!(took < Duration::from_secs(10), "{took:?}");
+        // Past its ceiling, however it goes.
+        let (ran, took) = run(
+            "while true; do echo progress 1 2; sleep 0.05; done",
+            5_000,
+            400,
+        );
+        assert!(ran.unwrap_err().to_string().contains("timed out"));
+        assert!(took < Duration::from_secs(10), "{took:?}");
+        assert_eq!(said_for(Duration::from_secs(180)), "3 minutes");
+        assert_eq!(said_for(Duration::from_secs(60)), "1 minute");
+        assert_eq!(said_for(Duration::from_millis(200)), "1 second");
     }
 
     /// What `a_program_that_ends_with_its_starter_goes_when_skwir_is_killed`
