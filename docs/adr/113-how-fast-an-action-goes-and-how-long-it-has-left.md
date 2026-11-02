@@ -3,7 +3,8 @@
 Status: accepted 2026-11-02 with the user; built the same day, as
 `docs/PLAN.md` ("Speed and time left") records: checked on Linux, against
 a throttled rclone server in a window of its own; compiled for Windows
-and macOS, not run there.
+and macOS, not run there. Amended the same day (below): a large remote
+file's ranges read in pieces, and shown as they arrive.
 
 ## Context
 
@@ -102,3 +103,35 @@ and macOS, not run there.
   its plan's time left is told only once it begins.
 - The copy loop's calls are smaller from a slow server (256 KiB at
   least): more calls, each answering Cancel.
+
+## Amendments
+
+### 2026-11-02: ranges read in pieces, shown as they arrive
+
+The user saw a copy from an SFTP server stand still for a long while at
+its start, at 80 MiB, and at the end of a file, then go on faster. Behind
+an ssh link of 12 MiB/s down and 4 MiB/s up with a 30 ms round trip, a
+file of 96 MiB copied alone (`ranges`) showed nothing for 2.8 s, then
+jumped 24 MiB, its bytes coming at 12 MiB/s throughout: eight ranges
+of 4 MiB come at once, each counted only once written in order. A copy
+cancelled meanwhile waited for each reader's 4 MiB.
+
+- **Decision 4 amended**: a large remote file's ranges are read a piece
+  at a time, each reader's about a quarter second's worth as the copy
+  loop's (`Chunk::from_least`: from 256 KiB, up to 4 MiB), measured and
+  shown as moved as each piece arrives (`Meter::reading`: done plus what
+  arrived, never going back), done as they are written. The same file
+  showed its first bytes at 0.4 s and never stood still more than 0.3 s;
+  copied alone from one server to another and cancelled, it stopped in
+  1.3 s, its staging folder on the second removed by then. Over a link
+  of 1 MiB/s, a copy down cancelled stopped in 1.0 s (3.1 s with pieces
+  of 512 KiB, each reader's taking 4 s there).
+- **"Smaller reads" no longer rejected**: the 4.4 times was the eight
+  ranges at once, not each read whole. A file read in pieces of 4 MiB,
+  1 MiB and 512 KiB, each twice, alternated, took the same time in each
+  of three links: 256 MiB over 48/16 MiB/s with a 40 ms round trip
+  (10.5–10.6 s), 128 MiB over 12/4 MiB/s with 100 ms (13.7–13.8 s),
+  256 MiB with no rate limit and 40 ms (9.9–10.1 s). Pieces of a
+  quarter second's worth, against 4 MiB, alternated twice on the first
+  link: 10.5–10.6 s against 10.5–10.7 s, never still more than 0.2 s
+  against 0.7 s.

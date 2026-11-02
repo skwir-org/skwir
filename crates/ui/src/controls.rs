@@ -134,13 +134,46 @@ pub fn button(
     focus: &FocusHandle,
     theme: &Theme,
 ) -> Stateful<Div> {
-    let (accent, hover) = (theme.accent, theme.hover);
+    let hover = theme.hover;
     let color = if style == ButtonStyle::Danger {
         theme.error
     } else {
         theme.text
     };
     let label = label.into();
+    button_frame(id, &label, focus, theme)
+        .text_color(color)
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .children(leading.map(|name| icon(name, color, 14.)))
+        .child(label)
+}
+
+/// A button said, not offered, while what it asked for is under way (a
+/// plan's "Stopping…"): a button's frame, its label muted, no pointer,
+/// nothing to press, disabled for assistive technology; it keeps `focus`
+/// where the button had it.
+pub fn inert_button(
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+    focus: &FocusHandle,
+    theme: &Theme,
+) -> Stateful<Div> {
+    let label = label.into();
+    button_frame(id, &label, focus, theme)
+        .aria_disabled(true)
+        .text_color(theme.text_muted)
+        .child(label)
+}
+
+/// What a button and an inert one share: role, name, focus, frame.
+fn button_frame(
+    id: impl Into<SharedString>,
+    label: &SharedString,
+    focus: &FocusHandle,
+    theme: &Theme,
+) -> Stateful<Div> {
+    let accent = theme.accent;
     div()
         .id(id.into())
         .role(gpui::Role::Button)
@@ -157,13 +190,8 @@ pub fn button(
         .border_color(theme.border)
         .bg(theme.bg)
         .text_xs()
-        .text_color(color)
         .whitespace_nowrap()
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover))
         .focus(move |s| s.border_color(accent))
-        .children(leading.map(|name| icon(name, color, 14.)))
-        .child(label)
 }
 
 /// A borderless square button holding one symbolic icon, `label` its name

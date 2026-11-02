@@ -168,15 +168,19 @@ fn program() -> Option<&'static PathBuf> {
 
 /// The bytes rsync says it has copied, from a line of
 /// `--info=progress2`: its first word, digits alone without
-/// `--human-readable`.
+/// `--human-readable`, once the percent after it says the word is whole.
+/// rsync begins each such line with `\r`, which ends the one before: a
+/// line is read as it comes, not when the next one begins a second later.
 fn copied_of(line: &[u8]) -> Option<u64> {
     let line = std::str::from_utf8(line).ok()?;
-    let word = line.split_whitespace().next()?;
+    let mut words = line.split_whitespace();
+    let word = words.next()?;
     let digits: String = word.chars().filter(char::is_ascii_digit).collect();
     if digits.is_empty()
         || !word
             .chars()
             .all(|c| c.is_ascii_digit() || c == ',' || c == '.')
+        || !words.next().is_some_and(|percent| percent.ends_with('%'))
     {
         return None;
     }
@@ -380,6 +384,12 @@ impl Transfer for Rsync {
                         line.push(b);
                     }
                 }
+                // A progress line ends only as the next begins: read as it
+                // stands, its count whole once its percent follows (what
+                // it said again at its end counts no more).
+                if let Some(n) = copied_of(&line) {
+                    copied(n);
+                }
             },
         )?;
         if finished.status.success() {
@@ -413,6 +423,10 @@ mod tests {
         assert_eq!(copied_of(b"1,234,567  12%"), Some(1_234_567));
         assert_eq!(copied_of(b"sending incremental file list"), None);
         assert_eq!(copied_of(b""), None);
+        // A line come in part: its count once whole, never a part of it.
+        assert_eq!(copied_of(b"      10485"), None);
+        assert_eq!(copied_of(b"      1048576  4"), None);
+        assert_eq!(copied_of(b"      1048576  45%"), Some(1_048_576));
     }
 
     #[test]

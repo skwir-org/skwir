@@ -642,7 +642,11 @@ of bars, split or not.
   items counted beside; under the bar, quieter, its speed and time left
   as the core read them (`toast::pace`, ADR-113: never reckoned in the
   window), hidden while paused; into a mount that sends after, "then
-  sent to the server". A plan that ran 5 s or more and moved bytes says
+  sent to the server". Cancelled, a card says it stops ("stopping at"),
+  its bar muted, no speed nor time left, and its Cancel becomes
+  "Stopping…", said, not offered (muted, no pointer, nothing to press,
+  disabled for assistive technology, the focus kept), until the plan
+  let go of what it held (operations.md, "Running"). A plan that ran 5 s or more and moved bytes says
   them in its toast, and how long it ran ("4.8 GB in 3 min 20 s"). A
   toast stays at least as long as its words take to read. Work that is no plan and
   nothing undoes (a print being made and sent) holds a task while it runs

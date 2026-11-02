@@ -2655,6 +2655,11 @@ impl Executor {
             _ => None,
         };
         record(&result, inverse, stop);
+        // What it staged goes before it is told finished (its staging
+        // folders, removed with its context): on a server, a round trip a
+        // name, while its card still says it stops. A card gone, the plan
+        // let go of what it held.
+        drop(ctx);
         // Told finished, it runs no more: Pause, Resume and Cancel asked
         // as its end is read find nothing.
         drop(listed);

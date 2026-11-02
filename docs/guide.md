@@ -44,6 +44,9 @@ work where the keyboard is, by topic.
   (`2.0 MB/s · about 3 min left`), once a few seconds of it tell. Onto a
   server that takes what is copied after (rclone's caches), it first says
   "then sent to the server", then the sending's own speed and time left.
+  Cancel stops it within a second or two, even in the middle of a large
+  file from a slow server; meanwhile its card says "Stopping…" while it
+  takes back what it left half done.
   A long one says in its toast how much it moved in how long ("30.0 MB
   in 17 s"). `skwir cmd running` says the same of what runs. Quitting
   while one runs asks first, then undoes what it left half done.

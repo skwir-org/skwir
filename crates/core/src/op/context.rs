@@ -141,8 +141,11 @@ pub(super) struct Meter {
     unmeasured: AtomicU64,
     /// Bytes read from a server and not yet written where they go (a large
     /// file's ranges read at once, written in order): not done, but how
-    /// fast they come is the speed (`ranges`).
+    /// fast they come is the speed, and they show as moved (`ranges`).
     arriving: AtomicU64,
+    /// The most [`Self::reading`] said was moved: what arrived and was let
+    /// go of (the copy stopped) never takes a bar back.
+    shown: AtomicU64,
     /// The steps of the plan, once it began ([`Self::begin`]).
     items: AtomicUsize,
     /// What its steps were sized at before it began, when they were.
@@ -329,6 +332,12 @@ impl Meter {
             return;
         }
         self.done.fetch_add(bytes, Ordering::Relaxed);
+        self.moved_now();
+    }
+
+    /// What moved now is sampled, and the window woken to show it, at most
+    /// every `WAKE_EVERY`.
+    fn moved_now(&self) {
         let now = Instant::now();
         let sample = self.sample(now);
         self.samples.lock().note(sample);
@@ -344,16 +353,16 @@ impl Meter {
     }
 
     /// `bytes` came from a server, not yet written where they go: measured
-    /// as speed, not done.
+    /// as speed and shown as moved, not done.
     #[cfg(unix)]
     fn arrived(&self, bytes: u64) {
         self.arriving.fetch_add(bytes, Ordering::Relaxed);
-        let sample = self.sample(Instant::now());
-        self.samples.lock().note(sample);
+        self.moved_now();
     }
 
-    /// `bytes` that arrived were written, and counted done by then; or
-    /// were let go of, the copy stopped (all of them: `u64::MAX`).
+    /// `bytes` that arrived are being written, and counted done right
+    /// after (told first, so they are never counted twice); or were let
+    /// go of, the copy stopped (all of them: `u64::MAX`).
     #[cfg(unix)]
     fn landed(&self, bytes: u64) {
         let _ = self
@@ -412,7 +421,13 @@ impl Meter {
     /// it went, how fast it goes, and how long it has left (ADR-113).
     pub(super) fn reading(&self, paused: bool) -> Reading {
         let steps = *self.steps.lock();
+        // What came from a server and waits to be written in its order (a
+        // large file's ranges, `ranges`) shows as moved: it is here, and
+        // a bar waiting for the range written next would stand still while
+        // the others come, then jump. Never less than shown before.
         let done = self.done.load(Ordering::Relaxed);
+        let done = done.saturating_add(self.arriving.load(Ordering::Relaxed));
+        let done = self.shown.fetch_max(done, Ordering::Relaxed).max(done);
         let total = self.total.load(Ordering::Relaxed);
         let planned = self.planned(&steps, total);
         let items = self.items.load(Ordering::Relaxed);
@@ -1751,7 +1766,7 @@ impl StepContext {
 
     /// What says, from another thread, bytes came from a server that are
     /// not yet written where they go (a large file's ranges): measured as
-    /// speed, not done, until [`Self::landed`].
+    /// speed and shown as moved, not done, until [`Self::landed`].
     #[cfg(unix)]
     pub(super) fn arrivals(&self) -> impl Fn(u64) + Send + Sync + Clone + use<> {
         let meter = Arc::clone(&self.meter);
@@ -2240,6 +2255,30 @@ mod tests {
         meter.sending(None);
         assert_eq!(moved(), 10, "back to what it wrote");
         assert_eq!(meter.reading(false).sending, None);
+    }
+
+    /// What came from a server and waits to be written in its order shows
+    /// as moved, never counted twice as it is written; let go of (the copy
+    /// stopped), it takes nothing back from what was shown. Done is what
+    /// was written.
+    #[cfg(unix)]
+    #[test]
+    fn what_arrived_shows_as_moved_and_never_goes_back() {
+        let meter = Meter::new(None);
+        meter.begin(1);
+        let shown = || meter.reading(false).done;
+        meter.arrived(300);
+        meter.arrived(200);
+        assert_eq!(shown(), 500, "all that arrived");
+        assert_eq!(meter.done.load(Ordering::Relaxed), 0, "none written");
+        meter.landed(300);
+        meter.advance(300);
+        assert_eq!(shown(), 500, "written, counted once");
+        meter.landed(u64::MAX);
+        assert_eq!(shown(), 500, "let go of, not taken back");
+        assert_eq!(meter.done.load(Ordering::Relaxed), 300);
+        meter.advance(400);
+        assert_eq!(shown(), 700);
     }
 
     /// Writing into a mount that sends to its server after, its end waits

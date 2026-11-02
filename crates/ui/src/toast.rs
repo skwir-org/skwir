@@ -721,7 +721,12 @@ fn progress_card(
     let (fraction, amount) = bar(running.total, transfer);
     let plan = running.plan;
     let paused = running.paused;
+    // Cancelled, it stops where it next answers Cancel and takes back what
+    // it was in the middle of: no speed nor time left any more, and
+    // nothing more to ask of it.
+    let stopping = running.cancelling;
     let state = match (paused, running.going_on, transfer.sending) {
+        _ if stopping => "stopping at ".to_owned(),
         (true, ..) => "paused at ".to_owned(),
         // Copied onto a mount that sends to its server after: what the
         // server still has to take before the copy is done (ADR-102).
@@ -757,7 +762,7 @@ fn progress_card(
                             div()
                                 .h_full()
                                 .rounded_full()
-                                .bg(if paused {
+                                .bg(if paused || stopping {
                                     theme.text_muted
                                 } else {
                                     theme.accent
@@ -767,11 +772,12 @@ fn progress_card(
                 )
                 // How fast, how long: under the bar, quieter than what it
                 // is and how far (ADR-113).
-                .when_some(pace(transfer).filter(|_| !paused), |d, pace| {
-                    d.child(div().text_xs().text_color(theme.text_muted).child(pace))
-                }),
+                .when_some(
+                    pace(transfer).filter(|_| !paused && !stopping),
+                    |d, pace| d.child(div().text_xs().text_color(theme.text_muted).child(pace)),
+                ),
         )
-        .when(!running.cancelling, |card| {
+        .when(!stopping, |card| {
             card.child(
                 controls::button(
                     format!("toast-pause-{n}"),
@@ -791,14 +797,19 @@ fn progress_card(
                 })),
             )
         })
-        .child(
+        .child(if stopping {
+            // Said, not offered: nothing more to ask of it.
+            controls::inert_button(
+                format!("toast-cancel-{n}"),
+                "Stopping…",
+                cancel_focus,
+                theme,
+            )
+            .mr_2()
+        } else {
             controls::button(
                 format!("toast-cancel-{n}"),
-                if running.cancelling {
-                    "Stopping…"
-                } else {
-                    "Cancel"
-                },
+                "Cancel",
                 None,
                 ButtonStyle::Plain,
                 cancel_focus,
@@ -812,8 +823,8 @@ fn progress_card(
                     running.cancelling = true;
                 }
                 cx.notify();
-            })),
-        )
+            }))
+        })
 }
 
 /// The card of the task `task` (work under way that is no plan: a print),

@@ -9246,3 +9246,89 @@ build only). A strip asking for every chip's width
 strip, for the file previewed. The vocabulary keeps at most 2,000 tags
 and the index counts the home folder's: a tag seen only outside home
 and forgotten by the vocabulary is not offered until seen again.
+
+## Cancel within a file (2026-11-02)
+
+Reported by the user, from a build before ADR-113: Cancel during a copy
+of large files between two SFTP servers said "Stopping…" and the copy
+went on to the end, the button doing nothing when pressed again; a copy
+of the same files from the first server to this machine, just after,
+was long to start, stood still at 80 MiB, then went faster, and stood
+still again at the end of the first file. Asked: whether that is
+expected, and to make the progress smooth, fixing the copy itself if
+more than its reporting stalled.
+
+- **Found, Cancel:** Skwir's own batch copy (`transfer::copy_one`: two
+  servers, or down from a server without rsync) looked at Cancel and
+  Pause only between files. Three files of 160 MiB between two OpenSSH
+  servers, ssh throttled to 16 MiB/s each way, cancelled at 5 s: the
+  plan went on 25.1 s, moved all 480 MiB, then ended. A large file
+  copied alone (`ranges`) waited, once cancelled, for each of its eight
+  readers' 4 MiB, and its writer for the range it wrote next.
+- **Found, the stalls:** a large remote file's ranges were counted done
+  only once written in the file's order. Behind a link of 12 MiB/s
+  down, 4 MiB/s up, 30 ms round trip, 96 MiB copied down showed nothing
+  for 2.8 s, then 8 MiB, then 32 MiB at once, and stood still 1.9 s
+  again, its bytes coming at 12 MiB/s throughout: the bar's stalls, not
+  the copy's. rsync's progress was read a second late (each line ends
+  as the next begins, with `\r`): its first figure 2.3–2.5 s after the
+  plan began. A plan said it finished before its staging folders were
+  removed (its context dropped after `Finished`): the card gone, the
+  next plan on that server waited (0.5 s here, a round trip a name).
+- **Not reproduced:** a stall of the copy itself after a Cancel. In
+  every probe, the next copy from the same server began at once and went
+  at the link's speed; a Cancel that let the files in flight run to
+  their end held the server's connection meanwhile.
+- **Built:** `copy_one` asks a chunk at a time (`builtin::Chunk`, a
+  quarter second's worth), and waits while paused and stops when
+  cancelled between two. Each range reader asks a piece at a time, its
+  own `Chunk::from_least` (256 KiB to 4 MiB), Pause and Cancel answered
+  between pieces; the writer looks for Cancel every 100 ms while it
+  waits. The meter shows what arrived as moved (`Meter::reading`: done
+  plus arriving, never going back), arrivals wake the window, and
+  bytes land before they count done. rsync's line is read once its
+  percent follows. The context is dropped before `Finished`. A card
+  stopping says "stopping at", its bar muted, no speed, no Pause, and
+  "Stopping…" said by `controls::inert_button`, not offered.
+
+**Checked:** a temporary ignored test (not committed): two OpenSSH
+servers run as this user with the test's keys and known hosts, mounted
+by Skwir's sshfs connector, ssh through a relay of the session's
+scratchpad (a rate each way, a one-way delay, a bounded queue). At 12/4
+MiB/s, 30 ms, two files of 96 MiB: between the servers, a batch
+cancelled at 5 s ended 1.4 s after (0.9 s before the staging folders
+were removed first), a file alone 1.3 s (1.0 s), nothing left on the
+second server once told finished, the next plan begun at 0.1 s (0.6 s);
+one file down, first bytes shown at 0.4 s, never still more than 0.3 s,
+8.4 s as before; both down by rsync, first figure at 1.5 s, a Cancel
+0.1 s; from a server allowing SFTP alone (Skwir's own copy), first bytes
+at 0.4 s, never still more than 0.3 s, a Cancel 0.2 s. Pieces against
+whole reads, each run twice, alternated (load 15 to 21): 256 MiB over
+48/16 MiB/s, 40 ms, in 10.5–10.7 s whatever the piece (4 MiB, 1 MiB,
+512 KiB, adaptive); 128 MiB over 12/4 MiB/s, 100 ms, 13.7–13.8 s; 256
+MiB unthrottled, 40 ms, 9.9–10.1 s; never still more than 0.2 s
+adaptive, 0.7 s whole. Over 1 MiB/s, 25 ms, 32 MiB down cancelled at
+6 s: 1.0 s adaptive, 3.1 s with pieces of 512 KiB. In a window on Xvfb
+(debug build, lavapipe): 64 MiB from an sshfs mount made by hand behind
+1 MiB/s to a local folder (the test's known hosts; the user's untouched):
+1.0 MB/s with its time left; Cancel, then "stopping at 8.0 MB of 64.0
+MB", the bar muted, "Stopping…" inert; half a second later "cancelled
+before anything was done", the folder clean. Found there and fixed: a
+second hover style on the button panicked gpui (`inert_button` now);
+that crash's staging folder was swept by the next start. Tests: core,
+UI and remote crates (1196, with `a_batch_cancelled_within_a_large_file_stops_there`,
+`a_range_comes_a_piece_at_a_time_and_stops_between_two`,
+`what_arrived_shows_as_moved_and_never_goes_back` and rsync's partial
+lines); the binary's `remote_folders` against servers on this machine
+(rsync batches, copies cut short and gone on from, uploads) and
+`plugins_toggle`, 44 passed; in a second run,
+`a_mount_let_go_of_elsewhere_is_disconnected_all_the_same` failed once
+at its own `fusermount3 -u` of an rclone mount (no plan in it), then
+passed alone three times. Clippy; clippy of core and remote for Windows
+and macOS, of the UI for Windows (compiled only).
+
+**Not checked:** the user's servers and network; the 80 MiB stall as
+such (their build counted no arrivals at all); a release build; GVfs,
+kio-fuse and rclone mounts throttled (their large files go through
+`ranges` too); Windows under Wine. A batch's items still count at its
+end ("0 of 3 items" while its bytes go).

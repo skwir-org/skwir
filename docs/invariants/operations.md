@@ -40,10 +40,18 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   measured from either), nothing said while paused or when nothing moved
   for 5 s. Bytes counted done that moved none now (a clone, a copy gone
   on from) are `advance_unmeasured`: done, never speed; a large remote
-  file's ranges are measured as they arrive (`StepContext::arrivals`)
-  and done once written (`landed`). A copy asks for about a quarter
-  second's worth at a time (`builtin::Chunk`), so its count and Cancel
-  come that often on a slow server.
+  file's ranges are read a piece at a time, each reader's about a
+  quarter second's worth (`builtin::Chunk::from_least`: 256 KiB to
+  4 MiB), measured and shown as moved as they arrive
+  (`StepContext::arrivals`), and done
+  once written (`landed`, told before the bytes count done, so never
+  both): a bar never waits for the range written next while the others
+  come, and what shows as moved never goes back (`Meter::reading`). A
+  copy asks for about a quarter second's worth at a time
+  (`builtin::Chunk`), Skwir's own batch copy too (`transfer::copy_one`),
+  so its count and Cancel come that often on a slow server. A tool's
+  progress is read as it comes: rsync's `\r` line as soon as its
+  percent follows, not when the next one begins.
 - **A plan's total is known from its start**: the room check's sizing
   is kept step by step (`room::sized`, `Meter::set_ahead`); a run the
   room check did not size (an undo, a redo, a plan not asked as one
@@ -140,7 +148,15 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 - A plan of several steps shows a bar with Pause and Cancel
   (`Executor::pause`, `Executor::cancel`). Pausing waits where Cancel
   would be answered (`StepContext::check_cancelled`), so long steps call
-  it between units of work.
+  it between units of work: a byte copy between its chunks (about a
+  quarter second's worth), whatever thread it runs on. Cancel stops a
+  copy within that, never at the end of the file it is in: on a slow
+  server, a large file's end may be minutes away, and what a copy reads
+  after Cancel holds the server's connection from the next plan.
+- A plan is told finished (`ExecEvent::Finished`) once it let go of
+  what it held: its staging folders removed (its context dropped, a
+  round trip a name on a server) before, while its card still says it
+  stops. A card gone, the next plan on that server starts at once.
 - A plan is told started (`ExecEvent::Started`, as asked) before its
   checks (unfolding, names taken, the dry run, room), which may read
   whole trees: Pause and Cancel reach it there (`Executor::show`), and
@@ -397,7 +413,8 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
 - A step's own threads (a batch's, `op::ranges`'s) are given the plan's
   `transfer::Control` (its cancel and its pause) and a progress handle
   (`StepContext::progress`), never the context, which is the plan
-  thread's alone. Paused, Skwir's own copy waits between files and a
+  thread's alone. Paused, Skwir's own copy waits between a file's chunks
+  (cancelled, it stops there), `op::ranges`'s readers between pieces, and a
   tool is held where it is (`process::run_watching`'s `held`: `SIGSTOP`
   to its process group; on Windows, which has no such signal, each
   thread of its job's processes suspended).

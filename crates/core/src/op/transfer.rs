@@ -30,8 +30,9 @@
 //! A move to another device is a copy, then the original removed: a batch
 //! makes its copy as a copy's, after reading what its source is
 //! (`builtin::state_of`), which its step compares before removing the
-//! original. A batch heeds the plan's pause ([`Control`]): Skwir's own
-//! copy waits between files, a tool is stopped meanwhile.
+//! original. A batch heeds the plan's pause and its cancel ([`Control`]):
+//! Skwir's own copy waits between a file's chunks, and stops there once
+//! cancelled; a tool is held meanwhile, and ended when cancelled.
 //!
 //! What a plugin's transfer writes or removes in a remote's folder, it
 //! does beside the mount, where no watch of this machine's sees it: the
@@ -1602,7 +1603,8 @@ fn run(
 /// [`AT_ONCE`] at a time ([`DOWN_AT_ONCE`] from a remote onto this
 /// machine), each given its mode where it was made otherwise
 /// and its time, then the folders theirs, deepest first. While the plan
-/// is paused, each waits before its next file. Beside what is there, each
+/// is paused, each waits before its next chunk of a file; cancelled, each
+/// stops there (`copy_one`). Beside what is there, each
 /// makes its files in a folder of its own in `temp`: the kernel takes a
 /// folder's lock to make a name in it, and to rename one out of it, so
 /// one folder for all would make them one at a time. A file a run cut
@@ -1673,7 +1675,7 @@ pub(super) fn copy_at_once(
                         // Made aside, then placed, never over anything.
                         Some(aside) => {
                             let aside = aside.join(dst.file_name().unwrap_or_default());
-                            copy_one(src, &aside, None, &wrote).and_then(|()| {
+                            copy_one(src, &aside, None, &wrote, control).and_then(|()| {
                                 match place(&aside, dst) {
                                     // Taken meanwhile: left to its step.
                                     Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
@@ -1687,7 +1689,7 @@ pub(super) fn copy_at_once(
                                 }
                             })
                         }
-                        None => copy_one(src, dst, goes_on.from(dst), &wrote),
+                        None => copy_one(src, dst, goes_on.from(dst), &wrote, control),
                     };
                     if let Err(error) = made {
                         stop.store(true, Ordering::Relaxed);
@@ -1876,7 +1878,19 @@ pub fn place(made: &Path, dst: &Path) -> std::io::Result<()> {
 /// first `from` bytes of `src` (a copy a run cut short, read back): its
 /// bytes told to `wrote` as they go, its mode where it was made
 /// otherwise, its time.
-fn copy_one(src: &Path, dst: &Path, from: Option<u64>, wrote: &dyn Fn(u64)) -> anyhow::Result<()> {
+///
+/// It asks for a chunk at a time, about a quarter second's worth
+/// (`builtin::Chunk`), and between two waits while the plan is paused and
+/// stops once it is cancelled: a large file from a slow server is never
+/// copied to its end after Cancel. What it wrote is taken back with what
+/// the batch made.
+fn copy_one(
+    src: &Path,
+    dst: &Path,
+    from: Option<u64>,
+    wrote: &dyn Fn(u64),
+    control: &Control,
+) -> anyhow::Result<()> {
     use std::io::{Read, Seek, Write};
     let meta = std::fs::symlink_metadata(src)?;
     if meta.file_type().is_symlink() {
@@ -1906,14 +1920,20 @@ fn copy_one(src: &Path, dst: &Path, from: Option<u64>, wrote: &dyn Fn(u64)) -> a
     };
     let made = df.metadata()?;
     let mut buf = vec![0; 1 << 20];
+    let mut chunk = super::builtin::Chunk::new(buf.len());
     loop {
-        let n = match sf.read(&mut buf) {
+        control.wait_while_paused();
+        anyhow::ensure!(!control.is_cancelled(), "cancelled");
+        let began = Instant::now();
+        let n = match sf.read(&mut buf[..chunk.size]) {
             Ok(0) => break,
             Ok(n) => n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e.into()),
         };
         df.write_all(&buf[..n])?;
+        // Read and written: a slow destination is as slow as a slow source.
+        chunk.took(began.elapsed());
         copied += n as u64;
         wrote(n as u64);
     }
@@ -2335,6 +2355,7 @@ mod tests {
             aside: &Aside<'_>,
             (name, at): (&Path, u64),
             told: &Told<'_>,
+            control: &Control,
         ) -> anyhow::Result<()> {
             use std::os::unix::fs::PermissionsExt;
             let layout = Layout::made(from, names, into, aside)?;
@@ -2347,7 +2368,7 @@ mod tests {
                     std::fs::write(dst, &bytes)?;
                     moved += at;
                 } else {
-                    copy_one(src, dst, None, &|_| {})?;
+                    copy_one(src, dst, None, &|_| {}, control)?;
                     moved += std::fs::metadata(src)?.len();
                 }
                 (told.copied)(moved);
@@ -2393,7 +2414,7 @@ mod tests {
         ) -> anyhow::Result<()> {
             let (copied, placed, temp) = (told.copied, told.placed, aside.temp);
             if let Some((name, at)) = self.cuts.lock().take() {
-                return Self::cut(from, names, into, aside, (&name, at), told);
+                return Self::cut(from, names, into, aside, (&name, at), told, control);
             }
             self.calls.lock().push(names.to_vec());
             if let Some(cancel) = &self.cancels {
@@ -2885,6 +2906,28 @@ mod tests {
         assert!(copied.is_err(), "cancelled while paused, it stops");
         assert!(!cancelled.join("run.sh").exists());
         drop(pause.resume());
+    }
+
+    /// Cancelled partway through a large file, Skwir's own copy stops
+    /// within its chunk: it never reads the file to its end.
+    #[test]
+    fn a_batch_cancelled_within_a_large_file_stops_there() {
+        let tmp = home_tempdir();
+        let src = tmp.path().join("it's large.bin");
+        let len = 16usize << 20;
+        std::fs::write(&src, vec![7u8; len]).unwrap();
+        let cancel = CancelToken::new();
+        let control = Control::new(cancel.clone(), Arc::default());
+        let moved = AtomicU64::new(0);
+        let wrote = |n: u64| {
+            moved.fetch_add(n, Ordering::Relaxed);
+            cancel.cancel();
+        };
+        let dst = tmp.path().join("copy.bin");
+        let copied = copy_one(&src, &dst, None, &wrote, &control);
+        assert!(copied.is_err(), "cancelled, it stops: {copied:?}");
+        let moved = moved.load(Ordering::Relaxed);
+        assert!(moved > 0 && moved <= 1 << 20, "one chunk at most: {moved}");
     }
 
     #[test]

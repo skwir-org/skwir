@@ -352,6 +352,23 @@ what it shows, whatever the number of tags
 (`docs/invariants/views.md`). Checks in `docs/STATUS-LOG.md`
 (2026-11-02, "Every tag offered").
 
+## Cancel within a file, progress as it comes (2026-11-02)
+
+Reported by the user: Cancel during a copy of large files between two
+SFTP servers said "Stopping…" while the copy went on to the end, the
+button doing nothing; a copy from the same server just after stood
+still at its start, at 80 MiB and at a file's end. Skwir's own batch
+copy answers Pause and Cancel between a file's chunks, a large remote
+file's readers between their pieces (a quarter second's worth each), so
+Cancel lands within a second or two on a slow server
+(`docs/invariants/operations.md`, "Running"). What a large file's
+ranges bring shows as moved as it comes, not once written in order: the
+stalls were the bar's, the bytes coming throughout (ADR-113, amended).
+rsync's progress is read as it comes, not a second late; a plan says it
+finished once its staging folders are gone; a card stopping says so,
+its Cancel inert (`docs/invariants/shell.md`). Checks in
+`docs/STATUS-LOG.md` (2026-11-02, "Cancel within a file").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -365,6 +382,15 @@ printing](#grammars-and-printing) (2026-10-31); skwird's steps (ADR-050); the de
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
+
+**From Cancel within a file (2026-11-02)**:
+- A batch's items are counted as its steps place them, at its end: "0 of
+  3 items" while its bytes go (its bar moves by them). rsync's `xfr#`
+  and Skwir's own copy's placed files could count them as they finish.
+- The 80 MiB stall the user saw was not reproduced as such (their build
+  predates arrivals counted at all); sshfs, rsync and Skwir's own copy
+  were measured through a relay on this machine, not a real network,
+  and GVfs, kio-fuse and rclone mounts not throttled.
 
 **From the address card (2026-11-02)**:
 - The lower of two panes split one above the other was not tried: its
@@ -2322,7 +2348,9 @@ Found on the way and fixed: a batch of a folder and a file lost the
 second run's first bytes (its count shared with the first), unseen
 until a total was shown. Deviation: a large remote file's ranges are
 still read 4 MiB at a time (the measured gain of `ranges`), so its bar
-moves by 4 MiB while its speed follows what arrives. Windows and macOS
+moves by 4 MiB while its speed follows what arrives; amended the same
+day (ADR-113, "Cancel within a file" above): read a quarter second's
+worth at a time, no slower, and shown as they arrive. Windows and macOS
 compiled only. Left: sshfs, GVfs and kio-fuse not checked throttled in
 a window (their bytes go as they are written, measured as any copy's);
 the card's line not yet said to a screen reader.

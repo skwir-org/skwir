@@ -2060,9 +2060,10 @@ const COPY_CHUNK: usize = 8 << 20;
 /// come that often from a slow server or onto a slow drive, and at most
 /// `most` on a fast disk (ADR-113). It starts at a mebibyte, doubles while
 /// a call takes under a tenth of a second, halves while one takes over
-/// four tenths, never under `CHUNK_LEAST`.
-struct Chunk {
-    size: usize,
+/// four tenths, never under `CHUNK_LEAST`. A batch's own copy asks so too
+/// (`transfer::copy_one`).
+pub(super) struct Chunk {
+    pub(super) size: usize,
     most: usize,
 }
 
@@ -2071,15 +2072,26 @@ struct Chunk {
 const CHUNK_LEAST: usize = 256 << 10;
 
 impl Chunk {
-    fn new(most: usize) -> Self {
+    pub(super) fn new(most: usize) -> Self {
         Chunk {
             size: (1 << 20).min(most),
             most,
         }
     }
 
+    /// One that starts at the least: a reader of one of several ranges
+    /// read at once (`ranges`), which shares the server's pace with the
+    /// others.
+    #[cfg(unix)]
+    pub(super) fn from_least(most: usize) -> Self {
+        Chunk {
+            size: CHUNK_LEAST.min(most),
+            most,
+        }
+    }
+
     /// The last call took `took`.
-    fn took(&mut self, took: std::time::Duration) {
+    pub(super) fn took(&mut self, took: std::time::Duration) {
         if took < std::time::Duration::from_millis(100) {
             self.size = (self.size * 2).min(self.most);
         } else if took > std::time::Duration::from_millis(400) {
