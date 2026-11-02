@@ -3,7 +3,10 @@
 //! `name (reduced).ext`, and its undo takes it to the trash; a PDF's
 //! photograph is brought to the dots per inch asked, its text untouched;
 //! a copy that would not be smaller is not made and the plan goes on; a
-//! signed PDF is not made smaller; Reduce Size… asks its dialog first.
+//! signed PDF is not made smaller; Reduce Size… asks its dialog first; an
+//! image whose page looks different in the copy is put back as it was,
+//! and a copy whose pages differ otherwise is not kept (a reader standing
+//! in for the window's draws the pages).
 //! The print helper, which makes the copies, is a default member built
 //! with the tests; without it the test says so and passes, unless
 //! `SKWIR_REQUIRE_WORKERS` is set.
@@ -151,6 +154,249 @@ fn pdf_with_photo(path: &Path, width: u32, height: u32, signed: bool) {
     let catalog_id = doc.add_object(catalog);
     doc.trailer.set("Root", catalog_id);
     doc.save(path).unwrap();
+}
+
+/// A two-page PDF, each page drawing a photograph of 3000 × 2000 pixels
+/// 6 by 4 inches (500 dpi), told apart by their grain.
+fn pdf_of_two_photos(path: &Path) {
+    let mut doc = Document::with_version("1.5");
+    let tree_id = doc.new_object_id();
+    let mut kids = Vec::new();
+    for page in 0..2u32 {
+        let mut picture = photo(3000, 2000);
+        for pixel in picture.pixels_mut() {
+            pixel[2] = pixel[2].wrapping_add(u8::try_from(page * 40).unwrap());
+        }
+        let mut image = Stream::new(
+            dictionary! {
+                "Type" => "XObject",
+                "Subtype" => "Image",
+                "Width" => 3000,
+                "Height" => 2000,
+                "ColorSpace" => "DeviceRGB",
+                "BitsPerComponent" => 8,
+                "Filter" => "DCTDecode",
+            },
+            jpeg(&picture, 95),
+        );
+        image.allows_compression = false;
+        let image_id = doc.add_object(image);
+        let content = doc.add_object(Stream::new(
+            Dictionary::new(),
+            b"q 432 0 0 288 90 400 cm /Im0 Do Q".to_vec(),
+        ));
+        let page_id = doc.add_object(dictionary! {
+            "Type" => "Page",
+            "Parent" => tree_id,
+            "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+            "Contents" => content,
+            "Resources" => dictionary! { "XObject" => dictionary! { "Im0" => image_id } },
+        });
+        kids.push(page_id.into());
+    }
+    doc.objects.insert(
+        tree_id,
+        Object::Dictionary(dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => 2 }),
+    );
+    let catalog_id = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => tree_id });
+    doc.trailer.set("Root", catalog_id);
+    doc.save(path).unwrap();
+}
+
+/// How the reader standing in for the window's draws a copy.
+#[derive(Clone, Copy)]
+enum Stand {
+    /// The first page as dark as its image is narrow, the others alike:
+    /// an image made smaller there looks different.
+    FirstPageByWidth,
+    /// The copy one page short.
+    PageShort,
+}
+
+/// A reader of PDFs standing in for the window's, which the copy's check
+/// asks: it draws each page in one gray, as `Stand` says.
+struct StandIn(Stand);
+
+impl skwir_core::preview::PreviewProvider for StandIn {
+    fn id(&self) -> &'static str {
+        "stand-in"
+    }
+    fn priority(&self) -> i32 {
+        i32::MAX / 2
+    }
+    fn accepts(&self, request: &skwir_core::preview::PreviewRequest) -> bool {
+        request.mime.as_deref() == Some("application/pdf")
+    }
+    fn open_document(
+        &self,
+        request: &skwir_core::preview::PreviewRequest,
+        _: &skwir_core::CancelToken,
+    ) -> anyhow::Result<Option<Arc<dyn skwir_core::document::DocumentSession>>> {
+        // Each page's image's width, as the file or the copy has it.
+        let widths = widths_by_page(&request.entry.path);
+        let copy = request.entry.path.file_name() == Some(std::ffi::OsStr::new("copy.pdf"));
+        let pages = match self.0 {
+            Stand::PageShort if copy => 1,
+            _ => u32::try_from(widths.len()).unwrap(),
+        };
+        Ok(Some(Arc::new(Drawn {
+            stand: self.0,
+            widths,
+            info: skwir_core::document::DocumentInfo {
+                pages,
+                outlines: Vec::new(),
+                reflowable: false,
+                labels: Vec::new(),
+            },
+        })))
+    }
+}
+
+struct Drawn {
+    stand: Stand,
+    widths: Vec<i64>,
+    info: skwir_core::document::DocumentInfo,
+}
+
+impl skwir_core::document::DocumentSession for Drawn {
+    fn info(&self) -> &skwir_core::document::DocumentInfo {
+        &self.info
+    }
+    fn render(
+        &self,
+        page: u32,
+        side: u32,
+        _: &skwir_core::CancelToken,
+    ) -> anyhow::Result<skwir_core::document::DocumentPage> {
+        let level = match self.stand {
+            Stand::FirstPageByWidth if page == 1 => u8::try_from(self.widths[0] / 20).unwrap(),
+            _ => 128,
+        };
+        let (width, height) = (side * 3 / 4, side);
+        Ok(skwir_core::document::DocumentPage {
+            width,
+            height,
+            pixels: [level, level, level, 255].repeat((width * height) as usize),
+            order: skwir_core::document::PixelOrder::Rgba,
+            content: Arc::new(skwir_core::document::PageContent {
+                page,
+                width: 612.0,
+                height: 792.0,
+                chars: Vec::new(),
+                links: Vec::new(),
+            }),
+        })
+    }
+    fn search(
+        &self,
+        _: &str,
+        _: &skwir_core::CancelToken,
+    ) -> anyhow::Result<Vec<skwir_core::document::SearchHit>> {
+        Ok(Vec::new())
+    }
+}
+
+/// The widths of the images the PDF at `path` holds, by page.
+fn widths_by_page(path: &Path) -> Vec<i64> {
+    let doc = Document::load(path).unwrap();
+    doc.get_pages()
+        .values()
+        .map(|&page| {
+            let resources = doc.get_dictionary(page).unwrap().get(b"Resources").unwrap();
+            let image = resources
+                .as_dict()
+                .unwrap()
+                .get(b"XObject")
+                .unwrap()
+                .as_dict()
+                .unwrap()
+                .get(b"Im0")
+                .unwrap()
+                .as_reference()
+                .unwrap();
+            let Ok(Object::Stream(image)) = doc.get_object(image) else {
+                panic!("an image");
+            };
+            image.dict.get(b"Width").unwrap().as_i64().unwrap()
+        })
+        .collect()
+}
+
+/// The image on a page that looks different in the copy is put back as it
+/// was, the copy made again keeping it and checked again; the other page's
+/// image is made smaller.
+#[test]
+fn an_image_whose_page_looks_different_is_put_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(app) = app(tmp.path()) else { return };
+    app.previews
+        .register("stand-in", Arc::new(StandIn(Stand::FirstPageByWidth)));
+    let dir = tmp.path().join("files");
+    std::fs::create_dir(&dir).unwrap();
+    let pdf = dir.join("two photos.pdf");
+    pdf_of_two_photos(&pdf);
+    let result = reduce(&app, &pdf, "screen");
+    assert!(result.error.is_none(), "{:?}", result.error);
+    let copy = dir.join("two photos (reduced).pdf");
+    assert!(copy.is_file());
+    assert!(std::fs::metadata(&copy).unwrap().len() < std::fs::metadata(&pdf).unwrap().len());
+    // The first page's image as it was; the second's at 150 dpi.
+    assert_eq!(widths_by_page(&copy), [3000, 900]);
+}
+
+/// A copy with a page fewer than its file is not kept, and said.
+#[test]
+fn a_copy_whose_pages_differ_otherwise_is_not_kept() {
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(app) = app(tmp.path()) else { return };
+    app.previews
+        .register("stand-in", Arc::new(StandIn(Stand::PageShort)));
+    let dir = tmp.path().join("files");
+    std::fs::create_dir(&dir).unwrap();
+    let pdf = dir.join("two photos.pdf");
+    pdf_of_two_photos(&pdf);
+    let result = reduce(&app, &pdf, "screen");
+    assert!(result.error.is_none(), "{:?}", result.error);
+    assert_eq!(result.skipped, 1);
+    assert!(!dir.join("two photos (reduced).pdf").exists());
+}
+
+/// Lossless brings nothing under a size: asked both, the command says so
+/// rather than making a plan.
+#[test]
+fn lossless_with_a_size_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(app) = app(tmp.path()) else { return };
+    let picture = tmp.path().join("walk.png");
+    image::RgbImage::from_pixel(64, 64, image::Rgb([200, 100, 50]))
+        .save(&picture)
+        .unwrap();
+    let invocation = Invocation::new("shrink.reduce")
+        .with("entries", named(&picture))
+        .with("quality", "lossless")
+        .with("at_most", "10 KB");
+    let refused = app.dispatch(&invocation).expect_err("refused");
+    assert!(format!("{refused:#}").contains("Lossless"), "{refused:#}");
+}
+
+/// A step of a plan made while the plugin was on is refused once it is
+/// off, and makes nothing.
+#[test]
+fn a_plan_made_before_the_plugin_went_off_makes_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let Some(app) = app(tmp.path()) else { return };
+    let picture = tmp.path().join("walk.jpg");
+    std::fs::write(&picture, jpeg(&photo(2600, 1800), 95)).unwrap();
+    let invocation = Invocation::new("shrink.reduce")
+        .with("entries", named(&picture))
+        .with("quality", "screen");
+    let Outcome::Plan(plan) = app.dispatch(&invocation).unwrap() else {
+        panic!("a plan");
+    };
+    assert!(app.plugins.set_enabled("shrink", false, &app));
+    let result = app.executor.execute_blocking(&plan, app.lifetime());
+    assert!(result.error.is_some(), "the step is refused");
+    assert!(!tmp.path().join("walk (reduced).jpg").exists());
 }
 
 /// The width of each image the PDF at `path` holds, and its pages' text

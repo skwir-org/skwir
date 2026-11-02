@@ -17,7 +17,7 @@
 //! Each copy is a step of a plan, undone to the trash, as a copy is.
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
 use std::time::Duration;
 
 use anyhow::Context as _;
@@ -36,6 +36,7 @@ use skwir_core::registry::MenuItem;
 use skwir_core::scheduler::Priority;
 use skwir_core::shrink::{Job, Kind, Quality};
 use skwir_core::workspace::PaneId;
+use skwir_platform::process::Metered;
 
 mod dialog;
 
@@ -163,6 +164,10 @@ impl Plugin for ShrinkPlugin {
 
     fn on_disable(&self, _app: &App) {
         dialog::forget();
+        // A step of a plan made before is refused from here on.
+        if let Ok(mut held) = APP.write() {
+            *held = None;
+        }
     }
 }
 
@@ -294,6 +299,10 @@ fn plan_of(app: &App, args: &ReduceArgs) -> anyhow::Result<Plan> {
         .filter(|text| !text.is_empty())
         .map(|text| dialog::size(text).map_err(anyhow::Error::msg))
         .transpose()?;
+    anyhow::ensure!(
+        at_most.is_none() || args.quality != Quality::Lossless,
+        "Lossless re-encodes nothing, so it cannot bring a copy under a size: ask `at_most` with print, screen or small"
+    );
     let mut plan = Plan::new(match files.as_slice() {
         [(entry, _)] => format!("make a smaller copy of “{}”", display_name(&entry.path)),
         many => format!("make smaller copies of {} files", many.len()),
@@ -494,10 +503,10 @@ impl op::Effect for ShrinkCopy {
         let source = self.entry.resolve()?;
         // Made in a folder of this machine's, in the lane of what it reads:
         // only the copy goes where it is kept, staged there and put in place.
-        let work = tempfile::Builder::new()
-            .prefix("skwir-shrink-")
-            .tempdir()
-            .context("A folder to make the copy in")?;
+        // Skwir's cache, on a disk, holds it while it is made and checked
+        // (a copy of a PDF may be gigabytes, which a temporary folder in
+        // memory would hold in memory); the folder goes when it is done.
+        let work = work_folder(&app).context("A folder to make the copy in")?;
         let job = Job {
             kind: self.kind.into(),
             input: source.clone(),
@@ -530,12 +539,22 @@ impl op::Effect for ShrinkCopy {
             // helper says how far it went, held while the plan is paused.
             let size = std::fs::metadata(&job.input).map_or(1, |meta| meta.len().max(1));
             gauge.announce(size);
-            let metered = skwir_platform::process::Metered::new(gauge, size);
-            let went = |fraction: f64| metered.went(fraction);
-            let held = || metered.held();
+            let metered = Mutex::new(Metered::new(gauge.clone(), size));
+            let meter = || metered.lock().unwrap_or_else(PoisonError::into_inner);
+            let went = |fraction: f64| meter().went(fraction);
+            let held = || gauge.is_paused();
+            // A PDF made again after images were put back goes through the
+            // whole file again: that much more work, announced.
+            let again = || {
+                let mut meter = meter();
+                meter.went(1.0);
+                gauge.announce(size);
+                *meter = Metered::new(gauge.clone(), size);
+            };
             let follow = skwir_platform::process::Follow::new(&went, &held);
-            let made = skwir_platform::shrink_job::made(&app, job, &at, &name, &token, &follow);
-            metered.went(1.0);
+            let made =
+                skwir_platform::shrink_job::made(&app, job, &at, &name, &token, &follow, &again);
+            meter().went(1.0);
             made
         });
         if cancel.is_cancelled() && made.is_err() {
@@ -567,8 +586,9 @@ impl op::Effect for ShrinkCopy {
         ctx.check_cancelled()?;
         let staging = ctx.stage(&self.dest_dir)?;
         let staged = staging.path().join("made");
-        let kept =
-            std::fs::rename(&copy, &staged).or_else(|_| std::fs::copy(&copy, &staged).map(drop));
+        // Read from the file as it was checked, never again by its name,
+        // which the helper could have left a link at.
+        let kept = copied(copy.file, &staged);
         let result = kept.map_err(anyhow::Error::from).and_then(|()| {
             ctx.check_cancelled()?;
             staging.place(&staged, &target).with_context(|| {
@@ -591,6 +611,21 @@ impl op::Effect for ShrinkCopy {
         // Undone to the trash, as a copy is: it may have been changed since.
         Ok(Some(Box::new(op::Trash { entry: made })))
     }
+}
+
+/// A folder of its own in the plugin's corner of Skwir's cache, for a
+/// copy being made, removed when dropped.
+fn work_folder(app: &App) -> std::io::Result<tempfile::TempDir> {
+    let folder = app.cache.namespace(ID).folder("work");
+    std::fs::create_dir_all(&folder)?;
+    tempfile::Builder::new().prefix("copy-").tempdir_in(folder)
+}
+
+/// What `from` holds written at `to`, a name nothing has.
+fn copied(mut from: std::fs::File, to: &Path) -> std::io::Result<()> {
+    let mut out = std::fs::File::create_new(to)?;
+    std::io::copy(&mut from, &mut out)?;
+    out.sync_all()
 }
 
 /// `bytes` said as a size: 1.2 MB, 640 KB.

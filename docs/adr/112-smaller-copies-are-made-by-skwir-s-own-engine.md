@@ -91,18 +91,39 @@ Windows and macOS (`just lint-all`), not run there.
    region, never symbols matched, which swap characters). Left as it is:
    2, 4 or 16 bits, a stencil mask, a colour key, a matted mask, JPEG
    2000, a CMYK JPEG (its inversion is read two ways), a JPEG whose
-   colour transform is set, and other filters. Streams stored twice are kept once, the pages'
-   thumbnails let go of, Deflate written at its best, the rest saved in
-   object streams. A PDF protected by a password, or signed, is not made
-   smaller (a copy would drop the protection, break the signature), nor
-   one carrying rights its maker signed (`UR3`), said apart.
+   colour transform is set, and other filters. An image no page's drawing
+   reaches (an annotation's, a pattern's) is never resized and written
+   again only without loss, as the check would not look at it. Streams
+   stored twice are kept once, the pages' thumbnails let go of, Deflate
+   written at its best (a stream holding more than 1 GiB left as it is),
+   the rest saved in object streams. A PDF protected by a password (an
+   owner's alone included, which opens without one), or signed, is not
+   made smaller (a copy would drop the protection, break the signature),
+   nor one carrying rights its maker signed (`UR3`), said apart, nor a
+   damaged one (its table of cross-references rebuilt, or an object it
+   reaches not read): a copy is written from what was read, and would
+   lose what a reader repairs as it shows it.
 5. **A PDF's copy is checked** before it is kept
-   (`skwir_platform::shrink_job::made`): each image written anew is
-   looked at on the first page showing it, drawn from the file and from
-   the copy by the reader the settings choose, at 600 pixels in gray. A
-   page differing by more than detail lost (an average of 6 levels, or
-   3 % of its pixels by more than 64) has its images put back, the copy
-   made again keeping them. No reader on, the copy is kept unchecked.
+   (`skwir_platform::shrink_job::made`): its first and last pages, and
+   each image written anew on the first page showing it, drawn from the
+   file and from the copy by the reader the settings choose, at 600
+   pixels in gray. A page differing by more than detail lost (an average
+   of 6 levels, 3 % of its pixels by more than 64, or a square of 8
+   pixels whose average moved by more than 40: resizing and a JPEG's
+   blocks keep each square's average, an image gone or turned does not,
+   however small beside its page) has its images put back, the copy made
+   again under the same rule and checked again, three times at most. A
+   copy with another count of pages, or one differing where no image was
+   written anew, is not kept, and said. No reader on, the copy is kept
+   unchecked. What the helper wrote is opened once, a regular file
+   itself and never through a link, and what is kept is read from it: a
+   helper that a file took over could leave a link to another file there.
+   The helper is stopped when it says nothing of how far it went for 3
+   minutes (it tells each page, image and stream it goes through), or
+   past 8 hours: how long a file takes is the machine's and the file's
+   (73 s for 10 MB of pages drawn, without loss, on the reference
+   machine), and a limit by its size, measured on one machine, stopped a
+   slower one's work that was going.
 6. **A picture** (JPEG, PNG; not an animated PNG) keeps its format, is
    turned upright as its EXIF said, keeps its colour profile, its EXIF
    (orientation set to 1) and XMP; with location and camera details left
@@ -151,6 +172,10 @@ Hyper's being smaller (26 %). The form's signed rights left it as it was.
   five predictors tried and Deflate at its best, 73 s for 15 pages of
   4096 pixels.
 - A PDF's copy costs a second reading of the pages checked; a scan of
-  every page an image, every page.
+  every page an image, every page. A copy whose images were put back
+  costs a second pass through the whole file, announced as more work.
+- A copy is made in Skwir's cache (`shrink/work`, on a disk), not in a
+  temporary folder that may be memory, and the folder goes once it is
+  kept or given up.
 - The print helper reads a file nobody vouched for in its `--shrink`
   mode, as it reads pictures to print: isolated where the system can.

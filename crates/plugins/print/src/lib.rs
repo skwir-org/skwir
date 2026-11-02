@@ -1316,10 +1316,12 @@ fn smaller_pdf(
         keep: Vec::new(),
         rule: None,
     };
+    // A pass after the first is not announced: the bar holds where the
+    // first left it while it runs.
     let (copy, _) =
-        skwir_platform::shrink_job::made(app, job, &folder, "smaller.pdf", cancel, follow)
+        skwir_platform::shrink_job::made(app, job, &folder, "smaller.pdf", cancel, follow, &|| {})
             .context("The PDF could not be made smaller")?;
-    Ok(copy.unwrap_or(pdf))
+    Ok(copy.map_or(pdf, |copy| copy.path))
 }
 
 #[cfg(test)]
