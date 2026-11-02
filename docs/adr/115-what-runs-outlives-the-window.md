@@ -152,9 +152,12 @@ macOS otherwise compiled only.
   presence saying so; nothing starts it but the user.
 - The core's wakes are taken by one loop for the program's life
   (`finishing::listen`), the window's shell syncing while one is up.
-- What runs and what was said of it is `Work` (`work.rs`), the window's
-  while it is up and the program's while none is; the shell no longer
-  owns it.
+- What runs and what was said of it is `Work` (`work.rs`), the
+  program's for its life (`Finishing`), which the window's shell shares
+  and never moves: what it took cannot go with a window that closed, or
+  one that failed to open. A window that left (`Shell::leave`) takes
+  nothing more, though gpui removes it later: what the core sends
+  meanwhile is the program's, what it asks waits for the next window.
 - gpui's quit mode is explicit: the program ends when nothing keeps it,
   not with its last window.
 - A launch looks for a finishing Skwir first: on Linux, a marker file in

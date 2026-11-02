@@ -138,7 +138,7 @@ like `AGENTS.md`.
 | settings | dialog; its pages a tab list; its controls | "Settings"; each control its setting's title |
 | toolbars, tabs | buttons; a tab list of tabs | their titles; each tab its location |
 | toasts | status (alert for a failure), live | the message |
-| Activity | its strip a button; a group of progress indicators, a list of what ended | what runs and how far; each card its plan's title |
+| Activity | its strip a button; a group of progress indicators, a list of what waits, a list of what ended (Earlier) | what runs and how far; each card its plan's title |
 | preview panel | landmark (complementary) | "Preview", described by the file and its facts |
 | Peek, the whole screen | modal dialog | the file; its facts and keys |
 | a picture, a film | image (its size), video | the file |

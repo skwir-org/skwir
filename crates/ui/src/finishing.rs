@@ -20,8 +20,14 @@
 //! and quit does.
 //!
 //! One loop takes the core's wakes for the program's life (`listen`): the
-//! window's sync while one is up, this module's while none is.
+//! window's sync while one is up, this module's while none is. `Work` is
+//! the program's for its life (`Finishing::work`): the window's shell
+//! shares it and never moves it, so nothing it took can go with a window
+//! that closed, nor with one that failed to open; a shell that has left
+//! takes nothing more (`Shell::leave`).
 
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -48,10 +54,11 @@ pub(crate) struct Finishing {
     app: Arc<skwir_core::App>,
     keymap: keymap::Keymap,
     started: Instant,
-    /// The window up, if any.
+    /// The window up, if any: none from the moment it leaves.
     window: Option<WindowHandle<Shell>>,
-    /// What runs, left by the window that closed, kept while none is up.
-    work: Option<Work>,
+    /// What runs and what was said of it, for the program's life: the
+    /// window's shell shares it while one is up.
+    work: Rc<RefCell<Work>>,
     /// Asked to stop and quit: the window closing ends the program.
     stopping: bool,
     /// The program ends: the system asking again is told yes.
@@ -92,12 +99,13 @@ pub(crate) fn start(
     let ending = Arc::new(AtomicBool::new(false));
     #[cfg(unix)]
     end_on_signals(&app, &ending);
+    let work = Rc::new(RefCell::new(Work::new(&app)));
     cx.set_global(Finishing {
         app,
         keymap,
         started,
         window: None,
-        work: None,
+        work,
         stopping: false,
         quitting: false,
         taking: Arc::default(),
@@ -152,34 +160,55 @@ fn listen(cx: &mut App, wakes: flume::Receiver<()>) {
 
 /// The core woke the program: whether a listing is still being applied.
 fn woken(cx: &mut App) -> bool {
-    if cx.global::<Finishing>().ending.load(Ordering::Acquire) {
-        quit(cx);
+    let state = cx.global::<Finishing>();
+    if state.quitting {
         return false;
     }
-    let openings = std::mem::take(&mut *cx.global::<Finishing>().openings.lock());
+    if state.ending.load(Ordering::Acquire) {
+        end(cx);
+        return false;
+    }
+    let openings = std::mem::take(&mut *state.openings.lock());
     for opening in openings {
         reopen(cx, Some(opening), false);
     }
-    if let Some(window) = cx.global::<Finishing>().window {
-        let synced = window.update(cx, |shell, window, cx| {
-            shell.sync(window, cx);
-            cx.notify();
-            shell.backlog()
-        });
-        if let Ok(backlog) = synced {
-            return backlog;
+    let state = cx.global::<Finishing>();
+    match state.window {
+        Some(window) => window
+            .update(cx, |shell, window, cx| {
+                shell.sync(window, cx);
+                cx.notify();
+                shell.backlog()
+            })
+            .unwrap_or(false),
+        // No window since one was up: the program takes it in.
+        None if state.opened => {
+            sync(cx);
+            false
         }
+        None => false,
     }
-    if cx.global::<Finishing>().work.is_some() {
-        sync(cx);
-    }
-    false
 }
 
-/// The window is about to close: it leaves what runs and what was said
-/// of it (`Shell::leave`).
-pub(crate) fn left(work: Work, cx: &mut App) {
-    cx.global_mut::<Finishing>().work = Some(work);
+/// A signal asked the program to end: what runs stops, as Stop and quit
+/// does, the window (if up) closing first, as it does then: it is not
+/// left frozen on screen while plans take back what they were in the
+/// middle of, and its tabs are remembered (`closed`).
+fn end(cx: &mut App) {
+    let window = cx.global::<Finishing>().window;
+    let closed = window.is_some_and(|window| window.update(cx, Shell::stop_and_quit).is_ok());
+    if !closed {
+        quit(cx);
+    }
+}
+
+/// The window is about to close (`Shell::leave`): from now on the
+/// program takes in what the core sends, the window's shell taking
+/// nothing more. An action stopped before is let go: the window showed it.
+pub(crate) fn left(cx: &mut App) {
+    let state = cx.global_mut::<Finishing>();
+    state.window = None;
+    state.work.borrow_mut().stopped = None;
 }
 
 /// Stop and quit was asked: the window closing ends the program, the
@@ -189,29 +218,34 @@ pub(crate) fn stopping(cx: &mut App) {
 }
 
 /// Whether something runs, waits its turn, or waits for its server to go
-/// on by itself: what Quit asks about.
-pub(crate) fn under_way(app: &skwir_core::App, work: &Work) -> bool {
-    app.executor.is_busy() || !app.tasks.running().is_empty() || work.waits_for_server()
+/// on by itself: what Quit asks about. Asked of the executor at once: a
+/// plan handed from waiting for its server to its turn is never missed
+/// between two questions.
+pub(crate) fn under_way(app: &skwir_core::App) -> bool {
+    app.executor.busy_or_waiting() || !app.tasks.running().is_empty()
 }
 
 /// Whether the program stays without a window: something under way, an
 /// action an error stopped since the window closed (its Retry), a
 /// question waiting for the window to ask it.
 fn keeps(app: &skwir_core::App, work: &Work) -> bool {
-    under_way(app, work) || work.stopped.is_some() || app.waits_for_answer()
+    under_way(app) || work.stopped.is_some() || app.waits_for_answer()
 }
 
 /// The last window closed: the program ends, unless something keeps it,
 /// which it then finishes without a window.
 fn closed(cx: &mut App) {
     let state = cx.global_mut::<Finishing>();
-    state.window = None;
+    // Gone without leaving (`left`): what it showed is let go all the same.
+    if state.window.take().is_some() {
+        state.work.borrow_mut().stopped = None;
+    }
+    if state.quitting {
+        return;
+    }
     let app = Arc::clone(&state.app);
     crate::remember_location(&app);
-    let work = state.work.get_or_insert_with(|| Work::new(&app));
-    // An action stopped before is let go: the window showed it.
-    work.stopped = None;
-    if state.stopping || !keeps(&app, work) {
+    if state.stopping || !keeps(&app, &state.work.borrow()) {
         quit(cx);
         return;
     }
@@ -245,11 +279,15 @@ fn take_over(state: &Finishing) {
 }
 
 /// Stop taking later launches over: once this returns, none is handed
-/// here; one handed just before waits in `openings`.
+/// here; one handed just before waits in `openings`. What served them is
+/// taken down on a thread of its own: the bus or the pipe is not waited
+/// for here.
 fn stop_taking_over(state: &Finishing) {
     state.round.fetch_add(1, Ordering::AcqRel);
     let taking = state.taking.lock().take();
-    drop(taking);
+    if let Some(taking) = taking {
+        taking.stop_aside();
+    }
 }
 
 /// No window is up: take in what the core sent, tell the desktop, show
@@ -257,32 +295,33 @@ fn stop_taking_over(state: &Finishing) {
 fn sync(cx: &mut App) {
     let state = cx.global_mut::<Finishing>();
     let app = Arc::clone(&state.app);
-    let Some(work) = state.work.as_mut() else {
-        return;
-    };
-    let watched = Watched::windowless(&app);
-    let events = app.executor.events().clone();
-    while let Ok(event) = events.try_recv() {
-        work.take(&app, event, watched);
-    }
-    let under = work.under_way(&app);
-    work.card(&under);
-    work.sync_stopped(&app);
-    work.tell(&app, &under, watched);
-    let asks = app.waits_for_answer();
-    work.tell_asks(asks, watched);
-    let asked = work.take_asked();
-    for asked in &asked {
-        if matches!(asked, Asked::PauseAll | Asked::GoOn) {
-            act(&app, work, asked);
+    let (keeps, asked) = {
+        let mut work = state.work.borrow_mut();
+        let watched = Watched::windowless(&app);
+        let events = app.executor.events().clone();
+        while let Ok(event) = events.try_recv() {
+            work.take(&app, event, watched);
         }
-    }
-    let keeps = keeps(&app, work);
-    let presence = keeps.then(|| presence(work, &under, asks));
-    if state.shown != presence {
-        work.present(presence.clone());
-        state.shown = presence;
-    }
+        let under = work.under_way(&app);
+        work.card(&under);
+        work.sync_stopped(&app);
+        work.tell(&app, &under, watched);
+        let asks = app.waits_for_answer();
+        work.tell_asks(asks, watched);
+        let asked = work.take_asked();
+        for asked in &asked {
+            if matches!(asked, Asked::PauseAll | Asked::GoOn) {
+                act(&app, &work, asked);
+            }
+        }
+        let keeps = keeps(&app, &work);
+        let presence = keeps.then(|| presence(&work, &under, asks));
+        if state.shown != presence {
+            work.present(presence.clone());
+            state.shown = presence;
+        }
+        (keeps, asked)
+    };
     if asked.iter().any(|asked| matches!(asked, Asked::StopAll)) {
         quit(cx);
         return;
@@ -303,6 +342,7 @@ fn sync(cx: &mut App) {
     } else if !keeps {
         // A launch handed over just before taking over stopped opens the
         // window rather than end with the program.
+        let state = cx.global::<Finishing>();
         stop_taking_over(state);
         let handed = state.openings.lock().pop();
         match handed {
@@ -405,22 +445,15 @@ pub(crate) fn reopen(cx: &mut App, opening: Option<Opening>, activity: bool) {
     open(cx, initial, token, activity);
 }
 
-/// Open the window, showing `initial` (else the tabs left open), taking
-/// back what runs if the program finished without one.
+/// Open the window, showing `initial` (else the tabs left open), sharing
+/// what runs, which the program finished without one. One that cannot
+/// open leaves the program as it was, without a window.
 fn open(cx: &mut App, initial: Option<Location>, token: Option<String>, activity: bool) {
     let state = cx.global_mut::<Finishing>();
     // A later launch starts its own Skwir again.
     stop_taking_over(state);
     let (app, keymap, started) = (Arc::clone(&state.app), state.keymap.clone(), state.started);
-    let work = match state.work.take() {
-        Some(work) => {
-            if state.shown.take().is_some() {
-                work.present(None);
-            }
-            work
-        }
-        None => Work::new(&app),
-    };
+    let work = Rc::clone(&state.work);
     let bounds = gpui::Bounds::centered(None, gpui::size(gpui::px(1200.), gpui::px(800.)), cx);
     let opened = cx.open_window(
         gpui::WindowOptions {
@@ -439,7 +472,11 @@ fn open(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
         // At start, nothing can go on without it.
         Err(error) if !cx.global::<Finishing>().opened => panic!("open window: {error:#}"),
         Err(error) => {
+            // Still without one: later launches taken over again, the
+            // presence kept, the program ended if nothing keeps it.
             tracing::error!("the window could not open again: {error:#}");
+            take_over(cx.global::<Finishing>());
+            sync(cx);
             return;
         }
     };
@@ -447,6 +484,9 @@ fn open(cx: &mut App, initial: Option<Location>, token: Option<String>, activity
     let state = cx.global_mut::<Finishing>();
     state.window = Some(window);
     state.opened = true;
+    if state.shown.take().is_some() {
+        state.work.borrow().present(None);
+    }
     let _ = window.update(cx, |shell, window, cx| {
         window.focus(&shell.ui().focus, cx);
         cx.activate(true);
@@ -476,11 +516,7 @@ pub(crate) fn may_quit(cx: &mut App) -> bool {
     if state.quitting || state.stopping {
         return true;
     }
-    let app = Arc::clone(&state.app);
-    let busy = match &state.work {
-        Some(work) => under_way(&app, work),
-        None => app.executor.is_busy() || !app.tasks.running().is_empty(),
-    };
+    let busy = under_way(&state.app);
     if !busy {
         cx.global_mut::<Finishing>().quitting = true;
         return true;
@@ -503,8 +539,11 @@ pub(crate) fn may_quit(cx: &mut App) -> bool {
 fn quit(cx: &mut App) {
     let state = cx.global_mut::<Finishing>();
     state.quitting = true;
+    // Aside as well: the thread lets go of the marker as the plans stop,
+    // and a bus that does not answer cannot hold the program's end.
     stop_taking_over(state);
-    if let Some(mut work) = state.work.take() {
+    {
+        let mut work = state.work.borrow_mut();
         if state.shown.take().is_some() {
             work.present(None);
         }

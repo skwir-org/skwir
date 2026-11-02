@@ -440,9 +440,13 @@ pub struct Shell {
     /// What runs, docked at the window's foot, and what ended (ADR-114).
     pub activity: crate::activity::ActivityState,
     /// What runs and what was said of it, the desktop told (ADR-114): the
-    /// window's while it is up, kept by the program once it closes while
-    /// something is left (ADR-115).
-    pub(crate) work: crate::work::Work,
+    /// program's for its life, shared with the window while it is up
+    /// (ADR-115, `finishing.rs`). Never borrowed across a call that may
+    /// reach the shell again.
+    pub(crate) work: std::rc::Rc<std::cell::RefCell<crate::work::Work>>,
+    /// The window left (`leave`): the shell takes nothing more of what the
+    /// core sends or asks, which the program takes in without it.
+    left: bool,
     /// Whether the window has the focus: what ends while it has not is
     /// told to the desktop.
     pub(crate) window_active: bool,
@@ -524,7 +528,7 @@ impl Shell {
         initial: Option<Location>,
         started: Instant,
         keymap: keymap::Keymap,
-        work: crate::work::Work,
+        work: std::rc::Rc<std::cell::RefCell<crate::work::Work>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -742,6 +746,7 @@ impl Shell {
             toasts: crate::toast::ToastState::default(),
             activity: crate::activity::ActivityState::default(),
             work,
+            left: false,
             window_active: window.is_window_active(),
             pending: Arc::default(),
             shortcuts: None,
@@ -791,7 +796,7 @@ impl Shell {
         }
         shell.restore_session(initial_given, window, cx);
         // The taskbar's button shows the progress of this window's.
-        shell.work.shown_in(Some(window));
+        shell.work.borrow().shown_in(Some(window));
         // Scripts and agents reach the window from now on: what they ask
         // comes after what it starts on.
         shell.app.set_window_shown();
@@ -2165,18 +2170,48 @@ impl Shell {
             .is_some_and(|c| matches!(c.then, Confirmed::Quit))
         {
             self.confirm_accept(window, cx);
-        } else if crate::finishing::under_way(&self.app, &self.work) {
-            let running = self.work.running.first().map(|running| {
-                let paused = self.app.executor.is_paused(running.plan);
-                (running.title.as_str(), paused)
-            });
-            let others = self.work.running.len().saturating_sub(1);
-            let waiting = self.app.executor.queued();
-            let question = crate::toast::quit_question(running, others, waiting);
+        } else if crate::finishing::under_way(&self.app) {
+            let question = self.quit_question();
             self.open_confirm(question, Confirmed::Quit, window, cx);
         } else {
             self.stop_and_quit(window, cx);
         }
+    }
+
+    /// What Quit asks, of what is under way: a plan first, else a task (a
+    /// print being sent), else a plan that waits for its server to go on
+    /// by itself (ADR-080, 9).
+    fn quit_question(&self) -> String {
+        let work = self.work.borrow();
+        let tasks = self.app.tasks.running();
+        let running = work
+            .running
+            .first()
+            .map(|running| {
+                let paused = self.app.executor.is_paused(running.plan);
+                (running.title.as_str(), paused)
+            })
+            .or_else(|| tasks.first().map(|task| (task.title.as_str(), false)));
+        let waiting = self.app.executor.queued();
+        if running.is_none() && waiting == 0 && work.waits_for_server() {
+            // Nothing runs nor waits its turn: what keeps it waits for
+            // its server, the one the strip says stopped when it is that.
+            let what = work
+                .stopped
+                .as_ref()
+                .filter(|stopped| self.app.executor.waits_for_server(stopped.plan))
+                .map_or_else(
+                    || "An action".to_owned(),
+                    |stopped| crate::toast::capitalized(&stopped.title),
+                );
+            return format!(
+                "{what} waits for its server to answer again, to go on by itself. \
+                 Skwir can wait for it without its window, then quit. Or stop now: it \
+                 does not go on, and what it finished stays."
+            );
+        }
+        let others = (work.running.len() + tasks.len()).saturating_sub(1);
+        crate::toast::quit_question(running, others, waiting)
     }
 
     /// Stop what runs and quit: the window closes at once, and the program
@@ -2190,13 +2225,20 @@ impl Shell {
 
     /// The window is about to close (its close button, Quit): what it asks
     /// and was not answered is answered Cancel, as its own Close would;
-    /// what runs and what was said of it go to the program, which finishes
-    /// without the window (`finishing.rs`) or ends.
+    /// from now on the shell takes nothing (`sync`), the program taking in
+    /// what the core sends and asks, which finishes without the window
+    /// (`finishing.rs`) or ends. The window goes later (gpui removes it in
+    /// a task of its own), and what is asked meanwhile waits for the next
+    /// window rather than going with this one.
     pub(crate) fn leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.decline_held();
-        self.work.shown_in(None);
         let _ = window;
-        crate::finishing::left(std::mem::take(&mut self.work), cx);
+        if self.left {
+            return;
+        }
+        self.decline_held();
+        self.left = true;
+        self.work.borrow().shown_in(None);
+        crate::finishing::left(cx);
     }
 
     /// What the window took to ask and was not answered: Cancel each.
@@ -2914,6 +2956,10 @@ impl Shell {
     }
 
     pub(crate) fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Left: what the core sends and asks is the program's to take in.
+        if self.left {
+            return;
+        }
         let t0 = Instant::now();
         let report = self.app.pump_report();
         self.backlog = report.backlog;
@@ -3315,14 +3361,16 @@ impl Shell {
         // Its footer; the last pane's ends with the window's own state.
         self.sync_weight(window, cx);
         let last = self.panes.last().map(|p| p.id) == Some(id);
-        let footer = status::render(self, last, cx);
+        // What runs, read once a frame for the footer and Activity.
+        let under = last.then(|| self.under_way());
+        let footer = status::render(self, under.as_ref(), cx);
         // The window's own, with its state: Activity pinned above the
         // footer, and the last answer over the files at their lower right,
         // where the list shows sizes and dates rather than names. On the
         // whole screen the answer is said over the preview instead.
-        let tray = last
-            .then(|| crate::activity::tray(self, &theme, cx))
-            .flatten();
+        let tray = under
+            .as_ref()
+            .and_then(|under| crate::activity::tray(self, under, &theme, cx));
         let answer = (last && self.preview.fullscreen.is_none())
             .then(|| crate::toast::render_answer(self, cx))
             .flatten();

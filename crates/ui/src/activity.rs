@@ -14,10 +14,15 @@
 //! An action an error stopped stays in the strip, in the error's colour,
 //! until it is retried, Activity is opened, or it is dismissed.
 
-use std::collections::{HashMap, HashSet};
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
-use gpui::{AnyElement, Context, FocusHandle, SharedString, Window, div, prelude::*, px};
+use gpui::{
+    AnyElement, Context, FocusHandle, ScrollHandle, SharedString, Window, div, prelude::*, px,
+};
 use skwir_core::op::{PlanId, Transfer};
 
 use skwir_platform::desktop::Asked;
@@ -28,7 +33,9 @@ use crate::elements::popover::PopoverAnchor;
 use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
-use crate::toast::{Action, Running, Tone, bar, capitalized, pace, sending, waiting_words};
+use crate::toast::{
+    Action, Running, Toast, Tone, bar, capitalized, pace, sending, share, waiting_words,
+};
 use crate::work::{Seen, Watched};
 
 /// Activity's popup, as `Shell::toggle_popup` and `toolbar_menu` know it.
@@ -37,21 +44,75 @@ pub const POPUP: &str = "activity";
 /// What `Earlier` keeps: the answers of this session, newest first.
 pub(crate) const EARLIER: usize = 20;
 
+/// The key of the next answer kept in `Earlier`.
+static NEXT_ENDED: AtomicU64 = AtomicU64::new(1);
+
 /// The bar's width in the strip: as much words as the footer has room for
 /// beside it, then less bar.
 const BAR_WIDE: f32 = 54.;
 const BAR_NARROW: f32 = 24.;
 
-/// An action that ended this session, as its answer said it.
+/// What ended this session, as its answer said it: a plan's, or any other
+/// answer a toast said (a print's, a message), so that none is lost while
+/// Activity is open and no toast is drawn.
 #[derive(Clone, Debug)]
 pub struct Ended {
-    pub plan: PlanId,
+    /// What tells it apart in `Earlier`: its row's and its buttons' ids.
+    pub key: u64,
+    /// The plan it answers; `None` for any other answer.
+    pub plan: Option<PlanId>,
     pub text: String,
     pub tone: Tone,
     /// Its Undo, or Retry for one an error stopped (never Redo: what it
-    /// would redo moves on).
+    /// would redo moves on); another answer's buttons as its toast had.
     pub actions: Vec<Action>,
     pub at: SystemTime,
+}
+
+impl Ended {
+    /// The answer of `plan`, as `text`, `tone` and `actions` say it.
+    pub(crate) fn of_plan(plan: PlanId, text: &str, tone: Tone, actions: &[Action]) -> Ended {
+        let actions = actions
+            .iter()
+            .filter(|action| action.command != "redo")
+            .cloned()
+            .collect();
+        Ended::new(Some(plan), text.to_owned(), tone, actions)
+    }
+
+    /// Any other answer, as its toast says it.
+    pub(crate) fn said(toast: &Toast) -> Ended {
+        Ended::new(None, toast.text.clone(), toast.tone, toast.actions.clone())
+    }
+
+    fn new(plan: Option<PlanId>, text: String, tone: Tone, actions: Vec<Action>) -> Ended {
+        Ended {
+            key: NEXT_ENDED.fetch_add(1, Ordering::Relaxed),
+            plan,
+            text,
+            tone,
+            actions,
+            at: SystemTime::now(),
+        }
+    }
+}
+
+/// Keep `ended` first in `earlier`, `EARLIER` at most. An answer that is no
+/// plan's said again as the last one was (a message repeated) is that one,
+/// moved to now: it does not push the plans' answers out.
+pub(crate) fn keep(earlier: &mut VecDeque<Ended>, ended: Ended) {
+    if ended.plan.is_none()
+        && let Some(last) = earlier.front_mut()
+        && last.plan.is_none()
+        && last.text == ended.text
+        && last.tone == ended.tone
+    {
+        last.at = ended.at;
+        last.actions = ended.actions;
+        return;
+    }
+    earlier.push_front(ended);
+    earlier.truncate(EARLIER);
 }
 
 /// The last action an error stopped, said in the strip until seen.
@@ -80,6 +141,7 @@ impl Stopped {
 }
 
 /// The strip's buttons: one handle each, kept as its words change.
+#[derive(Clone)]
 struct StripFocus {
     open: FocusHandle,
     pause: FocusHandle,
@@ -99,8 +161,8 @@ pub struct ActivityState {
     /// Each card's Pause and Cancel, by plan; each task's Cancel.
     cards: HashMap<PlanId, (FocusHandle, FocusHandle)>,
     tasks: HashMap<u64, FocusHandle>,
-    /// Each `Earlier` row's buttons, by plan and place.
-    rows: HashMap<(PlanId, usize), FocusHandle>,
+    /// Each `Earlier` row's buttons, by its answer's key and place.
+    rows: HashMap<(u64, usize), FocusHandle>,
     /// Each waiting action's Cancel, by its place in the order asked, and
     /// the one that cancels them all.
     waiting: HashMap<u64, FocusHandle>,
@@ -109,6 +171,59 @@ pub struct ActivityState {
     pin: Option<FocusHandle>,
     /// What `ui.activity` gives the keyboard to while pinned and shown.
     tray: Option<FocusHandle>,
+    /// What brings the button the keyboard reaches into view: in the
+    /// popup, made again as it opens (it opens at its top), and pinned.
+    popup_reveal: Reveal,
+    tray_reveal: Reveal,
+}
+
+/// What brings the button the keyboard reaches into view in Activity's
+/// rows, which scroll: the popup's, at most 520 px, and the pinned tray's,
+/// at most half the pane. Toolbar popups do it by their rows' key context
+/// (`toolbar::RevealRow`); Activity's buttons are its own.
+#[derive(Clone, Default)]
+struct Reveal {
+    scroll: ScrollHandle,
+    /// The button last brought into view: once, as the keyboard reaches
+    /// it, so that the wheel may take it out of view again.
+    shown: Rc<RefCell<Option<FocusHandle>>>,
+}
+
+impl Reveal {
+    /// Drawn in the button tracking `focus`: in prepaint, where its bounds
+    /// are real, the first frame it has the keyboard the rows scroll the
+    /// least that shows it whole, and the frame that draws them there is
+    /// asked for (a refresh asked while drawing is dropped).
+    fn marker(&self, focus: &FocusHandle) -> AnyElement {
+        let (scroll, shown, focus) = (self.scroll.clone(), Rc::clone(&self.shown), focus.clone());
+        gpui::canvas(
+            move |bounds, window, _| {
+                let mut shown = shown.borrow_mut();
+                if !focus.is_focused(window) {
+                    if shown.as_ref() == Some(&focus) {
+                        *shown = None;
+                    }
+                    return;
+                }
+                let area = scroll.bounds();
+                // Not laid out yet: the next frame tries again.
+                if shown.as_ref() == Some(&focus) || area.size.height <= px(0.) {
+                    return;
+                }
+                *shown = Some(focus.clone());
+                if let Some(offset) = showing(bounds, area, scroll.offset()) {
+                    scroll.set_offset(offset);
+                    window.on_next_frame(|window, _| window.refresh());
+                }
+            },
+            |_, (), _, _| {},
+        )
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+        .into_any_element()
+    }
 }
 
 /// What runs and is shown: the plans worth a card, then the tasks (a print).
@@ -164,7 +279,7 @@ pub(crate) fn summary(under: &Under) -> Option<Summary> {
         let shares = under
             .plans
             .iter()
-            .map(|(running, t)| bar(running.total, t).0)
+            .map(|(running, t)| share(running.total, t))
             .chain(
                 under
                     .tasks
@@ -242,7 +357,7 @@ pub(crate) fn words(under: &Under, summary: &Summary) -> [String; 3] {
 impl Shell {
     /// What runs and is shown as a card (`Work::under_way`).
     pub(crate) fn under_way(&self) -> Under {
-        self.work.under_way(&self.app)
+        self.work.borrow().under_way(&self.app)
     }
 
     /// Whether Activity's popup is open.
@@ -252,13 +367,25 @@ impl Shell {
             .is_some_and(|popup| popup.kind == POPUP)
     }
 
-    /// Whether Activity stands above the footer: pinned, with something
-    /// under way, waiting, or stopped to show.
+    /// Whether Activity has something to stand above the footer for, as
+    /// `under` runs: under way, waiting, or stopped.
+    fn activity_holds(&self, under: &Under) -> bool {
+        self.work.borrow().stopped.is_some()
+            || !under.is_empty()
+            || !self.app.executor.waiting().is_empty()
+    }
+
+    /// Whether Activity stands above the footer as `under` runs: pinned,
+    /// with something to show, unless it is open as a popup, which stays
+    /// where it opened until it is closed (the strip draws it).
+    pub(crate) fn activity_tray_shown_for(&self, under: &Under) -> bool {
+        self.activity.pinned && !self.activity_open() && self.activity_holds(under)
+    }
+
+    /// `activity_tray_shown_for` what runs now, for what is asked between
+    /// frames (a command, the desktop).
     pub(crate) fn activity_tray_shown(&self) -> bool {
-        self.activity.pinned
-            && (self.work.stopped.is_some()
-                || !self.under_way().is_empty()
-                || !self.app.executor.waiting().is_empty())
+        self.activity.pinned && !self.activity_open() && self.activity_holds(&self.under_way())
     }
 
     /// `ui.activity`: open Activity above its strip, or close it (`args`:
@@ -272,6 +399,8 @@ impl Shell {
     ) {
         let closing = args.get("close").and_then(serde_json::Value::as_bool) == Some(true);
         if !closing && self.activity_tray_shown() {
+            // One popup at a time: the one open closes.
+            self.close_popup(window, cx);
             let focus = self
                 .activity
                 .tray
@@ -285,8 +414,9 @@ impl Shell {
         }
         if self.toggle_popup(POPUP, args, window, cx) {
             self.toolbar_menu = Some(crate::toolbar::Popup::new(POPUP, window, cx));
+            self.activity.popup_reveal = Reveal::default();
             // Seen: the strip says it no more.
-            self.work.stopped = None;
+            self.work.borrow_mut().stopped = None;
         }
         cx.notify();
     }
@@ -297,7 +427,7 @@ impl Shell {
         self.activity.pinned = !self.activity.pinned;
         self.remember_session();
         // Pinned with something to show, it stands where the popup was.
-        if self.activity.pinned && self.activity_open() && self.activity_tray_shown() {
+        if self.activity.pinned && self.activity_open() && self.activity_holds(&self.under_way()) {
             self.close_popup(window, cx);
         }
         cx.notify();
@@ -305,20 +435,21 @@ impl Shell {
 
     /// `Earlier`'s rows' buttons, kept for the answers it still holds.
     pub(crate) fn forget_earlier_rows(&mut self) {
-        let kept: HashSet<PlanId> = self.work.earlier.iter().map(|e| e.plan).collect();
-        self.activity
-            .rows
-            .retain(|(plan, _), _| kept.contains(plan));
+        let kept: HashSet<u64> = self.work.borrow().earlier.iter().map(|e| e.key).collect();
+        self.activity.rows.retain(|(key, _), _| kept.contains(key));
     }
 
-    fn strip_focus(&mut self, cx: &mut Context<Self>) -> &StripFocus {
-        self.activity.strip.get_or_insert_with(|| StripFocus {
-            open: cx.focus_handle(),
-            pause: cx.focus_handle(),
-            cancel: cx.focus_handle(),
-            retry: cx.focus_handle(),
-            dismiss: cx.focus_handle(),
-        })
+    fn strip_focus(&mut self, cx: &mut Context<Self>) -> StripFocus {
+        self.activity
+            .strip
+            .get_or_insert_with(|| StripFocus {
+                open: cx.focus_handle(),
+                pause: cx.focus_handle(),
+                cancel: cx.focus_handle(),
+                retry: cx.focus_handle(),
+                dismiss: cx.focus_handle(),
+            })
+            .clone()
     }
 
     /// The focus of each card's buttons, kept by plan and task while they
@@ -337,8 +468,26 @@ impl Shell {
         for id in tasks {
             self.activity.tasks.entry(id).or_insert_with(|| stop(cx));
         }
-        self.work.carded.extend(plans);
+        self.work.borrow_mut().carded.extend(plans);
     }
+}
+
+/// The scroll offset that shows `row` whole in `area`, scrolled by
+/// `offset` now, moving it the least: `None` when it shows already.
+fn showing(
+    row: gpui::Bounds<gpui::Pixels>,
+    area: gpui::Bounds<gpui::Pixels>,
+    offset: gpui::Point<gpui::Pixels>,
+) -> Option<gpui::Point<gpui::Pixels>> {
+    let mut offset = offset;
+    if row.top() < area.top() {
+        offset.y += area.top() - row.top();
+    } else if row.bottom() > area.bottom() {
+        offset.y -= row.bottom() - area.bottom();
+    } else {
+        return None;
+    }
+    Some(offset)
 }
 
 /// A control pressed as every one is (`modal::pressed`): by a click, and by
@@ -413,20 +562,11 @@ enum Offers {
     Nothing,
 }
 
-/// The strip's buttons' handles, cloned out of the shell for a render.
-struct Handles {
-    open: FocusHandle,
-    pause: FocusHandle,
-    cancel: FocusHandle,
-    retry: FocusHandle,
-    dismiss: FocusHandle,
-}
-
 /// The buttons `offers` holds, built for one version of the strip: each
 /// version is its own element, its buttons with the same ids.
 fn strip_buttons(
     offers: Offers,
-    focus: &Handles,
+    focus: &StripFocus,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> Vec<AnyElement> {
@@ -500,7 +640,7 @@ fn strip_buttons(
                     .px_2()
                     .press(
                         move |this, window, cx| {
-                            this.work.stopped = None;
+                            this.work.borrow_mut().stopped = None;
                             this.run("retry", serde_json::json!({ "plan": plan }), window, cx);
                         },
                         cx,
@@ -518,7 +658,7 @@ fn strip_buttons(
                 )
                 .press(
                     |this, _, cx| {
-                        this.work.stopped = None;
+                        this.work.borrow_mut().stopped = None;
                         cx.notify();
                     },
                     cx,
@@ -531,31 +671,27 @@ fn strip_buttons(
     }
 }
 
-/// The strip at the end of the last pane's footer: what runs, how far, and
-/// the way to Activity, opened above it; `None` while there is nothing to
-/// say, or while Activity, pinned, says it above.
-pub fn strip(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    if shell.activity_tray_shown() {
+/// The strip at the end of the last pane's footer, as `under` runs: what
+/// runs, how far, and the way to Activity, opened above it; `None` while
+/// there is nothing to say, or while Activity, pinned, says it above.
+pub fn strip(
+    shell: &mut Shell,
+    under: &Under,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
+    if shell.activity_tray_shown_for(under) {
         return None;
     }
-    let under = shell.under_way();
     let open = shell.activity_open();
-    if under.is_empty() && shell.work.stopped.is_none() && !open {
+    if under.is_empty() && shell.work.borrow().stopped.is_none() && !open {
         return None;
     }
-    shell.card_focus(&under, cx);
-    let focus = {
-        let f = shell.strip_focus(cx);
-        Handles {
-            open: f.open.clone(),
-            pause: f.pause.clone(),
-            cancel: f.cancel.clone(),
-            retry: f.retry.clone(),
-            dismiss: f.dismiss.clone(),
-        }
-    };
+    shell.card_focus(under, cx);
+    let focus = shell.strip_focus(cx);
+    let stopped = shell.work.borrow().stopped.clone();
     // What it says, richest first, its colour and bar, and what it offers.
-    let (said, color, fraction, offers) = match summary(&under) {
+    let (said, color, fraction, offers) = match summary(under) {
         Some(summary) => {
             let color = if summary.paused || summary.stopping {
                 theme.text_muted
@@ -571,13 +707,13 @@ pub fn strip(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Optio
                 _ => Offers::Nothing,
             };
             (
-                words(&under, &summary),
+                words(under, &summary),
                 color,
                 Some(summary.fraction),
                 offers,
             )
         }
-        None => match shell.work.stopped.clone() {
+        None => match stopped {
             // Stopped by an error, nothing else under way: said until
             // seen, retried or dismissed.
             Some(stopped) => {
@@ -657,9 +793,12 @@ pub fn strip(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Optio
                 ))
             })
             .child({
-                // The last version, drawn when nothing else fits, is cut.
-                let text = div().min_w_0().overflow_hidden().whitespace_nowrap();
-                if last { text.text_ellipsis() } else { text }.child(words.clone())
+                // Each version is drawn only where it fits whole.
+                div()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .child(words.clone())
             })
             .when(several, |d| {
                 d.child(controls::glyph("up", theme.text_muted, 11.))
@@ -677,19 +816,25 @@ pub fn strip(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Optio
                 .justify_end()
                 .gap_0p5()
                 .min_w_0()
+                // A click on the strip leaves the keyboard where it was:
+                // the keys go on acting on the pane while it runs, paused
+                // or not. `ui.activity` brings the keyboard to Activity.
+                .capture_any_mouse_down(|_, window, _| window.prevent_default())
                 .child(opener)
                 .children(strip_buttons(offers, &focus, theme, cx))
                 .into_any_element(),
         );
     }
-    let popup = popover(shell, theme, cx);
+    let popup = popover(shell, under, theme, cx);
     Some(
         div()
             .flex()
             .min_w_0()
+            // The last version is the least it takes: cut narrower, its
+            // buttons, which cannot be, would be drawn over Undo.
             .child(Fit {
                 variants: versions,
-                cuts: true,
+                cuts: false,
                 start: false,
             })
             .children(popup)
@@ -698,15 +843,23 @@ pub fn strip(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Optio
 }
 
 /// Activity, opened above its strip: what `body` holds.
-fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
+fn popover(
+    shell: &mut Shell,
+    under: &Under,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
     if !shell.activity_open() {
         return None;
     }
-    let body = body(shell, theme, cx);
+    let reveal = shell.activity.popup_reveal.clone();
+    let body = body(shell, under, &reveal, theme, cx);
     let popup = shell.toolbar_menu.as_ref()?;
     let panel = crate::toolbar::popup_panel(popup, "ui.activity", theme, cx)
         .role(gpui::Role::Group)
         .aria_label("Activity")
+        // Its rows bring the button the keyboard reaches into view.
+        .track_scroll(&reveal.scroll)
         .w(px(400.))
         .max_h(px(520.))
         .p_0()
@@ -719,32 +872,44 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
 }
 
 /// Activity pinned, above the last pane's footer while something is under
-/// way: what the popup holds, taking room rather than covering the files.
-pub fn tray(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    if !shell.activity_tray_shown() {
+/// way (`under`): what the popup holds, taking room rather than covering
+/// the files.
+pub fn tray(
+    shell: &mut Shell,
+    under: &Under,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Option<AnyElement> {
+    if !shell.activity_tray_shown_for(under) {
         return None;
     }
-    let under = shell.under_way();
-    shell.card_focus(&under, cx);
     let focus = shell
         .activity
         .tray
         .get_or_insert_with(|| cx.focus_handle().tab_stop(false))
         .clone();
-    let body = body(shell, theme, cx);
+    let reveal = shell.activity.tray_reveal.clone();
+    let body = body(shell, under, &reveal, theme, cx);
     Some(
         div()
             .id("activity-tray")
             .role(gpui::Role::Group)
             .aria_label("Activity")
+            // A place of its own, as the pinned player is: Escape gives
+            // the keyboard back to the pane (`keymap::PLACES`).
+            .key_context(crate::keymap::ACTIVITY)
             .track_focus(&focus)
             // Its own place in the window's Tab order, its buttons walked
             // in theirs (as `toolbar::Popup`'s).
             .tab_group()
             .tab_index(1)
+            // A click in it leaves the keyboard where it was, as on the
+            // strip: the keys go on acting on the pane while it stands.
+            .capture_any_mouse_down(|_, window, _| window.prevent_default())
             .flex_none()
             .max_h(gpui::relative(0.5))
             .overflow_y_scroll()
+            .track_scroll(&reveal.scroll)
             .flex()
             .flex_col()
             .border_t_1()
@@ -756,11 +921,17 @@ pub fn tray(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option
     )
 }
 
-/// What Activity holds, in the popup or pinned: its name and pin, the
-/// cards of what runs, what waits, and what ended this session.
-fn body(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyElement> {
-    let under = shell.under_way();
-    shell.card_focus(&under, cx);
+/// What Activity holds, in the popup or pinned, as `under` runs: its name
+/// and pin, the cards of what runs, what waits, and what ended this
+/// session; `reveal` brings the button the keyboard reaches into view.
+fn body(
+    shell: &mut Shell,
+    under: &Under,
+    reveal: &Reveal,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> Vec<AnyElement> {
+    shell.card_focus(under, cx);
     let a11y = shell.a11y;
     let mut parts = Vec::new();
     let pinned = shell.activity.pinned;
@@ -796,6 +967,7 @@ fn body(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
                     })
                     .when(pinned, |d| d.bg(theme.selection_bg))
                     .tooltip(move |_, cx| crate::toolbar::tooltip(pin_tip.clone(), cx))
+                    .child(reveal.marker(&pin))
                     .press(
                         |this, window, cx| {
                             this.run("ui.activity_pin", serde_json::json!({}), window, cx);
@@ -809,13 +981,21 @@ fn body(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
     for (running, transfer) in &under.plans {
         let focus = shell.activity.cards[&running.plan].clone();
         parts.push(
-            progress_card(running, transfer, (&focus.0, &focus.1), a11y, theme, cx)
-                .into_any_element(),
+            progress_card(
+                running,
+                transfer,
+                (&focus.0, &focus.1),
+                reveal,
+                a11y,
+                theme,
+                cx,
+            )
+            .into_any_element(),
         );
     }
     for task in &under.tasks {
         let focus = shell.activity.tasks[&task.id].clone();
-        parts.push(task_card(task, &focus, a11y, theme, cx).into_any_element());
+        parts.push(task_card(task, &focus, reveal, a11y, theme, cx).into_any_element());
     }
     // What the user did meanwhile waits behind what it meets, and paused,
     // for as long as it stays paused: each with what it waits for, and its
@@ -824,10 +1004,10 @@ fn body(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
     let asked: HashSet<u64> = waiting.iter().map(|w| w.asked).collect();
     shell.activity.waiting.retain(|id, _| asked.contains(id));
     if !waiting.is_empty() {
-        parts.push(waiting_heading(shell, waiting.len(), theme, cx));
+        parts.push(waiting_heading(shell, waiting.len(), reveal, theme, cx));
         let rows: Vec<AnyElement> = waiting
             .iter()
-            .map(|w| waiting_row(shell, w, theme, cx))
+            .map(|w| waiting_row(shell, w, reveal, theme, cx))
             .collect();
         parts.push(
             div()
@@ -841,8 +1021,20 @@ fn body(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
                 .into_any_element(),
         );
     }
-    let earlier: Vec<Ended> = shell.work.earlier.iter().cloned().collect();
-    if !earlier.is_empty() {
+    // Each answer's buttons' focus, kept by answer and place; then its rows,
+    // read where they are kept.
+    for ended in &shell.work.borrow().earlier {
+        for n in 0..ended.actions.len() {
+            shell
+                .activity
+                .rows
+                .entry((ended.key, n))
+                .or_insert_with(|| stop(cx));
+        }
+    }
+    let shell: &Shell = shell;
+    let work = shell.work.borrow();
+    if !work.earlier.is_empty() {
         parts.push(
             div()
                 .mt_1()
@@ -856,10 +1048,22 @@ fn body(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
                 .child("Earlier")
                 .into_any_element(),
         );
-        for ended in &earlier {
-            parts.push(earlier_row(shell, ended, theme, cx));
-        }
-    } else if cards == 0 && waiting_is_empty(shell) {
+        let rows: Vec<AnyElement> = work
+            .earlier
+            .iter()
+            .map(|ended| earlier_row(shell, ended, reveal, theme, cx))
+            .collect();
+        parts.push(
+            div()
+                .id("activity-earlier")
+                .role(gpui::Role::List)
+                .when(a11y, |d| d.aria_label("Earlier"))
+                .flex()
+                .flex_col()
+                .children(rows)
+                .into_any_element(),
+        );
+    } else if cards == 0 && waiting.is_empty() {
         parts.push(
             div()
                 .px_3()
@@ -874,15 +1078,12 @@ fn body(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
     parts
 }
 
-fn waiting_is_empty(shell: &Shell) -> bool {
-    shell.app.executor.waiting().is_empty()
-}
-
 /// Over what waits its turn: its name, and Cancel all when there are
 /// several.
 fn waiting_heading(
     shell: &mut Shell,
     count: usize,
+    reveal: &Reveal,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -903,12 +1104,19 @@ fn waiting_heading(
         .h(px(22.))
         .px_2()
         .text_xs()
+        .child(reveal.marker(&focus))
         .press(
             |this, _, cx| {
-                // What waits when pressed, none that started meanwhile.
-                for waiting in this.app.executor.waiting() {
-                    this.app.executor.cancel_waiting(waiting.asked);
-                }
+                // What waits when pressed, none that started meanwhile, in
+                // one pass over the queue.
+                let asked: Vec<u64> = this
+                    .app
+                    .executor
+                    .waiting()
+                    .iter()
+                    .map(|waiting| waiting.asked)
+                    .collect();
+                this.app.executor.cancel_waiting_all(&asked);
                 cx.notify();
             },
             cx,
@@ -938,6 +1146,7 @@ fn waiting_heading(
 fn waiting_row(
     shell: &mut Shell,
     waiting: &skwir_core::op::Waiting,
+    reveal: &Reveal,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -999,6 +1208,7 @@ fn waiting_row(
             .h(px(22.))
             .px_2()
             .text_xs()
+            .child(reveal.marker(&focus))
             .press(
                 move |this, _, cx| {
                     this.app.executor.cancel_waiting(asked);
@@ -1013,8 +1223,9 @@ fn waiting_row(
 /// A row of `Earlier`: how it ended, what, when, and its way back (Undo),
 /// or Retry while it can be.
 fn earlier_row(
-    shell: &mut Shell,
+    shell: &Shell,
     ended: &Ended,
+    reveal: &Reveal,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
@@ -1023,16 +1234,20 @@ fn earlier_row(
         Tone::Error => controls::glyph("warning", theme.error, 13.),
         Tone::Info => controls::glyph("info", theme.text_muted, 13.),
     };
-    let plan = ended.plan;
+    let key = ended.key;
+    // Retry while its plan can be retried.
+    let retries = ended
+        .plan
+        .is_none_or(|plan| shell.app.executor.can_retry(plan));
     let actions: Vec<(usize, Action)> = ended
         .actions
         .iter()
         .cloned()
         .enumerate()
-        .filter(|(_, action)| action.command != "retry" || shell.app.executor.can_retry(plan))
+        .filter(|(_, action)| action.command != "retry" || retries)
         .collect();
     let mut row = div()
-        .id(("activity-earlier", plan.0))
+        .id(("activity-earlier", key))
         .role(gpui::Role::ListItem)
         .flex()
         .flex_none()
@@ -1044,7 +1259,7 @@ fn earlier_row(
         .child(glyph)
         .child(crate::elements::clip::clipped(
             div()
-                .id(("activity-earlier-text", plan.0))
+                .id(("activity-earlier-text", key))
                 .flex_1()
                 .min_w_0()
                 .overflow_hidden()
@@ -1061,24 +1276,23 @@ fn earlier_row(
                 .child(format::clock(ended.at)),
         );
     for (n, action) in actions {
-        let focus = shell
-            .activity
-            .rows
-            .entry((plan, n))
-            .or_insert_with(|| stop(cx))
-            .clone();
+        // Made for each of its buttons before its rows are (`body`).
+        let Some(focus) = shell.activity.rows.get(&(key, n)) else {
+            continue;
+        };
         row = row.child(
             controls::button(
-                SharedString::from(format!("activity-earlier-{}-{n}", plan.0)),
+                SharedString::from(format!("activity-earlier-{key}-{n}")),
                 action.label.clone(),
                 None,
                 ButtonStyle::Plain,
-                &focus,
+                focus,
                 theme,
             )
             .h(px(22.))
             .px_2()
             .text_color(theme.accent_text)
+            .child(reveal.marker(focus))
             .press(
                 move |this, window, cx| {
                     // Its answer is said as any is, the popup closed.
@@ -1099,6 +1313,7 @@ fn progress_card(
     running: &Running,
     transfer: &Transfer,
     focus: (&FocusHandle, &FocusHandle),
+    reveal: &Reveal,
     a11y: bool,
     theme: &Theme,
     cx: &mut Context<Shell>,
@@ -1186,6 +1401,7 @@ fn progress_card(
                     pause_focus,
                     theme,
                 )
+                .child(reveal.marker(pause_focus))
                 .press(
                     move |this, _, cx| {
                         if paused {
@@ -1207,6 +1423,7 @@ fn progress_card(
                 cancel_focus,
                 theme,
             )
+            .child(reveal.marker(cancel_focus))
             .into_any_element()
         } else {
             controls::button(
@@ -1217,6 +1434,7 @@ fn progress_card(
                 cancel_focus,
                 theme,
             )
+            .child(reveal.marker(cancel_focus))
             .press(
                 move |this, _, cx| {
                     this.cancel_plan(plan);
@@ -1249,6 +1467,7 @@ fn small_bar_full(fraction: f32, color: gpui::Hsla, theme: &Theme) -> gpui::Div 
 fn task_card(
     task: &skwir_core::task::Running,
     focus: &FocusHandle,
+    reveal: &Reveal,
     a11y: bool,
     theme: &Theme,
     cx: &mut Context<Shell>,
@@ -1301,6 +1520,7 @@ fn task_card(
                 focus,
                 theme,
             )
+            .child(reveal.marker(focus))
             .into_any_element()
         } else {
             controls::button(
@@ -1311,6 +1531,7 @@ fn task_card(
                 focus,
                 theme,
             )
+            .child(reveal.marker(focus))
             .press(
                 move |this, _, cx| {
                     this.app.tasks.cancel(id);
@@ -1327,7 +1548,12 @@ impl Shell {
     /// it let go of what it held (operations.md, "Running").
     pub(crate) fn cancel_plan(&mut self, plan: PlanId) {
         if self.app.executor.cancel(plan)
-            && let Some(running) = self.work.running.iter_mut().find(|r| r.plan == plan)
+            && let Some(running) = self
+                .work
+                .borrow_mut()
+                .running
+                .iter_mut()
+                .find(|r| r.plan == plan)
         {
             running.cancelling = true;
         }
@@ -1353,7 +1579,7 @@ impl Shell {
     pub(crate) fn window_activated(&mut self, active: bool) {
         self.window_active = active;
         if active {
-            self.work.looked_at();
+            self.work.borrow_mut().looked_at();
         }
     }
 
@@ -1362,7 +1588,7 @@ impl Shell {
     pub(crate) fn tell_desktop(&mut self) {
         let under = self.under_way();
         let watched = self.watched();
-        self.work.tell(&self.app, &under, watched);
+        self.work.borrow_mut().tell(&self.app, &under, watched);
     }
 
     /// What the desktop asked: a notice or the presence clicked brings the
@@ -1372,7 +1598,8 @@ impl Shell {
     pub(crate) fn take_asked(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let mut token = None;
         let mut shown = false;
-        for asked in self.work.take_asked() {
+        let asked = self.work.borrow().take_asked();
+        for asked in asked {
             match asked {
                 Asked::Notice(clicked) => {
                     shown = true;
@@ -1383,7 +1610,7 @@ impl Shell {
                     token = given.or(token);
                 }
                 Asked::PauseAll | Asked::GoOn => {
-                    crate::finishing::act(&self.app, &self.work, &asked);
+                    crate::finishing::act(&self.app, &self.work.borrow(), &asked);
                 }
                 Asked::StopAll => {
                     self.stop_and_quit(window, cx);
@@ -1403,13 +1630,66 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{Summary, Under, how, percent, summary, words};
+    use super::{EARLIER, Ended, Summary, Under, how, keep, percent, showing, summary, words};
     use crate::toast::Running;
     use skwir_core::op::{PlanId, RunKind, Transfer};
     use std::time::Duration;
 
     fn running(plan: u64, title: &str, total: usize) -> Running {
         Running::for_test(PlanId(plan), title, RunKind::Apply, total)
+    }
+
+    /// Every answer is kept in Earlier, a plan's or not, newest first and
+    /// twenty at most; a message said again as the last one was is that
+    /// one, moved to now, so that it never pushes the plans' answers out.
+    #[test]
+    fn every_answer_is_kept_in_earlier_and_a_repeat_is_one() {
+        use crate::toast::{Toast, Tone};
+        let said = |text: &str| {
+            Ended::said(&Toast {
+                text: text.to_owned(),
+                tone: Tone::Error,
+                actions: Vec::new(),
+            })
+        };
+        let mut earlier = std::collections::VecDeque::new();
+        keep(
+            &mut earlier,
+            Ended::of_plan(PlanId(3), "Copied “it's.txt” to Stick", Tone::Success, &[]),
+        );
+        keep(&mut earlier, said("The printer refused “it's.pdf”"));
+        keep(&mut earlier, said("The printer refused “it's.pdf”"));
+        assert_eq!(earlier.len(), 2, "{earlier:?}");
+        assert_eq!(earlier[0].plan, None);
+        assert_eq!(earlier[1].plan, Some(PlanId(3)));
+        assert_ne!(earlier[0].key, earlier[1].key);
+        for n in 0..EARLIER {
+            keep(&mut earlier, said(&format!("message {n}")));
+        }
+        assert_eq!(earlier.len(), EARLIER);
+        assert_eq!(earlier[0].text, format!("message {}", EARLIER - 1));
+    }
+
+    /// The button the keyboard reaches is brought into view by the least
+    /// scroll: up to its top above, down to its bottom below, not at all
+    /// when it shows.
+    #[test]
+    fn the_button_reached_scrolls_into_view_the_least() {
+        use gpui::{bounds, point, px, size};
+        let area = bounds(point(px(0.), px(100.)), size(px(400.), px(200.)));
+        let row = |top: f32| bounds(point(px(10.), px(top)), size(px(60.), px(22.)));
+        let at = point(px(0.), px(-50.));
+        assert_eq!(showing(row(150.), area, at), None);
+        assert_eq!(
+            showing(row(290.), area, at),
+            Some(point(px(0.), px(-62.))),
+            "its bottom at the area's"
+        );
+        assert_eq!(
+            showing(row(80.), area, at),
+            Some(point(px(0.), px(-30.))),
+            "its top at the area's"
+        );
     }
 
     #[test]

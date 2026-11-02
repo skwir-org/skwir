@@ -9,6 +9,7 @@
 //! keeps the UI awake.
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 use gpui::{Animation, AnimationExt, AnyElement, Context, div, prelude::*, px};
@@ -63,7 +64,9 @@ pub struct Running {
     /// What the user asked for, where the steps are not its items (a
     /// merge, a replace), as `Started` said it, before the plan was
     /// checked: what the result says when `Finished` says nothing better.
-    items: Option<skwir_core::op::Items>,
+    /// Shared: a retried plan's names every item placed, and what runs is
+    /// read once a frame (`activity::Under`).
+    items: Option<Arc<skwir_core::op::Items>>,
     /// Waiting where it would answer Cancel, until resumed.
     pub(crate) paused: bool,
     pub(crate) cancelling: bool,
@@ -92,7 +95,7 @@ impl Running {
             first_named: None,
             failed: None,
             failed_named: None,
-            items,
+            items: items.map(Arc::new),
             paused: false,
             cancelling: false,
             going_on,
@@ -285,21 +288,20 @@ pub fn failure(title: &str, failed: Option<&Change>, named: Option<&str>, error:
     format!("{tried}: {reason}")
 }
 
-/// What a running plan's bar says: how far it is, from 0 to 1, and in
-/// words. A plan whose bytes are known in all (sized before it began,
-/// ADR-113) moves by them, its items counted beside; one of one item
+/// What a running plan's bar says: how far it is, from 0 to 1 (`share`),
+/// and in words. A plan whose bytes are known in all (sized before it
+/// began, ADR-113) moves by them, its items counted beside; one of one item
 /// counts the bytes it said as it began. Else it counts its items, the
 /// bytes of the one under way moving the bar between two counts: its bytes
 /// are known only as each item starts.
 pub fn bar(items: usize, t: &Transfer) -> (f32, String) {
-    let whole = t.planned.unwrap_or(t.total).max(t.done);
-    let by_bytes = |whole: u64| (t.done as f32 / whole.max(1) as f32).clamp(0., 1.);
+    let fraction = share(items, t);
     if items <= 1 {
+        let whole = t.planned.unwrap_or(t.total).max(t.done);
         let words = format!("{} of {}", format::size(t.done), format::size(whole));
-        return (by_bytes(whole), words);
+        return (fraction, words);
     }
     if let Some(planned) = t.planned.filter(|&planned| planned > 0) {
-        let whole = planned.max(t.done);
         // Items as they come whole, a batch's before their steps place
         // them (`Transfer::finished`).
         let words = format!(
@@ -307,15 +309,10 @@ pub fn bar(items: usize, t: &Transfer) -> (f32, String) {
             format::thousands(t.finished),
             format::count(items, "item"),
             format::size(t.done),
-            format::size(whole)
+            format::size(planned.max(t.done))
         );
-        return (by_bytes(whole), words);
+        return (fraction, words);
     }
-    let within = if t.step_total > 0 {
-        (t.step_done as f32 / t.step_total as f32).clamp(0., 1.)
-    } else {
-        0.
-    };
     let count = format!(
         "{} of {}",
         format::thousands(t.finished),
@@ -326,8 +323,25 @@ pub fn bar(items: usize, t: &Transfer) -> (f32, String) {
     } else {
         count
     };
-    let fraction = (t.ended as f32 + within) / items as f32;
-    (fraction.clamp(0., 1.), words)
+    (fraction, words)
+}
+
+/// How far a running plan's bar is, from 0 to 1, as `bar` says it: by its
+/// bytes where they are known in all, else by its items.
+pub(crate) fn share(items: usize, t: &Transfer) -> f32 {
+    let by_bytes = |whole: u64| (t.done as f32 / whole.max(1) as f32).clamp(0., 1.);
+    if items <= 1 {
+        return by_bytes(t.planned.unwrap_or(t.total).max(t.done));
+    }
+    if let Some(planned) = t.planned.filter(|&planned| planned > 0) {
+        return by_bytes(planned.max(t.done));
+    }
+    let within = if t.step_total > 0 {
+        (t.step_done as f32 / t.step_total as f32).clamp(0., 1.)
+    } else {
+        0.
+    };
+    ((t.ended as f32 + within) / items as f32).clamp(0., 1.)
 }
 
 /// What Quit asks while a plan runs (ADR-115): which (`running`: its
@@ -384,11 +398,24 @@ fn shown_for(toast: &Toast) -> u64 {
 }
 
 impl Shell {
+    /// Show `toast` (`show_toast`), and keep it in Activity's Earlier: what
+    /// a toast said is found there again, though Activity was open when it
+    /// came and no toast was drawn. A plan's answer is kept by `Work` as
+    /// the plan ends.
+    pub fn toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
+        crate::activity::keep(
+            &mut self.work.borrow_mut().earlier,
+            crate::activity::Ended::said(&toast),
+        );
+        self.forget_earlier_rows();
+        self.show_toast(toast, cx);
+    }
+
     /// Show `toast`, replacing the current one, for a time that fits its
     /// weight: errors and anything with a button stay longer, and a long
     /// one (what a plan's steps said after what it did) as long as it
     /// takes to read.
-    pub fn toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
+    fn show_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
         let seconds = shown_for(&toast);
         self.toasts.current = Some(toast);
         self.toasts.generation += 1;
@@ -424,7 +451,8 @@ impl Shell {
         let mut any = false;
         while let Ok(event) = rx.try_recv() {
             any = true;
-            match self.work.take(&self.app, event, watched) {
+            let taken = self.work.borrow_mut().take(&self.app, event, watched);
+            match taken {
                 Taken::Nothing => {}
                 Taken::Step(progress) => self.made_step(&progress),
                 // Its toast says it goes on by itself, while it is the
@@ -449,12 +477,12 @@ impl Shell {
                     self.made(plan, done, items.as_ref());
                     if let Some(answer) = answer {
                         self.forget_earlier_rows();
-                        self.toast(answer, cx);
+                        self.show_toast(answer, cx);
                     }
                 }
             }
         }
-        self.work.sync_stopped(&self.app);
+        self.work.borrow_mut().sync_stopped(&self.app);
         if any {
             cx.notify();
         }
@@ -520,8 +548,10 @@ fn ended_as(
     kept_in: Option<&str>,
 ) -> (String, Tone) {
     let (title, run) = (running.title, running.run);
-    let (first, named, count) = match items.or(running.items) {
-        Some(items) if error.is_none() && !cancelled => (Some(items.first), None, items.count),
+    let (first, named, count) = match items.map(Arc::new).or(running.items) {
+        Some(items) if error.is_none() && !cancelled => {
+            (Some(items.first.clone()), None, items.count)
+        }
         _ => (running.first, running.first_named, applied),
     };
     let done = describe(
@@ -743,7 +773,7 @@ mod tests {
     /// Cancelled before anything was done, it says so.
     #[test]
     fn a_plan_ended_says_what_was_done_as_it_was_done() {
-        let running = |items| Running {
+        let running = |items: Option<skwir_core::op::Items>| Running {
             plan: skwir_core::op::Plan::new("copy to /example/it's here").id,
             title: "copy to /example/it's here".into(),
             run: RunKind::Apply,
@@ -754,7 +784,7 @@ mod tests {
             first_named: None,
             failed: None,
             failed_named: None,
-            items,
+            items: items.map(std::sync::Arc::new),
             paused: false,
             cancelling: false,
             going_on: false,

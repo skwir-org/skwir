@@ -110,8 +110,13 @@ fn as_of_said(as_of: &AsOf, now: &jiff::Zoned) -> (String, String) {
 }
 
 /// The footer of the pane being rendered; `window` adds the window's own
-/// state at its end (the last pane's).
-pub fn render(shell: &mut Shell, window: bool, cx: &mut Context<Shell>) -> AnyElement {
+/// state at its end (the last pane's), with what runs as this frame reads
+/// it once (`Shell::under_way`).
+pub(crate) fn render(
+    shell: &mut Shell,
+    window: Option<&crate::activity::Under>,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
     let theme = cx.global::<Theme>().clone();
     let selection = shell.selection_ctx();
     let (count, complete, error, is_query, sweep, total, as_of, reads) = {
@@ -250,9 +255,9 @@ pub fn render(shell: &mut Shell, window: bool, cx: &mut Context<Shell>) -> AnyEl
     bar = bar
         .when_some(said, StatefulInteractiveElement::aria_label)
         .child(div().flex_1());
-    if !window {
+    let Some(under) = window else {
         return bar.into_any_element();
-    }
+    };
     bar = bar.children(crate::player::render_status(shell, &theme, cx));
     // The clipboard is invisible once the pane shows another folder: say
     // what is waiting, and let a click forget it.
@@ -327,7 +332,7 @@ pub fn render(shell: &mut Shell, window: bool, cx: &mut Context<Shell>) -> AnyEl
         );
     }
     // What runs, docked: its strip, and Activity opened above it (ADR-114).
-    if let Some(strip) = crate::activity::strip(shell, &theme, cx) {
+    if let Some(strip) = crate::activity::strip(shell, under, &theme, cx) {
         bar = bar.child(strip);
     }
     // What Undo takes: the last thing asked, once it ends (ADR-079).

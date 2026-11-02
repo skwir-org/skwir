@@ -54,18 +54,24 @@ and macOS otherwise compiled only.
    action's card as it was (its bar, items and bytes, speed and time
    left, Pause and Cancel, "Stopping…"), what waits its turn, and
    **Earlier**: the answers of this session, newest first, twenty at most,
-   with Undo, and Retry while it can be, kept in memory only. One popup at
+   with Undo, and Retry while it can be, kept in memory only: every answer
+   a toast says, a plan's or another's (a print's, a message). One popup at
    a time, closed by Escape or a press elsewhere (`Shell::toggle_popup`).
 3. **Pinned** (`ui.activity_pin`, its pin button; remembered with the
    window's shape), Activity stands above the last pane's footer while
    something is under way, waits or stopped, taking room rather than
    covering the files, at most half the pane's height; the strip steps
-   aside meanwhile. Not pinned, nothing under way covers the files.
+   aside meanwhile, unless Activity is open as a popup, which stays where
+   it opened until closed. Not pinned, nothing under way covers the files.
+   Pinned, it is a place of the keyboard's: `ui.activity` gives it the
+   keyboard and Escape gives it back to the files. A click on the strip or
+   on Activity pinned leaves the keyboard where it was, as a click on the
+   cards in the toasts did.
 4. **Answers stay toasts**, one at a time, at the last pane's lower right,
    above the strip (or Activity pinned): there the list shows sizes and
    dates rather than names. On the whole screen, over the preview, as
-   before. While Activity is open, it holds the answer in Earlier and no
-   toast is drawn.
+   before. While Activity is open, no toast is drawn: Earlier holds every
+   answer, a plan's or not, so none that came meanwhile is lost.
 5. **An action an error stopped stays in the strip**, in the error's
    colour, "Copy …: stopped" with Retry and Dismiss, until it is retried
    (from anywhere), Activity is opened, or it is dismissed; only one that

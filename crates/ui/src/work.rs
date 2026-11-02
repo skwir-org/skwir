@@ -10,14 +10,14 @@
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
 use parking_lot::Mutex;
 use skwir_core::App;
 use skwir_core::op::{Change, ExecEvent, PlanId, RunKind};
 use skwir_platform::desktop::{Asked, Desktop, Kind, Notice, Presence, Progress, State};
 
-use crate::activity::{EARLIER, Ended, Stopped, Under, summary};
+use crate::activity::{Ended, Stopped, Under, summary};
 use crate::format;
 use crate::toast::{self, Action, Running, Toast, Tone, capitalized};
 
@@ -289,7 +289,17 @@ impl Work {
                     run == RunKind::Apply && app.executor.can_retry(plan),
                     run == RunKind::Undo && app.executor.can_redo(),
                 );
-                self.ended(app, plan, &title, (&text, tone, &actions), stopped_by_error);
+                // Without a window every action is as a card: one started
+                // and stopped between two syncs keeps its Retry too.
+                let carded = watched.seen == Seen::NoWindow;
+                self.ended(
+                    app,
+                    plan,
+                    &title,
+                    (&text, tone, &actions),
+                    stopped_by_error,
+                    carded,
+                );
                 self.tell_ended(plan, &text, stopped_by_error, cancelled, ran, watched);
                 Taken::Ended {
                     plan,
@@ -307,7 +317,7 @@ impl Work {
 
     /// An action ended, as its answer says it (`text`, `tone`, `actions`):
     /// kept in `Earlier`; one an error stopped stays in the strip, if it
-    /// was shown there.
+    /// was shown there (or `carded`, as every one is without a window).
     fn ended(
         &mut self,
         app: &App,
@@ -315,21 +325,11 @@ impl Work {
         title: &str,
         answer: (&str, Tone, &[Action]),
         stopped_by_error: bool,
+        carded: bool,
     ) {
         let (text, tone, actions) = answer;
-        let carded = self.carded.remove(&plan);
-        self.earlier.push_front(Ended {
-            plan,
-            text: text.to_owned(),
-            tone,
-            actions: actions
-                .iter()
-                .filter(|action| action.command != "redo")
-                .cloned()
-                .collect(),
-            at: SystemTime::now(),
-        });
-        self.earlier.truncate(EARLIER);
+        let carded = self.carded.remove(&plan) || carded;
+        crate::activity::keep(&mut self.earlier, Ended::of_plan(plan, text, tone, actions));
         if stopped_by_error && carded {
             self.stopped = Some(Stopped::new(plan, title, app.executor.can_retry(plan)));
         }
@@ -436,7 +436,7 @@ impl Work {
         let what = self
             .earlier
             .iter()
-            .find(|ended| ended.plan == plan)
+            .find(|ended| ended.plan == Some(plan))
             .map_or_else(String::new, |ended| ended.text.clone());
         desktop.notify(
             plan.0,
@@ -669,7 +669,25 @@ mod tests {
         assert_eq!(stopped.plan, shown);
         assert_eq!(stopped.title, "copy 3 items to Backup");
         assert_eq!(work.earlier.len(), 2, "both answers kept, newest first");
-        assert_eq!(work.earlier[0].plan, shown);
+        assert_eq!(work.earlier[0].plan, Some(shown));
+    }
+
+    /// Without a window, an action an error stops stays though it was
+    /// never shown as a card (started and stopped between two syncs): it
+    /// keeps the program, and its Retry, for the window.
+    #[test]
+    fn without_a_window_a_plan_stopped_by_an_error_stays() {
+        let (_tmp, app) = app();
+        let mut work = Work::default();
+        let unwatched = Watched {
+            seen: Seen::NoWindow,
+            ..LOOKED_AT
+        };
+        let plan = PlanId(9);
+        work.take(&app, started(plan, "copy 3 items to Stick", 3), unwatched);
+        work.take(&app, finished(plan, 0, Some("No such device")), unwatched);
+        let stopped = work.stopped.as_ref().expect("kept without a window");
+        assert_eq!(stopped.plan, plan);
     }
 
     /// Paused and resumed follow the plan; a plan its server stopped is

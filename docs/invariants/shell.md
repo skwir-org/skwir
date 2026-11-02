@@ -645,11 +645,22 @@ of bars, split or not.
   opens Activity above it (one popup at a time, `toggle_popup`): each
   action's card, what waits (each with its Cancel, Cancel all for
   several), and Earlier, this session's answers with
-  their Undo and Retry, twenty at most, in memory only. Pinned
+  their Undo and Retry, twenty at most, in memory only: every answer a
+  toast says, a plan's or another's (a print's, a message), so that none
+  is lost while Activity is open and no toast is drawn; a message said
+  again as the last one was is that one, moved to now
+  (`activity::keep`). Pinned
   (`ui.activity_pin`, remembered with the window's shape), Activity
   stands above the last pane's footer while something is under way,
   waits or stopped, at most half the pane's height, and the strip steps
-  aside. An action an error stopped stays in the strip, in the error's
+  aside; open as a popup, it stays where it opened until closed. Pinned,
+  it is a place of its own (`keymap::ACTIVITY`): `ui.activity` gives it
+  the keyboard, Escape gives it back to the files. A click on the strip
+  or on Activity pinned leaves the keyboard where it was, so the keys go
+  on acting on the pane. What is under way is read once a frame
+  (`Shell::under_way`, passed to the strip, Activity and the footer).
+  The button the keyboard reaches in Activity scrolls into view, once,
+  as it arrives (`activity::Reveal`). An action an error stopped stays in the strip, in the error's
   colour, until retried (from anywhere), Activity opened, or dismissed;
   only one that was a card there. Progress bars:
   [operations.md](operations.md). A card's bar moves by the plan's bytes
@@ -688,10 +699,12 @@ of bars, split or not.
   (`ui.notify_desktop`, `ui.keep_awake`). Every call to the desktop
   returns at once; nothing is told from a headless run.
 - **What runs outlives the window** (ADR-115, `finishing.rs`). What runs
-  and what was said of it is `Work` (`work.rs`): the shell's while a
-  window is up, kept by the program once the last one closes while
-  something keeps it (under way, paused, waiting for its server, stopped
-  since, a question waiting). The close button closes, asking nothing;
+  and what was said of it is `Work` (`work.rs`), the program's for its
+  life (`Finishing`): the window's shell shares it and never moves it,
+  so nothing it took goes with a window that closed or could not open.
+  The program goes on once the last window closes while something keeps
+  it (under way, paused, waiting for its server, stopped since, a
+  question waiting). The close button closes, asking nothing;
   Quit asks while something is under way: Finish in the background (the
   default), Stop and quit, Keep the window (`Confirmed::Quit`). Without
   a window the program takes the executor's events in as the window
@@ -699,9 +712,12 @@ of bars, split or not.
   (`Desktop::presence`: the tray's or notification area's icon, else a
   notice that stays; the Dock on macOS), and takes later launches over
   (`skwir_platform::handover`); its panes sleep. The window opened again
-  takes `Work` back. Closing, the window answers Cancel to what it was
-  asking (`Shell::leave`), and an action stopped it showed is let go.
-  The core's wakes go through one loop for the program's life
+  shows `Work` as it stands. Closing, the window answers Cancel to what
+  it was asking (`Shell::leave`), and an action stopped it showed is let
+  go; from then on its shell takes nothing (`Shell::sync`), though gpui
+  removes the window only later, in a task of its own: what the core
+  sends meanwhile is the program's, what it asks waits for the next
+  window. The core's wakes go through one loop for the program's life
   (`finishing::listen`), never one of the window's: a window opened
   again would miss what the closed one's loop took.
 - `Shell::set_status` is a toast; `set_status_about` (core:
