@@ -736,3 +736,71 @@ fn a_booklet_of_four_a_side_lays_a_printer_s_signature() {
     assert_eq!(lines(1), 0, "nothing marked on the back");
     worker.end();
 }
+
+/// Eight to a side, on landscape A4, of ten pages: a printer's 16-page
+/// signature, the places past the last page blank; its back turned half a
+/// turn for a printer turning the sheet over the other edge, each page of
+/// it in the place across the sheet's middle and turned once more. The
+/// folds are marked on the front alone.
+#[test]
+fn a_booklet_of_eight_a_side_leaves_its_last_places_blank_and_turns_its_back() {
+    let Some(pdfium) = pdfium() else {
+        eprintln!("skipped: no PDFium (SKWIR_PDFIUM_LIBRARY)");
+        return;
+    };
+    let tmp = tempfile::tempdir().unwrap();
+    let (pdf, scratch) = (tmp.path().join("ten.pdf"), tmp.path().join("work"));
+    std::fs::create_dir(&scratch).unwrap();
+    numbered(&pdfium, &pdf, 10, &[], false);
+    let composed = scratch.join(COMPOSED_FILE);
+    let mut worker = Worker::start(&pdf, &scratch);
+    let pages: Vec<u32> = (0..10).collect();
+    let eight = skwir_core::print::booklet::PerSide::Eight;
+    let reply = worker.ask(WorkerRequest::Compose(Compose::Booklet {
+        sheets: skwir_core::print::booklet::sheets(&pages, None, eight),
+        per_side: eight,
+        width: 842.0,
+        height: 595.0,
+        fold: 12.0,
+        edge: 18.0,
+        trim: false,
+        turn_backs: true,
+    }));
+    assert!(
+        matches!(reply, WorkerReply::Composed { pages: 2 }),
+        "{reply:?}"
+    );
+    assert_eq!(pages_and_size(&pdfium, &composed), (2, (842.0, 595.0)));
+    let read = places(&pdfium, &composed, 4, 2);
+    let said = |side: &[(String, bool)]| -> Vec<String> {
+        side.iter()
+            .map(|(text, turned)| {
+                if *turned {
+                    format!("{text}T")
+                } else {
+                    text.clone()
+                }
+            })
+            .collect()
+    };
+    // The front as the core lays it (5T 12T 9T 8T / 4 13 16 1), 11 to 16
+    // blank.
+    assert_eq!(said(&read[0]), ["5T", "", "9T", "8T", "4", "", "", "1"]);
+    // The back as the core lays it (7T 10T 11T 6T / 2 15 14 3), turned
+    // half a turn with its sheet.
+    assert_eq!(said(&read[1]), ["3T", "", "", "2T", "6", "", "10", "7"]);
+    let document = pdfium.load_pdf_from_file(&composed, None).unwrap();
+    let lines = |at: PdfPageIndex| {
+        document
+            .pages()
+            .get(at)
+            .unwrap()
+            .objects()
+            .iter()
+            .filter(|object| object.object_type() == PdfPageObjectType::Path)
+            .count()
+    };
+    assert_eq!(lines(0), 8, "three folds across and one down, at both ends");
+    assert_eq!(lines(1), 0, "nothing marked on the back");
+    worker.end();
+}
