@@ -1312,20 +1312,24 @@ mod tests {
             std::thread::spawn(move || helper.open("json", large.as_bytes(), &parsing).is_ok())
         };
         until(|| std::fs::read_dir(&process.outside).is_ok_and(|entries| entries.count() > 0));
-        let started = Instant::now();
-        let waited = process.call(
-            Request::Check {
-                name: "json".into(),
-            },
-            Duration::from_millis(200),
-            &cancel,
-        );
+        // Its text written is not yet its parse asked: a check the helper
+        // takes first is answered, and is asked again until one waits
+        // behind the parse.
+        let (waited, took) = loop {
+            let started = Instant::now();
+            let waited = process.call(
+                Request::Check {
+                    name: "json".into(),
+                },
+                Duration::from_millis(200),
+                &cancel,
+            );
+            if waited.is_err() || parse.is_finished() {
+                break (waited, started.elapsed());
+            }
+        };
         assert!(waited.is_err(), "{waited:?}");
-        assert!(
-            started.elapsed() < Duration::from_secs(2),
-            "{:?}",
-            started.elapsed()
-        );
+        assert!(took < Duration::from_secs(2), "{took:?}");
         parsing.cancel();
         parse.join().unwrap();
         assert!(
