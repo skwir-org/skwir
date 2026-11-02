@@ -258,11 +258,12 @@ fn write_job(job: &Job, path: &Path) -> Result<()> {
 /// How long the helper may say nothing of how far it went before it is
 /// stopped: it tells each image, page and stream it goes through, the
 /// longest of them one image of the most samples it reads (512 MiB),
-/// which a machine slower than the one it was measured on still writes
-/// in a minute or two. How long a whole file takes is not told ahead: it
-/// is the machine's, and what the file holds (73 s for 10 MB of pages
-/// drawn, without loss, on the reference machine).
-const STALL: Duration = Duration::from_mins(3);
+/// which a slow machine writes in a minute or two; the rest is the margin
+/// a slower one needs, as a helper that hangs is the user's to cancel
+/// meanwhile. How long a whole file takes is not told ahead: it is the
+/// machine's, and what the file holds (73 s for 10 MB of pages drawn,
+/// without loss, on the reference machine).
+const STALL: Duration = Duration::from_mins(10);
 
 /// The most it may take in all, saying how far it goes: what no file
 /// takes, for a helper that would go on saying so and never end.

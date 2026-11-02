@@ -118,12 +118,15 @@ Windows and macOS (`just lint-all`), not run there.
    unchecked. What the helper wrote is opened once, a regular file
    itself and never through a link, and what is kept is read from it: a
    helper that a file took over could leave a link to another file there.
-   The helper is stopped when it says nothing of how far it went for 3
+   The helper is stopped when it says nothing of how far it went for 10
    minutes (it tells each page, image and stream it goes through), or
    past 8 hours: how long a file takes is the machine's and the file's
    (73 s for 10 MB of pages drawn, without loss, on the reference
    machine), and a limit by its size, measured on one machine, stopped a
-   slower one's work that was going.
+   slower one's work that was going. Its longest silence is one image of
+   the largest size the engine reads, a minute or two on a slow machine;
+   the margin is a slower one's, and a helper that hangs meanwhile is the
+   user's to cancel.
 6. **A picture** (JPEG, PNG; not an animated PNG) keeps its format, is
    turned upright as its EXIF said, keeps its colour profile, its EXIF
    (orientation set to 1) and XMP; with location and camera details left
