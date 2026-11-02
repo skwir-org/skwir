@@ -238,7 +238,7 @@ mod portal {
         // Its range shows every page: Skwir's dialog chose them.
         let settings: HashMap<&str, Value<'_>> =
             HashMap::from([("print-pages", Value::from("all"))]);
-        let Some(results) = request(bus, destination, cancel, |token| {
+        let results = match request(bus, destination, cancel, |token| {
             let mut options: HashMap<&str, Value<'_>> = HashMap::new();
             options.insert("handle_token", Value::from(token));
             options.insert("modal", Value::from(true));
@@ -253,9 +253,10 @@ mod portal {
                 "PreparePrint",
                 &("", ask.title.as_str(), &settings, &empty, options),
             )
-        })?
-        else {
-            return Ok(None);
+        })? {
+            Ended::Answered(results) => results,
+            Ended::Code(1) | Ended::Closed => return Ok(None),
+            Ended::Code(code) => anyhow::bail!("the print dialog ended ({code})"),
         };
         Ok(Some(chosen(&results)?))
     }
@@ -354,7 +355,7 @@ mod portal {
         let System::Portal(token) = chosen.system;
         let file = crate::file::open_regular(pdf)?;
         let fd = zbus::zvariant::Fd::from(std::os::fd::AsFd::as_fd(&file));
-        let sent = request(bus, destination, cancel, |handle| {
+        let ended = request(bus, destination, cancel, |handle| {
             let mut options: HashMap<&str, Value<'_>> = HashMap::new();
             options.insert("handle_token", Value::from(handle));
             options.insert("token", Value::from(token));
@@ -367,8 +368,28 @@ mod portal {
                 &("", title, &fd, options),
             )
         })?;
-        anyhow::ensure!(sent.is_some(), "printing was cancelled");
-        Ok(())
+        match ended {
+            Ended::Answered(_) => Ok(()),
+            // 2 is "ended otherwise" by the portal's word, but KDE's back
+            // end answers it when its `lpr` took the job: it reads `lpr`'s
+            // success (0) as a failure, and answers `lpr`'s code otherwise
+            // (xdg-desktop-portal-kde's `PrintPortal::Print`, 6.8.2 and its
+            // main branch, read 2026-11-02). GTK's answers 0 once it handed
+            // the job on, before it is printed, and GTK's own printing
+            // through the portal reads no answer to `Print` at all. So 2
+            // says nothing of the job: it went as far as Skwir can know.
+            Ended::Code(2) => {
+                tracing::debug!("the print portal answered 2 to Print: taken as sent");
+                Ok(())
+            }
+            Ended::Closed => Err(anyhow::anyhow!("printing was cancelled")),
+            // 1: `lpr` failed (KDE's), or a dialog shown again for a token
+            // the back end lost was cancelled (GTK's); another code is
+            // `lpr`'s own.
+            Ended::Code(code) => Err(anyhow::anyhow!(
+                "the desktop's printing did not take it ({code})"
+            )),
+        }
     }
 
     /// What a request's listener heard.
@@ -383,6 +404,18 @@ mod portal {
         Gone,
     }
 
+    /// How a request ended.
+    enum Ended {
+        /// It answered 0, with its results.
+        Answered(Results),
+        /// It answered another code: 1 when the user cancelled, 2 when it
+        /// ended otherwise, by the portal's word (what a back end means by
+        /// it is read by the method that asked).
+        Code(u32),
+        /// `cancel` closed it.
+        Closed,
+    }
+
     /// Whether an answer on the object at `path` is a request's: the one
     /// its token named (`expected`) or the one its call answered
     /// (`handle`); any, on a connection with no name to expect one by.
@@ -391,14 +424,13 @@ mod portal {
     }
 
     /// A portal request: `call` made with a token of its own, then its
-    /// `Response` waited for; its results when it answered 0, `None` when
-    /// the user cancelled or `cancel` did (the request then closed).
+    /// `Response` waited for: how it ended, closed when `cancel` is.
     fn request(
         bus: &Connection,
         destination: Option<&str>,
         cancel: &CancelToken,
         call: impl FnOnce(&str) -> zbus::Result<zbus::Message>,
-    ) -> anyhow::Result<Option<Results>> {
+    ) -> anyhow::Result<Ended> {
         static NEXT: AtomicU32 = AtomicU32::new(0);
         let token = format!("skwir_print_{}", NEXT.fetch_add(1, Ordering::Relaxed));
         // The answer comes on the request's own object, whose path the
@@ -498,12 +530,10 @@ mod portal {
             crossbeam_channel::select! {
                 recv(told_rx) -> told => match told {
                     Ok(Heard::Response { path, code, results }) if ours(&path) => {
-                        break match code {
-                            0 => Ok(Some(results)),
-                            // 1: the user cancelled; 2: the dialog ended otherwise.
-                            1 => Ok(None),
-                            code => Err(anyhow::anyhow!("the print dialog ended ({code})")),
-                        };
+                        break Ok(match code {
+                            0 => Ended::Answered(results),
+                            code => Ended::Code(code),
+                        });
                     }
                     Ok(Heard::Response { .. }) => {}
                     Ok(Heard::Gone) => break Err(anyhow::anyhow!("the print portal stopped")),
@@ -511,7 +541,7 @@ mod portal {
                 },
                 recv(cancelled.receiver()) -> _ => {
                     let _ = bus.call_method(destination, handle.as_str(), Some(REQUEST), "Close", &());
-                    break Ok(None);
+                    break Ok(Ended::Closed);
                 }
             }
         };
@@ -535,10 +565,12 @@ mod portal {
         }
 
         /// A print portal that answers as a desktop's would, the dialog's
-        /// choice being `answer` (or cancelled when `None`).
+        /// choice being `answer` (or cancelled when `None`), its answer to
+        /// `Print` `printed`.
         struct Portal {
             seen: Arc<Mutex<Seen>>,
             answer: Option<HashMap<String, OwnedValue>>,
+            printed: u32,
         }
 
         const HANDLE: &str = "/org/freedesktop/portal/desktop/request/test/1";
@@ -597,7 +629,7 @@ mod portal {
                     seen.options.push(options);
                     seen.printed.push(bytes);
                 }
-                respond(&emitter, 0, HashMap::new());
+                respond(&emitter, self.printed, HashMap::new());
                 OwnedObjectPath::try_from(HANDLE).unwrap()
             }
         }
@@ -686,6 +718,7 @@ mod portal {
             let (bus, _portal) = serve(Portal {
                 seen: Arc::clone(&seen),
                 answer: Some(answer()),
+                printed: 0,
             });
             let cancel = CancelToken::new();
             let chosen = super::ask(
@@ -783,9 +816,84 @@ mod portal {
         #[test]
         fn a_dialog_cancelled_chooses_nothing() {
             let seen = Arc::new(Mutex::new(Seen::default()));
-            let (bus, _portal) = serve(Portal { seen, answer: None });
+            let (bus, _portal) = serve(Portal {
+                seen,
+                answer: None,
+                printed: 0,
+            });
             let chosen = super::ask(&bus, None, &Ask::default(), &CancelToken::new()).unwrap();
             assert!(chosen.is_none());
+        }
+
+        /// KDE's back end answers 2 when its `lpr` took the job, and
+        /// `lpr`'s own code when it did not (1 for most refusals): 2 is
+        /// sent, as 0 is; another code is the job not taken.
+        #[test]
+        fn a_job_answered_as_kde_s_portal_answers_a_job_taken_is_sent() {
+            let tmp = tempfile::tempdir().unwrap();
+            let pdf = tmp.path().join("made.pdf");
+            std::fs::write(&pdf, b"%PDF-1.7 made").unwrap();
+            for (printed, sent) in [(0, true), (2, true), (1, false), (3, false)] {
+                let seen = Arc::new(Mutex::new(Seen::default()));
+                let (bus, _portal) = serve(Portal {
+                    seen: Arc::clone(&seen),
+                    answer: Some(answer()),
+                    printed,
+                });
+                let cancel = CancelToken::new();
+                let chosen = super::ask(&bus, None, &Ask::default(), &cancel)
+                    .unwrap()
+                    .unwrap();
+                let result = super::send(&bus, None, &chosen, "Report.pdf", &pdf, &cancel);
+                assert_eq!(result.is_ok(), sent, "{printed}: {result:?}");
+                if let Err(error) = result {
+                    assert!(error.to_string().contains("did not take it"), "{error:#}");
+                }
+                assert_eq!(seen.lock().unwrap().printed.len(), 1);
+            }
+        }
+
+        /// The dialog ending otherwise than chosen or cancelled is an
+        /// error: the 2 KDE's `Print` misanswers is `Print`'s alone.
+        #[test]
+        fn a_dialog_that_ended_otherwise_is_an_error() {
+            struct Failing;
+            #[zbus::interface(name = "org.freedesktop.portal.Print")]
+            #[allow(clippy::needless_pass_by_value)] // zbus hands its arguments by value.
+            impl Failing {
+                #[allow(clippy::unused_self)] // zbus serves a method of an object.
+                fn prepare_print(
+                    &self,
+                    #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+                    parent: String,
+                    title: String,
+                    settings: HashMap<String, OwnedValue>,
+                    setup: HashMap<String, OwnedValue>,
+                    options: HashMap<String, OwnedValue>,
+                ) -> OwnedObjectPath {
+                    let _ = (parent, title, settings, setup, options);
+                    respond(&emitter, 2, HashMap::new());
+                    OwnedObjectPath::try_from(HANDLE).unwrap()
+                }
+            }
+            let (theirs, ours) = std::os::unix::net::UnixStream::pair().unwrap();
+            let server = std::thread::spawn(move || {
+                zbus::blocking::connection::Builder::async_io_unix_stream(theirs)
+                    .server(zbus::Guid::generate())
+                    .unwrap()
+                    .p2p()
+                    .serve_at(PATH, Failing)
+                    .unwrap()
+                    .build()
+                    .unwrap()
+            });
+            let bus = zbus::blocking::connection::Builder::async_io_unix_stream(ours)
+                .p2p()
+                .build()
+                .unwrap();
+            let _server = server.join().unwrap();
+            let error = super::ask(&bus, None, &Ask::default(), &CancelToken::new()).unwrap_err();
+            assert!(error.to_string().contains("dialog ended (2)"), "{error:#}");
         }
 
         /// Something else at the portal's place, as a desktop whose portal

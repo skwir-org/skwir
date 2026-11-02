@@ -217,3 +217,24 @@ PDF or a booklet is made on, chosen rather than assumed.
   it for a script. Printing, the system's dialog chooses it, as before.
 - **Rejected for now**: a one-sheet zine (eight pages on one side, cut
   in the middle and folded), offered and not asked.
+
+## Revision (2026-11-02): what the portal answers to `Print`
+
+The user printed a page through KDE's print portal: it came out of the
+printer, and Skwir said it had not been printed ("the print dialog
+ended (2)").
+
+- **KDE's back end answers 2 when the job went.** Its `Print` runs `lpr`
+  and reads `lpr`'s success (0) as a failure, answering 2, "ended
+  otherwise"; when `lpr` fails it answers `lpr`'s own code, 1 for most
+  refusals (xdg-desktop-portal-kde's `PrintPortal::Print`, 6.8.2 and its
+  main branch, read 2026-11-02). Seen with KDE's portal on a display
+  and bus of their own, a stand-in `lpr` exiting 0: it answered 2.
+- **GTK's answers 0 before the job is printed**, once it handed it on
+  with the dialog's token, whatever came of it; and GTK's own printing
+  through the portal reads no answer to `Print` at all, only whether the
+  call was taken (`gtkprintoperation-portal.c`).
+- **So Skwir reads `Print`'s answer as sent for 0 and 2**, and as not
+  taken for any other code (1, or `lpr`'s own); a 2 from `PreparePrint`,
+  the dialog, is still an error. What reaches paper is the printing
+  system's to say, as it was: "Sent" means handed to it.

@@ -9716,3 +9716,45 @@ Windows and macOS (`check-cross`) not run, their name rules (`~`, not
 ASCII) tested on neither; an archive extracted still claims the whole
 folder it extracts into.
 
+
+## A print that went, said not printed (2026-11-02)
+
+The user printed the first page of a PDF through KDE's print portal: it
+was printed, and Skwir's toast said it was not, "the print dialog ended
+(2)".
+
+**Cause:** KDE's back end runs `lpr` for `Print` and answers 2 ("ended
+otherwise") when `lpr` succeeds: it tests `retValue <= 0` as a failure,
+and answers `lpr`'s own exit code when it fails
+(xdg-desktop-portal-kde's `PrintPortal::Print` in 6.8.2, the version
+running here, and on its main branch, read 2026-11-02). GTK's back end
+answers 0 once the job is handed on, before it is printed; GTK's own
+printing through the portal reads no answer to `Print`. Skwir read the
+2 as the dialog failing.
+
+**Fixed** (`skwir_platform::print::portal`): a request ends answered,
+with another code, or closed by Cancel (`Ended`), and each method reads
+it: `PreparePrint` chooses on 0, nothing on 1, and errs on any other;
+`Print` is sent on 0 and 2, not taken on any other code ("the desktop's
+printing did not take it (1)"). ADR-111 revised.
+
+**Checked** with KDE's portal itself: on Xvfb :95 and a session bus of
+their own (a configuration without service directories), KDE's portal
+6.8.2 behind the portal frontend 1.22.1 (`XDG_DESKTOP_PORTAL_DIR` on its
+`kde.portal`), its `PATH` holding only a stand-in `lpr` that kept the
+file and exited 0. Print… of a synthetic two-page PDF, page 1, through
+Skwir's dialog then KDE's (the machine's CUPS printer listed, nothing
+sent to it): the stand-in got the job (`-P <printer> -#1 -o
+sides=one-sided …`, one page), KDE's portal answered 2, and the toast
+said "Sent 1 page of “Booklet test – deux pages (2).pdf” to the
+printer" (KDE's answer names no printer).
+
+**Tests:** `print::portal::tests::a_job_answered_as_kde_s_portal_answers_a_job_taken_is_sent`
+(the stand-in portal answering 0, 2, 1, 3 to `Print`),
+`a_dialog_that_ended_otherwise_is_an_error`. skwir-platform and the
+print plugin: 397 run, all passing; rustfmt; clippy of both on Linux.
+
+**Not checked:** a real `lpr` failing behind KDE's portal (its 1);
+GTK's back end again (its answers did not change). The bug is KDE's:
+reported upstream by no one found; a report and its one-line fix are
+drafted for the user.
