@@ -9184,3 +9184,65 @@ the UI for Windows and macOS (compiled only).
 **Not checked:** the lower of two panes split one above the other; a
 screen reader reading options scrolled out of the list (only the built
 ones are in the tree, the list box says how many there are).
+
+## Every tag offered (2026-11-02)
+
+Asked by the user after "The address card fits the window": offer every
+tag in `tag:`, and look into, and fix, the slow redraw of a folder whose
+files carry many tags.
+
+- **Found, `tag:`:** its values were `tags.list` without `read`: the
+  tags of the rows whose notes the listing had read (those in view: 30
+  of 150 in the earlier check), the folder's alone in a search below it
+  or in another scope; the tags the user has elsewhere never.
+- **Found, the redraw:** profiled with perf (user-space task clock, the
+  window's thread; perf started the program, which attaching cannot do
+  here; the debug build keeps no frame pointers and DWARF unwinding
+  gave broken stacks, so leaf samples grouped by crate): taffy 23 % of
+  them, gpui's geometry, divs, elements and styles about 13 % more, text
+  shaping 4 %, Skwir's tag code under 1 %. A row's strip of tags laid out
+  every chip as its own root in prepaint (seventy), and its search for
+  the step that fits measured a "+N" for every step it tried, from all
+  whole down (sixty-one for a row drawn as four chips, five dots and
+  "+61"); every chip was also built, with its tooltip and actions, at
+  each frame, on every row.
+- **Built:** `tags.known`, the tags plugin's every tag, each once:
+  those pinned, the vocabulary's (given, then seen), then those its
+  index counted under the home folder that it forgot or never saw.
+  `assist::offered_tags`: the folder's tags first, then those; `tag:`,
+  `#` and `query.complete` offer them; words read as terms name the
+  folder's tags without a scope, any of the user's in one. A strip takes
+  builders (`ChipStrip::new`): chips are built and measured in order
+  until one passes its width (`fitting`), and a "+N" is measured only
+  for a step whose other parts fit; what is drawn is the same.
+
+**Checked:** `tag_offers_the_folders_tags_then_the_users_others`
+(`crates/skwir/tests/search_tags.rs`, real extended attributes): a folder
+whose files carry `work` and `Places/France`, another read before with
+`holiday` and `WORK`: `tag:` and `#` offer Places/France, work, holiday
+(`WORK` once, as `work`), `tag:ho` holiday; `tags.known` three tags;
+"holiday" read as `tag:holiday` in a scope, as a name in the folder.
+The strip's tests: a "+1" no longer measured where one whole chip and
+three dots cannot fit; `the_first_widths_say_what_all_would` (seventy
+items, the first four measured: the same step, one count measured). In
+a window on Xvfb (1200×800, debug build, lavapipe, load 8.6 to 16), ticks
+of the window's thread (10 ms) for Down moving the cursor, 3 s apart, a
+folder of 30 files with 70 tags each: before, 73, 64 and 77 (load 10);
+after, 16 to 41. Alternated after (load 8.6 to 9.5), six Downs: 30
+untagged files 79 and 106 ticks, 30 files of 10 tags each 166 and 147,
+of 70 tags each 165 and 172: the number of tags no longer counts, what
+a row draws does (four chips, five dots, a "+N", the same before and
+after in the screenshots). In the folder of 150 files, after the other
+was shown: `tag:` lists its own tags first, then the others;
+`tag:topic-05-1` offers the other folder's ten tags. Tests of the UI,
+query and tags crates (644), the binary's `search_tags`,
+`plugins_toggle`, `tags_location`, `tags_everywhere`, `search_scope`
+(33); clippy; clippy of the three crates for Windows and macOS
+(compiled only).
+
+**Not checked:** a release build (the folder was measured in the debug
+build only). A strip asking for every chip's width
+(`ChipStrip::natural`, the preview's header) still builds them all: one
+strip, for the file previewed. The vocabulary keeps at most 2,000 tags
+and the index counts the home folder's: a tag seen only outside home
+and forgotten by the vocabulary is not offered until seen again.

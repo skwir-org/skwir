@@ -13,6 +13,12 @@
 //! width that draws every item whole (`ChipStrip::natural`): a wrapping
 //! row puts it on a line of its own before it steps down, and what gives
 //! way more readily beside it is cut first.
+//!
+//! What cannot be drawn is never built nor measured: whole forms are
+//! built in order until one passes the width (the items after it can
+//! only be dots), and a "+N" is measured only for a step whose other
+//! parts fit. A row of seventy tags builds the few its width holds, not
+//! seventy chips and sixty counts, at every frame.
 use std::ops::Range;
 
 use gpui::{
@@ -41,20 +47,56 @@ pub struct Metrics {
     pub center: bool,
 }
 
+/// Item `i` of a strip, built when it is asked for.
+pub type Item = Box<dyn Fn(usize) -> AnyElement>;
+
 pub struct ChipStrip {
-    /// Each item whole, in order.
-    pub whole: Vec<AnyElement>,
+    /// How many items it has.
+    count: usize,
+    /// Item `i` whole.
+    whole: Item,
     /// Item `i` as a dot, `metrics.dot` square.
-    pub dot: Box<dyn Fn(usize) -> AnyElement>,
+    dot: Item,
     /// The items left out, as "+N".
-    pub more: Box<dyn Fn(Range<usize>) -> AnyElement>,
-    pub metrics: Metrics,
+    more: Box<dyn Fn(Range<usize>) -> AnyElement>,
+    metrics: Metrics,
     /// It asks for the width that draws every item whole, else it takes
     /// what it is given (`ChipStrip::natural`).
-    pub natural: bool,
+    natural: bool,
+    /// The first items whole, as built so far, in order.
+    built: Vec<AnyElement>,
 }
 
 impl ChipStrip {
+    /// A strip of `count` items, each built by `whole` or `dot` when it
+    /// may be drawn so, the rest counted by `more`.
+    pub fn new(
+        count: usize,
+        whole: Item,
+        dot: Item,
+        more: Box<dyn Fn(Range<usize>) -> AnyElement>,
+        metrics: Metrics,
+    ) -> Self {
+        ChipStrip {
+            count,
+            whole,
+            dot,
+            more,
+            metrics,
+            natural: false,
+            built: Vec::new(),
+        }
+    }
+
+    /// Item `i` whole, built once.
+    fn built(&mut self, i: usize) -> &mut AnyElement {
+        while self.built.len() <= i {
+            let next = (self.whole)(self.built.len());
+            self.built.push(next);
+        }
+        &mut self.built[i]
+    }
+
     /// What it draws in the middle of its width.
     #[must_use]
     pub fn centered(mut self) -> Self {
@@ -118,23 +160,46 @@ fn span(widths: &[Pixels], fit: Fit, metrics: &Metrics, more: Pixels) -> Pixels 
     used + gap * parts.saturating_sub(1) as f32
 }
 
-/// The step of `widths` (each item whole) that fits `room`, as the module
-/// says: the most items whole, then the most dots. `more(n)` measures the
-/// "+N" for `n` left out.
+/// How many of the first items fit `room` whole, side by side: no step
+/// draws more of them whole, whatever follows (the widths only add up).
+fn fitting(widths: &[Pixels], room: Pixels, metrics: &Metrics) -> usize {
+    let mut used = px(0.);
+    for (i, w) in widths.iter().enumerate() {
+        used += *w + if i > 0 { px(metrics.gap) } else { px(0.) };
+        if used > room {
+            return i;
+        }
+    }
+    widths.len()
+}
+
+/// The step of `n` items that fits `room`, as the module says: the most
+/// items whole, then the most dots. `widths` are the first items' whole
+/// widths, at least up to the first that does not fit after those before
+/// it (`fitting`), all of them otherwise. `more(n)` measures the "+N" for
+/// `n` left out, asked only where the rest of the step fits.
 fn fit(
     widths: &[Pixels],
+    n: usize,
     room: Pixels,
     metrics: &Metrics,
     mut more: impl FnMut(usize) -> Pixels,
 ) -> Fit {
-    let n = widths.len();
-    let mut span = |fit: Fit| -> Pixels {
+    let mut fits = |fit: Fit| -> bool {
+        // With a "+N" of no width, the least the step can take.
+        if span(widths, fit, metrics, px(0.)) > room {
+            return false;
+        }
         let more = if fit.more > 0 { more(fit.more) } else { px(0.) };
-        span(widths, fit, metrics, more)
+        span(widths, fit, metrics, more) <= room
     };
-    let first = if metrics.whole { n } else { 0 };
+    let first = if metrics.whole {
+        fitting(widths, room, metrics)
+    } else {
+        0
+    };
     // The first `whole` items whole and the rest as dots, as many as
-    // are drawn: from all of them whole down to none.
+    // are drawn: from as many whole as fit down to none.
     for whole in (0..=first).rev() {
         let dots = (n - whole).min(metrics.max_dots);
         let fit = Fit {
@@ -142,7 +207,7 @@ fn fit(
             dots,
             more: n - whole - dots,
         };
-        if span(fit) <= room {
+        if fits(fit) {
             return fit;
         }
     }
@@ -153,7 +218,7 @@ fn fit(
             dots,
             more: n - dots,
         };
-        if span(fit) <= room {
+        if fits(fit) {
             return fit;
         }
     }
@@ -185,12 +250,14 @@ impl Element for ChipStrip {
         let height = px(self.metrics.height);
         if self.natural {
             let natural = size(AvailableSpace::MaxContent, AvailableSpace::Definite(height));
-            let widths: Vec<Pixels> = self
-                .whole
-                .iter_mut()
-                .map(|item| item.layout_as_root(natural, window, cx).width)
-                .collect();
-            let n = widths.len();
+            let n = self.count;
+            let widths: Vec<Pixels> = if self.metrics.whole {
+                (0..n)
+                    .map(|i| self.built(i).layout_as_root(natural, window, cx).width)
+                    .collect()
+            } else {
+                Vec::new()
+            };
             let all = if self.metrics.whole {
                 Fit {
                     whole: n,
@@ -243,16 +310,26 @@ impl Element for ChipStrip {
         let metrics = self.metrics;
         let height = px(metrics.height);
         let natural = size(AvailableSpace::MaxContent, AvailableSpace::Definite(height));
-        let sizes: Vec<gpui::Size<Pixels>> = self
-            .whole
-            .iter_mut()
-            .map(|item| item.layout_as_root(natural, window, cx))
-            .collect();
+        let n = self.count;
+        let room = bounds.size.width;
+        // The first items whole, up to the first that does not fit after
+        // those before it: none after it is drawn whole.
+        let mut sizes: Vec<gpui::Size<Pixels>> = Vec::new();
+        if metrics.whole {
+            let mut used = px(0.);
+            for i in 0..n {
+                let measured = self.built(i).layout_as_root(natural, window, cx);
+                used += measured.width + if i > 0 { px(metrics.gap) } else { px(0.) };
+                sizes.push(measured);
+                if used > room {
+                    break;
+                }
+            }
+        }
         let widths: Vec<Pixels> = sizes.iter().map(|s| s.width).collect();
-        let n = widths.len();
         // Each "+N" measured is kept, to draw the one that fits.
         let mut counts: Vec<(usize, AnyElement, gpui::Size<Pixels>)> = Vec::new();
-        let fit = fit(&widths, bounds.size.width, &metrics, |left| {
+        let fit = fit(&widths, n, room, &metrics, |left| {
             if let Some((_, _, measured)) = counts.iter().find(|(m, _, _)| *m == left) {
                 return measured.width;
             }
@@ -271,7 +348,7 @@ impl Element for ChipStrip {
                 .map_or(px(0.), |(_, _, measured)| measured.width);
             x += ((bounds.size.width - span(&widths, fit, &metrics, more)) / 2.).max(px(0.));
         }
-        for (item, measured) in self.whole.iter_mut().zip(&sizes).take(fit.whole) {
+        for (item, measured) in self.built.iter_mut().zip(&sizes).take(fit.whole) {
             item.prepaint_at(point(x, centered(measured.height)), window, cx);
             x += measured.width + gap;
         }
@@ -307,7 +384,7 @@ impl Element for ChipStrip {
         window: &mut Window,
         cx: &mut App,
     ) {
-        for item in self.whole.iter_mut().take(placed.fit.whole) {
+        for item in self.built.iter_mut().take(placed.fit.whole) {
             item.paint(window, cx);
         }
         for dot in &mut placed.dots {
@@ -347,20 +424,20 @@ mod tests {
         let chips = widths(&[40., 30., 50.]);
         let badge = |_| px(20.);
         // 40 + 4 + 30 + 4 + 50 = 128.
-        assert_eq!(fit(&chips, px(128.), &ROW, badge), of(3, 0, 0));
+        assert_eq!(fit(&chips, chips.len(), px(128.), &ROW, badge), of(3, 0, 0));
         // Two whole, the third a dot: 40 + 4 + 30 + 4 + 8 = 86.
-        assert_eq!(fit(&chips, px(127.), &ROW, badge), of(2, 1, 0));
-        assert_eq!(fit(&chips, px(86.), &ROW, badge), of(2, 1, 0));
+        assert_eq!(fit(&chips, chips.len(), px(127.), &ROW, badge), of(2, 1, 0));
+        assert_eq!(fit(&chips, chips.len(), px(86.), &ROW, badge), of(2, 1, 0));
         // One whole, two dots: 40 + 4 + 8 + 10 = 62.
-        assert_eq!(fit(&chips, px(85.), &ROW, badge), of(1, 2, 0));
-        assert_eq!(fit(&chips, px(62.), &ROW, badge), of(1, 2, 0));
+        assert_eq!(fit(&chips, chips.len(), px(85.), &ROW, badge), of(1, 2, 0));
+        assert_eq!(fit(&chips, chips.len(), px(62.), &ROW, badge), of(1, 2, 0));
         // Dots only: 8 + 10 + 10 = 28.
-        assert_eq!(fit(&chips, px(61.), &ROW, badge), of(0, 3, 0));
-        assert_eq!(fit(&chips, px(28.), &ROW, badge), of(0, 3, 0));
+        assert_eq!(fit(&chips, chips.len(), px(61.), &ROW, badge), of(0, 3, 0));
+        assert_eq!(fit(&chips, chips.len(), px(28.), &ROW, badge), of(0, 3, 0));
         // Fewer dots and the count: 8 + 10 + 4 + 20 = 42 does not fit
         // in 27; 8 + 4 + 20 = 32 neither: nothing.
-        assert_eq!(fit(&chips, px(27.), &ROW, badge), of(0, 0, 0));
-        assert_eq!(fit(&[], px(0.), &ROW, badge), of(0, 0, 0));
+        assert_eq!(fit(&chips, chips.len(), px(27.), &ROW, badge), of(0, 0, 0));
+        assert_eq!(fit(&[], 0, px(0.), &ROW, badge), of(0, 0, 0));
     }
 
     #[test]
@@ -368,13 +445,13 @@ mod tests {
         let chips = widths(&[40., 40., 40., 40., 40., 40.]);
         let badge = |_| px(16.);
         // Two whole, three dots, "+1": 40 + 4 + 40 + 4 + 28 + 4 + 16 = 136.
-        assert_eq!(fit(&chips, px(136.), &ROW, badge), of(2, 3, 1));
+        assert_eq!(fit(&chips, chips.len(), px(136.), &ROW, badge), of(2, 3, 1));
         // None whole: three dots and "+3", 28 + 4 + 16 = 48.
-        assert_eq!(fit(&chips, px(48.), &ROW, badge), of(0, 3, 3));
+        assert_eq!(fit(&chips, chips.len(), px(48.), &ROW, badge), of(0, 3, 3));
         // Two dots and "+4": 18 + 4 + 16 = 38; one and "+5": 28.
-        assert_eq!(fit(&chips, px(47.), &ROW, badge), of(0, 2, 4));
-        assert_eq!(fit(&chips, px(37.), &ROW, badge), of(0, 1, 5));
-        assert_eq!(fit(&chips, px(27.), &ROW, badge), of(0, 0, 0));
+        assert_eq!(fit(&chips, chips.len(), px(47.), &ROW, badge), of(0, 2, 4));
+        assert_eq!(fit(&chips, chips.len(), px(37.), &ROW, badge), of(0, 1, 5));
+        assert_eq!(fit(&chips, chips.len(), px(27.), &ROW, badge), of(0, 0, 0));
     }
 
     #[test]
@@ -384,7 +461,10 @@ mod tests {
             whole: false,
             ..ROW
         };
-        assert_eq!(fit(&chips, px(1000.), &dots, |_| px(20.)), of(0, 2, 0));
+        assert_eq!(
+            fit(&chips, chips.len(), px(1000.), &dots, |_| px(20.)),
+            of(0, 2, 0)
+        );
     }
 
     #[test]
@@ -396,22 +476,49 @@ mod tests {
             ..ROW
         };
         let chips = widths(&[60., 60., 60.]);
-        assert_eq!(fit(&chips, px(28.), &over, |_| px(20.)), of(0, 3, 0));
-        assert_eq!(fit(&chips, px(27.), &over, |_| px(20.)), of(0, 0, 0));
+        assert_eq!(
+            fit(&chips, chips.len(), px(28.), &over, |_| px(20.)),
+            of(0, 3, 0)
+        );
+        assert_eq!(
+            fit(&chips, chips.len(), px(27.), &over, |_| px(20.)),
+            of(0, 0, 0)
+        );
     }
 
     #[test]
     fn each_count_is_measured_for_what_it_says() {
         let chips = widths(&[40., 40., 40., 40., 40.]);
         let mut asked = Vec::new();
-        let shown = fit(&chips, px(40.), &ROW, |n| {
+        let shown = fit(&chips, chips.len(), px(40.), &ROW, |n| {
             asked.push(n);
             px(10. * n as f32)
         });
-        // One whole, three dots and "+1" is asked first; then three dots
-        // and "+2" (28 + 4 + 20 = 52), two and "+3" (18 + 4 + 30), one
-        // and "+4" (8 + 4 + 40): none fits.
+        // One whole and three dots take 76 px before any "+1": it is not
+        // asked. Three dots and "+2" (28 + 4 + 20 = 52), two and "+3"
+        // (18 + 4 + 30), one and "+4" (8 + 4 + 40) are: none fits.
         assert_eq!(shown, of(0, 0, 0));
-        assert_eq!(asked, [1, 2, 3, 4]);
+        assert_eq!(asked, [2, 3, 4]);
+    }
+
+    /// The widths of the first items up to the first that does not fit
+    /// after those before it say what all of them would: the step is the
+    /// same, and only the count drawn is measured.
+    #[test]
+    fn the_first_widths_say_what_all_would() {
+        let all = widths(&[40.; 70]);
+        let mut asked = Vec::new();
+        let mut badge = |n: usize| {
+            asked.push(n);
+            px(if n >= 10 { 22. } else { 16. })
+        };
+        // 40 + 4 + 40 + 4 + 40 = 128 for three; a fourth passes 150.
+        assert_eq!(fitting(&all, px(150.), &ROW), 3);
+        let fit_all = fit(&all, 70, px(150.), &ROW, &mut badge);
+        let first = fit(&all[..4], 70, px(150.), &ROW, &mut badge);
+        assert_eq!(fit_all, first);
+        // Two whole, three dots, "+65": 84 + 4 + 28 + 4 + 22 = 142.
+        assert_eq!(first, of(2, 3, 65));
+        assert_eq!(asked, [65, 65], "one count, once a search");
     }
 }

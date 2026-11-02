@@ -339,6 +339,19 @@ a kind's values, the tabs before anything is typed, any list in a short
 window or the lower of two panes. Checks in `docs/STATUS-LOG.md`
 (2026-11-02, "The address card fits the window").
 
+## Every tag offered, strips as wide as they draw (2026-11-02)
+
+Two things left by the address card's work, done the same day. `tag:`
+and `#` offer the folder's tags first, then every other tag the user
+has, from the tags plugin's memory (`tags.known`), in every scope; no
+file is read while a key is typed (`docs/invariants/locations.md`). A
+strip of tags builds and measures only the chips its width may draw
+and the one "+N" that fits: a file's seventy tags once laid out seventy
+chips and sixty counts on every row at each frame, and a row now costs
+what it shows, whatever the number of tags
+(`docs/invariants/views.md`). Checks in `docs/STATUS-LOG.md`
+(2026-11-02, "Every tag offered").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -354,14 +367,6 @@ what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
 
 **From the address card (2026-11-02)**:
-- `tag:` offers the tags of the files whose tags the listing read (the
-  rows on screen: 30 of 150 in the check), and the folder's alone in a
-  search below it or in another scope: the user's other tags (the tags
-  plugin's vocabulary, the All Tags place) are not offered.
-- A folder whose files carry many tags each redraws slowly in the debug
-  build: 70 tags a file, about 1.7 s of the window's thread for a key
-  moving the cursor (a loaded machine, lavapipe), the omnibox closed.
-  Not looked into.
 - The lower of two panes split one above the other was not tried: its
   card has what the window leaves under its field, at least 120 px.
 

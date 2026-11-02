@@ -329,16 +329,19 @@ pub fn strip_acting(
             }
         }
     };
-    let whole = tags
-        .iter()
-        .enumerate()
-        .map(|(i, (tag, color))| {
+    // Built when the strip asks: only what its width may draw.
+    let items: std::rc::Rc<[(String, usize)]> = tags.into();
+    let count = items.len();
+    let whole = {
+        let (items, theme, act) = (std::rc::Rc::clone(&items), theme.clone(), act.clone());
+        Box::new(move |i: usize| {
+            let (tag, color) = &items[i];
             let el = if named_after_its_color(tag, *color) {
-                strip_dot(i, tag, *color, on, metrics.dot, theme)
+                strip_dot(i, tag, *color, on, metrics.dot, &theme)
             } else {
                 let chip = match on {
-                    StripOn::Row { .. } => chip(tag, *color, theme).text_color(text),
-                    StripOn::Picture { zoom } => picture_chip(tag, *color, zoom, theme),
+                    StripOn::Row { .. } => chip(tag, *color, &theme).text_color(text),
+                    StripOn::Picture { zoom } => picture_chip(tag, *color, zoom, &theme),
                 };
                 let el = chip.id(("tag-chip", i));
                 match tag_parent(tag) {
@@ -354,44 +357,44 @@ pub fn strip_acting(
                 None => el.into_any_element(),
             }
         })
-        .collect();
-    let dots: Vec<(String, usize)> = tags.to_vec();
-    let theme_dots = theme.clone();
-    let names: Vec<String> = tags.iter().map(|(tag, _)| tag.clone()).collect();
-    let theme_more = theme.clone();
-    ChipStrip {
-        whole,
-        dot: Box::new(move |i| {
-            let (tag, color) = &dots[i];
-            let el = strip_dot(i, tag, *color, on, metrics.dot, &theme_dots);
+    };
+    let dot = {
+        let (items, theme) = (std::rc::Rc::clone(&items), theme.clone());
+        Box::new(move |i: usize| {
+            let (tag, color) = &items[i];
+            let el = strip_dot(i, tag, *color, on, metrics.dot, &theme);
             match &act {
                 Some(act) => act(el, tag).into_any_element(),
                 None => el.into_any_element(),
             }
-        }),
-        more: Box::new(move |left: std::ops::Range<usize>| {
-            let tip: gpui::SharedString = names[left.clone()].join(", ").into();
-            let n = left.len();
-            match on {
-                StripOn::Row { .. } => more_chip(n, muted),
-                StripOn::Picture { .. } => div()
-                    .flex_none()
-                    .px(px(3.))
-                    .rounded_sm()
-                    .bg(theme_more.bg)
-                    .text_color(theme_more.text_muted)
-                    .text_size(px(10.))
-                    .line_height(px(metrics.dot))
-                    .whitespace_nowrap()
-                    .child(format!("+{n}")),
-            }
-            .id("tag-more")
-            .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
-            .into_any_element()
-        }),
-        metrics,
-        natural: false,
-    }
+        })
+    };
+    let theme_more = theme.clone();
+    let more = Box::new(move |left: std::ops::Range<usize>| {
+        let names: Vec<&str> = items[left.clone()]
+            .iter()
+            .map(|(t, _)| t.as_str())
+            .collect();
+        let tip: gpui::SharedString = names.join(", ").into();
+        let n = left.len();
+        match on {
+            StripOn::Row { .. } => more_chip(n, muted),
+            StripOn::Picture { .. } => div()
+                .flex_none()
+                .px(px(3.))
+                .rounded_sm()
+                .bg(theme_more.bg)
+                .text_color(theme_more.text_muted)
+                .text_size(px(10.))
+                .line_height(px(metrics.dot))
+                .whitespace_nowrap()
+                .child(format!("+{n}")),
+        }
+        .id("tag-more")
+        .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+        .into_any_element()
+    });
+    ChipStrip::new(count, whole, dot, more, metrics)
 }
 
 /// A chip's height over a picture `zoom` px: smaller than a row's on the

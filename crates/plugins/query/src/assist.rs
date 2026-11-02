@@ -903,8 +903,8 @@ pub(crate) struct CompleteArgs {
     /// Where the caret is, in bytes; the end when omitted.
     #[serde(default)]
     pub caret: Option<usize>,
-    /// The pane whose files' tags `tag:` offers; the active one when
-    /// omitted.
+    /// The pane whose files' tags `tag:` offers first, before the user's
+    /// others; the active one when omitted.
     #[serde(default)]
     pub pane: Option<PaneId>,
 }
@@ -935,6 +935,41 @@ pub(crate) fn pane_tags(app: &App, pane: Option<PaneId>) -> Vec<String> {
         }
         _ => Vec::new(),
     }
+}
+
+/// The tags `tag:` and `#` offer: those of the pane's files the listing
+/// has read, by name ([`pane_tags`]), then every other tag the user has,
+/// as the tags plugin knows them (`tags.known`, from memory): a search
+/// below the folder, or in another scope, finds tags no file shown has,
+/// and the listing reads the tags of the rows in view only.
+pub(crate) struct Offered {
+    pub tags: Vec<String>,
+    /// How many of `tags` the pane's files have, first.
+    here: usize,
+}
+
+impl Offered {
+    /// Those of the pane's files.
+    pub fn here(&self) -> &[String] {
+        &self.tags[..self.here]
+    }
+}
+
+pub(crate) fn offered_tags(app: &App, pane: Option<PaneId>) -> Offered {
+    let mut tags = pane_tags(app, pane);
+    let here = tags.len();
+    let known = app
+        .commands
+        .get("tags.known")
+        .and_then(|_| match app.dispatch(&Invocation::new("tags.known")) {
+            Ok(Outcome::Value(v)) => serde_json::from_value::<Vec<String>>(v).ok(),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let folded = |tag: &str| -> String { tag.chars().flat_map(char::to_lowercase).collect() };
+    let mut named: std::collections::HashSet<String> = tags.iter().map(|t| folded(t)).collect();
+    tags.extend(known.into_iter().filter(|t| named.insert(folded(t))));
+    Offered { tags, here }
 }
 
 #[cfg(test)]

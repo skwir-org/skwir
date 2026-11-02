@@ -168,3 +168,128 @@ fn the_tag_chip_offers_the_tags_found_and_find_similar_shares_them() {
         "{lens}"
     );
 }
+
+/// `tag:` offers the tags of the folder's files first, then every other
+/// tag the user has (here, those a listing elsewhere read), each once
+/// whatever its case; words name the folder's tags where they filter it,
+/// any of the user's in a scope.
+#[test]
+fn tag_offers_the_folders_tags_then_the_users_others() {
+    let tmp = home_tempdir();
+    let (here, elsewhere) = (tmp.path().join("it's here"), tmp.path().join("élsewhere"));
+    for (dir, name, tags) in [
+        (&here, "a.txt", Some("work,Places/France")),
+        (&here, "c.txt", None),
+        (&elsewhere, "b.txt", Some("holiday,WORK")),
+    ] {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join(name);
+        std::fs::write(&path, name).unwrap();
+        if let Some(tags) = tags
+            && skwir_core::fs::xattr::set(&path, "user.xdg.tags", tags.as_bytes()).is_err()
+        {
+            eprintln!("skipped: no user extended attributes here");
+            return;
+        }
+    }
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("state"))).unwrap();
+    app.plugins
+        .add(Arc::new(skwir_plugin_query::QueryPlugin::default()), &app);
+    app.plugins
+        .add(Arc::new(skwir_plugin_tags::TagsPlugin::default()), &app);
+    let pane = app.workspace.read().active_id();
+    // Each folder shown and its files' notes read, as rows in view are.
+    let show = |dir: &std::path::Path| {
+        app.navigate(pane, &Location::from_path(dir)).unwrap();
+        assert!(app.pump_until_complete(pane, Duration::from_secs(5)));
+        let ids: Vec<skwir_core::EntryId> = {
+            let ws = app.workspace.read();
+            ws.pane(pane)
+                .unwrap()
+                .listing
+                .iter()
+                .map(|e| e.id)
+                .collect()
+        };
+        app.dispatch(&Invocation::with_args(
+            "hydrate",
+            &serde_json::json!({ "ids": ids, "pane": pane }),
+        ))
+        .unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            app.pump();
+            let read = {
+                let ws = app.workspace.read();
+                let p = ws.pane(pane).unwrap();
+                p.listing.iter().all(|e| e.metadata.is_hydrated())
+            };
+            if read {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "notes never read");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    show(&elsewhere);
+    show(&here);
+
+    let labels = |text: &str| -> Vec<String> {
+        let v = value(
+            &app,
+            "query.complete",
+            serde_json::json!({ "text": text, "pane": pane }),
+        );
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["label"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(labels("tag:"), ["Places/France", "work", "holiday"]);
+    assert_eq!(labels("#"), ["Places/France", "work", "holiday"]);
+    assert_eq!(labels("tag:ho"), ["holiday"]);
+    let known = value(&app, "tags.known", serde_json::json!({}));
+    let known: Vec<&str> = known
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t.as_str().unwrap())
+        .collect();
+    assert_eq!(known.len(), 3, "{known:?}: each tag once");
+
+    // The field's own rows: in the folder, `holiday` is a name; in a
+    // scope, a tag of the user's.
+    let field = app
+        .registry
+        .suggesters
+        .all()
+        .into_iter()
+        .find(|s| s.0.id() == "query" && s.0.searches())
+        .expect("the query plugin's field");
+    let reading = |scope: Option<Location>| {
+        let ask = skwir_core::suggest::Ask {
+            text: "holiday".into(),
+            caret: 7,
+            typed: skwir_core::suggest::Typed::Words,
+            scope,
+            shown: Some(Location::from_path(&here)),
+            dir: Some(here.clone()),
+            pane: Some(pane),
+            lens: None,
+        };
+        field
+            .0
+            .suggest(&app, &ask, &skwir_core::cancel::CancelToken::new())
+            .rows
+            .into_iter()
+            .find(|r| r.section == skwir_core::suggest::Section::Reading)
+            .and_then(|r| r.completion)
+    };
+    assert_eq!(reading(None), None);
+    assert_eq!(
+        reading(Some(Location::from_path(tmp.path()))).as_deref(),
+        Some("tag:holiday")
+    );
+}

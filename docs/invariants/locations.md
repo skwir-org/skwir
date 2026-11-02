@@ -138,6 +138,15 @@ and `notes.agree` are core `notes.*` commands.
   The parser's tokenizer and the field's lexer split text alike: a change
   to what a word is (`#print` is `tag:print`) is made in both, and
   `quote` writes a name that would read otherwise (`"#3"`).
+- **The tags `tag:` and `#` offer** are the folder's first, those its
+  listing read (`tags.list`), then every other tag the user has, from
+  the tags plugin's memory (`tags.known`: pinned, given, seen on files,
+  then counted under the home folder; `assist::offered_tags`), each
+  once whatever its case: a search below the folder or in another scope
+  finds tags no file shown has, and a listing reads the tags of the
+  rows in view only. Nothing is read from files while a key is typed.
+  Words read as terms ("Did you mean") name the folder's tags where
+  they filter it, any of the user's in a scope.
 - **Scopes (ADR-098).** A place is a scope where its provider says
   words can search it (`LocationProvider::searchable`, from its text): a
   folder, a tag's place and every tag's, Recent; never the trash or the

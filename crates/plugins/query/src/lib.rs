@@ -1045,12 +1045,12 @@ impl Plugin for QueryPlugin {
                 ID, Topic::Find,
                 "query.complete",
                 "Complete a search",
-                "`{ range, items: [{ label, text, detail?, icon, tag? }], typing }`: what the term ending at `caret` (bytes; the end when omitted) can go on with, each item's `text` written in place of `range`: the keys a word starts, a key's values (kinds, the pane's tags, periods, sizes, stars); `typing` when that term is still incomplete",
+                "`{ range, items: [{ label, text, detail?, icon, tag? }], typing }`: what the term ending at `caret` (bytes; the end when omitted) can go on with, each item's `text` written in place of `range`: the keys a word starts, a key's values (kinds, the tags of the pane's files then the user's others, periods, sizes, stars); `typing` when that term is still incomplete",
                 |a, app| {
                     let caret = a.caret.unwrap_or(a.text.len());
-                    let tags = assist::pane_tags(app, a.pane);
+                    let tags = assist::offered_tags(app, a.pane);
                     Ok(Outcome::Value(serde_json::to_value(assist::complete(
-                        &a.text, caret, &tags,
+                        &a.text, caret, &tags.tags,
                     ))?))
                 },
             )

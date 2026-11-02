@@ -33,6 +33,14 @@ around the views is in [shell.md](shell.md).
   column's tag on its cards): only that tag exactly, never one within
   it. A dot, a "+N" and a chip whose tag is in a category say the whole
   name when pointed at.
+- **A strip builds what it may draw** (`ChipStrip::new` takes builders):
+  chips are built and measured in order until one passes its width,
+  since none after it is drawn whole, and a "+N" is measured only for a
+  step whose other parts fit. Its cost follows its width, never how
+  many tags a file has: seventy tags a row once laid out seventy chips
+  and sixty counts per row at each frame. Only a strip that asks for
+  the width of every chip whole (`ChipStrip::natural`, the preview's
+  header) builds them all.
 - A thumbnail is drawn by `backdrop::Picture::img`, sized and fitted by
   the view. One that lets its background through, whose ink (its
   luminance, weighted by opacity, read once when converted) would not

@@ -146,6 +146,11 @@ registered in `App::notes` by its plugin); all share one model,
   2,000; past that it forgets a tenth at a time, the tags only ever seen
   first (the least recently seen first), and the tags the user gave only
   when those alone pass the bound (the least recently used first).
+- Every tag known is one answer (`tags.known`): those pinned, then the
+  vocabulary's, then those the index counted under the home folder that
+  it forgot or never saw, each once. The address field's `tag:` offers
+  them after the folder's own ([locations.md](locations.md),
+  "Searches").
 
 ## Companions (ADR-028)
 

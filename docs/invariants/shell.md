@@ -362,7 +362,7 @@ of bars, split or not.
   taller than what it leaves under the field (`popup_around`'s room).
   Its rows scroll there, under a scrollbar, between the depth line and
   the footer, which stay in sight; however many a source offers (every
-  tag a folder's files carry, for `tag:`), each is reached by the wheel
+  tag the user has, for `tag:`), each is reached by the wheel
   and the keys. They are a `gpui::list` that builds only the rows in
   view (`omnibox::draw_piece`), never a child per row: two thousand tags
   cost what a screenful does. A child of the list is a piece

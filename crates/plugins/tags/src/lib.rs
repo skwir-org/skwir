@@ -466,7 +466,6 @@ fn sidebar_location(tag: &str) -> String {
 /// compares them, where each tag offered was compared with all those
 /// before it at every key typed.
 fn known(pinned: Vec<String>, known: Vec<String>) -> Vec<String> {
-    let folded = |tag: &str| -> String { tag.chars().flat_map(char::to_lowercase).collect() };
     let pinned_here: std::collections::HashSet<String> =
         pinned.iter().map(|tag| folded(tag)).collect();
     let mut out = pinned;
@@ -475,6 +474,29 @@ fn known(pinned: Vec<String>, known: Vec<String>) -> Vec<String> {
             .into_iter()
             .filter(|tag| !pinned_here.contains(&folded(tag))),
     );
+    out
+}
+
+/// A tag as `same_tag` compares it.
+fn folded(tag: &str) -> String {
+    tag.chars().flat_map(char::to_lowercase).collect()
+}
+
+/// `tags.known`: every tag the user has, as [`known`] offers them, then
+/// those the index counted under the home folder that the vocabulary
+/// forgot or never saw (a tag place walked folders no listing showed),
+/// on the most files first. From memory, but for the index's pieces of
+/// the network mounts below the home folder, read once from the cache.
+fn every_tag(app: &App, vocabulary: &Vocabulary, index: &index::TagIndex) -> Vec<String> {
+    let mut out = known(sidebar::pinned(app), vocabulary.known());
+    let mut named: std::collections::HashSet<String> = out.iter().map(|t| folded(t)).collect();
+    if let Some(home) = std::env::home_dir() {
+        for (tag, _) in index.top(usize::MAX, &home) {
+            if named.insert(folded(&tag)) {
+                out.push(tag);
+            }
+        }
+    }
     out
 }
 
@@ -1036,7 +1058,8 @@ impl Plugin for TagsPlugin {
         app.hints.register(ID, Arc::new(hints::Baloo::default()));
         #[cfg(target_os = "macos")]
         app.hints.register(ID, Arc::new(hints::Spotlight));
-        app.hints.register(ID, Arc::new(hints::Learned(index)));
+        app.hints
+            .register(ID, Arc::new(hints::Learned(Arc::clone(&index))));
         app.settings.declare(SettingSpec::data(
             TAG_COLOR_SETTING,
             "Colors the user chose for tags, by tag in lowercase: { tag = color }",
@@ -1460,6 +1483,15 @@ impl Plugin for TagsPlugin {
                 },
             )
             .data();
+        let (v, i) = (Arc::clone(&vocabulary), Arc::clone(&index));
+        app.commands.register::<skwir_core::command::NoArgs, _>(
+            ID, Topic::Notes,
+            "tags.known",
+            "Tags known",
+            "Every tag the user has, each once, from memory: those pinned, in their order; then the most recently given; then those seen on files; then those counted under the home folder, on the most files first",
+            move |_, app| Ok(Outcome::Value(serde_json::to_value(every_tag(app, &v, &i))?)),
+        )
+        .data();
         app.commands.register::<ListArgs, _>(
             ID, Topic::Notes,
             "tags.list",

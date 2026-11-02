@@ -199,9 +199,9 @@ fn typed(app: &App, ask: &Ask) -> Answer {
     let Some(scope) = scope_of(ask) else {
         return Answer::default();
     };
-    let tags = assist::pane_tags(app, ask.pane);
+    let tags = assist::offered_tags(app, ask.pane);
     let completed = if ask.typing_at_end() {
-        assist::complete(text, caret, &tags)
+        assist::complete(text, caret, &tags.tags)
     } else {
         assist::Completed::default()
     };
@@ -277,8 +277,15 @@ fn typed(app: &App, ask: &Ask) -> Answer {
         rows.push(row);
     }
     // The words read as terms, offered below the search of the words; Tab
-    // writes them (and Enter, over a folder filtered alone).
-    if let Some(reading) = assist::interpret(words, &tags) {
+    // writes them (and Enter, over a folder filtered alone). Words name
+    // the tags of the folder's files where they filter it, any of the
+    // user's in a scope.
+    let named = if ask.scope.is_some() {
+        &tags.tags[..]
+    } else {
+        tags.here()
+    };
+    if let Some(reading) = assist::interpret(words, named) {
         let mut row = Suggestion::new(Section::Reading, reading.label)
             .detail(reading.expr.clone())
             .icon("sliders")
