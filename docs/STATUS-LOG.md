@@ -9938,3 +9938,37 @@ GNOME, Plasma or Windows session, portal or printer; nothing measured on
 large real PDFs or pictures; the wheel on X11 or a touchpad; 50,000 tags
 in a window; `just bench-check`, `just idle-pss` and `just
 release-check` were not run.
+
+## Dependencies to their newest, crates under the LGPL (2026-11-02)
+
+The user asked for every dependency at its most recent release, as far
+as other dependencies allow, then (ogeom having moved to
+LGPL-2.1-only) for the licence policy to change rather than keep it
+behind: never to downgrade a dependency for its licence or another
+reason without asking. `dbcb2731` amends ADR-042 (a crate under the LGPL
+may be built in, the source published beside every build) and names
+LGPL-2.1-only in deny.toml, the notices' list and the main package's
+licence fields. `f7d4ed98` runs `cargo update` (84 crates moved, among
+them zstd 0.13.4 and zstd-safe 7.4, which end the three advisories
+ignored for Wasmtime's cache: the ignores are gone) and moves Skwir's
+own requirements to the newest majors where nothing else holds the
+older one, porting the stylesheets' parser, the email preview, the
+checksums' hex, SQLite's progress handler and the fax decoder's sink to
+their new APIs. What other dependencies hold back is listed in the
+commit (gpui's, krilla's, parley's and tree-sitter's requirements).
+No crate and no dependency link went to an older version (the two lock
+files compared crate by crate and link by link).
+
+**Checked:** `just deny` (advisories, bans, licences, sources) and `just
+notices` after each step; `just lint-all` with `check-cross`;
+`CARGO_INCREMENTAL=0 just test-all`: 2947 passed, 30 skipped, none
+failed; `just djvu-check` for djvu-rs 0.44 (both engines over the
+corpus); `just release-tools-check` (the AUR `.SRCINFO`s made again for
+the new licence). The hayro crates were moved after that run: skwir-shrink
+and skwir-print-worker linted for Linux, Windows and macOS, skwir-shrink's
+56 tests and the binary's 8 shrink tests passed, the JBIG2 written now
+read back strictly.
+
+**Not checked:** the model helper's STEP reading on ogeom 0.14 beyond its
+tests (the conformance trial of 2026-10-19 was not run again); the email
+preview on real messages beyond its tests; nothing in a window.
