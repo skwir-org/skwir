@@ -8122,6 +8122,7 @@ name = "skwir-platform"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "async-io",
  "block2 0.6.2",
  "crossbeam-channel",
  "cssparser 0.37.0",
@@ -8149,6 +8150,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-quick-look-thumbnailing",
  "objc2-uniform-type-identifiers",
+ "objc2-user-notifications",
  "oo7",
  "open",
  "parking_lot",

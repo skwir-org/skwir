@@ -9,6 +9,7 @@
 //! - [`access`]: what the system adds to a file's mode (access lists, capabilities, a security label).
 //! - [`bat`]: where bat, the pager, keeps the themes its user added.
 //! - [`calendar`]: the user's time zone and first weekday, for dates people read.
+//! - [`desktop`]: what the desktop is told while long actions run: notices, progress, sleep held off.
 //! - [`icons`]: XDG icon theme lookup with caching.
 //! - [`picture`]: picture files decoded and sized the way their EXIF Orientation turns them.
 //! - [`thumbnails`]: the freedesktop thumbnail cache: lookup, load, store.
@@ -31,6 +32,7 @@ pub mod bat;
 #[cfg(target_os = "linux")]
 pub mod bus;
 pub mod calendar;
+pub mod desktop;
 #[cfg(target_os = "linux")]
 mod desktop_settings;
 pub mod desktop_style;

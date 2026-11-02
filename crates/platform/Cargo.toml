@@ -75,17 +75,22 @@ windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Globali
 # version of `windows` gpui already links.
 # The shell's icons, from the system image list (system_icons).
 # The print dialog and the memory it hands back (ADR-111).
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Memory", "Win32_UI_Controls", "Win32_UI_Controls_Dialogs", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+# What the desktop is told (`desktop`): toasts, the taskbar's progress, a
+# power request; the WinRT features gpui's own toasts already build.
+windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications", "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Memory", "Win32_System_Power", "Win32_System_Threading", "Win32_UI_Controls", "Win32_UI_Controls_Dialogs", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 
 # macOS's own calls (ADR-035): the calendar's first weekday, the
 # Keychain, the types the system knows (ADR-037). The versions already in
 # the tree.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSCalendar", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSString", "NSURL", "NSValue"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSBundle", "NSCalendar", "NSDictionary", "NSEnumerator", "NSError", "NSGeometry", "NSProcessInfo", "NSString", "NSURL", "NSValue"] }
 objc2-uniform-type-identifiers = { version = "0.3", default-features = false, features = ["std", "UTCoreTypes", "UTType"] }
-# The system's icons, drawn by NSImage (system_icons).
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSGraphicsContext", "NSImage", "NSImageRep", "NSPrintInfo", "NSPrintPanel", "NSPrinter", "NSWorkspace", "objc2-core-foundation", "objc2-core-graphics", "objc2-uniform-type-identifiers"] }
+# The system's icons, drawn by NSImage (system_icons). The dock tile's
+# badge (`desktop`).
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSApplication", "NSDockTile", "NSGraphicsContext", "NSImage", "NSImageRep", "NSPrintInfo", "NSPrintPanel", "NSPrinter", "NSResponder", "NSWorkspace", "objc2-core-foundation", "objc2-core-graphics", "objc2-uniform-type-identifiers"] }
+# Notices (`desktop`): the version gpui's own notifications link.
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotificationContent", "UNNotificationRequest", "UNNotificationTrigger", "UNUserNotificationCenter"] }
 # The print panel, shown on the main thread from a worker (ADR-111).
 dispatch2 = "0.3"
 # Quick Look's thumbnails, read as pixels (ADR-041).
@@ -106,6 +111,9 @@ zbus = "5"
 # when stopped (`bus`): the versions zbus itself links.
 futures-lite = { version = "2", default-features = false, features = ["std"] }
 event-listener = "5"
+# A call on the shared session bus given up on after a while (`desktop`):
+# the timer zbus itself runs on.
+async-io = "2"
 
 # The user's folders as the system names them, off Linux (ADR-035).
 [target.'cfg(not(target_os = "linux"))'.dependencies]
