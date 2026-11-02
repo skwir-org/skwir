@@ -103,6 +103,10 @@ pub enum ExecEvent {
         /// an `Unneeded`'s why), in order, each once: its answer says it
         /// after what was done.
         said: Vec<String>,
+        /// The bytes it moved, and how long its steps ran, its pauses left
+        /// out: what its answer says of a long copy (ADR-113).
+        moved: u64,
+        ran: Duration,
     },
     /// The server the plan `plan` stopped on does not answer: it goes on
     /// by itself once it does (ADR-080, 9).
@@ -156,10 +160,13 @@ impl From<Direction> for RunKind {
     }
 }
 
-/// How far a running plan is. Its bytes are those its steps move (copies,
-/// cross-device moves), `total` growing as each such step starts: a plan
-/// of several steps knows its bytes only as it goes.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+/// How far a running plan is, how fast it goes and how long it has left
+/// (ADR-113). Its bytes are those its steps move (copies, cross-device
+/// moves), `total` growing as each such step starts; `planned`, what it
+/// will move in all, is known from its start where its steps were sized
+/// before it began (a plan the user asked for, its retries, the heavy
+/// steps of an undo).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
 pub struct Transfer {
     pub done: u64,
     pub total: u64,
@@ -169,8 +176,45 @@ pub struct Transfer {
     pub step_done: u64,
     pub step_total: u64,
     /// The files a mount that sends later still sends to its server before
-    /// the plan ends (ADR-102), while it does.
+    /// the plan ends (ADR-102), while it does, and their bytes where it
+    /// says.
     pub sending: Option<usize>,
+    pub sending_bytes: Option<u64>,
+    /// What the plan will move in all, when known.
+    pub planned: Option<u64>,
+    /// Bytes a second, over the last seconds: what it writes, or, while a
+    /// mount sends, what that mount sends. `None` before two seconds went
+    /// by, while paused, when nothing moved of late, and for a plan that
+    /// moves no byte.
+    pub speed: Option<f64>,
+    /// How long it has left: by its bytes, or by its steps for a plan that
+    /// moves none. `None` while that cannot be told (not sized, nothing
+    /// moved of late, writing into a mount that sends after). In seconds
+    /// for a script.
+    #[serde(rename = "left_seconds", serialize_with = "seconds")]
+    pub left: Option<Duration>,
+    /// It writes into a mount that sends to its server after, which its
+    /// end waits for (ADR-102): why no time left is said meanwhile.
+    pub then_sends: bool,
+}
+
+/// `left` in whole seconds, as a script reads it.
+#[allow(clippy::ref_option)] // serde's `serialize_with` hands a reference.
+fn seconds<S: serde::Serializer>(left: &Option<Duration>, to: S) -> Result<S::Ok, S::Error> {
+    match left {
+        Some(left) => to.serialize_some(&left.as_secs()),
+        None => to.serialize_none(),
+    }
+}
+
+/// A plan running, as the `running` command answers it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct RunningPlan {
+    pub plan: PlanId,
+    pub title: String,
+    pub paused: bool,
+    #[serde(flatten)]
+    pub transfer: Transfer,
 }
 
 /// Told, once per finished run of a plan (undo and redo runs included),
@@ -610,6 +654,7 @@ enum Settling {
 /// A plan being applied: what stops it, what holds it, what it moved.
 struct Active {
     plan: PlanId,
+    title: String,
     cancel: CancelToken,
     pause: Arc<Pause>,
     meter: Arc<Meter>,
@@ -780,7 +825,11 @@ impl Executor {
     ) -> Option<String> {
         let free = Arc::clone(&self.free.lock());
         let ctx = dry_context(&plan.steps, &Arc::default(), cancel, shown);
-        let short = super::room::short(&plan.steps, &ctx, &*free, cancel)?;
+        let sized = super::room::sized(&plan.steps, &ctx, cancel, &|_| true)?;
+        // What it will move, and what each copy copies, kept for its run:
+        // its time left told from its start, no tree walked twice.
+        shown.meter.set_ahead(sized.work.clone(), walked(&sized));
+        let short = sized.short(&*free)?;
         let asker = self.room_asker.lock().clone();
         let Some(asker) = asker else {
             return Some(short.said());
@@ -930,9 +979,17 @@ impl Executor {
                 return false;
             };
             if paused {
-                (active.pause.pause(), None)
+                let held = active.pause.pause();
+                if held {
+                    active.meter.hold(true);
+                }
+                (held, None)
             } else {
-                (false, active.pause.resume())
+                let released = active.pause.resume();
+                if released.is_some() {
+                    active.meter.hold(false);
+                }
+                (false, released)
             }
         };
         if held {
@@ -1000,18 +1057,44 @@ impl Executor {
             .iter()
             .find(|a| a.plan == plan)
             .map(|a| {
-                let steps = *a.meter.steps.lock();
-                let done = a.meter.done.load(Ordering::Relaxed);
-                let total = a.meter.total.load(Ordering::Relaxed);
+                let read = a.meter.reading(a.pause.is_paused());
                 Transfer {
-                    done,
-                    total,
-                    ended: steps.ended,
-                    step_done: done.saturating_sub(steps.done),
-                    step_total: total.saturating_sub(steps.total),
-                    sending: a.meter.sending.load(Ordering::Relaxed).checked_sub(1),
+                    done: read.done,
+                    total: read.total,
+                    ended: read.steps.ended,
+                    step_done: read.done.saturating_sub(read.steps.done),
+                    step_total: read.total.saturating_sub(read.steps.total),
+                    sending: read.sending,
+                    sending_bytes: read.send_left,
+                    planned: read.planned,
+                    speed: read.measured.speed,
+                    left: read.measured.left,
+                    then_sends: read.then_sends,
                 }
             })
+    }
+
+    /// The plans, undos and redos running, in the order they started: what
+    /// each is, how far it went, how fast it goes and how long it has left
+    /// (the `running` command).
+    pub fn running(&self) -> Vec<RunningPlan> {
+        let running: Vec<(PlanId, String, bool)> = self
+            .running
+            .lock()
+            .iter()
+            .map(|a| (a.plan, a.title.clone(), a.pause.is_paused()))
+            .collect();
+        running
+            .into_iter()
+            .filter_map(|(plan, title, paused)| {
+                Some(RunningPlan {
+                    plan,
+                    title,
+                    paused,
+                    transfer: self.transfer(plan)?,
+                })
+            })
+            .collect()
     }
 
     /// Tell `observer` what each finished plan changed, until `owner`'s
@@ -2015,6 +2098,8 @@ impl Executor {
             undoable: false,
             items: plan.items.as_deref().cloned(),
             said: Vec::new(),
+            moved: 0,
+            ran: Duration::ZERO,
         });
         ExecResult {
             applied: 0,
@@ -2039,6 +2124,8 @@ impl Executor {
             undoable: false,
             items: None,
             said: Vec::new(),
+            moved: 0,
+            ran: Duration::ZERO,
         });
         ExecResult {
             applied: 0,
@@ -2245,6 +2332,8 @@ impl Executor {
                 undoable: false,
                 items: None,
                 said: Vec::new(),
+                moved: 0,
+                ran: Duration::ZERO,
             });
             return Some(ExecResult {
                 applied: 0,
@@ -2306,6 +2395,7 @@ impl Executor {
         let pause = Arc::new(Pause::default());
         self.running.lock().push(Active {
             plan: plan.id,
+            title: plan.title.clone(),
             cancel: cancel.clone(),
             pause: Arc::clone(&pause),
             meter: Arc::clone(&meter),
@@ -2342,6 +2432,25 @@ impl Executor {
         record: impl FnOnce(&ExecResult, Option<Plan>, Option<Stop>),
     ) -> ExecResult {
         let total = plan.steps.len();
+        // Sized before it begins where the room check did not size it (an
+        // undo, a redo, a plan not asked as one action): its heavy steps
+        // alone, and those that cannot say what they touch. A light one (a
+        // rename) moves no byte, and is not read for it (ADR-113).
+        // A step that panics as it is asked leaves the plan unsized: its
+        // own check says what it does.
+        if !shown.meter.is_sized() && !cancel.is_cancelled() {
+            let companions = Arc::clone(&self.companions.lock());
+            let sized = super::guarded(|| {
+                let volumes = super::footprint::Volumes::now();
+                let heavy =
+                    |step: &dyn Operation| step.footprint(&volumes).is_none_or(|f| f.is_heavy());
+                let dry = dry_context(&plan.steps, &companions, cancel, &shown);
+                Ok(super::room::sized(&plan.steps, &dry, cancel, &heavy))
+            });
+            if let Ok(Some(sized)) = sized {
+                shown.meter.set_ahead(sized.work.clone(), walked(&sized));
+            }
+        }
         let Shown {
             pause,
             meter,
@@ -2365,6 +2474,8 @@ impl Executor {
         let mut cancelled = false;
         // What the steps said, each once (several booklets fold alike).
         let (mut said, mut heard) = (Vec::new(), std::collections::HashSet::new());
+        // Its speed is measured from here, its sizing and checks done.
+        meter.begin(total);
         for (i, step) in plan.steps.iter().enumerate() {
             // Paused, the next step waits here.
             if ctx.check_cancelled().is_err() {
@@ -2556,6 +2667,8 @@ impl Executor {
             undoable: result.undoable,
             items: plan.items.as_deref().cloned(),
             said,
+            moved: meter.done.load(Ordering::Relaxed),
+            ran: meter.ran(),
         });
         if !held.is_empty() {
             for observer in self.observers.all() {
@@ -2596,6 +2709,16 @@ fn first_conflict(
 /// (`shown`): where a step names a remote, its folders' names are read
 /// once and its sources found ahead, at once (ADR-078), where a look at
 /// each would be a round trip to the server.
+/// What each step of `sized` copies, as its copy counts it, for it to take
+/// instead of walking its tree again (`StepContext::take_walked`).
+fn walked(sized: &super::room::Sized) -> Vec<Option<u64>> {
+    sized
+        .writes
+        .iter()
+        .map(|writes| writes.as_ref().map(|(_, bytes)| *bytes))
+        .collect()
+}
+
 fn dry_context(
     steps: &[Box<dyn Operation>],
     companions: &Arc<crate::companions::Companions>,
@@ -2958,6 +3081,72 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         false
+    }
+
+    /// A plan the user asked for is sized before it begins (ADR-113): what
+    /// it will copy is known from its start, before its first copy; the
+    /// `running` listing says it, its pause too; its end says what it
+    /// moved.
+    #[test]
+    fn a_plan_asked_knows_what_it_will_copy_from_its_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (src, dest) = (tmp.path().join("src"), tmp.path().join("dest"));
+        std::fs::create_dir_all(src.join("a folder")).unwrap();
+        std::fs::create_dir(&dest).unwrap();
+        std::fs::write(src.join("it's a.bin"), [0u8; 300]).unwrap();
+        std::fs::write(src.join("a folder/b.bin"), [0u8; 500]).unwrap();
+        let copy = |from: &Path| -> Box<dyn Operation> {
+            Box::new(super::super::Copy {
+                entry: super::super::EntryRef::from_path(from).unwrap(),
+                dest_dir: dest.clone(),
+                new_name: None,
+                preserve_attributes: true,
+            })
+        };
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let gate = Gate::new(
+            &tmp.path().join("gate").display().to_string(),
+            true,
+            false,
+            &log,
+        );
+        let plan = Plan::with_steps(
+            "copy 2 items to dest",
+            vec![
+                Box::new(gate.clone()),
+                copy(&src.join("it's a.bin")),
+                copy(&src.join("a folder")),
+            ],
+        );
+        let id = plan.id;
+        let executor = Arc::new(Executor::new(Scheduler::new(1)));
+        executor.execute_whole(plan, CancelToken::new());
+        assert!(logged(&log, &format!("began {}", gate.path.display())));
+        let transfer = executor.transfer(id).expect("running");
+        assert_eq!((transfer.done, transfer.planned), (0, Some(800)));
+        let running = executor.running();
+        assert_eq!(running.len(), 1);
+        assert_eq!(running[0].title, "copy 2 items to dest");
+        assert!(!running[0].paused);
+        assert_eq!(running[0].transfer.planned, Some(800));
+        assert!(executor.pause(id));
+        let paused = &executor.running()[0];
+        assert!(paused.paused);
+        assert_eq!((paused.transfer.speed, paused.transfer.left), (None, None));
+        let json = serde_json::to_value(executor.running()).unwrap();
+        assert_eq!(json[0]["planned"], 800);
+        assert!(json[0]["left_seconds"].is_null());
+        assert!(executor.resume(id));
+        gate.opened();
+        let ended = events_until(&executor, |e| matches!(e, ExecEvent::Finished { .. }));
+        match ended.last() {
+            Some(ExecEvent::Finished {
+                error: None, moved, ..
+            }) => assert_eq!(*moved, 800),
+            other => panic!("{other:?}"),
+        }
+        assert!(dest.join("a folder/b.bin").is_file());
+        assert!(executor.running().is_empty());
     }
 
     /// A light plan runs beside a heavy one it shares nothing with; one

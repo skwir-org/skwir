@@ -131,6 +131,17 @@ impl op::Kind for Compress {
 }
 
 impl op::Effect for Compress {
+    /// What goes in, which it counts as it reads it: what it writes, a 7z's
+    /// written twice counted once (ADR-113).
+    fn work(&self, _: &StepContext, writes: Option<u64>) -> u64 {
+        let bytes = writes.unwrap_or(0);
+        if format_of(&self.name).is_ok_and(|format| format == Format::SevenZip) {
+            bytes / 2
+        } else {
+            bytes
+        }
+    }
+
     fn footprint(&self, _: &op::footprint::Volumes) -> Option<op::footprint::Footprint> {
         let mut footprint = op::footprint::Footprint::default()
             .made(&self.target())

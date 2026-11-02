@@ -405,6 +405,12 @@ impl op::Kind for ShrinkCopy {
 }
 
 impl op::Effect for ShrinkCopy {
+    /// Its file's bytes, as the helper counts them going through it: the
+    /// plan's time left told from its start (ADR-113).
+    fn work(&self, _: &StepContext, _: Option<u64>) -> u64 {
+        std::fs::metadata(&self.entry.path).map_or(0, |meta| meta.len())
+    }
+
     fn footprint(&self, _: &op::footprint::Volumes) -> Option<op::footprint::Footprint> {
         Some(
             op::footprint::Footprint::default()

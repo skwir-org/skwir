@@ -147,6 +147,16 @@ impl op::Kind for Extract {
 }
 
 impl op::Effect for Extract {
+    /// The archive's bytes, which it counts as it reads them: the plan's
+    /// time left told from its start (ADR-113).
+    fn work(&self, _: &StepContext, _: Option<u64>) -> u64 {
+        self.entry
+            .resolve()
+            .ok()
+            .and_then(|src| std::fs::metadata(src).ok())
+            .map_or(0, |meta| meta.len())
+    }
+
     /// The archive read; what it makes in its folder, whose name may be
     /// known only once the archive is read: the folder, whole.
     fn footprint(&self, _: &op::footprint::Volumes) -> Option<op::footprint::Footprint> {

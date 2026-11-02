@@ -23,6 +23,7 @@ pub mod footprint;
 mod ranges;
 pub mod records;
 pub mod room;
+mod speed;
 pub mod staging;
 mod sys;
 pub mod transfer;
@@ -50,7 +51,7 @@ pub use entry_ref::{EntryArg, EntryRef, ResolveError};
 pub use executor::AT_ONCE as ACTIONS_AT_ONCE;
 pub use executor::{
     ChangeObserver, ExecEvent, ExecResult, Executor, JournalEntry, PlanObserver, Progress, RunKind,
-    SecretAsker, Transfer, Verdict, Waiting, WaitsFor,
+    RunningPlan, SecretAsker, Transfer, Verdict, Waiting, WaitsFor,
 };
 pub use order::{RenameOrderError, RenameRequest, order_renames};
 pub use staging::Staging;
@@ -627,6 +628,18 @@ pub trait Operation: Send + Sync + fmt::Debug {
         let _ = ctx;
         None
     }
+    /// The bytes it counts as it goes (`StepContext::add_total`, a
+    /// `Gauge`'s), sized before the plan begins so that its total, and the
+    /// time it has left, are known from its start (`room::sized`,
+    /// ADR-113): what it writes (`writes`, given as read once), unless it
+    /// counts other bytes (an archive extracted counts the archive's, a
+    /// smaller copy its file's). A step that counts bytes says them here,
+    /// or its plan's time left is told only once it begins. Reads: on the
+    /// plan's thread.
+    fn work(&self, ctx: &StepContext, writes: Option<u64>) -> u64 {
+        let _ = ctx;
+        writes.unwrap_or(0)
+    }
     /// The step as its own type, for code that knows the kind (`clash`
     /// reads a copy's and a move's). `None` for one that is not its own
     /// data.
@@ -743,6 +756,11 @@ pub trait Effect: Send + Sync + fmt::Debug {
         let _ = ctx;
         None
     }
+    /// `Operation::work`.
+    fn work(&self, ctx: &StepContext, writes: Option<u64>) -> u64 {
+        let _ = ctx;
+        writes.unwrap_or(0)
+    }
     /// `Operation::held`.
     fn held(&self) -> usize {
         0
@@ -795,6 +813,9 @@ impl<T: Kind> Operation for T {
     }
     fn writes(&self, ctx: &StepContext) -> Option<(PathBuf, u64)> {
         Effect::writes(self, ctx)
+    }
+    fn work(&self, ctx: &StepContext, writes: Option<u64>) -> u64 {
+        Effect::work(self, ctx, writes)
     }
     fn held(&self) -> usize {
         Effect::held(self)

@@ -68,6 +68,46 @@ pub fn count(n: usize, singular: &str) -> String {
     }
 }
 
+/// A speed: `23.4 MB/s`.
+pub fn speed(bytes_a_second: f64) -> String {
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // Shown, rounded.
+    let bytes = bytes_a_second.max(0.0).round() as u64;
+    format!("{}/s", size(bytes))
+}
+
+/// How long is left, roughly, so that it counts down rather than ticks:
+/// `a few seconds left`, `about 40 s left` (by fives), `about 12 min
+/// left`, `about 2 h 10 min left` (by tens of minutes), `more than a day
+/// left`.
+pub fn time_left(left: std::time::Duration) -> String {
+    let secs = left.as_secs();
+    match secs {
+        0..10 => "a few seconds left".to_owned(),
+        10..60 => format!("about {} s left", ((secs + 2) / 5 * 5).clamp(10, 55)),
+        60..3_570 => format!("about {} min left", (secs + 30) / 60),
+        3_570..86_400 => {
+            let minutes = (secs + 300) / 600 * 10;
+            match (minutes / 60, minutes % 60) {
+                (hours, 0) => format!("about {hours} h left"),
+                (hours, minutes) => format!("about {hours} h {minutes} min left"),
+            }
+        }
+        _ => "more than a day left".to_owned(),
+    }
+}
+
+/// How long something took: `45 s`, `3 min 20 s`, `1 h 5 min`.
+pub fn took(took: std::time::Duration) -> String {
+    let secs = took.as_secs();
+    match (secs / 3_600, secs / 60 % 60, secs % 60) {
+        (0, 0, s) => format!("{s} s"),
+        (0, m, 0) => format!("{m} min"),
+        (0, m, s) => format!("{m} min {s} s"),
+        (h, 0, _) => format!("{h} h"),
+        (h, m, _) => format!("{h} h {m} min"),
+    }
+}
+
 /// `1,234,567`.
 pub fn thousands(n: usize) -> String {
     let s = n.to_string();
@@ -83,6 +123,33 @@ pub fn thousands(n: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    /// A speed in the sizes' units; a time left rough, by steps that grow
+    /// with it; what took long, to the minute past an hour.
+    #[test]
+    fn speeds_and_times_are_said_roughly() {
+        assert_eq!(super::speed(1536.0), "1.5 KB/s");
+        assert_eq!(super::speed(-1.0), "0 B/s");
+        let left = |secs| super::time_left(Duration::from_secs(secs));
+        assert_eq!(left(3), "a few seconds left");
+        assert_eq!(left(12), "about 10 s left");
+        assert_eq!(left(43), "about 45 s left");
+        assert_eq!(left(59), "about 55 s left");
+        assert_eq!(left(60), "about 1 min left");
+        assert_eq!(left(150), "about 3 min left");
+        assert_eq!(left(3_599), "about 1 h left");
+        assert_eq!(left(3_600), "about 1 h left");
+        assert_eq!(left(7_890), "about 2 h 10 min left");
+        assert_eq!(left(90_000), "more than a day left");
+        let took = |secs| super::took(Duration::from_secs(secs));
+        assert_eq!(took(45), "45 s");
+        assert_eq!(took(180), "3 min");
+        assert_eq!(took(200), "3 min 20 s");
+        assert_eq!(took(3_900), "1 h 5 min");
+        assert_eq!(took(7_230), "2 h");
+    }
+
     #[test]
     fn sizes() {
         assert_eq!(super::size(0), "0 B");

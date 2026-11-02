@@ -39,8 +39,14 @@ work where the keyboard is, by topic.
   what waits for a paste, the shelf, plans waiting for review, and the
   player.
 - **Toasts** say what was done ("Moved “a.txt” to Trash"), with Undo. A
-  long plan shows its progress with Pause and Cancel. Quitting while one
-  runs asks first, then undoes what it left half done.
+  long plan shows its progress with Pause and Cancel: how much of how
+  much, and under the bar how fast it goes and how long it has left
+  (`2.0 MB/s · about 3 min left`), once a few seconds of it tell. Onto a
+  server that takes what is copied after (rclone's caches), it first says
+  "then sent to the server", then the sending's own speed and time left.
+  A long one says in its toast how much it moved in how long ("30.0 MB
+  in 17 s"). `skwir cmd running` says the same of what runs. Quitting
+  while one runs asks first, then undoes what it left half done.
 
 ## Moving around
 

@@ -1850,10 +1850,15 @@ fn copy_staged(
     pace: &Pace,
     ctx: &StepContext,
 ) -> anyhow::Result<Vec<PathBuf>> {
-    // A batch made it already, or counted it (ADR-078).
+    // A batch made it already, or counted it (ADR-078). Sized before the
+    // plan began, its tree is not walked again (ADR-113).
     let batched = ctx.take_batched(src);
     if batched.is_none() {
-        ctx.add_total(tree_size(src, ctx)?);
+        let size = match ctx.take_walked() {
+            Some(size) => size,
+            None => tree_size(src, ctx)?,
+        };
+        ctx.add_total(size);
     }
     // A destination that moves nothing between its folders (a camera)
     // takes the copy in place, never staged and moved (ADR-083).
@@ -2046,10 +2051,42 @@ fn tree_size(path: &Path, ctx: &StepContext) -> anyhow::Result<u64> {
     Ok(total)
 }
 
-/// Bytes per `copy_file_range` call: large enough to stay in the kernel's
-/// fast path, small enough that Cancel is answered within a fraction of a
-/// second on a slow disk.
+/// Bytes per `copy_file_range` call at most: large enough to stay in the
+/// kernel's fast path on a fast disk.
 const COPY_CHUNK: usize = 8 << 20;
+
+/// The bytes a copy asks for at once (`copy_range`, a read): about a
+/// quarter of a second's worth, so that its progress, its speed and Cancel
+/// come that often from a slow server or onto a slow drive, and at most
+/// `most` on a fast disk (ADR-113). It starts at a mebibyte, doubles while
+/// a call takes under a tenth of a second, halves while one takes over
+/// four tenths, never under `CHUNK_LEAST`.
+struct Chunk {
+    size: usize,
+    most: usize,
+}
+
+/// The least a copy asks for at once: a slow server still sends a few
+/// round trips' worth.
+const CHUNK_LEAST: usize = 256 << 10;
+
+impl Chunk {
+    fn new(most: usize) -> Self {
+        Chunk {
+            size: (1 << 20).min(most),
+            most,
+        }
+    }
+
+    /// The last call took `took`.
+    fn took(&mut self, took: std::time::Duration) {
+        if took < std::time::Duration::from_millis(100) {
+            self.size = (self.size * 2).min(self.most);
+        } else if took > std::time::Duration::from_millis(400) {
+            self.size = (self.size / 2).max(CHUNK_LEAST.min(self.most));
+        }
+    }
+}
 
 fn copy_file(
     src: &Path,
@@ -2079,12 +2116,18 @@ fn copy_file(
         if copied.is_err() {
             ctx.check_cancelled()?;
         }
-        copied.with_context(|| format!("“{}” could not be copied", display_name(src)))?;
+        let made =
+            copied.with_context(|| format!("“{}” could not be copied", display_name(src)))?;
         // Counted whole, whatever the system said as it went: Wine's copy
         // says nothing, and its bytes were never counted, nor the plan
-        // paused between its files.
+        // paused between its files. A clone's moved none (ADR-113).
         if let Ok(meta) = std::fs::symlink_metadata(dst) {
-            ctx.advance(meta.len().saturating_sub(written));
+            let rest = meta.len().saturating_sub(written);
+            if made == sys::Whole::Cloned {
+                ctx.advance_unmeasured(rest);
+            } else {
+                ctx.advance(rest);
+            }
         }
         ctx.check_cancelled()?;
         if preserve_attributes {
@@ -2141,10 +2184,12 @@ fn copy_file(
         }
         cloned
     };
+    // A clone moves no byte now, nor what a run before this one copied:
+    // counted done, never as speed (ADR-113).
     if cloned {
-        ctx.advance(m.len());
+        ctx.advance_unmeasured(m.len());
     } else {
-        ctx.advance(from);
+        ctx.advance_unmeasured(from);
         // Should it fail partway, what it wrote may be gone on from.
         ctx.copying(dst, &m);
         let began = std::time::Instant::now();
@@ -2287,11 +2332,14 @@ fn copy_contents(
         copied = super::ranges::copy(sf, df, from, meta.len(), &mut writing, ctx)?;
         sf.seek(std::io::SeekFrom::Start(from + copied))?;
     }
+    let mut chunk = Chunk::new(COPY_CHUNK);
     while !ctx.kernel_refuses(devices, Kernel::Range) {
         ctx.check_cancelled()?;
-        match sys::copy_range(sf, df, COPY_CHUNK)? {
+        let began = std::time::Instant::now();
+        match sys::copy_range(sf, df, chunk.size)? {
             Some(0) if copied > 0 => return writing.close(ctx).map(|()| from + copied),
             Some(n @ 1..) => {
+                chunk.took(began.elapsed());
                 copied += n as u64;
                 writing.wrote(n as u64, ctx)?;
             }
@@ -2307,15 +2355,19 @@ fn copy_contents(
     }
     // Both offsets advanced together, so the buffered copy resumes in place.
     let mut buf = ctx.copy_buffer();
+    let mut chunk = Chunk::new(buf.len());
     loop {
         ctx.check_cancelled()?;
-        let n = match sf.read(&mut buf) {
+        let began = std::time::Instant::now();
+        let n = match sf.read(&mut buf[..chunk.size]) {
             Ok(0) => return writing.close(ctx).map(|()| from + copied),
             Ok(n) => n,
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => return Err(e.into()),
         };
         df.write_all(&buf[..n])?;
+        // Read and written: a slow destination is as slow as a slow source.
+        chunk.took(began.elapsed());
         copied += n as u64;
         writing.wrote(n as u64, ctx)?;
     }
@@ -4821,6 +4873,29 @@ pub fn register_builtin(reg: &OpRegistry) {
 
 #[cfg(test)]
 mod tests {
+    /// A copy asks for about a quarter second's worth at once: more on a
+    /// fast disk, up to the kernel's fast path; less from a slow server,
+    /// never under a few round trips' worth (ADR-113).
+    #[test]
+    fn a_copy_asks_for_what_comes_in_a_quarter_second() {
+        use std::time::Duration;
+        let mut chunk = Chunk::new(COPY_CHUNK);
+        assert_eq!(chunk.size, 1 << 20);
+        for _ in 0..5 {
+            chunk.took(Duration::from_millis(2));
+        }
+        assert_eq!(chunk.size, COPY_CHUNK, "a fast disk: the most");
+        for _ in 0..10 {
+            chunk.took(Duration::from_secs(2));
+        }
+        assert_eq!(chunk.size, CHUNK_LEAST, "a slow server: the least");
+        chunk.took(Duration::from_millis(250));
+        assert_eq!(chunk.size, CHUNK_LEAST, "a quarter second: kept");
+        let mut small = Chunk::new(64 << 10);
+        small.took(Duration::from_secs(1));
+        assert_eq!(small.size, 64 << 10, "never past its buffer");
+    }
+
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
 

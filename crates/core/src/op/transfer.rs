@@ -182,7 +182,8 @@ pub trait Transfer: Send + Sync {
     /// plan wrote there since its last write-out (`written`: each copy
     /// made there, a file or a folder with all it holds, and what it placed
     /// beside it), and return once it has: `left` told how many files the
-    /// server still takes, as they go. A file closed may reach the mount's
+    /// server still takes, as they go, and their bytes where the mount
+    /// says (what the window shows its speed and time left by, ADR-113). A file closed may reach the mount's
     /// program a moment after its `close` returned (FUSE's release comes
     /// on its own time): what was written, not what waits when asked, is
     /// what is waited for. Blocking, on the plan's thread; stopped when the
@@ -197,7 +198,7 @@ pub trait Transfer: Send + Sync {
         folder: &Path,
         written: &[PathBuf],
         control: &Control,
-        left: &mut dyn FnMut(usize),
+        left: &mut dyn FnMut(Left),
     ) -> anyhow::Result<()> {
         let _ = (folder, written, control, left);
         Ok(())
@@ -459,6 +460,7 @@ pub(super) fn batch_ahead(
                     src,
                     new_name: step.new_name.cloned(),
                     moving: step.moving,
+                    step: i + k,
                 });
         }
     }
@@ -794,11 +796,16 @@ struct Source {
     src: PathBuf,
     new_name: Option<OsString>,
     moving: bool,
+    /// Its step's place in the plan.
+    step: usize,
 }
 
 /// An entry a batch takes: its source, its name, its bytes, and whether
 /// it is a folder, or copied under another name (a copy's "(copy)").
 struct Taken {
+    /// Its step's place in the plan: its bytes, counted by the batch, no
+    /// longer wait in what the plan was sized at.
+    step: usize,
     src: PathBuf,
     name: OsString,
     bytes: u64,
@@ -866,6 +873,7 @@ fn takes(from: &Path, dest: &Path, sources: &[Source], ctx: &StepContext) -> Vec
         src,
         new_name,
         moving,
+        step,
     } in sources
     {
         if ctx.cancel_token().is_cancelled() {
@@ -895,6 +903,7 @@ fn takes(from: &Path, dest: &Path, sources: &[Source], ctx: &StepContext) -> Vec
         let stamp = (!folder).then(|| Stamp::of(src)).flatten();
         if let Some(bytes) = plain_tree(src, rules, ctx.cancel_token()) {
             taken.push(Taken {
+                step: *step,
                 src: src.clone(),
                 name: name.to_os_string(),
                 bytes,
@@ -955,6 +964,15 @@ fn names_of(meta: &std::fs::Metadata) -> u64 {
     }
 }
 
+/// What a mount still has to send of what a plan wrote ([`Transfer::send`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Left {
+    pub files: usize,
+    /// Their bytes, less what the mount sent of them already, where it
+    /// says.
+    pub bytes: Option<u64>,
+}
+
 /// Make the copies `taken` of the folder `from` at once in `dest`, and
 /// tell their steps: those a batch places itself at their targets
 /// (module documentation), the rest in a folder of the plan's staging
@@ -966,6 +984,7 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
     ctx.add_total(total);
     for t in taken {
         ctx.batched(&t.src, Batched::Counted);
+        ctx.counted_ahead(t.step);
     }
     // What a move's source is as it is copied: changed after, its step
     // leaves it (`builtin::move_entry`).
@@ -1001,13 +1020,15 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
     // A file alone goes by a transfer that takes one (`batch_ahead`).
     let alone = is_alone(taken);
     let advance = ctx.progress();
-    let told = AtomicU64::new(0);
-    let copied = |so_far: u64| {
-        let before = told.fetch_max(so_far, Ordering::Relaxed);
-        if so_far > before {
-            advance(so_far - before);
-        }
-    };
+    // Each run (the staged, the placed) says what it copied so far from
+    // its own start: each counts from its own (one count for both lost
+    // the second's first bytes, under the first's), and what it made is
+    // counted whole once it ran, whatever its transfer said as it went.
+    let (staged_told, placed_told) = (AtomicU64::new(0), AtomicU64::new(0));
+    let (staged_copied, placed_copied) = (
+        counted(&staged_told, &advance),
+        counted(&placed_told, &advance),
+    );
     // What a batch a run this one retries cut short made, gone on in
     // (ADR-080): its folder, what it finished there kept, and the folder a
     // tool kept the file it was writing in.
@@ -1042,7 +1063,17 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
                 goes_on: &goes_on,
                 laid_out: Some(&laid_out),
             };
-            run(from, (&staged, alone), &into, &aside, &copied, &|_| {}, ctx)?;
+            run(
+                from,
+                (&staged, alone),
+                &into,
+                &aside,
+                &staged_copied,
+                &|_| {},
+                ctx,
+            )?;
+            let made: u64 = staged.iter().map(|t| t.bytes).sum();
+            staged_copied(made.saturating_sub(finished));
             for t in &staged {
                 made_by_batch(t, Batched::Made(into.join(&t.name)));
             }
@@ -1062,7 +1093,7 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
                 (&placed, alone),
                 dest,
                 &aside,
-                &copied,
+                &placed_copied,
                 &|name: &OsStr| {
                     said.lock().insert(name.to_owned());
                 },
@@ -1080,6 +1111,7 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
             // What is there, each looked at at once: through a mount, a look
             // may be a round trip.
             let there = looked_at(&placed, |t| dest.join(&t.name));
+            let mut made = 0u64;
             for (t, there) in placed.iter().zip(there) {
                 let target = dest.join(&t.name);
                 let Some(stamp) = there.filter(|there| {
@@ -1094,10 +1126,12 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
                     // made a moment ago.
                     let _ = std::fs::remove_file(&target);
                 } else {
+                    made = made.saturating_add(t.bytes);
                     made_by_batch(t, Batched::Placed(target, stamp));
                 }
             }
             ran?;
+            placed_copied(made);
         }
         anyhow::Ok(())
     })();
@@ -1110,7 +1144,9 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
             // What it made, should the plan stop (its server gone, its
             // steps fail too): kept for Retry to go on in, when it moved
             // enough that starting again would cost (`KEEP_FROM`).
-            let moved = told.load(Ordering::Relaxed) + finished;
+            let moved = staged_told.load(Ordering::Relaxed)
+                + placed_told.load(Ordering::Relaxed)
+                + finished;
             if let Some(partial) = partial_in
                 && moved >= super::context::KEEP_FROM
             {
@@ -1125,6 +1161,17 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
                 );
             }
             Ok(())
+        }
+    }
+}
+
+/// What a run of a batch says it copied so far, from its own start, told
+/// to `advance` as it grows: `told` holds the most it said.
+fn counted<'a>(told: &'a AtomicU64, advance: &'a (dyn Fn(u64) + Sync)) -> impl Fn(u64) + Sync + 'a {
+    move |so_far| {
+        let before = told.fetch_max(so_far, Ordering::Relaxed);
+        if so_far > before {
+            advance(so_far - before);
         }
     }
 }
@@ -1896,7 +1943,7 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use super::*;
-    use crate::op::{EntryRef, Executor, Plan};
+    use crate::op::{EntryRef, ExecEvent, Executor, Plan};
     use crate::scheduler::Scheduler;
 
     /// A folder of the test's on the home's file system, which keeps
@@ -2206,6 +2253,21 @@ mod tests {
         assert_eq!(staged(), before, "no staging folder made");
     }
 
+    /// The bytes of the files under `path`, links left out.
+    fn file_bytes(path: &Path) -> u64 {
+        let meta = std::fs::symlink_metadata(path).unwrap();
+        if meta.is_dir() {
+            std::fs::read_dir(path)
+                .unwrap()
+                .map(|e| file_bytes(&e.unwrap().path()))
+                .sum()
+        } else if meta.is_file() {
+            meta.len()
+        } else {
+            0
+        }
+    }
+
     #[test]
     fn copies_from_a_remote_go_in_one_batch_and_each_step_places_its_own() {
         let tmp = home_tempdir();
@@ -2221,6 +2283,14 @@ mod tests {
         for e in &entries {
             same(e, &dest.join(e.file_name().unwrap()));
         }
+        // Its files' bytes all counted, those of the run that stages (the
+        // folder) and of the one that places (the files) alike (ADR-113).
+        let all: u64 = entries.iter().map(|e| file_bytes(e)).sum();
+        let moved = executor.events().try_iter().find_map(|event| match event {
+            ExecEvent::Finished { moved, .. } => Some(moved),
+            _ => None,
+        });
+        assert_eq!(moved, Some(all));
         assert_eq!(
             names(&dest),
             ["it's a.txt", "kept.txt", "run.sh", "sub folder", "to a"],

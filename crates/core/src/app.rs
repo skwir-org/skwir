@@ -3666,6 +3666,15 @@ mod builtin {
         );
 
         c.register::<NoArgs, _>(
+            "core", Topic::Files,
+            "running",
+            "Running actions",
+            "Return the actions running, in the order they started: each one's title, steps ended, bytes done and in all when known (planned), speed in bytes a second and time left in seconds while they can be told, and the files a server still takes (ADR-113)",
+            |_, app| Ok(Outcome::Value(serde_json::to_value(app.executor.running())?)),
+        )
+        .data();
+
+        c.register::<NoArgs, _>(
             "core",
             Topic::Skwir,
             "commands",

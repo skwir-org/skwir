@@ -1974,9 +1974,12 @@ impl Remotes {
             let sends = !force && !stalled;
             if let (Some(at), true) = (&control, sends) {
                 result = result.and_then(|()| {
-                    let mut left = |files: usize| {
+                    let mut left = |left: skwir_core::op::transfer::Left| {
                         if let Some(app) = weak.upgrade() {
-                            this.state.lock().busy.insert(key.clone(), sending(files));
+                            this.state
+                                .lock()
+                                .busy
+                                .insert(key.clone(), sending(left.files));
                             this.refresh(&app);
                         }
                     };

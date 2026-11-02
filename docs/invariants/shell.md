@@ -624,7 +624,14 @@ of bars, split or not.
   in order, `Toast::actions`).
   Progress bars:
   [operations.md](operations.md); an answer said while plans run is drawn
-  under their cards, never hidden by them. Work that is no plan and
+  under their cards, never hidden by them. A card's bar moves by the
+  plan's bytes where its total is known (sized before it began), its
+  items counted beside; under the bar, quieter, its speed and time left
+  as the core read them (`toast::pace`, ADR-113: never reckoned in the
+  window), hidden while paused; into a mount that sends after, "then
+  sent to the server". A plan that ran 5 s or more and moved bytes says
+  them in its toast, and how long it ran ("4.8 GB in 3 min 20 s"). A
+  toast stays at least as long as its words take to read. Work that is no plan and
   nothing undoes (a print being made and sent) holds a task while it runs
   (`App::tasks`, `task::Task`): its card is drawn beside the plans', its
   title, how far it went and Cancel, gone when the task is dropped; a

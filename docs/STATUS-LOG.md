@@ -9060,3 +9060,75 @@ smallest copy is 61 KB", nothing covering it after.
 **Not checked:** printed on paper and folded; Print… to a printer with 4
 or 8 a side (the sides' turning is tested, not printed); Windows and
 macOS beyond clippy; the toast's new reading time in the window.
+
+### Speed and time left (2026-11-02, T1–T5)
+
+Asked by the user: a copy's or a move's speed and time left, especially
+for remote operations, done properly. ADR-113.
+
+- Core: `op::speed` (samples at most every 250 ms; speed over 5 s, time
+  left over 20 s; armed, measured from the first byte; nothing said
+  while paused or after 5 s without a byte; `Ran`, run time without
+  pauses); the plan's `Meter` keeps what its steps were sized at
+  (`set_ahead`: each step's bytes, `rest`, the size each copy copies),
+  bytes that moved none now (`advance_unmeasured`), bytes arriving from
+  a server (`arrivals`, `landed`), the sending phase of a mount that
+  sends after (`sending` with `transfer::Left`, what it sent as what it
+  has left goes down). `room::sized` keeps the room check's sizing step
+  by step, `Operation::work` says a step's bytes ahead (archives, Reduce
+  Size, Save as PDF override it); a run not sized by the room check is
+  sized as it begins, its heavy steps alone. `Transfer` gains `planned`,
+  `speed`, `left` (`left_seconds` for a script), `sending_bytes`,
+  `then_sends`; `Finished` gains `moved` and `ran`; `Executor::running`
+  and the `running` command. The copy loop's `Chunk` (1 MiB first,
+  256 KiB to 8 MiB, about a quarter second a call); macOS's
+  `clonefile` says it cloned (`sys::Whole`).
+- Remote: rclone's write-out reports bytes left: each file's size on the
+  mount, less what `core/stats` says rclone sent of those under way; its
+  queue's `size` read for `send_now`.
+- Window: the card's bar moves by bytes where the plan was sized, items
+  counted beside; under it, muted, `toast::pace` (`23.4 MB/s · about 3
+  min left`, "then sent to the server"), hidden while paused; a plan
+  that ran 5 s or more and moved bytes says "(30.0 MB in 17 s)";
+  `format::speed`, `time_left` (by fives of seconds, minutes, tens of
+  minutes past an hour), `took`.
+- Found and fixed: a batch's staged and placed runs shared one count of
+  what they said, so the second's first bytes, under the first's mark,
+  were never counted (20 MB of 60 MB lost in the window, unseen while
+  only the bytes done were shown). Each run counts from its own start,
+  and what it made is counted whole once it ran. The run's sizing first
+  asked steps their footprint unguarded (a test's panicking step failed
+  it): guarded now.
+
+**Checked:** tests: `op::speed` (a steady copy, a stall, a change of
+speed, a pause, the wait before a first byte, a plan of no bytes, run
+time without pauses), the meter (a plan sized ahead counting toward its
+total, a batch's steps counted once, a step taking its size once, a step
+grown past its size, unsized plans; a clone not speed; a sending
+measured by what it sent; writing into a mount that sends after), the
+copy's `Chunk`, `room::sized` (each step, one left out, cancelled), a
+user's plan knowing 800 bytes before its first copy, listed by `running`
+paused and not, its end saying `moved`; a remote batch of a folder and
+files counting all their bytes; rclone's `core/stats` read, and the
+rclone tests against a real served folder telling 4 bytes left then
+none; the toast's bar, pace and average; the formats. 1237 tests of the
+changed crates, then core's 611 after the last changes (two timing
+tests failed once with the machine at load 56 and passed alone), the
+binary's 184, the rclone integration tests (4, run, not skipped);
+clippy, rustfmt; clippy for Windows and macOS of the changed crates.
+In a window on Xvfb, `rclone://srv/` mounted by Skwir (full cache) over
+`rclone serve webdav`, the mount throttled to 2 MiB/s (`RCLONE_BWLIMIT`,
+then `core/bwlimit`): a 30 MB file from the server, its card "1.2 MB/s ·
+about 20 s left", "1.4 MB/s · about 15 s", "1.6 MB/s · about 10 s", then
+"Copied “fresh film.bin” to files (30.0 MB in 17 s)" (before measuring
+from the first byte: "429.2 KB/s · about 1 min left" at the start); a
+folder of 20 MB and a 40 MB file to the server: "sending 16 files to the
+server, 2 of 2 items · 60.0 MB of 60.0 MB", "2.0 MB/s · about 20 s
+left" down to "a few seconds left"; Paused while sending, the line
+hidden, "paused at"; Resumed, "Copied 2 items … (60.0 MB in 26 s)", the
+7 s pause left out by the captures' times.
+
+**Not checked:** sshfs, GVfs and kio-fuse throttled in a window; a plan
+of no bytes reckoned by its steps in a window (tested); macOS's clone
+(compiled); the card's speed line to a screen reader; Windows and macOS
+beyond clippy.

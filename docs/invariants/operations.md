@@ -33,6 +33,31 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   plan's thread could wait for a server), and counts them as its helper
   says how far it went (`process::Metered`, `run_helper`); while the
   plan is paused the helper is held, with every process under it.
+- **How fast, how long** (ADR-113) is measured in the core, never in
+  the window: the plan's meter samples what it moved (`op::speed`), its
+  speed the last 5 s, its time left what is left over the last 20 s,
+  from its first byte (armed at its start and after a pause, never
+  measured from either), nothing said while paused or when nothing moved
+  for 5 s. Bytes counted done that moved none now (a clone, a copy gone
+  on from) are `advance_unmeasured`: done, never speed; a large remote
+  file's ranges are measured as they arrive (`StepContext::arrivals`)
+  and done once written (`landed`). A copy asks for about a quarter
+  second's worth at a time (`builtin::Chunk`), so its count and Cancel
+  come that often on a slow server.
+- **A plan's total is known from its start**: the room check's sizing
+  is kept step by step (`room::sized`, `Meter::set_ahead`); a run the
+  room check did not size (an undo, a redo, a plan not asked as one
+  action) is sized as it begins, its heavy steps alone, guarded as a
+  step's footprint is. A step that counts bytes as it goes says them
+  ahead (`Operation::work`, from what it writes unless it counts other
+  bytes); a copy takes the size it was sized at
+  (`StepContext::take_walked`) and never walks its tree twice; a batch
+  that counts several steps' bytes takes them out of what waits
+  (`StepContext::counted_ahead`), and each of its runs counts from its
+  own start, what it made counted whole once it ran. Into a mount that
+  sends after (ADR-102) no time left is said while the plan writes
+  there; while it sends, the mount says its bytes left
+  (`transfer::Left`), which the speed and time left follow.
 - A step that finds, as it runs, it has nothing to make (a smaller copy
   that would not be smaller, ADR-112), having changed nothing, returns
   `op::Unneeded` with why: the executor counts it done already, as a

@@ -662,7 +662,10 @@ ADR-077 (which revises ADR-021).
   U+FFFD, so names differing only there are one name
   (`uploads::queued_as`); one that cannot be told so (on Windows, a name
   that is not Unicode) is judged by its record alone. The plan's progress
-  says how many files the server still takes. An upload tried three times
+  says how many files the server still takes, and their bytes (each
+  file's size on the mount less what rclone's `core/stats` says it sent
+  of those under way, never a reason to fail the write-out): the speed
+  and time left of the sending (ADR-113). An upload tried three times
   fails the write-out: the file stays in rclone's cache, which goes on
   trying, and a move's original stays. Disconnect sends what waits first
   (a refusal keeps it connected); a forced one, or one of a server that

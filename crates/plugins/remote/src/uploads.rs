@@ -22,7 +22,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use skwir_core::CancelToken;
 use skwir_core::op::Cancelled;
-use skwir_core::op::transfer::{Aside, Control, NotServed, Told, Transfer};
+use skwir_core::op::transfer::{Aside, Control, Left, NotServed, Told, Transfer};
 
 use crate::rc::{At, call};
 
@@ -108,6 +108,8 @@ pub fn sends_later(mode: &str) -> bool {
 struct Waiting {
     id: u64,
     name: String,
+    /// Its bytes, as the queue says.
+    size: Option<u64>,
     tries: u64,
     uploading: bool,
 }
@@ -128,6 +130,7 @@ fn waiting_in(answer: &serde_json::Value) -> Vec<Waiting> {
             Some(Waiting {
                 id: item["id"].as_u64()?,
                 name: item["name"].as_str().unwrap_or_default().to_owned(),
+                size: item["size"].as_u64(),
                 tries: item["tries"].as_u64().unwrap_or(0),
                 uploading: item["uploading"].as_bool().unwrap_or(false),
             })
@@ -145,10 +148,33 @@ pub fn waiting(at: &At, cancel: &CancelToken) -> anyhow::Result<usize> {
     Ok(queue(at, cancel)?.len())
 }
 
+/// What rclone sent so far of the uploads under way named `names`, by its
+/// own count (`core/stats`' `transferring`, answered from memory): 0 when
+/// it does not say. What the window's speed and time left of a sending
+/// are told by (ADR-113), never a reason to fail one.
+fn uploaded(at: &At, names: &HashSet<&str>, cancel: &CancelToken) -> u64 {
+    if names.is_empty() {
+        return 0;
+    }
+    asked(at, "core/stats", &serde_json::json!({}), cancel)
+        .map_or(0, |stats| uploaded_in(&stats, names))
+}
+
+/// What a `core/stats` answer says was sent of the uploads named `names`.
+fn uploaded_in(stats: &serde_json::Value, names: &HashSet<&str>) -> u64 {
+    stats["transferring"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|t| t["name"].as_str().is_some_and(|name| names.contains(name)))
+        .filter_map(|t| t["bytes"].as_u64())
+        .fold(0, u64::saturating_add)
+}
+
 /// Have the server take now what waits to be sent, and return once it
 /// has: what waited when asked, not what is written meanwhile. `left` is
-/// told how many of those remain; `pause` is called between looks, to hold
-/// while a plan is paused.
+/// told how many of those remain, and their bytes less what rclone sent of
+/// them; `pause` is called between looks, to hold while a plan is paused.
 ///
 /// # Errors
 /// When an upload was tried `REFUSED` times (it stays in rclone's cache,
@@ -158,7 +184,7 @@ pub fn send_now(
     at: &At,
     cancel: &CancelToken,
     pause: &dyn Fn(),
-    left: &mut dyn FnMut(usize),
+    left: &mut dyn FnMut(Left),
 ) -> anyhow::Result<()> {
     let ours: HashSet<u64> = queue(at, cancel)?.iter().map(|w| w.id).collect();
     let cancelled = cancel.subscribe();
@@ -171,7 +197,20 @@ pub fn send_now(
             .into_iter()
             .filter(|w| ours.contains(&w.id))
             .collect();
-        left(waiting.len());
+        let going: HashSet<&str> = waiting
+            .iter()
+            .filter(|w| w.uploading)
+            .map(|w| w.name.as_str())
+            .collect();
+        let bytes = waiting
+            .iter()
+            .map(|w| w.size)
+            .try_fold(0u64, |sum, size| Some(sum.saturating_add(size?)))
+            .map(|sum| sum.saturating_sub(uploaded(at, &going, cancel)));
+        left(Left {
+            files: waiting.len(),
+            bytes,
+        });
         if waiting.is_empty() {
             return Ok(());
         }
@@ -334,7 +373,7 @@ pub fn send_written(
     written: &[PathBuf],
     cancel: &CancelToken,
     pause: &dyn Fn(),
-    left: &mut dyn FnMut(usize),
+    left: &mut dyn FnMut(Left),
 ) -> anyhow::Result<()> {
     let stats = asked(at, "vfs/stats", &serde_json::json!({}), cancel)?;
     let records = stats["diskCache"]["pathMeta"].as_str().map(PathBuf::from);
@@ -346,6 +385,17 @@ pub fn send_written(
         return send_now(at, cancel, pause, left);
     };
     let began = std::time::Instant::now();
+    // Each file's bytes, as the mount says from what it keeps here: what
+    // is left to send, less what rclone sent of those under way.
+    let sizes: HashMap<PathBuf, u64> = unsent
+        .keys()
+        .filter_map(|name| {
+            Some((
+                name.clone(),
+                std::fs::symlink_metadata(point.join(name)).ok()?.len(),
+            ))
+        })
+        .collect();
     // Seen in the queue once, or one whose name there cannot be told
     // (`queued_as`): its release came, or its record alone is the judge,
     // and it is sent once its record says so, however long the server
@@ -378,7 +428,25 @@ pub fn send_written(
         // Out of the queue, a file is sent once its record says so: before
         // its release, it is unsent and not queued yet.
         unsent.retain(|file, name| in_queue(name) || record_of(&records, file) != Record::Sent);
-        left(unsent.len());
+        let going: HashSet<&str> = unsent
+            .values()
+            .flatten()
+            .filter(|name| {
+                waiting
+                    .get(*name)
+                    .is_some_and(|w| w.iter().any(|w| w.uploading))
+            })
+            .map(String::as_str)
+            .collect();
+        let bytes = unsent
+            .keys()
+            .map(|file| sizes.get(file).copied())
+            .try_fold(0u64, |sum, size| Some(sum.saturating_add(size?)))
+            .map(|sum| sum.saturating_sub(uploaded(at, &going, cancel)));
+        left(Left {
+            files: unsent.len(),
+            bytes,
+        });
         if unsent.is_empty() {
             return Ok(());
         }
@@ -492,7 +560,7 @@ impl Transfer for RcloneSends {
         folder: &Path,
         written: &[PathBuf],
         control: &Control,
-        left: &mut dyn FnMut(usize),
+        left: &mut dyn FnMut(Left),
     ) -> anyhow::Result<()> {
         let Some((point, at)) = skwir_core::fs::reach::of(folder).and_then(|remote| {
             let at = control_of(&remote.point)?;
@@ -534,18 +602,31 @@ mod tests {
                 Waiting {
                     id: 1,
                     name: "l'été/notes.txt".into(),
+                    size: Some(2),
                     tries: 0,
                     uploading: false,
                 },
                 Waiting {
                     id: 2,
                     name: "a b.bin".into(),
+                    size: None,
                     tries: 3,
                     uploading: true,
                 },
             ]
         );
         assert!(waiting_in(&serde_json::json!({})).is_empty());
+        // What rclone sent of the uploads under way, by their names.
+        let stats = serde_json::json!({
+            "transferring": [
+                { "name": "a b.bin", "bytes": 300, "size": 1000 },
+                { "name": "someone else's.bin", "bytes": 50 },
+                { "name": "l'été/notes.txt" },
+            ]
+        });
+        let names: HashSet<&str> = ["a b.bin", "l'été/notes.txt"].into();
+        assert_eq!(uploaded_in(&stats, &names), 300);
+        assert_eq!(uploaded_in(&serde_json::json!({}), &names), 0);
         assert!(sends_later("full") && sends_later("writes"));
         assert!(!sends_later("minimal") && !sends_later("off"));
     }

@@ -1006,6 +1006,17 @@ impl op::Kind for MakePdf {
 }
 
 impl op::Effect for MakePdf {
+    /// What it is made of, as its step counts it as the helper goes: the
+    /// plan's time left told from its start (ADR-113). A listing reads no
+    /// file.
+    fn work(&self, _: &StepContext, _: Option<u64>) -> u64 {
+        self.of
+            .entries()
+            .iter()
+            .filter_map(|entry| std::fs::metadata(&entry.path).ok())
+            .fold(0, |sum, meta| sum.saturating_add(meta.len()))
+    }
+
     fn footprint(&self, _: &op::footprint::Volumes) -> Option<op::footprint::Footprint> {
         let read = match &self.of {
             Of::Listing { folder, .. } => op::footprint::Footprint::default().read(folder),

@@ -2261,6 +2261,43 @@ and `release-check` not run.
 
 ---
 
+## Speed and time left
+
+Asked 2026-11-02 by the user: a copy's or a move's speed and time left,
+"especially useful for remote operations that take a long time", done
+properly (ADR-113). Checks and measurements in `docs/STATUS-LOG.md`.
+
+- **T1. Measured in the core** (`op::speed`, the plan's meter): the
+  last 5 s for the speed, the last 20 s for the time left, from the
+  first byte, nothing said while paused or when nothing moved of late.
+- **T2. A plan's total from its start**: the room check's sizing kept
+  step by step (`room::sized`, `Operation::work`), each copy taking its
+  size instead of walking its tree again; undos and redos sized as they
+  begin, their heavy steps alone; a batch's steps counted once.
+- **T3. Honest edges**: clones and a copy gone on from never speed; a
+  large remote file's ranges measured as they arrive; the copy asking
+  about a quarter second's worth at a time; a plan of no bytes reckoned
+  by its steps.
+- **T4. Mounts that send after**: "then sent to the server" while
+  writing, the sending's own speed and time left from rclone's queue.
+- **T5. Said**: under the card's bar, in a long plan's toast ("4.8 GB in
+  3 min 20 s"), and by the `running` command.
+
+**Status:** planned and built 2026-11-02 (T1 to T5), with the user's "do
+all five". Checked on Linux in a window of its own against a WebDAV
+server throttled to 2 MiB/s through Skwir's own rclone mount (a download,
+an upload with its sending phase, Pause and Resume while sending).
+Found on the way and fixed: a batch of a folder and a file lost the
+second run's first bytes (its count shared with the first), unseen
+until a total was shown. Deviation: a large remote file's ranges are
+still read 4 MiB at a time (the measured gain of `ranges`), so its bar
+moves by 4 MiB while its speed follows what arrives. Windows and macOS
+compiled only. Left: sshfs, GVfs and kio-fuse not checked throttled in
+a window (their bytes go as they are written, measured as any copy's);
+the card's line not yet said to a screen reader.
+
+---
+
 ## Phase 8: Polish and release
 
 **Scope** (ongoing):

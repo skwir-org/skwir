@@ -7,12 +7,13 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use crossbeam_channel::{Receiver, Sender};
 use parking_lot::Mutex;
 
+use super::speed;
 use super::staging::{Cut, Kept, KeptBatch};
 use crate::cancel::CancelToken;
 use crate::location::Waker;
@@ -120,7 +121,8 @@ impl Pause {
 }
 
 /// Bytes a running plan has moved, and its steps ended, read by whoever
-/// shows its progress.
+/// shows its progress, with how fast it goes and how long it has left
+/// (`speed`, ADR-113).
 #[derive(Default)]
 pub(super) struct Meter {
     pub(super) done: AtomicU64,
@@ -133,6 +135,30 @@ pub(super) struct Meter {
     /// The files a mount that sends later still has to send before the
     /// plan ends (ADR-102), plus one; 0 while none is being sent.
     pub(super) sending: AtomicUsize,
+    /// Of `done`, the bytes that moved none now: a clone's (the volume
+    /// shares its blocks), a copy's gone on from, which a run before this
+    /// one moved. Counted done, never as speed.
+    unmeasured: AtomicU64,
+    /// Bytes read from a server and not yet written where they go (a large
+    /// file's ranges read at once, written in order): not done, but how
+    /// fast they come is the speed (`ranges`).
+    arriving: AtomicU64,
+    /// The steps of the plan, once it began ([`Self::begin`]).
+    items: AtomicUsize,
+    /// What its steps were sized at before it began, when they were.
+    ahead: Mutex<Option<Ahead>>,
+    /// What it moved, sampled ([`speed::Samples`]): what it wrote, or,
+    /// while a mount sends, what that mount sent.
+    samples: Mutex<speed::Samples>,
+    /// How long its steps ran, its pauses left out.
+    ran: Mutex<speed::Ran>,
+    /// It writes into a mount that sends to its server after (ADR-102),
+    /// which its end waits for: no time left is said while it writes.
+    sends_after: AtomicBool,
+    /// While a mount sends: what it sent so far, and what it still has
+    /// (`UNTOLD` while it has not said).
+    sent: AtomicU64,
+    send_left: AtomicU64,
 }
 
 /// The steps of a plan that ended, and `done` and `total` as the next one
@@ -144,35 +170,154 @@ pub(super) struct Steps {
     pub(super) total: u64,
 }
 
+/// What a plan's steps were sized at before it began (`room::sized`): the
+/// total it will count, and for each step that copies, the size of what it
+/// copies, which it takes instead of walking its tree again.
+struct Ahead {
+    /// Each step's bytes as it will count them; 0 once it ended, or a
+    /// batch counted it (ADR-078).
+    work: Vec<u64>,
+    /// The sum of `work`.
+    rest: u64,
+    /// The size of what each step copies, as the copy counts it, taken
+    /// once ([`StepContext::take_walked`]).
+    walked: Vec<Option<u64>>,
+}
+
 /// How often byte progress may wake the UI: often enough for a bar to move,
 /// rarely enough that a fast copy does not redraw per chunk.
 const WAKE_EVERY: Duration = Duration::from_millis(100);
+
+/// What `send_left` holds while a mount has not said what it sends.
+const UNTOLD: u64 = u64::MAX;
 
 impl Meter {
     pub(super) fn new(wake: Option<Waker>) -> Self {
         Self {
             wake,
+            send_left: AtomicU64::new(UNTOLD),
             ..Self::default()
         }
     }
 
-    /// How many files a mount still sends before the plan ends; `None` once
-    /// it is done. The window is woken to say it.
-    pub(super) fn sending(&self, files: Option<usize>) {
-        let files = files.map_or(0, |files| files.saturating_add(1));
-        if self.sending.swap(files, Ordering::Relaxed) != files
-            && let Some(wake) = &self.wake
+    /// The plan's `items` steps begin, sized or not: its speed is
+    /// measured from here.
+    pub(super) fn begin(&self, items: usize) {
+        self.items.store(items, Ordering::Relaxed);
+        self.ran.lock().go(Instant::now());
+        self.samples.lock().arm();
+    }
+
+    /// What its steps were sized at before it began: each one's bytes as
+    /// it counts them, and the size of what each that copies copies.
+    pub(super) fn set_ahead(&self, work: Vec<u64>, walked: Vec<Option<u64>>) {
+        let rest = work
+            .iter()
+            .fold(0u64, |sum, &bytes| sum.saturating_add(bytes));
+        *self.ahead.lock() = Some(Ahead { work, rest, walked });
+    }
+
+    /// Whether its steps were sized before it began.
+    pub(super) fn is_sized(&self) -> bool {
+        self.ahead.lock().is_some()
+    }
+
+    /// The step `step`'s bytes were counted with another's (a batch's,
+    /// ADR-078): the total it will count no longer waits for them.
+    pub(super) fn counted(&self, step: usize) {
+        if let Some(ahead) = self.ahead.lock().as_mut()
+            && let Some(work) = ahead.work.get_mut(step)
         {
+            ahead.rest = ahead.rest.saturating_sub(std::mem::take(work));
+        }
+    }
+
+    /// The size of what the step `step` copies, sized before the plan
+    /// began, once.
+    fn take_walked(&self, step: usize) -> Option<u64> {
+        self.ahead
+            .lock()
+            .as_mut()
+            .and_then(|ahead| ahead.walked.get_mut(step)?.take())
+    }
+
+    /// The plan is paused, or goes on: its speed starts again from there,
+    /// and the time it ran leaves the pause out.
+    pub(super) fn hold(&self, paused: bool) {
+        let now = Instant::now();
+        if paused {
+            self.ran.lock().stop(now);
+            self.samples.lock().clear();
+        } else {
+            self.ran.lock().go(now);
+            self.samples.lock().arm();
+        }
+    }
+
+    /// How long its steps ran, its pauses left out.
+    pub(super) fn ran(&self) -> Duration {
+        self.ran.lock().until(Instant::now())
+    }
+
+    /// How many files a mount still sends before the plan ends, and how
+    /// many bytes when it says; `None` once it is done. The window is woken
+    /// to say it. The speed measured while a mount sends is its sending's,
+    /// what came before forgotten, and again once it is done: what it sent
+    /// is what it had left going down.
+    pub(super) fn sending(&self, left: Option<super::transfer::Left>) {
+        let files = left.map_or(0, |left| left.files.saturating_add(1));
+        let was = self.sending.swap(files, Ordering::Relaxed);
+        let (began, ended) = (was == 0 && files > 0, files == 0);
+        let bytes = left.and_then(|left| left.bytes);
+        if began || ended {
+            self.sent.store(0, Ordering::Relaxed);
+        }
+        let before = self
+            .send_left
+            .swap(bytes.unwrap_or(UNTOLD), Ordering::Relaxed);
+        if let Some(bytes) = bytes
+            && before != UNTOLD
+            && !began
+        {
+            self.sent
+                .fetch_add(before.saturating_sub(bytes), Ordering::Relaxed);
+        }
+        if ended {
+            self.send_left.store(UNTOLD, Ordering::Relaxed);
+        }
+        let sample = self.sample(Instant::now());
+        let mut samples = self.samples.lock();
+        if began || ended {
+            samples.arm();
+        } else {
+            samples.note(sample);
+        }
+        drop(samples);
+        if let Some(wake) = &self.wake {
             wake();
         }
+    }
+
+    /// It writes into a mount that sends to its server after: its end
+    /// waits for that.
+    pub(super) fn sends_after(&self) {
+        self.sends_after.store(true, Ordering::Relaxed);
     }
 
     /// A step ended: the next one's bytes count from here.
     pub(super) fn step_ended(&self) {
         let mut steps = self.steps.lock();
+        if let Some(ahead) = self.ahead.lock().as_mut()
+            && let Some(work) = ahead.work.get_mut(steps.ended)
+        {
+            ahead.rest = ahead.rest.saturating_sub(std::mem::take(work));
+        }
         steps.ended += 1;
         steps.done = self.done.load(Ordering::Relaxed);
         steps.total = self.total.load(Ordering::Relaxed);
+        drop(steps);
+        let sample = self.sample(Instant::now());
+        self.samples.lock().note(sample);
     }
 
     /// Count `bytes` done and wake, at most every `WAKE_EVERY`; no bytes
@@ -184,10 +329,12 @@ impl Meter {
             return;
         }
         self.done.fetch_add(bytes, Ordering::Relaxed);
+        let now = Instant::now();
+        let sample = self.sample(now);
+        self.samples.lock().note(sample);
         let Some(wake) = &self.wake else {
             return;
         };
-        let now = Instant::now();
         let mut last = self.last_wake.lock();
         if last.is_none_or(|t| now.duration_since(t) >= WAKE_EVERY) {
             *last = Some(now);
@@ -195,6 +342,120 @@ impl Meter {
             wake();
         }
     }
+
+    /// `bytes` came from a server, not yet written where they go: measured
+    /// as speed, not done.
+    #[cfg(unix)]
+    fn arrived(&self, bytes: u64) {
+        self.arriving.fetch_add(bytes, Ordering::Relaxed);
+        let sample = self.sample(Instant::now());
+        self.samples.lock().note(sample);
+    }
+
+    /// `bytes` that arrived were written, and counted done by then; or
+    /// were let go of, the copy stopped (all of them: `u64::MAX`).
+    #[cfg(unix)]
+    fn landed(&self, bytes: u64) {
+        let _ = self
+            .arriving
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |was| {
+                Some(was.saturating_sub(bytes))
+            });
+    }
+
+    /// Count `bytes` done that moved none now (a clone, a copy gone on
+    /// from): done, never speed.
+    fn advance_unmeasured(&self, bytes: u64) {
+        self.unmeasured.fetch_add(bytes, Ordering::Relaxed);
+        self.advance(bytes);
+    }
+
+    /// What it moved by `now`: what it wrote that moved now, or, while a
+    /// mount sends, what that mount sent.
+    fn sample(&self, now: Instant) -> speed::Sample {
+        let bytes = if self.sending.load(Ordering::Relaxed) > 0 {
+            self.sent.load(Ordering::Relaxed)
+        } else {
+            self.done
+                .load(Ordering::Relaxed)
+                .saturating_sub(self.unmeasured.load(Ordering::Relaxed))
+                .saturating_add(self.arriving.load(Ordering::Relaxed))
+        };
+        speed::Sample {
+            at: now,
+            bytes,
+            steps: self.steps.lock().ended,
+        }
+    }
+
+    /// The bytes the whole plan will count, when known: those its steps
+    /// ended and the step under way counted, and what those to come were
+    /// sized at; for a plan not sized, of one step, what that step said.
+    fn planned(&self, steps: &Steps, total: u64) -> Option<u64> {
+        match self.ahead.lock().as_ref() {
+            Some(ahead) => {
+                let own = ahead.work.get(steps.ended).copied().unwrap_or(0);
+                let counted = total.saturating_sub(steps.total);
+                Some(
+                    steps
+                        .total
+                        .saturating_add(counted.max(own))
+                        .saturating_add(ahead.rest.saturating_sub(own)),
+                )
+            }
+            None if self.items.load(Ordering::Relaxed) <= 1 => (total > 0).then_some(total),
+            None => None,
+        }
+    }
+
+    /// What the window and the `running` command show of the plan: how far
+    /// it went, how fast it goes, and how long it has left (ADR-113).
+    pub(super) fn reading(&self, paused: bool) -> Reading {
+        let steps = *self.steps.lock();
+        let done = self.done.load(Ordering::Relaxed);
+        let total = self.total.load(Ordering::Relaxed);
+        let planned = self.planned(&steps, total);
+        let items = self.items.load(Ordering::Relaxed);
+        let sending = self.sending.load(Ordering::Relaxed).checked_sub(1);
+        let send_left = self.send_left.load(Ordering::Relaxed);
+        let then_sends = sending.is_none() && self.sends_after.load(Ordering::Relaxed);
+        let left = match (sending, planned) {
+            (Some(_), _) if send_left != UNTOLD => speed::Left::Bytes(send_left),
+            // Its end waits for a mount to send what it wrote, untold.
+            (Some(_), _) | (None, None) => speed::Left::Unknown,
+            (None, _) if then_sends => speed::Left::Unknown,
+            (None, Some(0)) if items > 1 => speed::Left::Steps(items.saturating_sub(steps.ended)),
+            (None, Some(planned)) => speed::Left::Bytes(planned.saturating_sub(done)),
+        };
+        let measured = if paused {
+            speed::Reading::default()
+        } else {
+            let now = self.sample(Instant::now());
+            self.samples.lock().reading(now, left)
+        };
+        Reading {
+            steps,
+            done,
+            total,
+            planned,
+            sending,
+            send_left: (sending.is_some() && send_left != UNTOLD).then_some(send_left),
+            then_sends,
+            measured,
+        }
+    }
+}
+
+/// A plan's meter, read ([`Meter::reading`]).
+pub(super) struct Reading {
+    pub(super) steps: Steps,
+    pub(super) done: u64,
+    pub(super) total: u64,
+    pub(super) planned: Option<u64>,
+    pub(super) sending: Option<usize>,
+    pub(super) send_left: Option<u64>,
+    pub(super) then_sends: bool,
+    pub(super) measured: speed::Reading,
 }
 
 /// Passed to [`super::Operation::check`] and [`super::Operation::apply`].
@@ -1118,6 +1379,9 @@ impl StepContext {
             transfer,
             written: Vec::new(),
         });
+        // Its end waits for that mount to send: no time left is said
+        // while it writes there.
+        self.meter.sends_after();
         true
     }
 
@@ -1188,7 +1452,7 @@ impl StepContext {
             })
             .collect();
         for (point, transfer, written) in sends {
-            let mut left = |files| self.meter.sending(Some(files));
+            let mut left = |left| self.meter.sending(Some(left));
             let sent = transfer.send(&point, &written, &self.control(), &mut left);
             self.meter.sending(None);
             sent.map_err(stays)?;
@@ -1485,6 +1749,22 @@ impl StepContext {
         }
     }
 
+    /// What says, from another thread, bytes came from a server that are
+    /// not yet written where they go (a large file's ranges): measured as
+    /// speed, not done, until [`Self::landed`].
+    #[cfg(unix)]
+    pub(super) fn arrivals(&self) -> impl Fn(u64) + Send + Sync + Clone + use<> {
+        let meter = Arc::clone(&self.meter);
+        move |bytes| meter.arrived(bytes)
+    }
+
+    /// `bytes` that arrived ([`Self::arrivals`]) were written, counted done
+    /// by then; `u64::MAX` lets go of all of them (the copy stopped).
+    #[cfg(unix)]
+    pub(super) fn landed(&self, bytes: u64) {
+        self.meter.landed(bytes);
+    }
+
     /// What reports work done from another thread (a batch's).
     pub(super) fn progress(&self) -> impl Fn(u64) + Sync + use<> {
         let meter = Arc::clone(&self.meter);
@@ -1533,6 +1813,26 @@ impl StepContext {
     /// Report `bytes` of work done.
     pub fn advance(&self, bytes: u64) {
         self.meter.advance(bytes);
+    }
+
+    /// Report `bytes` done that moved none now: a clone's, whose blocks the
+    /// volume shares, a copy's gone on from. Counted done, never as speed.
+    pub(super) fn advance_unmeasured(&self, bytes: u64) {
+        self.meter.advance_unmeasured(bytes);
+    }
+
+    /// The step `step`'s bytes were counted with this one's (a batch's,
+    /// ADR-078): what the plan was sized at no longer waits for them.
+    pub(super) fn counted_ahead(&self, step: usize) {
+        self.meter.counted(step);
+    }
+
+    /// The size of what the step under way copies, as the copy counts it,
+    /// when the plan was sized before it began (`room::sized`): taken once,
+    /// so that its tree is not walked again (on a server, a round trip a
+    /// file).
+    pub(super) fn take_walked(&self) -> Option<u64> {
+        self.meter.take_walked(self.step.get())
     }
 
     /// The bytes reported done.
@@ -1863,6 +2163,98 @@ mod tests {
     use std::cell::Cell;
 
     use super::*;
+
+    /// A plan sized before it began counts toward what it was sized at from
+    /// its start; a batch that counts the steps after the one under way
+    /// takes them out of what waits, so nothing is counted twice; a step
+    /// takes the size of what it copies once (ADR-113).
+    #[test]
+    fn a_plan_sized_ahead_counts_toward_its_total_from_its_start() {
+        let meter = Meter::new(None);
+        meter.set_ahead(vec![100, 200, 300], vec![Some(100), Some(200), None]);
+        meter.begin(3);
+        let planned = || meter.reading(false).planned;
+        assert_eq!(planned(), Some(600));
+        assert_eq!(meter.take_walked(0), Some(100));
+        assert_eq!(meter.take_walked(0), None, "taken once");
+        assert_eq!(meter.take_walked(2), None, "not sized");
+        meter.total.fetch_add(100, Ordering::Relaxed);
+        meter.advance(100);
+        assert_eq!(planned(), Some(600));
+        meter.step_ended();
+        // A batch at the second step counts the second and the third.
+        meter.total.fetch_add(500, Ordering::Relaxed);
+        meter.counted(1);
+        meter.counted(2);
+        assert_eq!(planned(), Some(600), "the batch's bytes counted once");
+        meter.advance(500);
+        meter.step_ended();
+        meter.step_ended();
+        assert_eq!(planned(), Some(600));
+        // A step that moved more than it was sized at: what it moved.
+        let grown = Meter::new(None);
+        grown.set_ahead(vec![100, 50], vec![None, None]);
+        grown.begin(2);
+        grown.total.fetch_add(180, Ordering::Relaxed);
+        assert_eq!(grown.reading(false).planned, Some(230));
+        // Not sized, a plan of several steps knows no total; one of one
+        // step, what that step said.
+        let several = Meter::new(None);
+        several.begin(2);
+        several.total.fetch_add(10, Ordering::Relaxed);
+        assert_eq!(several.reading(false).planned, None);
+        let one = Meter::new(None);
+        one.begin(1);
+        one.total.fetch_add(10, Ordering::Relaxed);
+        assert_eq!(one.reading(false).planned, Some(10));
+    }
+
+    /// What moved no byte now (a clone, a copy gone on from) is counted
+    /// done, never as speed; while a mount sends, what is measured is what
+    /// it sent, its bytes left going down, more to send never undoing what
+    /// it sent.
+    #[test]
+    fn a_clone_is_done_but_no_speed_and_a_sending_is_measured_by_what_it_sent() {
+        use super::super::transfer::Left;
+        let meter = Meter::new(None);
+        meter.begin(1);
+        let moved = || meter.sample(Instant::now()).bytes;
+        meter.advance_unmeasured(1 << 30);
+        assert_eq!(meter.done.load(Ordering::Relaxed), 1 << 30);
+        assert_eq!(moved(), 0);
+        meter.advance(10);
+        assert_eq!(moved(), 10);
+        let left = |files, bytes| Some(Left { files, bytes });
+        meter.sending(left(2, Some(1000)));
+        assert_eq!(moved(), 0, "the sending measured from its start");
+        meter.sending(left(1, Some(400)));
+        assert_eq!(moved(), 600);
+        meter.sending(left(2, Some(900)));
+        assert_eq!(moved(), 600, "more to send");
+        meter.sending(left(1, Some(100)));
+        assert_eq!(moved(), 1400);
+        let read = meter.reading(false);
+        assert_eq!((read.sending, read.send_left), (Some(1), Some(100)));
+        meter.sending(left(1, None));
+        assert_eq!(meter.reading(false).send_left, None, "untold");
+        meter.sending(None);
+        assert_eq!(moved(), 10, "back to what it wrote");
+        assert_eq!(meter.reading(false).sending, None);
+    }
+
+    /// Writing into a mount that sends to its server after, its end waits
+    /// for that: said, and no time left told meanwhile.
+    #[test]
+    fn writing_into_a_mount_that_sends_after_says_so() {
+        let meter = Meter::new(None);
+        meter.set_ahead(vec![1000], vec![None]);
+        meter.begin(1);
+        assert!(!meter.reading(false).then_sends);
+        meter.sends_after();
+        let read = meter.reading(false);
+        assert!(read.then_sends);
+        assert_eq!(read.measured.left, None);
+    }
 
     /// What an earlier step makes is met under another case of its name
     /// where the folder tells no case apart, and only there.

@@ -103,7 +103,9 @@ ADR-045 to ADR-047 (plugins from outside) hold the reasoning.
   (`App::propose_awaiting`). `skwir cmd` prints a plan, or applies it with
   `--apply` as the user's own action. A verdict carries what the steps
   said beside what they did (`said`: how to fold a booklet, why a copy
-  was not made), as the window's toast says it.
+  was not made), as the window's toast says it. `running` answers what
+  runs as the cards show it: each action's title, steps, bytes done and
+  in all, speed and time left (ADR-113).
 - Without a window (`skwir cmd` with none open) a skwir of its own runs
   the command and ends once it answers, so a command answers once its
   work is done (saved, applied). What it hands a worker on the window's

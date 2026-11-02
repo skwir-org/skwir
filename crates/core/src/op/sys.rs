@@ -105,11 +105,11 @@ pub(super) fn copy_whole(
     dst: &Path,
     keep_attributes: bool,
     wrote: &mut dyn FnMut(u64) -> bool,
-) -> Option<io::Result<()>> {
+) -> Option<io::Result<Whole>> {
     #[cfg(windows)]
     {
         let _ = keep_attributes;
-        Some(crate::fs::win::copy_file(src, dst, wrote))
+        Some(crate::fs::win::copy_file(src, dst, wrote).map(|()| Whole::Copied))
     }
     #[cfg(target_os = "macos")]
     {
@@ -118,7 +118,6 @@ pub(super) fn copy_whole(
         if !keep_attributes {
             return None;
         }
-        let size = std::fs::symlink_metadata(src).map(|m| m.len());
         let (Ok(from), Ok(to)) = (
             std::ffi::CString::new(src.as_os_str().as_bytes()),
             std::ffi::CString::new(dst.as_os_str().as_bytes()),
@@ -136,14 +135,25 @@ pub(super) fn copy_whole(
                 _ => Some(Err(error)),
             };
         }
-        let _ = wrote(size.unwrap_or(0));
-        Some(Ok(()))
+        // Shared, not copied: its bytes say nothing of a speed (ADR-113).
+        let _ = wrote;
+        Some(Ok(Whole::Cloned))
     }
     #[cfg(target_os = "linux")]
     {
         let _ = (src, dst, keep_attributes, wrote);
         None
     }
+}
+
+/// How the system made a whole copy ([`copy_whole`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Whole {
+    /// Its bytes copied, told as they went (Windows').
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Copied,
+    /// Its blocks shared (APFS's `clonefile`): no byte moved.
+    Cloned,
 }
 
 /// The devices of a file read and of one written (their metadata): what

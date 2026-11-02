@@ -7,7 +7,8 @@
 //! Read [`AT_ONCE`] ranges at a time, the same file came in 4.4 times
 //! faster, and 4.9 times 2 ms away. The ranges are written in their order,
 //! so a copy written through to a drive (`pace`) and its progress go as
-//! for any other file.
+//! for any other file; what arrives is measured as it comes, so its speed
+//! is the server's, not the jumps of ranges written in turn (ADR-113).
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -68,10 +69,12 @@ pub(super) fn copy(
     });
     let turn = Condvar::new();
     let (tx, rx) = std::sync::mpsc::channel::<(u64, std::io::Result<Vec<u8>>)>();
-    std::thread::scope(|s| {
+    let arrivals = ctx.arrivals();
+    let copied = std::thread::scope(|s| {
         for _ in 0..AT_ONCE.min(ranges) {
             let (tx, window, turn) = (tx.clone(), &window, &turn);
             let cancel = ctx.cancel_token().clone();
+            let arrived = arrivals.clone();
             s.spawn(move || {
                 loop {
                     let i = {
@@ -87,7 +90,7 @@ pub(super) fn copy(
                     };
                     let at = from + i * RANGE;
                     let want = usize::try_from(RANGE.min(len - at)).unwrap_or(0);
-                    if tx.send((i, read_at(sf, at, want))).is_err() {
+                    if tx.send((i, read_at(sf, at, want, &arrived))).is_err() {
                         return;
                     }
                 }
@@ -107,6 +110,7 @@ pub(super) fn copy(
                     df.write_all(&bytes)?;
                     copied += bytes.len() as u64;
                     writing.wrote(bytes.len() as u64, ctx)?;
+                    ctx.landed(bytes.len() as u64);
                     next += 1;
                     window.lock().written = next;
                     turn.notify_all();
@@ -126,18 +130,25 @@ pub(super) fn copy(
         window.lock().stop = true;
         turn.notify_all();
         written
-    })
+    });
+    // What arrived and was never written is not on its way any more.
+    ctx.landed(u64::MAX);
+    copied
 }
 
 /// Up to `want` bytes of `file` from `at`: fewer where it ends first.
-fn read_at(file: &File, at: u64, want: usize) -> std::io::Result<Vec<u8>> {
+/// `arrived` is told each part as it comes.
+fn read_at(file: &File, at: u64, want: usize, arrived: &dyn Fn(u64)) -> std::io::Result<Vec<u8>> {
     use std::os::unix::fs::FileExt;
     let mut bytes = vec![0; want];
     let mut filled = 0;
     while filled < want {
         match file.read_at(&mut bytes[filled..], at + filled as u64) {
             Ok(0) => break,
-            Ok(n) => filled += n,
+            Ok(n) => {
+                filled += n;
+                arrived(n as u64);
+            }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e),
         }

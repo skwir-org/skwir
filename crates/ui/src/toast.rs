@@ -249,14 +249,28 @@ pub fn failure(title: &str, failed: Option<&Change>, named: Option<&str>, error:
 }
 
 /// What a running plan's bar says: how far it is, from 0 to 1, and in
-/// words. A plan of several items counts them, the bytes of the one under
-/// way moving the bar between two counts: its bytes are known only as each
-/// item starts. A plan of one item counts its bytes, known before it
-/// starts.
+/// words. A plan whose bytes are known in all (sized before it began,
+/// ADR-113) moves by them, its items counted beside; one of one item
+/// counts the bytes it said as it began. Else it counts its items, the
+/// bytes of the one under way moving the bar between two counts: its bytes
+/// are known only as each item starts.
 pub fn bar(items: usize, t: &Transfer) -> (f32, String) {
+    let whole = t.planned.unwrap_or(t.total).max(t.done);
+    let by_bytes = |whole: u64| (t.done as f32 / whole.max(1) as f32).clamp(0., 1.);
     if items <= 1 {
-        let words = format!("{} of {}", format::size(t.done), format::size(t.total));
-        return ((t.done as f32 / t.total.max(1) as f32).clamp(0., 1.), words);
+        let words = format!("{} of {}", format::size(t.done), format::size(whole));
+        return (by_bytes(whole), words);
+    }
+    if let Some(planned) = t.planned.filter(|&planned| planned > 0) {
+        let whole = planned.max(t.done);
+        let words = format!(
+            "{} of {} · {} of {}",
+            format::thousands(t.ended),
+            format::count(items, "item"),
+            format::size(t.done),
+            format::size(whole)
+        );
+        return (by_bytes(whole), words);
     }
     let within = if t.step_total > 0 {
         (t.step_done as f32 / t.step_total as f32).clamp(0., 1.)
@@ -446,6 +460,8 @@ impl Shell {
                     undoable,
                     items,
                     said,
+                    moved,
+                    ran,
                     ..
                 } => {
                     self.made(plan, error.is_none() && !cancelled, items.as_ref());
@@ -464,12 +480,16 @@ impl Shell {
                     };
                     let (text, tone) = ended(
                         running,
-                        applied,
-                        error,
-                        cancelled,
-                        items,
-                        kept_in.as_deref(),
-                        &said,
+                        End {
+                            applied,
+                            error,
+                            cancelled,
+                            items,
+                            kept_in: kept_in.as_deref(),
+                            said: &said,
+                            moved,
+                            ran,
+                        },
                     );
                     let actions = finished_actions(
                         plan,
@@ -502,23 +522,46 @@ impl Shell {
 /// cancelled, before anything was done (a question about names taken
 /// answered Cancel) or after. What the steps said follows; alone when
 /// they did nothing else (a smaller copy not made).
-fn ended(
-    running: Running,
-    applied: usize,
-    error: Option<String>,
-    cancelled: bool,
-    items: Option<skwir_core::op::Items>,
-    kept_in: Option<&str>,
-    said: &[String],
-) -> (String, Tone) {
+fn ended(running: Running, end: End<'_>) -> (String, Tone) {
+    let End {
+        applied,
+        error,
+        cancelled,
+        items,
+        kept_in,
+        said,
+        moved,
+        ran,
+    } = end;
     let said = said.join(". ");
     let nothing_else = applied == 0 && error.is_none() && !cancelled;
-    let (text, tone) = ended_as(running, applied, error, cancelled, items, kept_in);
+    let (mut text, tone) = ended_as(running, applied, error, cancelled, items, kept_in);
+    // A long one says how much it moved, in how long (ADR-113).
+    if tone == Tone::Success && moved > 0 && ran >= AVERAGED_FROM {
+        text = format!("{text} ({} in {})", format::size(moved), format::took(ran));
+    }
     match (said.is_empty(), nothing_else) {
         (true, _) => (text, tone),
         (false, true) => (said, Tone::Info),
         (false, false) => (format!("{text}. {said}"), tone),
     }
+}
+
+/// From how long a plan ran its toast says what it moved in that time.
+const AVERAGED_FROM: Duration = Duration::from_secs(5);
+
+/// How a plan ended, as `ExecEvent::Finished` says it, for its toast.
+#[derive(Default)]
+struct End<'a> {
+    applied: usize,
+    error: Option<String>,
+    cancelled: bool,
+    items: Option<skwir_core::op::Items>,
+    /// Deleted where its server keeps a trash (ADR-086): that trash.
+    kept_in: Option<&'a str>,
+    said: &'a [String],
+    moved: u64,
+    ran: Duration,
 }
 
 /// What the toast of `running`, ended, says of what was done (`ended`).
@@ -645,6 +688,17 @@ fn sending(files: usize) -> String {
     }
 }
 
+/// How fast a running plan goes and how long it has left, when that can
+/// be told (ADR-113): `23.4 MB/s · about 3 min left`; writing into a
+/// mount that sends after, which its end waits for, why no time is said.
+pub fn pace(t: &Transfer) -> Option<String> {
+    let speed = t.speed.map(format::speed);
+    let left = t.left.map(format::time_left);
+    let then = t.then_sends.then(|| "then sent to the server".to_owned());
+    let said: Vec<String> = [speed, left.or(then)].into_iter().flatten().collect();
+    (!said.is_empty()).then(|| said.join(" · "))
+}
+
 /// What a stopped plan's toast adds once its server is found not
 /// answering (`ExecEvent::WaitsForServer`).
 const WAITS_FOR_SERVER: &str = ". It goes on by itself once the server answers again";
@@ -710,7 +764,12 @@ fn progress_card(
                                 })
                                 .w(gpui::relative(fraction)),
                         ),
-                ),
+                )
+                // How fast, how long: under the bar, quieter than what it
+                // is and how far (ADR-113).
+                .when_some(pace(transfer).filter(|_| !paused), |d, pace| {
+                    d.child(div().text_xs().text_color(theme.text_muted).child(pace))
+                }),
         )
         .when(!running.cancelling, |card| {
             card.child(
@@ -1041,11 +1100,12 @@ pub fn render(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> 
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, Running, Toast, Tone, bar, describe, ended, failure, finished_actions,
+        Action, End, Running, Toast, Tone, bar, describe, ended, failure, finished_actions, pace,
         quit_question, shown_for, waiting_lines,
     };
     use skwir_core::op::{Change, RunKind, Transfer};
     use std::path::PathBuf;
+    use std::time::Duration;
 
     /// A plan ended says what it did as it was done: one file replaced is
     /// one item, though its steps were two (put in the trash, then copied),
@@ -1080,22 +1140,34 @@ mod tests {
         assert_eq!(
             ended(
                 running(None),
-                2,
-                None,
-                false,
-                Some(copied.clone()),
-                None,
-                &[]
+                End {
+                    applied: 2,
+                    items: Some(copied.clone()),
+                    ..End::default()
+                }
             ),
             ("Copied “a.txt” to it's here".to_owned(), Tone::Success)
         );
         // Said as asked when nothing better comes.
         assert_eq!(
-            ended(running(Some(copied)), 2, None, false, None, None, &[]).0,
+            ended(
+                running(Some(copied)),
+                End {
+                    applied: 2,
+                    ..End::default()
+                }
+            )
+            .0,
             "Copied “a.txt” to it's here"
         );
         assert_eq!(
-            ended(running(None), 0, None, true, None, None, &[]),
+            ended(
+                running(None),
+                End {
+                    cancelled: true,
+                    ..End::default()
+                }
+            ),
             (
                 "Copy to /example/it's here: cancelled before anything was done".to_owned(),
                 Tone::Info
@@ -1132,12 +1204,11 @@ mod tests {
         assert_eq!(
             ended(
                 running(),
-                1,
-                None,
-                false,
-                None,
-                None,
-                &["Fold each sheet in half twice".to_owned()]
+                End {
+                    applied: 1,
+                    said: &["Fold each sheet in half twice".to_owned()],
+                    ..End::default()
+                }
             ),
             (
                 "Saved “it's.md” as “it's (booklet).pdf”. Fold each sheet in half twice".to_owned(),
@@ -1147,12 +1218,10 @@ mod tests {
         assert_eq!(
             ended(
                 running(),
-                0,
-                None,
-                false,
-                None,
-                None,
-                &["“it's.md” is as small as it gets".to_owned()]
+                End {
+                    said: &["“it's.md” is as small as it gets".to_owned()],
+                    ..End::default()
+                }
             ),
             ("“it's.md” is as small as it gets".to_owned(), Tone::Info)
         );
@@ -1273,7 +1342,7 @@ mod tests {
             ended: 1286,
             step_done: 0,
             step_total: 64,
-            sending: None,
+            ..Transfer::default()
         };
         let (fraction, words) = bar(40_000, &small);
         assert_eq!(words, "1,286 of 40,000 items · 80.4 KB");
@@ -1285,7 +1354,7 @@ mod tests {
             ended: 1,
             step_done: 1 << 30,
             step_total: 2 << 30,
-            sending: None,
+            ..Transfer::default()
         };
         assert!((bar(3, &large).0 - 0.5).abs() < 1e-6);
         // Nothing moved yet, or nothing to move: the count alone.
@@ -1297,6 +1366,98 @@ mod tests {
             ..Transfer::default()
         };
         assert_eq!(bar(1, &one), (0.25, "1.0 GB of 4.0 GB".into()));
+        // Sized before it began (ADR-113): its bytes in all move it, its
+        // items counted beside.
+        let sized = Transfer {
+            planned: Some(8 << 30),
+            ..large
+        };
+        assert_eq!(
+            bar(3, &sized),
+            (0.375, "1 of 3 items · 3.0 GB of 8.0 GB".into())
+        );
+        // One item sized before it began: what it was sized at.
+        let one_sized = Transfer {
+            planned: Some(4 << 30),
+            total: 0,
+            ..one
+        };
+        assert_eq!(bar(1, &one_sized), (0.25, "1.0 GB of 4.0 GB".into()));
+    }
+
+    /// How fast and how long, when that can be told: nothing before, a
+    /// speed alone, both; writing into a mount that sends after, why no
+    /// time is said.
+    #[test]
+    fn a_card_says_its_speed_and_time_left_when_it_can() {
+        assert_eq!(pace(&Transfer::default()), None);
+        let speed = Transfer {
+            speed: Some(24.0 * 1024.0 * 1024.0),
+            ..Transfer::default()
+        };
+        assert_eq!(pace(&speed).as_deref(), Some("24.0 MB/s"));
+        let both = Transfer {
+            left: Some(Duration::from_secs(170)),
+            ..speed
+        };
+        assert_eq!(pace(&both).as_deref(), Some("24.0 MB/s · about 3 min left"));
+        let then = Transfer {
+            then_sends: true,
+            ..speed
+        };
+        assert_eq!(
+            pace(&then).as_deref(),
+            Some("24.0 MB/s · then sent to the server")
+        );
+        // A plan of no bytes: its time left alone.
+        let steps = Transfer {
+            left: Some(Duration::from_secs(40)),
+            ..Transfer::default()
+        };
+        assert_eq!(pace(&steps).as_deref(), Some("about 40 s left"));
+    }
+
+    /// A long copy says what it moved, in how long; a short one, or one
+    /// that failed, does not.
+    #[test]
+    fn a_long_copy_says_what_it_moved_in_how_long() {
+        let running = || Running {
+            plan: skwir_core::op::Plan::new("copy to /example/it's here").id,
+            title: "copy to /example/it's here".into(),
+            run: RunKind::Apply,
+            total: 1,
+            first: Some(Change::Copy {
+                from: PathBuf::from("/example/it's big.iso"),
+                to: PathBuf::from("/example/it's here/it's big.iso"),
+            }),
+            first_named: None,
+            failed: None,
+            failed_named: None,
+            items: None,
+            paused: false,
+            cancelling: false,
+            going_on: false,
+        };
+        let long = End {
+            applied: 1,
+            moved: 5 << 30,
+            ran: Duration::from_secs(200),
+            ..End::default()
+        };
+        assert_eq!(
+            ended(running(), long).0,
+            "Copied “it's big.iso” to it's here (5.0 GB in 3 min 20 s)"
+        );
+        let short = End {
+            applied: 1,
+            moved: 5 << 20,
+            ran: Duration::from_secs(2),
+            ..End::default()
+        };
+        assert_eq!(
+            ended(running(), short).0,
+            "Copied “it's big.iso” to it's here"
+        );
     }
 
     #[test]

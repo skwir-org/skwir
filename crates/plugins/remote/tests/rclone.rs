@@ -263,12 +263,23 @@ fn what_a_mount_sends_later_is_sent_through_a_control_on_the_loopback() {
     );
     let mut told = Vec::new();
     uploads::send_now(&at, &cancel, &|| {}, &mut |left| told.push(left)).unwrap();
+    // Told by files and bytes, down to none.
+    let told: Vec<(usize, Option<u64>)> = told.iter().map(|l| (l.files, l.bytes)).collect();
     assert_eq!(
         std::fs::read_to_string(served_root.join("l'été — a note.txt")).unwrap(),
         "sent",
         "on the server once sent"
     );
-    assert_eq!(told.last(), Some(&0), "said as it went: {told:?}");
+    assert_eq!(
+        told.last(),
+        Some(&(0, Some(0))),
+        "said as it went: {told:?}"
+    );
+    assert!(
+        told.iter()
+            .any(|&(files, bytes)| files == 1 && bytes == Some(4)),
+        "its 4 bytes, left to send: {told:?}"
+    );
     assert_eq!(uploads::waiting(&at, &cancel).unwrap(), 0);
 
     drop(mount);
@@ -318,7 +329,7 @@ fn what_was_written_is_sent_though_rclone_had_not_queued_it() {
                 &CancelToken::new(),
                 &|| {},
                 &mut |left| {
-                    let _ = told.send(left);
+                    let _ = told.send(left.files);
                 },
             )
         })
