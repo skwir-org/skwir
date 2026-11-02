@@ -427,6 +427,8 @@ struct Helpers {
     rmdir: PathBuf,
     /// What lets go of a FUSE mount: fusermount3, else fusermount.
     unmount: PathBuf,
+    /// What asks a mount whether its program answers (`stat -f`, GONE).
+    stat: PathBuf,
 }
 
 impl Helpers {
@@ -442,6 +444,7 @@ impl Helpers {
             rm: find(&["rm"]),
             rmdir: find(&["rmdir"]),
             unmount: find(&["fusermount3", "fusermount"]),
+            stat: find(&["stat"]),
         }
     }
 }
@@ -451,13 +454,21 @@ impl Helpers {
 const RCLONE_STOPPED: &[u8] = &[143];
 
 /// What lets go of what a run left, run by `/bin/sh` with the remover as
-/// `$0`, then the point, the unmounter, the folder remover and the
-/// leftovers. The point is removed where it is an empty folder. Where it
-/// then still answers (a mount alive: Skwir's, never one this unit's
-/// program left, which is gone), nothing else is done; else a mount whose
-/// program is gone is let go of, lazily, the point removed, and the
-/// leftovers.
-const GONE: &str = r#""$3" "$1" 2>/dev/null; [ -e "$1" ] && exit 0; "$2" -uz "$1" 2>/dev/null; "$3" "$1" 2>/dev/null; shift 3; exec "$0" -f -- "$@""#;
+/// `$0`, then the point, the unmounter, the folder remover, the asker of
+/// a mount and the leftovers. The point is removed where it is an empty
+/// folder. Where it then still answers (a mount alive: Skwir's, never one
+/// this unit's program left, which is gone), nothing else is done; else a
+/// mount whose program is gone is let go of, lazily, the point removed,
+/// and the leftovers. Whether it answers is asked of its file system
+/// (`stat -f`, statfs), which FUSE never answers from a cache: a mount
+/// whose program is gone says so at once (`ENOTCONN`), where a look at the
+/// point (`[ -e ]`) is answered from its attributes, kept a second after
+/// its program ended, and would leave it mounted. Its cost: a live mount
+/// whose server hangs may hold the question, until the unit's stop
+/// timeout ends it, leaving the mount where it is, the safe side. Run
+/// before its program starts (a point Skwir's window holds stays, and
+/// the program then fails) and after it ended.
+const GONE: &str = r#""$3" "$1" 2>/dev/null; "$4" -f "$1" >/dev/null 2>&1 && exit 0; "$2" -uz "$1" 2>/dev/null; "$3" "$1" 2>/dev/null; shift 4; exec "$0" -f -- "$@""#;
 
 /// The systemd user unit that runs `at` at login (`systemd.service`): its
 /// mount command in the foreground (`Type=notify` where it tells once
@@ -481,6 +492,7 @@ pub fn systemd_unit(at: &AtLogin) -> String {
         point.clone(),
         helpers.unmount.clone().into(),
         helpers.rmdir.into(),
+        helpers.stat.into(),
     ];
     gone.extend(at.leftovers.iter().map(OsString::from));
     let gone = exec_line(Path::new("/bin/sh"), &gone);
@@ -1425,7 +1437,8 @@ mod tests {
         let gone = systemd_words(values(&unit, "ExecStartPre")[0]).unwrap();
         assert_eq!(gone[..3], ["/bin/sh", "-c", GONE]);
         assert_eq!(gone[4], at.point.to_string_lossy());
-        assert_eq!(gone[7], "/run/user/1000/skwir/rc/0123.sock");
+        assert!(gone[7].ends_with("stat"), "{gone:?}");
+        assert_eq!(gone[8], "/run/user/1000/skwir/rc/0123.sock");
         assert_eq!(
             values(&unit, "ExecStopPost"),
             values(&unit, "ExecStartPre")[..1]
