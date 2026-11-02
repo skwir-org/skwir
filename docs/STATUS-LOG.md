@@ -9793,3 +9793,148 @@ skwir-ui's reader_scroll tests, 18 passing; rustfmt; clippy of skwir-ui.
 **Not checked:** a touchpad (its pixels unchanged, by the test only);
 X11's wheel; macOS and Windows (compiled by neither check here; the
 change is in shared UI code).
+
+## Review fixes (2026-11-02)
+
+The user asked for another review and fix pass before 0.3.0, over what
+came after the last round (d14e4213..899c3622, 21 commits: smaller
+copies, progress for helpers and prints, speed and time left, Cancel
+within a file, Activity docked, what runs outliving the window, booklets
+of four and eight, the address card, every tag in the field, the wheel
+over pages). Seven reviewers, one area each, found 60; each was then the
+fixer of its own area, seven at once in one tree, each owning its files;
+the integrator read each fix and committed it, only the fixer's hunks
+staged where two shared a file (b943a6b2..b91b1206, 23 commits, the
+dependencies and two test-found fixes among them). The
+integrator's choices: a size asked tries the qualities below the one
+chosen first; a portal's 2 is "sent" only from KDE's back end; the
+Plasma and GNOME holds were changed only as far as their sources
+confirm; the queue's quadratic admission is left for after the release.
+
+- Smaller copies (`b943a6b2`, `8732fab7`, `f48c5038`, `0454dc5b`,
+  `ab6f77f7`, `bf493154`, `91149aa7`): a PDF protected by an owner
+  password alone is refused (lopdf reads it decrypted and drops
+  `/Encrypt`; `was_encrypted`); a stream past 1 GiB is no longer cut off
+  when deflated again; a damaged PDF (its cross-reference table rebuilt,
+  or an object in use not read) is refused; reading is bounded
+  (decompression 256 MiB, a page's drawing 16 MiB, a fax image by its
+  size); an image no page draws is rewritten without loss only; a matted
+  mask is left; the file's bytes and a copy of the document are no
+  longer held through every try. The check draws the first and last
+  pages, compares the page count and 8 px squares of each page, and a
+  copy that differs where no image explains it is not kept; images put
+  back are made again under the same rule (`Job::rule`, `Made::rule`)
+  and checked again. The helper's copy is opened once, unfollowed and
+  regular, and kept from that handle; it is made in Skwir's cache; the
+  helper is stopped after 10 minutes without a progress line or 8 hours
+  in all (`process::run_helper_stalling`), not at a time guessed from
+  the file's size. A size asked tries the chosen size at lower qualities
+  first; Lossless never resizes to meet one, and the command refuses
+  both together. Pictures: resized where they are, a PNG streamed row by
+  row, its pHYs kept (scaled when resized), an EXIF after a JPEG header
+  read for the turn, an unreadable date dropping only itself.
+- How plans run (`35f2ad1f`, `345bbc34`, `19c3ed53`, `9bd7453f`,
+  `59092a66`): a file left out of its batch keeps its bytes in the
+  total; a failed batch takes back what it counted; holes are done
+  bytes, never speed; rsync tells a folder whole once its run returns;
+  a pause during the checks is left out of the time said; a stalled copy
+  stops showing its last speed (one wake after 5 s, a thread only for a
+  plan of several steps or one that moves bytes); Cancel all cancels in
+  one pass; a plan going on by itself is never missed while handed over
+  (`Executor::busy_or_waiting`); each folder a plan writes into is asked
+  its volume once a plan (10,010 writes, 13 looks); a Replace settled at
+  a copy's turn claims the trash record it adds; a camera's file without
+  a readable time is placed once; the executor wakes once when nothing
+  runs, so a program without its window ends after its last action.
+- Activity and what runs without the window (`13d1561c`, `3e28988e`,
+  `8bff67c0`): what runs is the program's for its life, the window
+  sharing it, and a window that left takes nothing more (a closing
+  window took the core's events and questions with it); a window that
+  fails to open again leaves it in place; without a window a plan an
+  error stopped keeps its Retry however short it ran; a signal with the
+  window up closes it first and remembers the tabs; taking launches over
+  stops off the window's thread; on Windows a later launch is handed
+  only to a pipe served by this user's process in this session. A click
+  on the strip or pinned Activity leaves the keyboard on the files;
+  pinned Activity is a place (Escape back to the files); the popup no
+  longer vanishes while counted open (which hid every toast); every
+  toast is kept in Earlier; what runs is read once a frame and a plan's
+  items are shared, not copied; the strip no longer draws over Undo in a
+  narrow footer.
+- The desktop (`a6832ffc`): a tray waited for no longer comes due for
+  ever (the desktop thread spun once the bus came back while the tray
+  was gone); sleep is held through the portal's Inhibit (SUSPEND) where
+  a session manager runs, logind's block elsewhere (under systemd 262 a
+  block refused the user's own Suspend, and GNOME's idle suspend reads
+  only gnome-session's inhibitors; sources in ADR-114); only the server
+  that showed Skwir's notices is heard; notices are told at most every
+  2 s; the presence is taken back at once; holds keep their first reason
+  and are let go a second late; Windows tells its taskbar progress again
+  once the button exists and after Explorer starts again. Plasma 6.8's
+  logout asks no one (ADR-115): nothing changed for it.
+- Printing and the UI (`fbd1ea23`, `0e122d7b`, `c1828339`, `17391244`):
+  xdg-desktop-portal answers 2 to Print whenever its back end failed, so
+  2 is "sent" from KDE's back end alone and "handed on, not confirmed"
+  elsewhere, 1 a cancel there (ADR-111); a helper's PDF is opened
+  unfollowed and Save as PDF copies from that handle; the dialog keeps a
+  booklet's choices; the preview's menu types a link by its target and
+  a pipe as one; the wheel's 40 px applies to whole notches only (gpui
+  reports an X11 touchpad as fractions of lines); `tags.known` keeps its
+  answer by generation and `tag:` offers 200 at a time with how many
+  more.
+- Dependencies (`6015efa7`): pulldown-cmark 0.13.6 (RUSTSEC-2026-0433,
+  quadratic nested image wikilinks; the Markdown preview turns wikilinks
+  on) and async-executor 1.14.1 (1.14.0 yanked); notices made again.
+- Found by the full test runs (`50c03dbe`, `b91b1206`): the grammar
+  helper's test of a call bounded from when it is asked asked once,
+  and under load its check could reach the helper before the parse it
+  meant to wait behind; it asks until one waits. The login unit's
+  clean-up told a live mount from a dead one by a stat, which FUSE
+  answers from attributes kept a second after the program ended, so a
+  mount just left stayed mounted (2 full runs in 3); it asks by statfs,
+  never cached, a live mount (Skwir's own) still left alone.
+
+**Checked:** by each fixer, for each fix: rustfmt on its files, clippy
+with `-D warnings` and all targets on every crate it touched, and their
+tests, each fix with a test where one could show it (an owner-password
+PDF made by lopdf, a PDF with a missing object, a stand-in reader whose
+page differs so images are put back, a fax claiming 2e9 × 2e9, a meter
+with a step left out of its batch, a failed batch, a waker that sees
+nothing running, a tray lost while the bus restarts (failing on the old
+code), each portal answer by back end, a helper's link left for its PDF,
+5,000 tags). Builds ran with `CARGO_INCREMENTAL=0` from 20:00, after the
+disk fell to 8 GB twice; `target/debug/incremental` was deleted with the
+user's leave. Windows and macOS code went through `cargo-zigbuild
+clippy`; under Wine the desktop tests (14) and the handover tests (10,
+the askpass pipe's 4) passed. Counts at the last runs: skwir-core 631,
+skwir-shrink 56, skwir-ui 465, skwir-platform's desktop 29, handover 10,
+process 19, shrink_job 2; the print, tags and query plugins with the
+platform's print tests 224; the binary's shrink, print, search_tags and
+plugins_toggle tests 13 and 17; the PDF helper's compose tests 6.
+Windows on Xvfb, each with its own session bus and folders:
+- Activity: Pause in the strip and Resume in pinned Activity left the
+  keyboard on the list; Ctrl+Shift+J, Tab and Escape reached and left
+  the tray; the narrow footer drew clear of Undo.
+- What runs without the window, copying 30,000 files: Quit then Enter
+  closed the window, the copy finished and the process ended by itself
+  (2.6 s after); the close button the same (4 s after the copy); a
+  second launch was handed over and the window opened again on its
+  folder; SIGTERM with the window up closed it, kept the tabs and ended
+  in 0.5 s, no staging folder left.
+
+At the end: `just deny` passed once pulldown-cmark and async-executor
+were updated (RUSTSEC-2026-0433 and a yanked crate, both new since the
+last round); `just lint-all` passed, with `check-cross` for Windows and
+macOS, and the two crates changed after it (skwir-platform,
+skwir-plugin-remote) went through `cargo-zigbuild clippy` for both
+again; `CARGO_INCREMENTAL=0 just test-all` on b91b1206: 2947 passed,
+30 skipped, none failed. The two runs before it failed once each, on
+the tests fixed in `50c03dbe` and `b91b1206`, each passing alone (the
+grammar test 10 of 10 before its fix and 8 of 8 after, the login test
+3 of 3, then 10 of 10 beside three core suites as load after its fix).
+
+**Not checked:** see PLAN's "From the review of 2026-11-02": no real
+GNOME, Plasma or Windows session, portal or printer; nothing measured on
+large real PDFs or pictures; the wheel on X11 or a touchpad; 50,000 tags
+in a window; `just bench-check`, `just idle-pss` and `just
+release-check` were not run.

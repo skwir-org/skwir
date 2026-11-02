@@ -446,6 +446,39 @@ LUKS, nearly full); an archive extracted still claims the whole folder
 it extracts into (the name it makes is read from the archive); a row of
 what waits moves up under the pointer as what is ahead of it starts.
 
+## Review fixes (2026-11-02)
+
+A review before 0.3.0 of what came after the last round
+(d14e4213..899c3622: smaller copies, progress and time left, Activity
+docked, what runs outliving the window, booklets of four and eight, the
+address card, every tag in the field) made 60 findings, fixed the same
+evening by seven fixers at once (b943a6b2..b91b1206; pulldown-cmark and
+async-executor updated for an advisory and a yank). Four were not
+changed, with their reasons: a clone's bytes stay in a toast's total
+(ADR-113 says what the copy amounts to), Plasma's logout cannot be held
+off by anything Skwir asks (ADR-115), a notice type that duplicates
+another is a cleanup for later, and a tag strip's copy of its row's tags
+adds nothing to a look built each frame. Three were high: a PDF
+protected by an owner password alone was made smaller without its
+protection, a window closing could take the core's events and questions
+with it (what runs is the program's for its life now), and the thread
+telling the desktop could spin once the bus came back while the tray
+was gone. Among the others: a smaller copy is checked on its first and
+last pages and in small squares of each page, and hostile PDFs are read
+within bounds (ADR-112); a size asked tries the qualities below the one
+chosen first; a copy's bytes, items and time left stay right across
+batches, failures, holes and pauses (ADR-113); a print the portal did
+not confirm is said to be handed on, only KDE's 2 taken as sent
+(ADR-111); sleep is held off through the portal where a session manager
+runs (ADR-114); a later launch is handed only to the user's own Skwir
+on Windows (ADR-115); `tag:` keeps its list and offers 200 at a time.
+The window checks found two more, fixed with them: a program finishing
+without its window did not end after its last action, and the strip
+drew its buttons over Undo in a narrow footer; the full test runs one
+more: a login unit's clean-up left a mount its program had just left,
+asked by a stat FUSE answers from memory (statfs now). Checks in
+`docs/STATUS-LOG.md` (2026-11-02, "Review fixes").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -459,6 +492,49 @@ printing](#grammars-and-printing) (2026-10-31); skwird's steps (ADR-050); the de
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
+
+**From the review of 2026-11-02**:
+- Smaller copies: the page check's squares (8 px, 40 levels) are
+  reasoned, not measured on real scans, so a text-heavy scan at the
+  smallest steps may have images put back it did not need; a crash
+  leaves its `copy-*` work folder in the cache until the cache is
+  cleared; nothing was measured on large real PDFs or pictures (memory,
+  time); the JBIG2 coder and CCITT Group 3 2-D were checked by round
+  trips only; a JPEG's JFIF or EXIF density is not scaled when it is
+  resized, and IPTC is dropped when a JPEG is written again.
+- Plans: `admit()` stays quadratic in the queue. Merging the footprints
+  ahead keeps ADR-079 exact, but it is linear only once
+  `Footprint::conflicts` and `Names::meets` look each item of the
+  smaller footprint up in the larger. Windows' `CopyFileEx` progress may
+  count alternate streams beyond a file's length. rsync's order under
+  incremental recursion was not run against a real rsync, and the wake
+  of a copy that stalls was seen in core tests only.
+- The desktop: nothing ran on a real GNOME, Plasma or Windows session
+  (GNOME's and PowerDevil's answer to the portal's SUSPEND, the taskbar
+  told again on real Explorer, mako or swaync broadcasting another
+  program's clicks). Plasma 6.8 holds nothing off at logout:
+  xdg-desktop-portal-kde keeps the portal's LOGOUT flag, but nothing in
+  plasma-workspace asks it, and a logind block would leave the machine
+  on after the logout (ADR-115). `Asked::Notice` does what `Asked::Open`
+  does (a cleanup).
+- What runs without the window: the race of a window leaving before
+  gpui removes it is closed by structure, not reproduced; a window that
+  fails to open again, macOS's Quit question and Windows' window were
+  not run; another user's pipe cannot be made in a test, so its refusal
+  is tested only through `user_of`; Quit's words for a print being sent
+  or a plan waiting for its server were not seen in a window. The `ui.*`
+  requests and notifications that pile up while no window is open run,
+  or show as toasts, when it opens again, possibly stale; a marker a
+  crash left costs each later launch one bus connection.
+- Activity: an Activity popup open while a plan starts without a press,
+  and the scroll to a button among many answers, were not seen in a
+  window.
+- Printing and the UI: no real GNOME or KDE portal gave the answers now
+  read apart; the wheel on X11 and on a real touchpad was not measured;
+  `tag:` with 50,000 tags was not timed in a window, and the pane's own
+  tags are still asked at each key; the preview's More popup builds its
+  items three times a frame while open; a row's tag look is built again
+  each frame (`views/entry.rs`).
 
 **From Cancel within a file (2026-11-02)**:
 - The 80 MiB stall the user saw was not reproduced as such (their build
