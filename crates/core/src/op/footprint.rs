@@ -146,6 +146,15 @@ impl Names {
         }
     }
 
+    /// How many claims they are: the folder's, and each name and
+    /// beginning of names.
+    fn claims(&self) -> usize {
+        match self {
+            Names::These { names, kept } => 1 + names.len() + kept.len(),
+            Names::Every => 1,
+        }
+    }
+
     /// Whether two actions' names of one folder may be one name.
     fn meets(&self, other: &Names) -> bool {
         let (
@@ -510,12 +519,7 @@ impl Footprint {
     /// apart: one changes what the other touches, or one keeps whole a
     /// store the other keeps (two records of their own there, nothing).
     pub fn conflicts(&self, other: &Footprint) -> bool {
-        let whole = |a: &Footprint, b: &Footprint| {
-            a.stores
-                .iter()
-                .any(|store| b.stores.contains(store) || b.records.contains(store))
-        };
-        if self.every || other.every || whole(self, other) || whole(other, self) {
+        if self.meets_whole(other) {
             return true;
         }
         let changes = |a: &Footprint, b: &Footprint| {
@@ -531,6 +535,230 @@ impl Footprint {
             })
         };
         changes(self, other) || changes(other, self)
+    }
+
+    /// Whether `self` and `other` meet whatever their paths: one cannot
+    /// say what it touches, or keeps whole a store the other keeps.
+    fn meets_whole(&self, other: &Footprint) -> bool {
+        let whole = |a: &Footprint, b: &Footprint| {
+            a.stores
+                .iter()
+                .any(|store| b.stores.contains(store) || b.records.contains(store))
+        };
+        self.every || other.every || whole(self, other) || whole(other, self)
+    }
+
+    /// How many claims it holds: the trees it reads and writes, the
+    /// folders it names in and the names and beginnings of names there.
+    fn claims(&self) -> usize {
+        self.reads.len() + self.writes.len() + self.names.values().map(Names::claims).sum::<usize>()
+    }
+
+    /// The same, or one touching more, of at most `most` claims where
+    /// widening can make it so: each folder's names first any name there,
+    /// then each such folder written whole (which meets all its names
+    /// meet), then trees taken for their folders, the deepest first. It
+    /// meets everything `self` meets, and more: what the history keeps
+    /// ([`Kept`]) is taken back alone a little less often, never wrongly.
+    #[must_use]
+    pub fn bounded(&self, most: usize) -> Footprint {
+        let mut kept = self.clone();
+        if kept.every || kept.claims() <= most {
+            return kept;
+        }
+        for names in kept.names.values_mut() {
+            *names = Names::Every;
+        }
+        if kept.claims() <= most {
+            return kept;
+        }
+        let folders = std::mem::take(&mut kept.names);
+        kept.writes.extend(folders.into_keys());
+        loop {
+            kept.writes = outermost(std::mem::take(&mut kept.writes));
+            let writes = &kept.writes;
+            let reads = outermost(std::mem::take(&mut kept.reads));
+            // A tree read within one written: the written meets all it does.
+            kept.reads = reads
+                .into_iter()
+                .filter(|read| !read.ancestors().any(|above| writes.contains(above)))
+                .collect();
+            if kept.reads.len() + kept.writes.len() <= most {
+                return kept;
+            }
+            let deepest = kept
+                .reads
+                .iter()
+                .chain(&kept.writes)
+                .map(|path| path.components().count())
+                .max()
+                .unwrap_or(0);
+            let mut widened = false;
+            let mut up = |set: BTreeSet<PathBuf>| -> BTreeSet<PathBuf> {
+                set.into_iter()
+                    .map(|path| match path.parent() {
+                        Some(folder) if path.components().count() == deepest => {
+                            widened = true;
+                            folder.to_path_buf()
+                        }
+                        _ => path,
+                    })
+                    .collect()
+            };
+            kept.reads = up(std::mem::take(&mut kept.reads));
+            kept.writes = up(std::mem::take(&mut kept.writes));
+            // Only tops left (two drives' roots): it cannot widen further.
+            if !widened {
+                return kept;
+            }
+        }
+    }
+}
+
+/// `set` without the paths within another of it: those follow it in the
+/// set's order, by their components.
+fn outermost(set: BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
+    let mut out: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut last: Option<PathBuf> = None;
+    for path in set {
+        if last.as_ref().is_some_and(|above| path.starts_with(above)) {
+            continue;
+        }
+        last = Some(path.clone());
+        out.insert(path);
+    }
+    out
+}
+
+/// The most claims a footprint the history keeps holds ([`Kept`]): each
+/// entry's is compared with every other's on its stack as it joins
+/// (ADR-079, 13), `JOURNAL_ENTRIES` at most, so each comparison stays
+/// bounded however large the action.
+pub const KEPT_CLAIMS: usize = 1_000;
+
+/// What an action touched, as the history keeps it (ADR-079, 13): its
+/// footprint bounded to [`KEPT_CLAIMS`], the folder every path of it is
+/// in, and the names right below that folder its paths go through, so
+/// that two in folders apart, or through different names of one folder,
+/// are told apart at once.
+#[derive(Clone, Debug, Default)]
+pub struct Kept {
+    footprint: Footprint,
+    within: Within,
+    /// The names right below `within` (its `Under` folder) the paths go
+    /// through; `None` when one path is that folder itself, which meets
+    /// everything below it, or when there is no such folder.
+    heads: Option<std::collections::HashSet<std::ffi::OsString>>,
+}
+
+/// Where every path a footprint touches is.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum Within {
+    /// It touches no path (a store alone, nothing, or everything).
+    #[default]
+    Nothing,
+    /// Each is at or below this folder.
+    Under(PathBuf),
+    /// They share no folder (two drives).
+    Anywhere,
+}
+
+impl Kept {
+    pub fn new(footprint: &Footprint) -> Kept {
+        Kept::of(footprint.bounded(KEPT_CLAIMS))
+    }
+
+    /// `footprint` as it is, with the folder its paths are in.
+    fn of(footprint: Footprint) -> Kept {
+        let mut within = Within::Nothing;
+        for path in footprint.paths() {
+            within = match within {
+                Within::Nothing => Within::Under(path.to_path_buf()),
+                Within::Under(folder) => {
+                    let shared: PathBuf = folder
+                        .components()
+                        .zip(path.components())
+                        .take_while(|(a, b)| a == b)
+                        .map(|(a, _)| a)
+                        .collect();
+                    if shared.as_os_str().is_empty() {
+                        Within::Anywhere
+                    } else {
+                        Within::Under(shared)
+                    }
+                }
+                Within::Anywhere => break,
+            };
+        }
+        let heads = match &within {
+            Within::Under(folder) => {
+                let depth = folder.components().count();
+                footprint
+                    .paths()
+                    .map(|path| {
+                        path.components()
+                            .nth(depth)
+                            .map(|c| c.as_os_str().to_owned())
+                    })
+                    .collect::<Option<std::collections::HashSet<_>>>()
+            }
+            _ => None,
+        };
+        Kept {
+            footprint,
+            within,
+            heads,
+        }
+    }
+
+    pub fn footprint(&self) -> &Footprint {
+        &self.footprint
+    }
+
+    /// Whether `self` and `other` touched something in common, as
+    /// [`Footprint::conflicts`] tells. Two paths meet only where one is
+    /// at or below the other: so two whose paths are in folders apart
+    /// (neither within the other), or that go through different names
+    /// right below one folder, and claim nothing at it, meet only by a
+    /// store, or where one cannot say what it touches.
+    pub fn conflicts(&self, other: &Kept) -> bool {
+        let apart = match (&self.within, &other.within) {
+            (Within::Under(a), Within::Under(b)) if a == b => match (&self.heads, &other.heads) {
+                (Some(mine), Some(theirs)) => {
+                    let (few, many) = if mine.len() <= theirs.len() {
+                        (mine, theirs)
+                    } else {
+                        (theirs, mine)
+                    };
+                    !few.iter().any(|head| many.contains(head))
+                }
+                _ => false,
+            },
+            (Within::Under(a), Within::Under(b)) if b.starts_with(a) => self.goes_apart_from(b),
+            (Within::Under(a), Within::Under(b)) if a.starts_with(b) => other.goes_apart_from(a),
+            // One touches no path, or theirs are in folders apart.
+            (Within::Nothing, _) | (_, Within::Nothing) | (Within::Under(_), Within::Under(_)) => {
+                true
+            }
+            _ => false,
+        };
+        if apart {
+            return self.footprint.meets_whole(&other.footprint);
+        }
+        self.footprint.conflicts(&other.footprint)
+    }
+
+    /// Whether none of its paths is at or above `inner`, a folder below
+    /// its own: it claims nothing at its folder, and goes through other
+    /// names below it than the one `inner` is under.
+    fn goes_apart_from(&self, inner: &Path) -> bool {
+        let (Within::Under(folder), Some(heads)) = (&self.within, &self.heads) else {
+            return false;
+        };
+        inner
+            .components()
+            .nth(folder.components().count())
+            .is_some_and(|head| !heads.contains(head.as_os_str()))
     }
 }
 
@@ -867,5 +1095,102 @@ mod tests {
         assert!(many.is_heavy());
         let unknown = Footprint::of_steps([Some(Footprint::default()), None]);
         assert!(unknown.is_every());
+    }
+
+    /// What the history keeps of a large action fits its bound, and still
+    /// meets what the action met (ADR-079, 13): ten thousand files put
+    /// in the trash from one folder meet a rename of one of them and a
+    /// copy of the folder, and, widened, a new file beside them; never a
+    /// rename elsewhere.
+    #[test]
+    fn a_large_action_is_kept_bounded_and_meets_what_it_met() {
+        let trashed = Footprint::of_steps((0..10_000).map(|n| {
+            Some(
+                Footprint::default()
+                    .made(&p(&format!("/disk/downloads/it's {n}.jpg")))
+                    .record_in(TRASH),
+            )
+        }));
+        let kept = Kept::new(&trashed);
+        assert!(kept.footprint().claims() <= KEPT_CLAIMS);
+        let one = |footprint: Footprint| Kept::new(&footprint);
+        let rename = one(Footprint::default()
+            .made(&p("/disk/downloads/it's 7.jpg"))
+            .made(&p("/disk/downloads/b.jpg")));
+        assert!(kept.conflicts(&rename) && rename.conflicts(&kept));
+        // Widened, it meets a name beside them too: the folder written whole.
+        let beside = one(Footprint::default().made(&p("/disk/downloads/new.txt")));
+        assert!(!trashed.conflicts(beside.footprint()) && kept.conflicts(&beside));
+        let copy = one(Footprint::default()
+            .read(&p("/disk/downloads"))
+            .made(&p("/stick/downloads")));
+        assert!(kept.conflicts(&copy));
+        let elsewhere = one(Footprint::default()
+            .made(&p("/disk/notes/a.txt"))
+            .made(&p("/disk/notes/b.txt")));
+        assert!(!kept.conflicts(&elsewhere) && !elsewhere.conflicts(&kept));
+        // A store kept whole meets it whatever the folders.
+        let emptied = one(Footprint::default().store(TRASH));
+        assert!(kept.conflicts(&emptied));
+        assert!(one(Footprint::every()).conflicts(&elsewhere));
+    }
+
+    /// Paths of two drives share no folder: no quick answer, the whole
+    /// comparison is made.
+    #[test]
+    fn paths_under_no_one_folder_are_compared_whole() {
+        let a = Kept::new(&Footprint::default().made(&p("x/a")).made(&p("y/b")));
+        let b = Kept::new(&Footprint::default().made(&p("y/b")));
+        assert_eq!(a.within, Within::Anywhere);
+        assert!(a.conflicts(&b) && b.conflicts(&a));
+        let c = Kept::new(&Footprint::default().made(&p("z/c")));
+        assert!(!a.conflicts(&c));
+    }
+
+    mod widening {
+        use super::*;
+        use proptest::prelude::*;
+
+        /// A footprint of a few claims among a few folders and names.
+        fn footprint() -> impl Strategy<Value = Footprint> {
+            let path = (0..3usize, 0..3usize, 0..4usize).prop_map(|(a, b, n)| match n {
+                0 => p(&format!("/d{a}")),
+                1 => p(&format!("/d{a}/e{b}")),
+                _ => p(&format!("/d{a}/e{b}/it's {n}")),
+            });
+            let claim = (0..5usize, path).prop_map(|(kind, path)| match kind {
+                0 => Footprint::default().read(&path),
+                1 => Footprint::default().written(&path),
+                2 => Footprint::default().settles_name(&path, true),
+                3 => Footprint::default().store(TRASH),
+                _ => Footprint::default().made(&path),
+            });
+            prop::collection::vec(claim, 1..8)
+                .prop_map(|claims| Footprint::of_steps(claims.into_iter().map(Some)))
+        }
+
+        proptest! {
+            /// Widened to any bound, a footprint meets everything it met,
+            /// and fits that bound where it can; kept with its folder, it
+            /// answers as the whole comparison does.
+            #[test]
+            fn widening_never_lets_through_what_met(
+                a in footprint(),
+                b in footprint(),
+                most in 0..12usize,
+            ) {
+                let wide = a.bounded(most);
+                if a.conflicts(&b) {
+                    prop_assert!(wide.conflicts(&b) && b.conflicts(&wide));
+                }
+                if !a.is_every() {
+                    // Tops alone cannot widen: one per drive, `/` here.
+                    prop_assert!(wide.claims() <= most.max(1));
+                }
+                let (ka, kb) = (Kept::of(wide.clone()), Kept::of(b.clone()));
+                prop_assert_eq!(ka.conflicts(&kb), wide.conflicts(&b));
+                prop_assert_eq!(kb.conflicts(&ka), b.conflicts(&wide));
+            }
+        }
     }
 }

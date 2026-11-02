@@ -94,11 +94,16 @@ pub struct Report {
     /// The tags index holding 100 000 tagged files in one folder, told
     /// the folder went (`TagIndex::moved`).
     pub tags_forget: Stat,
+    /// What an action joining a full undo history costs (ADR-079, 13): a
+    /// 10 000-step action's footprint bounded as the history keeps it
+    /// (`footprint::Kept`), then compared with 200 kept entries of 1 000
+    /// claims each in the same folder, none meeting it.
+    pub history_put: Stat,
 }
 
 impl Report {
     /// Each measurement by its key in the budgets file.
-    fn metrics(&self) -> [(&'static str, &Stat); 26] {
+    fn metrics(&self) -> [(&'static str, &Stat); 27] {
         [
             ("first_batch_us", &self.first_batch),
             ("list_getdents_us", &self.list_getdents),
@@ -126,13 +131,14 @@ impl Report {
             ("entry_at_selection_us", &self.entry_at_selection),
             ("delete_tail_us", &self.delete_tail),
             ("tags_forget_us", &self.tags_forget),
+            ("history_put_us", &self.history_put),
         ]
     }
 }
 
 /// The measurements made in memory or in a scratch folder of their own:
 /// they read no generated tree.
-const OWN_DATA: [&str; 7] = [
+const OWN_DATA: [&str; 8] = [
     "tags_index_learn_us",
     "tags_index_tally_us",
     "tags_index_change_us",
@@ -140,16 +146,18 @@ const OWN_DATA: [&str; 7] = [
     "listing_sort_update_us",
     "delete_tail_us",
     "tags_forget_us",
+    "history_put_us",
 ];
 
 /// The measurements of the flat tree alone.
-const FLAT_ONLY: [&str; 6] = [
+const FLAT_ONLY: [&str; 7] = [
     "listing_sort_hydrate_us",
     "listing_sort_update_us",
     "entry_at_selection_us",
     "delete_tail_us",
     "tags_forget_us",
     "mime_by_name_us",
+    "history_put_us",
 ];
 
 /// The metrics a run measures, by their keys in the budgets file: those
@@ -1008,6 +1016,39 @@ fn tags_forget(runs: usize) -> Stat {
     )
 }
 
+/// [`Report::history_put`]: what `Executor`'s journal does as an action
+/// joins it, through the footprints it keeps: 200 entries each of a file
+/// made in 1 000 folders of its own (bounded to those folders, the most a
+/// kept footprint holds, all in one folder, so no quick answer), then an
+/// action of 10 000 files made in 1 000 folders of its own, bounded so,
+/// and compared with each.
+fn history_put(runs: usize) -> Stat {
+    use skwir_core::op::footprint::{Footprint, KEPT_CLAIMS, Kept};
+    let root = Path::new("/bench/history");
+    let action = |n: usize, files: usize| {
+        Footprint::of_steps((0..files).map(|i| {
+            let folder = root.join(format!("{n}-{}", i % KEPT_CLAIMS));
+            Some(Footprint::default().made(&folder.join(format!("it's {i}.txt"))))
+        }))
+    };
+    let entries: Vec<Kept> = (0..200)
+        .map(|n| Kept::new(&action(n, KEPT_CLAIMS)))
+        .collect();
+    let new = action(200, 10 * KEPT_CLAIMS);
+    Stat::of(
+        (0..runs)
+            .map(|_| {
+                let t = Instant::now();
+                let kept = Kept::new(&new);
+                let met = entries.iter().filter(|e| e.conflicts(&kept)).count();
+                let took = t.elapsed();
+                assert_eq!(met, 0, "folders of their own: none meets it");
+                took
+            })
+            .collect(),
+    )
+}
+
 /// Whether the generator could tag `dir` (see `generate::tag`).
 fn tagged(dir: &Path) -> bool {
     dir.join(".skwir-bench-tagged").exists()
@@ -1114,6 +1155,7 @@ pub fn run(root: &Path, profile: Profile, runs: usize, only: &Only) -> Report {
         entry_at_selection,
         delete_tail: measured(flat && want("delete_tail_us"), || delete_tail(runs)),
         tags_forget: measured(flat && want("tags_forget_us"), || tags_forget(runs)),
+        history_put: measured(flat && want("history_put_us"), || history_put(runs)),
     }
 }
 

@@ -166,9 +166,45 @@ one lane (`op::executor`) and operations.md's "Running".
    still takes the latest.
 10. **Redo** offers what was undone since the last action asked: an
     action asked after an Undo drops that undo's redo, even when the
-    undo ends after it.
+    undo ends after it. An undone action is put back alone, by the
+    History (13), when nothing undone after it touched what it did
+    (amended 2026-11-03).
 11. The history's bound (`JOURNAL_ENTRIES`, `JOURNAL_BYTES`) is
     unchanged.
+13. **The History** (added 2026-11-03, the user's choice of the nine
+    recommended options): every entry is listed, newest first, with its
+    own Undo, which takes it back alone under the rule of 9; an undone
+    one with its own Redo, under the rule of 10. The rule is answered
+    ahead, for every entry, never by comparing footprints as the list
+    is drawn:
+    - Each entry keeps the entries after it on its stack that touched
+      what it did (`JournalEntry::blocked_by`), worked out once as it
+      joins the stack, out of the journal's lock (`Executor::meets_on`,
+      at most `JOURNAL_ENTRIES` comparisons), and given up as one
+      leaves. What runs or waits is compared with the entries before it
+      as the history is read, kept by the reader until
+      `Executor::history_version` moves.
+    - What an entry keeps of its footprint is bounded (`footprint::Kept`,
+      `KEPT_CLAIMS`, 1 000): many names of one folder become any name
+      there, then that folder written whole, then trees their folders,
+      the deepest first. It meets everything the footprint met, so a
+      very large action is taken back alone a little less often, never
+      wrongly. A kept footprint also says the folder all its paths are
+      in and the names right below it they go through: two apart are
+      told apart without comparing their paths (a full history: 7.5 ms
+      to join it, `history_put_us`). A toast's Undo compares what runs
+      the same way, so what the History shows held is held.
+    - Undo with what came after takes an entry with the entries after it
+      that touched what it did, followed through, newest first, each
+      once the one before ended (an undo waits for one of its kind asked
+      before it, unmeasured or taking a later entry); never through one
+      that cannot be undone. Each is an undo of its own: Redo puts them
+      back one at a time, the oldest first.
+    - An entry that cannot be undone (deleted for good) blocks the ones
+      before it that it touched: their Undo says it took what they did
+      for good, until Undo, reaching it, lets go of it.
+    - Agents and scripts have the same surface: `history`, and
+      `undo`'s `entry` and `with_after`, `redo`'s `entry`.
 
 ### What the window shows
 

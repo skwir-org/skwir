@@ -9972,3 +9972,44 @@ read back strictly.
 **Not checked:** the model helper's STEP reading on ogeom 0.14 beyond its
 tests (the conformance trial of 2026-10-19 was not run again); the email
 preview on real messages beyond its tests; nothing in a window.
+
+## Queue progress and the History (2026-11-03)
+
+The user chose the nine recommended options of the proposal page
+(whole-queue progress counted by actions, a History panel opened from
+the footer's Undo split in two, each entry undone alone when nothing
+after it touched what it did, "Undo with what came after", Redo by the
+same rule, footprints bounded in the journal).
+
+**1. The history's rule answered ahead** (ADR-079, 13). Each journal
+entry keeps the entries after it on its stack that touched what it did
+(`JournalEntry::blocked_by`): compared once as it joins, out of the
+journal's lock (`Executor::meets_on`, then checked under it by pointer,
+anything changed since compared there), given up as one leaves (undone,
+redone, past the bound). What an entry keeps of its runs' footprints is
+`footprint::Kept`: bounded to 1,000 claims (names of a folder become any
+name there, then the folder written whole, then trees their folders),
+with the folder all its paths are in and the names right below it. The
+first measure of a put into a full history, 200 entries of 1,000 claims
+each in one folder, was 391 ms; comparing the names right below the
+shared folder first took it to 7.5 ms (`history_put_us`, budget 25 ms).
+An entry that cannot be undone (deleted for good) still blocks those it
+touched: the first build let it block nothing, and
+`undo_of_one_trashing_is_not_refused_for_another` caught it. A toast's
+Undo compares what runs by the bounded footprint too, so the History and
+the press agree.
+
+Checked: `cargo nextest run -p skwir-core`, 637 passed, among them
+`the_history_says_what_each_undo_can_do_and_takes_what_came_after` (a
+chain undone newest first, the redo of the older refused until the newer
+is put back, an action running holding an entry's Undo and the chain
+through it), `an_entry_undone_no_longer_blocks_the_ones_before_it`, the
+property `widening_never_lets_through_what_met` (a widened footprint
+meets all it met and fits its bound; the kept footprint's quick answers
+equal the whole comparison) and the property
+`an_action_undone_alone_then_the_rest_restores_the_tree` (real renames,
+moves, copies, swaps and folders: one entry the history lets go alone,
+or with what came after, taken back first, then the rest, gives the
+tree back; redone all, the last state); clippy on skwir-core and
+skwir-bench; `skwir-bench list --only history_put_us`.
+

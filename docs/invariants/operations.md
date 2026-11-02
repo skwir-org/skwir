@@ -218,11 +218,17 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   the order asked (`JournalEntry::seq`): Undo takes the last plan asked,
   waiting while it runs (`Executor::undo_target`, which the status bar
   names), and a plan asked after an undo drops its redo. A toast's Undo
-  names the plan it reports (`undo`'s `plan`, `Executor::undo_of`):
-  taken back alone when no plan asked after it, its entry still in the
-  history, running or waiting, touched what it did
-  (`JournalEntry::touched`, the footprints its runs had), else refused,
-  saying which did, and nothing taken back. A step's
+  names the plan it reports (`undo`'s `plan`, `Executor::undo_of`), and
+  the History's an entry (`undo`'s `entry`, `Executor::undo_entry`,
+  ADR-079, 13): taken back alone when no plan asked after it, its entry
+  still in the history, running or waiting, touched what it did
+  (`JournalEntry::blocked_by`, worked out as each entry joins its stack;
+  what runs or waits, compared as it is asked), else refused, saying
+  which did, and nothing taken back. What an entry keeps of what its
+  runs touched is bounded and only ever wider (`footprint::Kept`): never
+  compare footprints as the history is read or drawn, nor keep an
+  entry's whole. An undone entry is redone alone by the same rule on the
+  redo stack (`redo`'s `entry`). A step's
   footprint names what its `describe` and its companions touch
   (`Footprint::made_with`, `read_with`: their places by the companions'
   rules `Volumes` carries, none looked at, a companions' folder such as

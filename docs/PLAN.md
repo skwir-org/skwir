@@ -479,6 +479,30 @@ more: a login unit's clean-up left a mount its program had just left,
 asked by a stat FUSE answers from memory (statfs now). Checks in
 `docs/STATUS-LOG.md` (2026-11-02, "Review fixes").
 
+## Queue progress and the History (2026-11-03)
+
+Asked by the user: the strip's bar counted only what ran, so it went
+back to nothing between two copies waiting their turn; and Undo took
+only the last action, or a toast's, refused when pressed when it could
+not be. Proposed on a page and chosen whole (the recommended option of
+each of nine). Three steps:
+
+1. **The history's rule answered ahead** (ADR-079, 13). Built: each
+   journal entry keeps the entries after it that touched what it did,
+   worked out once as it joins its stack, out of the journal's lock;
+   what an entry keeps of its footprint is bounded to 1,000 claims, only
+   ever wider, with the folder its paths are in and the names right
+   below it, which tell two apart at once (`footprint::Kept`). Undo and
+   Redo of an entry by its place, Undo with what came after (newest
+   first, each once the one before ended), and `history` for agents.
+   Rules in `docs/invariants/operations.md` ("At once").
+2. **The History panel**, opened from the footer's Undo split in two:
+   next.
+3. **The queue's progress** in the strip and Activity: next.
+
+Checks in `docs/STATUS-LOG.md` (2026-11-03, "Queue progress and the
+History").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of

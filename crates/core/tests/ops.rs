@@ -265,6 +265,77 @@ proptest! {
     }
 }
 
+/// A small tree and actions on it, each its own plan, drawn for that tree.
+fn tree_and_actions() -> impl Strategy<Value = (Tree, Vec<Vec<Step>>)> {
+    (0usize..3, 1usize..4).prop_flat_map(|(dirs, files)| {
+        let t = Tree { dirs, files };
+        (Just(t.clone()), prop::collection::vec(steps(&t), 2..5))
+    })
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 24, ..ProptestConfig::default() })]
+
+    /// An action the history lets go back alone (ADR-079, 13), or with
+    /// what came after it, taken back first, then the rest in the reverse
+    /// order asked, gives back the tree as it was; redone all, the tree
+    /// the last action left.
+    #[test]
+    fn an_action_undone_alone_then_the_rest_restores_the_tree(
+        (t, actions) in tree_and_actions(),
+        pick in any::<prop::sample::Index>(),
+        with_after in any::<bool>(),
+    ) {
+        if under_wine("trashing through the shell") {
+            return Ok(());
+        }
+        let tmp = Scratch::new();
+        let root: PathBuf = tmp.path().join("tree");
+        std::fs::create_dir(&root).unwrap();
+        build(&root, &t);
+        let app = app(tmp.path());
+        app.companions.register("test", std::sync::Arc::new(Aside { holds: false }));
+        let before = snapshot(&root);
+        for steps in &actions {
+            let plan = make_plan(&root, &t, steps);
+            if !plan.steps.is_empty() {
+                app.executor.execute_blocking(&plan, app.lifetime());
+            }
+        }
+        let last = snapshot(&root);
+        let rows = app.executor.history().rows;
+        let free: Vec<&skwir_core::op::HistoryRow> = rows
+            .iter()
+            .filter(|r| {
+                r.can == skwir_core::op::Can::Now || (with_after && !r.with.is_empty())
+            })
+            .collect();
+        if free.is_empty() {
+            return Ok(());
+        }
+        let row = free[pick.index(free.len())];
+        let first = if with_after && !row.with.is_empty() {
+            app.executor.with_after(row.entry)
+        } else {
+            vec![row.entry]
+        };
+        for entry in first {
+            let u = app.executor.undo_entry_blocking(entry, app.lifetime()).expect("in the history");
+            prop_assert!(u.error.is_none(), "undo of {} failed: {:?}", entry, u.error);
+        }
+        while app.executor.can_undo() {
+            let u = app.executor.undo_blocking(app.lifetime()).unwrap();
+            prop_assert!(u.error.is_none(), "undo failed: {:?}", u.error);
+        }
+        prop_assert_eq!(snapshot(&root), before, "undone all, the tree is as it was");
+        while app.executor.can_redo() {
+            let r = app.executor.redo_blocking(app.lifetime()).unwrap();
+            prop_assert!(r.error.is_none(), "redo failed: {:?}", r.error);
+        }
+        prop_assert_eq!(snapshot(&root), last, "redone all, the tree is as the last action left it");
+    }
+}
+
 /// The seed `8168ec6a…` the property found, by itself: the copy's source
 /// was found ahead of it, at `f0`; the swap then put the other file there;
 /// the rename after it names the file the copy copied. It renames that

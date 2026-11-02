@@ -2657,9 +2657,28 @@ pub struct UndoArgs {
     /// The plan to take back, as its progress named it (a toast's Undo,
     /// of the action it reports): taken back alone when nothing asked
     /// after it touched what it did, else refused, saying what did. The
-    /// last plan asked when omitted.
+    /// last plan asked when neither it nor `entry` is given.
     #[serde(default)]
     pub plan: Option<op::PlanId>,
+    /// The entry of the history to take back, by its place as `history`
+    /// lists it: alone when nothing asked after it touched what it did,
+    /// else refused, saying what did, unless `with_after`.
+    #[serde(default)]
+    pub entry: Option<u64>,
+    /// With `entry`: take back with it the entries after it that touched
+    /// what it did, followed through, newest first (`history`'s `with`).
+    #[serde(default)]
+    pub with_after: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RedoArgs {
+    /// The undone entry of the history to apply again, by its place as
+    /// `history` lists it: alone when nothing undone after it touched what
+    /// it did, else refused, saying what did. The last undone when
+    /// omitted.
+    #[serde(default)]
+    pub entry: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -3604,24 +3623,58 @@ mod builtin {
             "core", Topic::Files,
             "undo",
             "Undo",
-            "Undo the most recent plan, or the plan named when nothing asked after it touched what it did; asked from outside the window, says what it took back",
+            "Undo the most recent plan, or the plan or history entry named when nothing asked after it touched what it did (with_after: with the entries after it that did, newest first); asked from outside the window, says what it took back",
             |a, app| {
+                anyhow::ensure!(
+                    !(a.plan.is_some() && a.entry.is_some()),
+                    "name a plan or an entry, not both"
+                );
                 if crate::scheduler::on_window_thread() {
-                    match a.plan {
+                    let cancel = app.lifetime().child();
+                    match (a.plan, a.entry) {
                         // Its run says what it did, or why it could not.
-                        Some(plan) => app.executor.undo_of(plan, app.lifetime().child()),
-                        None => anyhow::ensure!(
-                            app.executor.undo(app.lifetime().child()),
-                            "nothing to undo"
-                        ),
+                        (Some(plan), _) => app.executor.undo_of(plan, cancel),
+                        (None, Some(entry)) if a.with_after => {
+                            app.executor.undo_with_after(entry, &cancel);
+                        }
+                        (None, Some(entry)) => app.executor.undo_entry(entry, cancel),
+                        (None, None) => {
+                            anyhow::ensure!(app.executor.undo(cancel), "nothing to undo");
+                        }
                     }
                     return Ok(Outcome::Done);
                 }
                 // A script or an agent waits, and is told what it took back.
                 let cancel = app.lifetime().child();
-                let result = match a.plan {
-                    Some(plan) => app.executor.undo_of_blocking(plan, &cancel),
-                    None => app.executor.undo_blocking(&cancel),
+                let result = match (a.plan, a.entry) {
+                    (Some(plan), _) => app.executor.undo_of_blocking(plan, &cancel),
+                    (None, Some(entry)) if a.with_after => {
+                        // Newest first, each once the one before ended.
+                        let mut all: Option<op::ExecResult> = None;
+                        for seq in app.executor.with_after(entry) {
+                            let Some(r) = app.executor.undo_entry_blocking(seq, &cancel) else {
+                                break;
+                            };
+                            let stop = r.error.is_some() || r.cancelled;
+                            all = Some(match all {
+                                None => r,
+                                Some(sum) => op::ExecResult {
+                                    applied: sum.applied + r.applied,
+                                    skipped: sum.skipped + r.skipped,
+                                    error: sum.error.or(r.error),
+                                    cancelled: sum.cancelled || r.cancelled,
+                                    undoable: sum.undoable || r.undoable,
+                                    complete: sum.complete && r.complete,
+                                },
+                            });
+                            if stop {
+                                break;
+                            }
+                        }
+                        all
+                    }
+                    (None, Some(entry)) => app.executor.undo_entry_blocking(entry, &cancel),
+                    (None, None) => app.executor.undo_blocking(&cancel),
                 }
                 .ok_or_else(|| anyhow::anyhow!("nothing to undo"))?;
                 Ok(replayed(
@@ -3632,23 +3685,38 @@ mod builtin {
             },
         );
 
-        c.register::<NoArgs, _>(
+        c.register::<RedoArgs, _>(
             "core", Topic::Files,
             "redo",
             "Redo",
-            "Redo the most recently undone plan; asked from outside the window, says what it applied again",
-            |_, app| {
+            "Redo the most recently undone plan, or the undone history entry named when nothing undone after it touched what it did; asked from outside the window, says what it applied again",
+            |a, app| {
                 if crate::scheduler::on_window_thread() {
-                    anyhow::ensure!(app.executor.redo(app.lifetime().child()), "nothing to redo");
+                    let cancel = app.lifetime().child();
+                    match a.entry {
+                        Some(entry) => app.executor.redo_entry(entry, cancel),
+                        None => anyhow::ensure!(app.executor.redo(cancel), "nothing to redo"),
+                    }
                     return Ok(Outcome::Done);
                 }
-                let result = app
-                    .executor
-                    .redo_blocking(&app.lifetime().child())
-                    .ok_or_else(|| anyhow::anyhow!("nothing to redo"))?;
+                let cancel = app.lifetime().child();
+                let result = match a.entry {
+                    Some(entry) => app.executor.redo_entry_blocking(entry, &cancel),
+                    None => app.executor.redo_blocking(&cancel),
+                }
+                .ok_or_else(|| anyhow::anyhow!("nothing to redo"))?;
                 Ok(replayed("redone", app.executor.last_undo_title().as_deref(), &result))
             },
         );
+
+        c.register::<NoArgs, _>(
+            "core", Topic::Files,
+            "history",
+            "Undo history",
+            "Return the actions Undo can take back, newest first (ADR-079, 13): each one's entry (what undo and redo take as entry), title, when it applied (seconds since 1970, UTC), whether it runs, waits, is done or undone, and what its Undo (an undone one's Redo) can do now: now, once it ends, after the action named (undo, or redo, that one first), being done, or never; with, the entries undo with_after takes with it",
+            |_, app| Ok(Outcome::Value(serde_json::to_value(app.executor.history())?)),
+        )
+        .data();
 
         c.register::<RetryArgs, _>(
             "core", Topic::Files,
