@@ -145,11 +145,69 @@ impl Quality {
             None => "Nothing re-encoded".to_owned(),
         }
     }
+
+    /// The qualities after this one, each smaller.
+    fn below(self) -> impl Iterator<Item = Quality> + Clone {
+        Quality::ALL
+            .into_iter()
+            .skip_while(move |quality| *quality != self)
+            .skip(1)
+    }
+
+    /// The rules tried after this quality's own to bring a picture under
+    /// the size asked (`Job::at_most`), from the largest copy to the
+    /// smallest: its own longer side at the JPEG qualities of those below
+    /// it, then those qualities, then [`PICTURE_STEPS`]. None for
+    /// Lossless, which re-encodes nothing at a loss.
+    pub fn picture_steps(self) -> Vec<PictureRule> {
+        let own = self.picture();
+        let Some(jpeg) = own.jpeg else {
+            return Vec::new();
+        };
+        let below = self.below().map(Quality::picture);
+        let mut steps: Vec<PictureRule> = below
+            .clone()
+            .filter_map(|rule| rule.jpeg.filter(|&quality| quality < jpeg))
+            .map(|quality| PictureRule {
+                jpeg: Some(quality),
+                ..own
+            })
+            .collect();
+        steps.extend(below);
+        steps.extend(PICTURE_STEPS);
+        steps
+    }
+
+    /// The rules tried after this quality's own to bring a PDF under the
+    /// size asked, as [`Quality::picture_steps`] does: its own dpi at the
+    /// JPEG qualities of those below it (their flat images allowed as
+    /// JPEG), then those qualities, then [`PDF_STEPS`]. None for Lossless.
+    pub fn pdf_steps(self) -> Vec<PdfRule> {
+        let own = self.pdf();
+        let Some(jpeg) = own.jpeg else {
+            return Vec::new();
+        };
+        let below = self.below().map(Quality::pdf);
+        let mut steps: Vec<PdfRule> = below
+            .clone()
+            .filter(|rule| rule.jpeg.is_some_and(|quality| quality < jpeg))
+            .map(|rule| PdfRule {
+                jpeg: rule.jpeg,
+                lossy_flat: rule.lossy_flat,
+                ..own
+            })
+            .collect();
+        steps.extend(below);
+        steps.extend(PDF_STEPS);
+        steps
+    }
 }
 
-/// The steps tried, below the quality chosen, to bring a copy under the
-/// size asked (`Job::at_most`): for a picture, its longer side and JPEG
-/// quality; for a PDF, its images' dpi and JPEG quality.
+/// The last steps tried to bring a copy under the size asked
+/// (`Job::at_most`), after the qualities below the one chosen
+/// ([`Quality::picture_steps`], [`Quality::pdf_steps`]): for a picture, its
+/// longer side and JPEG quality; for a PDF, its images' dpi and JPEG
+/// quality.
 pub const PICTURE_STEPS: [PictureRule; 3] = [
     PictureRule {
         longest: Some(1024),
@@ -195,7 +253,9 @@ pub struct Job {
     #[serde(default, skip_serializing_if = "is_false")]
     pub strip: bool,
     /// At most this many bytes: smaller steps are tried until it fits
-    /// ([`PICTURE_STEPS`], [`PDF_STEPS`]), the smallest kept when none does.
+    /// ([`Quality::picture_steps`], [`Quality::pdf_steps`]), the smallest
+    /// kept when none does. Lossless has none: it re-encodes nothing at a
+    /// loss.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at_most: Option<u64>,
     /// A PDF's images (by object number) kept as they were: those a page
@@ -271,6 +331,49 @@ mod tests {
             assert_eq!(rule.dpi.is_some(), rule.from.is_some());
             assert!(rule.from >= rule.dpi);
         }
+    }
+
+    #[test]
+    fn a_size_asked_steps_down_from_the_quality_chosen() {
+        assert!(Quality::Lossless.picture_steps().is_empty());
+        assert!(Quality::Lossless.pdf_steps().is_empty());
+        let print = Quality::Print.picture_steps();
+        let at = |longest, jpeg| PictureRule {
+            longest: Some(longest),
+            jpeg: Some(jpeg),
+        };
+        assert_eq!(
+            print[..4],
+            [at(3840, 80), at(3840, 70), at(1920, 80), at(1280, 70)]
+        );
+        assert_eq!(print[4..], PICTURE_STEPS);
+        assert_eq!(Quality::Small.picture_steps(), PICTURE_STEPS);
+        for quality in [Quality::Print, Quality::Screen, Quality::Small] {
+            // Each step a smaller copy than the one before: a shorter side,
+            // or the same side at a lower JPEG quality.
+            let own = quality.picture();
+            let steps: Vec<_> = std::iter::once(own)
+                .chain(quality.picture_steps())
+                .collect();
+            assert!(steps.windows(2).all(|pair| {
+                pair[1].longest < pair[0].longest
+                    || (pair[1].longest == pair[0].longest && pair[1].jpeg < pair[0].jpeg)
+            }));
+            let rules: Vec<_> = std::iter::once(quality.pdf())
+                .chain(quality.pdf_steps())
+                .collect();
+            assert!(rules.windows(2).all(|pair| {
+                pair[1].dpi < pair[0].dpi
+                    || (pair[1].dpi == pair[0].dpi && pair[1].jpeg < pair[0].jpeg)
+            }));
+            assert!(rules.iter().all(|rule| rule.from >= rule.dpi));
+            assert_eq!(rules[rules.len() - PDF_STEPS.len()..], PDF_STEPS);
+        }
+        let print = Quality::Print.pdf_steps();
+        assert_eq!(
+            (print[0].dpi, print[0].from, print[0].jpeg),
+            (Some(300), Some(450), Some(75))
+        );
     }
 
     #[test]

@@ -14,7 +14,7 @@ use image::{
     DynamicImage, ImageBuffer, ImageDecoder, ImageFormat, ImageReader, Limits, LumaA, Rgba,
 };
 use skwir_core::print::Picture;
-use skwir_core::shrink::{PICTURE_STEPS, Quality};
+use skwir_core::shrink::Quality;
 use std::borrow::Cow;
 use std::io::{Cursor, Read};
 use std::path::Path;
@@ -29,7 +29,8 @@ pub struct Options {
     /// taken stay.
     pub strip: bool,
     /// At most this many bytes: smaller steps are tried until it fits
-    /// ([`PICTURE_STEPS`]), the smallest kept when none does.
+    /// ([`Quality::picture_steps`]), the smallest kept when none does.
+    /// Lossless has none: it re-encodes nothing at a loss.
     pub at_most: Option<u64>,
 }
 
@@ -91,14 +92,16 @@ pub fn shrink(input: &Path, output: &Path, options: &Options) -> Result<Option<W
     let met = match options.at_most {
         None => None,
         Some(limit) => {
-            if size(&best) > limit {
+            // None under Lossless, which loses nothing to fit a size.
+            let steps = options.quality.picture_steps();
+            if size(&best) > limit && !steps.is_empty() {
                 // Each step from the original pixels, never from a copy
                 // already made smaller.
                 let decoded = match original.take() {
                     Some(decoded) => decoded,
                     None => source.decode()?,
                 };
-                for step in PICTURE_STEPS {
+                for step in steps {
                     let Some(quality) = step.jpeg else { continue };
                     let copy =
                         source.encoded(&decoded, step.longest, quality, gray, options.strip)?;
@@ -2129,6 +2132,48 @@ mod tests {
         // The smallest step kept.
         let back = image::load_from_memory(&copy.unwrap()).unwrap();
         assert_eq!((back.width(), back.height()), (640, 137));
+    }
+
+    #[test]
+    fn picture_at_most_tries_the_qualities_below_first() {
+        // Print's copy a little too large: the JPEG quality below it, at
+        // its own size, fits, the picture keeping its pixels across.
+        let input = plain_jpeg(1400, 300, 95);
+        let print = shrunk(&input, options(Quality::Print)).0.unwrap().bytes;
+        let (written, copy) = shrunk(
+            &input,
+            Options {
+                at_most: Some(print - 1),
+                ..options(Quality::Print)
+            },
+        );
+        assert_eq!(written.unwrap().met, Some(true));
+        let back = image::load_from_memory(&copy.unwrap()).unwrap();
+        assert_eq!((back.width(), back.height()), (1400, 300));
+    }
+
+    #[test]
+    fn picture_lossless_loses_nothing_to_fit_a_size() {
+        // Wider than the smallest step, which would resize it.
+        let (width, height) = (800, 100);
+        let data = photo(width, height);
+        let input = library_png(
+            (width, height),
+            &data,
+            image::ExtendedColorType::Rgb8,
+            None,
+            None,
+        );
+        let (written, copy) = shrunk(
+            &input,
+            Options {
+                at_most: Some(100),
+                ..options(Quality::Lossless)
+            },
+        );
+        assert_eq!(written.unwrap().met, Some(false));
+        let back = image::load_from_memory(&copy.unwrap()).unwrap();
+        assert_eq!(back.into_rgb8().into_raw(), data);
     }
 
     #[test]
