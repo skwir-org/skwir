@@ -16,7 +16,7 @@ use image::{
 use skwir_core::print::Picture;
 use skwir_core::shrink::Quality;
 use std::borrow::Cow;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
 /// What a picture's copy is made with.
@@ -67,8 +67,13 @@ pub fn shrink(input: &Path, output: &Path, options: &Options) -> Result<Option<W
         None => keep(&mut best, source.lossless(options.strip)?),
         Some(quality) => {
             let decoded = source.decode()?;
-            let copy = source.encoded(&decoded, rule.longest, quality, gray, options.strip)?;
-            keep(&mut best, Some(copy));
+            // A PNG whose pixels this rule leaves as they are is only
+            // packed tighter, below, keeping all that describes them.
+            let as_stored = source.as_stored(&decoded, rule.longest, gray);
+            if !as_stored {
+                let copy = source.encoded(&decoded, rule.longest, quality, gray, options.strip)?;
+                keep(&mut best, Some(copy));
+            }
             // Pixels that need no change are also tried as they are: an
             // already small picture written again may only grow, and lose.
             let side = source.width.max(source.height);
@@ -77,11 +82,13 @@ pub fn shrink(input: &Path, output: &Path, options: &Options) -> Result<Option<W
                 && !(gray && source.colour)
                 && let Some(mut kept) = source.lossless(options.strip)?
             {
-                kept.notes.insert(
-                    0,
-                    "Its pixels were kept as they were: written again, they came out larger."
-                        .to_owned(),
-                );
+                if !as_stored {
+                    kept.notes.insert(
+                        0,
+                        "Its pixels were kept as they were: written again, they came out larger."
+                            .to_owned(),
+                    );
+                }
                 keep(&mut best, Some(kept));
             }
             original = Some(decoded);
@@ -103,6 +110,10 @@ pub fn shrink(input: &Path, output: &Path, options: &Options) -> Result<Option<W
                 };
                 for step in steps {
                     let Some(quality) = step.jpeg else { continue };
+                    if source.as_stored(&decoded, step.longest, gray) {
+                        // Its copy as stored was tried above.
+                        continue;
+                    }
                     let copy =
                         source.encoded(&decoded, step.longest, quality, gray, options.strip)?;
                     keep(&mut best, Some(copy));
@@ -203,7 +214,6 @@ impl<'a> Source<'a> {
             "A picture of more than {} megapixels is not made smaller.",
             Picture::MOST_PIXELS / 1_000_000
         );
-        let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
         let colour = decoder.color_type().has_color();
         let icc = decoder.icc_profile().ok().flatten();
         // A PNG's eXIf holds the TIFF block alone; some writers put the
@@ -214,6 +224,12 @@ impl<'a> Source<'a> {
                 None => block,
             }
         });
+        // Read from the block the copy keeps, so its pixels are turned as
+        // that block says, whatever stood before it.
+        let orientation = exif
+            .as_deref()
+            .and_then(Orientation::from_exif_chunk)
+            .unwrap_or(Orientation::NoTransforms);
         Ok(Source {
             bytes,
             container,
@@ -248,6 +264,28 @@ impl<'a> Source<'a> {
         }
     }
 
+    /// Whether `original` brought to `longest`, gray when asked, holds a
+    /// PNG's pixels as stored: the same size, 8 bits a sample and colour
+    /// type (no palette expanded, no transparency added or taken), which
+    /// the copy that loses nothing ([`Source::lossless`]) keeps with all
+    /// that describes them.
+    fn as_stored(&self, original: &Pixels, longest: Option<u32>, gray: bool) -> bool {
+        let Container::Png(png) = &self.container else {
+            return false;
+        };
+        let size = longest.map_or((original.width, original.height), |longest| {
+            samples::fitted(original.width, original.height, longest)
+        });
+        let channels = if gray && original.colour() {
+            original.channels - 2
+        } else {
+            original.channels
+        };
+        size == (png.header.width, png.header.height)
+            && png.header.depth == 8
+            && png.header.colour == colour_type(channels)
+    }
+
     /// A copy re-encoded from `original`: its longer side at most
     /// `longest`, turned upright, gray when asked, a JPEG at `quality`.
     fn encoded(
@@ -264,6 +302,10 @@ impl<'a> Source<'a> {
         };
         // Resized as stored, then turned: the turn works on the smaller
         // picture, and fitting a size is the same either way.
+        let scale = (
+            f64::from(width) / f64::from(original.width),
+            f64::from(height) / f64::from(original.height),
+        );
         let mut pixels = original.resized(width, height)?;
         let jpeg = matches!(self.container, Container::Jpeg(_));
         if jpeg && pixels.alpha() {
@@ -305,12 +347,7 @@ impl<'a> Source<'a> {
                     width: pixels.width,
                     height: pixels.height,
                     depth: 8,
-                    colour: match pixels.channels {
-                        1 => 0,
-                        2 => 4,
-                        3 => 2,
-                        _ => 6,
-                    },
+                    colour: colour_type(pixels.channels),
                     interlaced: false,
                 };
                 let raster = Raster {
@@ -321,8 +358,10 @@ impl<'a> Source<'a> {
                 };
                 let kept = Kept::Resampled {
                     profile: profile.is_some(),
+                    scale,
+                    quarter_turn: quarter_turn(self.orientation),
                 };
-                png.written(&header, &raster, &kept, strip, exif.as_deref())
+                png.written(&header, &raster, &kept, strip, exif.as_deref())?
             }
         };
         Ok(Candidate { bytes, notes })
@@ -344,7 +383,7 @@ impl<'a> Source<'a> {
         let kept = Kept::Lossless {
             quarter_turn: quarter_turn(self.orientation),
         };
-        let bytes = png.written(&header, &raster, &kept, strip, exif.as_deref());
+        let bytes = png.written(&header, &raster, &kept, strip, exif.as_deref())?;
         Ok(Candidate { bytes, notes })
     }
 
@@ -432,6 +471,16 @@ impl<'a> Source<'a> {
     }
 }
 
+/// A PNG's colour type for pixels of `channels` 8-bit samples.
+fn colour_type(channels: u8) -> u8 {
+    match channels {
+        1 => 0,
+        2 => 4,
+        3 => 2,
+        _ => 6,
+    }
+}
+
 /// Whether `orientation` turns a quarter, swapping width and height.
 fn quarter_turn(orientation: Orientation) -> bool {
     matches!(
@@ -510,10 +559,10 @@ impl Pixels {
         }
     }
 
-    /// Resized to `width` × `height` as [`Samples::resized`] does; with
-    /// alpha, premultiplied at 16 bits a sample, so the colour of a
-    /// transparent pixel, whatever it is, does not bleed into its
-    /// neighbours.
+    /// Resized to `width` × `height` as [`samples::resize`] does, read
+    /// where they are; with alpha, premultiplied at 16 bits a sample, so
+    /// the colour of a transparent pixel, whatever it is, does not bleed
+    /// into its neighbours.
     fn resized(&self, width: u32, height: u32) -> Result<Pixels> {
         if (width, height) == (self.width, self.height) {
             return Ok(Pixels {
@@ -522,13 +571,17 @@ impl Pixels {
             });
         }
         if !self.alpha() {
-            let samples = Samples::new(self.width, self.height, self.channels, self.data.clone())?;
-            let resized = samples.resized(width, height)?;
+            let data = samples::resize(
+                &self.data,
+                (self.width, self.height),
+                self.channels,
+                (width, height),
+            )?;
             return Ok(Pixels {
                 width,
                 height,
                 channels: self.channels,
-                data: resized.data,
+                data,
             });
         }
         let channels = usize::from(self.channels);
@@ -1048,29 +1101,41 @@ fn dated(block: &[u8], orientation: u16, notes: &mut Vec<String>) -> Option<Vec<
         }
     };
     let little = read.as_ref().is_some_and(exif::Exif::little_endian);
-    let mut fields: Vec<exif::Field> = read
+    let (dates, unknown): (Vec<&exif::Field>, Vec<&exif::Field>) = read
         .iter()
         .flat_map(exif::Exif::fields)
         .filter(|field| field.ifd_num == exif::In::PRIMARY && DATES.contains(&field.tag))
-        .cloned()
-        .collect();
-    if orientation != 1 {
-        fields.push(exif::Field {
-            tag: exif::Tag::Orientation,
-            ifd_num: exif::In::PRIMARY,
-            value: exif::Value::Short(vec![orientation]),
-        });
+        // A value of a type EXIF does not have is one no writer writes.
+        .partition(|field| !matches!(field.value, exif::Value::Unknown(..)));
+    let turn = (orientation != 1).then(|| exif::Field {
+        tag: exif::Tag::Orientation,
+        ifd_num: exif::In::PRIMARY,
+        value: exif::Value::Short(vec![orientation]),
+    });
+    let written = |dates: &[&exif::Field]| -> Option<Vec<u8>> {
+        if dates.is_empty() && turn.is_none() {
+            return None;
+        }
+        let mut writer = exif::experimental::Writer::new();
+        for field in dates.iter().copied().chain(turn.as_ref()) {
+            writer.push_field(field);
+        }
+        let mut out = Cursor::new(Vec::new());
+        writer.write(&mut out, little).ok()?;
+        Some(out.into_inner())
+    };
+    if !unknown.is_empty() {
+        notes.push("Part of its date could not be read, so it was left out.".to_owned());
     }
-    if fields.is_empty() {
-        return None;
+    match written(&dates) {
+        Some(block) => Some(block),
+        None if dates.is_empty() => None,
+        // How to turn it kept whatever its date holds.
+        None => {
+            notes.push("Its date could not be kept, so it was left out.".to_owned());
+            written(&[])
+        }
     }
-    let mut writer = exif::experimental::Writer::new();
-    for field in &fields {
-        writer.push_field(field);
-    }
-    let mut out = Cursor::new(Vec::new());
-    writer.write(&mut out, little).ok()?;
-    Some(out.into_inner())
 }
 
 // PNG: read chunk by chunk, so a copy keeps what it is told to, and its
@@ -1160,12 +1225,20 @@ impl Header {
 }
 
 /// What a PNG copy keeps of the original's chunks: all that describes its
-/// pixels when they are the same (a palette, its transparency, its
-/// pixels' shape, swapped by a quarter turn), only what describes their
-/// colours when they are resampled, its profile where it still fits.
+/// pixels when they are the same (a palette, its transparency), only what
+/// describes their colours when they are resampled, its profile where it
+/// still fits; and its pixels' physical size, scaled with them and swapped
+/// by a quarter turn.
 enum Kept {
-    Lossless { quarter_turn: bool },
-    Resampled { profile: bool },
+    Lossless {
+        quarter_turn: bool,
+    },
+    Resampled {
+        profile: bool,
+        /// How much each side, as stored, was brought down.
+        scale: (f64, f64),
+        quarter_turn: bool,
+    },
 }
 
 impl<'a> Png<'a> {
@@ -1205,57 +1278,50 @@ impl<'a> Png<'a> {
         Ok(Png { header, chunks })
     }
 
-    /// Its pixels, unfiltered and, when interlaced, put in place.
+    /// Its pixels, unfiltered and, when interlaced, put in place: its
+    /// compressed data read where it is, each row unfiltered as it comes.
     fn raster(&self) -> Result<Raster> {
         let header = self.header;
         let bits = header.bits();
-        let compressed: Vec<u8> = self
-            .chunks
-            .iter()
-            .filter(|chunk| &chunk.kind == b"IDAT")
-            .flat_map(|chunk| chunk.data.iter().copied())
-            .collect();
-        let passes: Vec<(u32, u32, u32, u32)> = if header.interlaced {
-            ADAM7.to_vec()
-        } else {
-            vec![(0, 0, 1, 1)]
-        };
-        let sizes: Vec<(u32, u32)> = passes
-            .iter()
-            .map(|&(x0, y0, dx, dy)| {
-                let across = |size: u32, start: u32, step: u32| {
-                    if size > start {
-                        (size - start).div_ceil(step)
-                    } else {
-                        0
-                    }
-                };
-                (across(header.width, x0, dx), across(header.height, y0, dy))
-            })
-            .collect();
-        let expected: u64 = sizes
-            .iter()
-            .filter(|&&(width, height)| width > 0 && height > 0)
-            .map(|&(width, height)| u64::from(height) * (1 + stride(width, bits) as u64))
-            .sum();
-        let mut filtered = Vec::new();
-        flate2::read::ZlibDecoder::new(&compressed[..])
-            .take(expected)
-            .read_to_end(&mut filtered)
+        let bpp = usize::from(bits.div_ceil(8));
+        let mut inflated = flate2::read::ZlibDecoder::new(Idats {
+            chunks: self.chunks.iter(),
+            current: &[],
+        });
+        let mut rows = |width: u32, height: u32| -> Result<Raster> {
+            let mut data = Vec::new();
+            samples::unfilter_rows(
+                &mut inflated,
+                stride(width, bits),
+                bpp,
+                height as usize,
+                &mut data,
+            )
             .context(DAMAGED_PNG)?;
-        ensure!(filtered.len() as u64 == expected, DAMAGED_PNG);
+            Ok(Raster {
+                width,
+                height,
+                bits,
+                data,
+            })
+        };
         if !header.interlaced {
-            return unfiltered(&filtered, header.width, header.height, bits);
+            return rows(header.width, header.height);
         }
         let mut full = Raster::new(header.width, header.height, bits);
-        let mut at = 0;
-        for (&(x0, y0, dx, dy), &(width, height)) in passes.iter().zip(&sizes) {
+        for (x0, y0, dx, dy) in ADAM7 {
+            let across = |size: u32, start: u32, step: u32| {
+                if size > start {
+                    (size - start).div_ceil(step)
+                } else {
+                    0
+                }
+            };
+            let (width, height) = (across(header.width, x0, dx), across(header.height, y0, dy));
             if width == 0 || height == 0 {
                 continue;
             }
-            let length = height as usize * (1 + stride(width, bits));
-            let pass = unfiltered(&filtered[at..at + length], width, height, bits)?;
-            at += length;
+            let pass = rows(width, height)?;
             for y in 0..height {
                 for x in 0..width {
                     full.set(x0 + x * dx, y0 + y * dy, pass.get(x, y));
@@ -1275,15 +1341,11 @@ impl<'a> Png<'a> {
         kept: &Kept,
         strip: bool,
         exif: Option<&[u8]>,
-    ) -> Vec<u8> {
-        let (lossless, profile, quarter_turn) = match *kept {
-            Kept::Lossless { quarter_turn } => (true, true, quarter_turn),
-            Kept::Resampled { profile } => (false, profile, false),
+    ) -> Result<Vec<u8>> {
+        let (lossless, profile) = match *kept {
+            Kept::Lossless { .. } => (true, true),
+            Kept::Resampled { profile, .. } => (false, profile),
         };
-        // A palette or fewer than 8 bits a pixel compress best unfiltered,
-        // as libpng has it.
-        let adaptive = header.colour != 3 && header.depth >= 8;
-        let idat = samples::deflate(&filtered(raster, adaptive));
         let mut out = PNG_SIGNATURE.to_vec();
         chunk(&mut out, *b"IHDR", &header.bytes());
         let first_idat = self
@@ -1299,22 +1361,38 @@ impl<'a> Png<'a> {
                     chunk(&mut out, *b"eXIf", block);
                 }
             } else if kept_chunk(original.kind, lossless, strip, profile) {
-                chunk(&mut out, original.kind, &kept_data(original, quarter_turn));
+                chunk(&mut out, original.kind, &kept_data(original, kept));
             }
         }
         if let Some(block) = exif {
             chunk(&mut out, *b"eXIf", block);
         }
-        for part in idat.chunks(IDAT_SIZE) {
-            chunk(&mut out, *b"IDAT", part);
-        }
+        // Its rows filtered, compressed and cut into chunks as they come,
+        // never held whole. A palette or fewer than 8 bits a pixel compress
+        // best unfiltered, as libpng has it.
+        let adaptive = header.colour != 3 && header.depth >= 8;
+        let mut compressed = flate2::write::ZlibEncoder::new(
+            Idat {
+                out: &mut out,
+                pending: Vec::with_capacity(IDAT_SIZE),
+            },
+            flate2::Compression::best(),
+        );
+        samples::filter_rows(
+            &raster.data,
+            stride(raster.width, raster.bits),
+            usize::from(raster.bits.div_ceil(8)),
+            adaptive,
+            &mut compressed,
+        )?;
+        compressed.finish()?.end();
         for original in after {
             if kept_chunk(original.kind, lossless, strip, profile) {
-                chunk(&mut out, original.kind, &kept_data(original, quarter_turn));
+                chunk(&mut out, original.kind, &kept_data(original, kept));
             }
         }
         chunk(&mut out, *b"IEND", &[]);
-        out
+        Ok(out)
     }
 }
 
@@ -1326,8 +1404,8 @@ impl<'a> Png<'a> {
 fn kept_chunk(kind: [u8; 4], lossless: bool, strip: bool, profile: bool) -> bool {
     match &kind {
         b"IHDR" | b"IDAT" | b"IEND" | b"eXIf" => false,
-        b"PLTE" | b"tRNS" | b"sBIT" | b"bKGD" | b"hIST" | b"sPLT" | b"pHYs" => lossless,
-        b"gAMA" | b"cHRM" | b"sRGB" | b"cICP" | b"mDCv" | b"cLLi" => true,
+        b"PLTE" | b"tRNS" | b"sBIT" | b"bKGD" | b"hIST" | b"sPLT" => lossless,
+        b"pHYs" | b"gAMA" | b"cHRM" | b"sRGB" | b"cICP" | b"mDCv" | b"cLLi" => true,
         b"iCCP" => profile,
         b"tIME" => lossless && !strip,
         b"tEXt" | b"zTXt" | b"iTXt" => !strip,
@@ -1335,15 +1413,40 @@ fn kept_chunk(kind: [u8; 4], lossless: bool, strip: bool, profile: bool) -> bool
     }
 }
 
-/// What a chunk kept holds in the copy: its pixels' shape swapped by a
-/// quarter turn, an XMP packet saying its pixels stand upright (one stored
-/// as it is: its keyword, then a 0 for no compression).
-fn kept_data<'d>(original: &Chunk<'d>, quarter_turn: bool) -> Cow<'d, [u8]> {
+/// What a chunk kept holds in the copy: its pixels a unit (pHYs) as many
+/// fewer as its sides have, so the picture keeps its size on paper, and
+/// swapped by a quarter turn; an XMP packet saying
+/// its pixels stand upright (one stored as it is: its keyword, then a 0
+/// for no compression).
+fn kept_data<'d>(original: &Chunk<'d>, kept: &Kept) -> Cow<'d, [u8]> {
     match &original.kind {
-        b"pHYs" if quarter_turn && original.data.len() == 9 => {
-            let mut swapped = original.data.to_vec();
-            swapped[0..8].rotate_left(4);
-            Cow::Owned(swapped)
+        b"pHYs" if original.data.len() == 9 => {
+            let ((across, down), quarter_turn) = match *kept {
+                Kept::Lossless { quarter_turn } => ((1.0, 1.0), quarter_turn),
+                Kept::Resampled {
+                    scale,
+                    quarter_turn,
+                    ..
+                } => (scale, quarter_turn),
+            };
+            let at = |range: std::ops::Range<usize>| {
+                u32::from_be_bytes(original.data[range].try_into().unwrap_or_default())
+            };
+            // A count only ever brought down (a picture is never enlarged),
+            // never to none.
+            let scaled = |count: u32, scale: f64| {
+                if count == 0 || scale >= 1.0 {
+                    count
+                } else {
+                    (f64::from(count) * scale).round().max(1.0) as u32
+                }
+            };
+            let (x, y) = (scaled(at(0..4), across), scaled(at(4..8), down));
+            let (x, y) = if quarter_turn { (y, x) } else { (x, y) };
+            let mut data = original.data.to_vec();
+            data[0..4].copy_from_slice(&x.to_be_bytes());
+            data[4..8].copy_from_slice(&y.to_be_bytes());
+            Cow::Owned(data)
         }
         b"iTXt" if original.data.starts_with(b"XML:com.adobe.xmp\0\0") => {
             let mut xmp = original.data.to_vec();
@@ -1454,109 +1557,53 @@ impl Raster {
     }
 }
 
-/// `filtered` (a PNG's rows, each after its filter byte) unfiltered into
-/// pixels of `bits` each.
-fn unfiltered(filtered: &[u8], width: u32, height: u32, bits: u8) -> Result<Raster> {
-    let stride = stride(width, bits);
-    let bpp = usize::from(bits.div_ceil(8));
-    let mut raster = Raster::new(width, height, bits);
-    let zero = vec![0u8; stride];
-    for (y, line) in filtered
-        .chunks_exact(stride + 1)
-        .take(height as usize)
-        .enumerate()
-    {
-        let (kind, line) = (line[0], &line[1..]);
-        ensure!(kind <= 4, DAMAGED_PNG);
-        let (done, rest) = raster.data.split_at_mut(y * stride);
-        let previous = if y == 0 {
-            &zero[..]
-        } else {
-            &done[(y - 1) * stride..]
-        };
-        let row = &mut rest[..stride];
-        for x in 0..stride {
-            let a = if x >= bpp { row[x - bpp] } else { 0 };
-            let b = previous[x];
-            let c = if x >= bpp { previous[x - bpp] } else { 0 };
-            let predicted = match kind {
-                0 => 0,
-                1 => a,
-                2 => b,
-                3 => a.midpoint(b),
-                _ => paeth(a, b, c),
-            };
-            row[x] = line[x].wrapping_add(predicted);
-        }
-    }
-    Ok(raster)
+/// The data of a PNG's IDAT chunks, read one after another where they
+/// are.
+struct Idats<'c, 'a> {
+    chunks: std::slice::Iter<'c, Chunk<'a>>,
+    current: &'a [u8],
 }
 
-/// `raster`'s rows filtered for Deflate: each the filter that leaves the
-/// smallest sum (bytes read as signed), or none when not `adaptive`.
-fn filtered(raster: &Raster, adaptive: bool) -> Vec<u8> {
-    let stride = stride(raster.width, raster.bits);
-    let bpp = usize::from(raster.bits.div_ceil(8));
-    let mut out = Vec::with_capacity((stride + 1) * raster.height as usize);
-    if stride == 0 {
-        return out;
-    }
-    if !adaptive {
-        for row in raster.data.chunks_exact(stride) {
-            out.push(0);
-            out.extend_from_slice(row);
-        }
-        return out;
-    }
-    let zero = vec![0u8; stride];
-    let mut previous: &[u8] = &zero;
-    let mut candidates = vec![vec![0u8; stride]; 5];
-    for row in raster.data.chunks_exact(stride) {
-        for (kind, candidate) in candidates.iter_mut().enumerate() {
-            for x in 0..stride {
-                let a = if x >= bpp { row[x - bpp] } else { 0 };
-                let b = previous[x];
-                let c = if x >= bpp { previous[x - bpp] } else { 0 };
-                let predicted = match kind {
-                    0 => 0,
-                    1 => a,
-                    2 => b,
-                    3 => a.midpoint(b),
-                    _ => paeth(a, b, c),
-                };
-                candidate[x] = row[x].wrapping_sub(predicted);
+impl Read for Idats<'_, '_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        while self.current.is_empty() {
+            match self.chunks.find(|chunk| &chunk.kind == b"IDAT") {
+                Some(chunk) => self.current = chunk.data,
+                None => return Ok(0),
             }
         }
-        let cost = |row: &[u8]| -> u64 {
-            row.iter()
-                .map(|&v| u64::from(if v < 128 { v } else { v.wrapping_neg() }))
-                .sum()
-        };
-        let (kind, best) = candidates
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, candidate)| cost(candidate))
-            .unwrap_or((0, &candidates[0]));
-        out.push(kind as u8);
-        out.extend_from_slice(best);
-        previous = row;
+        self.current.read(buf)
     }
-    out
 }
 
-fn paeth(a: u8, b: u8, c: u8) -> u8 {
-    let p = i16::from(a) + i16::from(b) - i16::from(c);
-    let (pa, pb, pc) = (
-        (p - i16::from(a)).abs(),
-        (p - i16::from(b)).abs(),
-        (p - i16::from(c)).abs(),
-    );
-    if pa <= pb && pa <= pc {
-        a
-    } else if pb <= pc {
-        b
-    } else {
-        c
+/// What is written to it put in `out` as IDAT chunks of [`IDAT_SIZE`]
+/// bytes, what remains in a last one when it ends.
+struct Idat<'o> {
+    out: &'o mut Vec<u8>,
+    pending: Vec<u8>,
+}
+
+impl Write for Idat<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let taken = buf.len().min(IDAT_SIZE - self.pending.len());
+        self.pending.extend_from_slice(&buf[..taken]);
+        if self.pending.len() == IDAT_SIZE {
+            chunk(self.out, *b"IDAT", &self.pending);
+            self.pending.clear();
+        }
+        Ok(taken)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Idat<'_> {
+    fn end(self) {
+        if !self.pending.is_empty() {
+            chunk(self.out, *b"IDAT", &self.pending);
+        }
     }
 }
 
@@ -1685,7 +1732,16 @@ mod tests {
     /// A PNG of `raster`, stored without compression, with `extra` chunks
     /// before its pixels.
     fn png_of(header: Header, raster: &Raster, extra: &[(&[u8; 4], Vec<u8>)]) -> Vec<u8> {
-        png_from(header, &filtered(raster, false), extra)
+        let mut filtered = Vec::new();
+        samples::filter_rows(
+            &raster.data,
+            stride(raster.width, raster.bits),
+            usize::from(raster.bits.div_ceil(8)),
+            false,
+            &mut filtered,
+        )
+        .unwrap();
+        png_from(header, &filtered, extra)
     }
 
     fn png_from(header: Header, filtered: &[u8], extra: &[(&[u8; 4], Vec<u8>)]) -> Vec<u8> {
@@ -2016,9 +2072,22 @@ mod tests {
         );
         let copy = copy.unwrap();
         assert_eq!(icc_of(&copy), None);
-        assert_eq!(
-            image::load_from_memory(&copy).unwrap().color(),
-            image::ColorType::Rgb8
+        let back = image::load_from_memory(&copy).unwrap();
+        assert_eq!(back.color(), image::ColorType::Rgb8);
+        // Its colours read as its inks stand for (Adobe's inverted CMYK,
+        // as the encoder writes it), not as their negative: squares of the
+        // copy against the same squares of the picture.
+        let back = back.into_rgb8();
+        let original = image::RgbImage::from_raw(width, height, photo(width, height)).unwrap();
+        let mut differences = Vec::new();
+        for y in (0..height).step_by(20) {
+            for x in (0..width).step_by(20) {
+                differences.push(mean(&back, (x, y), 20).abs_diff(mean(&original, (x, y), 20)));
+            }
+        }
+        assert!(
+            differences.iter().all(|&difference| difference < 16),
+            "{differences:?}"
         );
     }
 
@@ -2350,7 +2419,20 @@ mod tests {
             colour: 0,
             interlaced: true,
         };
-        let input = png_from(header, &passes, &[]);
+        // Its data cut into many small chunks, as some writers do.
+        let single = png_from(header, &passes, &[]);
+        let png = Png::parse(&single).unwrap();
+        let idat = png
+            .chunks
+            .iter()
+            .find(|chunk| &chunk.kind == b"IDAT")
+            .unwrap();
+        let mut input = PNG_SIGNATURE.to_vec();
+        chunk(&mut input, *b"IHDR", &header.bytes());
+        for part in idat.data.chunks(7) {
+            chunk(&mut input, *b"IDAT", part);
+        }
+        chunk(&mut input, *b"IEND", &[]);
         let (_, copy) = shrunk(&input, options(Quality::Lossless));
         let copy = copy.unwrap();
         let png = Png::parse(&copy).unwrap();
@@ -2467,6 +2549,180 @@ mod tests {
         assert!(read.get_field(Tag::Make, In::PRIMARY).is_none());
         assert!(read.get_field(Tag::DateTimeOriginal, In::PRIMARY).is_some());
         assert_eq!(Png::parse(&copy).unwrap().raster().unwrap(), raster);
+    }
+
+    /// A pHYs chunk of `x` and `y` pixels a metre.
+    fn phys(x: u32, y: u32) -> Vec<u8> {
+        [&x.to_be_bytes()[..], &y.to_be_bytes(), &[1]].concat()
+    }
+
+    fn chunk_of(copy: &[u8], kind: [u8; 4]) -> Option<&[u8]> {
+        Png::parse(copy)
+            .unwrap()
+            .chunks
+            .into_iter()
+            .find(|chunk| chunk.kind == kind)
+            .map(|chunk| chunk.data)
+    }
+
+    #[test]
+    fn picture_png_keeps_its_size_on_paper() {
+        // Pixels a rule leaves as they are: packed tighter, all that
+        // describes them kept.
+        let (width, height) = (600, 400);
+        let raster = Raster {
+            width,
+            height,
+            bits: 24,
+            data: photo(width, height),
+        };
+        let header = Header {
+            width,
+            height,
+            depth: 8,
+            colour: 2,
+            interlaced: false,
+        };
+        let input = png_of(
+            header,
+            &raster,
+            &[(b"pHYs", phys(11_811, 11_811)), (b"sBIT", vec![5, 6, 5])],
+        );
+        let (written, copy) = shrunk(&input, options(Quality::Screen));
+        assert_eq!(written.unwrap().notes, Vec::<String>::new());
+        let copy = copy.unwrap();
+        assert_eq!(chunk_of(&copy, *b"pHYs"), Some(&phys(11_811, 11_811)[..]));
+        assert_eq!(chunk_of(&copy, *b"sBIT"), Some(&[5, 6, 5][..]));
+        assert_eq!(Png::parse(&copy).unwrap().raster().unwrap(), raster);
+
+        // Resampled and turned: as many fewer pixels a metre as each side
+        // has, the two swapped.
+        let (width, height) = (1600, 200);
+        let raster = Raster {
+            width,
+            height,
+            bits: 24,
+            data: photo(width, height),
+        };
+        let header = Header {
+            width,
+            height,
+            ..header
+        };
+        let input = png_of(
+            header,
+            &raster,
+            &[
+                (b"pHYs", phys(11_811, 5_906)),
+                (b"eXIf", exif_block(true, 6, (width, height))),
+            ],
+        );
+        let (_, copy) = shrunk(&input, options(Quality::Small));
+        let copy = copy.unwrap();
+        let back = image::load_from_memory(&copy).unwrap();
+        assert_eq!((back.width(), back.height()), (160, 1280));
+        assert_eq!(chunk_of(&copy, *b"pHYs"), Some(&phys(4_725, 9_449)[..]));
+    }
+
+    #[test]
+    fn picture_png_exif_after_a_jpeg_header_turns_it() {
+        let (width, height) = (60, 40);
+        let mut raster = Raster::new(width, height, 8);
+        for y in 0..height {
+            for x in 0..width {
+                raster.set(x, y, u64::from((x * 4 + y) % 256));
+            }
+        }
+        let header = Header {
+            width,
+            height,
+            depth: 8,
+            colour: 0,
+            interlaced: false,
+        };
+        let exif = [EXIF_HEADER, &exif_block(true, 6, (width, height))].concat();
+        let input = png_of(header, &raster, &[(b"eXIf", exif)]);
+        let (_, copy) = shrunk(&input, options(Quality::Lossless));
+        let copy = copy.unwrap();
+        let back = image::load_from_memory(&copy).unwrap();
+        // Turned as the block it keeps says, which says so no more.
+        assert_eq!((back.width(), back.height()), (40, 60));
+        assert_eq!(number(&exif_of(&copy).unwrap(), Tag::Orientation), Some(1));
+    }
+
+    #[test]
+    fn picture_date_not_read_leaves_its_turn() {
+        // Its date stored as a type EXIF does not have.
+        let (width, height) = (300, 200);
+        let mut tiff = Tiff::new(exif_block(true, 6, (width, height))).unwrap();
+        let ifd0 = tiff.u32_at(4).unwrap() as usize;
+        let exif_ifd = tiff
+            .entry(ifd0, EXIF_IFD)
+            .and_then(|entry| tiff.number(entry))
+            .unwrap() as usize;
+        for tag in [0x9003, 0x9011] {
+            let entry = tiff.entry(exif_ifd, tag).unwrap();
+            tiff.put_u16(entry + 2, 99);
+        }
+        let input = jpeg_of(
+            (width, height),
+            photo(width, height),
+            90,
+            Some(&tiff.data),
+            None,
+            false,
+        );
+        let (written, copy) = shrunk(
+            &input,
+            Options {
+                strip: true,
+                ..options(Quality::Lossless)
+            },
+        );
+        let notes = written.unwrap().notes;
+        assert!(notes.iter().any(|note| note.contains("date")), "{notes:?}");
+        let exif = exif_of(&copy.unwrap()).unwrap();
+        // Its pixels kept as stored, still turned by its EXIF.
+        assert_eq!(number(&exif, Tag::Orientation), Some(6));
+        assert!(exif.get_field(Tag::DateTimeOriginal, In::PRIMARY).is_none());
+    }
+
+    #[test]
+    fn picture_png_data_is_read_and_written_across_chunks() {
+        let data: Vec<u8> = (0..IDAT_SIZE * 5 / 2).map(|i| (i % 251) as u8).collect();
+        let mut out = Vec::new();
+        let mut idat = Idat {
+            out: &mut out,
+            pending: Vec::new(),
+        };
+        for part in data.chunks(100_003) {
+            idat.write_all(part).unwrap();
+        }
+        idat.end();
+        let png_header = Header {
+            width: 1,
+            height: 1,
+            depth: 8,
+            colour: 0,
+            interlaced: false,
+        };
+        let mut file = PNG_SIGNATURE.to_vec();
+        chunk(&mut file, *b"IHDR", &png_header.bytes());
+        file.extend_from_slice(&out);
+        let png = Png::parse(&file).unwrap();
+        let sizes: Vec<usize> = png.chunks[1..]
+            .iter()
+            .map(|chunk| chunk.data.len())
+            .collect();
+        assert_eq!(sizes, [IDAT_SIZE, IDAT_SIZE, IDAT_SIZE / 2]);
+        let mut read = Vec::new();
+        Idats {
+            chunks: png.chunks.iter(),
+            current: &[],
+        }
+        .read_to_end(&mut read)
+        .unwrap();
+        assert_eq!(read, data);
     }
 
     #[test]
