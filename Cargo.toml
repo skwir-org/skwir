@@ -141,7 +141,7 @@ xdg-mime = "0.4"
 mime = "0.3"
 md5 = "0.8"
 # SHA-256 for the checksums plugin: the version the tree already links.
-sha2 = "0.10"
+sha2 = "0.11"
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
@@ -154,7 +154,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # A JPEG decoded at a reduced scale for its thumbnail (zune-jpeg, image's
 # own, decodes it whole); without rayon, one thread per decode.
 jpeg-decoder = { version = "0.3", default-features = false }
-png = "0.17"
+png = "0.18"
 crossbeam-channel = "0.5"
 parking_lot = "0.12"
 # Pinned: skwir-alloc sets two options by their number in the compiled
@@ -195,7 +195,7 @@ proptest = "1"
 tempfile = "3"
 # DjVu in Rust (ADR-061). Pinned: young, and released weekly; an update is
 # read and tried with `just djvu-check` before it is taken.
-djvu-rs = { version = "=0.43.0", default-features = false, features = ["std"] }
+djvu-rs = { version = "=0.44.0", default-features = false, features = ["std"] }
 # Windows' own calls (ADR-035): the version most of the tree already links.
 windows-sys = "0.61"
 

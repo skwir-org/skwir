@@ -19,7 +19,7 @@ tree-sitter-highlight = "0.27"
 # `LanguageFn`, how a native grammar's symbol becomes a language.
 tree-sitter-language = "0.1"
 # A native grammar is a shared library, loaded when first needed.
-libloading = "0.8"
+libloading = "0.9"
 # A grammar's `injection-regex`.
 regex.workspace = true
 anyhow.workspace = true

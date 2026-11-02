@@ -14,7 +14,7 @@ serde_json.workspace = true
 # model is the plugin world's (`crates/plugin-api/wit`).
 wasmtime = { version = "48", default-features = false, features = ["runtime", "cranelift", "component-model", "std", "anyhow"] }
 # A module built with the world's bindings becomes a component.
-wit-component = "0.261"
+wit-component = "0.263"
 # Names a compiled module by what it was compiled from.
 blake3.workspace = true
 anyhow.workspace = true

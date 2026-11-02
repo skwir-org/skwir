@@ -22,7 +22,7 @@ krilla = { version = "0.8", default-features = false, features = ["raster-images
 krilla-svg = "0.8"
 usvg = { version = "0.47", default-features = false, features = ["text"] }
 # A picture's size from its header, before anything decodes it; krilla's.
-imagesize = "0.14"
+imagesize = "0.15"
 # A compressed drawing (`.svgz`) inflated within a bound.
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 # Lays text out: shaping, bidirectional text, line breaking. Without

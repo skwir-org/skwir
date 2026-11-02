@@ -35,7 +35,7 @@ fn quoted(name: &str) -> String {
 
 fn open(path: &Path, cancel: &CancelToken) -> anyhow::Result<Connection> {
     let uri = format!("{}?immutable=1", skwir_platform::uri::sqlite_uri(path));
-    let connection = Connection::open_with_flags(
+    let mut connection = Connection::open_with_flags(
         uri,
         OpenFlags::SQLITE_OPEN_READ_ONLY
             | OpenFlags::SQLITE_OPEN_URI

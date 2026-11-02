@@ -737,7 +737,7 @@ fn a_coloured_still_is_drawn_in_its_colours() {
     let png = &output.stdout[line + 1..];
     let decoder = png::Decoder::new(std::io::Cursor::new(png));
     let mut reader = decoder.read_info().unwrap();
-    let mut pixels = vec![0; reader.output_buffer_size()];
+    let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
     let info = reader.next_frame(&mut pixels).unwrap();
     // The square covers the middle of its picture: red, lit.
     let at = ((info.height / 2 * info.width + info.width / 2) * 4) as usize;

@@ -239,7 +239,7 @@ SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: bitflags 2.13.2, log 0.4.34, num-integer 0.1.47, num-rational 0.4.2, num-traits 0.2.19
+Used by: bitflags 2.13.2, log 0.4.35, num-integer 0.1.47, num-rational 0.4.2, num-traits 0.2.19
 
 Copyright (c) 2014 The Rust Project Developers
 
@@ -508,9 +508,9 @@ DEALINGS IN THE SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: getrandom 0.3.4
+Used by: getrandom 0.4.3
 
-Copyright (c) 2018-2025 The rust-random Project Developers
+Copyright (c) 2018-2026 The rust-random Project Developers
 Copyright (c) 2014 The Rust Project Developers
 
 Permission is hereby granted, free of charge, to any
@@ -1058,7 +1058,7 @@ SOFTWARE.
 ------------------------------------------------------------------------
 MIT License (MIT)
 
-Used by: tempfile 3.27.0, xattr 1.6.1
+Used by: tempfile 3.27.0, xattr 1.7.0
 
 Copyright (c) 2015 Steven Allen
 

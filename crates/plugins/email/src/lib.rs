@@ -1,5 +1,4 @@
 //! EML headers, inert HTML/text body and bounded attachment previews.
-use mail_parser::MimeHeaders;
 use skwir_core::{
     App, CancelToken,
     inspection::{Block, InspectRequest, Inspection, Row},
@@ -61,10 +60,11 @@ impl PreviewProvider for Provider {
         let bytes = read(&held, Bounds::WHOLE, cancel)?;
         let message = parse(&bytes, cancel)?;
         let attachment = message
-            .attachment(target.parse()?)
+            .attachments()
+            .nth(target.parse()?)
             .ok_or_else(|| anyhow::anyhow!("Missing attachment"))?;
         let bounds = Bounds::of(view);
-        if attachment.contents().len() > bounds.binary_input() {
+        if attachment.decoded_len() > bounds.binary_input() {
             return Err(bounds.refuse(format!(
                 "Attachment exceeds {} preview limit",
                 limits::describe(bounds.binary_input())
@@ -72,7 +72,7 @@ impl PreviewProvider for Provider {
         }
         let name = attachment.attachment_name().unwrap_or("Attachment");
         let file = archive::member_file(into, name);
-        std::fs::write(&file, attachment.contents())?;
+        std::fs::write(&file, attachment.decoded())?;
         Ok(Some(skwir_core::preview::Member {
             own_file: false,
             name: name.to_owned(),
@@ -97,7 +97,7 @@ impl PreviewProvider for Provider {
         let message = parse(&bytes, cancel)?;
         let sent = message
             .date()
-            .map_or_else(String::new, mail_parser::DateTime::to_rfc3339);
+            .map_or_else(String::new, |date| date.to_rfc3339());
         let mut blocks = vec![
             Block {
                 text: message.subject().unwrap_or("No subject").into(),
@@ -121,8 +121,8 @@ impl PreviewProvider for Provider {
                     remote |= ["http:", "https:", "//"].iter().any(|p| src.starts_with(p));
                     return None;
                 };
-                let part = message.parts.iter().find(|p| p.content_id() == Some(id))?;
-                inspection::image(part.contents()).ok()
+                let part = message.parts().find(|p| p.content_id() == Some(id))?;
+                inspection::image(&part.decoded()).ok()
             });
             let mut page =
                 rich_preview::html(&html, rich_preview::Markup::Html, bounds, cancel, images)?;
@@ -130,8 +130,9 @@ impl PreviewProvider for Provider {
             // The parser writes a message in plain text as HTML: the addresses
             // its text gives are links, as mail readers make them.
             let written = message
-                .html_part(0)
-                .is_some_and(|part| matches!(part.body, mail_parser::PartType::Html(_)));
+                .html_body()
+                .next()
+                .is_some_and(|part| matches!(part.kind(), mail_parser::PartKind::Html));
             if !written {
                 for block in page.blocks.iter_mut().filter(|block| !block.code) {
                     skwir_platform::links::link_block(block, false);
@@ -146,7 +147,7 @@ impl PreviewProvider for Provider {
             skwir_platform::links::link_block(&mut body, false);
             blocks.push(body);
         }
-        let attachments = message.attachments().count();
+        let attachments = message.attachments().len();
         let details = inspection::details([
             ("Subject", message.subject().map(str::to_owned)),
             ("From", Some(addresses(message.from()))),
@@ -160,7 +161,7 @@ impl PreviewProvider for Provider {
             .enumerate()
             .take(limits::ATTACHMENTS)
             .map(|(i, a)| {
-                let bytes = a.contents().len() as u64;
+                let bytes = a.decoded_len() as u64;
                 Row {
                     cells: vec![
                         a.attachment_name().unwrap_or("Attachment").into(),
@@ -213,14 +214,14 @@ fn parse<'x>(bytes: &'x [u8], cancel: &CancelToken) -> anyhow::Result<mail_parse
     Ok(message)
 }
 /// `Name <address>`, or the bare address when there is no name.
-fn addresses(value: Option<&mail_parser::Address<'_>>) -> String {
+fn addresses(value: Option<mail_parser::AddressList<'_>>) -> String {
     value
         .map(|v| {
-            v.iter()
+            v.mailboxes()
                 .take(limits::ADDRESSES)
                 .map(|a| {
-                    let address = a.address.as_deref().unwrap_or("");
-                    match a.name.as_deref().map(str::trim) {
+                    let address = a.address().unwrap_or("");
+                    match a.name().map(str::trim) {
                         Some(name) if !name.is_empty() => format!("{name} <{address}>"),
                         _ => address.to_owned(),
                     }

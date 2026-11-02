@@ -20,7 +20,7 @@ jpeg-encoder = "0.7"
 # are stored, its pages' drawing never rewritten.
 lopdf = { version = "0.46", default-features = false }
 # A scan's black-and-white pages (CCITT fax) read, to be written as JBIG2.
-hayro-ccitt = "0.4"
+hayro-ccitt = "0.5"
 # The EXIF a picture keeps: its date, without location or camera.
 kamadak-exif = "0.6"
 flate2 = "1"
@@ -28,9 +28,9 @@ flate2 = "1"
 [dev-dependencies]
 tempfile.workspace = true
 # Reads back the JBIG2 written, to check it is what was encoded.
-hayro-jbig2 = "0.3"
+hayro-jbig2 = "0.4"
 # Writes the Group 4 fax read in tests.
-fax = "0.2"
+fax = "0.3"
 
 [lints]
 workspace = true

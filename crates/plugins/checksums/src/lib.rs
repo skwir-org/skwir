@@ -81,11 +81,21 @@ impl Hasher {
     fn finish(self) -> String {
         use sha2::Digest as _;
         match self {
-            Hasher::Sha256(h) => format!("{:x}", h.finalize()),
+            Hasher::Sha256(h) => lower_hex(&h.finalize()),
             Hasher::Md5(h) => format!("{:x}", h.finalize()),
             Hasher::Blake3(h) => h.finalize().to_hex().to_string(),
         }
     }
+}
+
+/// `bytes` in lowercase hexadecimal, two digits a byte.
+fn lower_hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut text = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(text, "{byte:02x}");
+    }
+    text
 }
 
 impl Algorithm {
@@ -760,7 +770,7 @@ mod tests {
         sha2::Digest::update(&mut whole, &big);
         assert_eq!(
             digest(Algorithm::Sha256, &big),
-            format!("{:x}", sha2::Digest::finalize(whole))
+            lower_hex(&sha2::Digest::finalize(whole))
         );
         // Several from one read: each as alone.
         let all = digests(&Algorithm::ALL, &mut &big[..], &cancel)

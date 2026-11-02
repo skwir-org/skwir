@@ -18,7 +18,7 @@
 //! followed. Every stylesheet and the number of rules are bounded.
 use crate::inspection::limits;
 use cssparser::{
-    AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
+    AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserState,
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, Token,
 };
 use scraper::{ElementRef, selector::Simple};
@@ -208,8 +208,7 @@ impl Parsed {
 /// The rules of `css` (of `origin`, found at `base`) and the fonts it
 /// brings, at most what `limits::STYLE_RULES` leaves beside `held`.
 fn parse(css: &str, origin: Origin, base: &str, held: usize) -> (Vec<Rule>, Vec<FontFace>) {
-    let mut input = ParserInput::new(css);
-    let mut parser = Parser::new(&mut input);
+    let mut parser = Parser::new(css);
     let mut rules = Rules {
         origin,
         out: Vec::new(),
@@ -573,7 +572,7 @@ struct Rules {
     faces: Vec<FontFace>,
 }
 impl Rules {
-    fn sheet(&mut self, input: &mut Parser<'_, '_>) {
+    fn sheet(&mut self, input: &mut Parser<'_>) {
         let parsed: Vec<_> = StyleSheetParser::new(input, self).collect();
         // Errors are rules the reader does not know: they are skipped, as a
         // browser skips them.
@@ -599,12 +598,12 @@ struct Descriptors;
 impl<'i> DeclarationParser<'i> for Descriptors {
     type Declaration = (String, Vec<Value>);
     type Error = ();
-    fn parse_value<'t>(
+    fn parse_value(
         &mut self,
         name: CowRcStr<'i>,
-        input: &mut Parser<'i, 't>,
+        input: &mut Parser<'i>,
         _: &ParserState,
-    ) -> Result<(String, Vec<Value>), ParseError<'i, ()>> {
+    ) -> Result<(String, Vec<Value>), ParseError<()>> {
         Ok((
             name.to_ascii_lowercase(),
             values(input, limits::CSS_DEPTH).0,
@@ -642,11 +641,11 @@ impl<'i> AtRuleParser<'i> for Rules {
     type AtRule = ();
     type Error = ();
 
-    fn parse_prelude<'t>(
+    fn parse_prelude(
         &mut self,
         name: CowRcStr<'i>,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<At, ParseError<'i, ()>> {
+        input: &mut Parser<'i>,
+    ) -> Result<At, ParseError<()>> {
         if name.eq_ignore_ascii_case("media") {
             let start = input.position();
             while input.next().is_ok() {}
@@ -669,12 +668,12 @@ impl<'i> AtRuleParser<'i> for Rules {
     fn rule_without_block(&mut self, _: At, _: &ParserState) -> Result<(), ()> {
         Ok(())
     }
-    fn parse_block<'t>(
+    fn parse_block(
         &mut self,
         prelude: At,
         _: &ParserState,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<(), ParseError<'i, ()>> {
+        input: &mut Parser<'i>,
+    ) -> Result<(), ParseError<()>> {
         if let At::Media(true) = prelude
             && self.depth < MEDIA_DEPTH
         {
@@ -729,27 +728,27 @@ impl<'i> QualifiedRuleParser<'i> for Rules {
     type QualifiedRule = ();
     type Error = ();
 
-    fn parse_prelude<'t>(
+    fn parse_prelude(
         &mut self,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<SelectorList<Simple>, ParseError<'i, ()>> {
+        input: &mut Parser<'i>,
+    ) -> Result<SelectorList<Simple>, ParseError<()>> {
         // The selectors' parser recurses once a nested `:not(`, `:is(`…,
         // with no bound of its own: a rule nested deeper is skipped.
         let start = input.state();
         let deep = nests_deeper(input, limits::CSS_DEPTH);
         input.reset(&start);
         if deep {
-            return Err(input.new_custom_error(()));
+            return Err(ParseError::custom(()));
         }
         SelectorList::parse(&Selectors, input, ParseRelative::No)
-            .map_err(|error| error.location.new_custom_error(()))
+            .map_err(|_| ParseError::custom(()))
     }
-    fn parse_block<'t>(
+    fn parse_block(
         &mut self,
         selectors: SelectorList<Simple>,
         _: &ParserState,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<(), ParseError<'i, ()>> {
+        input: &mut Parser<'i>,
+    ) -> Result<(), ParseError<()>> {
         let declarations: Arc<[Declaration]> = block(input).into();
         if declarations.is_empty() {
             return Ok(());
@@ -772,9 +771,9 @@ impl<'i> QualifiedRuleParser<'i> for Rules {
 /// Selector syntax without `:has()`, whose matching cost grows with the
 /// whole subtree of every element it is asked about.
 struct Selectors;
-impl<'i> selectors::parser::Parser<'i> for Selectors {
+impl selectors::parser::Parser<'_> for Selectors {
     type Impl = Simple;
-    type Error = SelectorParseErrorKind<'i>;
+    type Error = SelectorParseErrorKind;
 
     fn parse_is_and_where(&self) -> bool {
         true
@@ -782,7 +781,7 @@ impl<'i> selectors::parser::Parser<'i> for Selectors {
 }
 
 /// The declarations of a rule's block or of a `style` attribute.
-fn block(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
+fn block(input: &mut Parser<'_>) -> Vec<Declaration> {
     let mut parser = Declarations;
     RuleBodyParser::new(input, &mut parser)
         .filter_map(Result::ok)
@@ -790,8 +789,7 @@ fn block(input: &mut Parser<'_, '_>) -> Vec<Declaration> {
         .collect()
 }
 fn declarations(style: &str) -> Vec<Declaration> {
-    let mut input = ParserInput::new(style);
-    block(&mut Parser::new(&mut input))
+    block(&mut Parser::new(style))
 }
 
 struct Declarations;
@@ -801,12 +799,12 @@ impl<'i> DeclarationParser<'i> for Declarations {
     type Declaration = Vec<Declaration>;
     type Error = ();
 
-    fn parse_value<'t>(
+    fn parse_value(
         &mut self,
         name: CowRcStr<'i>,
-        input: &mut Parser<'i, 't>,
+        input: &mut Parser<'i>,
         _: &ParserState,
-    ) -> Result<Vec<Declaration>, ParseError<'i, ()>> {
+    ) -> Result<Vec<Declaration>, ParseError<()>> {
         let (values, important) = values(input, limits::CSS_DEPTH);
         Ok(properties(&name.to_ascii_lowercase(), &values)
             .into_iter()
@@ -840,7 +838,7 @@ impl RuleBodyItemParser<'_, Vec<Declaration>, ()> for Declarations {
 /// Functions keep their arguments (`rgb()`, `matrix()`, `url()`), `room`
 /// levels deep: one nested deeper is `Other`, its arguments passed over by
 /// the parser without recursing (`limits::CSS_DEPTH`).
-fn values(input: &mut Parser<'_, '_>, room: usize) -> (Vec<Value>, bool) {
+fn values(input: &mut Parser<'_>, room: usize) -> (Vec<Value>, bool) {
     let mut out = Vec::new();
     let mut important = false;
     while let Ok(token) = input.next().cloned() {
@@ -864,7 +862,7 @@ fn values(input: &mut Parser<'_, '_>, room: usize) -> (Vec<Value>, bool) {
                 let name = name.to_ascii_lowercase();
                 let inner = input
                     .parse_nested_block(|input| {
-                        Ok::<_, ParseError<'_, ()>>(values(input, room - 1).0)
+                        Ok::<_, ParseError<()>>(values(input, room - 1).0)
                     })
                     .unwrap_or_default();
                 match (name.as_str(), inner.as_slice()) {
@@ -881,7 +879,7 @@ fn values(input: &mut Parser<'_, '_>, room: usize) -> (Vec<Value>, bool) {
 /// Whether what `input` holds nests its functions and blocks deeper than
 /// `room` levels, read as the parser reads it, recursing no deeper than
 /// that to tell.
-fn nests_deeper(input: &mut Parser<'_, '_>, room: usize) -> bool {
+fn nests_deeper(input: &mut Parser<'_>, room: usize) -> bool {
     while let Ok(token) = input.next() {
         if !matches!(
             token,
@@ -894,9 +892,7 @@ fn nests_deeper(input: &mut Parser<'_, '_>, room: usize) -> bool {
         }
         if room == 0
             || input
-                .parse_nested_block(|input| {
-                    Ok::<_, ParseError<'_, ()>>(nests_deeper(input, room - 1))
-                })
+                .parse_nested_block(|input| Ok::<_, ParseError<()>>(nests_deeper(input, room - 1)))
                 .unwrap_or(false)
         {
             return true;

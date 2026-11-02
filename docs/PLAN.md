@@ -555,9 +555,6 @@ leave (ADR-077).
   waits for an ADR (on Linux `RLIMIT_DATA` near 2 GiB, set by the helper
   as it starts, which spares the address space Wasmtime reserves where
   `RLIMIT_AS` would not; a Job Object on Windows; none on macOS).
-- `deny.toml` ignores RUSTSEC-2026-0391, 0398 and 0403 (zstd, through
-  Wasmtime 48's compile cache, read only inside the sandboxed helper)
-  until Wasmtime moves to zstd 0.14.
 - Printing was checked by tests and stand-ins only: no real portal or
   printer printed a page scaled, sides chosen or a booklet's turned
   backs; the portal's wait ending when it leaves the bus has no test;

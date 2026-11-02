@@ -181,9 +181,7 @@ pub fn from_fax(data: &[u8], fax: &Fax, width: u32, height: u32) -> Result<Bits>
     let encoding = match fax.k {
         k if k < 0 => hayro_ccitt::EncodingMode::Group4,
         0 => hayro_ccitt::EncodingMode::Group3_1D,
-        k => hayro_ccitt::EncodingMode::Group3_2D {
-            k: k.unsigned_abs(),
-        },
+        _ => hayro_ccitt::EncodingMode::Group3_2D,
     };
     let rows = if fax.rows > 0 {
         fax.rows.min(height)
@@ -197,10 +195,9 @@ pub fn from_fax(data: &[u8], fax: &Fax, width: u32, height: u32) -> Result<Bits>
         end_of_line: fax.end_of_line,
         rows_are_byte_aligned: fax.byte_align,
         encoding,
-        // The decoder says white for a coded white pixel, or for a coded
-        // black one when told to invert: with `BlackIs1`, a coded white
-        // pixel is a 0 sample, which is black here.
-        invert_black: fax.black_is_1,
+        // As readers show it: what breaks the standard is read as well as
+        // it can be.
+        strict: false,
     };
     let mut sink = FaxSink {
         data: vec![0; len],
@@ -208,7 +205,7 @@ pub fn from_fax(data: &[u8], fax: &Fax, width: u32, height: u32) -> Result<Bits>
         width: width as usize,
         rows: height as usize,
         row: 0,
-        x: 0,
+        black_is_1: fax.black_is_1,
     };
     let mut context = hayro_ccitt::DecoderContext::new(settings);
     hayro_ccitt::decode(data, &mut sink, &mut context)
@@ -225,30 +222,40 @@ pub fn from_fax(data: &[u8], fax: &Fax, width: u32, height: u32) -> Result<Bits>
     })
 }
 
-/// Where the fax decoder's runs land: black runs set in the rows of
-/// [`Bits`].
+/// Where the fax decoder's rows land, in the rows of [`Bits`]: a 1 where
+/// the image's sample is 0, its coded black pixels, or its coded white
+/// ones with `BlackIs1` (where a coded white pixel is a 0 sample).
 struct FaxSink {
     data: Vec<u8>,
     stride: usize,
     width: usize,
     rows: usize,
     row: usize,
-    x: usize,
+    black_is_1: bool,
 }
 
 impl hayro_ccitt::Decoder for FaxSink {
-    fn push_pixels(&mut self, white: bool, count: u32) {
-        let end = self.x.saturating_add(count as usize).min(self.width);
-        if !white && self.row < self.rows {
+    fn push_row(&mut self, changes: &[u32]) {
+        if self.row < self.rows {
             let start = self.row * self.stride;
-            set_run(&mut self.data[start..start + self.stride], self.x, end);
+            let row = &mut self.data[start..start + self.stride];
+            // A row starts white and changes colour at each change: runs
+            // between them alternate, the last running to the row's end.
+            let mut from = 0;
+            let mut black = false;
+            for to in changes
+                .iter()
+                .map(|&change| (change as usize).min(self.width))
+                .chain(std::iter::once(self.width))
+            {
+                if black != self.black_is_1 {
+                    set_run(row, from, to);
+                }
+                from = to;
+                black = !black;
+            }
         }
-        self.x = end;
-    }
-
-    fn next_line(&mut self) {
         self.row += 1;
-        self.x = 0;
     }
 }
 
@@ -672,7 +679,9 @@ mod tests {
                 self.x = 0;
             }
         }
-        let image = hayro_jbig2::Image::new_embedded(data, None).unwrap();
+        // Strict: what Skwir writes keeps to the standard.
+        let settings = hayro_jbig2::DecodeSettings { strict: true };
+        let image = hayro_jbig2::Page::new_embedded(data, None, &settings).unwrap();
         let (width, height) = (image.width(), image.height());
         let stride = stride(width);
         let mut collect = Collect {
@@ -856,7 +865,7 @@ mod tests {
         }
         let writer = Rc::new(RefCell::new(fax::VecWriter::new()));
         let mut encoder = fax::encoder::Encoder::new(Shared(writer.clone()));
-        let width = u16::try_from(bits.width).unwrap();
+        let width = bits.width;
         for y in 0..bits.height {
             let colors = (0..bits.width).map(|x| {
                 if get(bits, x, y) {

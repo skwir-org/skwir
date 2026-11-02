@@ -13,7 +13,7 @@ anyhow.workspace = true
 # Bound to an older PDFium API than the packages carry (ADR-004): every
 # function of the surface named must be in the library, so a newer one
 # refuses any PDFium before it, and the helper needs nothing past 6721.
-pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_6721"] }
+pdfium-render = { version = "=0.9.5", default-features = false, features = ["pdfium_6721"] }
 
 # Windows prints through PDFium drawing on the printer (ADR-111): its
 # device-context call, and GDI's spooler calls. pdfium-render takes any
@@ -22,7 +22,7 @@ pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdf
 # here with the features its call needs, so its HDC is ours. When they
 # move to another, this moves with them (`just check-windows` says so).
 [target.'cfg(windows)'.dependencies]
-pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdfium_6721", "pdfium_use_win32"] }
+pdfium-render = { version = "=0.9.5", default-features = false, features = ["pdfium_6721", "pdfium_use_win32"] }
 windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_Xps"] }
 
 [dev-dependencies]

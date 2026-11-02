@@ -17,10 +17,10 @@ flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 ruzstd = { version = "0.9", default-features = false, features = ["std"] }
 quick-xml = "0.42"
 # G-code carries its pictures in base64 comments.
-base64 = "0.22"
+base64 = "0.23"
 # G-code without one is drawn from its moves: the version and features
 # resvg already brings.
-tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"] }
 
 [dev-dependencies]
 # 3MF packages and FreeCAD documents are zips (read by
