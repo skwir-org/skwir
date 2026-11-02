@@ -866,10 +866,15 @@ impl Plugin for QueryPlugin {
             .section("Address"),
         );
         // What the address field offers as it is typed in, and how words
-        // typed over a folder filter it (ADR-098).
-        app.registry
-            .suggesters
-            .add(ID, skwir_core::suggest::Suggester::new(field::Field));
+        // typed over a folder filter it (ADR-098). The tags it offers are
+        // kept between keys, shared with `query.complete`.
+        let tag_offers = Arc::new(assist::TagOffers::default());
+        app.registry.suggesters.add(
+            ID,
+            skwir_core::suggest::Suggester::new(field::Field {
+                tags: Arc::clone(&tag_offers),
+            }),
+        );
         app.registry.filter_readers.add(
             ID,
             skwir_core::registry::FilterReader(Arc::new(lens::read_filter)),
@@ -1045,12 +1050,12 @@ impl Plugin for QueryPlugin {
                 ID, Topic::Find,
                 "query.complete",
                 "Complete a search",
-                "`{ range, items: [{ label, text, detail?, icon, tag? }], typing }`: what the term ending at `caret` (bytes; the end when omitted) can go on with, each item's `text` written in place of `range`: the keys a word starts, a key's values (kinds, the tags of the pane's files then the user's others, periods, sizes, stars); `typing` when that term is still incomplete",
-                |a, app| {
+                "`{ range, items: [{ label, text, detail?, icon, tag? }], typing, more? }`: what the term ending at `caret` (bytes; the end when omitted) can go on with, each item's `text` written in place of `range`: the keys a word starts, a key's values (kinds, the tags of the pane's files then the user's others, at most 200 of them, `more` counting those left out, periods, sizes, stars); `typing` when that term is still incomplete",
+                move |a, app| {
                     let caret = a.caret.unwrap_or(a.text.len());
-                    let tags = assist::offered_tags(app, a.pane);
-                    Ok(Outcome::Value(serde_json::to_value(assist::complete(
-                        &a.text, caret, &tags.tags,
+                    let tags = tag_offers.offered(app, a.pane);
+                    Ok(Outcome::Value(serde_json::to_value(assist::complete_in(
+                        &a.text, caret, &tags.all,
                     ))?))
                 },
             )

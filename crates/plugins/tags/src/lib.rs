@@ -482,22 +482,121 @@ fn folded(tag: &str) -> String {
     tag.chars().flat_map(char::to_lowercase).collect()
 }
 
-/// `tags.known`: every tag the user has, as [`known`] offers them, then
-/// those the index counted under the home folder that the vocabulary
-/// forgot or never saw (a tag place walked folders no listing showed),
-/// on the most files first. From memory, but for the index's pieces of
-/// the network mounts below the home folder, read once from the cache.
-fn every_tag(app: &App, vocabulary: &Vocabulary, index: &index::TagIndex) -> Vec<String> {
-    let mut out = known(sidebar::pinned(app), vocabulary.known());
+/// Every tag the user has, as [`known`] offers them, then those the index
+/// counted under the home folder that the vocabulary forgot or never saw
+/// (a tag place walked folders no listing showed), on the most files
+/// first. From memory, but for the index's pieces of the network mounts
+/// below the home folder, read once from the cache.
+fn every_tag(
+    pinned: Vec<String>,
+    vocabulary: &Vocabulary,
+    index: &index::TagIndex,
+    home: Option<&std::path::Path>,
+) -> Vec<String> {
+    let mut out = known(pinned, vocabulary.known());
     let mut named: std::collections::HashSet<String> = out.iter().map(|t| folded(t)).collect();
-    if let Some(home) = std::env::home_dir() {
-        for (tag, _) in index.top(usize::MAX, &home) {
+    if let Some(home) = home {
+        for (tag, _) in index.top(usize::MAX, home) {
             if named.insert(folded(&tag)) {
                 out.push(tag);
             }
         }
     }
     out
+}
+
+/// What [`every_tag`] is made of: while none of it moved, the tags it
+/// made are its answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EveryTagMadeOf {
+    pinned: Vec<String>,
+    vocabulary: u64,
+    index: u64,
+    mounts: Vec<std::path::PathBuf>,
+}
+
+/// `tags.known`'s answer, kept until what it is made of moves, each made
+/// numbered (`generation`): a caller that holds the current one is not
+/// sent every tag again, a key typed after another costing what a number
+/// does however many tags the user has.
+#[derive(Default)]
+struct EveryTag {
+    kept: Mutex<KeptTags>,
+}
+
+/// The tags last made, numbered: every making a new number, so a number
+/// a caller holds names those tags alone.
+#[derive(Default)]
+struct KeptTags {
+    /// What they were made of; `None` when it moved while they were made.
+    made_of: Option<EveryTagMadeOf>,
+    generation: u64,
+    tags: Arc<Vec<String>>,
+}
+
+/// What `tags.known` is asked.
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
+struct KnownArgs {
+    /// The `generation` of the tags the caller holds: while it is the
+    /// current one, the answer names it alone.
+    #[serde(default)]
+    generation: Option<u64>,
+}
+
+impl EveryTag {
+    /// The current tags and their number, made again only when what they
+    /// are made of moved.
+    fn current(
+        &self,
+        app: &App,
+        vocabulary: &Vocabulary,
+        index: &index::TagIndex,
+    ) -> (u64, Arc<Vec<String>>) {
+        let home = std::env::home_dir();
+        let made_of = || EveryTagMadeOf {
+            pinned: sidebar::pinned(app),
+            vocabulary: vocabulary.generation(),
+            index: index.generation(),
+            mounts: home.as_deref().map(index::mounts_below).unwrap_or_default(),
+        };
+        let before = made_of();
+        {
+            let kept = self.kept.lock();
+            if kept.made_of.as_ref() == Some(&before) {
+                return (kept.generation, Arc::clone(&kept.tags));
+            }
+        }
+        let tags = Arc::new(every_tag(
+            before.pinned.clone(),
+            vocabulary,
+            index,
+            home.as_deref(),
+        ));
+        // What moved while they were made is made again at the next call.
+        let still = made_of() == before;
+        let mut kept = self.kept.lock();
+        kept.generation += 1;
+        kept.made_of = still.then_some(before);
+        kept.tags = Arc::clone(&tags);
+        (kept.generation, tags)
+    }
+
+    /// The answer to `args`: `{ generation, tags }`, `tags` left out when
+    /// the caller holds them.
+    fn answer(
+        &self,
+        args: &KnownArgs,
+        app: &App,
+        vocabulary: &Vocabulary,
+        index: &index::TagIndex,
+    ) -> serde_json::Value {
+        let (generation, tags) = self.current(app, vocabulary, index);
+        if args.generation == Some(generation) {
+            serde_json::json!({ "generation": generation })
+        } else {
+            serde_json::json!({ "generation": generation, "tags": tags.as_slice() })
+        }
+    }
 }
 
 /// The comment of the pane's one selected entry, from what hydration read.
@@ -1483,13 +1582,17 @@ impl Plugin for TagsPlugin {
                 },
             )
             .data();
-        let (v, i) = (Arc::clone(&vocabulary), Arc::clone(&index));
-        app.commands.register::<skwir_core::command::NoArgs, _>(
+        let (v, i, every) = (
+            Arc::clone(&vocabulary),
+            Arc::clone(&index),
+            EveryTag::default(),
+        );
+        app.commands.register::<KnownArgs, _>(
             ID, Topic::Notes,
             "tags.known",
             "Tags known",
-            "Every tag the user has, each once, from memory: those pinned, in their order; then the most recently given; then those seen on files; then those counted under the home folder, on the most files first",
-            move |_, app| Ok(Outcome::Value(serde_json::to_value(every_tag(app, &v, &i))?)),
+            "`{ generation, tags? }`: every tag the user has, each once, from memory: those pinned, in their order; then the most recently given; then those seen on files; then those counted under the home folder, on the most files first. `generation` numbers them: asked with the one held, `tags` is left out while it is current",
+            move |a, app| Ok(Outcome::Value(every.answer(&a, app, &v, &i))),
         )
         .data();
         app.commands.register::<ListArgs, _>(
@@ -1697,6 +1800,54 @@ mod tests {
             assert!(std::time::Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
+    }
+
+    /// `tags.known`'s answer is made again only when what it is made of
+    /// moves (the vocabulary, the index), each making numbered anew; a
+    /// caller holding the current number is sent the number alone.
+    #[test]
+    fn every_tag_is_made_again_only_when_what_it_is_made_of_moves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let app = App::new(AppConfig::ephemeral(tmp.path())).unwrap();
+        let vocabulary = vocabulary::Vocabulary::empty();
+        let index = index::TagIndex::new(None, &app, CancelToken::new());
+        index.set_limit(1);
+        let every = EveryTag::default();
+        let (first, made) = every.current(&app, &vocabulary, &index);
+        let (again, kept) = every.current(&app, &vocabulary, &index);
+        assert_eq!(first, again);
+        assert!(Arc::ptr_eq(&made, &kept), "kept, not made again");
+        vocabulary.used(&["urgent".to_owned()]);
+        let (given, made) = every.current(&app, &vocabulary, &index);
+        assert!(given > first);
+        assert_eq!(made.as_slice(), ["urgent"]);
+        if let Some(home) = std::env::home_dir() {
+            // In memory alone: nothing is read or written there.
+            let file = home.join("skwir-known-test").join("notes.txt");
+            index.learn(vec![(file, vec!["filed".to_owned()])]);
+            let (learned, made) = every.current(&app, &vocabulary, &index);
+            assert!(learned > given);
+            assert_eq!(made.as_slice(), ["urgent", "filed"]);
+        }
+        let (now, _) = every.current(&app, &vocabulary, &index);
+        let held = every.answer(
+            &KnownArgs {
+                generation: Some(now),
+            },
+            &app,
+            &vocabulary,
+            &index,
+        );
+        assert_eq!(held, serde_json::json!({ "generation": now }));
+        let stale = every.answer(
+            &KnownArgs {
+                generation: Some(first),
+            },
+            &app,
+            &vocabulary,
+            &index,
+        );
+        assert_eq!(stale["tags"][0], "urgent");
     }
 
     fn plan(app: &App, name: &str, args: &serde_json::Value) -> Plan {

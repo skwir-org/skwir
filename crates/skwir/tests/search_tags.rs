@@ -250,14 +250,27 @@ fn tag_offers_the_folders_tags_then_the_users_others() {
     assert_eq!(labels("tag:"), ["Places/France", "work", "holiday"]);
     assert_eq!(labels("#"), ["Places/France", "work", "holiday"]);
     assert_eq!(labels("tag:ho"), ["holiday"]);
-    let known = value(&app, "tags.known", serde_json::json!({}));
-    let known: Vec<&str> = known
+    let answer = value(&app, "tags.known", serde_json::json!({}));
+    let known: Vec<&str> = answer["tags"]
         .as_array()
         .unwrap()
         .iter()
         .map(|t| t.as_str().unwrap())
         .collect();
     assert_eq!(known.len(), 3, "{known:?}: each tag once");
+    // Asked with the number of the tags held, while nothing changed: the
+    // number alone, the tags not sent again.
+    let generation = answer["generation"].clone();
+    let again = value(
+        &app,
+        "tags.known",
+        serde_json::json!({ "generation": generation }),
+    );
+    assert_eq!(again["generation"], generation);
+    assert!(again.get("tags").is_none(), "{again}");
+    // Asked with another number, the tags are sent.
+    let stale = value(&app, "tags.known", serde_json::json!({ "generation": 0 }));
+    assert_eq!(stale["tags"].as_array().map(Vec::len), Some(3), "{stale}");
 
     // The field's own rows: in the folder, `holiday` is a name; in a
     // scope, a tag of the user's.

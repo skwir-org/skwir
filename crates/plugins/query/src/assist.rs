@@ -10,12 +10,15 @@
 //! key with no value yet, the start of a value offered, the digits of a
 //! date) is not an error until the caret leaves it.
 
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+use std::sync::Arc;
 
+use parking_lot::Mutex;
 use serde::Serialize;
 use skwir_core::app::App;
 use skwir_core::command::{Invocation, Outcome};
-use skwir_core::metadata::{same_tag, tag_leaf};
+use skwir_core::metadata::tag_leaf;
 use skwir_core::workspace::PaneId;
 use skwir_platform::mime::Kind;
 
@@ -305,7 +308,7 @@ fn typing(text: &str, w: &WordLex, caret: usize) -> bool {
     };
     let value = w.value(text);
     value.is_empty()
-        || !values(text, w, key, &[]).is_empty()
+        || !values(text, w, key, &TagList::default(), &mut 0).is_empty()
         || (TIMES.contains(&key)
             && value
                 .chars()
@@ -471,7 +474,20 @@ pub struct Completed {
     pub items: Vec<Item>,
     /// The term there is still being typed: not an error yet.
     pub typing: bool,
+    /// How many more tags go on with what is typed than `items` offers
+    /// ([`MOST_TAGS_OFFERED`]): typing more of a name narrows them.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub more: usize,
 }
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde hands it a reference.
+fn is_zero(n: &usize) -> bool {
+    *n == 0
+}
+
+/// The most tags `tag:` and `#` offer at once: no one reads further down
+/// a list, and every row offered is made, sent and drawn at each key.
+pub const MOST_TAGS_OFFERED: usize = 200;
 
 /// One way to go on: what it reads as, the term it writes in place of
 /// `Completed::range`, a word on it, its icon, and the tag it names.
@@ -492,6 +508,11 @@ pub struct Item {
 /// option takes) that go on with what is typed, after the last comma of a
 /// list. A term already whole offers only what goes on from it.
 pub fn complete(text: &str, caret: usize, tags: &[String]) -> Completed {
+    complete_in(text, caret, &TagList::new(tags.to_vec()))
+}
+
+/// [`complete`], the tags offered made once ([`TagList`]).
+pub fn complete_in(text: &str, caret: usize, tags: &TagList) -> Completed {
     let caret = floor_boundary(text, caret);
     let lexemes = lex(text);
     let Some(w) = word_at(&lexemes, caret) else {
@@ -501,22 +522,24 @@ pub fn complete(text: &str, caret: usize, tags: &[String]) -> Completed {
         };
     };
     let range = w.range.clone();
+    let mut more = 0;
     let items = match w.key {
         _ if w.unterminated => Vec::new(),
         None if w.quoted => Vec::new(),
         None => keys(&text[range.clone()]),
-        Some((key, _)) => values(text, w, key, tags),
+        Some((key, _)) => values(text, w, key, tags, &mut more),
     };
     // Any tag parses, so a tag is still being typed while it only starts
     // the names of the tags offered (`#pr`): Enter takes the first.
     let unnamed = w.key.is_some_and(|(k, _)| k == "tag")
         && !items.is_empty()
-        && !tags.iter().any(|t| same_tag(t, w.value(text)));
+        && !tags.is_named(w.value(text));
     let typing = (verdict(text, w).is_err() && typing(text, w, caret)) || unnamed;
     Completed {
         range,
         items,
         typing,
+        more,
     }
 }
 
@@ -538,8 +561,15 @@ fn keys(word: &str) -> Vec<Item> {
         .collect()
 }
 
-/// The values of `key` that go on with what `w` holds.
-fn values(text: &str, w: &WordLex, key: &'static str, tags: &[String]) -> Vec<Item> {
+/// The values of `key` that go on with what `w` holds; how many tags
+/// more than are offered go on with it, in `more`.
+fn values(
+    text: &str,
+    w: &WordLex,
+    key: &'static str,
+    tags: &TagList,
+    more: &mut usize,
+) -> Vec<Item> {
     if w.quoted || w.unterminated {
         return Vec::new();
     }
@@ -629,16 +659,22 @@ fn values(text: &str, w: &WordLex, key: &'static str, tags: &[String]) -> Vec<It
         "type" => words(&["file", "dir", "symlink"]),
         "hidden" => words(&["true", "false"]),
         "case" => words(&["sensitive", "insensitive"]),
-        "tag" => tags
-            .iter()
-            .filter(|t| {
-                let lower = t.to_lowercase();
-                lower != typed_lower
-                    && (lower.starts_with(&typed_lower)
-                        || tag_leaf(t).to_lowercase().starts_with(&typed_lower))
-            })
-            .map(|t| item(t.clone(), &lang::quote(t), Some(t.clone())))
-            .collect(),
+        "tag" => {
+            let mut found = Vec::new();
+            for (tag, (lower, leaf)) in tags.tags.iter().zip(&tags.lower) {
+                let goes_on = *lower != typed_lower
+                    && (lower.starts_with(&typed_lower) || leaf.starts_with(&typed_lower));
+                if !goes_on {
+                    continue;
+                }
+                if found.len() < MOST_TAGS_OFFERED {
+                    found.push(item(tag.clone(), &lang::quote(tag), Some(tag.clone())));
+                } else {
+                    *more += 1;
+                }
+            }
+            found
+        }
         _ => Vec::new(),
     }
 }
@@ -700,6 +736,11 @@ const SIZE_WORDS: [(&str, &str, &str); 6] = [
 /// (`big`), and the tags of `tags`; what is left searches names. `None`
 /// when the text holds anything but words, or nothing was read.
 pub fn interpret(text: &str, tags: &[String]) -> Option<Reading> {
+    interpret_in(text, &TagList::new(tags.to_vec()))
+}
+
+/// [`interpret`], the tags words may name made once ([`TagList`]).
+pub fn interpret_in(text: &str, tags: &TagList) -> Option<Reading> {
     let mut words: Vec<(String, bool)> = Vec::new();
     for lexeme in lex(text) {
         match lexeme {
@@ -760,12 +801,7 @@ pub fn interpret(text: &str, tags: &[String]) -> Option<Reading> {
             }
         } else if let Some(&(_, form, says)) = SIZE_WORDS.iter().find(|(w, ..)| *w == lower) {
             size = Some((form, says));
-        } else if let Some(tag) = tags.iter().find(|t| {
-            let full = t.to_lowercase();
-            let leaf = tag_leaf(t).to_lowercase();
-            [full.as_str(), leaf.as_str()].contains(&lower.as_str())
-                || [full.as_str(), leaf.as_str()].contains(&single)
-        }) {
+        } else if let Some(tag) = tags.named_by(&lower, single) {
             if !tagged.contains(tag) {
                 tagged.push(tag.clone());
             }
@@ -937,44 +973,190 @@ pub(crate) fn pane_tags(app: &App, pane: Option<PaneId>) -> Vec<String> {
     }
 }
 
+/// Tags offered (`tag:`, `#`, words read as tags), each with what a key
+/// typed is compared with made once: its name and its leaf in lower case,
+/// the first tag by either, and every name as `same_tag` folds it. Made
+/// when the tags change ([`TagOffers`]), never at every key: a user of
+/// many thousands of tags pays for them once.
+#[derive(Debug, Default)]
+pub struct TagList {
+    tags: Vec<String>,
+    /// Each tag's name and leaf in lower case, as `tags`.
+    lower: Vec<(String, String)>,
+    /// The first tag by its name or its leaf in lower case.
+    by_word: HashMap<String, usize>,
+    /// Every name, folded as `same_tag` compares them.
+    folded: HashSet<String>,
+}
+
+impl TagList {
+    pub fn new(tags: Vec<String>) -> TagList {
+        let lower: Vec<(String, String)> = tags
+            .iter()
+            .map(|tag| (tag.to_lowercase(), tag_leaf(tag).to_lowercase()))
+            .collect();
+        let mut by_word = HashMap::with_capacity(lower.len());
+        for (at, (full, leaf)) in lower.iter().enumerate() {
+            by_word.entry(full.clone()).or_insert(at);
+            by_word.entry(leaf.clone()).or_insert(at);
+        }
+        let folded = tags.iter().map(|tag| fold(tag)).collect();
+        TagList {
+            tags,
+            lower,
+            by_word,
+            folded,
+        }
+    }
+
+    pub fn tags(&self) -> &[String] {
+        &self.tags
+    }
+
+    /// Whether a tag is named `name`, as `same_tag` compares names.
+    fn is_named(&self, name: &str) -> bool {
+        self.folded.contains(&fold(name))
+    }
+
+    /// The first tag whose name or leaf is `word` or `single` (each in
+    /// lower case): what a word read as a term names.
+    fn named_by(&self, word: &str, single: &str) -> Option<&String> {
+        let at = [word, single]
+            .iter()
+            .filter_map(|w| self.by_word.get(*w))
+            .min()?;
+        self.tags.get(*at)
+    }
+}
+
+/// A tag as `same_tag` compares it.
+fn fold(tag: &str) -> String {
+    tag.chars().flat_map(char::to_lowercase).collect()
+}
+
 /// The tags `tag:` and `#` offer: those of the pane's files the listing
 /// has read, by name ([`pane_tags`]), then every other tag the user has,
 /// as the tags plugin knows them (`tags.known`, from memory): a search
 /// below the folder, or in another scope, finds tags no file shown has,
 /// and the listing reads the tags of the rows in view only.
 pub(crate) struct Offered {
-    pub tags: Vec<String>,
-    /// How many of `tags` the pane's files have, first.
-    here: usize,
-}
-
-impl Offered {
+    /// All of them, the pane's files' first.
+    pub all: Arc<TagList>,
     /// Those of the pane's files.
-    pub fn here(&self) -> &[String] {
-        &self.tags[..self.here]
-    }
+    pub here: Arc<TagList>,
 }
 
-pub(crate) fn offered_tags(app: &App, pane: Option<PaneId>) -> Offered {
-    let mut tags = pane_tags(app, pane);
-    let here = tags.len();
-    let known = app
-        .commands
-        .get("tags.known")
-        .and_then(|_| match app.dispatch(&Invocation::new("tags.known")) {
-            Ok(Outcome::Value(v)) => serde_json::from_value::<Vec<String>>(v).ok(),
-            _ => None,
-        })
-        .unwrap_or_default();
-    let folded = |tag: &str| -> String { tag.chars().flat_map(char::to_lowercase).collect() };
-    let mut named: std::collections::HashSet<String> = tags.iter().map(|t| folded(t)).collect();
-    tags.extend(known.into_iter().filter(|t| named.insert(folded(t))));
-    Offered { tags, here }
+/// What the tags offered were last made of, and what they made.
+#[derive(Default)]
+struct Kept {
+    /// The pane's files' tags.
+    here_names: Vec<String>,
+    /// The number `tags.known` gave the user's tags, and those tags.
+    generation: Option<u64>,
+    known: Vec<String>,
+    offered: Option<Offered>,
+}
+
+/// The tags offered, kept between keys while neither the pane's files'
+/// tags nor the user's change: `tags.known` is asked with the number of
+/// those held, and sends them again only when they changed.
+#[derive(Default)]
+pub(crate) struct TagOffers {
+    kept: Mutex<Kept>,
+}
+
+/// What `tags.known` answers.
+#[derive(serde::Deserialize)]
+struct Known {
+    generation: u64,
+    #[serde(default)]
+    tags: Option<Vec<String>>,
+}
+
+impl TagOffers {
+    /// The tags offered for `pane` now ([`Offered`]).
+    pub(crate) fn offered(&self, app: &App, pane: Option<PaneId>) -> Offered {
+        let here_names = pane_tags(app, pane);
+        let held = self.kept.lock().generation;
+        let known: Option<Known> = app.commands.get("tags.known").and_then(|_| {
+            let ask =
+                Invocation::with_args("tags.known", &serde_json::json!({ "generation": held }));
+            match app.dispatch(&ask) {
+                Ok(Outcome::Value(v)) => serde_json::from_value(v).ok(),
+                _ => None,
+            }
+        });
+        let mut kept = self.kept.lock();
+        let mut moved = kept.here_names != here_names;
+        match known {
+            Some(Known {
+                generation,
+                tags: Some(tags),
+            }) => {
+                kept.generation = Some(generation);
+                kept.known = tags;
+                moved = true;
+            }
+            // The tags held are current (or another caller's, as new,
+            // replaced them since).
+            Some(Known { tags: None, .. }) => {}
+            // No tags plugin, or no answer: the pane's files' alone.
+            None => {
+                moved |= kept.generation.is_some();
+                kept.generation = None;
+                kept.known.clear();
+            }
+        }
+        if moved || kept.offered.is_none() {
+            let mut all = here_names.clone();
+            let mut named: HashSet<String> = all.iter().map(|t| fold(t)).collect();
+            all.extend(kept.known.iter().filter(|t| named.insert(fold(t))).cloned());
+            kept.offered = Some(Offered {
+                all: Arc::new(TagList::new(all)),
+                here: Arc::new(TagList::new(here_names.clone())),
+            });
+            kept.here_names = here_names;
+        }
+        let offered = kept.offered.as_ref().expect("made above");
+        Offered {
+            all: Arc::clone(&offered.all),
+            here: Arc::clone(&offered.here),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A user of many tags is offered the first of those that go on with
+    /// what is typed, and told how many more there are; typing narrows
+    /// them, and a word names one of them as a term, each found by its
+    /// name rather than by a walk through them all.
+    #[test]
+    fn many_tags_are_offered_a_few_hundred_at_a_time() {
+        let count = 5_000;
+        let tags: Vec<String> = (0..count).map(|i| format!("Lot/tag{i:04}")).collect();
+        let all = TagList::new(tags);
+        let every = complete_in("tag:", 4, &all);
+        assert_eq!(every.items.len(), MOST_TAGS_OFFERED);
+        assert_eq!(every.more, count - MOST_TAGS_OFFERED);
+        assert_eq!(every.items[0].label, "Lot/tag0000");
+        assert!(serde_json::to_value(&every).unwrap()["more"].is_number());
+        let narrowed = complete_in("tag:tag49", 9, &all);
+        assert_eq!(narrowed.items.len(), 100, "by the leaf");
+        assert_eq!(narrowed.more, 0);
+        assert!(
+            serde_json::to_value(&narrowed)
+                .unwrap()
+                .get("more")
+                .is_none()
+        );
+        let named = complete_in("#lot/tag4999", 12, &all);
+        assert!(named.items.is_empty() && !named.typing, "a tag named whole");
+        let reading = interpret_in("tag4999 report", &all).expect("a tag read");
+        assert!(reading.expr.contains("Lot/tag4999"), "{}", reading.expr);
+    }
 
     fn kinds(spans: &[Span]) -> Vec<(Range<usize>, SpanKind)> {
         spans.iter().map(|s| (s.range.clone(), s.kind)).collect()

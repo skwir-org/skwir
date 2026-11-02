@@ -29,8 +29,11 @@ const RECENT: usize = 20;
 /// How many are offered before anything is typed.
 const RECENT_SHOWN: usize = 4;
 
-/// The source.
-pub struct Field;
+/// The source, and the tags it offers, kept between keys.
+#[derive(Default)]
+pub struct Field {
+    pub(crate) tags: std::sync::Arc<assist::TagOffers>,
+}
 
 impl SuggestSource for Field {
     fn id(&self) -> &'static str {
@@ -58,7 +61,7 @@ impl SuggestSource for Field {
                 spans: Vec::new(),
             },
             Typed::Help => terms(),
-            _ => typed(app, ask),
+            _ => typed(app, ask, &self.tags),
         }
     }
 }
@@ -178,7 +181,7 @@ fn live(app: &App, expr: &str, scope: &Location, ask: &Ask) -> Option<Invocation
 }
 
 /// The rows for words typed.
-fn typed(app: &App, ask: &Ask) -> Answer {
+fn typed(app: &App, ask: &Ask, offers: &assist::TagOffers) -> Answer {
     let text = ask.text.as_str();
     let words = ask.words();
     let caret = ask.caret.min(text.len());
@@ -199,9 +202,9 @@ fn typed(app: &App, ask: &Ask) -> Answer {
     let Some(scope) = scope_of(ask) else {
         return Answer::default();
     };
-    let tags = assist::offered_tags(app, ask.pane);
+    let tags = offers.offered(app, ask.pane);
     let completed = if ask.typing_at_end() {
-        assist::complete(text, caret, &tags.tags)
+        assist::complete_in(text, caret, &tags.all)
     } else {
         assist::Completed::default()
     };
@@ -276,16 +279,26 @@ fn typed(app: &App, ask: &Ask) -> Answer {
         }
         rows.push(row);
     }
+    // Tags past those offered are counted, not made: typing more of a
+    // name narrows them. Enter waits on the row, which says so.
+    if completed.more > 0 {
+        let more = completed.more;
+        let row = Suggestion::new(Section::Complete, format!("{more} more tags"))
+            .detail("Type more of the name to narrow them")
+            .icon("tag")
+            .rank(i32::try_from(completed.items.len()).unwrap_or(i32::MAX));
+        rows.push(row);
+    }
     // The words read as terms, offered below the search of the words; Tab
     // writes them (and Enter, over a folder filtered alone). Words name
     // the tags of the folder's files where they filter it, any of the
     // user's in a scope.
     let named = if ask.scope.is_some() {
-        &tags.tags[..]
+        &tags.all
     } else {
-        tags.here()
+        &tags.here
     };
-    if let Some(reading) = assist::interpret(words, named) {
+    if let Some(reading) = assist::interpret_in(words, named) {
         let mut row = Suggestion::new(Section::Reading, reading.label)
             .detail(reading.expr.clone())
             .icon("sliders")
@@ -606,7 +619,9 @@ mod tests {
     fn rows(text: &str) -> Vec<Suggestion> {
         let tmp = tempfile::tempdir().unwrap();
         let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
-        Field.suggest(&app, &ask(text), &CancelToken::new()).rows
+        Field::default()
+            .suggest(&app, &ask(text), &CancelToken::new())
+            .rows
     }
 
     #[test]
@@ -648,7 +663,9 @@ mod tests {
         let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         let mut disk = ask("dunes");
         disk.scope = Some(Location::from_path(std::path::MAIN_SEPARATOR_STR));
-        let r = Field.suggest(&app, &disk, &CancelToken::new()).rows;
+        let r = Field::default()
+            .suggest(&app, &disk, &CancelToken::new())
+            .rows;
         assert!(r[0].run.is_some() && r[0].live.is_none());
     }
 
@@ -718,7 +735,9 @@ mod tests {
         let app = App::new(skwir_core::app::AppConfig::ephemeral(tmp.path())).unwrap();
         let mut recent = ask("dunes");
         recent.scope = Some(Location::new("recent", ""));
-        let r = Field.suggest(&app, &recent, &CancelToken::new()).rows;
+        let r = Field::default()
+            .suggest(&app, &recent, &CancelToken::new())
+            .rows;
         assert_eq!(r[0].run.as_ref().unwrap().args["expr"], "dunes in:recent:");
         let elsewhere: Vec<&Suggestion> = r
             .iter()

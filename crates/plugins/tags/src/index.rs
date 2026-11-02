@@ -118,7 +118,7 @@ fn hidden_under(path: &Path, root: &Path) -> bool {
 
 /// The network mounts below `root`, as the table in memory has them: what
 /// a walk of it never enters (ADR-077), nor its counts count.
-fn mounts_below(root: &Path) -> Vec<PathBuf> {
+pub(crate) fn mounts_below(root: &Path) -> Vec<PathBuf> {
     reach::all()
         .iter()
         .filter(|r| r.point != root && r.point.starts_with(root))
@@ -321,9 +321,20 @@ struct State {
     home_counts: HashMap<u32, u64>,
     refused: bool,
     meta_dirty: bool,
+    /// Moves at every change of what it knows (each marked to be written,
+    /// `changed`): a caller keeping what it made of it keys on it
+    /// (`TagIndex::generation`).
+    generation: u64,
 }
 
 impl State {
+    /// What it knows changed: written soon, and what was made of it
+    /// before is made again.
+    fn changed(&mut self) {
+        self.meta_dirty = true;
+        self.generation += 1;
+    }
+
     fn total(&self) -> u64 {
         self.bytes.iter().sum()
     }
@@ -337,7 +348,7 @@ impl State {
         self.tags.push(tag.to_owned());
         self.parents.push(parent);
         self.ids.insert(tag.to_owned(), id);
-        self.meta_dirty = true;
+        self.changed();
         id
     }
 
@@ -386,7 +397,7 @@ impl State {
                 self.home_counts.remove(&tag);
             }
         }
-        self.meta_dirty = true;
+        self.changed();
     }
 
     /// Take the folder `path` (of piece `at`) out whole, with the room its
@@ -409,7 +420,7 @@ impl State {
             self.add_home(gone);
         }
         self.pieces[at].dirty = true;
-        self.meta_dirty = true;
+        self.changed();
         Some(folder)
     }
 }
@@ -519,7 +530,7 @@ impl Learning<'_> {
                 if !state.refused || !state.covered.is_empty() {
                     state.refused = true;
                     state.covered.clear();
-                    state.meta_dirty = true;
+                    state.changed();
                     self.changed = true;
                 }
                 return Fate::Same;
@@ -558,7 +569,7 @@ impl Learning<'_> {
         state.bytes[self.at] = bytes;
         *self.total = *self.total - before + bytes;
         state.pieces[self.at].dirty = true;
-        state.meta_dirty = true;
+        state.changed();
         self.changed = true;
         if ids.is_empty() {
             Fate::Gone
@@ -723,7 +734,7 @@ impl TagIndex {
             let mut state = self.state.lock();
             if state.refused {
                 state.refused = false;
-                state.meta_dirty = true;
+                state.changed();
             }
         }
     }
@@ -799,7 +810,7 @@ impl TagIndex {
                     }
                 }
                 state.home_counts = counts;
-                state.meta_dirty = true;
+                state.changed();
             }
         }
     }
@@ -1160,7 +1171,7 @@ impl TagIndex {
                 root: root.to_path_buf(),
                 since: (since.as_secs(), since.subsec_nanos()),
             });
-            state.meta_dirty = true;
+            state.changed();
         }
         self.write_soon();
     }
@@ -1258,7 +1269,7 @@ impl TagIndex {
                 let before = state.covered.len();
                 state.covered.retain(|c| !c.root.starts_with(from));
                 if state.covered.len() != before {
-                    state.meta_dirty = true;
+                    state.changed();
                     changed = true;
                 }
             }
@@ -1404,6 +1415,14 @@ impl TagIndex {
             }
         }
         out
+    }
+
+    /// How many times what it knows changed. What is made of its answers
+    /// keys on it, and on the network mounts below where it counts
+    /// (`mounts_below`): what they hold is taken out of the home folder's
+    /// counts, and they come and go without a change here.
+    pub fn generation(&self) -> u64 {
+        self.state().generation
     }
 
     /// The `at_most` tags on the most files under `root`, each with how

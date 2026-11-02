@@ -55,6 +55,9 @@ struct Inner {
     /// By the tag's lowercase form: tags ignore case.
     known: HashMap<String, Known>,
     loaded: bool,
+    /// Moves whenever what [`Vocabulary::known`] answers may have: a
+    /// caller keeping what it made of it keys on it.
+    generation: u64,
 }
 
 pub struct Vocabulary {
@@ -111,6 +114,7 @@ impl Vocabulary {
             }
         }
         inner.loaded = true;
+        inner.generation += 1;
     }
 
     /// Tags a listing showed. Writes only when one is new.
@@ -132,6 +136,8 @@ impl Vocabulary {
     fn touch(&self, tags: &[String], used: bool) -> bool {
         let at = now();
         let mut inner = self.inner.lock();
+        // When each was last seen or used orders what `known` answers.
+        inner.generation += 1;
         let mut new = false;
         for tag in tags {
             let known = inner.known.entry(tag.to_lowercase()).or_insert_with(|| {
@@ -197,6 +203,27 @@ impl Vocabulary {
             .clone()
     }
 
+    /// A vocabulary already read, of nothing, kept nowhere: for tests of
+    /// what is made of it.
+    #[cfg(test)]
+    pub(crate) fn empty() -> Arc<Self> {
+        Arc::new(Vocabulary {
+            inner: Mutex::new(Inner {
+                loaded: true,
+                ..Inner::default()
+            }),
+            slot: None,
+            app: Weak::new(),
+            lifetime: CancelToken::new(),
+            writing: AtomicBool::new(false),
+        })
+    }
+
+    /// How many times what [`Self::known`] answers may have changed.
+    pub fn generation(&self) -> u64 {
+        self.inner.lock().generation
+    }
+
     /// The tags known, the most recently used first, then those seen.
     pub fn known(&self) -> Vec<String> {
         let inner = self.inner.lock();
@@ -257,6 +284,7 @@ mod tests {
             inner: Mutex::new(Inner {
                 known: HashMap::new(),
                 loaded: true,
+                generation: 0,
             }),
             slot: None,
             app: Weak::new(),
