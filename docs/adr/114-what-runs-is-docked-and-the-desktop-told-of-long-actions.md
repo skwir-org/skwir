@@ -80,7 +80,9 @@ and macOS otherwise compiled only.
    action that ran 5 s or more (the same 5 s after which its answer says
    what it moved in how long) and finished or stopped, or one waiting for
    a server that stopped answering, while Skwir's window does not have
-   the focus, is a notification: one at a time, replacing the last ("3
+   the focus, is a notification: one at a time, at most one every 2 s
+   (the first at once, then the last, which sums what ended:
+   `desktop::NOTICE_PACE`), replacing the last ("3
    actions finished, 1 stopped"), filed as the specification's
    `transfer.complete`, `transfer.error` or `transfer`, withdrawn once the
    window has the focus again, or once a waiting one goes on. A click
