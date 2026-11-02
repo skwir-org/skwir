@@ -1312,6 +1312,13 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         answers: &[PromptButton],
     ) -> Option<oneshot::Receiver<usize>>;
     fn activate(&self);
+    /// Bring the window forward with `token`, the desktop's leave to do so
+    /// (Wayland's xdg-activation, as a notification's click hands it);
+    /// where none works so, as `activate`.
+    fn activate_with_token(&self, token: &str) {
+        let _ = token;
+        self.activate();
+    }
     /// Requests that the operating system draw attention to this window.
     fn request_attention(&self) {}
     fn is_active(&self) -> bool;

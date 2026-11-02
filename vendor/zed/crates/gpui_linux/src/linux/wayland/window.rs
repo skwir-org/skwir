@@ -1889,6 +1889,18 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
+    fn activate_with_token(&self, token: &str) {
+        // A token the desktop gave (a notification clicked) lets the
+        // window come forward, where one asked for here would be refused.
+        let state = self.borrow();
+        if let Some(activation) = &state.globals.activation {
+            activation.activate(token.to_owned(), &state.surface);
+        } else {
+            drop(state);
+            self.activate();
+        }
+    }
+
     fn request_attention(&self) {}
 
     fn is_active(&self) -> bool {

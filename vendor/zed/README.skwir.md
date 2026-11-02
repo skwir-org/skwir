@@ -72,6 +72,7 @@ at the vendored commit.
 | `0040-list-keeps-height-hints-across-a-width-change` | A list keeps each item's height, measured or hinted, as its estimate when its width changes and on its first layout, so a scrollbar measures every item (0004's last hunk) | — |
 | `0041-key-binding-for-a-system` | `KeyBinding::new_for_os` binds any string, its `secondary-` the given system's, without a keyboard mapper (`KeyBinding::new` takes a static string, and `load` maps keys by the layout) | — |
 | `0042-list-overdraw-set-later` | `ListState::set_overdraw`: a list about to scroll up by more than its overdraw measures that far first, and crosses heights known rather than hinted | — |
+| `0043-activate-with-token` | `Window::activate_window_with_token`: the window brought forward with the token the desktop gave (Wayland's xdg-activation, a notification clicked) | — |
 
 The numbers are those of the gpui 0.2.2 series where a patch came from it.
 
@@ -678,6 +679,21 @@ found. `test_overdraw_set_later_measures_that_far_above_the_top` scrolls
 overdraw it reaches the list's start (eight hints); with 400 px set and a
 layout between, it crosses item 4 and item 3's last 100 px, 200 px into
 item 3. `just gpui-check` runs it with upstream's list tests.
+
+### 0043: Activate with a token
+
+A notification server that follows version 1.2 of the specification sends
+an xdg-activation token with a click on a notification (`ActivationToken`,
+before `ActionInvoked`). Upstream's `activate` asks the compositor for a
+token of its own, with the serial of the last press in the window, which a
+compositor refuses when the window was not used last: Mutter and KWin then
+only mark the window as asking for attention. Skwir's notices of long
+actions (ADR-114) bring the window forward when clicked.
+
+`PlatformWindow::activate_with_token` hands the desktop's token to
+`xdg_activation_v1::activate` on Wayland; elsewhere, and on a compositor
+without the protocol, it activates as before. `Window::activate_window_with_token`
+takes the token if there is one.
 
 ## Adding or changing a patch
 

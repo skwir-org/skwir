@@ -1,0 +1,64 @@
+0043 activate-with-token: Window::activate_window_with_token brings the window forward with a token the desktop gave (Wayland's xdg-activation, as a notification's click hands it), else as activate_window
+
+diff --git a/crates/gpui/src/platform.rs b/crates/gpui/src/platform.rs
+index 0d56a83..539fc1c 100644
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -1312,6 +1312,13 @@ pub trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
+         answers: &[PromptButton],
+     ) -> Option<oneshot::Receiver<usize>>;
+     fn activate(&self);
++    /// Bring the window forward with `token`, the desktop's leave to do so
++    /// (Wayland's xdg-activation, as a notification's click hands it);
++    /// where none works so, as `activate`.
++    fn activate_with_token(&self, token: &str) {
++        let _ = token;
++        self.activate();
++    }
+     /// Requests that the operating system draw attention to this window.
+     fn request_attention(&self) {}
+     fn is_active(&self) -> bool;
+diff --git a/crates/gpui/src/window.rs b/crates/gpui/src/window.rs
+index d563d85..2a88e0d 100644
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -6785,6 +6785,16 @@ impl Window {
+         self.platform_window.activate();
+     }
+ 
++    /// Focus the window and bring it to the foreground with `token`, the
++    /// desktop's leave to do so (Wayland's xdg-activation, as a
++    /// notification's click hands it), else as `activate_window`.
++    pub fn activate_window_with_token(&self, token: Option<&str>) {
++        match token {
++            Some(token) => self.platform_window.activate_with_token(token),
++            None => self.platform_window.activate(),
++        }
++    }
++
+     /// Requests that the operating system draw attention to this window.
+     pub fn request_attention(&self) {
+         self.platform_window.request_attention();
+diff --git a/crates/gpui_linux/src/linux/wayland/window.rs b/crates/gpui_linux/src/linux/wayland/window.rs
+index 8145198..a53cd27 100644
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -1889,6 +1889,18 @@ impl PlatformWindow for WaylandWindow {
+         }
+     }
+ 
++    fn activate_with_token(&self, token: &str) {
++        // A token the desktop gave (a notification clicked) lets the
++        // window come forward, where one asked for here would be refused.
++        let state = self.borrow();
++        if let Some(activation) = &state.globals.activation {
++            activation.activate(token.to_owned(), &state.surface);
++        } else {
++            drop(state);
++            self.activate();
++        }
++    }
++
+     fn request_attention(&self) {}
+ 
+     fn is_active(&self) -> bool {

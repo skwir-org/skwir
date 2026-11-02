@@ -6785,6 +6785,16 @@ impl Window {
         self.platform_window.activate();
     }
 
+    /// Focus the window and bring it to the foreground with `token`, the
+    /// desktop's leave to do so (Wayland's xdg-activation, as a
+    /// notification's click hands it), else as `activate_window`.
+    pub fn activate_window_with_token(&self, token: Option<&str>) {
+        match token {
+            Some(token) => self.platform_window.activate_with_token(token),
+            None => self.platform_window.activate(),
+        }
+    }
+
     /// Requests that the operating system draw attention to this window.
     pub fn request_attention(&self) {
         self.platform_window.request_attention();
