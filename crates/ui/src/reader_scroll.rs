@@ -323,6 +323,51 @@ impl WheelTurn {
     }
 }
 
+/// How far a line of the wheel moves pages, read continuously or a page at
+/// a time: 40 px, so a notch (three lines on Linux) goes 120 px, as
+/// Chromium's does there (its PDF viewer's). gpui's list counts a line
+/// 20 px, a `div` the window's line height (26 px): both crawled through
+/// a page. A touchpad's pixels go as they come.
+pub(crate) const WHEEL_LINE: gpui::Pixels = px(40.);
+
+/// How far a plain wheel moves the column down (up when negative): its
+/// lines at `WHEEL_LINE`, `None` for what is left to gpui's own scrolling
+/// (a touchpad's pixels, a wheel turned sideways, one with a modifier).
+fn wheel_step(event: &ScrollEvent) -> Option<f32> {
+    let gpui::ScrollDelta::Lines(lines) = event.delta else {
+        return None;
+    };
+    (!event.modifiers.modified() && lines.x == 0. && lines.y != 0. && lines.y.is_finite())
+        .then(|| -lines.y * f32::from(WHEEL_LINE))
+}
+
+/// The wheel over pages read continuously, at a document's step
+/// (`WHEEL_LINE`): drawn after the column, its listener comes before the
+/// list's (bubbling runs last drawn first), and after what is drawn over
+/// the pages, which keeps the wheel.
+fn wheel_steps(list: ListState, shell: gpui::WeakEntity<Shell>) -> impl IntoElement {
+    gpui::canvas(
+        |bounds, window, _| window.insert_hitbox(bounds, gpui::HitboxBehavior::Normal),
+        move |_, hitbox, window, _| {
+            window.on_mouse_event(move |event: &ScrollEvent, phase, window, cx| {
+                if !phase.bubble() || !hitbox.should_handle_scroll(window) {
+                    return;
+                }
+                let Some(step) = wheel_step(event) else {
+                    return;
+                };
+                list.scroll_by(px(step));
+                shell.update(cx, |_, cx| cx.notify()).ok();
+                cx.stop_propagation();
+            });
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+}
+
 /// The room under each page read continuously, before the next.
 const PAGE_GAP: f32 = 12.;
 
@@ -547,7 +592,7 @@ impl Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let delta = event.delta.pixel_delta(window.line_height());
+        let delta = event.delta.pixel_delta(WHEEL_LINE);
         let pending = self.preview.phase != crate::preview::PreviewPhase::Idle;
         let scroll = &mut self.preview.reader.scroll;
         let offset = scroll.single.offset();
@@ -1088,6 +1133,7 @@ pub fn continuous_element(
     let list = scroll.list.clone();
     let after_list = list.clone();
     let bar_list = list.clone();
+    let wheel_list = list.clone();
     let sideways = scroll.sideways.clone();
     let count = list.item_count() as u32;
     let layout = scroll.layout.clone();
@@ -1100,6 +1146,7 @@ pub fn continuous_element(
     let (side, scale) = (shell.preview.page_side, reader.shown_scale);
     let entity = cx.entity().downgrade();
     let after_entity = entity.clone();
+    let wheel_entity = entity.clone();
     let lifetime = reader.lifetime.clone();
     let zoom = shell.preview.zoom;
     let fit_width = shell.preview.fit_width;
@@ -1229,6 +1276,7 @@ pub fn continuous_element(
                 )
                 .child(bar)
                 .child(across)
+                .child(wheel_steps(wheel_list, wheel_entity))
                 .into_any_element()
         }),
         laid_out: Box::new(move |window, cx| {
@@ -1518,6 +1566,28 @@ mod tests {
         assert_eq!(wheel.turn(-40., false, false), 0);
         assert_eq!(wheel.turn(-40., false, true), 0);
         assert_eq!(wheel.turn(-40., false, false), 0);
+    }
+
+    #[test]
+    fn a_wheel_notch_moves_pages_as_chromium_s_viewer_does() {
+        let wheel = |delta, modifiers| ScrollEvent {
+            delta,
+            modifiers,
+            ..ScrollEvent::default()
+        };
+        let lines = |x, y| gpui::ScrollDelta::Lines(point(x, y));
+        let plain = gpui::Modifiers::default();
+        // A notch is three lines on Linux, toward the reader (down) when
+        // negative: 120 px.
+        assert_eq!(wheel_step(&wheel(lines(0., -3.), plain)), Some(120.));
+        assert_eq!(wheel_step(&wheel(lines(0., 3.), plain)), Some(-120.));
+        // The rest is gpui's: a touchpad's pixels, sideways, Ctrl's zoom.
+        let pixels = gpui::ScrollDelta::Pixels(point(px(0.), px(-30.)));
+        assert_eq!(wheel_step(&wheel(pixels, plain)), None);
+        assert_eq!(wheel_step(&wheel(lines(-3., 0.), plain)), None);
+        assert_eq!(wheel_step(&wheel(lines(0., f32::NAN), plain)), None);
+        let ctrl = gpui::Modifiers::control();
+        assert_eq!(wheel_step(&wheel(lines(0., -3.), ctrl)), None);
     }
 
     #[test]

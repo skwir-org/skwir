@@ -132,6 +132,15 @@ Measurements: `docs/pdf-comparison.md`, ADR-061 for `DjVu`.
   the page, `reader_wheel`; so do Up and Down at its edge, `reader_arrow`,
   waiting while a turn is on its way, so a held key starts the next page
   at its top).
+- **A line of the wheel moves pages `WHEEL_LINE` (40 px)**, read
+  continuously or a page at a time, so a notch (three lines on Linux)
+  goes 120 px, as Chromium's does there (its PDF viewer's). gpui's list
+  counts a line 20 px and a `div` the window's line height (26 px): a
+  notch went 60 and 78 px. Read continuously, the column takes the wheel
+  before the list does (`wheel_steps`, drawn after the column: bubbling
+  runs last drawn first, and what is drawn over the pages still comes
+  before it). A touchpad's pixels, a wheel turned sideways and one with a
+  modifier (Ctrl's zoom) are left as they come (`wheel_step`).
 - **The wheel turns a page a notch** a page at a time, past the page's
   edge: a page that fits (Fit) is at both its edges, so every notch turns
   it. The wheel and the arrows ask one question, `at_page_edge`, in

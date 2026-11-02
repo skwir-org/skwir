@@ -9758,3 +9758,38 @@ print plugin: 397 run, all passing; rustfmt; clippy of both on Linux.
 GTK's back end again (its answers did not change). The bug is KDE's:
 reported upstream by no one found; a report and its one-line fix are
 drafted for the user.
+
+## A notch of the wheel over pages, as Chromium's (2026-11-02)
+
+The user found the wheel slow over a document read continuously, next to
+Chromium's PDF viewer (PDFium in Brave).
+
+**Cause:** the continuous column is gpui's list, which counts a wheel
+line 20 px whatever the window's text: a notch (three lines on Linux,
+`SCROLL_LINES`) moved 60 px. A page at a time, the canvas counted the
+window's line height, 26 px: 78 px a notch. Chromium moves 120 px a
+notch on Linux and Windows (`MouseWheelEvent::kWheelDelta`, read
+2026-11-02).
+
+**Fixed** (`reader_scroll`): a line of the wheel over pages is
+`WHEEL_LINE`, 40 px, in both modes. Read continuously, a listener drawn
+after the column (`wheel_steps`) takes a plain wheel's lines before the
+list does and moves it; a touchpad's pixels, a wheel turned sideways and
+one with a modifier stay gpui's (`wheel_step`). The reader's rules say
+so (reader.md).
+
+**Checked** on headless sway (Wayland, as the user's session) with the
+virtual pointer's wheel over a synthetic six-page PDF of grey bars,
+PDFium's helper, the panel's column captured before and after a notch
+and the shift between them measured: before, 60 px a notch read
+continuously (twice) and 78 px a page at a time at 95 %; after, 120 px
+down and up in both modes, and from the end of the document (41 notches
+down) the first notch up moved 120 px at once. Ctrl and the wheel still
+zoomed (Fit to 49 %), the column unmoved by it.
+
+**Tests:** `reader_scroll::tests::a_wheel_notch_moves_pages_as_chromium_s_viewer_does`;
+skwir-ui's reader_scroll tests, 18 passing; rustfmt; clippy of skwir-ui.
+
+**Not checked:** a touchpad (its pixels unchanged, by the test only);
+X11's wheel; macOS and Windows (compiled by neither check here; the
+change is in shared UI code).
