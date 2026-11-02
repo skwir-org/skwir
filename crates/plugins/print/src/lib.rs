@@ -696,10 +696,13 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
         let never = || false;
         let follow = skwir_platform::process::Follow::new(&went, &never);
         let ready = made_ready(&app, made, &title, &layout, work.path(), &token, &follow)?;
+        // What a helper made is sent only as the file it is.
+        make::open_made(&ready, work.path())?;
         held.went(0.9);
-        skwir_platform::print::send(&sent_as, &title, &ready.pdf, &token)?;
+        let answered = skwir_platform::print::send(&sent_as, &title, &ready.pdf, &token)?;
         let notice = [ready.notice, ready.folding.map(str::to_owned)];
         Ok((
+            answered,
             ready.pages,
             notice.into_iter().flatten().collect::<Vec<_>>(),
         ))
@@ -709,8 +712,13 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
     if working.is_cancelled() && !cancel.is_cancelled() {
         return Ok(Some(format!("{} was not printed", capitalized(&what))));
     }
-    let (pages, notice) =
+    let (answered, pages, notice) =
         printed.with_context(|| format!("{} was not printed", capitalized(&what)))?;
+    // Cancelled in a dialog the desktop's printing showed again: as the
+    // first one closed, nothing is said.
+    if answered == skwir_platform::print::Sent::Cancelled {
+        return Ok(None);
+    }
     let sent = match pages {
         Some(1) => "1 page of ".to_owned(),
         Some(pages) => format!("{pages} pages of "),
@@ -721,7 +729,14 @@ fn print(app: &Arc<App>, request: Request, cancel: &CancelToken) -> anyhow::Resu
         (None, Some(named)) => format!("to {named}"),
         (None, None) => "to the printer".to_owned(),
     };
-    let mut said = format!("Sent {sent}{what} {to}");
+    let mut said = match answered {
+        // What the portal answers when its back end failed, too.
+        skwir_platform::print::Sent::Unconfirmed => format!(
+            "Handed {sent}{what} to the desktop's printing for {}, which did not confirm it took it",
+            to.strip_prefix("to ").unwrap_or(&to)
+        ),
+        _ => format!("Sent {sent}{what} {to}"),
+    };
     if booklet.is_some() && chosen.duplex == skwir_core::print::Duplex::Simplex {
         said = format!(
             "{said}. A booklet is printed on both sides: on one side, print the odd sides, turn the sheets over, then the even"
@@ -1230,15 +1245,22 @@ impl op::Effect for MakePdf {
         ctx.check_cancelled()?;
         let staging = ctx.stage(&self.dest_dir)?;
         let made = staging.path().join("made.pdf");
-        // What was made here moves where it can; the file itself, printed
-        // whole, is copied, never moved.
-        let kept = if ready.pdf.starts_with(work.path()) {
-            std::fs::rename(&ready.pdf, &made)
-                .or_else(|_| std::fs::copy(&ready.pdf, &made).map(drop))
-        } else {
-            std::fs::copy(&ready.pdf, &made).map(drop)
-        };
-        let result = kept.map_err(anyhow::Error::from).and_then(|()| {
+        // What a helper made here is copied from the file it opened as
+        // what it is, never moved nor read through a link it left; the
+        // file itself, printed whole, is copied.
+        let kept = make::open_made(&ready, work.path()).and_then(|opened| {
+            match opened {
+                Some(mut from) => {
+                    let mut to = std::fs::File::create_new(&made)?;
+                    std::io::copy(&mut from, &mut to)?;
+                }
+                None => {
+                    std::fs::copy(&ready.pdf, &made)?;
+                }
+            }
+            Ok(())
+        });
+        let result = kept.and_then(|()| {
             ctx.check_cancelled()?;
             staging.place(&made, &target).with_context(|| {
                 format!(

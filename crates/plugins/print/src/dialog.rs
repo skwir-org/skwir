@@ -142,20 +142,50 @@ pub(crate) fn ask(app: &App, offers: &Offers, cancel: &CancelToken) -> Option<Ch
         };
         match chosen(&values, offers) {
             Ok(chosen) => {
-                *last() = Some(Remembered {
-                    to: chosen.to,
-                    layout: chosen.layout,
-                    signature: chosen.signature,
-                    trim: chosen.trim,
-                    together: chosen.together,
-                    smaller: chosen.smaller,
-                    per_side: chosen.per_side,
-                    paper: Some(chosen.paper.clone()),
-                });
+                let mut last = last();
+                let before = last.take().unwrap_or_default();
+                *last = Some(remembered(&values, &chosen, &before));
                 return Some(chosen);
             }
             Err(refused) => form = form.again(&values, refused),
         }
+    }
+}
+
+/// What the next dialog opens on, of `values` answered as `chosen`, the
+/// dialog before having opened on `before`. A booklet's own choices (its
+/// pages a side, its fold, its trim) are kept as they were set, a booklet
+/// chosen or not, and as they were before where the dialog had none (a
+/// folder's listing): printing a file as it is in between does not
+/// forget them.
+fn remembered(values: &Values, chosen: &Chosen, before: &Remembered) -> Remembered {
+    let set = |key: &str| values.0.contains_key(key);
+    Remembered {
+        to: chosen.to,
+        layout: chosen.layout,
+        signature: if set(FOLD) {
+            match values.get(FOLD) {
+                "16" => Some(16),
+                "32" => Some(32),
+                _ => None,
+            }
+        } else {
+            before.signature
+        },
+        trim: if set(TRIM) {
+            values.on(TRIM)
+        } else {
+            before.trim
+        },
+        together: chosen.together,
+        smaller: chosen.smaller,
+        per_side: values
+            .get(PER_SIDE)
+            .parse()
+            .ok()
+            .and_then(PerSide::of_count)
+            .unwrap_or(before.per_side),
+        paper: Some(chosen.paper.clone()),
     }
 }
 
@@ -822,5 +852,34 @@ mod tests {
         assert_eq!(value(PAPER), "a5");
         forget();
         assert_eq!(super::form(&offers()).fields[0].value, "printer");
+    }
+
+    /// A file printed as it is between two booklets leaves the booklet's
+    /// choices as they were set: the next booklet opens on eight a side,
+    /// its fold and its trim.
+    #[test]
+    fn a_booklet_s_choices_outlast_a_print_as_it_is() {
+        let answered = values(&[
+            (TO, "printer"),
+            (PAGES, "all"),
+            (LAYOUT, "as_shown"),
+            (PER_SIDE, "8"),
+            (FOLD, "16"),
+            (TRIM, "true"),
+        ]);
+        let asked = chosen(&answered, &offers()).unwrap();
+        assert_eq!(asked.layout, Arrange::AsShown);
+        assert_eq!(asked.per_side, PerSide::Two, "what is done is as shown");
+        let kept = remembered(&answered, &asked, &Remembered::default());
+        assert_eq!(kept.per_side, PerSide::Eight);
+        assert_eq!(kept.signature, Some(16));
+        assert!(kept.trim);
+        // A folder's listing, whose dialog asks no layout: kept as before.
+        let listing = values(&[(TO, "printer"), (PAGES, "all")]);
+        let listed = chosen(&listing, &offers()).unwrap();
+        let kept = remembered(&listing, &listed, &kept);
+        assert_eq!(kept.per_side, PerSide::Eight);
+        assert_eq!(kept.signature, Some(16));
+        assert!(kept.trim);
     }
 }

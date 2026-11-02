@@ -234,7 +234,18 @@ ended (2)").
   with the dialog's token, whatever came of it; and GTK's own printing
   through the portal reads no answer to `Print` at all, only whether the
   call was taken (`gtkprintoperation-portal.c`).
-- **So Skwir reads `Print`'s answer as sent for 0 and 2**, and as not
-  taken for any other code (1, or `lpr`'s own); a 2 from `PreparePrint`,
-  the dialog, is still an error. What reaches paper is the printing
-  system's to say, as it was: "Sent" means handed to it.
+- **The portal's front end answers 2 too, when the back end failed**:
+  xdg-desktop-portal's `print_done` starts its answer at 2 and keeps it
+  when its call to the back end errs ("Backend call failed"), so on GNOME
+  a job GTK's back end could not take answers 2 as well (found in review,
+  2026-11-02).
+- **So Skwir reads `Print`'s answer by the back end the desktop likely
+  runs** (`portal::BackEnd`: KDE's where `XDG_CURRENT_DESKTOP` names KDE,
+  as the portal's `kde-portals.conf` picks it): 0 is sent everywhere; 2
+  is sent from KDE's, and elsewhere said as handed to the desktop's
+  printing, which did not confirm it took it (`print::Sent::Unconfirmed`),
+  never as sent; 1 is the user cancelling a dialog the back end showed
+  again, said as the first dialog's cancel is (nothing), except from
+  KDE's, where it is `lpr`'s refusal; any other code is not taken. A 2
+  from `PreparePrint`, the dialog, is still an error. What reaches paper
+  is the printing system's to say, as it was: "Sent" means handed to it.

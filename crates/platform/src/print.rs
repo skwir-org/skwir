@@ -150,25 +150,53 @@ pub fn ask(ask: &Ask, cancel: &CancelToken) -> anyhow::Result<Option<Chosen>> {
     }
 }
 
+/// How the system's printing answered a document handed to it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sent {
+    /// It took it: handed on to the printing system, which says what
+    /// reaches paper.
+    Taken,
+    /// It answered neither taken nor refused: the print portal's 2 where
+    /// its back end is not KDE's (its front end answers 2 when the back
+    /// end's call failed, too).
+    Unconfirmed,
+    /// The user cancelled it (a dialog the portal's back end showed again).
+    Cancelled,
+}
+
 /// Print `pdf` as `chosen` says, with `title` as the job's name: handed to
 /// the system's printing. The pages, sides and order were applied to it.
 /// It may wait for the system: a worker's work.
 ///
 /// # Errors
 /// When the system refused it.
-pub fn send(chosen: &Chosen, title: &str, pdf: &Path, cancel: &CancelToken) -> anyhow::Result<()> {
+pub fn send(
+    chosen: &Chosen,
+    title: &str,
+    pdf: &Path,
+    cancel: &CancelToken,
+) -> anyhow::Result<Sent> {
     #[cfg(target_os = "linux")]
     {
         let bus = portal::connection()?;
-        portal::send(&bus, Some(portal::DESTINATION), chosen, title, pdf, cancel)
+        let back_end = portal::BackEnd::of_desktops(&crate::apps::current_desktops());
+        portal::send(
+            &bus,
+            Some(portal::DESTINATION),
+            back_end,
+            chosen,
+            title,
+            pdf,
+            cancel,
+        )
     }
     #[cfg(target_os = "macos")]
     {
-        macos::send(chosen, title, pdf, cancel)
+        macos::send(chosen, title, pdf, cancel).map(|()| Sent::Taken)
     }
     #[cfg(windows)]
     {
-        windows::send(chosen, title, pdf, cancel)
+        windows::send(chosen, title, pdf, cancel).map(|()| Sent::Taken)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     {
@@ -342,15 +370,70 @@ mod portal {
         })
     }
 
-    /// `Print`: `pdf` handed by descriptor, with the token the dialog gave.
+    /// Whose back end the portal likely runs, which reads its answer to
+    /// `Print`: KDE's where the desktop names KDE (the portal picks its
+    /// back ends by `XDG_CURRENT_DESKTOP`, `kde-portals.conf`), another's
+    /// else.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(super) enum BackEnd {
+        Kde,
+        Other,
+    }
+
+    impl BackEnd {
+        pub(super) fn of_desktops(desktops: &[String]) -> BackEnd {
+            if desktops
+                .iter()
+                .any(|desktop| desktop.eq_ignore_ascii_case("KDE"))
+            {
+                BackEnd::Kde
+            } else {
+                BackEnd::Other
+            }
+        }
+    }
+
+    /// What an answer to `Print` says of the job, read for `back_end`.
+    ///
+    /// 0: the back end took it (GTK's answers it once it handed the job
+    /// on, before it is printed). 2 is "ended otherwise" by the portal's
+    /// word, and the front end answers it whenever its call to the back
+    /// end failed (xdg-desktop-portal's `print_done` starts its answer at
+    /// 2 and keeps it when the call errs): so it is not taken as sent,
+    /// but as unconfirmed, except from KDE's back end, which answers 2
+    /// when its `lpr` took the job (it reads `lpr`'s success, 0, as a
+    /// failure, and answers `lpr`'s code otherwise:
+    /// xdg-desktop-portal-kde's `PrintPortal::Print`, 6.8.2 and its main
+    /// branch, read 2026-11-02). 1: the user cancelled (a dialog shown
+    /// again for a token the back end lost), but from KDE's `lpr`'s
+    /// refusal; another code is `lpr`'s own.
+    fn sent_of(ended: Ended, back_end: BackEnd) -> anyhow::Result<super::Sent> {
+        use super::Sent;
+        match (ended, back_end) {
+            (Ended::Answered(_), _) | (Ended::Code(2), BackEnd::Kde) => Ok(Sent::Taken),
+            (Ended::Code(2), BackEnd::Other) => {
+                tracing::debug!("the print portal answered 2 to Print: not confirmed");
+                Ok(Sent::Unconfirmed)
+            }
+            (Ended::Code(1), BackEnd::Other) => Ok(Sent::Cancelled),
+            (Ended::Closed, _) => Err(anyhow::anyhow!("printing was cancelled")),
+            (Ended::Code(code), _) => Err(anyhow::anyhow!(
+                "the desktop's printing did not take it ({code})"
+            )),
+        }
+    }
+
+    /// `Print`: `pdf` handed by descriptor, with the token the dialog gave;
+    /// its answer read as `back_end` means it.
     pub(super) fn send(
         bus: &Connection,
         destination: Option<&str>,
+        back_end: BackEnd,
         chosen: &Chosen,
         title: &str,
         pdf: &Path,
         cancel: &CancelToken,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<super::Sent> {
         // On Linux what the dialog keeps is the portal's token alone.
         let System::Portal(token) = chosen.system;
         let file = crate::file::open_regular(pdf)?;
@@ -368,28 +451,7 @@ mod portal {
                 &("", title, &fd, options),
             )
         })?;
-        match ended {
-            Ended::Answered(_) => Ok(()),
-            // 2 is "ended otherwise" by the portal's word, but KDE's back
-            // end answers it when its `lpr` took the job: it reads `lpr`'s
-            // success (0) as a failure, and answers `lpr`'s code otherwise
-            // (xdg-desktop-portal-kde's `PrintPortal::Print`, 6.8.2 and its
-            // main branch, read 2026-11-02). GTK's answers 0 once it handed
-            // the job on, before it is printed, and GTK's own printing
-            // through the portal reads no answer to `Print` at all. So 2
-            // says nothing of the job: it went as far as Skwir can know.
-            Ended::Code(2) => {
-                tracing::debug!("the print portal answered 2 to Print: taken as sent");
-                Ok(())
-            }
-            Ended::Closed => Err(anyhow::anyhow!("printing was cancelled")),
-            // 1: `lpr` failed (KDE's), or a dialog shown again for a token
-            // the back end lost was cancelled (GTK's); another code is
-            // `lpr`'s own.
-            Ended::Code(code) => Err(anyhow::anyhow!(
-                "the desktop's printing did not take it ({code})"
-            )),
-        }
+        sent_of(ended, back_end)
     }
 
     /// What a request's listener heard.
@@ -776,7 +838,16 @@ mod portal {
             let tmp = tempfile::tempdir().unwrap();
             let pdf = tmp.path().join("made.pdf");
             std::fs::write(&pdf, b"%PDF-1.7 made").unwrap();
-            super::send(&bus, None, &chosen, "Report.pdf", &pdf, &cancel).unwrap();
+            let sent = super::send(
+                &bus,
+                None,
+                super::BackEnd::Other,
+                &chosen,
+                "Report.pdf",
+                &pdf,
+                &cancel,
+            );
+            assert_eq!(sent.unwrap(), crate::print::Sent::Taken);
             let seen = seen.lock().unwrap();
             assert_eq!(seen.printed, [b"%PDF-1.7 made".to_vec()]);
             assert_eq!(u32::try_from(&seen.options[1]["token"]).unwrap(), 7);
@@ -825,15 +896,29 @@ mod portal {
             assert!(chosen.is_none());
         }
 
-        /// KDE's back end answers 2 when its `lpr` took the job, and
-        /// `lpr`'s own code when it did not (1 for most refusals): 2 is
-        /// sent, as 0 is; another code is the job not taken.
+        /// Each answer to `Print`, read for each back end. KDE's answers 2
+        /// when its `lpr` took the job and `lpr`'s own code when it did not
+        /// (1 for most refusals): 2 is sent there, as 0 is. Elsewhere 2 is
+        /// also what the portal's front end answers when the back end's
+        /// call failed: unconfirmed, never sent; 1 is the user cancelling
+        /// a dialog the back end showed again.
         #[test]
-        fn a_job_answered_as_kde_s_portal_answers_a_job_taken_is_sent() {
+        fn each_answer_to_print_is_read_as_its_back_end_means_it() {
+            use super::BackEnd::{Kde, Other};
+            use crate::print::Sent::{Cancelled, Taken, Unconfirmed};
             let tmp = tempfile::tempdir().unwrap();
             let pdf = tmp.path().join("made.pdf");
             std::fs::write(&pdf, b"%PDF-1.7 made").unwrap();
-            for (printed, sent) in [(0, true), (2, true), (1, false), (3, false)] {
+            for (back_end, printed, sent) in [
+                (Kde, 0, Some(Taken)),
+                (Kde, 2, Some(Taken)),
+                (Kde, 1, None),
+                (Kde, 3, None),
+                (Other, 0, Some(Taken)),
+                (Other, 2, Some(Unconfirmed)),
+                (Other, 1, Some(Cancelled)),
+                (Other, 3, None),
+            ] {
                 let seen = Arc::new(Mutex::new(Seen::default()));
                 let (bus, _portal) = serve(Portal {
                     seen: Arc::clone(&seen),
@@ -844,13 +929,33 @@ mod portal {
                 let chosen = super::ask(&bus, None, &Ask::default(), &cancel)
                     .unwrap()
                     .unwrap();
-                let result = super::send(&bus, None, &chosen, "Report.pdf", &pdf, &cancel);
-                assert_eq!(result.is_ok(), sent, "{printed}: {result:?}");
-                if let Err(error) = result {
-                    assert!(error.to_string().contains("did not take it"), "{error:#}");
+                let result =
+                    super::send(&bus, None, back_end, &chosen, "Report.pdf", &pdf, &cancel);
+                let case = format!("{back_end:?} {printed}: {result:?}");
+                if let Some(sent) = sent {
+                    assert_eq!(result.unwrap(), sent, "{case}");
+                } else {
+                    let error = result.unwrap_err();
+                    assert!(error.to_string().contains("did not take it"), "{case}");
                 }
                 assert_eq!(seen.lock().unwrap().printed.len(), 1);
             }
+        }
+
+        /// The back end is KDE's where the desktop names KDE, as the
+        /// portal's configuration picks it.
+        #[test]
+        fn kde_s_back_end_is_the_one_a_kde_desktop_names() {
+            let named = |desktops: &[&str]| {
+                super::BackEnd::of_desktops(
+                    &desktops.iter().map(|d| (*d).to_owned()).collect::<Vec<_>>(),
+                )
+            };
+            assert_eq!(named(&["KDE"]), super::BackEnd::Kde);
+            assert_eq!(named(&["X-Custom", "kde"]), super::BackEnd::Kde);
+            assert_eq!(named(&["GNOME"]), super::BackEnd::Other);
+            assert_eq!(named(&["Hyprland"]), super::BackEnd::Other);
+            assert_eq!(named(&[]), super::BackEnd::Other);
         }
 
         /// The dialog ending otherwise than chosen or cancelled is an

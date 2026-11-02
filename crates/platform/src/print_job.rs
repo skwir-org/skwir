@@ -567,7 +567,10 @@ fn made(
         .context("the print helper said nothing")?;
     let made: Made =
         serde_json::from_str(line).context("the print helper's answer could not be read")?;
-    let size = std::fs::metadata(&output)
+    // Taken only as the regular file it is: a link the helper left there
+    // (its sandbox lets it make one to any path), or a pipe, is refused.
+    let size = skwir_core::fs::file::open_regular_unfollowed(&output)
+        .and_then(|file| file.metadata())
         .map(|meta| meta.len())
         .context("the print helper wrote no PDF")?;
     ensure!(size > 0, "the print helper wrote an empty PDF");
@@ -1146,6 +1149,54 @@ mod tests {
             panic!();
         };
         assert_eq!(pictures[0].path, dir.path().join("picture.png"));
+    }
+
+    /// A helper that leaves a link where its PDF goes, to a file of the
+    /// user's, made nothing: what it points to is never taken as the PDF.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_the_helper_left_for_its_pdf_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let (work, outside) = (dir.path().join("work"), dir.path().join("private.txt"));
+        std::fs::create_dir(&work).unwrap();
+        std::fs::write(&outside, "not for printing").unwrap();
+        let helper = dir.path().join("helper.sh");
+        std::fs::write(
+            &helper,
+            format!(
+                "#!/bin/sh\nln -s '{}' \"$(dirname \"$1\")/{OUTPUT}\"\necho '{{\"pages\":1,\"laid_out\":1}}'\n",
+                outside.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&helper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut job = Job {
+            paper: print::Paper::a4(),
+            output: PathBuf::new(),
+            title: String::new(),
+            author: None,
+            language: None,
+            header: None,
+            numbers: false,
+            fonts: Fonts::default(),
+            fallback: Vec::new(),
+            pages: None,
+            parts: Vec::new(),
+        };
+        let result = made(
+            &helper,
+            &mut job,
+            &work,
+            &CancelToken::new(),
+            &crate::process::Follow::none(),
+        );
+        assert!(
+            std::fs::symlink_metadata(work.join(OUTPUT)).is_ok_and(|m| m.is_symlink()),
+            "the stand-in left its link"
+        );
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("wrote no PDF"), "{error}");
     }
 
     #[test]

@@ -710,6 +710,22 @@ fn request(path: &Path, mime: Option<String>) -> anyhow::Result<PreviewRequest> 
     })
 }
 
+/// The PDF `ready` names opened, when a helper made it in `work`: taken
+/// only as the regular file it is, never through a link at its end nor a
+/// pipe, which a helper that misbehaved may leave there (its sandbox lets
+/// it make one to any path). What is kept of it is read from what this
+/// opened; what is sent is the file this found there, which nothing
+/// replaces once the helpers ended (their sandbox ends every process in
+/// it). `None` for a file of the user's, printed whole as it is.
+pub(crate) fn open_made(ready: &Ready, work: &Path) -> anyhow::Result<Option<std::fs::File>> {
+    if !ready.pdf.starts_with(work) {
+        return Ok(None);
+    }
+    let file = skwir_core::fs::file::open_regular_unfollowed(&ready.pdf)
+        .context("The PDF made is not a file of its own")?;
+    Ok(Some(file))
+}
+
 /// How many pages the PDF at `path` has, as the document reader the
 /// settings choose reads it (its engine, its `PDFium`), else `PDFium` where
 /// no reader is on.
