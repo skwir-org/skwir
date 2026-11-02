@@ -40,7 +40,7 @@ use std::path::{Path, PathBuf};
 use super::sys;
 
 /// What every staging folder's name begins with.
-const PREFIX: &str = ".skwir-copy-";
+pub(crate) const PREFIX: &str = ".skwir-copy-";
 /// The file a staging folder's copy keeps locked.
 const LOCK: &str = "lock";
 

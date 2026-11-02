@@ -592,37 +592,23 @@ pub(crate) fn finished_actions(
     actions
 }
 
-/// What waits its turn, a line each under the cards of what runs (ADR-079,
-/// 12): "Rename to b.txt — waits for copy to /media/stick". The first
-/// few, then how many more.
-pub(crate) fn waiting_lines(waiting: &[skwir_core::op::Waiting]) -> Vec<String> {
+/// An action waiting its turn, as its row under the cards of what runs
+/// says it (ADR-079, 12): what it is ("Rename to b.txt"), and what it
+/// waits for ("Waits for copy to /media/stick").
+pub(crate) fn waiting_words(waiting: &skwir_core::op::Waiting) -> (String, String) {
     use skwir_core::op::WaitsFor;
-    const SHOWN: usize = 3;
-    let mut lines: Vec<String> = waiting
-        .iter()
-        .take(SHOWN)
-        .map(|w| {
-            let what = match &w.waits_for {
-                WaitsFor::Action(named) => format!("waits for {named}"),
-                WaitsFor::Disk => "waits for the disk".to_owned(),
-                WaitsFor::Server => "waits for the server".to_owned(),
-                WaitsFor::Room => format!(
-                    "waits for one of the {} running to end",
-                    skwir_core::op::ACTIONS_AT_ONCE
-                ),
-                WaitsFor::Everything => "waits for what was asked before it".to_owned(),
-                WaitsFor::Starting => "starts".to_owned(),
-            };
-            format!("{} — {what}", capitalized(&w.named))
-        })
-        .collect();
-    if waiting.len() > SHOWN {
-        lines.push(format!(
-            "and {} waiting",
-            format::count(waiting.len() - SHOWN, "more action")
-        ));
-    }
-    lines
+    let why = match &waiting.waits_for {
+        WaitsFor::Action(named) => format!("Waits for {named}"),
+        WaitsFor::Disk => "Waits for the disk".to_owned(),
+        WaitsFor::Server => "Waits for the server".to_owned(),
+        WaitsFor::Room => format!(
+            "Waits for one of the {} running to end",
+            skwir_core::op::ACTIONS_AT_ONCE
+        ),
+        WaitsFor::Everything => "Waits for what was asked before it".to_owned(),
+        WaitsFor::Starting => "Starts".to_owned(),
+    };
+    (capitalized(&waiting.named), why)
 }
 
 /// What a plan copying onto a mount that sends later says while the
@@ -745,7 +731,7 @@ pub fn render_answer(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyEl
 mod tests {
     use super::{
         Action, End, Running, Toast, Tone, bar, describe, ended, failure, finished_actions, pace,
-        quit_question, shown_for, waiting_lines,
+        quit_question, shown_for, waiting_words,
     };
     use skwir_core::op::{Change, RunKind, Transfer};
     use std::path::PathBuf;
@@ -924,30 +910,38 @@ mod tests {
     }
 
     #[test]
-    fn what_waits_is_said_under_the_cards_the_first_three() {
+    fn what_waits_says_what_for() {
         use skwir_core::op::{Waiting, WaitsFor};
-        let waiting = |named: &str, waits_for| Waiting {
-            named: named.into(),
-            waits_for,
+        let words = |named: &str, waits_for| {
+            let (what, why) = waiting_words(&Waiting {
+                asked: 7,
+                named: named.into(),
+                waits_for,
+            });
+            format!("{what} / {why}")
         };
-        let lines = waiting_lines(&[
-            waiting(
-                "rename to b.txt",
-                WaitsFor::Action("copy to /media/stick".into()),
-            ),
-            waiting("copy to /media/stick/more", WaitsFor::Disk),
-            waiting("copy to /mnt/server", WaitsFor::Server),
-            waiting("undo copy to /tmp", WaitsFor::Room),
-            waiting("tag", WaitsFor::Everything),
-        ]);
         assert_eq!(
-            lines,
-            [
-                "Rename to b.txt — waits for copy to /media/stick",
-                "Copy to /media/stick/more — waits for the disk",
-                "Copy to /mnt/server — waits for the server",
-                "and 2 more actions waiting",
-            ]
+            words(
+                "rename to b.txt",
+                WaitsFor::Action("copy to /media/stick".into())
+            ),
+            "Rename to b.txt / Waits for copy to /media/stick"
+        );
+        assert_eq!(
+            words("copy to /media/it's here", WaitsFor::Disk),
+            "Copy to /media/it's here / Waits for the disk"
+        );
+        assert_eq!(
+            words("copy to /mnt/server", WaitsFor::Server),
+            "Copy to /mnt/server / Waits for the server"
+        );
+        assert_eq!(
+            words("undo copy to /tmp", WaitsFor::Room),
+            "Undo copy to /tmp / Waits for one of the 4 running to end"
+        );
+        assert_eq!(
+            words("tag", WaitsFor::Everything),
+            "Tag / Waits for what was asked before it"
         );
     }
 

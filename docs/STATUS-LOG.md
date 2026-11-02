@@ -9644,3 +9644,75 @@ area, menu and shutdown screen on real Windows (Wine stubs
 `ShutdownBlockReasonCreate`), macOS at all, a plan waiting for its
 server without a window, the UI's tests under Wine, a window opened
 again while one is up (a launch handed over in that instant).
+
+## Beside a long copy, and Cancel for what waits (2026-11-02)
+
+Asked by the user: while a multi-gigabyte file was copied from a server
+(SFTP) onto a USB hard disk, a folder made in the folder it was copied
+into, beside it, waited for the whole copy; could a cheap action on that
+disk go at once, or would it slow the copy? And actions waiting their
+turn had no Cancel.
+
+**Measured:** on the USB disk set aside for timings (btrfs in LUKS, 97 %
+full), a 4 GiB file written at full speed, then fsync-ed, while a
+folder was made and removed every quarter second beside it: 580 folders
+made, 0.09 ms at the median, 0.29 ms at the 99th percentile, 0.42 s at
+worst (once, likely a btrfs commit); the write 29.5 MiB/s with them,
+13.5 and 28.7 MiB/s alone (the disk's own spread). Idle, 0.11 ms. A
+light action never took a disk's channel (ADR-079, 3): what held the
+folder back was the names rule, two actions making names in one folder
+always meeting.
+
+**Built:**
+- `op::footprint`: a folder's names are claimed one by one (`Names`),
+  compared with their case left out (`name_key`, `context::folded`;
+  every staging folder one name; on macOS a name not ASCII, on Windows
+  one holding `~`, claims every name there). A copy, a move, a link,
+  what the archives, print and shrink plugins make claims its own name,
+  the names it may be kept as beside one taken
+  (`Footprint::settles_name`, `clash::kept_prefixes`: as a file and as a
+  folder, whatever the word) and, where it stages, the staging folders.
+  ADR-079 amended, operations.md's "At once".
+- `Executor::cancel_waiting` (by `Waiting::asked`): what waits ends at
+  once, having done nothing, without waiting for what it waited for; a
+  plan says it was cancelled, an undo or a redo leaves its entry.
+  `Executor::cancel` of a queued plan now ends it at once too, and
+  `waiting`, `queued` leave out what was cancelled.
+- Activity: a "Waiting" heading with Cancel all for several, each
+  waiting action a row of two lines cut in the middle (what it is, what
+  it waits for) with its Cancel.
+
+**Checked** in a window of its own (Xvfb :94, lavapipe, a session bus
+from a configuration without service directories), on 600 000 files of
+32 B: a folder "Nouveau dossier" made beside a copy into its folder at
+16 %, at once; three more pastes of the same folder there waited for it,
+then each found it there whole ("Copied 0 items"); a copy into another
+folder paused at 74 % with two pastes of the same name waiting behind
+it: "Autre dossier" made at once, "Many (copy)" waiting for them (a
+name they may be kept as); a waiting row's Cancel and Cancel all ended
+them ("cancelled before anything was done" in Earlier), the copy
+resumed and ended whole (600 000 files), nothing else in the folder.
+First seen there and fixed: the rows were cut at the end, the folder
+they go to lost (now two lines cut in the middle). A row clicked moved
+up under the pointer once what was ahead of it started (left as is).
+
+**Tests:** `footprint::what_meets_and_what_does_not` (names apart and
+alike, their case aside, kept names, staging folders, two settled later),
+`clash::a_kept_name_begins_as_its_prefix_says` (it found a folder
+`notes.txt` kept as `notes.txt (copy)`: a file's and a folder's prefixes),
+`footprint::many_names_in_one_folder_are_compared_once_each` (50 000
+copies each into one folder, settled later: four comparisons in 1.7 s
+in a debug build, from 4.6 s once a prefix was looked up only where
+another may end),
+`executor::a_name_made_beside_a_copy_starts_at_once_and_the_same_name_waits`,
+`executor::an_action_waiting_its_turn_is_cancelled_at_once`,
+`toast::what_waits_says_what_for`. Core, UI, the archives, print and
+shrink plugins and the binary: 1311 run, all passing (then core, the
+plugins and the binary again after the comparison was made cheaper: 853,
+all passing); rustfmt; clippy of those crates on Linux.
+
+**Not checked:** a real SFTP source and the user's own disk; clippy for
+Windows and macOS (`check-cross`) not run, their name rules (`~`, not
+ASCII) tested on neither; an archive extracted still claims the whole
+folder it extracts into.
+

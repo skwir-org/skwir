@@ -412,10 +412,11 @@ impl op::Effect for ShrinkCopy {
     }
 
     fn footprint(&self, _: &op::footprint::Volumes) -> Option<op::footprint::Footprint> {
+        // A name taken there is kept beside when its turn comes.
         Some(
             op::footprint::Footprint::default()
                 .read(&self.entry.path)
-                .made(&self.target())
+                .settles_name(&self.target(), true)
                 .heavy_if(true),
         )
     }

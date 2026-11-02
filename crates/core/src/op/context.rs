@@ -772,7 +772,7 @@ fn folded_key(path: &Path) -> Option<(PathBuf, String)> {
 
 /// A name with its case left out, as a volume that tells no case apart
 /// (FAT, exFAT, NTFS, SMB, APFS as it comes) compares it, near enough.
-fn folded(name: &std::ffi::OsStr) -> String {
+pub(super) fn folded(name: &std::ffi::OsStr) -> String {
     name.to_str().map_or_else(
         || {
             name.as_encoded_bytes()

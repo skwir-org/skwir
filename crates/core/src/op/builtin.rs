@@ -543,6 +543,8 @@ impl super::Effect for Move {
             super::footprint::Footprint::default()
                 .made_with(src, volumes)
                 .made_with(&target, volumes)
+                // Kept beside a name taken there; across volumes, a copy.
+                .settles_name(&target, across)
                 .heavy_if(across)
                 .store_if(trash, super::footprint::TRASH),
         )
@@ -977,6 +979,7 @@ impl super::Effect for Copy {
             super::footprint::Footprint::default()
                 .read_with(&self.entry.path, volumes)
                 .made_with(&target, volumes)
+                .settles_name(&target, true)
                 .heavy_if(true),
         )
     }
@@ -4748,7 +4751,10 @@ impl super::Kind for Link {
 
 impl super::Effect for Link {
     fn footprint(&self, _: &super::footprint::Volumes) -> Option<super::footprint::Footprint> {
-        Some(super::footprint::Footprint::default().made(&self.target(&self.entry.path)))
+        Some(
+            super::footprint::Footprint::default()
+                .settles_name(&self.target(&self.entry.path), false),
+        )
     }
     fn describe(&self) -> Change {
         Change::Link {

@@ -1,12 +1,19 @@
 //! What an action touches, to tell which actions may run at once
 //! (ADR-079). Each step says it ([`super::Operation::footprint`]): the
 //! trees it reads, the trees it changes (made, written or removed), the
-//! folders whose names it changes, and the stores several actions keep (a
-//! volume's trash, the notes'): what they hold, or only a record of its
-//! own there. Two actions conflict when one changes what the other
-//! touches; reads never meet, nor two records of their own. A step that
-//! cannot say touches everything: its action runs alone, as every action
-//! did.
+//! names it makes, takes or changes in a folder, and the stores several
+//! actions keep (a volume's trash, the notes'): what they hold, or only a
+//! record of its own there. Two actions conflict when one changes what the
+//! other touches; reads never meet, nor two records of their own, nor two
+//! names of one folder that the volume tells apart. A step that cannot say
+//! touches everything: its action runs alone, as every action did.
+//!
+//! Names are compared as a volume that tells no case apart compares them
+//! ([`Names`]). A name a step makes that is settled only when its turn
+//! comes (a copy's, kept beside one taken as `name (copy).ext`) claims
+//! the names it may be settled as, and the staging folders a copy makes
+//! there ([`Footprint::settles_name`]): a new folder beside a long copy,
+//! running or waiting its turn, starts at once.
 //!
 //! Paths are compared by their components, each folder made canonical
 //! on this machine's volumes (a link to a folder is the folder: one look
@@ -19,7 +26,8 @@
 //! and 4): two copies on one disk take turns, which ends sooner than
 //! sharing it; on two disks, or a disk and a server, they run at once.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 
@@ -34,8 +42,8 @@ pub struct Footprint {
     reads: BTreeSet<PathBuf>,
     /// Trees made, written or removed.
     writes: BTreeSet<PathBuf>,
-    /// Folders whose names change.
-    names: BTreeSet<PathBuf>,
+    /// Folders whose names change, and which names.
+    names: BTreeMap<PathBuf, Names>,
     /// Stores several actions keep, what they hold: read, taken, emptied.
     stores: BTreeSet<&'static str>,
     /// Stores it keeps only a record of its own in ([`Footprint::record_in`]).
@@ -76,6 +84,163 @@ impl Channel {
     }
 }
 
+/// The names an action makes, takes or changes in one folder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Names {
+    /// These, each as [`name_key`] gives it, and every name beginning with
+    /// one of `kept` (the names one settled later may be kept as,
+    /// [`Footprint::settles_name`]).
+    These {
+        names: BTreeSet<String>,
+        kept: BTreeSet<String>,
+    },
+    /// Any name there: one the volume may take for another ([`name_key`]).
+    Every,
+}
+
+impl Default for Names {
+    fn default() -> Self {
+        Names::These {
+            names: BTreeSet::new(),
+            kept: BTreeSet::new(),
+        }
+    }
+}
+
+impl Names {
+    /// The name `key` too ([`name_key`]; `None`, any name).
+    fn add(&mut self, key: Option<String>) {
+        match (self, key) {
+            (Names::Every, _) => {}
+            (names, None) => *names = Names::Every,
+            (Names::These { names, .. }, Some(key)) => {
+                names.insert(key);
+            }
+        }
+    }
+
+    /// Every name beginning with `key` too (`None`, any name).
+    fn add_kept(&mut self, key: Option<String>) {
+        match (self, key) {
+            (Names::Every, _) => {}
+            (names, None) => *names = Names::Every,
+            (Names::These { kept, .. }, Some(key)) => {
+                kept.insert(key);
+            }
+        }
+    }
+
+    fn merge(&mut self, other: Names) {
+        match other {
+            Names::Every => *self = Names::Every,
+            Names::These { names, kept } => {
+                if let Names::These {
+                    names: these,
+                    kept: beside,
+                } = self
+                {
+                    these.extend(names);
+                    beside.extend(kept);
+                }
+            }
+        }
+    }
+
+    /// Whether two actions' names of one folder may be one name.
+    fn meets(&self, other: &Names) -> bool {
+        let (
+            Names::These {
+                names: a,
+                kept: a_kept,
+            },
+            Names::These {
+                names: b,
+                kept: b_kept,
+            },
+        ) = (self, other)
+        else {
+            return true;
+        };
+        let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+        // A name one of `names` begins with `prefix`: it follows `prefix`
+        // in the set's order.
+        let begins = |names: &BTreeSet<String>, prefix: &String| {
+            names
+                .range::<String, _>((Bound::Included(prefix), Bound::Unbounded))
+                .next()
+                .is_some_and(|name| name.starts_with(prefix.as_str()))
+        };
+        // Two prefixes meet where one begins the other: each of the fewer
+        // looked up in the others, as a beginning of theirs and by its own
+        // beginnings that may be one: every kept prefix ends with ` (`,
+        // unless cut to the longest (`clash::KEPT_PREFIX`).
+        let (few, many) = if a_kept.len() <= b_kept.len() {
+            (a_kept, b_kept)
+        } else {
+            (b_kept, a_kept)
+        };
+        let cut_from = super::clash::KEPT_PREFIX.saturating_sub(4);
+        let kept_meet = || {
+            few.iter().any(|p| {
+                let ends = p.match_indices(" (").map(|(at, _)| at + 2);
+                let cut = p
+                    .char_indices()
+                    .map(|(at, _)| at)
+                    .filter(|&at| at >= cut_from);
+                begins(many, p)
+                    || ends
+                        .chain(cut)
+                        .any(|end| end < p.len() && many.contains(&p[..end]))
+            })
+        };
+        small.iter().any(|name| large.contains(name))
+            || a_kept.iter().any(|prefix| begins(b, prefix))
+            || b_kept.iter().any(|prefix| begins(a, prefix))
+            || kept_meet()
+    }
+}
+
+/// What a name is compared as: its case left out, as a volume that tells
+/// none apart (FAT, exFAT, NTFS, SMB, APFS as it comes) compares it; on
+/// Windows its trailing dots and spaces too, which Windows drops. Every
+/// staging folder is one name ([`super::staging`]): a copy claims the
+/// ones it makes there by it. `None` where a volume may take the name for
+/// another this cannot tell: on macOS one that is not ASCII (APFS and
+/// HFS+ take each Unicode normalization of it as one), on Windows one
+/// holding a `~` (a short 8.3 name another file's long one may have).
+fn name_key(name: &OsStr) -> Option<String> {
+    let folded = folded(name)?;
+    let folded = if cfg!(windows) {
+        folded.trim_end_matches(['.', ' ']).to_owned()
+    } else {
+        folded
+    };
+    if folded.starts_with(super::staging::PREFIX) {
+        return Some(super::staging::PREFIX.to_owned());
+    }
+    Some(folded)
+}
+
+/// What the beginning of names is compared as, as [`name_key`] compares
+/// a name.
+fn prefix_key(prefix: &OsStr) -> Option<String> {
+    folded(prefix)
+}
+
+/// A name, its case left out (`context::folded`); `None` where this
+/// system's volumes may take it for another this cannot tell
+/// ([`name_key`]).
+fn folded(name: &OsStr) -> Option<String> {
+    let folded = super::context::folded(name);
+    if cfg!(target_os = "macos") && !folded.is_ascii() {
+        return None;
+    }
+    if cfg!(windows) && folded.contains('~') {
+        return None;
+    }
+    Some(folded)
+}
+
 /// A volume's trash, its `files` and `info`, and every trash a restore may
 /// read: one store. A file trashed adds an item of its own; a restore, an
 /// item deleted for good or moved, keeps it whole.
@@ -91,7 +256,7 @@ impl Footprint {
         self.reads
             .iter()
             .chain(&self.writes)
-            .chain(&self.names)
+            .chain(self.names.keys())
             .map(PathBuf::as_path)
     }
 
@@ -117,13 +282,35 @@ impl Footprint {
         self
     }
 
-    /// The tree at `path` made, written or removed, and the names of its
+    /// The tree at `path` made, written or removed, and its name in its
     /// folder.
     #[must_use]
     pub fn made(mut self, path: &Path) -> Self {
         self.writes.insert(path.to_path_buf());
         if let Some(folder) = path.parent() {
-            self.names.insert(folder.to_path_buf());
+            let key = path.file_name().and_then(name_key);
+            self.names.entry(folder.to_path_buf()).or_default().add(key);
+        }
+        self
+    }
+
+    /// The tree at `path` made under a name settled only when its turn
+    /// comes: its own, or one kept beside it where its own is taken
+    /// (`name (copy).ext`, ADR-054), which begins as
+    /// `clash::kept_prefixes` says; and, where it `stages` (a copy, what a step makes), the
+    /// staging folders made beside it first.
+    #[must_use]
+    pub fn settles_name(mut self, path: &Path, stages: bool) -> Self {
+        let (Some(folder), Some(name)) = (path.parent(), path.file_name()) else {
+            return self.made(path);
+        };
+        self = self.made(path);
+        let names = self.names.entry(folder.to_path_buf()).or_default();
+        for prefix in super::clash::kept_prefixes(name) {
+            names.add_kept(prefix_key(&prefix));
+        }
+        if stages {
+            names.add(Some(super::staging::PREFIX.to_owned()));
         }
         self
     }
@@ -222,10 +409,16 @@ impl Footprint {
             folder.join(name)
         };
         let mut all = |set: BTreeSet<PathBuf>| set.into_iter().map(&mut canonical).collect();
+        let reads = all(self.reads);
+        let writes = all(self.writes);
+        let mut names: BTreeMap<PathBuf, Names> = BTreeMap::new();
+        for (folder, these) in self.names {
+            names.entry(canonical(folder)).or_default().merge(these);
+        }
         Footprint {
-            reads: all(self.reads),
-            writes: all(self.writes),
-            names: all(self.names),
+            reads,
+            writes,
+            names,
             ..self
         }
     }
@@ -284,7 +477,9 @@ impl Footprint {
     pub fn merge(&mut self, other: Footprint) {
         self.reads.extend(other.reads);
         self.writes.extend(other.writes);
-        self.names.extend(other.names);
+        for (folder, names) in other.names {
+            self.names.entry(folder).or_default().merge(names);
+        }
         self.stores.extend(other.stores);
         self.records.extend(other.records);
         self.every |= other.every;
@@ -321,9 +516,11 @@ impl Footprint {
         }
         let changes = |a: &Footprint, b: &Footprint| {
             a.writes.iter().any(|tree| {
-                meets(&b.reads, tree) || meets(&b.writes, tree) || within(&b.names, tree)
-            }) || a.names.iter().any(|folder| {
-                b.names.contains(folder)
+                meets(&b.reads, tree) || meets(&b.writes, tree) || folder_within(&b.names, tree)
+            }) || a.names.iter().any(|(folder, names)| {
+                b.names
+                    .get(folder)
+                    .is_some_and(|theirs| names.meets(theirs))
                     || folder
                         .ancestors()
                         .any(|above| b.reads.contains(above) || b.writes.contains(above))
@@ -336,6 +533,14 @@ impl Footprint {
 /// Whether `set` holds `tree`, a tree above it, or one within it.
 fn meets(set: &BTreeSet<PathBuf>, tree: &Path) -> bool {
     within(set, tree) || tree.ancestors().skip(1).any(|above| set.contains(above))
+}
+
+/// Whether `names` holds the folder `tree` or one within it, as [`within`].
+fn folder_within(names: &BTreeMap<PathBuf, Names>, tree: &Path) -> bool {
+    names
+        .range::<Path, _>((Bound::Included(tree), Bound::Unbounded))
+        .next()
+        .is_some_and(|(first, _)| first.starts_with(tree))
 }
 
 /// Whether `set` holds `tree` or a path within it: those follow it in the
@@ -505,9 +710,40 @@ mod tests {
         // A name made beside the tree read, in its folder: no matter.
         let beside = Footprint::default().made(&p("/disk/new folder"));
         assert!(!copy.conflicts(&beside));
-        // Into the folder the copy makes names in.
+        // Into the folder the copy makes names in: another name, beside
+        // it, no matter; the same name meets, its case aside (a stick's
+        // exFAT takes one for the other).
         let into = Footprint::default().made(&p("/stick/other.txt"));
-        assert!(copy.conflicts(&into));
+        assert!(!copy.conflicts(&into) && !into.conflicts(&copy));
+        let same = Footprint::default().made(&p("/stick/Photos"));
+        assert!(copy.conflicts(&same) && same.conflicts(&copy));
+        // A name settled only when its turn comes claims the names it may
+        // be kept as beside one taken, and the staging folders made there.
+        let settles = Footprint::default()
+            .read(&p("/disk/photos"))
+            .settles_name(&p("/stick/photos"), true);
+        assert!(!settles.conflicts(&into) && settles.conflicts(&same));
+        for kept in [
+            "/stick/photos (copy)",
+            "/stick/Photos (Copy 2)",
+            "/stick/photos (2)",
+        ] {
+            let kept = Footprint::default().made(&p(kept));
+            assert!(
+                settles.conflicts(&kept) && kept.conflicts(&settles),
+                "{kept:?}"
+            );
+        }
+        let staging = Footprint::default().made(&p("/stick/.skwir-copy-it's AbC1"));
+        assert!(settles.conflicts(&staging) && !copy.conflicts(&staging));
+        let photos2 = Footprint::default().made(&p("/stick/photos2"));
+        assert!(!settles.conflicts(&photos2));
+        // Two settled later meet where their kept names may: one's prefix
+        // begins the other's.
+        let other = Footprint::default().settles_name(&p("/stick/photos (copy).txt"), false);
+        assert!(settles.conflicts(&other) && other.conflicts(&settles));
+        let apart = Footprint::default().settles_name(&p("/stick/videos"), false);
+        assert!(!apart.conflicts(&Footprint::default().settles_name(&p("/stick/photos"), false)));
         // Reads never meet.
         let again = Footprint::default()
             .read(&p("/disk/photos"))
@@ -538,6 +774,26 @@ mod tests {
         assert!(!copy.conflicts(&photos2));
         // What cannot be told meets everything.
         assert!(Footprint::every().conflicts(&Footprint::default()));
+    }
+
+    /// Two actions of many names in one folder are compared in time
+    /// linear in their names (AGENTS.md, "Scale"): fifty thousand copies
+    /// each, settled later, apart and then meeting on one name.
+    #[test]
+    fn many_names_in_one_folder_are_compared_once_each() {
+        let many = |word: &str, n: usize| {
+            Footprint::of_steps((0..n).map(|i| {
+                Some(
+                    Footprint::default().settles_name(&p(&format!("/stick/{word} {i}.jpg")), false),
+                )
+            }))
+        };
+        let (a, b) = (many("it's a", 50_000), many("b", 50_000));
+        assert!(!a.conflicts(&b) && !b.conflicts(&a));
+        let c = many("it's a", 1);
+        assert!(a.conflicts(&c) && c.conflicts(&b) == b.conflicts(&c));
+        let kept = Footprint::default().made(&p("/stick/B 49999 (copy).jpg"));
+        assert!(b.conflicts(&kept) && !a.conflicts(&kept));
     }
 
     /// A folder reached through a link is the folder: two plans naming

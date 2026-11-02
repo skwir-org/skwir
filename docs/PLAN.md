@@ -427,6 +427,25 @@ server without a window, two graphical sessions sharing one user bus
 (a launch in one handed to a Skwir finishing in the other); going on
 after a restart set aside in ADR-115.
 
+## Beside a long copy, and Cancel for what waits (2026-11-02)
+
+Asked by the user: a folder made beside a multi-gigabyte file copied
+from a server onto a USB disk, in the folder it was copied into, waited
+for the whole copy; and actions waiting their turn had no Cancel. A
+folder made costs that kind of disk nothing, measured while it was
+written at full speed. Two actions now meet in one folder only on one
+name, its case aside; a copy, a move, a link or what a plugin makes
+claims its own name, the names it may be kept as beside one taken
+(`name (copy).ext`…) and its staging folders, whether it runs or waits
+(ADR-079, amended). In Activity each action waiting has its Cancel, and
+Cancel all stands over several (`Executor::cancel_waiting`): it ends at
+once, having done nothing. Rules in `docs/invariants/operations.md`
+("At once", "Running"); checks in `docs/STATUS-LOG.md` (2026-11-02,
+"Beside a long copy"). Left: the measure was of one USB disk (btrfs in
+LUKS, nearly full); an archive extracted still claims the whole folder
+it extracts into (the name it makes is read from the archive); a row of
+what waits moves up under the pointer as what is ahead of it starts.
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of

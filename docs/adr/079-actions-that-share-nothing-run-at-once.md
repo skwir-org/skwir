@@ -62,7 +62,8 @@ one lane (`op::executor`) and operations.md's "Running".
 
    Two claims conflict when a `write(A)` meets any claim on a path
    within `A` or above it, a `names(F)` meets a `read` or `write` of a
-   tree holding `F` or another `names(F)`, or two claims name the same
+   tree holding `F` or another `names(F)` (amended 2026-11-02, below:
+   on one name), or two claims name the same
    store. Reads never conflict with reads. Paths are compared by their
    components, a folder made canonical on this machine's volumes (a
    link to a folder is the folder), as named on a remote (no round
@@ -73,6 +74,26 @@ one lane (`op::executor`) and operations.md's "Running".
    every plan asked after it waits for it. That is the lane of today.
    A plugin's built-in steps (an archive extracted, a picture's
    position written) say their footprint.
+
+   **Amended 2026-11-02**, the user's report: a folder made beside a
+   multi-gigabyte file copied from a server onto a USB disk, in the
+   folder it was copied into, waited for the whole copy, though it
+   touched nothing the copy did and a folder made costs the disk
+   nothing (measured on that kind of disk, written at full speed: 580
+   folders made, 0.09 ms each at the median, 0.29 ms at the 99th
+   percentile, 0.42 s at worst, the write as fast as without them).
+   A `names(F)` claim now names the names: two meet only on one name,
+   compared as a volume that tells no case apart compares it, and on
+   macOS a name that is not ASCII (normalized by APFS), on Windows one
+   holding `~` (a short 8.3 name), claims every name of `F`. A name
+   settled only when its plan's turn comes (a copy, a move or a link
+   kept beside a name taken; what a plugin makes) claims its own, every
+   name it may be kept as (`name (copy).ext`, `(copy 2)`, `(link)`,
+   `(2)`: those beginning with its base and ` (`, as a file and as a
+   folder), and, where it is staged, the staging folders made there
+   (`.skwir-copy-…`, one name). So what is asked beside a copy into the
+   folder starts at once, the copy running or waiting its turn; what
+   takes one of its names waits for it.
 
 ### Heavy and light
 
@@ -162,6 +183,8 @@ one lane (`op::executor`) and operations.md's "Running".
 | Running | Asked meanwhile | At once? | Why |
 | --- | --- | --- | --- |
 | a copy from the SSD to a USB drive | a rename on the SSD, elsewhere | yes | light, nothing shared |
+| a copy to a USB drive, under way | a new folder beside what it makes, in the folder it copies into | yes | light, another name (amended 2026-11-02) |
+| the same copy | a new folder of the name it makes, its case aside | no | one name |
 | the same copy | a rename in the folder being copied | no | `names` within the tree read |
 | the same copy | a copy from an SD card to a server | yes | heavy, channels {SD card, server} and {SSD, USB drive} apart |
 | the same copy | a copy between two SSD folders | no, waits | both heavy on the SSD |

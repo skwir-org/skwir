@@ -143,8 +143,9 @@ impl op::Effect for Compress {
     }
 
     fn footprint(&self, _: &op::footprint::Volumes) -> Option<op::footprint::Footprint> {
+        // A name taken there is kept beside when its turn comes.
         let mut footprint = op::footprint::Footprint::default()
-            .made(&self.target())
+            .settles_name(&self.target(), true)
             .heavy_if(true);
         for entry in &self.entries {
             footprint = footprint.read(&entry.path);

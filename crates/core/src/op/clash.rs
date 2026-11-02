@@ -808,6 +808,38 @@ fn numbered(stem: &[u8]) -> (&[u8], u32) {
     counted.unwrap_or((stem, 0))
 }
 
+/// What every name kept beside `name` begins with, whichever step keeps
+/// it ([`kept_name`]: a copy's or a move's `name (copy).ext`, a link's
+/// `name (link).ext`, what a step makes, `name (2).ext`): for a file, the
+/// shortest of their bases before its extension, then ` (`; for a folder,
+/// which has none, the same of its whole name. Never more than
+/// [`KEPT_PREFIX`] bytes, which `kept_name` never cuts into.
+pub(crate) fn kept_prefixes(name: &OsStr) -> Vec<OsString> {
+    let bytes = name.as_encoded_bytes();
+    let mut prefixes: Vec<OsString> = Vec::new();
+    for stem in [&bytes[..extension_at(bytes)], bytes] {
+        let base = [
+            counted(stem, "copy").0,
+            counted(stem, "link").0,
+            numbered(stem).0,
+        ]
+        .into_iter()
+        .min_by_key(|base| base.len())
+        .unwrap_or(stem);
+        let mut prefix = base.to_vec();
+        prefix.extend_from_slice(b" (");
+        let prefix = crate::os_path::from_bytes(cut(&prefix, KEPT_PREFIX).to_vec());
+        if !prefixes.contains(&prefix) {
+            prefixes.push(prefix);
+        }
+    }
+    prefixes
+}
+
+/// The longest of [`kept_prefixes`]: `kept_name` keeps more of a name's base,
+/// its suffix and extension taking 30 bytes at most.
+pub(crate) const KEPT_PREFIX: usize = 200;
+
 /// The first `room` bytes of `base`, not cutting a character in two.
 fn cut(base: &[u8], room: usize) -> &[u8] {
     if base.len() <= room {
@@ -986,5 +1018,52 @@ mod tests {
             let copy = copy_name(name, false, |_| false);
             assert_eq!(copy.as_bytes(), b"caf\xe9 (copy).txt");
         }
+    }
+
+    /// Every name kept beside one begins as its kept prefixes say, the
+    /// file's or the folder's, whatever the word.
+    #[test]
+    fn a_kept_name_begins_as_its_prefix_says() {
+        for name in [
+            "notes.txt",
+            "notes (copy).txt",
+            "it's (copy 07).txt",
+            "archive.tar.gz",
+            "photos",
+            "photos (2)",
+            ".hidden",
+            "a name with no end. and a dot",
+            "été (link).jpg",
+        ] {
+            let prefixes = kept_prefixes(OsStr::new(name));
+            for folder in [false, true] {
+                let prefix = prefixes[usize::from(folder && prefixes.len() > 1)].as_encoded_bytes();
+                for word in ["copy", "link", ""] {
+                    // The first name kept, the second, the third.
+                    for n in 0..3 {
+                        let asked = std::cell::Cell::new(0);
+                        let kept = kept_name(OsStr::new(name), word, folder, |_| {
+                            asked.set(asked.get() + 1);
+                            asked.get() <= n
+                        });
+                        assert!(
+                            kept.as_encoded_bytes().starts_with(prefix),
+                            "{kept:?} kept beside {name:?} begins {:?}",
+                            String::from_utf8_lossy(prefix)
+                        );
+                    }
+                }
+            }
+        }
+        let long = "é".repeat(150);
+        let prefixes = kept_prefixes(OsStr::new(&long));
+        assert_eq!(prefixes.len(), 1, "no extension: one");
+        let prefix = &prefixes[0];
+        assert!(prefix.len() <= KEPT_PREFIX && prefix.to_str().is_some());
+        let kept = copy_name(OsStr::new(&long), false, |_| false);
+        assert!(
+            kept.as_encoded_bytes()
+                .starts_with(prefix.as_encoded_bytes())
+        );
     }
 }

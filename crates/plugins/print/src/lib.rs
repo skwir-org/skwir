@@ -1027,7 +1027,8 @@ impl op::Effect for MakePdf {
                     footprint.read(&entry.path)
                 }),
         };
-        Some(read.made(&self.target()).heavy_if(true))
+        // A name taken there is kept beside when its turn comes.
+        Some(read.settles_name(&self.target(), true).heavy_if(true))
     }
 
     fn describe(&self) -> Change {

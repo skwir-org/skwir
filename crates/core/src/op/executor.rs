@@ -525,6 +525,9 @@ pub const AT_ONCE: usize = 4;
 /// An action waiting its turn, and what for (ADR-079, 12).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Waiting {
+    /// Its place in the order asked: what [`Executor::cancel_waiting`]
+    /// takes.
+    pub asked: u64,
     /// Its title: a plan's, or "undo …" and "redo …".
     pub named: String,
     pub waits_for: WaitsFor,
@@ -952,13 +955,40 @@ impl Executor {
             active.cancel.cancel();
             return true;
         }
-        self.lane
+        let queued = self
+            .lane
             .lock()
             .queue
             .iter()
             .find(|job| matches!(&job.work, Work::Execute { plan: p, .. } if p.id == plan))
             .map(|job| job.cancel.cancel())
-            .is_some()
+            .is_some();
+        if queued {
+            self.dispatch_elsewhere();
+        }
+        queued
+    }
+
+    /// Cancel the plan, undo or redo that waits its turn as `asked`
+    /// ([`Waiting::asked`]): it ends at once, having done nothing, without
+    /// waiting for what it waited for. A plan says it was cancelled; an
+    /// undo or a redo leaves its entry where it was. Whether it was
+    /// waiting (one that started meanwhile is cancelled as a running one
+    /// is: [`Executor::cancel`]).
+    pub fn cancel_waiting(&self, asked: u64) -> bool {
+        let waited = self
+            .lane
+            .lock()
+            .queue
+            .iter()
+            .find(|job| job.seq == asked && !job.cancel.is_cancelled())
+            .map(|job| job.cancel.cancel())
+            .is_some();
+        if waited {
+            self.wake();
+            self.dispatch_elsewhere();
+        }
+        waited
     }
 
     /// Hold a running plan where it would next answer Cancel: between its
@@ -1017,9 +1047,14 @@ impl Executor {
     }
 
     /// Plans, undos and redos asked and not started: waiting for what they
-    /// meet, or for a heavy one, to end (ADR-079).
+    /// meet, or for a heavy one, to end (ADR-079). One cancelled is not:
+    /// it ends at once.
     pub fn queued(&self) -> usize {
-        self.lane.lock().queue.len()
+        let lane = self.lane.lock();
+        lane.queue
+            .iter()
+            .filter(|job| !job.cancel.is_cancelled())
+            .count()
     }
 
     /// Cancel every plan, undo and redo, whether it runs, waits paused or
@@ -1473,8 +1508,11 @@ impl Executor {
         let lane = self.lane.lock();
         let mut out = Vec::new();
         for (i, job) in lane.queue.iter().enumerate() {
+            // Cancelled, it ends at once: it waits for nothing.
+            if job.cancel.is_cancelled() {
+                continue;
+            }
             let waits_for = match job.footprint.as_deref() {
-                _ if job.cancel.is_cancelled() => WaitsFor::Starting,
                 None => match &job.work {
                     // An undo or a redo waits for the plan asked before it
                     // that may put its entry there.
@@ -1525,6 +1563,7 @@ impl Executor {
                 }
             };
             out.push(Waiting {
+                asked: job.seq,
                 named: self.named(job),
                 waits_for,
             });
@@ -1591,9 +1630,14 @@ impl Executor {
         self.enqueue(work, cancel, None);
         // Behind what it waits for, whoever shows the plans says it waits.
         self.wake();
-        // Working out what it touches may read (the mount table, whether
-        // what is deleted is a folder): never on the caller's thread, the
-        // window's.
+        self.dispatch_elsewhere();
+    }
+
+    /// Work out what the queued jobs touch and start what may start, on a
+    /// thread of its own: working out what a job touches may read (the
+    /// mount table, whether what is deleted is a folder), never on the
+    /// caller's thread, the window's.
+    fn dispatch_elsewhere(&self) {
         let Some(this) = self.me.upgrade() else {
             return;
         };
@@ -2793,6 +2837,8 @@ mod tests {
     struct Gate {
         path: PathBuf,
         heavy: bool,
+        /// Its name settled when its turn comes, as a copy's.
+        settles: bool,
         undoing: bool,
         open: Arc<(parking_lot::Mutex<bool>, parking_lot::Condvar)>,
         log: Arc<parking_lot::Mutex<Vec<String>>>,
@@ -2808,6 +2854,7 @@ mod tests {
             Gate {
                 path: PathBuf::from(path),
                 heavy,
+                settles: false,
                 undoing: false,
                 open: Arc::new((parking_lot::Mutex::new(open), parking_lot::Condvar::new())),
                 log: Arc::clone(log),
@@ -2817,6 +2864,12 @@ mod tests {
         fn opened(&self) {
             *self.open.0.lock() = true;
             self.open.1.notify_all();
+        }
+
+        /// The same, its name settled when its turn comes, as a copy's.
+        fn settling(mut self) -> Self {
+            self.settles = true;
+            self
         }
 
         fn plan(&self) -> Plan {
@@ -2869,7 +2922,12 @@ mod tests {
             Box::new(self.clone())
         }
         fn footprint(&self, _: &super::super::footprint::Volumes) -> Option<Footprint> {
-            Some(Footprint::default().made(&self.path).heavy_if(self.heavy))
+            let made = if self.settles {
+                Footprint::default().settles_name(&self.path, true)
+            } else {
+                Footprint::default().made(&self.path)
+            };
+            Some(made.heavy_if(self.heavy))
         }
     }
 
@@ -3161,8 +3219,7 @@ mod tests {
 
     /// A light plan runs beside a heavy one it shares nothing with; one
     /// within the heavy one's tree, and another heavy one, wait for it
-    /// (ADR-079). Two that make names in one folder meet: their folders
-    /// differ here.
+    /// (ADR-079).
     #[test]
     fn a_light_plan_runs_beside_a_heavy_one_and_what_meets_it_waits() {
         let executor = Executor::new(Scheduler::new(2));
@@ -3190,6 +3247,67 @@ mod tests {
         let at = |line: &str| order.iter().position(|l| l == line).unwrap();
         assert!(at("ended /stick/photos") < at("began /stick/photos/2026"));
         assert!(at("ended /stick/photos") < at("began /card/music"));
+    }
+
+    /// A new folder beside what a copy makes, in the folder it copies
+    /// into, starts at once, whether the copy runs or waits its turn; one
+    /// of the same name, its case aside, or of a name the copy may be kept
+    /// as beside one taken, waits for it (ADR-079, 1).
+    #[test]
+    fn a_name_made_beside_a_copy_starts_at_once_and_the_same_name_waits() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let copy = Gate::new("/stick/dest/photos", true, false, &log).settling();
+        executor.execute(copy.plan(), CancelToken::new());
+        assert!(logged(&log, "began /stick/dest/photos"));
+        let beside = Gate::new("/stick/dest/it's new", false, true, &log);
+        let r = executor.execute_blocking(&beside.plan(), &CancelToken::new());
+        assert_eq!(r.applied, 1, "beside the copy");
+        let same = Gate::new("/stick/dest/Photos", false, true, &log);
+        executor.execute(same.plan(), CancelToken::new());
+        let kept = Gate::new("/stick/dest/photos (copy)", false, true, &log);
+        executor.execute(kept.plan(), CancelToken::new());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let waiting = loop {
+            let waiting = executor.waiting();
+            if waiting.len() == 2 && waiting.iter().all(|w| w.waits_for != WaitsFor::Starting)
+                || Instant::now() > deadline
+            {
+                break waiting;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let said: Vec<(&str, &WaitsFor)> = waiting
+            .iter()
+            .map(|w| (w.named.as_str(), &w.waits_for))
+            .collect();
+        let copying = WaitsFor::Action("/stick/dest/photos".into());
+        assert_eq!(
+            said,
+            [
+                ("/stick/dest/Photos", &copying),
+                ("/stick/dest/photos (copy)", &copying),
+            ]
+        );
+        copy.opened();
+        assert!(logged(&log, "ended /stick/dest/Photos"));
+        assert!(logged(&log, "ended /stick/dest/photos (copy)"));
+
+        // Behind a copy into the folder that waits its turn (for the
+        // disk), a new folder beside it starts at once all the same.
+        let first = Gate::new("/stick/a/one", true, false, &log);
+        executor.execute(first.plan(), CancelToken::new());
+        assert!(logged(&log, "began /stick/a/one"));
+        let second = Gate::new("/stick/dest/videos", true, false, &log).settling();
+        executor.execute(second.plan(), CancelToken::new());
+        let new = Gate::new("/stick/dest/new", false, true, &log);
+        let r = executor.execute_blocking(&new.plan(), &CancelToken::new());
+        assert_eq!(r.applied, 1, "beside the copy waiting");
+        assert!(!log.lock().iter().any(|l| l.contains("/stick/dest/videos")));
+        first.opened();
+        assert!(logged(&log, "began /stick/dest/videos"));
+        second.opened();
+        assert!(logged(&log, "ended /stick/dest/videos"));
     }
 
     /// Heavy plans on two servers run at once; on one, they take turns
@@ -3240,21 +3358,97 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(5));
         };
+        let said: Vec<(&str, &WaitsFor)> = waiting
+            .iter()
+            .map(|w| (w.named.as_str(), &w.waits_for))
+            .collect();
         assert_eq!(
-            waiting,
+            said,
             [
-                Waiting {
-                    named: "/servers/one/a/photos/it's 1.jpg".into(),
-                    waits_for: WaitsFor::Action("/servers/one/a/photos".into()),
-                },
-                Waiting {
-                    named: "/servers/one/b/videos".into(),
-                    waits_for: WaitsFor::Server,
-                },
+                (
+                    "/servers/one/a/photos/it's 1.jpg",
+                    &WaitsFor::Action("/servers/one/a/photos".into()),
+                ),
+                ("/servers/one/b/videos", &WaitsFor::Server),
             ]
         );
+        assert!(waiting[0].asked < waiting[1].asked, "in the order asked");
         up.opened();
         assert!(logged(&log, "ended /servers/one/b/videos"));
+    }
+
+    /// An action waiting its turn, cancelled, ends at once without waiting
+    /// for what it waited for: a plan says it was cancelled, having done
+    /// nothing; an undo leaves its entry, which a later Undo takes. What
+    /// else waits goes on waiting, then runs.
+    #[test]
+    fn an_action_waiting_its_turn_is_cancelled_at_once() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let copy = Gate::new("/stick/photos", true, false, &log);
+        executor.execute(copy.plan(), CancelToken::new());
+        assert!(logged(&log, "began /stick/photos"));
+        let first = Gate::new("/stick/photos/it's 2026", false, true, &log);
+        let first = first.plan();
+        let first_id = first.id;
+        executor.execute(first, CancelToken::new());
+        let second = Gate::new("/stick/photos/2027", false, true, &log);
+        executor.execute(second.plan(), CancelToken::new());
+        assert!(
+            executor.undo(CancelToken::new()),
+            "an undo waits for the copy"
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let waiting = loop {
+            let waiting = executor.waiting();
+            if waiting.len() == 3 && waiting.iter().all(|w| w.waits_for != WaitsFor::Starting)
+                || Instant::now() > deadline
+            {
+                break waiting;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let named: Vec<&str> = waiting.iter().map(|w| w.named.as_str()).collect();
+        assert_eq!(
+            named,
+            ["/stick/photos/it's 2026", "/stick/photos/2027", "undo"]
+        );
+        executor.events().try_iter().for_each(drop);
+
+        // The first: it says it was cancelled, while the copy still runs.
+        assert!(executor.cancel_waiting(waiting[0].asked));
+        assert!(!executor.cancel_waiting(waiting[0].asked), "once");
+        let seen = events_until(
+            &executor,
+            |e| matches!(e, ExecEvent::Finished { plan, .. } if *plan == first_id),
+        );
+        assert!(seen.iter().any(|e| matches!(
+            e,
+            ExecEvent::Finished { plan, applied: 0, cancelled: true, .. } if *plan == first_id
+        )));
+        // The undo: it ends without a word.
+        assert!(executor.cancel_waiting(waiting[2].asked));
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while executor.queued() != 1 || executor.waiting().len() != 1 {
+            assert!(Instant::now() < deadline, "{:?}", executor.waiting());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(executor.waiting()[0].named, "/stick/photos/2027");
+        assert!(!log.lock().iter().any(|l| l.contains("2026")));
+
+        copy.opened();
+        assert!(logged(&log, "ended /stick/photos/2027"));
+        assert!(!log.lock().iter().any(|l| l.contains("2026")), "never ran");
+        assert!(
+            !log.lock().iter().any(|l| l.starts_with("undid")),
+            "never ran"
+        );
+        // The copy's entry is still there for Undo, under the latest.
+        let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
+        assert_eq!(undone.applied, 1);
+        let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
+        assert_eq!(undone.applied, 1);
+        assert!(logged(&log, "undid /stick/photos"));
     }
 
     /// What a mount's Eject would cut: the actions under way there, by

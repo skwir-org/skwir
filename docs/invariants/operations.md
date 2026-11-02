@@ -182,8 +182,15 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   reads and writes (`fs::volume::disks_of`, through LUKS, LVM and RAID,
   a partition its disk), a remote by its mount, a volume kept in memory
   by its own; a volume whose disks cannot be told (all of them on macOS
-  and Windows, a ZFS pool) meets every disk. Two plans making names
-  in one folder meet. A store several actions keep (a volume's trash,
+  and Windows, a ZFS pool) meets every disk. Two plans meet in one
+  folder only on one name, its case aside (`footprint::name_key`; on
+  macOS a name not ASCII, on Windows one holding `~`, meets every name
+  there): a new folder beside a copy, running or waiting its turn,
+  starts at once. A name settled only when its plan's turn comes (a
+  copy's, a move's, a link's, what a plugin makes, kept beside one taken
+  as `name (copy).ext`) claims its own and every name it may be kept as
+  (those beginning as `clash::kept_prefixes` says), and the staging
+  folders a copy makes there (`Footprint::settles_name`). A store several actions keep (a volume's trash,
   the notes') is kept whole by a step that reads, takes or empties what
   it holds (a restore, an item deleted for good or moved), which meets
   every action keeping it; a file trashed adds an item of its own (its
@@ -192,7 +199,10 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   and a toast's Undo of one is not refused for the other. Each running
   plan has its bar in Activity (ADR-114); what waits is listed under them, each saying what it waits for (`Executor::waiting`:
   an action asked before it that it meets, by its title; the disk; the
-  server; one of the four to end); a paused plan keeps what it holds. The journal keeps
+  server; one of the four to end), with its Cancel, and Cancel all for
+  several (`Executor::cancel_waiting`: it ends at once, having done
+  nothing, without waiting for what it waited for; a plan says it was
+  cancelled, an undo or a redo leaves its entry); a paused plan keeps what it holds. The journal keeps
   the order asked (`JournalEntry::seq`): Undo takes the last plan asked,
   waiting while it runs (`Executor::undo_target`, which the status bar
   names), and a plan asked after an undo drops its redo. A toast's Undo

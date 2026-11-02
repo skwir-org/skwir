@@ -28,7 +28,7 @@ use crate::elements::popover::PopoverAnchor;
 use crate::format;
 use crate::shell::Shell;
 use crate::theme::Theme;
-use crate::toast::{Action, Running, Tone, bar, capitalized, pace, sending, waiting_lines};
+use crate::toast::{Action, Running, Tone, bar, capitalized, pace, sending, waiting_words};
 use crate::work::{Seen, Watched};
 
 /// Activity's popup, as `Shell::toggle_popup` and `toolbar_menu` know it.
@@ -101,6 +101,10 @@ pub struct ActivityState {
     tasks: HashMap<u64, FocusHandle>,
     /// Each `Earlier` row's buttons, by plan and place.
     rows: HashMap<(PlanId, usize), FocusHandle>,
+    /// Each waiting action's Cancel, by its place in the order asked, and
+    /// the one that cancels them all.
+    waiting: HashMap<u64, FocusHandle>,
+    cancel_waiting: Option<FocusHandle>,
     strip: Option<StripFocus>,
     pin: Option<FocusHandle>,
     /// What `ui.activity` gives the keyboard to while pinned and shown.
@@ -814,22 +818,26 @@ fn body(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
         parts.push(task_card(task, &focus, a11y, theme, cx).into_any_element());
     }
     // What the user did meanwhile waits behind what it meets, and paused,
-    // for as long as it stays paused: each with what it waits for.
-    let waiting = waiting_lines(&shell.app.executor.waiting());
+    // for as long as it stays paused: each with what it waits for, and its
+    // Cancel.
+    let waiting = shell.app.executor.waiting();
+    let asked: HashSet<u64> = waiting.iter().map(|w| w.asked).collect();
+    shell.activity.waiting.retain(|id, _| asked.contains(id));
     if !waiting.is_empty() {
+        parts.push(waiting_heading(shell, waiting.len(), theme, cx));
+        let rows: Vec<AnyElement> = waiting
+            .iter()
+            .map(|w| waiting_row(shell, w, theme, cx))
+            .collect();
         parts.push(
             div()
                 .id("activity-waiting")
-                .role(gpui::Role::Status)
-                .when(a11y, |d| d.aria_label(waiting.join(". ")))
+                .role(gpui::Role::List)
+                .when(a11y, |d| d.aria_label("Waiting"))
                 .flex()
                 .flex_col()
-                .gap_1()
-                .px_3()
-                .pb_2()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .children(waiting)
+                .pb_1()
+                .children(rows)
                 .into_any_element(),
         );
     }
@@ -868,6 +876,138 @@ fn body(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Vec<AnyEle
 
 fn waiting_is_empty(shell: &Shell) -> bool {
     shell.app.executor.waiting().is_empty()
+}
+
+/// Over what waits its turn: its name, and Cancel all when there are
+/// several.
+fn waiting_heading(
+    shell: &mut Shell,
+    count: usize,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let all = (count > 1).then(|| {
+        let focus = shell
+            .activity
+            .cancel_waiting
+            .get_or_insert_with(|| stop(cx))
+            .clone();
+        controls::button(
+            "activity-waiting-cancel-all",
+            "Cancel all",
+            None,
+            ButtonStyle::Plain,
+            &focus,
+            theme,
+        )
+        .h(px(22.))
+        .px_2()
+        .text_xs()
+        .press(
+            |this, _, cx| {
+                // What waits when pressed, none that started meanwhile.
+                for waiting in this.app.executor.waiting() {
+                    this.app.executor.cancel_waiting(waiting.asked);
+                }
+                cx.notify();
+            },
+            cx,
+        )
+    });
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .justify_between()
+        .min_h(px(26.))
+        .pl_3()
+        .pr_1()
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .child("Waiting"),
+        )
+        .children(all)
+        .into_any_element()
+}
+
+/// An action waiting its turn: what it is and, under it, what it waits
+/// for, each cut in the middle (where a path's end tells two apart), and
+/// its Cancel, which ends it at once, having done nothing.
+fn waiting_row(
+    shell: &mut Shell,
+    waiting: &skwir_core::op::Waiting,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let asked = waiting.asked;
+    let (what, why) = waiting_words(waiting);
+    let focus = shell
+        .activity
+        .waiting
+        .entry(asked)
+        .or_insert_with(|| stop(cx))
+        .clone();
+    div()
+        .id(("activity-waiting-row", asked))
+        .role(gpui::Role::ListItem)
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap_2()
+        .min_h(px(26.))
+        .pl_3()
+        .pr_1()
+        .py_1()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .text_xs()
+                .child(crate::elements::clip::clipped(
+                    div()
+                        .id(("activity-waiting-what", asked))
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis_middle(),
+                    what,
+                ))
+                .child(crate::elements::clip::clipped(
+                    div()
+                        .id(("activity-waiting-why", asked))
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis_middle()
+                        .text_color(theme.text_muted),
+                    why,
+                )),
+        )
+        .child(
+            controls::button(
+                SharedString::from(format!("activity-waiting-cancel-{asked}")),
+                "Cancel",
+                None,
+                ButtonStyle::Plain,
+                &focus,
+                theme,
+            )
+            .h(px(22.))
+            .px_2()
+            .text_xs()
+            .press(
+                move |this, _, cx| {
+                    this.app.executor.cancel_waiting(asked);
+                    cx.notify();
+                },
+                cx,
+            ),
+        )
+        .into_any_element()
 }
 
 /// A row of `Earlier`: how it ended, what, when, and its way back (Undo),

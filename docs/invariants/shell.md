@@ -643,7 +643,8 @@ of bars, split or not.
   summed (their bytes where each was sized, else each one's share alike;
   the longest time left). A click, or `ui.activity` (Ctrl+Shift+J),
   opens Activity above it (one popup at a time, `toggle_popup`): each
-  action's card, what waits, and Earlier, this session's answers with
+  action's card, what waits (each with its Cancel, Cancel all for
+  several), and Earlier, this session's answers with
   their Undo and Retry, twenty at most, in memory only. Pinned
   (`ui.activity_pin`, remembered with the window's shape), Activity
   stands above the last pane's footer while something is under way,
