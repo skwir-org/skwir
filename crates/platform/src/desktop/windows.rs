@@ -25,10 +25,10 @@ use ::windows::Win32::UI::Shell::{
     ITaskbarList3, TBPF_ERROR, TBPF_NOPROGRESS, TBPF_NORMAL, TBPF_PAUSED, TBPFLAG, TaskbarList,
 };
 use ::windows::core::{HSTRING, IInspectable, PWSTR};
-use crossbeam_channel::Receiver;
+use crossbeam_channel::{Receiver, Sender};
 use parking_lot::Mutex;
 
-use super::{Asked, Clicked, Notice, OnAsked, Presence, Progress, Setup, Shown, State};
+use super::{Again, Asked, Clicked, Notice, OnAsked, Presence, Progress, Setup, Shown, State};
 
 mod presence;
 
@@ -59,6 +59,11 @@ pub(super) struct Backend {
     taskbar: OnceCell<Option<ITaskbarList3>>,
     /// The progress asked last, shown again on a window given after.
     shown: Option<Shown>,
+    /// The progress told again a moment after a window was given or the
+    /// taskbar started again: its button comes after.
+    again: Again,
+    /// Told by the hidden window's thread when the taskbar started again.
+    wake: (Sender<()>, Receiver<()>),
     /// The toasts' notifier, made once when first needed: none for an
     /// id the system does not know (the zip, Wine).
     notifier: OnceCell<Option<ToastNotifier>>,
@@ -91,6 +96,8 @@ impl Backend {
             com,
             taskbar: OnceCell::new(),
             shown: None,
+            again: Again::default(),
+            wake: crossbeam_channel::unbounded(),
             notifier: OnceCell::new(),
             toast: None,
             request: None,
@@ -99,25 +106,30 @@ impl Backend {
         }
     }
 
-    /// Nothing of the desktop's own wakes this: the hidden window's
-    /// thread answers it.
-    #[allow(clippy::unused_self)] // Each system's backend is asked alike.
+    /// What wakes this: the taskbar started again (Explorer did), told by
+    /// the hidden window's thread. This keeps a sender, so the receiver is
+    /// never disconnected.
     pub(super) fn wakes(&self) -> Receiver<()> {
-        crossbeam_channel::never()
+        self.wake.1.clone()
     }
 
-    #[allow(clippy::unused_self)] // Each system's backend is asked alike.
+    /// When the progress is to be told again.
     pub(super) fn due(&self) -> Option<Instant> {
-        None
+        self.again.due()
     }
 
-    #[allow(clippy::unused_self)] // Each system's backend is asked alike.
     pub(super) fn tick(&mut self, now: Instant) {
-        let _ = now;
+        if self.again.take(now) && self.shown.is_some() {
+            self.show_progress();
+        }
     }
 
-    #[allow(clippy::unused_self)] // Each system's backend is asked alike.
-    pub(super) fn woken(&mut self) {}
+    /// The taskbar started again: its buttons are made anew, the progress
+    /// told again on the window's once it is.
+    pub(super) fn woken(&mut self) {
+        while self.wake.1.try_recv().is_ok() {}
+        self.again.start(Instant::now());
+    }
 
     pub(super) fn notify(&mut self, key: u64, notice: &Notice) {
         let Some(notifier) = self.notifier() else {
@@ -200,9 +212,17 @@ impl Backend {
         self.show_progress();
     }
 
-    /// The window given changed: the progress shown on its button.
+    /// The window given changed: the progress shown on its button, and
+    /// again a moment later, as the button comes after the window.
     pub(super) fn window(&mut self) {
         self.show_progress();
+        self.again.start(Instant::now());
+    }
+
+    /// When the progress is told again (the tests').
+    #[cfg(test)]
+    pub(super) fn tells_again(&self) -> Option<Instant> {
+        self.again.due()
     }
 
     fn show_progress(&mut self) {
@@ -324,6 +344,7 @@ impl Backend {
                     presence::Hidden::start(
                         Arc::clone(&self.asks),
                         Arc::clone(&self.asked),
+                        self.wake.0.clone(),
                         self.icon,
                     )
                 })

@@ -87,9 +87,28 @@ and macOS otherwise compiled only.
    keyed on the desktop file), Windows' taskbar button (green, yellow
    paused, red stopped), the macOS Dock's badge. Silent, no setting.
 8. **The machine is kept awake** while something runs and is not paused:
-   logind's sleep inhibitor (`block`) on Linux, a system-required power
-   request on Windows, a user-initiated activity on macOS. A closed lid
-   still sleeps. A setting turns it off (`ui.keep_awake`, on by default).
+   on Linux by the portal's `Inhibit` (suspend) where a session manager
+   is on the bus, else by logind's sleep inhibitor (`block`); a
+   system-required power request on Windows, a user-initiated activity on
+   macOS. A closed lid still sleeps. Let go a second after the last action
+   ends, so a queue never lapses. A setting turns it off (`ui.keep_awake`,
+   on by default).
+   - logind's `block` was asked everywhere at first. Read in the sources
+     (2026-11-02): systemd 262 refuses any suspend while a `block` is
+     held, the user's own too, only `block-weak` yielding to its own user
+     (`src/login/logind-shutdown.c`, `logind-inhibit.c`);
+     gnome-settings-daemon 50.1 arms its idle suspend by gnome-session's
+     `InhibitedActions`, reading no logind lock
+     (`plugins/power/gsd-power-manager.c`); gnome-session 50.1 turns a
+     program's suspend inhibitor, which xdg-desktop-portal-gtk 1.15.3
+     hands it as asked (`src/inhibit.c`), into logind's `block-weak`
+     (`gnome-session/gsm-systemd.c`); xdg-desktop-portal-kde 6.8.2 makes
+     it PowerDevil's `InterruptSession` (`src/inhibit.cpp`), and
+     PowerDevil 6.8.2 honours other programs' logind `block` locks too.
+     Under GNOME the `block` left the idle suspend armed (its warning
+     shown, the suspend then refused) and refused the user's own Suspend;
+     through the portal, idle does not suspend and the user's Suspend
+     does. Not tried on a GNOME or Plasma session.
 9. **One seam for the desktop** (`skwir_platform::desktop::Desktop`):
    every call returns at once, a thread of its own talking to the
    desktop, started on the first; the session bus is Skwir's one
@@ -118,7 +137,10 @@ and macOS otherwise compiled only.
 - What a toast said is found again in Activity's Earlier until the window
   closes.
 - The window keeps whether it has the focus (`Shell::window_active`).
-- A sleep inhibitor appears in `systemd-inhibit --list` while a plan runs.
+- A sleep inhibitor appears in `systemd-inhibit --list` while a plan runs:
+  Skwir's where no session manager is on the bus, gnome-session's
+  (`block-weak`) under GNOME; under Plasma, PowerDevil keeps it in its own
+  list.
 - Toasts show on Windows only for an installed Skwir: its installer
   registers the program's AppUserModelID (`org.skwir.skwir`) under
   `HKCU\Software\Classes\AppUserModelId`, as unpackaged programs do;

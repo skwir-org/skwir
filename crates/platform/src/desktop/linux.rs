@@ -52,11 +52,12 @@ const PORTAL: (&str, &str, &str) = (
 );
 /// What a portal's call answers: closed, its inhibition ends.
 const REQUEST: &str = "org.freedesktop.portal.Request";
-/// The portal's inhibitor flag for the session's end.
+/// The portal's inhibitor flags: the session's end, and sleep.
 const LOGOUT: u32 = 1;
+const SUSPEND: u32 = 4;
 /// The session managers that show a dialog of their own at the session's
 /// end, listing what the portal holds: logind's block is not asked where
-/// one is.
+/// one is. Where one is, sleep is held off through the portal too.
 const SESSION_MANAGERS: [&str; 2] = ["org.gnome.SessionManager", "org.kde.ksmserver"];
 const LAUNCHER_ENTRY: &str = "com.canonical.Unity.LauncherEntry";
 /// The action a click on the notice itself invokes.
@@ -110,11 +111,35 @@ pub(super) struct Showing {
     /// The presence's notice that stays, while there is no tray: the
     /// server's id of it, until the user closes it.
     pub(super) resident: Option<u32>,
+    /// The server that showed them, by its connection's name: what another
+    /// says of an id is of another's notice (a server started again counts
+    /// its ids anew, and some tell every program of every click).
+    server: Option<String>,
+    /// How many times the server went or came: what was shown before is
+    /// gone with the server.
+    pub(super) servers: u32,
 }
 
 impl Showing {
     fn is(&self, id: u32) -> bool {
         self.shown.is_some_and(|(shown, _)| shown == id)
+    }
+
+    /// The server went or came (or the bus did): what it showed is gone,
+    /// and its ids name nothing of ours.
+    fn forget(&mut self) {
+        *self = Showing {
+            servers: self.servers.wrapping_add(1),
+            ..Showing::default()
+        };
+    }
+
+    /// Whether `message` comes from the server that showed ours.
+    fn said_by_server(&self, message: &zbus::Message) -> bool {
+        let header = message.header();
+        header
+            .sender()
+            .is_some_and(|sender| self.server.as_deref() == Some(sender.as_str()))
     }
 
     /// The token given for `id`, taken.
@@ -140,8 +165,23 @@ struct Resident {
     /// What it said: shown again only when this changes, never for a
     /// percent, and not after the user closed it until then.
     said: Option<(String, String, Standing)>,
-    /// The connection it was shown on: a bus started again shows it anew.
-    on: Option<String>,
+    /// The connection it was shown on, and how many times the server had
+    /// gone or come then: a bus or a server started again shows it anew.
+    on: (Option<String>, u32),
+}
+
+/// The machine kept awake.
+enum Awake {
+    /// By the portal, where a session manager is on the bus: its request,
+    /// asked on the connection named (its inhibition ends with it), and
+    /// why, to ask again on a bus started again.
+    Portal {
+        why: String,
+        on: Option<String>,
+        request: Option<OwnedObjectPath>,
+    },
+    /// By logind's descriptor.
+    Logind(OwnedFd),
 }
 
 /// The session's end held off.
@@ -172,11 +212,14 @@ pub(super) struct Backend {
     /// again: this looks again ([`Backend::woken`]). This keeps a sender,
     /// so the receiver is never disconnected.
     wake: (Sender<()>, Receiver<()>),
-    /// logind's descriptor, while the machine is kept awake.
-    inhibitor: Option<OwnedFd>,
+    /// What keeps the machine awake, while it is.
+    awake: Option<Awake>,
     /// Whether the last progress could not be told: said once, until
     /// one can.
     untold: bool,
+    /// Whether the server reads markup, as it said when asked on the
+    /// connection and with the server named: asked once each.
+    markup: Option<((Option<String>, u32), bool)>,
     icons: Icons,
     /// The presence asked last.
     wanted: Option<Presence>,
@@ -224,8 +267,9 @@ impl Backend {
             path: path + "/LauncherEntry",
             following: None,
             wake: crossbeam_channel::unbounded(),
-            inhibitor: None,
+            awake: None,
             untold: false,
+            markup: None,
             icons: Icons::new(setup.icon),
             wanted: None,
             shows: Shows::Nothing,
@@ -247,16 +291,20 @@ impl Backend {
         self.lost
     }
 
+    /// The tray waited for did not come back in time: look again, once.
+    /// The deadline is taken first, so a look that cannot settle it (no
+    /// bus) never comes due again: the module's thread would wake at once,
+    /// for ever.
     pub(super) fn tick(&mut self, now: Instant) {
-        if self.lost.is_some_and(|lost| now >= lost) {
-            self.settle();
+        if self.lost.take_if(|lost| now >= *lost).is_some() {
+            self.settle(true);
         }
     }
 
     /// The tray or the bus changed: look again, once for all told.
     pub(super) fn woken(&mut self) {
         while self.wake.1.try_recv().is_ok() {}
-        self.settle();
+        self.settle(false);
     }
 
     pub(super) fn notify(&mut self, key: u64, notice: &Notice) {
@@ -276,7 +324,7 @@ impl Backend {
         };
         let hints = HashMap::from([
             ("category", Value::from(category)),
-            ("desktop-entry", Value::from(self.app_id.as_str())),
+            ("desktop-entry", Value::from(self.app_id.clone())),
             ("urgency", Value::U8(1)),
         ]);
         let shown = self.show_notice(
@@ -293,9 +341,10 @@ impl Backend {
         }
     }
 
-    /// Show a notice in place of `replaces` (0 for none): its id.
+    /// Show a notice in place of `replaces` (0 for none): its id. The
+    /// server that answers is the one whose signals are ours.
     fn show_notice(
-        &self,
+        &mut self,
         bus: &Connection,
         replaces: u32,
         (summary, body): (&str, &str),
@@ -305,15 +354,12 @@ impl Backend {
     ) -> zbus::Result<u32> {
         // Escaped only for a server that reads markup: another shows
         // the body as written.
-        let markup = call(bus, NOTICES, "GetCapabilities", &())
-            .and_then(|reply| reply.body().deserialize::<Vec<String>>())
-            .is_ok_and(|capabilities| capabilities.iter().any(|c| c == "body-markup"));
-        let body = if markup {
+        let body = if self.reads_markup(bus) {
             super::escape(body)
         } else {
             body.to_owned()
         };
-        call(
+        let reply = call(
             bus,
             NOTICES,
             "Notify",
@@ -327,8 +373,33 @@ impl Backend {
                 hints,
                 timeout,
             ),
-        )
-        .and_then(|reply| reply.body().deserialize::<u32>())
+        )?;
+        let id = reply.body().deserialize::<u32>()?;
+        let server = reply.header().sender().map(ToString::to_string);
+        let mut showing = self.showing.lock();
+        if showing.server != server {
+            // Another server than the last: its ids are not the last's.
+            showing.shown = None;
+            showing.resident = None;
+            showing.server = server;
+        }
+        Ok(id)
+    }
+
+    /// Whether the server reads markup in a notice's body, asked once on
+    /// each connection and of each server.
+    fn reads_markup(&mut self, bus: &Connection) -> bool {
+        let of = (unique(bus), self.showing.lock().servers);
+        if let Some((asked, markup)) = &self.markup
+            && *asked == of
+        {
+            return *markup;
+        }
+        let markup = call(bus, NOTICES, "GetCapabilities", &())
+            .and_then(|reply| reply.body().deserialize::<Vec<String>>())
+            .is_ok_and(|capabilities| capabilities.iter().any(|c| c == "body-markup"));
+        self.markup = Some((of, markup));
+        markup
     }
 
     pub(super) fn withdraw(&mut self, key: Option<u64>) {
@@ -374,17 +445,43 @@ impl Backend {
         }
     }
 
-    /// Ask logind to hold off sleep, on a system connection made for
-    /// the call: the descriptor it answers outlives the connection.
+    /// Hold off sleep: through the portal where a session manager is on
+    /// the bus, else (or where the portal refuses) by logind's block, on a
+    /// system connection made for the call, the descriptor it answers
+    /// outliving the connection. GNOME's session turns the portal's into
+    /// logind's `block-weak` and keeps its own idle from suspending, as
+    /// KDE's `PowerDevil` does: the user's own Suspend still suspends, which
+    /// logind refuses outright while a `block` is held (systemd 257 on).
     pub(super) fn hold(&mut self, why: &str) {
+        let bus = (self.buses.session)().ok();
+        if let Some(bus) = bus.filter(|bus| session_manager(bus).is_some()) {
+            // To ask the portal again on a bus started again.
+            self.follow();
+            if let Some(request) = self.ask_portal(&bus, SUSPEND, why) {
+                self.awake = Some(Awake::Portal {
+                    why: why.to_owned(),
+                    on: unique(&bus),
+                    request: Some(request),
+                });
+                return;
+            }
+        }
         match self.inhibit("sleep", why) {
-            Ok(fd) => self.inhibitor = Some(fd),
+            Ok(fd) => self.awake = Some(Awake::Logind(fd)),
             Err(error) => tracing::debug!("the machine may sleep meanwhile: {error}"),
         }
     }
 
     pub(super) fn let_go(&mut self) {
-        self.inhibitor = None;
+        match self.awake.take() {
+            Some(Awake::Portal {
+                on,
+                request: Some(request),
+                ..
+            }) => self.close_request(on.as_deref(), &request),
+            Some(Awake::Portal { request: None, .. }) | None => {}
+            Some(Awake::Logind(descriptor)) => drop(descriptor),
+        }
     }
 
     /// logind's block of `what`, with `why`.
@@ -431,8 +528,9 @@ impl Backend {
     }
 
     /// Show `presence` in the tray whose watcher `tray` names, else as a
-    /// notice that stays: nothing showing it yet.
+    /// notice that stays: nothing showing it yet, so no tray is waited for.
     fn show(&mut self, bus: &Connection, tray: Option<String>, presence: &Presence) {
+        self.lost = None;
         if let Some(watcher) = tray {
             self.items += 1;
             // Unique to the process and to the presence: a host that knew
@@ -461,8 +559,10 @@ impl Backend {
     /// the tray or the bus having changed: register again with a watcher
     /// started again, become a notice once the tray is gone for [`LOST`],
     /// go back to the tray once there is one, show everything anew on a
-    /// bus started again.
-    fn settle(&mut self) {
+    /// bus started again. `expired`: the tray gone was waited for [`LOST`]
+    /// (`tick`). `lost` is set only here, only while an item is served
+    /// whose tray is gone: every other way out leaves it unset.
+    fn settle(&mut self, expired: bool) {
         let bus = match (self.buses.session)() {
             Ok(bus) => bus,
             Err(error) => {
@@ -485,14 +585,10 @@ impl Backend {
                     }
                     return;
                 }
-                let now = Instant::now();
-                match self.lost {
-                    None => {
-                        self.lost = Some(now + LOST);
-                        return;
-                    }
-                    Some(lost) if now < lost => return,
-                    Some(_) => {}
+                if !expired {
+                    // Waited for from when it was first missed.
+                    self.lost.get_or_insert_with(|| Instant::now() + LOST);
+                    return;
                 }
                 tracing::debug!("no tray came back: the program at work is shown in a notice");
                 self.lost = None;
@@ -506,9 +602,11 @@ impl Backend {
                 self.show(&bus, tray, &wanted);
             }
             // Shown anew on a bus started again.
-            Shows::Notice => self.resident(&bus, &wanted),
-            Shows::Tray(_) | Shows::Nothing => {
+            Shows::Notice => {
                 self.lost = None;
+                self.resident(&bus, &wanted);
+            }
+            Shows::Tray(_) | Shows::Nothing => {
                 self.shows = Shows::Nothing;
                 self.show(&bus, tray, &wanted);
             }
@@ -519,9 +617,10 @@ impl Backend {
     /// title, what it is about or how it stands changed, never for a
     /// percent; once the user closed it, not until then.
     fn resident(&mut self, bus: &Connection, presence: &Presence) {
-        let on = unique(bus);
+        let on = (unique(bus), self.showing.lock().servers);
         if self.resident.on != on {
-            // Shown on a bus that ended, or never: gone with it.
+            // Shown on a bus that ended, by a server gone, or never: gone
+            // with it.
             self.resident = Resident { said: None, on };
             self.showing.lock().resident = None;
         }
@@ -536,7 +635,7 @@ impl Backend {
         let replaces = self.showing.lock().resident.unwrap_or(0);
         let hints = HashMap::from([
             ("category", Value::from("transfer")),
-            ("desktop-entry", Value::from(self.app_id.as_str())),
+            ("desktop-entry", Value::from(self.app_id.clone())),
             ("resident", Value::Bool(true)),
             ("urgency", Value::U8(1)),
         ]);
@@ -611,12 +710,10 @@ impl Backend {
             // To ask the portal again on a bus started again.
             self.follow();
         }
-        let portal = bus.as_ref().and_then(|bus| self.ask_portal(bus, why));
-        let showing_its_own = bus.as_ref().and_then(|bus| {
-            SESSION_MANAGERS
-                .into_iter()
-                .find(|name| has_owner(bus, name))
-        });
+        let portal = bus
+            .as_ref()
+            .and_then(|bus| self.ask_portal(bus, LOGOUT, why));
+        let showing_its_own = bus.as_ref().and_then(session_manager);
         let logind = match showing_its_own {
             Some(manager) => {
                 tracing::debug!("logind is not asked: {manager} shows the session's end itself");
@@ -638,18 +735,19 @@ impl Backend {
         }
     }
 
-    /// The portal's inhibitor of logging out, with `why`: its request.
-    fn ask_portal(&mut self, bus: &Connection, why: &str) -> Option<OwnedObjectPath> {
+    /// The portal's inhibitor of what `flags` name (logging out, sleep),
+    /// with `why`: its request.
+    fn ask_portal(&mut self, bus: &Connection, flags: u32, why: &str) -> Option<OwnedObjectPath> {
         self.requests += 1;
         let token = format!("skwir_session_{}", self.requests);
         let options = HashMap::from([
             ("reason", Value::from(why)),
             ("handle_token", Value::from(token.as_str())),
         ]);
-        call(bus, PORTAL, "Inhibit", &("", LOGOUT, options))
+        call(bus, PORTAL, "Inhibit", &("", flags, options))
             .and_then(|reply| reply.body().deserialize::<OwnedObjectPath>())
             .inspect_err(|error| {
-                tracing::debug!("the portal does not hold off the session's end: {error}");
+                tracing::debug!("the portal does not inhibit (flags {flags}): {error}");
             })
             .ok()
     }
@@ -658,29 +756,44 @@ impl Backend {
     /// the connection that asked.
     fn hold_again(&mut self, bus: &Connection) {
         let on = unique(bus);
-        let why = match &self.session {
-            Some(hold) if hold.on != on => hold.why.clone(),
-            _ => return,
-        };
-        let portal = self.ask_portal(bus, &why);
-        if let Some(hold) = &mut self.session {
-            hold.portal = portal;
-            hold.on = on;
+        if let Some(why) = self
+            .session
+            .as_ref()
+            .filter(|hold| hold.on != on)
+            .map(|hold| hold.why.clone())
+        {
+            let portal = self.ask_portal(bus, LOGOUT, &why);
+            if let Some(hold) = &mut self.session {
+                hold.portal = portal;
+                hold.on.clone_from(&on);
+            }
+        }
+        if let Some(why) = match &self.awake {
+            Some(Awake::Portal { why, on: asked, .. }) if *asked != on => Some(why.clone()),
+            _ => None,
+        } {
+            let request = self.ask_portal(bus, SUSPEND, &why);
+            self.awake = Some(Awake::Portal { why, on, request });
         }
     }
 
     fn let_session_go(&self, hold: SessionHold) {
-        if let Some(request) = hold.portal {
-            // On a bus that ended, it went with the connection.
-            let closed = (self.buses.session)()
-                .ok()
-                .filter(|bus| unique(bus) == hold.on)
-                .map(|bus| call(&bus, (PORTAL.0, request.as_str(), REQUEST), "Close", &()));
-            if let Some(Err(error)) = closed {
-                tracing::debug!("the portal's hold was not let go of: {error}");
-            }
+        if let Some(request) = &hold.portal {
+            self.close_request(hold.on.as_deref(), request);
         }
         drop(hold.logind);
+    }
+
+    /// Close the portal's `request`, asked on the connection named `on`:
+    /// on a bus that ended, it went with the connection.
+    fn close_request(&self, on: Option<&str>, request: &OwnedObjectPath) {
+        let closed = (self.buses.session)()
+            .ok()
+            .filter(|bus| unique(bus).as_deref() == on)
+            .map(|bus| call(&bus, (PORTAL.0, request.as_str(), REQUEST), "Close", &()));
+        if let Some(Err(error)) = closed {
+            tracing::debug!("the portal's hold was not let go of: {error}");
+        }
     }
 
     /// Follow the bus's signals on a thread of their own, for the
@@ -718,7 +831,7 @@ impl Backend {
                             // The bus started again, and its servers with
                             // it: what was shown went with them, and what
                             // was served and held is asked anew.
-                            *showing.lock() = Showing::default();
+                            showing.lock().forget();
                             let _ = wake.send(());
                         }
                         let ready = ready.clone();
@@ -750,6 +863,7 @@ impl Drop for Backend {
         if let Some(hold) = self.session.take() {
             self.let_session_go(hold);
         }
+        self.let_go();
         if let Some(following) = self.following.take() {
             following.cancel();
         }
@@ -757,8 +871,9 @@ impl Drop for Backend {
 }
 
 /// The signals followed: the notification server's (a notice clicked,
-/// the token given with the click, a notice closed), the tray's watcher's
-/// owner changing, and a host coming to or leaving the watcher.
+/// the token given with the click, a notice closed) and its owner changing,
+/// the tray's watcher's owner changing, and a host coming to or leaving the
+/// watcher.
 fn rules() -> zbus::Result<Vec<zbus::MatchRule<'static>>> {
     let signal = || zbus::MatchRule::builder().msg_type(zbus::message::Type::Signal);
     let host = |member| -> zbus::Result<zbus::MatchRule<'static>> {
@@ -768,21 +883,27 @@ fn rules() -> zbus::Result<Vec<zbus::MatchRule<'static>>> {
             .member(member)?
             .build())
     };
-    Ok(vec![
-        signal().interface(NOTICES.2)?.path(NOTICES.1)?.build(),
-        signal()
+    let owner = |name| -> zbus::Result<zbus::MatchRule<'static>> {
+        Ok(signal()
             .sender(DBUS.0)?
             .interface(DBUS.2)?
             .member("NameOwnerChanged")?
-            .arg(0, WATCHER.0)?
-            .build(),
+            .arg(0, name)?
+            .build())
+    };
+    Ok(vec![
+        signal().interface(NOTICES.2)?.path(NOTICES.1)?.build(),
+        owner(NOTICES.0)?,
+        owner(WATCHER.0)?,
         host("StatusNotifierHostRegistered")?,
         host("StatusNotifierHostUnregistered")?,
     ])
 }
 
 /// A signal followed, taken at once: the notification server's handled
-/// here, the tray's told to the module's thread, which asks the bus.
+/// here, the server gone or come forgotten; the tray's, and the server's
+/// change, told to the module's thread, which asks the bus (the notice that
+/// stays shown anew).
 fn told(message: &zbus::Message, showing: &Mutex<Showing>, asked: &OnAsked, wake: &Sender<()>) {
     let header = message.header();
     let (Some(interface), Some(member)) = (header.interface(), header.member()) else {
@@ -790,15 +911,27 @@ fn told(message: &zbus::Message, showing: &Mutex<Showing>, asked: &OnAsked, wake
     };
     if interface.as_str() == NOTICES.2 {
         noticed(member.as_str(), message, showing, asked);
-    } else {
-        let _ = wake.send(());
+        return;
     }
+    if interface.as_str() == DBUS.2
+        && message
+            .body()
+            .deserialize::<(String, String, String)>()
+            .is_ok_and(|(name, ..)| name == NOTICES.0)
+    {
+        showing.lock().forget();
+    }
+    let _ = wake.send(());
 }
 
 /// A signal of the notification server's: a click on a notice of ours told
 /// with the token given just before it (spec 1.2), a notice closed
-/// forgotten. Others' notices are none of ours.
+/// forgotten. Others' notices are none of ours, nor what another server
+/// says.
 fn noticed(member: &str, message: &zbus::Message, showing: &Mutex<Showing>, asked: &OnAsked) {
+    if !showing.lock().said_by_server(message) {
+        return;
+    }
     let body = message.body();
     match member {
         "ActivationToken" => {
@@ -871,6 +1004,14 @@ fn tray_host(bus: &Connection) -> Option<String> {
     .and_then(|reply| reply.body().deserialize::<OwnedValue>())
     .is_ok_and(|hosted| bool::try_from(&hosted).unwrap_or(false));
     hosted.then_some(owner)
+}
+
+/// The session manager on the bus that shows the session's end itself
+/// and holds sleep off for the portal, if any.
+fn session_manager(bus: &Connection) -> Option<&'static str> {
+    SESSION_MANAGERS
+        .into_iter()
+        .find(|name| has_owner(bus, name))
 }
 
 fn has_owner(bus: &Connection, name: &str) -> bool {

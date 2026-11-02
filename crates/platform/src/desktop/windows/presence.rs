@@ -89,6 +89,7 @@ impl Hidden {
     pub(super) fn start(
         asks: Arc<Mutex<Asks>>,
         asked: OnAsked,
+        taskbar: Sender<()>,
         icon: &'static [u8],
     ) -> Option<Hidden> {
         let (made, window) = crossbeam_channel::bounded(1);
@@ -96,7 +97,7 @@ impl Hidden {
         let started = std::thread::Builder::new()
             .name("skwir-presence".into())
             .spawn(move || {
-                run(asks, asked, icon, &made);
+                run(asks, asked, taskbar, icon, &made);
                 drop(ends);
             });
         if let Err(error) = started {
@@ -145,10 +146,17 @@ impl Drop for Hidden {
 }
 
 /// Make the window, say which, and pump its messages until it ends.
-fn run(asks: Arc<Mutex<Asks>>, asked: OnAsked, icon: &'static [u8], made: &Sender<Option<isize>>) {
+fn run(
+    asks: Arc<Mutex<Asks>>,
+    asked: OnAsked,
+    taskbar: Sender<()>,
+    icon: &'static [u8],
+    made: &Sender<Option<isize>>,
+) {
     let context = Box::new(Context {
         asks,
         asked,
+        taskbar,
         #[allow(unsafe_code)]
         // SAFETY: a name registered for the whole session, 0 if refused.
         taskbar_created: unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) },
@@ -286,11 +294,13 @@ unsafe extern "system" fn procedure(
             }
             _ if message != 0 && message == context.taskbar_created => {
                 // The notification area started again (Explorer did), and
-                // forgot every icon.
+                // forgot every icon, and the taskbar every button's
+                // progress.
                 if let Ok(mut state) = context.state.try_borrow_mut() {
                     state.added = false;
                 }
                 context.present(window);
+                let _ = context.taskbar.send(());
             }
             _ => return DefWindowProcW(window, message, wparam, lparam),
         }
@@ -303,6 +313,8 @@ unsafe extern "system" fn procedure(
 struct Context {
     asks: Arc<Mutex<Asks>>,
     asked: OnAsked,
+    /// Told when the taskbar started again (`TaskbarCreated`).
+    taskbar: Sender<()>,
     taskbar_created: u32,
     state: RefCell<State>,
     /// Whether the menu is open.

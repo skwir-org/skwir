@@ -313,11 +313,16 @@ fn open(kept: &UnixStream) -> bool {
     }
 }
 
+/// The session's connection the backend is handed: one a test may replace
+/// (the bus started again) or take away (no bus).
+type Session = Arc<Mutex<Option<Connection>>>;
+
 /// A desktop told on a daemon of its own, its servers stood in for.
 struct Harness {
     /// First, so it ends before the daemon does.
     desktop: Option<Desktop>,
     setup: Setup,
+    session: Session,
     asked: Arc<Mutex<Vec<Asked>>>,
     seen: Arc<Mutex<Seen>>,
     showing: Arc<Mutex<linux::Showing>>,
@@ -546,7 +551,7 @@ fn harness() -> Option<Harness> {
             .unwrap();
     }
     let server = server.build().unwrap();
-    let client = connect(&daemon.address).unwrap();
+    let session: Session = Arc::new(Mutex::new(Some(connect(&daemon.address).unwrap())));
     let address = daemon.address.clone();
     let asked = Arc::new(Mutex::new(Vec::new()));
     let showing = Arc::new(Mutex::new(linux::Showing::default()));
@@ -559,7 +564,15 @@ fn harness() -> Option<Harness> {
             Arc::new(move |what| asked.lock().push(what))
         },
         buses: linux::Buses {
-            session: Arc::new(move || Ok(client.clone())),
+            session: {
+                let session = Arc::clone(&session);
+                Arc::new(move || {
+                    session
+                        .lock()
+                        .clone()
+                        .ok_or_else(|| zbus::Error::Failure("no session bus".into()))
+                })
+            },
             system: Arc::new(move || connect(&address)),
         },
         showing: Arc::clone(&showing),
@@ -567,6 +580,7 @@ fn harness() -> Option<Harness> {
     Some(Harness {
         desktop: Some(Desktop::with(setup.clone())),
         setup,
+        session,
         asked,
         seen,
         showing,
@@ -713,6 +727,100 @@ fn a_notice_closed_by_the_server_is_not_taken_back() {
     let seen = harness.seen.lock();
     assert!(seen.closed.is_empty(), "nothing taken back");
     assert_eq!(seen.notified[1].replaces, 0);
+}
+
+/// What another program says of our notices' ids is not ours; the server
+/// gone, what it showed is forgotten, and the notice that stays is shown
+/// anew by the one that came, whose clicks alone are ours.
+#[test]
+fn only_the_server_that_showed_ours_is_heard() {
+    let Some(harness) = harness() else { return };
+    // No tray: the presence is a notice that stays. Driven alone, each
+    // ask carried out before the next.
+    let mut backend = linux::Backend::new(&harness.setup);
+    backend.presence(Some(&presence(Standing::Running, Some(true))));
+    backend.notify(4, &notice("Copied", "3 files", Kind::Finished));
+    let (resident, shown) = {
+        let seen = harness.seen.lock();
+        (seen.notified[0].id, seen.notified[1].id)
+    };
+
+    let other = connect(&harness.daemon.address).unwrap();
+    for id in [shown, resident] {
+        other
+            .emit_signal(
+                None::<&str>,
+                "/org/freedesktop/Notifications",
+                "org.freedesktop.Notifications",
+                "ActionInvoked",
+                &(id, "default"),
+            )
+            .unwrap();
+    }
+    // Ours after it: what the bus heard first would be told first.
+    harness.emit("ActionInvoked", &(shown, "default"));
+    harness.emit("ActionInvoked", &(resident, "stop"));
+    until("ours told", &|| harness.asked.lock().len() >= 2);
+    assert_eq!(
+        harness.asked(),
+        [
+            Asked::Notice(Clicked {
+                key: 4,
+                token: None
+            }),
+            Asked::StopAll
+        ],
+        "another program's not"
+    );
+
+    let before = harness.showing.lock().servers;
+    harness
+        .server
+        .release_name("org.freedesktop.Notifications")
+        .unwrap();
+    let again = zbus::blocking::connection::Builder::address(harness.daemon.address.as_str())
+        .unwrap()
+        .name("org.freedesktop.Notifications")
+        .unwrap()
+        .serve_at(
+            "/org/freedesktop/Notifications",
+            Notifications {
+                seen: Arc::clone(&harness.seen),
+                next: AtomicU32::new(1),
+            },
+        )
+        .unwrap()
+        .build()
+        .unwrap();
+    until("the server gone and come", &|| {
+        harness.showing.lock().servers == before.wrapping_add(2)
+    });
+    {
+        let showing = harness.showing.lock();
+        assert_eq!((showing.shown, showing.resident), (None, None), "forgotten");
+    }
+    backend.woken();
+    let anew = {
+        let seen = harness.seen.lock();
+        assert_eq!(seen.notified.len(), 3, "the notice that stays shown anew");
+        assert_eq!(seen.notified[2].replaces, 0);
+        seen.notified[2].id
+    };
+
+    // The last server's word on the new id is not the new server's.
+    harness.emit("ActionInvoked", &(anew, "stop"));
+    again
+        .emit_signal(
+            None::<&str>,
+            "/org/freedesktop/Notifications",
+            "org.freedesktop.Notifications",
+            "ActionInvoked",
+            &(anew, "default"),
+        )
+        .unwrap();
+    until("the new server's told", &|| harness.asked.lock().len() == 3);
+    assert_eq!(harness.asked()[2], Asked::Open { token: None });
+    drop(backend);
 }
 
 /// Progress is told on the launcher's entry at a pace, the last asked
@@ -1056,6 +1164,64 @@ fn a_tray_gone_for_good_leaves_a_notice() {
     });
 }
 
+/// The bus started again while a tray gone was waited for: the item served
+/// on the last one is shown anew on this one, as a notice while no tray is
+/// there, and nothing is waited for any more (a deadline left behind came
+/// due at once, for ever: the module's thread never slept again).
+#[test]
+fn a_bus_started_again_while_the_tray_is_lost_waits_for_nothing() {
+    let Some(harness) = harness() else { return };
+    let (first, registered) = watcher(&harness.daemon.address, true);
+    let mut backend = linux::Backend::new(&harness.setup);
+    let running = presence(Standing::Running, Some(true));
+    backend.presence(Some(&running));
+    assert_eq!(registered.lock().len(), 1);
+
+    stop_watcher(first);
+    backend.woken();
+    assert!(backend.due().is_some(), "the tray waited for");
+
+    // Asked of a bus started again before its listener tells it.
+    *harness.session.lock() = Some(connect(&harness.daemon.address).unwrap());
+    backend.presence(Some(&Presence {
+        said: "Copy 3 items to Back & up · 43 %".into(),
+        ..running.clone()
+    }));
+    assert_eq!(harness.notified(), 1, "a notice in the item's place");
+    assert_eq!(backend.due(), None, "nothing waited for");
+    backend.woken();
+    assert_eq!(backend.due(), None);
+    assert_eq!(harness.notified(), 1, "not shown again");
+    drop(backend);
+}
+
+/// The tray gone and then the bus: the deadline that came due without a
+/// bus to look on is not due again; once the bus is back, the tray is
+/// waited for anew, then the notice shown.
+#[test]
+fn a_tray_lost_without_a_bus_is_not_due_for_ever() {
+    let Some(harness) = harness() else { return };
+    let (first, registered) = watcher(&harness.daemon.address, true);
+    let mut backend = linux::Backend::new(&harness.setup);
+    backend.presence(Some(&presence(Standing::Running, Some(true))));
+    assert_eq!(registered.lock().len(), 1);
+    stop_watcher(first);
+    backend.woken();
+    let due = backend.due().expect("the tray waited for");
+
+    let bus = harness.session.lock().take();
+    backend.tick(due);
+    assert_eq!(backend.due(), None, "not due again without a bus");
+
+    *harness.session.lock() = bus;
+    backend.woken();
+    let due = backend.due().expect("waited for anew");
+    backend.tick(due);
+    assert_eq!(backend.due(), None);
+    assert_eq!(harness.notified(), 1, "the notice in the item's place");
+    drop(backend);
+}
+
 /// Without a tray (no watcher, or one no host reads), the presence is a
 /// notice that stays, shown again only when it says something new, never
 /// for a percent, nor after the user closed it until then; its actions
@@ -1157,10 +1323,10 @@ fn without_a_tray_the_presence_is_a_notice_that_stays() {
 }
 
 /// The session's end is held off by the portal (logout, with the reason)
-/// and logind (shutdown, block) where no session manager shows its own; a
-/// new why takes the last one's place, the new held before the last is
-/// let go of; let go, the portal's request is closed and logind's
-/// descriptor too.
+/// and logind (shutdown, block) where no session manager shows its own;
+/// another why while held is not told; let go, it stays held a moment, so
+/// a queue's next action finds it held, then the portal's request is
+/// closed and logind's descriptor too; held again, anew with its why.
 #[test]
 fn the_session_is_held_by_the_portal_and_logind() {
     let Some(harness) = harness() else { return };
@@ -1183,32 +1349,40 @@ fn the_session_is_held_by_the_portal_and_logind() {
         assert!(open(&seen.held[0]));
     }
 
-    // The same why again: nothing new; another: held anew, then the
-    // last let go.
-    desktop.hold_session(Some("Copy 3 items to Backup".into()));
+    // Another why while held, let go and held again at once: nothing
+    // told; let go for good: closed a moment later.
     desktop.hold_session(Some("Move 2 items to Archive".into()));
-    until("held anew", &|| {
-        let seen = harness.seen.lock();
-        seen.portal.len() == 2 && seen.requests_closed.len() == 1
-    });
+    desktop.hold_session(None);
+    desktop.hold_session(Some("Move 2 items to Archive".into()));
+    let let_go = Instant::now();
+    desktop.hold_session(None);
+    until("let go", &|| harness.seen.lock().requests_closed.len() == 1);
+    assert!(let_go.elapsed() >= LINGER, "a moment later");
     {
         let seen = harness.seen.lock();
-        assert_eq!(seen.portal[1].2, "Move 2 items to Archive");
+        assert_eq!(seen.portal.len(), 1, "nothing asked anew");
+        assert_eq!(seen.inhibited.len(), 1);
         assert_eq!(seen.requests_closed, [format!("{REQUESTS}/r1")]);
-        assert_eq!(seen.inhibited.len(), 2);
-        assert!(!open(&seen.held[0]), "the last let go");
-        assert!(open(&seen.held[1]));
+        assert!(!open(&seen.held[0]), "let go");
     }
 
+    desktop.hold_session(Some("Move 2 items to Archive".into()));
+    until("held anew", &|| harness.seen.lock().portal.len() == 2);
+    assert_eq!(harness.seen.lock().portal[1].2, "Move 2 items to Archive");
     desktop.hold_session(None);
-    until("let go", &|| harness.seen.lock().requests_closed.len() == 2);
+    until("let go again", &|| {
+        harness.seen.lock().requests_closed.len() == 2
+    });
     let seen = harness.seen.lock();
     assert_eq!(seen.requests_closed[1], format!("{REQUESTS}/r2"));
     assert!(!open(&seen.held[1]));
 }
 
-/// A session manager that shows its own dialog: the portal asked, logind
-/// not (GNOME mishandles its block).
+/// A session manager that shows its own dialog: the portal asked to hold
+/// off the session's end and sleep, logind not (GNOME's session takes
+/// logind's weak block for the portal's, and logind refuses the user's
+/// own Suspend while a block is held); let go, the portal's requests are
+/// closed.
 #[test]
 fn with_a_session_manager_logind_is_not_asked() {
     let Some(harness) = harness() else { return };
@@ -1220,19 +1394,32 @@ fn with_a_session_manager_logind_is_not_asked() {
         .unwrap();
     let desktop = harness.desktop();
     desktop.hold_session(Some("Copy 3 items to Backup".into()));
-    // Asks are carried out in order: once sleep is held, the session was.
     desktop.keep_awake(Some("Copying".into()));
-    until("kept awake", &|| !harness.seen.lock().inhibited.is_empty());
-    let seen = harness.seen.lock();
-    assert_eq!(seen.portal.len(), 1, "the portal asked");
-    assert_eq!(
-        seen.inhibited
+    until("both held", &|| harness.seen.lock().portal.len() == 2);
+    {
+        let seen = harness.seen.lock();
+        let asked: Vec<_> = seen
+            .portal
             .iter()
-            .map(|[what, ..]| what.as_str())
-            .collect::<Vec<_>>(),
-        ["sleep"],
-        "logind not asked to block shutdown"
+            .map(|(_, flags, reason, _)| (*flags, reason.as_str()))
+            .collect();
+        assert_eq!(asked, [(1, "Copy 3 items to Backup"), (4, "Copying")]);
+        assert!(seen.inhibited.is_empty(), "logind not asked");
+    }
+
+    desktop.keep_awake(None);
+    until("sleep let go", &|| {
+        harness.seen.lock().requests_closed.len() == 1
+    });
+    assert_eq!(
+        harness.seen.lock().requests_closed,
+        [format!("{REQUESTS}/r2")]
     );
+    desktop.hold_session(None);
+    until("the session let go", &|| {
+        harness.seen.lock().requests_closed.len() == 2
+    });
+    assert!(harness.seen.lock().inhibited.is_empty());
 }
 
 /// Finished, the desktop tells what was asked before returning (the last

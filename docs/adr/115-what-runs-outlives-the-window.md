@@ -107,7 +107,18 @@ macOS otherwise compiled only.
      only where no session manager that shows its own dialog is on the
      bus (`org.gnome.SessionManager`, `org.kde.ksmserver`), as GNOME
      mishandles logind's blocking inhibitors (power off silently does
-     nothing, or polkit asks for a password without saying why).
+     nothing, or polkit asks for a password without saying why). Plasma
+     6.8 holds nothing off: xdg-desktop-portal-kde 6.8.2 keeps the
+     portal's logout inhibitors for `org.kde.SessionState`'s
+     `queryCanEndSession` (`src/inhibit.cpp`), which nothing in
+     plasma-workspace or KWin 6.8.2 calls, and ksmserver asks only its
+     XSMP clients (`ksmserver/logout.cpp`), which Skwir is not. logind's
+     shutdown block is not asked there either: it holds off no logout,
+     and plasma-shutdown asks for the power off once the session has
+     ended (`startkde/plasma-shutdown/shutdown.cpp`), which systemd 262
+     then refuses outright (`src/login/logind-shutdown.c`). Read in the
+     sources 2026-11-02; not tried on a Plasma session. Logout there is
+     held off once Plasma's session manager asks the portal.
    - **macOS**: the system asks whether Skwir may quit
      (`applicationShouldTerminate:`, gpui patch 0044); while something is
      under way it answers no, and the window asks the user as Quit does.

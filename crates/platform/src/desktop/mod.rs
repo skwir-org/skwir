@@ -21,8 +21,11 @@
 //!   for the activation token) on the program's session bus (`bus`); the
 //!   progress as the Unity launcher entry's `Update` signal, which
 //!   Plasma's task manager and docks such as Ubuntu's show (GNOME's own
-//!   dash shows none); sleep held off by logind's `Inhibit`, its
-//!   descriptor kept meanwhile. The presence is an item in the tray (KDE's
+//!   dash shows none); sleep held off by the portal's `Inhibit` where a
+//!   session manager is on the bus (GNOME's session and KDE's `PowerDevil`
+//!   keep their idle from suspending for it, the user's own Suspend let
+//!   through), else by logind's, its descriptor kept meanwhile. The
+//!   presence is an item in the tray (KDE's
 //!   `StatusNotifierItem`, its menu as `com.canonical.dbusmenu`) where a
 //!   host shows one, else a notice that stays, as GNOME Files' does. The
 //!   session's end is held off by the portal's `Inhibit` (logout), which
@@ -178,6 +181,17 @@ const PACE: Duration = Duration::from_millis(250);
 /// once.
 const PRESENCE_PACE: Duration = Duration::from_secs(1);
 
+/// The least time between two notices told: a burst of ends (a queue of
+/// short actions finishing while no one looks) tells its last, which says
+/// what all of them did, rather than each in turn, each shown anew by the
+/// desktop. The first after a quiet while is told at once.
+const NOTICE_PACE: Duration = Duration::from_secs(2);
+
+/// How long the machine's sleep and the session's end stay held once let
+/// go: the next action of a queue, asked for at once, finds them held, and
+/// nothing lapses between two actions.
+const LINGER: Duration = Duration::from_secs(1);
+
 /// What a caller asked, in order, for the module's thread.
 enum Ask {
     Notify(u64, Notice),
@@ -278,7 +292,7 @@ impl Desktop {
     }
 
     /// Show `notice`, known by `key`, in place of the one shown: one at a
-    /// time.
+    /// time, at most one every two seconds, the last asked always shown.
     pub fn notify(&self, key: u64, notice: Notice) {
         self.ask(Ask::Notify(key, notice));
     }
@@ -300,7 +314,8 @@ impl Desktop {
     }
 
     /// `Some(why)`: keep the machine from going to sleep by itself while
-    /// held (the first why asked is kept while held); `None`: let go.
+    /// held (the first why asked is kept while held); `None`: let go, a
+    /// second later unless held again meanwhile.
     pub fn keep_awake(&self, why: Option<String>) {
         self.ask(Ask::KeepAwake(why));
     }
@@ -314,9 +329,10 @@ impl Desktop {
     }
 
     /// `Some(why)`: hold off the session's end (logout, shutdown, restart)
-    /// while held, `why` shown where the system shows one (a new why takes
-    /// the last one's place); `None`: let go. Nothing on macOS, where the
-    /// UI answers the system's question itself.
+    /// while held, `why` shown where the system shows one (the first why
+    /// asked is kept while held: on Linux each would be a new inhibitor);
+    /// `None`: let go, a second later unless held again meanwhile. Nothing
+    /// on macOS, where the UI answers the system's question itself.
     pub fn hold_session(&self, why: Option<String>) {
         self.ask(Ask::HoldSession(why));
     }
@@ -388,24 +404,33 @@ fn start(setup: Setup) -> Option<Started> {
     }
 }
 
-/// Tell the desktop what is asked, in order, the progress and the presence
-/// paced, until the [`Desktop`] is dropped: then take back the presence,
-/// let go of the session's end and the machine's sleep, and hide the
-/// progress.
+/// Tell the desktop what is asked, in order, the progress, the presence and
+/// the notices paced, what is held let go of a moment late, until the
+/// [`Desktop`] is dropped: then tell the last notice, take back the
+/// presence, let go of the session's end and the machine's sleep, and hide
+/// the progress.
 fn run(setup: &Setup, asked: &Receiver<Ask>) {
     let mut desktop = imp::Backend::new(setup);
     // What the desktop changed on its own (a tray come or gone), told by
     // the backend's own threads.
     let wakes = desktop.wakes();
     let mut progress = Paced::new(PACE);
-    let mut presence = Paced::new(PRESENCE_PACE);
-    let mut awake = false;
-    let mut session: Option<String> = None;
+    let mut presence = Paced::new(PRESENCE_PACE).taken_back_at_once();
+    let mut notices = Notices::default();
+    let mut awake = Held::default();
+    let mut session = Held::default();
     loop {
-        let due = [progress.due(), presence.due(), desktop.due()]
-            .into_iter()
-            .flatten()
-            .min();
+        let due = [
+            progress.due(),
+            presence.due(),
+            notices.due(),
+            awake.due(),
+            session.due(),
+            desktop.due(),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
         let mut select = Select::new();
         let on_asked = select.recv(asked);
         select.recv(&wakes);
@@ -415,26 +440,24 @@ fn run(setup: &Setup, asked: &Receiver<Ask>) {
         };
         match ready {
             Some(ready) if ready.index() == on_asked => match ready.recv(asked) {
-                Ok(Ask::Notify(key, notice)) => desktop.notify(key, &notice),
-                Ok(Ask::Withdraw(key)) => desktop.withdraw(key),
+                Ok(Ask::Notify(key, notice)) => notices.want(key, notice),
+                Ok(Ask::Withdraw(key)) => match notices.withdraw(key) {
+                    TakeBack::Nothing => {}
+                    TakeBack::Any => desktop.withdraw(None),
+                    TakeBack::Key(key) => desktop.withdraw(Some(key)),
+                },
                 Ok(Ask::Progress(asked)) => progress.want(imp::shown(asked)),
                 Ok(Ask::Presence(asked)) => presence.want(asked),
-                Ok(Ask::KeepAwake(Some(why))) if !awake => {
-                    awake = true;
-                    desktop.hold(&why);
+                Ok(Ask::KeepAwake(why)) => {
+                    if let Some(why) = awake.ask(why, Instant::now()) {
+                        desktop.hold(&why);
+                    }
                 }
-                Ok(Ask::KeepAwake(None)) if awake => {
-                    awake = false;
-                    desktop.let_go();
+                Ok(Ask::HoldSession(why)) => {
+                    if let Some(why) = session.ask(why, Instant::now()) {
+                        desktop.hold_session(Some(&why));
+                    }
                 }
-                // Held already with its first why, or let go already.
-                Ok(Ask::KeepAwake(_)) => {}
-                Ok(Ask::HoldSession(why)) if why != session => {
-                    desktop.hold_session(why.as_deref());
-                    session = why;
-                }
-                // Held already with this why, or let go already.
-                Ok(Ask::HoldSession(_)) => {}
                 #[cfg(windows)]
                 Ok(Ask::Window) => desktop.window(),
                 Err(_) => break,
@@ -446,25 +469,142 @@ fn run(setup: &Setup, asked: &Receiver<Ask>) {
             None => {}
         }
         let now = Instant::now();
+        if let Some((key, notice)) = notices.take(now) {
+            desktop.notify(key, &notice);
+        }
         if progress.take(now) {
             desktop.progress(progress.sent);
         }
         if presence.take(now) {
             desktop.presence(presence.sent.as_ref());
         }
+        if awake.take(now) {
+            desktop.let_go();
+        }
+        if session.take(now) {
+            desktop.hold_session(None);
+        }
         desktop.tick(now);
+    }
+    if let Some((key, notice)) = notices.waiting.take() {
+        desktop.notify(key, &notice);
     }
     if presence.sent.is_some() {
         desktop.presence(None);
     }
-    if session.is_some() {
+    if session.why.is_some() {
         desktop.hold_session(None);
     }
     if progress.sent.is_some() {
         desktop.progress(None);
     }
-    if awake {
+    if awake.why.is_some() {
         desktop.let_go();
+    }
+}
+
+/// What the desktop is to take back of the notice it shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TakeBack {
+    Nothing,
+    /// Whichever it shows.
+    Any,
+    /// Only the one shown with this key.
+    Key(u64),
+}
+
+/// The notice asked, told at most once in [`NOTICE_PACE`]: one waiting is
+/// the one shown, as far as the caller knows, and replaced by the next.
+#[derive(Default)]
+struct Notices {
+    /// The notice asked and not told yet, and its key.
+    waiting: Option<(u64, Notice)>,
+    /// When one was last told.
+    last: Option<Instant>,
+}
+
+impl Notices {
+    fn want(&mut self, key: u64, notice: Notice) {
+        self.waiting = Some((key, notice));
+    }
+
+    /// When the one waiting is to be told.
+    fn due(&self) -> Option<Instant> {
+        self.waiting.as_ref().map(|_| {
+            self.last
+                .map_or_else(Instant::now, |last| last + NOTICE_PACE)
+        })
+    }
+
+    /// The notice to tell at `now`, if one waits and its time came.
+    fn take(&mut self, now: Instant) -> Option<(u64, Notice)> {
+        if self.last.is_some_and(|last| now < last + NOTICE_PACE) {
+            return None;
+        }
+        let taken = self.waiting.take()?;
+        self.last = Some(now);
+        Some(taken)
+    }
+
+    /// The notice taken back (any, or only the one with `key`): what the
+    /// desktop is to take back of what it shows. One waiting stands for the
+    /// one shown, which it replaces: taken back with it, the desktop takes
+    /// back whatever it shows; with another key, nothing.
+    fn withdraw(&mut self, key: Option<u64>) -> TakeBack {
+        match (&self.waiting, key) {
+            (None, None) => TakeBack::Any,
+            (None, Some(key)) => TakeBack::Key(key),
+            (Some((waiting, _)), Some(key)) if *waiting != key => TakeBack::Nothing,
+            (Some(_), _) => {
+                self.waiting = None;
+                TakeBack::Any
+            }
+        }
+    }
+}
+
+/// What is held while asked (the machine kept awake, the session's end
+/// held off), with the reason first asked: one asked later while held is
+/// not told, as each would be a new inhibitor on Linux; let go only once
+/// [`LINGER`] passed without its being asked again.
+#[derive(Default)]
+struct Held {
+    /// The reason it is held for, while held.
+    why: Option<String>,
+    /// When it is let go of, unless asked again before.
+    until: Option<Instant>,
+}
+
+impl Held {
+    /// `why` asked at `now` (`None`: let go): the reason to hold with now,
+    /// if it was not held.
+    fn ask(&mut self, why: Option<String>, now: Instant) -> Option<String> {
+        let Some(why) = why else {
+            if self.why.is_some() && self.until.is_none() {
+                self.until = Some(now + LINGER);
+            }
+            return None;
+        };
+        self.until = None;
+        if self.why.is_some() {
+            return None;
+        }
+        self.why = Some(why.clone());
+        Some(why)
+    }
+
+    fn due(&self) -> Option<Instant> {
+        self.until
+    }
+
+    /// Whether to let go at `now`.
+    fn take(&mut self, now: Instant) -> bool {
+        if self.until.is_none_or(|until| now < until) {
+            return false;
+        }
+        self.until = None;
+        self.why = None;
+        true
     }
 }
 
@@ -489,6 +629,8 @@ fn permille(fraction: f32, step: u16) -> u16 {
 /// since, when the last asked is told.
 struct Paced<T> {
     pace: Duration,
+    /// Whether `None` (taken back) is told at once, never paced.
+    taken_back_at_once: bool,
     wanted: Option<T>,
     sent: Option<T>,
     /// When one was last told.
@@ -499,9 +641,19 @@ impl<T: Clone + PartialEq> Paced<T> {
     fn new(pace: Duration) -> Paced<T> {
         Paced {
             pace,
+            taken_back_at_once: false,
             wanted: None,
             sent: None,
             last: None,
+        }
+    }
+
+    /// `None` told at once: the presence, which offers what the window
+    /// that took its place offers.
+    fn taken_back_at_once(self) -> Paced<T> {
+        Paced {
+            taken_back_at_once: true,
+            ..self
         }
     }
 
@@ -509,19 +661,73 @@ impl<T: Clone + PartialEq> Paced<T> {
         self.wanted = wanted;
     }
 
+    /// When the next can be told, paced.
+    fn next(&self) -> Option<Instant> {
+        if self.taken_back_at_once && self.wanted.is_none() {
+            return None;
+        }
+        self.last.map(|last| last + self.pace)
+    }
+
     /// When the next is to be told, if anything differs from what was.
     fn due(&self) -> Option<Instant> {
-        (self.wanted != self.sent)
-            .then(|| self.last.map_or_else(Instant::now, |last| last + self.pace))
+        (self.wanted != self.sent).then(|| self.next().unwrap_or_else(Instant::now))
     }
 
     /// Whether something is to be told at `now`: then `sent` is what.
     fn take(&mut self, now: Instant) -> bool {
-        if self.wanted == self.sent || self.last.is_some_and(|last| now < last + self.pace) {
+        if self.wanted == self.sent || self.next().is_some_and(|next| now < next) {
             return false;
         }
         self.sent.clone_from(&self.wanted);
         self.last = Some(now);
+        true
+    }
+}
+
+/// When something is told again after a change the system makes its own a
+/// moment later, from the change: Windows' taskbar button, which Explorer
+/// makes once the window shows, and again when it starts again. Calls on
+/// the button wait for it (`TaskbarButtonCreated`, told to the window's
+/// procedure, which is gpui's): one before it is lost.
+#[cfg(any(windows, test))]
+const AGAIN: [Duration; 3] = [
+    Duration::from_millis(250),
+    Duration::from_secs(1),
+    Duration::from_secs(3),
+];
+
+/// What is told again at [`AGAIN`]'s times after a change.
+#[cfg(any(windows, test))]
+#[derive(Default)]
+struct Again {
+    /// When the change was, while some time is left.
+    from: Option<Instant>,
+    /// The next of [`AGAIN`]'s times.
+    step: usize,
+}
+
+#[cfg(any(windows, test))]
+impl Again {
+    /// The change was `now`: told again from it.
+    fn start(&mut self, now: Instant) {
+        self.from = Some(now);
+        self.step = 0;
+    }
+
+    fn due(&self) -> Option<Instant> {
+        Some(self.from? + *AGAIN.get(self.step)?)
+    }
+
+    /// Whether to tell again at `now`.
+    fn take(&mut self, now: Instant) -> bool {
+        if self.due().is_none_or(|due| now < due) {
+            return false;
+        }
+        self.step += 1;
+        if self.step == AGAIN.len() {
+            self.from = None;
+        }
         true
     }
 }
@@ -614,6 +820,112 @@ mod tests {
         assert_eq!(paced.sent, None, "hidden");
     }
 
+    /// The presence is paced, but taken back at once: the window that
+    /// takes its place offers what it offered.
+    #[test]
+    fn a_presence_is_taken_back_at_once() {
+        let mut paced = Paced::new(PRESENCE_PACE).taken_back_at_once();
+        let start = Instant::now();
+        paced.want(Some(shown(100)));
+        assert!(paced.take(start));
+        paced.want(Some(shown(200)));
+        assert!(!paced.take(start + PRESENCE_PACE / 2), "paced");
+        paced.want(None);
+        assert!(paced.due().is_some_and(|due| due <= Instant::now()));
+        assert!(paced.take(start + PRESENCE_PACE / 2), "at once");
+        assert_eq!(paced.sent, None);
+        // Shown again: paced from the taking back.
+        paced.want(Some(shown(300)));
+        assert!(!paced.take(start + PRESENCE_PACE));
+        assert!(paced.take(start + PRESENCE_PACE * 3 / 2));
+    }
+
+    fn notice(title: &str) -> Notice {
+        Notice {
+            title: title.into(),
+            body: String::new(),
+            kind: Kind::Finished,
+        }
+    }
+
+    /// A burst of notices tells the first at once and then only the last,
+    /// a pace later.
+    #[test]
+    fn a_burst_of_notices_tells_its_last() {
+        let mut notices = Notices::default();
+        let start = Instant::now();
+        assert_eq!(notices.due(), None);
+        notices.want(1, notice("Finished"));
+        assert_eq!(notices.take(start).map(|(key, _)| key), Some(1), "at once");
+        for key in 2..=20 {
+            notices.want(key, notice(&format!("{key} actions finished")));
+        }
+        assert_eq!(notices.due(), Some(start + NOTICE_PACE));
+        assert!(notices.take(start + NOTICE_PACE / 2).is_none(), "paced");
+        let (key, last) = notices.take(start + NOTICE_PACE).unwrap();
+        assert_eq!((key, last.title.as_str()), (20, "20 actions finished"));
+        assert_eq!(notices.due(), None, "nothing waits");
+    }
+
+    /// One waiting stands for the one shown, which it replaces: taken back
+    /// by its key, the desktop takes back what it shows; by another key,
+    /// nothing; with none waiting, as asked.
+    #[test]
+    fn a_notice_waiting_is_taken_back_as_the_one_shown() {
+        let mut notices = Notices::default();
+        let start = Instant::now();
+        notices.want(1, notice("Finished"));
+        notices.take(start);
+        assert_eq!(notices.withdraw(Some(1)), TakeBack::Key(1), "none waits");
+        notices.want(2, notice("2 actions finished"));
+        assert_eq!(
+            notices.withdraw(Some(1)),
+            TakeBack::Nothing,
+            "the one shown was replaced"
+        );
+        assert!(notices.waiting.is_some());
+        assert_eq!(
+            notices.withdraw(Some(2)),
+            TakeBack::Any,
+            "taken back with it"
+        );
+        assert!(notices.waiting.is_none());
+        notices.want(3, notice("Stopped"));
+        assert_eq!(notices.withdraw(None), TakeBack::Any);
+        assert_eq!(notices.due(), None);
+    }
+
+    /// Held with the first reason asked; let go of a moment late, unless
+    /// asked again meanwhile, which tells nothing.
+    #[test]
+    fn what_is_held_keeps_its_first_reason_and_lingers() {
+        let mut held = Held::default();
+        let start = Instant::now();
+        assert_eq!(held.ask(None, start), None, "nothing held");
+        assert_eq!(held.due(), None);
+        assert_eq!(held.ask(Some("Copy".into()), start), Some("Copy".into()));
+        assert_eq!(held.ask(Some("Move".into()), start), None, "the first kept");
+        assert_eq!(held.ask(None, start), None);
+        assert_eq!(held.due(), Some(start + LINGER));
+        assert!(!held.take(start + LINGER / 2), "lingers");
+        // The queue's next action: still held, nothing told.
+        assert_eq!(held.ask(Some("Move".into()), start + LINGER / 2), None);
+        assert_eq!(held.due(), None);
+        assert!(!held.take(start + LINGER * 2));
+        assert_eq!(held.why.as_deref(), Some("Copy"));
+
+        held.ask(None, start + LINGER * 2);
+        // Asked to let go again: the first time counts.
+        held.ask(None, start + LINGER * 3);
+        assert!(held.take(start + LINGER * 3), "let go");
+        assert_eq!(held.why, None);
+        assert_eq!(
+            held.ask(Some("Move".into()), start),
+            Some("Move".into()),
+            "anew"
+        );
+    }
+
     #[test]
     fn thousandths_are_rounded_down_and_bounded() {
         assert_eq!(permille(0.4567, 1), 456);
@@ -637,6 +949,25 @@ mod tests {
             "ab\tc\nde",
             "what XML refuses dropped"
         );
+    }
+
+    /// Told again at each of its times after a change, then no more; a
+    /// change meanwhile starts over.
+    #[test]
+    fn again_is_told_at_its_times_then_done() {
+        let mut again = Again::default();
+        let start = Instant::now();
+        assert_eq!(again.due(), None);
+        assert!(!again.take(start));
+        again.start(start);
+        for after in AGAIN {
+            assert_eq!(again.due(), Some(start + after));
+            assert!(!again.take(start + after / 2), "not yet");
+            assert!(again.take(start + after));
+        }
+        assert_eq!(again.due(), None, "done");
+        again.start(start + AGAIN[2]);
+        assert_eq!(again.due(), Some(start + AGAIN[2] + AGAIN[0]), "anew");
     }
 
     /// The tip fits its room with its zero, cut at a character's end.
@@ -694,6 +1025,12 @@ mod tests {
             fraction: 0.5,
             state: State::Paused,
         })));
+        // A window given: told again a moment later, as its button comes
+        // after it, then no more.
+        backend.window();
+        while let Some(due) = backend.tells_again() {
+            backend.tick(due);
+        }
         backend.progress(None);
         drop(backend);
     }
