@@ -164,33 +164,13 @@ fn made_of(line: &[u8]) -> Option<&[u8]> {
         .then(|| &rest[at + 1..])
 }
 
-/// Of the paths rsync says it made in order, in a folder it copies whole
-/// entries into, which entry each finished: a file of its own at once, a
-/// folder once rsync goes on to another (it copies them one after
-/// another, a folder's files after it).
-#[derive(Default)]
-struct Entries {
-    open: Option<Vec<u8>>,
-}
-
-impl Entries {
-    /// `path` was made: the entries finished by it.
-    fn made(&mut self, path: &[u8]) -> Vec<Vec<u8>> {
-        let mut finished = Vec::new();
-        let (top, inside) = match path.iter().position(|&b| b == b'/') {
-            Some(at) => (&path[..at], true),
-            None => (path, false),
-        };
-        if self.open.as_deref().is_some_and(|open| open != top) {
-            finished.extend(self.open.take());
-        }
-        if inside {
-            self.open = Some(top.to_vec());
-        } else {
-            finished.push(top.to_vec());
-        }
-        finished
-    }
+/// The entry of its own a path rsync says it made names, once it is whole:
+/// a file or a link given to it (no `/` in its path). A folder's own line
+/// comes as rsync makes it, before what it holds, and recursing as it
+/// goes (`--recursive` from rsync 3), it may copy those after the entries
+/// that follow: a folder is told once its run returns.
+fn whole_entry(path: &[u8]) -> Option<&[u8]> {
+    (!path.is_empty() && !path.contains(&b'/')).then_some(path)
 }
 
 /// `word` in single quotes, as rsync's own splitting of `-e` reads them:
@@ -410,7 +390,6 @@ impl Transfer for Rsync {
             list.push(0);
         }
         let mut line = Vec::new();
-        let mut entries = Entries::default();
         let finished = skwir_platform::process::run_watching(
             &mut command,
             Some(&list),
@@ -422,13 +401,12 @@ impl Transfer for Rsync {
                     if b == b'\r' || b == b'\n' {
                         if let Some(path) = made_of(&line) {
                             // Beside what is there, files alone: each
-                            // placed. In a folder of its own, the entries.
+                            // placed. In a folder of its own, the files
+                            // given alone; a folder once its run returns.
                             if temp.is_some() {
                                 placed(&skwir_core::os_path::from_bytes_ref(path));
-                            } else {
-                                for entry in entries.made(path) {
-                                    made(&skwir_core::os_path::from_bytes_ref(&entry));
-                                }
+                            } else if let Some(entry) = whole_entry(path) {
+                                made(&skwir_core::os_path::from_bytes_ref(entry));
                             }
                         } else if let Some(n) = copied_of(&line) {
                             copied(n);
@@ -476,16 +454,14 @@ mod tests {
         );
         assert_eq!(made_of(b"skwir-placed:x:y"), None);
         assert_eq!(made_of(b"      1048576  45%"), None);
-        // Files of their own at once; a folder once another begins.
-        let mut entries = Entries::default();
-        let mut made = |path: &[u8]| entries.made(path);
-        assert_eq!(made(b"a.bin"), vec![b"a.bin".to_vec()]);
-        assert!(made(b"tree/").is_empty());
-        assert!(made(b"tree/y.bin").is_empty());
-        assert!(made(b"tree/sub/").is_empty());
-        assert_eq!(made(b"z.bin"), vec![b"tree".to_vec(), b"z.bin".to_vec()]);
-        assert!(made(b"other/x").is_empty());
-        assert_eq!(made(b"last/x"), vec![b"other".to_vec()]);
+        // Files of their own at once; a folder's lines never, its files
+        // coming after the entries that follow it as rsync recurses.
+        assert_eq!(whole_entry(b"a.bin"), Some(&b"a.bin"[..]));
+        assert_eq!(whole_entry(b"tree/"), None);
+        assert_eq!(whole_entry(b"z.bin"), Some(&b"z.bin"[..]));
+        assert_eq!(whole_entry(b"tree/y.bin"), None);
+        assert_eq!(whole_entry(b"tree/sub/"), None);
+        assert_eq!(whole_entry(b""), None);
     }
 
     #[test]

@@ -990,7 +990,7 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
     ctx.add_total(total);
     for t in taken {
         ctx.batched(&t.src, Batched::Counted);
-        ctx.counted_ahead(t.step);
+        ctx.counted_ahead(t.step, t.bytes);
     }
     // What a move's source is as it is copied: changed after, its step
     // leaves it (`builtin::move_entry`).
@@ -1002,8 +1002,16 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
     // Each copy whole counts its item done as it comes (said only), and
     // whatever its transfer told, once it is made or placed.
     let finishing = ctx.finishing();
+    // What its steps take as made: should it fail, the rest of what it
+    // counted is taken back, those steps copying their own again.
+    let taken_as_made: Mutex<(u64, std::collections::HashSet<usize>)> = Mutex::default();
     let made_by_batch = |t: &Taken, what: Batched| {
         finishing(t.step);
+        {
+            let mut made = taken_as_made.lock();
+            made.0 = made.0.saturating_add(t.bytes);
+            made.1.insert(t.step);
+        }
         ctx.batched(&t.src, what);
         if let Some(state) = states.get(t.src.as_path()) {
             ctx.batched_state(&t.src, *state);
@@ -1029,7 +1037,13 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
         .partition(|t| t.stamp.is_some() && !t.renamed && !held.contains(&t.name));
     // A file alone goes by a transfer that takes one (`batch_ahead`).
     let alone = is_alone(taken);
-    let advance = ctx.progress();
+    let progress = ctx.progress();
+    // All it counted, which a failure takes back but for what it made.
+    let advanced = AtomicU64::new(0);
+    let advance = |bytes: u64| {
+        advanced.fetch_add(bytes, Ordering::Relaxed);
+        progress(bytes);
+    };
     // Each run (the staged, the placed) says what it copied so far from
     // its own start: each counts from its own (one count for both lost
     // the second's first bytes, under the first's), and what it made is
@@ -1177,6 +1191,19 @@ fn batch(from: &Path, dest: &Path, taken: &[Taken], ctx: &StepContext) -> Result
                     },
                 );
             }
+            // What it made counts whole; the rest of what it counted is
+            // its steps' to count again, as they copy their own.
+            let (made, steps) = std::mem::take(&mut *taken_as_made.lock());
+            let advanced = advanced.load(Ordering::Relaxed);
+            if made > advanced {
+                progress(made - advanced);
+            }
+            let again: Vec<usize> = taken
+                .iter()
+                .map(|t| t.step)
+                .filter(|step| !steps.contains(step))
+                .collect();
+            ctx.uncount(advanced.saturating_sub(made), &again);
             Ok(())
         }
     }
@@ -1223,9 +1250,9 @@ fn batch_in_place(
         return Ok(());
     }
     let advance = ctx.progress();
-    let told = AtomicU64::new(0);
+    let reported = AtomicU64::new(0);
     let copied = |so_far: u64| {
-        let before = told.fetch_max(so_far, Ordering::Relaxed);
+        let before = reported.fetch_max(so_far, Ordering::Relaxed);
         if so_far > before {
             advance(so_far - before);
         }
@@ -1280,6 +1307,9 @@ fn batch_in_place(
     if let Err(error) = ran {
         tracing::warn!("a batch of copies failed, the rest copied one by one: {error:#}");
     }
+    // What it made went: what it counted is its steps' to count again.
+    let again: Vec<usize> = here.iter().map(|t| t.step).collect();
+    ctx.uncount(reported.load(Ordering::Relaxed), &again);
     Ok(())
 }
 
@@ -3286,6 +3316,14 @@ mod tests {
             same(e, &dest.join(e.file_name().unwrap()));
         }
         assert_eq!(names(&dest).len(), entries.len(), "nothing staged left");
+        // What the batch counted before it failed, its steps copying
+        // their own again, is counted once (ADR-113).
+        let moved = executor.events().try_iter().find_map(|e| match e {
+            ExecEvent::Finished { moved, .. } => Some(moved),
+            _ => None,
+        });
+        let bytes: u64 = entries.iter().map(|e| file_bytes(e)).sum();
+        assert_eq!(moved, Some(bytes), "each byte counted once");
     }
 
     #[test]

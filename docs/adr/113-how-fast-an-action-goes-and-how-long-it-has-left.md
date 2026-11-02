@@ -135,3 +135,21 @@ cancelled meanwhile waited for each reader's 4 MiB.
   quarter second's worth, against 4 MiB, alternated twice on the first
   link: 10.5–10.6 s against 10.5–10.7 s, never still more than 0.2 s
   against 0.7 s.
+
+### 2026-11-02: review before 0.3.0
+
+- **Decision 2 amended**: "nothing moved for 5 s" is measured from the
+  last bytes moved. The latest sample stands for what came since the one
+  before it, so bytes within a quarter second of a sample no longer leave
+  a speed fading for good. Once 5 s pass with nothing moved, the meter
+  wakes the window once to say so: armed again by the next bytes, never
+  a loop. A pause asked during a plan's checks holds its time from its
+  start, so a toast's time leaves it out.
+- **Decision 3 amended**: a batch that counts the steps after the one
+  under way, leaving that one to its own copy (a file alone in its
+  folder, one with a companion), counts their bytes apart from its own:
+  the total stays what the plan was sized at. A batch that fails takes
+  back what it counted but what its steps take as made, bytes and items,
+  as they copy their own again.
+- **Decision 4 amended**: a file's holes, counted done as they are
+  passed over, are done, never speed, as a clone's bytes are.

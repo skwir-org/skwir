@@ -411,6 +411,29 @@ impl Stopped {
     fn waits_for(&self, point: &Path) -> bool {
         self.waits.server.as_deref() == Some(point) && self.waits.tries < ON_ITS_OWN
     }
+
+    /// Whether it waits for its server, seen not answering, to answer
+    /// again and go on by itself.
+    fn goes_on_by_itself(&self) -> bool {
+        self.waits.down && self.waits.tries < ON_ITS_OWN
+    }
+}
+
+/// A stopped plan taken out to be retried, counted as handed over until
+/// it is let go of, once its work is queued (`Executor::busy_or_waiting`).
+struct HandOver<'a>(&'a std::sync::atomic::AtomicUsize);
+
+impl<'a> HandOver<'a> {
+    fn new(handing: &'a std::sync::atomic::AtomicUsize) -> Self {
+        handing.fetch_add(1, Ordering::SeqCst);
+        HandOver(handing)
+    }
+}
+
+impl Drop for HandOver<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 /// What a stopped plan waits for to go on by itself (ADR-080, 9): the
@@ -596,6 +619,10 @@ pub struct Executor {
     clash_asker: Mutex<Option<ClashAsker>>,
     /// The plans a step's error stopped, oldest first, for Retry.
     stopped: Mutex<VecDeque<Stopped>>,
+    /// Stopped plans taken out to be retried and not queued yet
+    /// ([`HandOver`]): from one to the other, a plan is never out of both
+    /// ([`Executor::busy_or_waiting`]).
+    handing: std::sync::atomic::AtomicUsize,
     /// The mounts of the servers stopped plans wait for, each asked by a
     /// thread of its own whether it answers again (`look_for`).
     looking: Mutex<std::collections::HashSet<PathBuf>>,
@@ -734,6 +761,7 @@ impl Executor {
             secret_asker: Mutex::new(None),
             clash_asker: Mutex::new(None),
             stopped: Mutex::default(),
+            handing: std::sync::atomic::AtomicUsize::new(0),
             looking: Mutex::default(),
             look_every: Mutex::new(LOOK_EVERY),
         })
@@ -976,19 +1004,27 @@ impl Executor {
     /// waiting (one that started meanwhile is cancelled as a running one
     /// is: [`Executor::cancel`]).
     pub fn cancel_waiting(&self, asked: u64) -> bool {
-        let waited = self
+        self.cancel_waiting_all(&[asked]) == 1
+    }
+
+    /// [`Executor::cancel_waiting`] for each of `asked` (Cancel all), at
+    /// once: one look at what waits, one start of what may start. How many
+    /// were waiting.
+    pub fn cancel_waiting_all(&self, asked: &[u64]) -> usize {
+        let asked: std::collections::HashSet<u64> = asked.iter().copied().collect();
+        let cancelled = self
             .lane
             .lock()
             .queue
             .iter()
-            .find(|job| job.seq == asked && !job.cancel.is_cancelled())
+            .filter(|job| asked.contains(&job.seq) && !job.cancel.is_cancelled())
             .map(|job| job.cancel.cancel())
-            .is_some();
-        if waited {
+            .count();
+        if cancelled > 0 {
             self.wake();
             self.dispatch_elsewhere();
         }
-        waited
+        cancelled
     }
 
     /// Hold a running plan where it would next answer Cancel: between its
@@ -1225,23 +1261,28 @@ impl Executor {
     /// plan's entry in the history (module documentation). False when
     /// there is no such plan (retried already, or let go).
     pub fn retry(self: &Arc<Self>, plan: PlanId, cancel: CancelToken) -> bool {
-        let Some(work) = self.retrying(plan) else {
+        let Some((work, handing)) = self.retrying(plan) else {
             return false;
         };
         self.submit(work, cancel);
+        drop(handing);
         true
     }
 
     /// Retry when its turn comes, waiting for it. `None` when there is no
     /// such plan.
     pub fn retry_blocking(&self, plan: PlanId, cancel: &CancelToken) -> Option<ExecResult> {
-        let work = self.retrying(plan)?;
-        self.submit_blocking(work, cancel)
+        let (work, handing) = self.retrying(plan)?;
+        let (tx, rx) = bounded(1);
+        self.enqueue(work, cancel.clone(), Some(tx));
+        drop(handing);
+        self.dispatch();
+        rx.recv().ok().flatten()
     }
 
     /// The work that retries `plan`, taken out of the stopped plans: asked
     /// for, its server's count of going on by itself starts again.
-    fn retrying(&self, plan: PlanId) -> Option<Work> {
+    fn retrying(&self, plan: PlanId) -> Option<(Work, HandOver<'_>)> {
         self.taken_to_retry(plan, false, |waits| Waits {
             server: waits.server,
             ..Waits::default()
@@ -1249,13 +1290,14 @@ impl Executor {
     }
 
     /// The work that retries `plan`, taken out of the stopped plans, what it
-    /// waits for made `waits`; going on `by_itself`, or asked.
+    /// waits for made `waits`; going on `by_itself`, or asked. Held until it
+    /// is queued: meanwhile it is busy (`busy_or_waiting`).
     fn taken_to_retry(
         &self,
         plan: PlanId,
         by_itself: bool,
         waits: impl FnOnce(Waits) -> Waits,
-    ) -> Option<Work> {
+    ) -> Option<(Work, HandOver<'_>)> {
         let mut stopped = self.stopped.lock();
         let at = stopped.iter().position(|s| s.plan == plan)?;
         let Stopped {
@@ -1266,7 +1308,11 @@ impl Executor {
             waits: was,
             ..
         } = stopped.remove(at)?;
-        Some(Work::Execute {
+        // Counted before the lock is let go of: whoever looks finds it
+        // stopped, handed over, or queued.
+        let handing = HandOver::new(&self.handing);
+        drop(stopped);
+        let work = Work::Execute {
             plan: Arc::new(rest),
             whole: true,
             continues: Some(Box::new(Continues {
@@ -1276,7 +1322,8 @@ impl Executor {
                 waits: waits(was),
                 by_itself,
             })),
-        })
+        };
+        Some((work, handing))
     }
 
     /// Whether the plan `plan`, which a step's error stopped, waits for its
@@ -1286,7 +1333,7 @@ impl Executor {
             .lock()
             .iter()
             .find(|s| s.plan == plan)
-            .is_some_and(|s| s.waits.down && s.waits.tries < ON_ITS_OWN)
+            .is_some_and(Stopped::goes_on_by_itself)
     }
 
     /// While a plan its server stopped waits (`Stopped::waits`), ask that
@@ -1379,7 +1426,7 @@ impl Executor {
             self.emit(ExecEvent::WaitsForServer { plan });
         }
         for (plan, next, title) in going {
-            let Some(work) = self.taken_to_retry(plan, true, |waits| Waits {
+            let Some((work, handing)) = self.taken_to_retry(plan, true, |waits| Waits {
                 down: false,
                 tries: waits.tries + 1,
                 ..waits
@@ -1389,6 +1436,7 @@ impl Executor {
             tracing::info!(%title, "its server answers again: it goes on");
             self.emit(ExecEvent::GoesOn { plan, next, title });
             self.submit(work, CancelToken::new());
+            drop(handing);
         }
     }
 
@@ -1620,10 +1668,33 @@ impl Executor {
         running.chain(waiting).collect()
     }
 
-    /// Whether a plan, an undo or a redo runs or waits its turn.
+    /// Whether a plan, an undo or a redo runs or waits its turn, a stopped
+    /// one being handed over to be retried included.
     pub fn is_busy(&self) -> bool {
         let lane = self.lane.lock();
-        !lane.started.is_empty() || !lane.queue.is_empty()
+        !lane.started.is_empty()
+            || !lane.queue.is_empty()
+            || self.handing.load(Ordering::SeqCst) > 0
+    }
+
+    /// Whether a plan, an undo or a redo runs or waits its turn, or a plan
+    /// a step's error stopped waits for its server to answer, to go on by
+    /// itself (ADR-080, 9): what a program without a window waits for
+    /// before it ends (ADR-115). Asked at once, under the lock the stopped
+    /// plans are kept by: one going on by itself, taken out of them and
+    /// queued, is found in one or the other, never in neither, as separate
+    /// questions ([`Executor::is_busy`], [`Executor::waits_for_server`])
+    /// may find it.
+    pub fn busy_or_waiting(&self) -> bool {
+        let stopped = self.stopped.lock();
+        if stopped.iter().any(Stopped::goes_on_by_itself) {
+            return true;
+        }
+        // Taken out under that lock and counted, it stays counted until
+        // it is queued.
+        let handing = self.handing.load(Ordering::SeqCst) > 0;
+        let lane = self.lane.lock();
+        handing || !lane.started.is_empty() || !lane.queue.is_empty()
     }
 
     fn submit(&self, work: Work, cancel: CancelToken) {
@@ -3449,6 +3520,79 @@ mod tests {
         let undone = executor.undo_blocking(&CancelToken::new()).unwrap();
         assert_eq!(undone.applied, 1);
         assert!(logged(&log, "undid /stick/photos"));
+    }
+
+    /// Cancel all cancels at once what waits its turn when asked, each
+    /// once, nothing that runs, and says how many it cancelled.
+    #[test]
+    fn what_waits_is_cancelled_all_at_once() {
+        let executor = Executor::new(Scheduler::new(2));
+        let log = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let copy = Gate::new("/stick/photos", true, false, &log);
+        let plan = copy.plan();
+        let copy_id = plan.id;
+        executor.execute(plan, CancelToken::new());
+        assert!(logged(&log, "began /stick/photos"));
+        let waiting: Vec<Gate> = (0..3)
+            .map(|i| Gate::new(&format!("/stick/photos/it's {i}"), false, true, &log))
+            .collect();
+        for gate in &waiting {
+            executor.execute(gate.plan(), CancelToken::new());
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while executor.waiting().len() < 3 {
+            assert!(Instant::now() < deadline, "{:?}", executor.waiting());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let asked: Vec<u64> = executor.waiting().iter().map(|w| w.asked).collect();
+        assert_eq!(executor.cancel_waiting_all(&asked), 3);
+        assert_eq!(executor.cancel_waiting_all(&asked), 0, "once");
+        while executor.queued() > 0 || !executor.waiting().is_empty() {
+            assert!(Instant::now() < deadline, "{:?}", executor.waiting());
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(executor.transfer(copy_id).is_some(), "what runs runs on");
+        copy.opened();
+        assert!(logged(&log, "ended /stick/photos"));
+        assert!(!log.lock().iter().any(|l| l.contains("it's")), "never ran");
+    }
+
+    /// A stopped plan that goes on by itself is under way throughout: while
+    /// it waits for its server, taken out to be retried, and queued, never
+    /// out of all three, as `is_busy` and `waits_for_server` asked apart
+    /// may find it (ADR-115).
+    #[test]
+    fn a_plan_going_on_by_itself_is_under_way_as_it_is_handed_over() {
+        let executor = Executor::new(Scheduler::new(1));
+        assert!(!executor.busy_or_waiting());
+        let rest = Plan::new("copy “it's a.bin” to the server");
+        let plan = rest.id;
+        let waits = Waits {
+            server: None,
+            down: true,
+            tries: 0,
+        };
+        executor.stash(plan, 1, plan, rest, None, waits);
+        assert!(executor.waits_for_server(plan) && executor.busy_or_waiting());
+        let (work, handing) = executor
+            .taken_to_retry(plan, true, |waits| Waits {
+                down: false,
+                ..waits
+            })
+            .unwrap();
+        assert!(!executor.waits_for_server(plan));
+        assert!(executor.busy_or_waiting() && executor.is_busy(), "handed over");
+        let cancel = CancelToken::new();
+        executor.enqueue(work, cancel.clone(), None);
+        drop(handing);
+        assert!(executor.busy_or_waiting(), "queued");
+        cancel.cancel();
+        executor.dispatch();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while executor.busy_or_waiting() {
+            assert!(Instant::now() < deadline, "it ends");
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 
     /// What a mount's Eject would cut: the actions under way there, by

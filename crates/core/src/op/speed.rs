@@ -77,18 +77,27 @@ impl Samples {
         self.armed = false;
     }
 
-    /// Note `now`, at most every [`SAMPLE_EVERY`], letting go of what the
-    /// longest window no longer reaches; the first since armed is where the
-    /// work is measured from. Nothing while not begun or paused.
+    /// What was noted says nothing of what comes now (what was counted is
+    /// no longer): measured afresh from what is noted next, armed or not as
+    /// it was.
+    pub(super) fn forget(&mut self) {
+        self.kept.clear();
+    }
+
+    /// Note `now`, letting go of what the longest window no longer
+    /// reaches; the first since armed is where the work is measured from.
+    /// One noted within [`SAMPLE_EVERY`] of the sample before the latest
+    /// takes the latest's place: two at most in each, the latest standing
+    /// for what came since, so that a stall is measured from the last bytes
+    /// moved, not from a sample before them. Nothing while not begun or
+    /// paused.
     pub(super) fn note(&mut self, now: Sample) {
         if !self.armed {
             return;
         }
-        let Some(last) = self.kept.back() else {
-            self.kept.push_back(now);
-            return;
-        };
-        if now.at.saturating_duration_since(last.at) < SAMPLE_EVERY {
+        let len = self.kept.len();
+        if len >= 2 && now.at.saturating_duration_since(self.kept[len - 2].at) < SAMPLE_EVERY {
+            self.kept[len - 1] = now;
             return;
         }
         self.kept.push_back(now);
@@ -247,6 +256,19 @@ mod tests {
         // Nothing more for six seconds.
         let stalled = samples.reading(at(start, 16_000, 10_000_000), Left::Bytes(5_000_000));
         assert_eq!(stalled, Reading::default());
+        // Its last bytes came within a sample's while of the one before:
+        // nothing said once five seconds went by since them.
+        for (t, bytes) in [
+            (16_100, 10_100_000),
+            (16_200, 10_200_000),
+            (16_300, 10_300_000),
+        ] {
+            samples.note(at(start, t, bytes));
+        }
+        let lately = samples.reading(at(start, 18_000, 10_300_000), Left::Bytes(5_000_000));
+        assert!(lately.speed.is_some(), "{lately:?}");
+        let after = samples.reading(at(start, 21_300, 10_300_000), Left::Bytes(5_000_000));
+        assert_eq!(after, Reading::default());
     }
 
     /// The speed follows a change within its window; the time left is

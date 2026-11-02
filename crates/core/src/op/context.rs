@@ -146,10 +146,11 @@ pub(super) struct Meter {
     /// The most [`Self::reading`] said was moved: what arrived and was let
     /// go of (the copy stopped) never takes a bar back.
     shown: AtomicU64,
-    /// The steps a batch finished before their turn (ADR-078): their items
-    /// count as done as each comes whole, not when the steps place them
-    /// after the batch. Said, never acted on.
-    finished_ahead: Mutex<std::collections::BTreeSet<usize>>,
+    /// The steps a batch finished before their turn (ADR-078) that have not
+    /// ended: their items count as done as each comes whole, not when the
+    /// steps place them after the batch. Each leaves as its step ends, so
+    /// what a reading counts is how many there are. Said, never acted on.
+    finished_ahead: Mutex<HashSet<usize>>,
     /// The steps of the plan, once it began ([`Self::begin`]).
     items: AtomicUsize,
     /// What its steps were sized at before it began, when they were.
@@ -158,7 +159,9 @@ pub(super) struct Meter {
     /// while a mount sends, what that mount sent.
     samples: Mutex<speed::Samples>,
     /// How long its steps ran, its pauses left out.
-    ran: Mutex<speed::Ran>,
+    clock: Mutex<Clock>,
+    /// What wakes the window once its bytes stop moving ([`Stall`]).
+    stall: StallGuard,
     /// It writes into a mount that sends to its server after (ADR-102),
     /// which its end waits for: no time left is said while it writes.
     sends_after: AtomicBool,
@@ -175,6 +178,88 @@ pub(super) struct Steps {
     pub(super) ended: usize,
     pub(super) done: u64,
     pub(super) total: u64,
+    /// Of what `total` grew by since, the bytes a batch counted for the
+    /// steps after the one under way (ADR-078): theirs, not its own.
+    pub(super) others: u64,
+}
+
+/// How long a plan's steps ran, from its start ([`Meter::begin`]), its
+/// pauses left out: a pause asked during its checks holds it from there.
+#[derive(Default)]
+struct Clock {
+    ran: speed::Ran,
+    begun: bool,
+    paused: bool,
+}
+
+/// Wakes the window once a plan's bytes stopped moving for
+/// [`speed::SPEED_OVER`]: what it said last (a speed, a time left) is no
+/// longer said, and nothing else would draw it again. Once a stall, armed
+/// again by the next bytes, never a loop. Its thread starts with the first
+/// bytes, and ends with the meter ([`StallGuard`]).
+#[derive(Default)]
+struct Stall {
+    state: Mutex<StallState>,
+    changed: parking_lot::Condvar,
+}
+
+#[derive(Default)]
+struct StallState {
+    /// When bytes last moved; `None` once the stall was told.
+    moved: Option<Instant>,
+    started: bool,
+    ended: bool,
+}
+
+impl Stall {
+    /// Bytes moved at `now`: told `wake`, once they stop.
+    fn moved(self: &Arc<Self>, now: Instant, wake: &Waker) {
+        let mut state = self.state.lock();
+        let armed = state.moved.is_none();
+        state.moved = Some(now);
+        if !state.started {
+            state.started = true;
+            drop(state);
+            let (stall, wake) = (Arc::clone(self), Arc::clone(wake));
+            // Without a thread, no wake comes: the reading stays as drawn.
+            let _ = std::thread::Builder::new()
+                .name("skwir-plan-stall".into())
+                .spawn(move || stall.watch(&wake));
+        } else if armed {
+            self.changed.notify_one();
+        }
+    }
+
+    /// Wake `wake` once each time no bytes moved for `SPEED_OVER`, until
+    /// the meter goes. Woken only when armed again, or due.
+    fn watch(&self, wake: &Waker) {
+        let mut state = self.state.lock();
+        while !state.ended {
+            match state.moved {
+                None => self.changed.wait(&mut state),
+                Some(moved) if Instant::now() < moved + speed::SPEED_OVER => {
+                    let _ = self
+                        .changed
+                        .wait_until(&mut state, moved + speed::SPEED_OVER);
+                }
+                Some(_) => {
+                    state.moved = None;
+                    parking_lot::MutexGuard::unlocked(&mut state, || wake());
+                }
+            }
+        }
+    }
+}
+
+/// A meter's [`Stall`], which ends its thread when the meter goes.
+#[derive(Default)]
+struct StallGuard(Arc<Stall>);
+
+impl Drop for StallGuard {
+    fn drop(&mut self) {
+        self.0.state.lock().ended = true;
+        self.0.changed.notify_one();
+    }
 }
 
 /// What a plan's steps were sized at before it began (`room::sized`): the
@@ -211,8 +296,13 @@ impl Meter {
     /// measured from here.
     pub(super) fn begin(&self, items: usize) {
         self.items.store(items, Ordering::Relaxed);
-        self.ran.lock().go(Instant::now());
-        self.samples.lock().arm();
+        let mut clock = self.clock.lock();
+        clock.begun = true;
+        // Paused during its checks, it runs from where it goes on.
+        if !clock.paused {
+            clock.ran.go(Instant::now());
+            self.samples.lock().arm();
+        }
     }
 
     /// What its steps were sized at before it began: each one's bytes as
@@ -229,9 +319,15 @@ impl Meter {
         self.ahead.lock().is_some()
     }
 
-    /// The step `step`'s bytes were counted with another's (a batch's,
-    /// ADR-078): the total it will count no longer waits for them.
-    pub(super) fn counted(&self, step: usize) {
+    /// The step `step`'s `bytes` were counted with another's (a batch's,
+    /// ADR-078), the total grown by them: the total it will count no longer
+    /// waits for what that step was sized at. A step after the one under
+    /// way has them apart from that one's own, which it counts still.
+    pub(super) fn counted(&self, step: usize, bytes: u64) {
+        let mut steps = self.steps.lock();
+        if step > steps.ended {
+            steps.others = steps.others.saturating_add(bytes);
+        }
         if let Some(ahead) = self.ahead.lock().as_mut()
             && let Some(work) = ahead.work.get_mut(step)
         {
@@ -246,6 +342,29 @@ impl Meter {
         }
     }
 
+    /// What a batch counted was not made after all (one that failed, whose
+    /// steps copy their own again, ADR-078): `bytes` are no longer done nor
+    /// shown, the steps `steps` no longer finished, and its speed is
+    /// measured afresh from what comes next.
+    pub(super) fn uncount(&self, bytes: u64, steps: &[usize]) {
+        if bytes == 0 && steps.is_empty() {
+            return;
+        }
+        let _ = self
+            .done
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |done| {
+                Some(done.saturating_sub(bytes))
+            });
+        // What `reading` said no longer holds: the bar goes back.
+        self.shown.store(0, Ordering::Relaxed);
+        let mut finished = self.finished_ahead.lock();
+        for step in steps {
+            finished.remove(step);
+        }
+        drop(finished);
+        self.samples.lock().forget();
+    }
+
     /// The size of what the step `step` copies, sized before the plan
     /// began, once.
     fn take_walked(&self, step: usize) -> Option<u64> {
@@ -257,20 +376,23 @@ impl Meter {
 
     /// The plan is paused, or goes on: its speed starts again from there,
     /// and the time it ran leaves the pause out.
+    /// Before it began, it is only noted: it begins held.
     pub(super) fn hold(&self, paused: bool) {
         let now = Instant::now();
+        let mut clock = self.clock.lock();
+        clock.paused = paused;
         if paused {
-            self.ran.lock().stop(now);
+            clock.ran.stop(now);
             self.samples.lock().clear();
-        } else {
-            self.ran.lock().go(now);
+        } else if clock.begun {
+            clock.ran.go(now);
             self.samples.lock().arm();
         }
     }
 
     /// How long its steps ran, its pauses left out.
     pub(super) fn ran(&self) -> Duration {
-        self.ran.lock().until(Instant::now())
+        self.clock.lock().ran.until(Instant::now())
     }
 
     /// How many files a mount still sends before the plan ends, and how
@@ -326,12 +448,18 @@ impl Meter {
         {
             ahead.rest = ahead.rest.saturating_sub(std::mem::take(work));
         }
+        // Its item counts as ended now, no longer as finished ahead.
+        self.finished_ahead.lock().remove(&steps.ended);
         steps.ended += 1;
         steps.done = self.done.load(Ordering::Relaxed);
         steps.total = self.total.load(Ordering::Relaxed);
+        steps.others = 0;
         drop(steps);
-        let sample = self.sample(Instant::now());
+        let now = Instant::now();
+        let sample = self.sample(now);
         self.samples.lock().note(sample);
+        // A plan counted by its steps goes as they end.
+        self.stalls_from(now);
     }
 
     /// Count `bytes` done and wake, at most every `WAKE_EVERY`; no bytes
@@ -355,11 +483,20 @@ impl Meter {
         let Some(wake) = &self.wake else {
             return;
         };
+        self.stall.0.moved(now, wake);
         let mut last = self.last_wake.lock();
         if last.is_none_or(|t| now.duration_since(t) >= WAKE_EVERY) {
             *last = Some(now);
             drop(last);
             wake();
+        }
+    }
+
+    /// It went on at `now`: should nothing follow, the window is woken
+    /// once to say so ([`Stall`]).
+    fn stalls_from(&self, now: Instant) {
+        if let Some(wake) = &self.wake {
+            self.stall.0.moved(now, wake);
         }
     }
 
@@ -411,15 +548,19 @@ impl Meter {
     /// The bytes the whole plan will count, when known: those its steps
     /// ended and the step under way counted, and what those to come were
     /// sized at; for a plan not sized, of one step, what that step said.
+    /// What a batch counted for the steps after the one under way is
+    /// theirs: the one under way still has its own to count, as sized.
     fn planned(&self, steps: &Steps, total: u64) -> Option<u64> {
         match self.ahead.lock().as_ref() {
             Some(ahead) => {
                 let own = ahead.work.get(steps.ended).copied().unwrap_or(0);
                 let counted = total.saturating_sub(steps.total);
+                let others = steps.others.min(counted);
                 Some(
                     steps
                         .total
-                        .saturating_add(counted.max(own))
+                        .saturating_add(others)
+                        .saturating_add((counted - others).max(own))
                         .saturating_add(ahead.rest.saturating_sub(own)),
                 )
             }
@@ -461,7 +602,7 @@ impl Meter {
         };
         // Its items done: the steps ended, and those after them a batch
         // finished already.
-        let finished = steps.ended + self.finished_ahead.lock().range(steps.ended..).count();
+        let finished = steps.ended + self.finished_ahead.lock().len();
         Reading {
             steps,
             finished,
@@ -1854,10 +1995,17 @@ impl StepContext {
         self.meter.advance_unmeasured(bytes);
     }
 
-    /// The step `step`'s bytes were counted with this one's (a batch's,
-    /// ADR-078): what the plan was sized at no longer waits for them.
-    pub(super) fn counted_ahead(&self, step: usize) {
-        self.meter.counted(step);
+    /// The step `step`'s `bytes` were counted with this one's (a batch's,
+    /// ADR-078), announced already: what the plan was sized at no longer
+    /// waits for them.
+    pub(super) fn counted_ahead(&self, step: usize, bytes: u64) {
+        self.meter.counted(step, bytes);
+    }
+
+    /// What a batch that failed counted is taken back (ADR-078): `bytes`
+    /// done, and the steps `steps` finished, which copy their own again.
+    pub(super) fn uncount(&self, bytes: u64, steps: &[usize]) {
+        self.meter.uncount(bytes, steps);
     }
 
     /// What says, from a batch's threads, that the copy of a step after
@@ -1880,6 +2028,12 @@ impl StepContext {
     #[cfg(all(test, target_os = "linux"))]
     pub(super) fn done(&self) -> u64 {
         self.meter.done.load(Ordering::Relaxed)
+    }
+
+    /// The bytes measured as moved now, what a speed is told by.
+    #[cfg(all(test, target_os = "linux"))]
+    pub(super) fn measured(&self) -> u64 {
+        self.meter.sample(Instant::now()).bytes
     }
 
     /// Run `f` over the trash listing, reading it on first use in this
@@ -2225,13 +2379,29 @@ mod tests {
         meter.step_ended();
         // A batch at the second step counts the second and the third.
         meter.total.fetch_add(500, Ordering::Relaxed);
-        meter.counted(1);
-        meter.counted(2);
+        meter.counted(1, 200);
+        meter.counted(2, 300);
         assert_eq!(planned(), Some(600), "the batch's bytes counted once");
         meter.advance(500);
         meter.step_ended();
         meter.step_ended();
         assert_eq!(planned(), Some(600));
+        // A batch at the first step that leaves it to itself (a file alone
+        // in its folder) counts those after it: the first's own bytes still
+        // wait, and are counted once it counts them.
+        let left = Meter::new(None);
+        left.set_ahead(vec![400, 100, 100], vec![Some(400), None, None]);
+        left.begin(3);
+        left.total.fetch_add(200, Ordering::Relaxed);
+        left.counted(1, 100);
+        left.counted(2, 100);
+        assert_eq!(left.reading(false).planned, Some(600), "during the batch");
+        left.advance(200);
+        left.total.fetch_add(400, Ordering::Relaxed);
+        assert_eq!(left.reading(false).planned, Some(600), "its own copy");
+        left.advance(400);
+        left.step_ended();
+        assert_eq!(left.reading(false).planned, Some(600));
         // A step that moved more than it was sized at: what it moved.
         let grown = Meter::new(None);
         grown.set_ahead(vec![100, 50], vec![None, None]);
@@ -2324,6 +2494,99 @@ mod tests {
         meter.step_ended();
         meter.step_ended();
         assert_eq!(finished(), 3, "their steps ended: counted once");
+    }
+
+    /// A batch that failed takes back what it counted: its bytes no longer
+    /// done nor shown, its items no longer finished, and its speed measured
+    /// afresh, as its steps copy their own again (ADR-078).
+    #[test]
+    fn a_batch_that_failed_takes_back_what_it_counted() {
+        let meter = Meter::new(None);
+        meter.set_ahead(vec![500, 500], vec![None, None]);
+        meter.begin(2);
+        meter.total.fetch_add(1000, Ordering::Relaxed);
+        meter.counted(0, 500);
+        meter.counted(1, 500);
+        meter.advance(800);
+        meter.finished_ahead(1);
+        assert_eq!(meter.reading(false).done, 800);
+        assert_eq!(meter.reading(false).finished, 1);
+        meter.uncount(800, &[1]);
+        let read = meter.reading(false);
+        assert_eq!((read.done, read.finished), (0, 0));
+        assert_eq!(read.planned, Some(1000), "its steps copy the same");
+        assert_eq!(meter.sample(Instant::now()).bytes, 0);
+        meter.advance(1000);
+        assert_eq!(meter.reading(false).done, 1000, "counted once");
+    }
+
+    /// Paused during its checks, a plan's time runs from where it goes on;
+    /// a pause after counts no more.
+    #[test]
+    fn a_plan_paused_before_it_began_runs_from_where_it_goes_on() {
+        let meter = Meter::new(None);
+        meter.hold(true);
+        meter.begin(1);
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(meter.ran(), Duration::ZERO, "held from its start");
+        meter.advance(10);
+        assert_eq!(meter.sample(Instant::now()).bytes, 10);
+        assert!(
+            meter
+                .samples
+                .lock()
+                .reading(meter.sample(Instant::now()), speed::Left::Unknown)
+                == speed::Reading::default(),
+            "nothing measured while held"
+        );
+        let before = Instant::now();
+        meter.hold(false);
+        std::thread::sleep(Duration::from_millis(30));
+        meter.hold(true);
+        let between = before.elapsed();
+        std::thread::sleep(Duration::from_millis(30));
+        let ran = meter.ran();
+        assert!(
+            ran >= Duration::from_millis(30) && ran <= between,
+            "{ran:?}"
+        );
+        // Resumed before it began, its time starts with it.
+        let early = Meter::new(None);
+        early.hold(true);
+        early.hold(false);
+        std::thread::sleep(Duration::from_millis(40));
+        assert_eq!(early.ran(), Duration::ZERO, "not begun");
+        let began = Instant::now();
+        early.begin(1);
+        assert!(early.ran() <= began.elapsed());
+    }
+
+    /// Bytes that stop moving wake the window once, so that the speed it
+    /// shows goes, and no more until more bytes come: never a loop.
+    #[test]
+    fn a_stall_wakes_the_window_once() {
+        let woken = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&woken);
+        let meter = Meter::new(Some(Arc::new(move || {
+            counted.fetch_add(1, Ordering::Relaxed);
+        })));
+        meter.begin(1);
+        let moved = Instant::now();
+        meter.advance(10);
+        let after_bytes = woken.load(Ordering::Relaxed);
+        let deadline = moved + speed::SPEED_OVER + Duration::from_secs(5);
+        while woken.load(Ordering::Relaxed) == after_bytes && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(moved.elapsed() >= speed::SPEED_OVER, "not before");
+        assert_eq!(woken.load(Ordering::Relaxed), after_bytes + 1, "woken once");
+        std::thread::sleep(Duration::from_millis(400));
+        assert_eq!(
+            woken.load(Ordering::Relaxed),
+            after_bytes + 1,
+            "and no more"
+        );
+        drop(meter);
     }
 
     /// Writing into a mount that sends to its server after, its end waits

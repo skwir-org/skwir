@@ -37,9 +37,13 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   the window: the plan's meter samples what it moved (`op::speed`), its
   speed the last 5 s, its time left what is left over the last 20 s,
   from its first byte (armed at its start and after a pause, never
-  measured from either), nothing said while paused or when nothing moved
-  for 5 s. Bytes counted done that moved none now (a clone, a copy gone
-  on from) are `advance_unmeasured`: done, never speed; a large remote
+  measured from either, a pause during its checks holding it from its
+  start), nothing said while paused or when nothing moved for 5 s,
+  measured from its last bytes (the latest sample stands for what came
+  since), the window woken once then to say so (`context::Stall`, armed
+  again by the next bytes, never a loop). Bytes counted done that moved
+  none now (a clone, a copy gone on from, a file's holes) are
+  `advance_unmeasured`: done, never speed; a large remote
   file's ranges are read a piece at a time, each reader's about a
   quarter second's worth (`builtin::Chunk::from_least`: 256 KiB to
   4 MiB), measured and shown as moved as they arrive
@@ -61,8 +65,14 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   bytes); a copy takes the size it was sized at
   (`StepContext::take_walked`) and never walks its tree twice; a batch
   that counts several steps' bytes takes them out of what waits
-  (`StepContext::counted_ahead`), and each of its runs counts from its
-  own start, what it made counted whole once it ran. Into a mount that
+  (`StepContext::counted_ahead`), those of the steps after the one under
+  way apart from its own, which it still counts, and each of its runs
+  counts from its own start, what it made counted whole once it ran. One
+  that fails takes back what it counted but what its steps take as made,
+  bytes and items (`StepContext::uncount`): they copy their own again.
+  rsync tells a file given it alone once whole, a folder once its run
+  returns (recursing, it copies a folder's files after the entries that
+  follow it). Into a mount that
   sends after (ADR-102) no time left is said while the plan writes
   there; while it sends, the mount says its bytes left
   (`transfer::Left`), which the speed and time left follow.
@@ -200,8 +210,9 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   plan has its bar in Activity (ADR-114); what waits is listed under them, each saying what it waits for (`Executor::waiting`:
   an action asked before it that it meets, by its title; the disk; the
   server; one of the four to end), with its Cancel, and Cancel all for
-  several (`Executor::cancel_waiting`: it ends at once, having done
-  nothing, without waiting for what it waited for; a plan says it was
+  several (`Executor::cancel_waiting`, `cancel_waiting_all` at once: it
+  ends at once, having done nothing, without waiting for what it waited
+  for; a plan says it was
   cancelled, an undo or a redo leaves its entry); a paused plan keeps what it holds. The journal keeps
   the order asked (`JournalEntry::seq`): Undo takes the last plan asked,
   waiting while it runs (`Executor::undo_target`, which the status bar
@@ -233,7 +244,12 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   (`ExecEvent::WaitsForServer`, said in its toast); once answered, it is
   retried as Retry would (`ExecEvent::GoesOn`, its card says "going
   on"), three times at most a server. Nothing is read to classify an
-  error: its words are the system's, translated.
+  error: its words are the system's, translated. A stopped plan taken out
+  to be retried is counted as handed over until its work is queued
+  (`HandOver`), so whether anything runs, waits its turn or waits for
+  its server is one question (`Executor::busy_or_waiting`), never
+  answered by asking those apart: one going on by itself between them
+  would be in neither.
 - **Observers.** A plugin that keeps paths of its own follows what each
   finished run changed (`Executor::observe`: the steps applied and found
   done, in plan order, undos and redos included). One that returned a

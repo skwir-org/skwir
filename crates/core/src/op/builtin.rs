@@ -2402,8 +2402,9 @@ fn copy_sparse(
     #[cfg(unix)]
     use std::os::unix::fs::FileExt;
     let mut at = start;
+    // A hole moves no byte: done, never speed (ADR-113).
     while let Some((data, hole)) = sys::next_data(sf, at)? {
-        ctx.advance(data.saturating_sub(at));
+        ctx.advance_unmeasured(data.saturating_sub(at));
         let mut from = data;
         while from < hole {
             ctx.check_cancelled()?;
@@ -2445,7 +2446,7 @@ fn copy_sparse(
         }
         at = hole.max(from);
     }
-    ctx.advance(len.saturating_sub(at));
+    ctx.advance_unmeasured(len.saturating_sub(at));
     df.set_len(len)?;
     Ok(())
 }
@@ -5985,6 +5986,45 @@ mod tests {
             pace.write_out().unwrap();
             assert!(std::fs::read(&dst).unwrap().is_empty(), "{how}");
         }
+    }
+
+    /// A file's holes count as done, never as speed: they move no byte
+    /// (ADR-113).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_file_s_holes_are_done_but_no_speed() {
+        use std::os::unix::fs::{FileExt, MetadataExt};
+        let base = dirs::home_dir().unwrap().join(".cache/skwir-tests");
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = tempfile::tempdir_in(base).unwrap();
+        let (src, dst) = (
+            dir.path().join("disk image.raw"),
+            dir.path().join("copy.raw"),
+        );
+        let len = 64u64 << 20;
+        let data = vec![7u8; 1 << 20];
+        let file = std::fs::File::create(&src).unwrap();
+        file.write_all_at(&data, 0).unwrap();
+        file.write_all_at(&data, len - data.len() as u64).unwrap();
+        drop(file);
+        let meta = std::fs::metadata(&src).unwrap();
+        if meta.blocks() * 512 >= len {
+            eprintln!("skipped: this volume keeps no holes");
+            return;
+        }
+        let ctx = StepContext::detached();
+        let (sf, df) = (
+            std::fs::File::open(&src).unwrap(),
+            std::fs::File::create(&dst).unwrap(),
+        );
+        copy_sparse(&sf, &df, (0, len), None, &ctx).unwrap();
+        assert_eq!(ctx.done(), len, "the holes counted done");
+        assert!(
+            ctx.measured() <= 2 * data.len() as u64,
+            "only the data measured: {}",
+            ctx.measured()
+        );
+        assert_eq!(std::fs::read(&dst).unwrap(), std::fs::read(&src).unwrap());
     }
 
     #[cfg(target_os = "linux")]
