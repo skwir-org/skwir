@@ -5,6 +5,8 @@ day, as `docs/PLAN.md` ("Grammars and printing") records: checked on
 Linux, compiled for Windows and macOS (`just lint-all`), not run there. Extends
 ADR-060 (bat's grammars, matched by Ferroni), which stands. Decision 4
 revised 2026-11-01: a choice for each language beside Automatic's rule.
+Decision 3 amended 2026-11-04 with the user, from a page of samples: a
+grammar found whole or combined by one rule, said and checked (below).
 
 ## Context
 
@@ -119,3 +121,100 @@ revised 2026-11-01: a choice for each language beside Automatic's rule.
 - Parsing needs the whole text: past what a preview holds whole, or past
   32 MiB (`syntax::MAX_TEXT`, a Full preview's), a tree-sitter-only
   language is plain; a line past 1 MiB is colored by bat's grammar.
+
+## Amendment (2026-11-04): a grammar found whole or combined by one rule
+
+Accepted 2026-11-04 with the user, from a page of samples and four
+questions, each answered as recommended: lending only from the
+grammar's own repository, a combined grammar named by its queries'
+source first, the folders looked in folded under Languages, checks when
+Languages is first shown.
+
+- **Context:** a user's report (2026-11-03). Their Emacs grammars
+  offered only Plain text. Once the grammar's repository was in a CLI
+  parser directory, the row said "Emacs" (its library's source) though
+  its colors and its file types were the repository's. A repository two
+  folders below a parser directory was not found, and nothing said so.
+  A repository's library went with the CLI's cache when that was
+  emptied. Decision 3 combines any source's library with any other's
+  queries by language name, unsaid: a row names its library's source
+  only; whether the two fit is known only once a file is colored (the
+  helper's `Check`, built for the Reading page, is asked by nothing); a
+  library in the system's library folders named as Emacs names its own
+  is called Emacs's; a language named two ways (`c-sharp`, `c_sharp`)
+  is two languages. The 2026-11-03 change made a grammar that nothing
+  colors say where to put its repository; the rest stands.
+- **Decision** (replacing decision 3's borrowing; finding, confining and
+  file types stand):
+  1. **Whole or a part.** A grammar is whole when one source holds its
+     library and its highlights: a Zed extension, Helix's runtime,
+     Neovim's parsers and queries, the system's library and queries, a
+     repository built (Skwir's folder, the CLI's). Otherwise it is a
+     part: a library alone (Emacs's, a parser whose queries are not
+     installed) or queries alone (a repository not built). A whole
+     grammar is offered as now; a part is never offered alone.
+  2. **One rule combines parts:** a library and the queries of its
+     grammar's own repository (Skwir's folder, a CLI parser directory)
+     or the system's queries of it. An editor's queries (Helix's, Zed's,
+     Neovim's) never color another source's library: they are written
+     for that editor's revision of the grammar and its predicates. A
+     grammar is known by the symbol its library exports
+     (`tree_sitter_<name>`), `-` and `_` alike: Emacs's
+     `libtree-sitter-c-sharp.so` and Neovim's `c_sharp.so` are one
+     language. File types still come from whoever says them
+     (`languages.toml`, the grammar's sources, bat's grammar, its name):
+     they name files and run nothing.
+  3. **A combined grammar names both parts,** its queries' source first,
+     as a whole grammar is named by its source and as the user put the
+     repository there: "tree-sitter CLI, with Emacs's library", in the
+     picker and in Automatic's label; the repository's own name in its
+     detail and in the folders looked in.
+  4. **A combined grammar is checked before it is offered.** When the
+     Languages list is first shown (not when the settings open on
+     another page, nor when a picker opens: Automatic's label needs the
+     answer), the helper loads its library and compiles its queries
+     (`Check`), remembered for the run by both files' identity and
+     change time. Until answered it is offered as being checked; a
+     refusal greys it with the helper's reason. A file colored before
+     then checks it the same way. Whole grammars are checked only when
+     they color, as now.
+  5. **A source is named by its folder.** Emacs's are
+     `~/.emacs.d/tree-sitter` and `<config>/emacs/tree-sitter`; a
+     library in the system's library folders (`/usr/lib`,
+     `/usr/local/lib`, Homebrew's) is the system's.
+  6. **Where grammars were looked for is shown** on the Reading page,
+     folded under Languages, its header counting what was nearly found:
+     each folder read, whether it is there, what it gave (whole
+     grammars, libraries alone, repositories not built), and what was
+     nearly found with what to do: a repository one folder too deep in
+     a parser directory (the CLI reads only the folders directly in
+     it), a repository with no library (`tree-sitter build`, or its
+     queries color a library found elsewhere), a library with nothing to
+     combine (the 2026-11-03 reason), a parser directory that is not
+     there.
+  7. **A folder kept elsewhere is linked into Skwir's grammars folder:**
+     the one explicit way, for a repository kept anywhere or a folder
+     Emacs's `treesit-extra-load-path` names, which Skwir never reads.
+- **Rejected:**
+  - **Discovery dropped, Skwir's folder alone:** predictable, but users
+    of Neovim, Helix and Zed lose grammars that work as found, and the
+    report's grammars would need a C compiler (their library is Emacs's).
+  - **Any parts combined as now, only labelled:** a label says the mix
+    but keeps queries written for another editor on a library they may
+    not fit, and two sources' queries tried in turn.
+  - **A setting listing more folders:** a link in Skwir's folder does it,
+    with nothing more to read or to keep.
+  - **Asking Emacs for its own rules** (`emacs --batch`): apart, in
+    `docs/PLAN.md`'s What is left.
+- **Consequences:**
+  - What colors today with another editor's queries stops: a Neovim
+    parser colored by Zed's or Helix's queries, an Emacs library by
+    Helix's. Such a language is offered by the source that holds it
+    whole, else bat's grammar, else plain text, its row saying why.
+  - A choice kept under a language's old name (`c-sharp`) is read under
+    its symbol's (`c_sharp`).
+  - Showing Languages starts the helper when a combined grammar is
+    found (a library loaded and its queries compiled each); whole
+    grammars cost nothing more.
+  - `Grammar::lent` holds only the grammar's own repositories' queries;
+    the test of every source changes with the rule.

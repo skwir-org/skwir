@@ -605,6 +605,31 @@ rules was proposed and left (in "What is left").
 
 Checks in `docs/STATUS-LOG.md` (2026-11-03, "Emacs's grammars").
 
+## Grammars whole or combined (2026-11-04)
+
+The same report, followed further by an agent on the user's machine: a
+grammar's row named its library's source though its colors were a
+repository's, a nested repository was not found and nothing said so, a
+library in `/usr/lib` was called Emacs's. ADR-110's decision 3 amended
+with the user, from a page of samples: a grammar found whole or combined
+by one rule, said and checked. Built in this order:
+
+- **W1. Sources named by their folder:** Emacs's are its own folders; a
+  `libtree-sitter-<lang>` library in the system's library folders is the
+  system's, with the system's queries of it.
+- **W2. A combined grammar named by both parts,** its queries' source
+  first ("tree-sitter CLI, with Emacs's library"), in the picker and in
+  Automatic's label.
+- **W3. The folders looked in,** folded under Languages, its header
+  counting what was nearly found, each near-miss saying what to do.
+- **W4. One rule of combining, checked:** a library with its own
+  repository's queries (Skwir's folder, the CLI's) or the system's, a
+  grammar known by its symbol (`-` and `_` alike), an editor's queries
+  never lent; a combined grammar checked by the helper when Languages is
+  first shown, offered as being checked until answered.
+
+**Status:** accepted 2026-11-04; being built.
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
