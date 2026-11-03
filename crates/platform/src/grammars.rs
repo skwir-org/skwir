@@ -393,7 +393,7 @@ impl Roots {
         let config = editor_config();
         let home = home();
         let mut roots = Roots {
-            skwir: skwir_core::folders::data().map(|dir| dir.join("grammars")),
+            skwir: folder(),
             ..Roots::default()
         };
         // The CLI's own: `$TREE_SITTER_DIR`, else its configuration folder
@@ -527,6 +527,13 @@ impl Roots {
             .collect();
         roots
     }
+}
+
+/// Skwir's grammars folder: grammars' repositories, built or not (an
+/// unbuilt one lends its queries to a library found elsewhere), and
+/// `languages.toml`.
+pub fn folder() -> Option<PathBuf> {
+    skwir_core::folders::data().map(|dir| dir.join("grammars"))
 }
 
 fn home() -> Option<PathBuf> {
@@ -954,7 +961,7 @@ fn alternative(own: &Candidate, candidates: &[Candidate], file_types: &[String])
         .clone()
         .or_else(|| match (&own.library, queries.is_empty()) {
             (None, _) => Some("no library: build the grammar (`tree-sitter build`)".to_owned()),
-            (Some(_), true) => Some("no highlights query found for its language".to_owned()),
+            (Some(_), true) => Some(no_highlights(source).to_owned()),
             (Some(_), false) => None,
         });
     Found {
@@ -978,6 +985,25 @@ fn alternative(own: &Candidate, candidates: &[Candidate], file_types: &[String])
         file_types: file_types.to_vec(),
         first_line,
         problem,
+    }
+}
+
+/// Why a library no source has a highlights query for colors nothing,
+/// and what makes it color: the grammar's repository in Skwir's folder,
+/// whose queries a library of another source borrows, built or not.
+/// Emacs keeps none (its modes color in Lisp); a repository of Skwir's
+/// or the CLI's has none of its own.
+fn no_highlights(source: Source) -> &'static str {
+    match source {
+        Source::Emacs => {
+            "Emacs keeps no colors with its grammars: put the grammar's repository in Skwir's grammars folder (it need not be built)"
+        }
+        Source::Skwir | Source::TreeSitter => {
+            "no highlights query in its repository, nor found for its language"
+        }
+        Source::Zed | Source::Helix | Source::Neovim | Source::System => {
+            "no highlights query found for its language: put the grammar's repository in Skwir's grammars folder (it need not be built)"
+        }
     }
 }
 
@@ -1607,6 +1633,17 @@ mod tests {
         );
         // Emacs's: a library alone, and the runtime itself, never a grammar.
         write(&root.join("emacs/libtree-sitter-zig.so"), "");
+        // An Emacs library whose grammar's repository, never built, is in
+        // Skwir's folder: its queries color Emacs's library.
+        write(&root.join("emacs/libtree-sitter-heex.so"), "");
+        write(
+            &root.join("skwir/tree-sitter-heex/tree-sitter.json"),
+            r#"{"grammars":[{"name":"heex","file-types":["heex"]}]}"#,
+        );
+        write(
+            &root.join("skwir/tree-sitter-heex/queries/highlights.scm"),
+            "(comment) @comment",
+        );
         write(&root.join("emacs/libtree-sitter.so.0.25"), "");
         write(&root.join("emacs/libtree-sitter-c.so.15"), "");
         let roots = Roots {
@@ -1651,6 +1688,7 @@ mod tests {
             [
                 ("c", Source::Neovim, None),
                 ("gleam", Source::Skwir, None),
+                ("heex", Source::Emacs, Some(Source::Skwir)),
                 ("lua", Source::Neovim, Some(Source::System)),
                 ("markup", Source::Helix, None),
                 ("nix", Source::Zed, None),
@@ -1679,13 +1717,34 @@ mod tests {
         assert_eq!(get("zig").file_types, ["zig", "zon"], "bat's say");
         assert_eq!(get("odin").file_types, ["odin"]);
         assert_eq!(get("lua").file_types, ["lua"], "its name");
-        // Usable or not, and why.
+        // Usable or not, and why: Emacs's library alone says where its
+        // colors would come from.
         assert!(
             get("zig")
                 .problem
                 .as_deref()
                 .unwrap()
-                .contains("highlights")
+                .starts_with("Emacs keeps no colors")
+        );
+        // Its repository unbuilt in Skwir's folder lends its queries: one
+        // row, Emacs's library, the repository's colors.
+        let heex = get("heex");
+        assert!(heex.problem.is_none(), "{:?}", heex.problem);
+        assert_eq!(
+            heex.grammar.library,
+            root.join("emacs/libtree-sitter-heex.so")
+        );
+        assert_eq!(
+            heex.grammar.highlights,
+            [root.join("skwir/tree-sitter-heex/queries/highlights.scm")]
+        );
+        assert_eq!(heex.file_types, ["heex"], "its repository says");
+        assert_eq!(
+            all.iter()
+                .filter(|found| found.grammar.name == "heex")
+                .count(),
+            1,
+            "the unbuilt repository has no row of its own"
         );
         assert!(
             get("markup")
@@ -1704,6 +1763,10 @@ mod tests {
         assert_eq!(
             for_file(&found, "paper.typ", None).unwrap().grammar.name,
             "typst"
+        );
+        assert_eq!(
+            for_file(&found, "page.heex", None).unwrap().grammar.name,
+            "heex"
         );
         assert!(
             for_file(&found, "build.zig", None).is_none(),

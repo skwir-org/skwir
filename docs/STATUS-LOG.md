@@ -10492,3 +10492,55 @@ been pushed, so the local tag moved onto each.
 Not checked: the Windows and macOS builds on their systems; the manual
 `packages` workflow (the AppImage and tarball on hosted Ubuntu 24.04 and
 Fedora 44); the AppImage on GNOME or Plasma.
+
+## Emacs's grammars (2026-11-03)
+
+A user's report, with screenshots: their Emacs tree-sitter grammars
+(heex, quint, rayfall) offered only Plain text, the Emacs entry greyed
+with "no highlights query found for its language".
+
+- **Why:** Emacs installs a grammar's library alone
+  (`libtree-sitter-<lang>.so`); its modes color with rules written in
+  Lisp (`treesit-font-lock-rules`), so it keeps no `highlights.scm`.
+  Skwir lends a library the queries another source holds for its
+  language (ADR-110); for those three nothing held any.
+- **The reason says what to do** (`grammars::no_highlights`, by source):
+  an Emacs library alone, "Emacs keeps no colors with its grammars: put
+  the grammar's repository in Skwir's grammars folder (it need not be
+  built)"; an editor's or the system's library, the same advice after
+  "no highlights query found for its language"; a repository of Skwir's
+  or the CLI's, "no highlights query in its repository, nor found for
+  its language". A repository there unbuilt has no row of its own and
+  lends its queries first (it is the grammar's own).
+- **The folder is named:** `grammars::folder()`, shown from `~/` in
+  Reading › Grammars › Languages' description (its tooltip past the
+  first sentence), as General names the settings file
+  (`settings::home_shown`, now shared).
+- **A picker's popup is at most 440 px wide**
+  (`settings_records`), its details wrapping: the Emacs reason drew it
+  about 720 px wide, over the settings' sidebar.
+- **Asking Emacs** (`emacs --batch` recording its rules as its modes
+  load) was proposed and not built: in PLAN.md's "What is left". From
+  `heex-ts-mode.el` and `elixir-ts-mode.el` on Emacs's master: HEEx's
+  rules are literal, Elixir's built from `defconst`s made with
+  `regexp-opt` and `concat`, so reading `.el` files would mean
+  evaluating Lisp.
+
+Checked: `grammars_are_found_where_each_source_keeps_them` extended (an
+Emacs library and the grammar's unbuilt repository in Skwir's folder:
+one row, Emacs's library, the repository's highlights, `page.heex`
+colored by it; an Emacs library alone gives the new reason);
+skwir-platform's grammar tests 12 passed, skwir-ui's settings tests 23
+passed; `cargo clippy -p skwir-platform -p skwir-ui --all-targets -D
+warnings` clean, rustfmt clean. On Xvfb (:93, lavapipe), the debug
+build with two empty Emacs libraries (heex, quint) under a fixture
+`XDG_CONFIG_HOME/emacs/tree-sitter` and HEEx's repository (its
+`tree-sitter.json` and `queries/highlights.scm`, no library) in the
+fixture's grammars folder: heex "Automatic: Emacs (tree-sitter)", its
+choice "its colors from Skwir's folder"; quint "Automatic: Plain text",
+Emacs greyed with the new reason on two lines in a 440 px popup; the
+description's tooltip naming the fixture's folder from `~/`; General's
+settings file still from `~/`. The popup of the lowest rows, one line
+taller, scrolls to its last choice. Not checked: a real Emacs grammar
+colored through a lent repository (the libraries were empty files),
+macOS and Windows, release-check.

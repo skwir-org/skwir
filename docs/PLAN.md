@@ -590,6 +590,21 @@ too) now measure from the press, not from gpui's first reported move.
 
 Checks in `docs/STATUS-LOG.md` (2026-11-03, "Table columns").
 
+## Emacs's grammars say where their colors come from (2026-11-03)
+
+A user's report: Emacs's tree-sitter grammars offered only Plain text.
+Emacs keeps a library without queries (its modes color in Lisp), and
+none was found to lend for those languages. The greyed grammar now says
+what to do, by where it was found: Emacs's "Emacs keeps no colors with
+its grammars: put the grammar's repository in Skwir's grammars folder
+(it need not be built)", an editor's or the system's the same advice,
+a repository's own that it has none. Reading's Languages description
+names Skwir's grammars folder where it is, and a picker's popup is at
+most 440 px wide, a long reason wrapping. Asking Emacs for its own
+rules was proposed and left (in "What is left").
+
+Checks in `docs/STATUS-LOG.md` (2026-11-03, "Emacs's grammars").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of
@@ -750,6 +765,17 @@ progress, fixed the same night):
   are plain where bat colors them.
 - A grammar's file types taken from its name can name no real file
   (Neovim's `markdown_inline`, `query`, `vimdoc`).
+- Emacs's grammars come without queries: its modes color in Lisp
+  (`treesit-font-lock-rules`, often built from `defconst`s, `rx` and
+  `regexp-opt`, some captures naming a function). Since 2026-11-03 the
+  greyed grammar says to put the grammar's repository in Skwir's
+  folder. Proposed, not decided (a user's report): ask Emacs itself,
+  `emacs --batch` recording the rules as its `*-ts-mode` files load
+  them, expanded with `treesit-query-expand`, then faces mapped to
+  capture names, Emacs regexps to `#match?`'s, `:pred` and function
+  captures left out; kept in the cache. It runs the user's packages'
+  code unasked and finds no package an init file loads (straight,
+  elpaca, Doom): an ADR first.
 - The first parse of a WebAssembly grammar can take seconds, its colors
   waiting; code blocks are colored as a document is built, so a helper
   starting delays its first paint. Folds a user closed are forgotten

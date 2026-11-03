@@ -318,6 +318,18 @@ pub(crate) static LANGUAGES: std::sync::LazyLock<skwir_core::settings::RecordSou
 /// The languages a tree-sitter grammar was found or a grammar added for,
 /// as listed and as their choices are kept (`highlight::tree::languages`):
 /// the key the engine finds a text's choice by is theirs.
+/// `path` as the settings show it: from `~/` where it is under the home
+/// folder.
+pub(crate) fn home_shown(path: &std::path::Path) -> String {
+    skwir_core::os_path::home()
+        .and_then(|home| {
+            path.strip_prefix(home)
+                .ok()
+                .map(|rest| format!("~/{}", rest.display()))
+        })
+        .unwrap_or_else(|| path.display().to_string())
+}
+
 fn languages() -> std::sync::Arc<[skwir_platform::highlight::tree::Language]> {
     skwir_platform::highlight::tree::listed_languages()
 }
@@ -811,11 +823,18 @@ pub fn declare(app: &App) {
         )
         .section("Grammars"),
     );
+    // Skwir's grammars folder, named where it is: the greyed grammars'
+    // reasons send there.
+    let grammars_folder = skwir_platform::grammars::folder()
+        .map(|folder| format!(" ({})", home_shown(&folder)))
+        .unwrap_or_default();
     app.settings.declare(
         SettingSpec::records(
             LANGUAGES_KEY,
             "Languages",
-            "The languages a grammar was found or added for, each with the files it colors and what colors it. Automatic follows the choice above; bat's grammar is one you added to bat or Sublime Text where you did; each tree-sitter grammar is named by where it was found, one that cannot be used greyed with why; Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them; languages.toml in Skwir's grammars folder says what files a language colors.",
+            &format!(
+                "The languages a grammar was found or added for, each with the files it colors and what colors it. Automatic follows the choice above; bat's grammar is one you added to bat or Sublime Text where you did; each tree-sitter grammar is named by where it was found, one that cannot be used greyed with why; Plain text shows the files without colors. Tree-sitter grammars are looked for in Skwir's grammars folder{grammars_folder} and where the tree-sitter CLI, Zed, Helix, Neovim, Emacs and the system keep them. A grammar's repository put in Skwir's grammars folder colors with its queries, built or not: unbuilt, they color the same language's grammar found elsewhere (Emacs keeps none with its own). languages.toml there says what files a language colors."
+            ),
             "Language",
             vec![
                 skwir_core::settings::RecordField::text("name", "Language", "", ""),

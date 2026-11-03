@@ -1235,6 +1235,9 @@ impl SettingsView {
             let mut panel = div()
                 .id(gpui::SharedString::from(format!("picks-{key}-{id}")))
                 .min_w(px(220.))
+                // A choice's detail (why a grammar cannot be used, a path)
+                // wraps rather than widening the popup past the dialog.
+                .max_w(px(440.))
                 .max_h(px(360.))
                 .overflow_y_scroll()
                 .p_1()
@@ -1276,6 +1279,7 @@ impl SettingsView {
                             div()
                                 .flex()
                                 .flex_col()
+                                .min_w_0()
                                 .child(label)
                                 .when(!detail.is_empty(), |d| {
                                     d.child(div().text_color(theme.text_muted).child(detail))

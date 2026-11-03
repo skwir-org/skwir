@@ -1401,14 +1401,10 @@ impl SettingsView {
         let location = self.app.settings.path().map_or_else(
             || "Settings are kept in memory for this session.".to_owned(),
             |path| {
-                let shown = skwir_core::os_path::home()
-                    .and_then(|home| {
-                        path.strip_prefix(home)
-                            .ok()
-                            .map(|rest| format!("~/{}", rest.display()))
-                    })
-                    .unwrap_or_else(|| path.display().to_string());
-                format!("{shown}. It lists only what differs from the defaults.")
+                format!(
+                    "{}. It lists only what differs from the defaults.",
+                    crate::settings::home_shown(path)
+                )
             },
         );
         let open = self.handle("open-file", cx);
