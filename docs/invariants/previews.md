@@ -1345,6 +1345,14 @@ is still to come are in `docs/preview-frame.md`.
   last; the next sorts descending, the third restores the file's order.
   It reorders the index of visible rows, never the data, so selection,
   find and copy keep working.
+- A header cell's right edge sizes its column (`elements/edge.rs`, inside
+  the column's rule, `TableColumnResize`); a double click gives the
+  column back its content's width. Dragged widths replace the shape's at
+  draw time (`inspector_rows::Dragged`), 40 to 1600 px, and are the
+  file's: kept while the header is the one they were given for (a CSV's
+  next rows, the file read again), dropped with another (a workbook's
+  next sheet, a database's next table) and with another file. Like every
+  edge, they have no key.
 - A selected row of the byte view is decoded in a strip under it
   (integers in both byte orders, a float, the text), outside the
   sideways scroller; so are the bars of what scrolls sideways (a table,

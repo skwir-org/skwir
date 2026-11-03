@@ -1,6 +1,7 @@
 //! What the inspector works out about rows before it draws them: how wide a
-//! table's columns are and which hold numbers, the order a click on a header
-//! asks for, and what the bytes of a selected hex row mean. Pure, so it is
+//! table's columns are (and how wide the user dragged them) and which hold
+//! numbers, the order a click on a header asks for, and what the bytes of a
+//! selected hex row mean. Pure, so it is
 //! tested without a window; the shape is computed on the worker that builds
 //! the `Display`, never while painting.
 use skwir_core::inspection::Row;
@@ -20,6 +21,65 @@ const CHAR: f32 = 7.5;
 const PADDING: f32 = 18.;
 const NARROWEST: f32 = 56.;
 const WIDEST: f32 = 320.;
+
+/// What a column dragged by its edge may be: narrow enough to set aside,
+/// wide enough to read a long cell whole (a cell draws its first 512
+/// characters).
+const DRAGGED_NARROWEST: f32 = 40.;
+const DRAGGED_WIDEST: f32 = 1600.;
+
+/// The widths the user gave a table's columns by dragging their edges, in
+/// place of the shape's. They are kept while the header is the one they
+/// were given for (the next rows of a CSV), and forgotten with another (a
+/// spreadsheet's next sheet) or another file, whose `State` starts empty.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Dragged {
+    header: Vec<String>,
+    widths: Vec<Option<f32>>,
+}
+
+impl Dragged {
+    /// A table came with `header`: the widths stay if it is theirs.
+    pub fn keep_for(&mut self, header: &[String]) {
+        if self.header != header {
+            self.header = header.to_vec();
+            self.widths.clear();
+        }
+    }
+
+    /// Column `column` is `width` wide, within what a drag may make it.
+    pub fn set(&mut self, column: usize, width: f32) {
+        if self.widths.len() <= column {
+            self.widths.resize(column + 1, None);
+        }
+        self.widths[column] = Some(width.clamp(DRAGGED_NARROWEST, DRAGGED_WIDEST));
+    }
+
+    /// Column `column` is as wide as its content again.
+    pub fn forget(&mut self, column: usize) {
+        if let Some(width) = self.widths.get_mut(column) {
+            *width = None;
+        }
+    }
+
+    /// Column `column`'s width: the one dragged, else the shape's; `None`
+    /// past the shape's columns.
+    pub fn width(&self, shape: &Shape, column: usize) -> Option<f32> {
+        let dragged = self.widths.get(column).copied().flatten();
+        dragged.or_else(|| shape.widths.get(column).copied())
+    }
+
+    /// Every column's width: the one dragged, else the shape's.
+    pub fn widths(&self, shape: &Shape) -> Vec<f32> {
+        let mut widths = shape.widths.clone();
+        for (width, dragged) in widths.iter_mut().zip(&self.widths) {
+            if let Some(dragged) = dragged {
+                *width = *dragged;
+            }
+        }
+        widths
+    }
+}
 
 /// A number as people write one: digits with an optional sign, a decimal
 /// point, thousands separators, a percent sign or a currency mark.
@@ -214,6 +274,35 @@ mod tests {
         assert_eq!(number("1e3"), Some(1000.));
         assert_eq!(number("—"), None);
         assert_eq!(number("v2"), None);
+    }
+
+    #[test]
+    fn a_dragged_width_stays_with_its_header() {
+        let header = ["name", "qty"].map(String::from);
+        let shape = shape(&header, &rows(&[&["apple", "3"]]));
+        let mut dragged = Dragged::default();
+        dragged.keep_for(&header);
+        assert_eq!(dragged.widths(&shape), shape.widths, "nothing dragged");
+        dragged.set(0, 500.);
+        dragged.set(1, 2.);
+        // A column past the shape's (a drag on the last of a short row) is
+        // kept, never drawn by itself.
+        dragged.set(7, 90.);
+        assert_eq!(dragged.widths(&shape), [500., DRAGGED_NARROWEST]);
+        assert_eq!(dragged.width(&shape, 1), Some(DRAGGED_NARROWEST));
+        assert_eq!(dragged.width(&shape, 2), None);
+        // The next rows of the same table keep them.
+        dragged.keep_for(&header);
+        assert_eq!(dragged.widths(&shape)[0], 500.);
+        dragged.set(0, 1e6);
+        assert_eq!(dragged.widths(&shape)[0], DRAGGED_WIDEST);
+        // A double click on the edge gives the column its own width back.
+        dragged.forget(0);
+        dragged.forget(30);
+        assert_eq!(dragged.widths(&shape)[0], shape.widths[0]);
+        // Another header: the widths were not given for it.
+        dragged.keep_for(&["date".to_owned(), "qty".to_owned()]);
+        assert_eq!(dragged.widths(&shape), shape.widths);
     }
 
     #[test]

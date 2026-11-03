@@ -4922,6 +4922,7 @@ impl Shell {
             .on_drag_move(cx.listener(Self::on_sidebar_drag))
             .on_drag_move(cx.listener(Self::on_dock_drag))
             .on_drag_move(cx.listener(Self::on_column_drag))
+            .on_drag_move(cx.listener(Self::on_table_column_drag))
             .on_mouse_up(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, _| {

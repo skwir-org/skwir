@@ -672,6 +672,8 @@ pub struct State {
     page_starts: Vec<(usize, usize)>,
     /// The column a table is ordered by, and whether ascending.
     sort: Option<(usize, bool)>,
+    /// The widths a table's columns were dragged to (`table_column_edge`).
+    pub(crate) dragged: crate::inspector_rows::Dragged,
     /// Scrolling past the end of a section goes to the next one: the wheel
     /// must already rest on the edge (`at_edge`) and then mean it (`turn`).
     turn: crate::reader_scroll::WheelTurn,
@@ -800,6 +802,7 @@ impl Default for State {
             section_input: None,
             page_starts: Vec::new(),
             sort: None,
+            dragged: crate::inspector_rows::Dragged::default(),
             turn: crate::reader_scroll::WheelTurn::default(),
             at_edge: 0,
             land_at_end: false,
@@ -938,6 +941,7 @@ impl State {
             sought.current = None;
         }
         self.request.offset = data.position;
+        self.dragged.keep_for(&data.columns);
         // Whether it is the source is the worker's to say: its type's
         // choice (`preview::SourceTypes`), where the file has one.
         if let Some(origin) = &display.origin {
@@ -3486,6 +3490,12 @@ pub fn content(
     }
     let data = display.data.clone();
     let shape = display.table.clone();
+    // A table's columns as wide as their content, or as the user dragged
+    // them (`State::dragged`): the rows and the header draw the same.
+    let widths: Option<Arc<[f32]>> = shape
+        .as_deref()
+        .map(|shape| state.dragged.widths(shape).into());
+    let header_widths = widths.clone();
     let images = display.images.clone();
     // The blocks the rows draw, reported after layout so the pictures they
     // show can be asked for (`inspector_pictures`).
@@ -3633,9 +3643,7 @@ pub fn content(
     // A table is as wide as its columns, every row's cells counted (a CSV's
     // rows need not agree with its header): its rows and header stop at the
     // last column's rule, so no tint past it reads as more data.
-    let grid = shape
-        .as_deref()
-        .map(|shape| shape.widths.iter().sum::<f32>());
+    let grid = widths.as_deref().map(|widths| widths.iter().sum::<f32>());
     let list = gpui::list(state.list.clone(), move |index, window, _| {
         if Some(index) == spacer {
             // As tall as the window, so taller than the view: the list
@@ -3788,9 +3796,9 @@ pub fn content(
             }
             // A row short of the table's columns draws the rest empty, so
             // its rules go on to the last.
-            let count = shape
+            let count = widths
                 .as_ref()
-                .map_or(0, |shape| shape.widths.len())
+                .map_or(0, |widths| widths.len())
                 .max(r.cells.len());
             for column in 0..count {
                 let cell = r.cells.get(column).map_or("", String::as_str);
@@ -3807,7 +3815,7 @@ pub fn content(
                     div()
                         .id(("cell", column))
                         .optional_tooltip(clip.tooltip(None))
-                        .w(px(column_width(shape.as_deref(), data.kind, column)))
+                        .w(px(column_width(widths.as_deref(), data.kind, column)))
                         .flex_none()
                         .when(data.kind == InspectionKind::Table, |d| {
                             d.px_2()
@@ -3959,10 +3967,9 @@ pub fn content(
         }
         // A column only some rows reach has a header too, unnamed, so the
         // rules above and below line up.
-        let count = display
-            .table
+        let count = header_widths
             .as_ref()
-            .map_or(0, |shape| shape.widths.len())
+            .map_or(0, |widths| widths.len())
             .max(display.data.columns.len());
         for index in 0..count {
             let column = display.data.columns.get(index).map_or("", String::as_str);
@@ -3982,13 +3989,14 @@ pub fn content(
                     .id(("inspect-column", index))
                     .when(table, |d| d.optional_tooltip(clip.tooltip(None)))
                     .w(px(column_width(
-                        display.table.as_deref(),
+                        header_widths.as_deref(),
                         display.data.kind,
                         index,
                     )))
                     .flex_none()
                     .when(table, |d| {
-                        d.px_2()
+                        d.relative()
+                            .px_2()
                             .py(px(4.))
                             .border_r_1()
                             .border_color(theme.border)
@@ -4007,7 +4015,8 @@ pub fn content(
                                 );
                             }))
                     })
-                    .child(title),
+                    .child(title)
+                    .when(table, |d| d.child(table_column_edge(index, cx))),
             );
         }
         body = body.child(header);
@@ -4195,16 +4204,57 @@ pub fn content(
     }
 }
 
-fn column_width(
-    shape: Option<&crate::inspector_rows::Shape>,
-    kind: InspectionKind,
-    index: usize,
-) -> f32 {
+/// Payload of a drag on the edge of a table's column in the preview.
+#[derive(Clone, Copy)]
+pub struct TableColumnResize(pub usize);
+
+/// The right edge of a table's header cell, inside its rule: dragged, the
+/// column follows the pointer (`Shell::on_table_column_drag`); a double
+/// click gives it back the width its content gave it.
+fn table_column_edge(column: usize, cx: &mut Context<Shell>) -> gpui::Stateful<gpui::Div> {
+    crate::elements::edge::edge(
+        ("table-column-edge", column),
+        crate::elements::edge::Side::Right,
+        TableColumnResize(column),
+        move |shell| shell.preview.inspection.dragged.forget(column),
+        cx,
+    )
+}
+
+impl Shell {
+    /// A table column's edge dragged: the column is as much wider as the
+    /// pointer moved right since the drag began, narrower as it moved left.
+    pub(crate) fn on_table_column_drag(
+        &mut self,
+        ev: &gpui::DragMoveEvent<TableColumnResize>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let column = ev.drag(cx).0;
+        let x = f32::from(ev.event.position.x);
+        let preview = &mut self.preview;
+        let Some(PreviewContent::Inspection(display)) = &preview.content else {
+            return;
+        };
+        let Some(shape) = display.table.as_deref() else {
+            return;
+        };
+        let dragged = &mut preview.inspection.dragged;
+        let pressed = self.edge_pressed;
+        let (start_x, start_width) = *self
+            .edge_start
+            .get_or_insert_with(|| (pressed, dragged.width(shape, column).unwrap_or(140.)));
+        dragged.set(column, start_width + (x - start_x));
+        cx.notify();
+    }
+}
+
+fn column_width(widths: Option<&[f32]>, kind: InspectionKind, index: usize) -> f32 {
     if kind == InspectionKind::Hex {
         [140., 400., 148.].get(index).copied().unwrap_or(140.)
     } else {
-        shape
-            .and_then(|shape| shape.widths.get(index).copied())
+        widths
+            .and_then(|widths| widths.get(index).copied())
             .unwrap_or(140.)
     }
 }

@@ -359,9 +359,15 @@ pub struct Shell {
     pub tab_wheel: crate::reader_scroll::WheelTurn,
     pub column_widths: crate::views::list::PerColumn<f32>,
     /// Where the pointer and the size were as an edge's drag began, for an
-    /// edge whose area grows by the pointer's travel (a list column's).
-    /// Every edge's drag clears it as it starts (`elements::edge`).
+    /// edge whose area grows by the pointer's travel (a list column's, a
+    /// table preview's): the pointer where it pressed the edge
+    /// (`edge_pressed`), the size at the drag's first move. Every press on
+    /// an edge clears it (`elements::edge`).
     pub edge_start: Option<(f32, f32)>,
+    /// Where the pointer pressed an edge, across. A drag measures from
+    /// there: gpui reports its moves from the one after the move that
+    /// began it, which would leave the area behind the pointer.
+    pub edge_pressed: f32,
     pub preview: PreviewState,
     /// A track kept playing while the selection moves (`player.rs`).
     pub player: crate::player::PlayerState,
@@ -709,6 +715,7 @@ impl Shell {
             tab_wheel: crate::reader_scroll::WheelTurn::default(),
             column_widths: crate::views::list::default_widths(),
             edge_start: None,
+            edge_pressed: 0.,
             preview: PreviewState::default(),
             player: crate::player::PlayerState::default(),
             palette: None,

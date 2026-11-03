@@ -1,6 +1,6 @@
 //! The edge the user drags to size an area: the sidebar's, the preview's,
 //! the split's, the archive's view's, the dock's, the terminal's, a list
-//! column's. One element for all: a strip over the area's border, the
+//! column's, a table preview's column's. One element for all: a strip over the area's border, the
 //! resize cursor, the handle's color under the pointer, a double click
 //! back to the size the area ships with, and nothing following the
 //! pointer while dragged (the edge itself follows). What a drag means is
@@ -35,15 +35,23 @@ pub fn edge<T: 'static>(
     cx: &mut Context<Shell>,
 ) -> Stateful<Div> {
     let hover = cx.global::<Theme>().handle;
-    let shell = cx.weak_entity();
     let el = div()
         .id(id)
         .absolute()
         .top_0()
         .hover(move |style| style.bg(hover))
         // The press is the edge's: nothing under it starts a band or
-        // selects.
-        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        // selects. A drag starts clean, measured from where it was pressed
+        // (`Shell::edge_pressed`): a release missed outside the window
+        // cannot leave another drag's start behind.
+        .on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                this.edge_start = None;
+                this.edge_pressed = f32::from(event.position.x);
+                cx.stop_propagation();
+            }),
+        )
         .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
             if event.click_count() == 2 {
                 reset(this);
@@ -51,12 +59,7 @@ pub fn edge<T: 'static>(
                 cx.notify();
             }
         }))
-        .on_drag(drag, move |_, _, _, cx| {
-            // A drag starts clean: a release missed outside the window
-            // cannot leave another drag's start behind.
-            shell.update(cx, |shell, _| shell.edge_start = None).ok();
-            cx.new(|_| Nothing)
-        });
+        .on_drag(drag, |_, _, _, cx| cx.new(|_| Nothing));
     match side {
         Side::Left => el.left_0().h_full().w(px(THICKNESS)),
         Side::Right => el.right_0().h_full().w(px(THICKNESS)),

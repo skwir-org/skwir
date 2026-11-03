@@ -455,6 +455,10 @@ PDFs and office documents, books, comics, e-mail, notebooks, pictures,
 audio and video, fonts, 3D models, circuit boards, maps and tracks,
 archives, and the bytes of any file.
 
+- A table (CSV, a spreadsheet, a database, JSON Lines) sorts by a
+  column when you click its header. Drag the edge at a header's right to
+  widen or narrow its column, and double-click it to fit the column to
+  its content again; the widths stay while the file is shown.
 - A file shown other than as written (Markdown, a table, a map, JSON
   formatted) has **Source** in the bar: lit, it shows the file's own
   text; pressed again, the rendered view.

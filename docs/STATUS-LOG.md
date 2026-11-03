@@ -10357,3 +10357,44 @@ way. `just lint` clean; `just test` 2957 passed, 30 skipped. New test:
 `the_strip_offers_one_action_s_buttons_or_the_whole_queue_s`. Not
 checked: a screen reader on the named buttons, Pause all with a print
 running beside a plan, release-check.
+
+## Table columns (2026-11-03)
+
+Asked by the user: can the columns of CSV previews, and of similar table
+previews, be resized?
+
+- **A table preview's header cell has an edge at its right**
+  (`inspector::table_column_edge`, the shared `elements::edge`, inside
+  the column's rule): dragged, the column follows the pointer, 40 to
+  1600 px (a cell draws its first 512 characters); a double click gives
+  it back the width estimated from its content. It applies to every
+  `InspectionKind::Table`: CSV and TSV, workbooks, SQLite, JSON Lines,
+  playlists. A press on the edge does not sort.
+- **The widths are the file's** (`inspector_rows::Dragged`, in the
+  inspector's `State`): drawn in place of the shape's for the rows, the
+  header and the table's width; kept while the header is the one they
+  were given for (a CSV's next rows, the file read again), dropped with
+  another header (a workbook's next sheet) and with another file. Not
+  remembered past it, as the sort is not.
+- **Edges sized by the pointer's travel measure from the press.** gpui
+  starts a drag on the first move past 2 px and reports moves only after
+  that one, so a column measured from the first reported move stayed
+  behind the pointer by that first step (73 px of 200 in a drag made of
+  three moves). The edge's press records the pointer (`Shell::
+  edge_pressed`); the list view's columns use it too.
+- Markdown's tables (a document, a README, a book) are left as they
+  are: their columns share the reading width and wrap, so nothing in
+  them is cut.
+
+Checked on Xvfb (:93, lavapipe), a synthetic CSV of 300 rows and six
+columns: the description column's edge dragged 200 px right moved its
+rule from x 1026 to 1226 (before the press fix: 73 px); a double click
+there put it back at 1026, the header unsorted; the name column dragged
+far left stopped at 40 px, its cells cut with an ellipsis; a click on
+"height cm" sorted with the widths kept; a TSV beside it showed its own
+widths, and the CSV again its content's. The file list's Modified
+column dragged 100 px left moved 99 px. `cargo clippy -p skwir-ui
+--all-targets -D warnings` clean; skwir-ui's tests 485 passed (new:
+`a_dragged_width_stays_with_its_header`). Not checked: a workbook's next
+sheet or a CSV's next rows with dragged widths (unit test only), the
+sideways bar after widening, Wayland, release-check.

@@ -572,6 +572,20 @@ Activity's header holds Cancel all, Waiting's own says "Cancel waiting"
 
 Checks in `docs/STATUS-LOG.md` (2026-11-03, "Cancel all").
 
+## Table columns sized by hand (2026-11-03)
+
+Asked by the user: resizable columns in CSV previews and the like. A
+table preview's header cell (CSV, TSV, a workbook, a database, JSON
+Lines, a playlist) has an edge at its right: dragged, the column is
+40 to 1600 px; double-clicked, it is its content's width again. The
+widths are the file's, kept while its header stays (the next rows) and
+forgotten with another sheet or file (`inspector_rows::Dragged`).
+Markdown's tables, which share the reading width and wrap, are not
+sized by hand. Edges sized by the pointer's travel (the list's columns
+too) now measure from the press, not from gpui's first reported move.
+
+Checks in `docs/STATUS-LOG.md` (2026-11-03, "Table columns").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of

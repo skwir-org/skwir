@@ -1200,7 +1200,11 @@ listing them on a worker (`choose.rs`; `option` adds a flag such as
   location and filter, are remembered with `core.startup = last` (Tabs,
   above).
 - **Edges** dragged to size an area are one element (`elements/edge.rs`):
-  double click restores the default; shared room via `edge::share`.
+  double click restores the default; shared room via `edge::share`. An
+  area that grows by the pointer's travel (a list column, a table
+  preview's) measures it from where the edge was pressed
+  (`Shell::edge_pressed`), never from the first move reported: gpui
+  starts a drag on a move past 2 px and reports moves only after it.
 - The preview panel's width is bounded by what the panes and sidebar
   need (`preview::max_width`, from the window's width, no fixed cap); a
   small window draws it narrower without rewriting the remembered width.

@@ -201,7 +201,7 @@ impl Shell {
         let detail = ev.drag(cx).0;
         let (start_x, start_width) = *self
             .edge_start
-            .get_or_insert((x, self.column_widths[detail]));
+            .get_or_insert((self.edge_pressed, self.column_widths[detail]));
         self.column_widths[detail] = clamp_width(start_width + (start_x - x));
         cx.notify();
     }

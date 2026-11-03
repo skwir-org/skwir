@@ -423,7 +423,9 @@ server and network. Undo history is cleared when Skwir exits.
   (Contents, the text size, Full preview) as you go from one to the next. Read
   a page at a time, a notch of the wheel turns one page, from a page that fits
   the panel too; read continuously, it moves the pages 120 px, as browsers do,
-  where it moved 60, a touchpad as before. Find says that nothing matches in
+  where it moved 60, a touchpad as before. A table's columns (a CSV, a
+  spreadsheet, a database) are sized by dragging the edge of their header, a
+  double click fitting one to its content again. Find says that nothing matches in
   its own popup, under what you typed, rather than at the bottom of the
   window; so does the hex view's
   "Match at 0x…". A protected EPUB says so rather than show its encrypted
