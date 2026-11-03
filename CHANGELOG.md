@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.3.0 (2026-11-03)
 
 Skwir 0.3 reaches servers, phones and cameras: type an address and it mounts
 the server with a tool you have, lists the servers your network announces and

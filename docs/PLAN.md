@@ -31,21 +31,14 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
 6. **Agent-ready:** commands are data, plans before apply, stable
    identity (ADR-049), metadata with provenance.
 
-## Current status (2026-10-28)
+## Current status (2026-11-03)
 
 - **Where:** named Skwir (skwir.org, application id `org.skwir.skwir`),
-  version 0.2.0, released 2026-10-20 on GitHub and the AUR's three
-  bases; 0.1.0 was [released](#release-01-linux) 2026-10-13. Since
-  0.2.0, toward 0.3.0: servers configured from Skwir (ADR-086, ADR-087),
-  phones listed before they are mounted and KDE's reached through kmtpd
-  (ADR-096, ADR-097), the address field as one field for filtering and
-  searching (ADR-098), menus with submenus (ADR-099), F1 by topic
-  (ADR-100), FB2 and Mobipocket books (ADR-106); on 2026-10-28 gpui
-  from Zed's main of that week, Rust
-  1.99.1, PDFium chromium/8125, and a whole review fixed (below). Phases 0 to
-  4, 5a and 6 pass their gates. Maps and Notes everywhere are built,
-  their gates not closed, as is much that no phase planned
-  ([Built beyond the plan](#built-beyond-the-plan)).
+  version 0.3.0, dated 2026-11-03; 0.2.0 was released 2026-10-20 on
+  GitHub and the AUR's three bases, 0.1.0 [released](#release-01-linux)
+  2026-10-13. Phases 0 to 4, 5a and 6 pass their gates. Maps and Notes
+  everywhere are built, their gates not closed, as is much that no phase
+  planned ([Built beyond the plan](#built-beyond-the-plan)).
 - **Next:** skwird's steps (ADR-050) and Phase 7, which the user put
   after the release (2026-10-07). [Remote folders](#remote-folders)
   were built on 2026-10-21 (ADR-077): what they leave is in their
@@ -72,17 +65,23 @@ Binding, from ADR-000 (AGENTS.md has the working rules):
   of 150 ms: a median of 119 ms on Zed's gpui and 109 on 0.2.2, the least
   110 and 100 (ten starts each, alternated). `just bench-check` meets all
   44 budgets (2026-10-18, quiet).
-- **Latest work (2026-10-14 to 10-20), in 0.2.0:** fonts by role and
-  the desktop's colors and fonts (ADR-071, ADR-073); settings by subject
-  (ADR-072); address completion (ADR-070); 3D models turned on the GPU,
-  STEP, IGES and Rhino meshes (ADR-067, ADR-069); Full preview
-  (ADR-068); a held key's repeats (ADR-066); screen readers (ADR-065);
-  gpui from Zed's main branch on wgpu (ADR-064); the desktop's file
-  clipboard (ADR-062); DjVu (ADR-061); code colored by Ferroni (ADR-060);
-  the preview's fullscreen and slideshow, links found in text, the
-  terminal's menu and keys, the AUR's `skwir-bin` and `skwir-git`. Since
-  0.2.0: builds to try for Windows and macOS made on Linux (ADR-074,
-  ADR-075). Earlier work, day by day: `docs/STATUS-LOG.md`.
+- **Latest work (2026-10-21 to 11-03), in 0.3.0:** remote folders
+  (ADR-077 to ADR-088): servers mounted by sshfs, GVfs, KIO or rclone,
+  configured from Skwir, found nearby, copies in batches retried from
+  where they stopped; phones and cameras listed before they are mounted,
+  KDE's reached through kmtpd (ADR-096, ADR-097); the address field as
+  one field (ADR-098); menus with submenus (ADR-099); F1 by topic
+  (ADR-100); a preview reading its file once (ADR-101, ADR-102); text a
+  screen at a time (ADR-103); FB2 and Mobipocket books (ADR-106);
+  filters kept until taken off, and places with their filters (ADR-107
+  to ADR-109); tree-sitter grammars (ADR-110); printing (ADR-111);
+  smaller copies (ADR-112); speed and time left, the footer's strip and
+  Activity, finishing without the window (ADR-113 to ADR-115); the
+  Undo history (ADR-079 amended). gpui from Zed's main of 2026-10-28,
+  Rust 1.99.1, PDFium chromium/8125, every dependency at its newest on
+  2026-11-02. The reviews of 10-23, 10-28, 10-30, 11-01, 11-02 and 11-03
+  are fixed; what they leave is under [What is left](#what-is-left).
+  Earlier work, day by day: `docs/STATUS-LOG.md`.
 
 | Phase or plan | State | Planned size |
 |---|---|---|
