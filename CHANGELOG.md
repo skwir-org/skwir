@@ -29,10 +29,15 @@ offers builds to try on Windows and macOS.
   within one server on the server. Actions that share nothing run at once, and
   an action an error stopped is retried from where it stopped.
 - **What runs** stands at the end of the footer, saying how fast it goes and
-  how long it has left; `Ctrl+Shift+J` opens Activity, with each action, what
-  waits its turn and what was done this session. Closing the window stops
-  nothing: Skwir finishes without it, an icon in the tray, and the desktop is
-  told when a long action ends.
+  how long it has left, and how far the whole queue has come ("2 of 3 · 47 % ·
+  1 waiting"); `Ctrl+Shift+J` opens Activity, with each action, what waits its
+  turn and what was done this session. Closing the window stops nothing: Skwir
+  finishes without it, an icon in the tray, and the desktop is told when a long
+  action ends.
+- **Undo history**: the arrow beside Undo in the footer (or `Ctrl+Alt+Z`)
+  lists what you did, each with its own Undo. An action can be undone on its
+  own unless a later one touched the same files: then it says which, and offers
+  to undo them together.
 - **The address field**: `Ctrl+Shift+F` filters this folder and `Ctrl+F`
   searches it and its subfolders, both as you type, one switch between them.
   The field offers places, tags, tabs, history and commands; `#tag` finds a

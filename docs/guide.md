@@ -36,8 +36,9 @@ work where the keyboard is, by topic.
   and copies them for a report.
 - **Footer.** Each pane's footer shows how many items it lists, what is
   selected and what it weighs. The last pane's footer also shows Undo,
-  what waits for a paste, the shelf, plans waiting for review, and the
-  player.
+  what waits for a paste, the shelf, plans waiting for review, the
+  player, and what runs: how far the whole queue has come ("2 of 3 · 47 %
+  · 1 waiting"), each action counting one.
 - **Toasts** say what was done ("Moved “a.txt” to Trash"), with Undo. A
   long plan shows its progress with Pause and Cancel: how much of how
   much, and under the bar how fast it goes and how long it has left
@@ -247,6 +248,12 @@ sort, hidden files (`Ctrl+H` or `Alt+.`) and the zoom (`Ctrl++`,
   file has other names).
 - **Undo and Redo:** `Ctrl+Z`, `Ctrl+Shift+Z` (or `Ctrl+Y`), for every
   change Skwir made, in order. The history lasts while Skwir runs.
+  The arrow beside Undo in the footer (or a right click on Undo,
+  `Ctrl+Alt+Z`) opens it: each action with its own Undo, an undone one
+  with its own Redo. An action is undone on its own unless one done after
+  it touched the same files; then its row names that one, which a click
+  on the name shows, and "Undo both" takes the two back together, the
+  later first.
 - **Plans.** A change to many files, and anything an agent or a plugin
   proposes, is shown as steps to review first. `Enter` applies it,
   `Escape` dismisses it.
