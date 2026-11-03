@@ -2199,12 +2199,12 @@ fn task_card(
 }
 
 impl Shell {
-    /// Cancel `plan`, from its card or the strip: it says it stops until
-    /// it let go of what it held (operations.md, "Running").
     /// `ui.activity_cancel_all`: cancel every action under way and every
     /// one waiting its turn, what waits first, so that none starts as
     /// another ends. What each did stays, undoable; what it left half done
-    /// is taken back, as by its own Cancel.
+    /// is taken back, as by its own Cancel. What runs is the executor's,
+    /// read after what waited is cancelled: one that started meanwhile, or
+    /// before the window took in that it did, is cancelled too.
     pub(crate) fn activity_cancel_all(&mut self) {
         let asked: Vec<u64> = self
             .app
@@ -2214,7 +2214,13 @@ impl Shell {
             .map(|waiting| waiting.asked)
             .collect();
         self.app.executor.cancel_waiting_all(&asked);
-        let plans: Vec<PlanId> = self.work.borrow().running.iter().map(|r| r.plan).collect();
+        let plans: Vec<PlanId> = self
+            .app
+            .executor
+            .running()
+            .iter()
+            .map(|running| running.plan)
+            .collect();
         for plan in plans {
             self.cancel_plan(plan);
         }
@@ -2245,6 +2251,8 @@ impl Shell {
         }
     }
 
+    /// Cancel `plan`, from its card or the strip: it says it stops until
+    /// it let go of what it held (operations.md, "Running").
     pub(crate) fn cancel_plan(&mut self, plan: PlanId) {
         if self.app.executor.cancel(plan)
             && let Some(running) = self
