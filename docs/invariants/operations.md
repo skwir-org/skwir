@@ -223,12 +223,18 @@ copies, volumes or the trash's operations. Binding, like `AGENTS.md`.
   ADR-079, 13): taken back alone when no plan asked after it, its entry
   still in the history, running or waiting, touched what it did
   (`JournalEntry::blocked_by`, worked out as each entry joins its stack;
-  what runs or waits, compared as it is asked), else refused, saying
-  which did, and nothing taken back. What an entry keeps of what its
-  runs touched is bounded and only ever wider (`footprint::Kept`): never
-  compare footprints as the history is read or drawn, nor keep an
-  entry's whole. An undone entry is redone alone by the same rule on the
-  redo stack (`redo`'s `entry`). A step's
+  what runs or waits, by the entries each one met, `Job::meets`, worked
+  out as it is measured and as an entry joins after it), else refused,
+  saying which did, and nothing taken back. What an entry keeps of what
+  its runs touched is bounded and only ever wider (`footprint::Kept`);
+  what joins, runs or waits is compared by its footprint whole
+  (`Kept::exact`) with what the entries before it keep, so widening only
+  holds the widened entry's own Undo: never compare footprints as the
+  history is read or drawn, nor keep an entry's whole. An undone entry is redone alone by the same rule on the
+  redo stack (`redo`'s `entry`). An entry being taken back stays on its
+  stack until its run ends (`JournalEntry::going`), and a run never takes
+  an entry back while one after it on its stack that touched what it did
+  is there: it refuses it as it starts, whatever chose it. A step's
   footprint names what its `describe` and its companions touch
   (`Footprint::made_with`, `read_with`: their places by the companions'
   rules `Volumes` carries, none looked at, a companions' folder such as

@@ -226,10 +226,10 @@ impl Reveal {
     }
 }
 
-/// What runs and is shown: the plans worth a card, then the tasks (a print);
-/// and what the strip counts beside them in this spell of work (ADR-114,
-/// amended 2026-11-03): the actions that ended, and those waiting that
-/// will count (`Waiting::weighs`).
+/// What runs and is shown: the plans that count as an action, each a card,
+/// then the tasks (a print); and what the strip counts beside them in this
+/// spell of work (ADR-114, amended 2026-11-03): the actions that ended, and
+/// those waiting that count (`Waiting::counts`, the same test).
 pub(crate) struct Under {
     pub plans: Vec<(Running, Transfer)>,
     pub tasks: Vec<skwir_core::task::Running>,
@@ -255,11 +255,15 @@ pub(crate) struct Summary {
     /// From 0 to 1: each action of the spell counting one, those ended
     /// whole, those running by their own share (bytes or items, as their
     /// cards say), those waiting nothing: so it never goes back as one
-    /// ends, only as more is asked.
+    /// ends, only as more is asked, or as an action stopped goes on, by
+    /// what it has left.
     pub fraction: f32,
     /// The share of each running one, plans then tasks, as `under` holds
-    /// them: what Activity's header draws.
+    /// them: what Activity's header draws. Empty while nothing runs and
+    /// something waits.
     pub shares: Vec<f32>,
+    /// Those that ended.
+    pub ended: usize,
     /// How far the queue has started, the ended and the running…
     pub at: usize,
     /// …of every action of the spell, those waiting too.
@@ -305,12 +309,35 @@ pub(crate) fn summary(under: &Under) -> Option<Summary> {
     Some(Summary {
         fraction,
         shares,
+        ended: under.ended,
         at,
         of,
         waiting: under.waiting,
         left,
         paused,
         stopping,
+    })
+}
+
+impl Summary {
+    /// Whether it has a share to show: something runs, or something of the
+    /// spell ended. Only waiting, nothing ended, there is none: the desktop
+    /// draws none (the taskbar, the presence), the strip says how many wait.
+    pub(crate) fn has_share(&self) -> bool {
+        !self.shares.is_empty() || self.ended > 0
+    }
+}
+
+/// What Activity's header fills, one segment an action of the spell, as
+/// `summary` counts them: full for those ended, as far as each running one
+/// went, empty for those waiting. `None` past `SEGMENTS`: one bar, the
+/// segments too thin to tell apart.
+fn segments(summary: &Summary) -> Option<Vec<f32>> {
+    (summary.of <= SEGMENTS).then(|| {
+        std::iter::repeat_n(1., summary.ended)
+            .chain(summary.shares.iter().copied())
+            .chain(std::iter::repeat_n(0., summary.waiting))
+            .collect()
     })
 }
 
@@ -323,30 +350,36 @@ fn percent(fraction: f32) -> String {
 
 /// What the strip says of how it goes: the share done and the time left
 /// of what runs, then how many wait; paused, stopping, or sending to its
-/// server instead.
+/// server instead. While nothing runs, the share of what ended, if any,
+/// and how many wait.
 fn how(summary: &Summary, sending_files: Option<usize>) -> String {
     let at = percent(summary.fraction);
     if summary.stopping {
         return "stopping…".to_owned();
     }
-    let said = if summary.paused {
-        format!("paused at {at}")
+    let said = if summary.shares.is_empty() {
+        (summary.ended > 0).then_some(at)
+    } else if summary.paused {
+        Some(format!("paused at {at}"))
     } else if let Some(files) = sending_files {
-        sending(files)
+        Some(sending(files))
     } else {
-        match summary.left {
+        Some(match summary.left {
             Some(left) => format!("{at} · {}", format::time_left(left)),
             None => at,
-        }
+        })
     };
-    match summary.waiting {
-        0 => said,
-        waiting => format!("{said} · {waiting} waiting"),
-    }
+    let waiting = (summary.waiting > 0).then(|| format!("{} waiting", summary.waiting));
+    [said, waiting]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// The strip's words, richest first: what runs, how far the queue started
-/// and how; that without what runs; the share alone.
+/// and how; that without what runs; the share alone. While only something
+/// waits, with nothing of the spell ended yet, how many wait, in each.
 pub(crate) fn words(under: &Under, summary: &Summary) -> [String; 3] {
     let sending_files = if let [(_, t)] = under.plans.as_slice()
         && under.tasks.is_empty()
@@ -357,25 +390,31 @@ pub(crate) fn words(under: &Under, summary: &Summary) -> [String; 3] {
     };
     let how = how(summary, sending_files);
     let what = match (under.plans.as_slice(), under.tasks.as_slice()) {
-        ([(running, _)], []) => capitalized(&running.title),
-        ([], [task]) => capitalized(&task.title),
-        ([], []) => "Waiting".to_owned(),
-        _ => format::count(under.count(), "action"),
+        ([(running, _)], []) => Some(capitalized(&running.title)),
+        ([], [task]) => Some(capitalized(&task.title)),
+        ([], []) => None,
+        _ => Some(format::count(under.count(), "action")),
     };
     let least = if summary.stopping {
         "Stopping…".to_owned()
+    } else if summary.shares.is_empty() && summary.ended == 0 {
+        how.clone()
     } else {
         percent(summary.fraction)
     };
-    if summary.of > 1 {
-        let queue = format!("{} of {}", summary.at, summary.of);
-        return [
-            format!("{what} · {queue} · {how}"),
-            format!("{queue} · {how}"),
-            least,
-        ];
-    }
-    [format!("{what} · {how}"), capitalized(&how), least]
+    // How far the queue started, once something of it did.
+    let queue =
+        (summary.of > 1 && summary.at > 0).then(|| format!("{} of {}", summary.at, summary.of));
+    let rich = [what, queue.clone(), Some(how.clone())]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" · ");
+    let without = match queue {
+        Some(queue) => format!("{queue} · {how}"),
+        None => capitalized(&how),
+    };
+    [capitalized(&rich), without, least]
 }
 
 impl Shell {
@@ -392,11 +431,13 @@ impl Shell {
     }
 
     /// Whether Activity has something to stand above the footer for, as
-    /// `under` runs: under way, waiting, or stopped.
+    /// `under` runs: under way, waiting (any of what it lists, which a
+    /// count of the queue tells), or stopped.
     fn activity_holds(&self, under: &Under) -> bool {
         self.work.borrow().stopped.is_some()
             || !under.is_empty()
-            || !self.app.executor.waiting().is_empty()
+            || under.waiting > 0
+            || self.app.executor.queued() > 0
     }
 
     /// Whether Activity stands above the footer as `under` runs: pinned,
@@ -547,19 +588,24 @@ const SEGMENTS: usize = 12;
 
 /// Over the cards, while several actions make the spell of work (ADR-114,
 /// amended 2026-11-03): how far the queue started and its share, what is
-/// left of what runs and how many wait, over a bar of one segment each,
-/// full for the `ended`, as far as each running one went, empty for those
-/// waiting; one bar past `SEGMENTS`.
-fn spell_header(summary: &Summary, ended: usize, a11y: bool, theme: &Theme) -> AnyElement {
-    let said = format!(
-        "{} of {} · {}",
-        summary.at,
-        summary.of,
-        percent(summary.fraction)
-    );
+/// left of what runs and how many wait, over a bar of one segment each
+/// (`segments`); one bar past `SEGMENTS`.
+fn spell_header(summary: &Summary, a11y: bool, theme: &Theme) -> AnyElement {
+    // Nothing of it started yet: how many wait, once.
+    let started = summary.at > 0;
+    let said = if started {
+        format!(
+            "{} of {} · {}",
+            summary.at,
+            summary.of,
+            percent(summary.fraction)
+        )
+    } else {
+        format!("{} waiting", summary.waiting)
+    };
     let after = [
         summary.left.map(format::time_left),
-        (summary.waiting > 0).then(|| format!("{} waiting", summary.waiting)),
+        (started && summary.waiting > 0).then(|| format!("{} waiting", summary.waiting)),
     ]
     .into_iter()
     .flatten()
@@ -570,16 +616,13 @@ fn spell_header(summary: &Summary, ended: usize, a11y: bool, theme: &Theme) -> A
     } else {
         theme.accent
     };
-    let bar = if summary.of <= SEGMENTS {
-        let fills = std::iter::repeat_n(1., ended)
-            .chain(summary.shares.iter().copied())
-            .chain(std::iter::repeat_n(0., summary.waiting));
-        div()
-            .flex()
-            .gap(px(3.))
-            .children(fills.map(|fill| div().flex_1().child(small_bar_full(fill, color, theme))))
-    } else {
-        div().child(small_bar_full(summary.fraction, color, theme))
+    let bar = match segments(summary) {
+        Some(fills) => div().flex().gap(px(3.)).children(
+            fills
+                .into_iter()
+                .map(|fill| div().flex_1().child(small_bar_full(fill, color, theme))),
+        ),
+        None => div().child(small_bar_full(summary.fraction, color, theme)),
     };
     div()
         .id("activity-spell")
@@ -779,14 +822,18 @@ pub fn strip(
         return None;
     }
     let open = shell.activity_open();
-    if under.is_empty() && shell.work.borrow().stopped.is_none() && !open {
+    // Shown while anything of the spell runs or waits, an action handed
+    // over to the next included (what is admitted and not yet told
+    // started is counted as waiting).
+    let summary = summary(under);
+    if summary.is_none() && shell.work.borrow().stopped.is_none() && !open {
         return None;
     }
     shell.card_focus(under, cx);
     let focus = shell.strip_focus(cx);
     let stopped = shell.work.borrow().stopped.clone();
     // What it says, richest first, its colour and bar, and what it offers.
-    let (said, color, fraction, offers) = match summary(under) {
+    let (said, color, fraction, offers) = match summary {
         Some(summary) => {
             let color = if summary.paused || summary.stopping {
                 theme.text_muted
@@ -1075,7 +1122,7 @@ fn body(
     );
     // The spell of work as a whole, where it holds several actions.
     if let Some(summary) = summary(under).filter(|s| s.of > 1) {
-        parts.push(spell_header(&summary, under.ended, a11y, theme));
+        parts.push(spell_header(&summary, a11y, theme));
     }
     let cards = under.count();
     for (running, transfer) in &under.plans {
@@ -1104,7 +1151,17 @@ fn body(
     let asked: HashSet<u64> = waiting.iter().map(|w| w.asked).collect();
     shell.activity.waiting.retain(|id, _| asked.contains(id));
     if !waiting.is_empty() {
-        parts.push(waiting_heading(shell, waiting.len(), reveal, theme, cx));
+        // Those that end as they start (a single rename), which the strip
+        // and the header above do not count among those waiting.
+        let quick = waiting.iter().filter(|w| !w.counts).count();
+        parts.push(waiting_heading(
+            shell,
+            waiting.len(),
+            quick,
+            reveal,
+            theme,
+            cx,
+        ));
         let rows: Vec<AnyElement> = waiting
             .iter()
             .map(|w| waiting_row(shell, w, reveal, theme, cx))
@@ -1134,7 +1191,7 @@ fn body(
     }
     // What each answer's Undo can do now, as the History says it.
     let by_plan = if shell.work.borrow().earlier.is_empty() {
-        HashMap::new()
+        Rc::default()
     } else {
         shell.history_by_plan()
     };
@@ -1184,11 +1241,31 @@ fn body(
     parts
 }
 
-/// Over what waits its turn: its name, and Cancel all when there are
-/// several.
+/// What Activity's Waiting heading says of the actions it lists, `quick`
+/// of them ending as they start (a single rename): those the strip and the
+/// header leave out of "N waiting" and the bar, said, so that the count
+/// and the rows agree.
+fn waiting_said(quick: usize) -> String {
+    match quick {
+        0 => "Waiting".to_owned(),
+        quick => format!("Waiting · {} not counted", quick_ones(quick)),
+    }
+}
+
+/// "1 quick one", "2 quick ones".
+fn quick_ones(quick: usize) -> String {
+    match quick {
+        1 => "1 quick one".to_owned(),
+        quick => format!("{quick} quick ones"),
+    }
+}
+
+/// Over what waits its turn: its name, how many the strip counts where some
+/// end as they start, and Cancel all when there are several.
 fn waiting_heading(
     shell: &mut Shell,
     count: usize,
+    quick: usize,
     reveal: &Reveal,
     theme: &Theme,
     cx: &mut Context<Shell>,
@@ -1240,7 +1317,7 @@ fn waiting_heading(
             div()
                 .text_xs()
                 .text_color(theme.text_muted)
-                .child("Waiting"),
+                .child(waiting_said(quick)),
         )
         .children(all)
         .into_any_element()
@@ -1353,6 +1430,13 @@ fn earlier_row(
         .enumerate()
         .filter(|(_, action)| action.command != "retry" || retries)
         .collect();
+    // An Undo that cannot take its action back now says why, as the
+    // History does (ADR-079, 13), rather than being refused pressed: on a
+    // line of its own under the answer, and to a screen reader with the
+    // button, not only in a tooltip.
+    let held = actions
+        .iter()
+        .find_map(|(_, action)| crate::history::undo_held(action, by_plan));
     let mut row = div()
         .id(("activity-earlier", key))
         .role(gpui::Role::ListItem)
@@ -1364,17 +1448,31 @@ fn earlier_row(
         .pl_3()
         .pr_1()
         .child(glyph)
-        .child(crate::elements::clip::clipped(
+        .child(
             div()
-                .id(("activity-earlier-text", key))
+                .flex()
+                .flex_col()
                 .flex_1()
                 .min_w_0()
-                .overflow_hidden()
-                .whitespace_nowrap()
-                .text_ellipsis()
-                .text_xs(),
-            ended.text.clone(),
-        ))
+                .child(crate::elements::clip::clipped(
+                    div()
+                        .id(("activity-earlier-text", key))
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_xs(),
+                    ended.text.clone(),
+                ))
+                // Said whole, wrapped: the keyboard's user reads it here.
+                .children(held.clone().map(|why| {
+                    div()
+                        .min_w_0()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(why)
+                })),
+        )
         .child(
             div()
                 .flex_none()
@@ -1387,9 +1485,11 @@ fn earlier_row(
         let Some(focus) = shell.activity.rows.get(&(key, n)) else {
             continue;
         };
-        // An Undo that cannot take its action back now says why, as the
-        // History does (ADR-079, 13), rather than being refused pressed.
-        if let Some(why) = undo_held(&action, by_plan) {
+        // The held Undo: inert, its why under the answer (`held`), with it
+        // for a screen reader and in its tooltip.
+        if action.command == "undo"
+            && let Some(why) = held.clone()
+        {
             let why: SharedString = why.into();
             row = row.child(
                 controls::inert_button(
@@ -1406,6 +1506,7 @@ fn earlier_row(
                     let accent = theme.accent;
                     move |s| s.border_color(accent)
                 })
+                .when(shell.a11y, |d| d.aria_description(why.clone()))
                 .child(reveal.marker(focus))
                 .tooltip(move |_, cx| crate::toolbar::tooltip(why.clone(), cx)),
             );
@@ -1435,25 +1536,6 @@ fn earlier_row(
         );
     }
     row.into_any_element()
-}
-
-/// Why `action`, an answer's Undo, cannot take its plan back now, as the
-/// History says it (`by_plan`); `None` for another action, or one it takes
-/// back.
-fn undo_held(
-    action: &Action,
-    by_plan: &HashMap<PlanId, skwir_core::op::HistoryRow>,
-) -> Option<String> {
-    if action.command != "undo" {
-        return None;
-    }
-    let plan: PlanId = serde_json::from_value(action.args.get("plan")?.clone()).ok()?;
-    match by_plan.get(&plan) {
-        Some(row) if row.state == skwir_core::op::Done::Undone => Some("Undone already".to_owned()),
-        Some(row) if crate::history::can_now(row) => None,
-        Some(row) => crate::history::why(row),
-        None => Some("No longer in the history".to_owned()),
-    }
 }
 
 /// The card of the running plan `running` in Activity: its title, how far
@@ -1780,7 +1862,10 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{EARLIER, Ended, Summary, Under, how, keep, percent, showing, summary, words};
+    use super::{
+        EARLIER, Ended, Summary, Under, how, keep, percent, segments, showing, summary,
+        waiting_said, words,
+    };
     use crate::toast::Running;
     use skwir_core::op::{PlanId, RunKind, Transfer};
     use std::time::Duration;
@@ -1893,7 +1978,78 @@ mod tests {
         let between = summary(&under(Vec::new(), 2, 1)).unwrap();
         assert!((between.fraction - 2. / 3.).abs() < 1e-6);
         assert!(!between.stopping && !between.paused);
+        assert!(between.has_share());
+        // Only waiting, nothing of it ended: a summary with no share.
+        let first = summary(&under(Vec::new(), 0, 2)).unwrap();
+        assert_eq!((first.at, first.of, first.fraction), (0, 2, 0.));
+        assert!(!first.has_share() && !first.paused && !first.stopping);
         assert!(summary(&under(Vec::new(), 3, 0)).is_none());
+    }
+
+    /// Activity's header draws a segment an action up to twelve, full for
+    /// those ended, as far as each running one went, empty for those
+    /// waiting; one bar past twelve.
+    #[test]
+    fn the_header_draws_a_segment_an_action_up_to_twelve() {
+        let under = |plans: Vec<(Running, Transfer)>, ended: usize, waiting: usize| Under {
+            plans,
+            tasks: Vec::new(),
+            ended,
+            waiting,
+        };
+        let half = (
+            running(1, "copy a", 2),
+            Transfer {
+                ended: 1,
+                ..Transfer::default()
+            },
+        );
+        let twelve = summary(&under(vec![half.clone()], 3, 8)).unwrap();
+        assert_eq!(twelve.of, 12);
+        let fills = segments(&twelve).expect("twelve segments");
+        assert_eq!(fills.len(), 12);
+        assert_eq!(&fills[..4], &[1., 1., 1., 0.5]);
+        assert!(fills[4..].iter().all(|&fill| fill == 0.));
+        let thirteen = summary(&under(vec![half], 3, 9)).unwrap();
+        assert_eq!(thirteen.of, 13);
+        assert_eq!(segments(&thirteen), None, "one bar");
+    }
+
+    /// While nothing runs and something waits, the strip is shown and says
+    /// so: how far the spell went once something of it ended, else how
+    /// many wait, in each of its versions. Activity's Waiting heading says
+    /// how many quick ones it lists that the strip leaves out.
+    #[test]
+    fn the_strip_says_what_waits_while_nothing_runs() {
+        let waiting = |ended: usize, waiting: usize| Under {
+            plans: Vec::new(),
+            tasks: Vec::new(),
+            ended,
+            waiting,
+        };
+        let between = waiting(1, 1);
+        let s = summary(&between).expect("shown between two");
+        assert_eq!(
+            words(&between, &s),
+            [
+                "1 of 2 · 50 % · 1 waiting".to_owned(),
+                "1 of 2 · 50 % · 1 waiting".to_owned(),
+                "50 %".to_owned(),
+            ]
+        );
+        let first = waiting(0, 2);
+        let s = summary(&first).expect("shown before the first starts");
+        assert_eq!(
+            words(&first, &s),
+            [
+                "2 waiting".to_owned(),
+                "2 waiting".to_owned(),
+                "2 waiting".to_owned()
+            ]
+        );
+        assert_eq!(waiting_said(0), "Waiting");
+        assert_eq!(waiting_said(1), "Waiting · 1 quick one not counted");
+        assert_eq!(waiting_said(3), "Waiting · 3 quick ones not counted");
     }
 
     /// One action is said by its title; several by how many; a queue by

@@ -131,9 +131,47 @@ impl Running {
 pub struct ToastState {
     pub current: Option<Toast>,
     generation: u64,
+    /// Whether the time of the current one runs: from when it is said, or,
+    /// held back while the History is open, from when it is first drawn.
+    timed: bool,
     close: Option<gpui::FocusHandle>,
     /// Kept across frames, so Tab can reach the toast's buttons.
     action_focus: Vec<gpui::FocusHandle>,
+}
+
+impl ToastState {
+    /// `toast` is said, replacing the current one: its generation, and how
+    /// many seconds it stays from now, unless `held` (the History is open,
+    /// and draws none): its time then begins as it is first drawn
+    /// (`drawn`).
+    fn say(&mut self, toast: Toast, held: bool) -> (u64, Option<u64>) {
+        let seconds = shown_for(&toast);
+        self.current = Some(toast);
+        self.generation += 1;
+        self.timed = !held;
+        (self.generation, self.timed.then_some(seconds))
+    }
+
+    /// The current one is drawn: its generation and how many seconds it
+    /// stays, when its time begins now.
+    fn drawn(&mut self) -> Option<(u64, u64)> {
+        if self.timed {
+            return None;
+        }
+        let seconds = shown_for(self.current.as_ref()?);
+        self.timed = true;
+        Some((self.generation, seconds))
+    }
+
+    /// The time of the one said at `generation` is over: it goes, unless
+    /// another replaced it since. Whether it went.
+    fn over(&mut self, generation: u64) -> bool {
+        if self.generation != generation {
+            return false;
+        }
+        self.current = None;
+        true
+    }
 }
 
 fn name_of(path: &Path) -> String {
@@ -414,26 +452,31 @@ impl Shell {
     /// Show `toast`, replacing the current one, for a time that fits its
     /// weight: errors and anything with a button stay longer, and a long
     /// one (what a plan's steps said after what it did) as long as it
-    /// takes to read.
+    /// takes to read. Held back while the History is open, it keeps its
+    /// time: that begins as it is first drawn (`render_answer`).
     fn show_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
-        let seconds = shown_for(&toast);
-        self.toasts.current = Some(toast);
-        self.toasts.generation += 1;
-        let generation = self.toasts.generation;
+        let held = self.undo_history_open();
+        if let (generation, Some(seconds)) = self.toasts.say(toast, held) {
+            self.time_toast(generation, seconds, cx);
+        }
+        cx.notify();
+    }
+
+    /// The toast said at `generation` goes in `seconds`, unless another
+    /// replaced it by then.
+    fn time_toast(&mut self, generation: u64, seconds: u64, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_secs(seconds))
                 .await;
             this.update(cx, |shell, cx| {
-                if shell.toasts.generation == generation {
-                    shell.toasts.current = None;
+                if shell.toasts.over(generation) {
                     cx.notify();
                 }
             })
             .ok();
         })
         .detach();
-        cx.notify();
     }
 
     pub fn dismiss_toast(&mut self, cx: &mut Context<Self>) {
@@ -665,13 +708,35 @@ pub fn pace(t: &Transfer) -> Option<String> {
 /// The answer said last, as a card: what it says, its buttons, and Close.
 /// Its caller places it: over the files at the last pane's lower right,
 /// above Activity's strip, or over the preview on the whole screen. Not
-/// while Activity is open, which holds it in `Earlier`, nor the History.
+/// while Activity is open, which holds it in `Earlier`, nor the History,
+/// whose rows say what each action came to: one said meanwhile keeps its
+/// time, which begins once it is drawn (`ToastState::drawn`).
 pub fn render_answer(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyElement> {
-    // Nor while the History is: its rows say what each action came to.
     if shell.activity_open() || shell.undo_history_open() {
         return None;
     }
     let toast = shell.toasts.current.clone()?;
+    // Held back while the History was open, its time begins now.
+    if let Some((generation, seconds)) = shell.toasts.drawn() {
+        shell.time_toast(generation, seconds, cx);
+    }
+    // An Undo that cannot take its plan back now is said, not offered,
+    // with why, as the History says it (`history::undo_held`), rather
+    // than refused once pressed.
+    let by_plan = toast
+        .actions
+        .iter()
+        .any(|action| action.command == "undo")
+        .then(|| shell.history_by_plan());
+    let held: Vec<Option<String>> = toast
+        .actions
+        .iter()
+        .map(|action| {
+            by_plan
+                .as_ref()
+                .and_then(|by_plan| crate::history::undo_held(action, by_plan))
+        })
+        .collect();
     let theme = cx.global::<Theme>().clone();
     let close = shell
         .toasts
@@ -719,13 +784,40 @@ pub fn render_answer(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyEl
         })
         .when(a11y, |d| d.aria_label(toast.text.clone()))
         .child(glyph)
-        .child(div().flex_1().min_w_0().py_1().child(toast.text.clone()));
-    for (n, action) in toast.actions.into_iter().enumerate() {
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .py_1()
+                .flex()
+                .flex_col()
+                .child(toast.text.clone())
+                // Why an Undo is held, under what was said.
+                .children(held.iter().flatten().map(|why| {
+                    div()
+                        .text_xs()
+                        .text_color(theme.text_muted)
+                        .child(why.clone())
+                })),
+        );
+    for ((n, action), held) in toast.actions.into_iter().enumerate().zip(held) {
         while shell.toasts.action_focus.len() <= n {
             shell.toasts.action_focus.push(cx.focus_handle());
         }
         let focus = shell.toasts.action_focus[n].clone();
         let label = action.label.clone();
+        if let Some(why) = held {
+            // Said, not offered: no frame but the keyboard's.
+            let accent = theme.accent;
+            card = card.child(
+                controls::inert_button(format!("toast-action-{n}"), label, &focus, &theme)
+                    .aria_live(gpui::Live::Off)
+                    .when(a11y, |d| d.aria_description(why))
+                    .border_color(gpui::transparent_black())
+                    .focus(move |s| s.border_color(accent)),
+            );
+            continue;
+        }
         card = card.child(
             controls::button(
                 format!("toast-action-{n}"),
@@ -762,8 +854,8 @@ pub fn render_answer(shell: &mut Shell, cx: &mut Context<Shell>) -> Option<AnyEl
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, End, Running, Toast, Tone, bar, describe, ended, failure, finished_actions, pace,
-        quit_question, shown_for, waiting_words,
+        Action, End, Running, Toast, ToastState, Tone, bar, describe, ended, failure,
+        finished_actions, pace, quit_question, shown_for, waiting_words,
     };
     use skwir_core::op::{Change, RunKind, Transfer};
     use std::path::PathBuf;
@@ -951,6 +1043,7 @@ mod tests {
                 waits_for,
                 steps: Some(1),
                 heavy: false,
+                counts: false,
             });
             format!("{what} / {why}")
         };
@@ -1303,5 +1396,35 @@ mod tests {
             ),
             "Moved “it's a draft.txt” to Archive 2026"
         );
+    }
+
+    /// A toast held back while the History is open keeps its time: it
+    /// begins as the toast is first drawn, once; one said with nothing
+    /// holding it back begins at once. A time over goes only with the
+    /// toast it was for.
+    #[test]
+    fn a_toast_held_back_keeps_its_time_until_drawn() {
+        let said = |text: &str| Toast {
+            text: text.into(),
+            tone: Tone::Error,
+            actions: Vec::new(),
+        };
+        let mut toasts = ToastState::default();
+        let (held, timed) = toasts.say(said("Could not undo “it's a.txt”"), true);
+        assert_eq!(timed, None);
+        let seconds = shown_for(&said("Could not undo “it's a.txt”"));
+        assert_eq!(toasts.drawn(), Some((held, seconds)));
+        assert_eq!(toasts.drawn(), None, "its time begins once");
+        let (shown, timed) = toasts.say(said("Moved “b.txt”"), false);
+        assert_eq!(timed, Some(shown_for(&said("Moved “b.txt”"))));
+        assert_eq!(toasts.drawn(), None, "its time runs already");
+        assert!(
+            !toasts.over(held),
+            "the time of one replaced is not this one's"
+        );
+        assert!(toasts.current.is_some());
+        assert!(toasts.over(shown));
+        assert!(toasts.current.is_none());
+        assert_eq!(toasts.drawn(), None, "nothing to time");
     }
 }

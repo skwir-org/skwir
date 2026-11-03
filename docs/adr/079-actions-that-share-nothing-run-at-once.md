@@ -176,35 +176,81 @@ one lane (`op::executor`) and operations.md's "Running".
     own Undo, which takes it back alone under the rule of 9; an undone
     one with its own Redo, under the rule of 10. The rule is answered
     ahead, for every entry, never by comparing footprints as the list
-    is drawn:
+    is read or drawn:
     - Each entry keeps the entries after it on its stack that touched
       what it did (`JournalEntry::blocked_by`), worked out once as it
       joins the stack, out of the journal's lock (`Executor::meets_on`,
       at most `JOURNAL_ENTRIES` comparisons), and given up as one
-      leaves. What runs or waits is compared with the entries before it
-      as the history is read, kept by the reader until
-      `Executor::history_version` moves.
+      leaves. Each plan running or waiting keeps the entries before it
+      that it touched (`Job::meets`), worked out once it is measured,
+      out of the journal's lock (`Executor::note_meets`), and noted as an
+      entry joins after it (`Lane::note_joined`): each entry and each plan
+      under way are compared once, as each is asked or joins. The history
+      reads these sets and compares nothing (`history_read_us`), kept by
+      its reader until `Executor::history_version` moves; an undo by entry
+      waits for a plan whose set is not worked out yet. Amended
+      2026-11-03, the review: what ran or waited was compared with every
+      entry each time the history was read, on the window's thread.
     - What an entry keeps of its footprint is bounded (`footprint::Kept`,
-      `KEPT_CLAIMS`, 1 000): many names of one folder become any name
-      there, then that folder written whole, then trees their folders,
-      the deepest first. It meets everything the footprint met, so a
-      very large action is taken back alone a little less often, never
-      wrongly. A kept footprint also says the folder all its paths are
-      in and the names right below it they go through: two apart are
-      told apart without comparing their paths (a full history: 7.5 ms
-      to join it, `history_put_us`). A toast's Undo compares what runs
-      the same way, so what the History shows held is held.
+      `KEPT_CLAIMS`, 1 000 claims: a file made or removed claims its path
+      and its name, one renamed two of each, one copied or moved the
+      names it may be kept as too, so some 170 to 250 files copied,
+      moved or renamed into one folder, some 500 put in the trash): many
+      names of one folder become any name there, then that folder
+      written whole, then trees their folders, the deepest first. It
+      meets everything the footprint met. What joins the history, runs
+      or waits is compared by its footprint whole (`Kept::exact`) with
+      what the entries before it keep: widening only ever holds the
+      widened entry's own Undo, against what comes after it, so a very
+      large action is taken back alone a little less often, never
+      wrongly, and never holds an earlier action. The one exception: an
+      entry put back among later ones (a redo by its entry, a retry
+      joining its first run past later entries) meets what those keep.
+      Amended 2026-11-03, the review: each kept footprint was compared
+      with the others', so a copy of 250 files into a folder held the
+      Undo of every earlier action that named anything there.
+    - A kept footprint also says the folder all its paths are in, and
+      the names right below a folder there its paths go through, each
+      worked out once it is asked: two apart are told apart without
+      comparing their paths (a full history: 7.5 ms to join it,
+      `history_put_us`). Actions in one folder (files renamed, put in the
+      trash or copied there) are told apart by the names they make there,
+      compared as names (`history_put_folder_us`: 4-6 ms for a full
+      history of them; a copy of 100 000 files into that folder compared
+      whole with it, its names below the folder read once:
+      `history_meets_whole_us`, some 50 ms). Two that cannot be told
+      apart so are compared claim by claim, the one of fewer looked up in
+      the other's sets. A toast's Undo reads what runs the same way, so
+      what the History shows held is held.
+    - An entry being taken back stays on its stack until its run ends
+      (`JournalEntry::going`): the History lists it as being undone, and
+      the entries it blocks as held by its undo, running or waiting; cut
+      short, it stays there with what that run did. The history's bound
+      lets go of none from it on. Nothing takes an entry back alone while
+      one after it on its stack that touched what it did is there: its
+      run refuses it as it starts, whatever asked for it. A plain Undo,
+      as an undo by entry, waits for one of its kind asked before it that
+      takes an entry blocking the one it would take; that one cut short,
+      it is the latest again, and Undo takes it. Amended 2026-11-03, the
+      review: a plain Undo asked while a later entry was being undone
+      took the entry before it, and took it back when that undo was
+      cancelled.
     - Undo with what came after takes an entry with the entries after it
       that touched what it did, followed through, newest first, each
       once the one before ended (an undo waits for one of its kind asked
-      before it, unmeasured or taking a later entry); never through one
-      that cannot be undone. Each is an undo of its own: Redo puts them
-      back one at a time, the oldest first.
+      before it, unmeasured or taking an entry that blocks it); never
+      through one that cannot be undone. It is one action: the first of
+      its undos that does not go (an error, a refusal, Cancel) stops
+      those still waiting, which do nothing, and the undo of the entry
+      asked for says why, once. Each is an undo of its own: Redo puts
+      them back one at a time, the oldest first.
     - An entry that cannot be undone (deleted for good) blocks the ones
       before it that it touched: their Undo says it took what they did
       for good, until Undo, reaching it, lets go of it.
     - Agents and scripts have the same surface: `history`, and
-      `undo`'s `entry` and `with_after`, `redo`'s `entry`.
+      `undo`'s `entry` and `with_after` (only with `entry`), `redo`'s
+      `entry`; they are told the entries their runs took back or applied
+      again, by their titles.
     - In the window, the footer's Undo is split in two: its left part
       takes back the latest, as before; its chevron, a right click on
       Undo and `ui.undo_history` (Ctrl+Alt+Z) open the History above

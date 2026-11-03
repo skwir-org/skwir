@@ -51,22 +51,47 @@ and macOS otherwise compiled only.
    Paused or stopping, its bar is muted and it says so.
 
    Amended 2026-11-03 (the user's choice of the recommended options):
-   the strip counts the **spell of work**, from an action started with
+   the strip counts the **spell of work**, from an action asked with
    nothing under way until nothing runs, waits or goes on by itself.
    Each action of it counts one, whatever its bytes: those ended whole,
    those running by their own share, those waiting nothing ("Copy “a” ·
    2 of 3 · 47 % · about 3 min left · 1 waiting", then "2 of 3 · 47 % ·
-   … · 1 waiting", then "47 %"). So the bar never goes back to nothing
-   between two actions waiting their turn, and goes back only when more
-   is asked, which "2 of 4" says. An action counts as a running one gets
-   a card: several steps, bytes moved, or a tree walked; a single rename
-   counts for nothing (`Waiting::weighs`). Nothing is read ahead to size
-   what waits: the time left is what runs, and the strip says how many
-   wait. Activity's header says the same over a bar of one segment each
-   (one bar past twelve); the taskbar's progress and the presence follow
-   it. Counted where the cards are decided (`Work::spell_ended`, settled
-   after each sync's events), not in the core as the proposal said: the
-   agents' `running` is unchanged.
+   … · 1 waiting", then "47 %"). Corrected the same day, after review:
+   - One test, the core's, says what counts as an action, for what
+     waits, the card and what ended (`Waiting::counts`,
+     `ExecEvent::Started::counts`): several steps, or a heavy one (bytes
+     moved, a tree walked: one file copied, a folder deleted for good),
+     an undo or a redo by its entry's steps; never a single rename. A
+     plan is counted by its steps until what it touches is worked out
+     (a single heavy step joins a few milliseconds after it is asked, a
+     single rename never flashes "1 waiting"); an undo or a redo counts
+     until its entry is known. (The first build had three tests, which
+     disagreed: an undo of one rename counted while it waited, a folder
+     deleted for good counted waiting and never after.)
+   - The bar never goes back as one ends. A task (a print) that ends
+     counts whole, as a plan does. An action cancelled before it did
+     anything (its Cancel or Cancel all while it waits) leaves the count,
+     its share nothing; one that did something ended, and counts whole.
+     One admitted and not yet told started counts as waiting
+     (`Executor::waiting_count`), so the strip stays through each
+     hand-over: "1 of 2 · 50 % · 1 waiting", or "1 waiting" before
+     anything of the spell started.
+   - It goes back only when more is asked, which "2 of 4" says, or as an
+     action stopped goes on, retried or by itself once its server
+     answers (`ExecEvent::Retried`, `GoesOn`): the same action (ADR-080,
+     9), the run that stopped leaving what ended as its continuation is
+     asked, counted again by what it has left.
+   Nothing is read ahead to size what waits: the time left is what runs,
+   and the strip says how many wait that count; Activity's Waiting
+   heading says how many quick ones it lists beside them. Activity's
+   header says the same over a bar of one segment each (one bar past
+   twelve); the taskbar's progress and the presence follow it, with no
+   share while only something waits and nothing ended, and no Pause with
+   nothing to pause. Counted where the cards are decided (`Work`'s
+   spell, settled after each sync's events), what waits a count the
+   executor keeps for it, with no footprint compared and no title built,
+   not in the core as the proposal said: the agents' `running` is
+   unchanged.
 2. **Activity opens above the strip** on a click or `ui.activity`
    (Ctrl+Shift+J, Chrome's key for its downloads; Ctrl+J is Jump's): each
    action's card as it was (its bar, items and bytes, speed and time

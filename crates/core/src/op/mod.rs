@@ -49,10 +49,12 @@ pub use context::{Cancelled, Gauge, StepContext, Unanswered, Unneeded};
 pub use entry_ref::{EntryArg, EntryRef, ResolveError};
 /// The plans, undos and redos that run at once at most (ADR-079).
 pub use executor::AT_ONCE as ACTIONS_AT_ONCE;
+/// The actions the undo history keeps at most (ADR-079, 11).
+pub use executor::JOURNAL_ENTRIES as HISTORY_ENTRIES;
 pub use executor::{
     Can, ChangeObserver, Done, ExecEvent, ExecResult, Executor, History, HistoryRow, JournalEntry,
     PlanObserver, Progress, RunKind, RunningPlan, SecretAsker, Since, Transfer, Verdict, Waiting,
-    WaitsFor,
+    WaitsFor, counts_as_action,
 };
 pub use order::{RenameOrderError, RenameRequest, order_renames};
 pub use staging::Staging;

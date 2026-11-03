@@ -4,55 +4,173 @@
 //! once, as Ctrl+Z does; its chevron (and a right click on Undo, and
 //! `ui.undo_history`, Ctrl+Alt+Z) opens the History. Like the rest of the
 //! footer, the two are no stops of the Tab order: their keys are the
-//! commands'.
+//! commands', and a click on them leaves the keyboard where it was.
 //!
 //! An action whose Undo cannot take it back alone says which action after
 //! it touched what it did, by a name that leads to that one's row, and
 //! offers to take them back together, newest first. What each row can do
 //! is the core's answer (`Executor::history`), read again only when its
-//! version moves: nothing is compared as the History is drawn.
+//! version moves (`Read`), with each row by the runs that made it: what a
+//! toast's and `Earlier`'s Undo ask (`undo_held`). Only the rows in view
+//! are built; the keys walk the rows read, so one out of view is reached
+//! too, and comes into view.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
-use gpui::{AnyElement, Context, FocusHandle, SharedString, Window, div, prelude::*, px};
+use gpui::{
+    AnyElement, Context, FocusHandle, ListOffset, SharedString, Window, div, prelude::*, px,
+};
 use skwir_core::op::{Can, Done, History, HistoryRow, PlanId, Since};
 
-use crate::activity::{Press, Reveal, stop};
+use crate::activity::{Press, stop};
 use crate::controls::{self, ButtonStyle};
 use crate::elements::popover::PopoverAnchor;
 use crate::format;
+use crate::keymap::RunCommand;
 use crate::shell::Shell;
 use crate::theme::Theme;
-use crate::toast::capitalized;
+use crate::toast::{Action, capitalized};
 
 /// The History's popup, as `Shell::toggle_popup` and `toolbar_menu` know it.
 pub const POPUP: &str = "undo-history";
 
-/// What a row's button is: its Undo or Redo, its Undo with what came
-/// after, and the name of the action that holds it.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+/// A row's height until it is measured: one line, as most are.
+const ROW_HINT: f32 = 28.;
+
+/// What is measured beyond the rows in view.
+const OVERDRAW: f32 = 60.;
+
+/// What a focus of a row is: the row's own (no stop of the Tab order: what
+/// holds its buttons, which the list keeps drawn while one of them has the
+/// keyboard), its Undo or Redo, its Undo with what came after, and the name
+/// of the action that holds it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Part {
+    Row,
     Main,
     WithAfter,
     Blocker,
 }
 
+/// The history as the core said it at one version, read once for it: each
+/// row by the runs that made it, and each row's place by its entry.
+struct Read {
+    history: History,
+    by_plan: Rc<HashMap<PlanId, HistoryRow>>,
+    at: HashMap<u64, usize>,
+}
+
+impl Read {
+    fn of(history: History) -> Read {
+        let by_plan = history
+            .rows
+            .iter()
+            .flat_map(|row| row.plans.iter().map(move |plan| (*plan, row.clone())))
+            .collect();
+        let at = history
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(at, row)| (row.entry, at))
+            .collect();
+        Read {
+            history,
+            by_plan: Rc::new(by_plan),
+            at,
+        }
+    }
+}
+
 /// The History as the window shows it.
-#[derive(Default)]
 pub struct HistoryState {
     anchor: PopoverAnchor,
     /// What the core said, kept while its version stays.
-    read: Option<History>,
+    read: Option<Rc<Read>>,
+    /// The read the rows are listed from (`list`): the one drawn.
+    listed: Option<Rc<Read>>,
     /// The footer's Undo and its chevron.
     undo: Option<FocusHandle>,
     more: Option<FocusHandle>,
-    /// Each row's buttons, by entry and part, kept for the rows read.
+    /// Each row's focus and its buttons', by entry and part, kept for the
+    /// rows read: the keys find them where they were as rows come and go.
     buttons: HashMap<(u64, Part), FocusHandle>,
-    /// What brings the button the keyboard reaches into view, made again
-    /// as the popup opens.
-    reveal: Reveal,
+    /// The rows: only those in view are built.
+    list: gpui::ListState,
     /// The row a blocker's name led to: lit until the popup closes.
     lit: Option<u64>,
+}
+
+impl Default for HistoryState {
+    fn default() -> Self {
+        HistoryState {
+            anchor: PopoverAnchor::default(),
+            read: None,
+            listed: None,
+            undo: None,
+            more: None,
+            buttons: HashMap::new(),
+            list: gpui::ListState::new(0, gpui::ListAlignment::Top, px(OVERDRAW)),
+            lit: None,
+        }
+    }
+}
+
+/// A key that moves the keyboard among the History's buttons.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Walk {
+    Next,
+    Prev,
+    First,
+    Last,
+}
+
+impl Walk {
+    fn of(command: &str) -> Option<Walk> {
+        Some(match command {
+            "ui.toolbar_next" => Walk::Next,
+            "ui.toolbar_prev" => Walk::Prev,
+            "ui.toolbar_first" => Walk::First,
+            "ui.toolbar_last" => Walk::Last,
+            _ => return None,
+        })
+    }
+}
+
+/// The buttons of `rows` in the order the keys walk them, each with its
+/// row's place: a row's Undo with what came after and its Undo (or Redo),
+/// then the name of the action that holds it, on the line under them.
+fn stops(rows: &[HistoryRow]) -> Vec<(usize, u64, Part)> {
+    rows.iter()
+        .enumerate()
+        .flat_map(|(at, row)| {
+            let with = (!row.with.is_empty()).then_some((at, row.entry, Part::WithAfter));
+            let blocker =
+                matches!(row.can, Can::After { .. }).then_some((at, row.entry, Part::Blocker));
+            with.into_iter()
+                .chain([(at, row.entry, Part::Main)])
+                .chain(blocker)
+        })
+        .collect()
+}
+
+/// The stop `walk` goes to among `count`, from the one at `at` (none has
+/// the keyboard: the popup's own focus does): round the ends, as Tab in a
+/// dialog goes.
+fn walked(walk: Walk, at: Option<usize>, count: usize) -> Option<usize> {
+    let last = count.checked_sub(1)?;
+    Some(match (walk, at) {
+        (Walk::First, _) | (Walk::Next, None) => 0,
+        (Walk::Last, _) | (Walk::Prev, None | Some(0)) => last,
+        (Walk::Next, Some(at)) => {
+            if at >= last {
+                0
+            } else {
+                at + 1
+            }
+        }
+        (Walk::Prev, Some(at)) => at - 1,
+    })
 }
 
 impl Shell {
@@ -73,35 +191,128 @@ impl Shell {
     ) {
         if self.toggle_popup(POPUP, args, window, cx) {
             self.toolbar_menu = Some(crate::toolbar::Popup::new(POPUP, window, cx));
-            self.undo_history.reveal = Reveal::default();
             self.undo_history.lit = None;
+            // From the newest, the rows listed again.
+            self.undo_history.listed = None;
+            self.undo_history.list.scroll_to(ListOffset::default());
         }
         cx.notify();
     }
 
     /// The history as the core says it, read again only when it may say
     /// otherwise (`Executor::history_version`).
-    pub(crate) fn history(&mut self) -> &History {
+    fn history_read(&mut self) -> Rc<Read> {
         let version = self.app.executor.history_version();
-        let stale = self
-            .undo_history
-            .read
-            .as_ref()
-            .is_none_or(|read| read.version != version);
-        if stale {
-            self.undo_history.read = Some(self.app.executor.history());
+        if let Some(read) = &self.undo_history.read
+            && read.history.version == version
+        {
+            return Rc::clone(read);
         }
-        self.undo_history.read.get_or_insert_with(History::default)
+        let read = Rc::new(Read::of(self.app.executor.history()));
+        self.undo_history.read = Some(Rc::clone(&read));
+        read
     }
 
     /// Each row of the history by the runs that made it: what a toast's
-    /// or `Earlier`'s Undo names.
-    pub(crate) fn history_by_plan(&mut self) -> HashMap<PlanId, HistoryRow> {
-        self.history()
-            .rows
+    /// or `Earlier`'s Undo names. Made once a version of the history.
+    pub(crate) fn history_by_plan(&mut self) -> Rc<HashMap<PlanId, HistoryRow>> {
+        Rc::clone(&self.history_read().by_plan)
+    }
+
+    /// List the rows of `read`, when they are not listed already: each
+    /// row's focus and its buttons' kept for the rows read, and the row at
+    /// the top kept there as rows come before it, unless the newest was
+    /// shown: then the newest still is.
+    fn list_history(&mut self, read: &Rc<Read>, cx: &mut Context<Self>) {
+        let state = &mut self.undo_history;
+        if state
+            .listed
+            .as_ref()
+            .is_some_and(|listed| Rc::ptr_eq(listed, read))
+        {
+            return;
+        }
+        let top = state.list.logical_scroll_top();
+        let kept = state
+            .listed
+            .as_ref()
+            .filter(|_| top.item_ix > 0 || top.offset_in_item > px(0.))
+            .and_then(|listed| listed.history.rows.get(top.item_ix))
+            .map(|row| row.entry);
+        let rows = &read.history.rows;
+        let parts: HashSet<(u64, Part)> = stops(rows)
+            .into_iter()
+            .map(|(_, entry, part)| (entry, part))
+            .chain(rows.iter().map(|row| (row.entry, Part::Row)))
+            .collect();
+        state.buttons.retain(|key, _| parts.contains(key));
+        for key in parts {
+            state.buttons.entry(key).or_insert_with(|| match key.1 {
+                Part::Row => cx.focus_handle(),
+                _ => stop(cx),
+            });
+        }
+        let focus: Vec<Option<FocusHandle>> = rows
             .iter()
-            .flat_map(|row| row.plans.iter().map(move |plan| (*plan, row.clone())))
-            .collect()
+            .map(|row| state.buttons.get(&(row.entry, Part::Row)).cloned())
+            .collect();
+        let count = state.list.item_count();
+        state.list.splice_focusable(0..count, focus);
+        // A height until each is measured: the list's height from the
+        // first frame, and its scrollbar.
+        let _ = state.list.clone().with_uniform_item_height(px(ROW_HINT));
+        if let Some(at) = kept.and_then(|entry| read.at.get(&entry)) {
+            state.list.scroll_to(ListOffset {
+                item_ix: *at,
+                offset_in_item: top.offset_in_item,
+            });
+        }
+        state.listed = Some(Rc::clone(read));
+    }
+
+    /// The keys among the History's buttons (`Walk`), by the rows read:
+    /// one out of view is reached too, and comes into view.
+    fn walk_history(&mut self, walk: Walk, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(read) = self.undo_history.listed.clone() else {
+            return;
+        };
+        let stops = stops(&read.history.rows);
+        let at = stops.iter().position(|(_, entry, part)| {
+            self.undo_history
+                .buttons
+                .get(&(*entry, *part))
+                .is_some_and(|focus| focus.is_focused(window))
+        });
+        if let Some((row, entry, part)) = walked(walk, at, stops.len()).map(|next| stops[next]) {
+            self.focus_history(row, entry, part, window, cx);
+        }
+    }
+
+    /// Give the keyboard to the button `part` of the row `entry`, at `row`
+    /// in the rows listed, bringing the row into view: the least that
+    /// shows it once drawn, at the top before.
+    fn focus_history(
+        &mut self,
+        row: usize,
+        entry: u64,
+        part: Part,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(focus) = self.undo_history.buttons.get(&(entry, part)).cloned() else {
+            return;
+        };
+        let list = &self.undo_history.list;
+        if list.bounds_for_item(row).is_some() {
+            list.scroll_to_reveal_item(row);
+        } else {
+            list.scroll_to(ListOffset {
+                item_ix: row,
+                offset_in_item: px(0.),
+            });
+        }
+        window.focus(&focus, cx);
+        cx.notify();
     }
 }
 
@@ -126,6 +337,23 @@ pub(crate) fn why(row: &HistoryRow) -> Option<String> {
             format!("{before}“{}”{after}", capitalized(title))
         }
     })
+}
+
+/// Why `action`, an answer's Undo (a toast's, `Earlier`'s), cannot take
+/// its plan back now, as the History says it (`by_plan`): said, not
+/// offered, rather than refused once pressed. `None` for another action,
+/// or one it takes back.
+pub(crate) fn undo_held(action: &Action, by_plan: &HashMap<PlanId, HistoryRow>) -> Option<String> {
+    if action.command != "undo" {
+        return None;
+    }
+    let plan: PlanId = serde_json::from_value(action.args.get("plan")?.clone()).ok()?;
+    match by_plan.get(&plan) {
+        Some(row) if row.state == Done::Undone => Some("Undone already".to_owned()),
+        Some(row) if can_now(row) => None,
+        Some(row) => why(row),
+        None => Some("No longer in the history".to_owned()),
+    }
 }
 
 /// What is said before and after the name of the action that holds an
@@ -191,6 +419,9 @@ pub fn undo_control(
         .aria_label(tip.clone())
         .when(!enabled, |d| d.aria_disabled(true))
         .track_focus(&undo)
+        // A click leaves the keyboard where it was, as on the strip: the
+        // keys go on acting on the files (Enter would press Undo again).
+        .capture_any_mouse_down(|_, window, _| window.prevent_default())
         .flex()
         .flex_none()
         .items_center()
@@ -208,7 +439,6 @@ pub fn undo_control(
         .on_mouse_down(
             gpui::MouseButton::Right,
             cx.listener(|this, _, window, cx| {
-                window.prevent_default();
                 this.run("ui.undo_history", serde_json::json!({}), window, cx);
             }),
         )
@@ -228,6 +458,8 @@ pub fn undo_control(
         .aria_label(history_tip.clone())
         .aria_expanded(open)
         .track_focus(&more)
+        // The keyboard stays where it was: the History gives it back there.
+        .capture_any_mouse_down(|_, window, _| window.prevent_default())
         .flex()
         .flex_none()
         .items_center()
@@ -274,103 +506,102 @@ fn popover(shell: &mut Shell, theme: &Theme, cx: &mut Context<Shell>) -> Option<
     if !shell.undo_history_open() {
         return None;
     }
-    let rows = shell.history().rows.clone();
-    // Each row's buttons, kept for the rows read: Tab finds them where
-    // they were as rows come and go.
-    let parts: std::collections::HashSet<(u64, Part)> = rows
-        .iter()
-        .flat_map(|row| {
-            let mut parts = vec![(row.entry, Part::Main)];
-            if !row.with.is_empty() {
-                parts.push((row.entry, Part::WithAfter));
-            }
-            if matches!(row.can, Can::After { .. }) {
-                parts.push((row.entry, Part::Blocker));
-            }
-            parts
-        })
-        .collect();
-    shell
-        .undo_history
-        .buttons
-        .retain(|key, _| parts.contains(key));
-    for key in parts {
-        shell
-            .undo_history
-            .buttons
-            .entry(key)
-            .or_insert_with(|| stop(cx));
-    }
-    let reveal = shell.undo_history.reveal.clone();
+    let read = shell.history_read();
+    shell.list_history(&read, cx);
+    let count = read.history.rows.len();
     let a11y = shell.a11y;
-    let lit = shell.undo_history.lit;
-    let mut body: Vec<AnyElement> = vec![
+    let title = div()
+        .flex_none()
+        .px_3()
+        .pt_2()
+        .pb_1()
+        .text_xs()
+        .text_color(theme.text_muted)
+        .child("Undo history");
+    let rows = if count == 0 {
         div()
             .flex_none()
             .px_3()
-            .pt_2()
-            .pb_1()
+            .py_2()
             .text_xs()
             .text_color(theme.text_muted)
-            .child("Undo history")
-            .into_any_element(),
-    ];
-    if rows.is_empty() {
-        body.push(
-            div()
-                .px_3()
-                .py_2()
-                .text_xs()
-                .text_color(theme.text_muted)
-                .child("Nothing to undo yet")
-                .into_any_element(),
-        );
+            .child("Nothing to undo yet")
+            .into_any_element()
     } else {
-        let built: Vec<AnyElement> = rows
-            .iter()
-            .map(|row| history_row(shell, row, lit == Some(row.entry), &reveal, theme, cx))
-            .collect();
-        body.push(
-            div()
-                .id("undo-history-rows")
-                .role(gpui::Role::List)
-                .when(a11y, |d| d.aria_label("Undo history"))
-                .flex()
-                .flex_col()
-                .children(built)
-                .into_any_element(),
-        );
-    }
-    body.push(div().flex_none().h(px(6.)).into_any_element());
+        // Only the rows in view are built (`history_row`), the rows read
+        // kept as they were drawn (`HistoryState::listed`).
+        let list = gpui::list(
+            shell.undo_history.list.clone(),
+            cx.processor(|shell: &mut Shell, at: usize, _, cx| {
+                let theme = cx.global::<Theme>().clone();
+                match shell.undo_history.listed.clone() {
+                    Some(read) => history_row(shell, &read, at, &theme, cx),
+                    None => div().into_any_element(),
+                }
+            }),
+        )
+        .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
+        .min_h_0();
+        div()
+            .id("undo-history-rows")
+            .role(gpui::Role::List)
+            .when(a11y, |d| {
+                d.aria_label("Undo history").aria_size_of_set(count)
+            })
+            .relative()
+            .flex()
+            .flex_col()
+            .min_h_0()
+            .child(list)
+            .child(crate::elements::scrollbar::vertical(
+                "undo-history-scrollbar",
+                crate::elements::scrollbar::Scrolls::Items(shell.undo_history.list.clone()),
+            ))
+            .into_any_element()
+    };
     let popup = shell.toolbar_menu.as_ref()?;
     let panel = crate::toolbar::popup_panel(popup, "ui.undo_history", theme, cx)
         .role(gpui::Role::Group)
         .aria_label("Undo history")
-        .track_scroll(&reveal.scroll)
+        // Its rows scroll, in their list.
+        .overflow_hidden()
         .w(px(420.))
         .max_h(px(520.))
         .p_0()
         .gap_0()
-        .children(body);
+        // The keys walk the rows read, not only those drawn.
+        .on_action(cx.listener(|this, action: &RunCommand, window, cx| {
+            match Walk::of(&action.name) {
+                Some(walk) => this.walk_history(walk, window, cx),
+                None => cx.propagate(),
+            }
+        }))
+        .child(title)
+        .child(rows)
+        .child(div().flex_none().h(px(6.)));
     Some(shell.undo_history.anchor.popup_above_for(
         &crate::elements::adaptive::Chosen::default(),
         vec![panel.into_any_element()],
     ))
 }
 
-/// One action of the History: its state, title and time, why its Undo
+/// The action at `at` of `read`: its state, title and time, why its Undo
 /// waits or cannot (the action that holds it named, leading to its row),
 /// and its buttons.
 fn history_row(
     shell: &Shell,
-    row: &HistoryRow,
-    lit: bool,
-    reveal: &Reveal,
+    read: &Read,
+    at: usize,
     theme: &Theme,
     cx: &mut Context<Shell>,
 ) -> AnyElement {
+    let Some(row) = read.history.rows.get(at) else {
+        return div().into_any_element();
+    };
     let entry = row.entry;
     let focus = |part: Part| shell.undo_history.buttons.get(&(entry, part)).cloned();
+    let lit = shell.undo_history.lit == Some(entry);
+    let a11y = shell.a11y;
     let undone = row.state == Done::Undone;
     let glyph = match row.state {
         Done::Done => controls::glyph("check", theme.success, 13.),
@@ -385,16 +616,19 @@ fn history_row(
     };
     let title = capitalized(&row.title);
     let why_said = why(row);
-    let label: SharedString = [
-        Some(title.clone()),
-        pill.map(str::to_owned),
-        why_said.clone(),
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<_>>()
-    .join(", ")
-    .into();
+    // What a screen reader hears of the row, built only while one listens.
+    let label: Option<SharedString> = a11y.then(|| {
+        [
+            Some(title.clone()),
+            pill.map(str::to_owned),
+            why_said.clone(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(", ")
+        .into()
+    });
     let what = div().flex().flex_1().min_w_0().child(
         div()
             .flex()
@@ -427,67 +661,62 @@ fn history_row(
     );
     // Why it waits or cannot, on a line of its own under the title: the
     // action that holds it named, a button that leads to its row.
-    let mut reason = None;
-    match &row.can {
+    let reason = match &row.can {
         Can::After {
             entry: holder,
             title: holder_title,
             since,
-        } => {
+        } => focus(Part::Blocker).map(|link| {
             let (before, after) = held(*since);
             let holder = *holder;
-            if let Some(link) = focus(Part::Blocker) {
-                reason = Some(
+            let named = capitalized(holder_title);
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .text_xs()
+                .text_color(theme.text_muted)
+                .child(before)
+                .child(
                     div()
-                        .flex()
-                        .flex_wrap()
-                        .items_center()
-                        .text_xs()
-                        .text_color(theme.text_muted)
-                        .child(before)
-                        .child(
-                            div()
-                                .id(("undo-history-holder", entry))
-                                .role(gpui::Role::Link)
-                                .aria_label(format!("Go to {}", capitalized(holder_title)))
-                                .track_focus(&link)
-                                .relative()
-                                .px_0p5()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(gpui::transparent_black())
-                                .text_color(theme.accent_text)
-                                .underline()
-                                .cursor_pointer()
-                                .focus({
-                                    let accent = theme.accent;
-                                    move |s| s.border_color(accent)
-                                })
-                                .child(reveal.marker(&link))
-                                .child(format!("“{}”", capitalized(holder_title)))
-                                .press(
-                                    move |this, window, cx| {
-                                        // Its row lit, the keyboard on its
-                                        // Undo, which comes into view.
-                                        this.undo_history.lit = Some(holder);
-                                        if let Some(target) =
-                                            this.undo_history.buttons.get(&(holder, Part::Main))
-                                        {
-                                            window.focus(target, cx);
-                                        }
-                                        cx.notify();
-                                    },
-                                    cx,
-                                ),
-                        )
-                        .child(after),
-                );
-            }
-        }
-        _ => {
-            reason = why_said.map(|why| div().text_xs().text_color(theme.text_muted).child(why));
-        }
-    }
+                        .id(("undo-history-holder", entry))
+                        .role(gpui::Role::Link)
+                        .when(a11y, |d| d.aria_label(format!("Go to {named}")))
+                        .track_focus(&link)
+                        .px_0p5()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(gpui::transparent_black())
+                        .text_color(theme.accent_text)
+                        .underline()
+                        .cursor_pointer()
+                        .focus({
+                            let accent = theme.accent;
+                            move |s| s.border_color(accent)
+                        })
+                        .child(format!("“{named}”"))
+                        .press(
+                            move |this, window, cx| {
+                                // Its row lit, the keyboard on its Undo,
+                                // which comes into view.
+                                this.undo_history.lit = Some(holder);
+                                let at = this
+                                    .undo_history
+                                    .listed
+                                    .as_ref()
+                                    .and_then(|read| read.at.get(&holder).copied());
+                                if let Some(at) = at {
+                                    this.focus_history(at, holder, Part::Main, window, cx);
+                                }
+                                cx.notify();
+                            },
+                            cx,
+                        ),
+                )
+                .child(after)
+        }),
+        _ => why_said.map(|why| div().text_xs().text_color(theme.text_muted).child(why)),
+    };
     let mut buttons = div().flex().flex_none().items_center().gap_1();
     if !row.with.is_empty()
         && let Some(with) = focus(Part::WithAfter)
@@ -505,11 +734,9 @@ fn history_row(
                 &with,
                 theme,
             )
-            .relative()
             .h(px(22.))
             .px_2()
             .text_color(theme.accent_text)
-            .child(reveal.marker(&with))
             .press(
                 move |this, window, cx| {
                     this.run(
@@ -532,11 +759,9 @@ fn history_row(
         let id = SharedString::from(format!("undo-history-main-{entry}"));
         let button = if can_now(row) {
             controls::button(id, word, None, ButtonStyle::Plain, &main, theme)
-                .relative()
                 .h(px(22.))
                 .px_2()
                 .text_color(theme.accent_text)
-                .child(reveal.marker(&main))
                 .press(
                     move |this, window, cx| {
                         this.run(command, serde_json::json!({ "entry": entry }), window, cx);
@@ -550,12 +775,10 @@ fn history_row(
             // the keyboard's, unlike what can be pressed.
             let accent = theme.accent;
             controls::inert_button(id, word, &main, theme)
-                .relative()
                 .h(px(22.))
                 .px_2()
                 .border_color(gpui::transparent_black())
                 .focus(move |s| s.border_color(accent))
-                .child(reveal.marker(&main))
                 .into_any_element()
         };
         buttons = buttons.child(button);
@@ -577,13 +800,24 @@ fn history_row(
                 }),
         )
         .child(buttons);
-    div()
+    let mut item = div()
         .id(("undo-history-row", entry))
         .role(gpui::Role::ListItem)
-        .aria_label(label)
+        .when_some(label, |d, label| {
+            d.aria_label(label).aria_position_in_set(at)
+        });
+    if let Some(row_focus) = focus(Part::Row) {
+        item = item.track_focus(&row_focus);
+    }
+    item
+        // A click beside its buttons gives the row no keyboard: they take
+        // it, as they are pressed.
+        .on_mouse_down(gpui::MouseButton::Left, |_, window, _| {
+            window.prevent_default();
+        })
+        .w_full()
         .flex()
         .flex_col()
-        .flex_none()
         .py_0p5()
         .pl_3()
         .pr_1()
@@ -592,4 +826,180 @@ fn history_row(
         // Under the title, past the glyph.
         .children(reason.map(|reason| reason.pl(px(21.)).pb_1()))
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Part, Walk, held, stops, undo_held, walked, why};
+    use crate::toast::Action;
+    use skwir_core::op::{Can, Done, HistoryRow, Plan, PlanId, Since};
+    use std::collections::HashMap;
+    use std::time::SystemTime;
+
+    fn row(entry: u64, state: Done, can: Can, with: Vec<u64>) -> HistoryRow {
+        HistoryRow {
+            entry,
+            title: format!("rename to it's {entry}.txt"),
+            plans: Vec::new(),
+            at: SystemTime::UNIX_EPOCH,
+            state,
+            can,
+            with,
+        }
+    }
+
+    fn undo_of(plan: PlanId) -> Action {
+        Action {
+            label: "Undo".into(),
+            command: "undo".into(),
+            args: serde_json::json!({ "plan": plan }),
+        }
+    }
+
+    /// A row's Undo that cannot act says why, naming the action that holds
+    /// it as it stands; one it takes back says nothing.
+    #[test]
+    fn a_held_undo_says_why_by_how_the_one_holding_it_stands() {
+        let after = |since| Can::After {
+            entry: 9,
+            title: "move “a.txt” to /example/b".into(),
+            since,
+        };
+        let said = |state, can| why(&row(1, state, can, Vec::new()));
+        assert_eq!(said(Done::Done, Can::Now), None);
+        assert_eq!(
+            said(Done::Done, after(Since::Done)).as_deref(),
+            Some("Undo “Move “a.txt” to /example/b” first: it touched what this did")
+        );
+        assert_eq!(
+            said(Done::Done, after(Since::Running)).as_deref(),
+            Some("“Move “a.txt” to /example/b” is running, and touches what this did")
+        );
+        assert_eq!(
+            said(Done::Undone, after(Since::Undone)).as_deref(),
+            Some("Redo “Move “a.txt” to /example/b” first: it touched what this did")
+        );
+        assert_eq!(
+            said(Done::Done, after(Since::ForGood)).as_deref(),
+            Some("“Move “a.txt” to /example/b” took what this did for good")
+        );
+        assert_eq!(
+            said(Done::Running, Can::OnceEnded).as_deref(),
+            Some("Taken back once it ends")
+        );
+        assert_eq!(
+            said(Done::Undone, Can::Going).as_deref(),
+            Some("Being put back…")
+        );
+        assert_eq!(
+            said(Done::Done, Can::Going).as_deref(),
+            Some("Being undone…")
+        );
+        assert_eq!(
+            said(Done::Done, Can::Never).as_deref(),
+            Some("Cannot be undone")
+        );
+        // Every way an Undo is held reads as a sentence round the name.
+        for since in [
+            Since::Done,
+            Since::Running,
+            Since::Waiting,
+            Since::Undone,
+            Since::ForGood,
+        ] {
+            let (before, after) = held(since);
+            assert!(after.starts_with(' '), "{since:?}");
+            assert!(before.is_empty() || before.ends_with(' '), "{since:?}");
+        }
+    }
+
+    /// An answer's Undo asks the History for the plan it reports: taken
+    /// back now or once it ends, it is offered; undone already, held, or
+    /// gone from the history, it says so; another button is not its.
+    #[test]
+    fn an_answers_undo_is_held_as_the_history_says() {
+        let ids: Vec<PlanId> = (0..5).map(|n| Plan::new(format!("plan {n}")).id).collect();
+        let mut by_plan: HashMap<PlanId, HistoryRow> = HashMap::new();
+        by_plan.insert(ids[0], row(1, Done::Done, Can::Now, Vec::new()));
+        by_plan.insert(ids[1], row(2, Done::Running, Can::OnceEnded, Vec::new()));
+        by_plan.insert(ids[2], row(3, Done::Undone, Can::Now, Vec::new()));
+        by_plan.insert(
+            ids[3],
+            row(
+                4,
+                Done::Done,
+                Can::After {
+                    entry: 7,
+                    title: "copy to /example".into(),
+                    since: Since::Waiting,
+                },
+                Vec::new(),
+            ),
+        );
+        assert_eq!(undo_held(&undo_of(ids[0]), &by_plan), None);
+        assert_eq!(undo_held(&undo_of(ids[1]), &by_plan), None);
+        assert_eq!(
+            undo_held(&undo_of(ids[2]), &by_plan).as_deref(),
+            Some("Undone already")
+        );
+        assert_eq!(
+            undo_held(&undo_of(ids[3]), &by_plan).as_deref(),
+            Some("“Copy to /example” waits its turn, and touches what this did")
+        );
+        assert_eq!(
+            undo_held(&undo_of(ids[4]), &by_plan).as_deref(),
+            Some("No longer in the history")
+        );
+        let retry = Action {
+            label: "Retry".into(),
+            command: "retry".into(),
+            args: serde_json::json!({ "plan": ids[3] }),
+        };
+        assert_eq!(undo_held(&retry, &by_plan), None);
+        // An Undo naming no plan (the last asked) is the core's to answer.
+        let last = Action {
+            label: "Undo".into(),
+            command: "undo".into(),
+            args: serde_json::json!({}),
+        };
+        assert_eq!(undo_held(&last, &by_plan), None);
+    }
+
+    /// The keys walk every row's buttons in reading order, rows out of
+    /// view included, round the ends; from the popup's own focus, Down
+    /// takes the first and Up the last.
+    #[test]
+    fn the_keys_walk_the_rows_read_round_their_ends() {
+        let rows = [
+            row(
+                5,
+                Done::Done,
+                Can::After {
+                    entry: 6,
+                    title: "rename".into(),
+                    since: Since::Done,
+                },
+                vec![6],
+            ),
+            row(4, Done::Undone, Can::Now, Vec::new()),
+        ];
+        assert_eq!(
+            stops(&rows),
+            [
+                (0, 5, Part::WithAfter),
+                (0, 5, Part::Main),
+                (0, 5, Part::Blocker),
+                (1, 4, Part::Main),
+            ]
+        );
+        assert_eq!(walked(Walk::Next, None, 4), Some(0));
+        assert_eq!(walked(Walk::Prev, None, 4), Some(3));
+        assert_eq!(walked(Walk::Next, Some(1), 4), Some(2));
+        assert_eq!(walked(Walk::Next, Some(3), 4), Some(0));
+        assert_eq!(walked(Walk::Prev, Some(0), 4), Some(3));
+        assert_eq!(walked(Walk::First, Some(2), 4), Some(0));
+        assert_eq!(walked(Walk::Last, Some(0), 4), Some(3));
+        assert_eq!(walked(Walk::Next, None, 0), None);
+        assert_eq!(Walk::of("ui.toolbar_close"), None);
+    }
 }

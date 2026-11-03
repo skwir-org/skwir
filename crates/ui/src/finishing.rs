@@ -379,7 +379,10 @@ fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
     let (standing, about) = if asks {
         (Standing::Asks, "Open Skwir to answer".to_owned())
     } else if let Some(summary) = &summary {
-        if summary.paused {
+        if summary.shares.is_empty() {
+            // Nothing runs yet: what is asked waits its turn.
+            (Standing::Running, "Waiting its turn".to_owned())
+        } else if summary.paused {
             (Standing::Paused, format!("{what}: paused"))
         } else {
             (Standing::Running, what.clone())
@@ -391,11 +394,15 @@ fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
     } else {
         (Standing::Running, "Finishing".to_owned())
     };
-    let title = match standing {
-        _ if !under.is_empty() => format!("Finishing {}", format::count(under.count(), "action")),
-        Standing::Asks => "An action needs an answer".to_owned(),
-        Standing::Waiting => "Waiting for the server".to_owned(),
-        Standing::Stopped => "An action stopped".to_owned(),
+    let title = match (&summary, standing) {
+        // What is left of the spell to finish: what runs and what waits.
+        (Some(summary), _) => format!(
+            "Finishing {}",
+            format::count(summary.of - summary.ended, "action")
+        ),
+        (None, Standing::Asks) => "An action needs an answer".to_owned(),
+        (None, Standing::Waiting) => "Waiting for the server".to_owned(),
+        (None, Standing::Stopped) => "An action stopped".to_owned(),
         _ => "Finishing".to_owned(),
     };
     let said = summary.as_ref().map_or_else(
@@ -409,10 +416,14 @@ fn presence(work: &Work, under: &Under, asks: bool) -> Presence {
         title,
         said,
         about,
-        fraction: summary.as_ref().map(|summary| summary.fraction),
+        fraction: summary
+            .as_ref()
+            .filter(|summary| summary.has_share())
+            .map(|summary| summary.fraction),
         standing,
+        // Pause and Go on reach plans: offered while one runs, not stopping.
         pause: summary
-            .filter(|summary| !summary.stopping)
+            .filter(|summary| !summary.stopping && !under.plans.is_empty())
             .map(|summary| !summary.paused),
     }
 }
@@ -646,6 +657,38 @@ mod tests {
         assert_eq!(shown.about, "2 actions: paused");
         assert_eq!(shown.standing, Standing::Paused);
         assert_eq!(shown.pause, Some(false), "Go on");
+    }
+
+    /// While only something waits its turn, the presence says so, draws no
+    /// share until something of the spell ended, and offers no Pause:
+    /// there is nothing to pause.
+    #[test]
+    fn the_presence_says_what_waits_with_nothing_running() {
+        let work = Work::default();
+        let first = Under {
+            plans: Vec::new(),
+            tasks: Vec::new(),
+            ended: 0,
+            waiting: 2,
+        };
+        let shown = presence(&work, &first, false);
+        assert_eq!(shown.title, "Finishing 2 actions");
+        assert_eq!(shown.about, "Waiting its turn");
+        assert_eq!(shown.said, "2 waiting");
+        assert_eq!(shown.standing, Standing::Running);
+        assert_eq!(shown.fraction, None, "no share yet");
+        assert_eq!(shown.pause, None, "nothing to pause");
+
+        let between = Under {
+            ended: 1,
+            waiting: 1,
+            ..first
+        };
+        let shown = presence(&work, &between, false);
+        assert_eq!(shown.title, "Finishing 1 action");
+        assert_eq!(shown.said, "1 of 2 · 50 % · 1 waiting");
+        assert!((shown.fraction.unwrap() - 0.5).abs() < 1e-6);
+        assert_eq!(shown.pause, None);
     }
 
     /// What keeps the program with nothing running says so: a question

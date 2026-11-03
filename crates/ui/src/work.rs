@@ -8,7 +8,7 @@
 //! window (`finishing.rs`); a window opened again takes it back, `Earlier`
 //! and the stopped strip with it.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -44,12 +44,12 @@ pub(crate) struct Work {
     pub(crate) stopped: Option<Stopped>,
     /// The plans shown as a card: one an error stops stays in the strip.
     pub(crate) carded: HashSet<PlanId>,
-    /// The actions of this spell of work that ended, each as one the strip
-    /// counts (ADR-114, amended 2026-11-03): from an action started with
-    /// nothing under way until nothing runs, waits or goes on by itself
-    /// (`Work::settle`). Counted whole, so the bar never goes back as one
-    /// ends.
-    pub(crate) spell_ended: usize,
+    /// The runs told started that count as an action
+    /// (`ExecEvent::Started::counts`, the core's one test, as what waits
+    /// is counted by it): those get a card, and count in the spell.
+    counting: HashSet<PlanId>,
+    /// What of the spell of work ended (ADR-114, amended 2026-11-03).
+    spell: Spell,
     /// The plans a server stopped, which go on by themselves once it
     /// answers again (ADR-080, 9).
     servers: HashSet<PlanId>,
@@ -69,6 +69,39 @@ pub(crate) struct Work {
     /// What the desktop asked (a notice or the presence clicked, its
     /// menu), kept for the next sync.
     asked: Arc<Mutex<Vec<Asked>>>,
+}
+
+/// What ended of the spell of work the strip counts (ADR-114, amended
+/// 2026-11-03): from an action asked with nothing under way until nothing
+/// runs, waits or goes on by itself (`Work::settle`). Each action that
+/// ended counts whole, so the bar never goes back as one ends.
+#[derive(Default)]
+struct Spell {
+    /// The runs that ended. One a retry continues, asked or going on by
+    /// itself, leaves as its continuation is asked: an action that goes on
+    /// is the same action (ADR-080, 9), counted once, by what it has left.
+    plans: HashSet<PlanId>,
+    /// The tasks seen running at the last settle, each with whether it was
+    /// asked to stop before it went anywhere: that one ends having done
+    /// nothing, and leaves the count.
+    tasks: HashMap<u64, bool>,
+    /// The tasks that ended.
+    tasks_ended: usize,
+}
+
+impl Spell {
+    fn ended(&self) -> usize {
+        self.plans.len() + self.tasks_ended
+    }
+
+    /// The tasks seen at the last settle that are gone from `now`, each
+    /// counted as it ended: whole, unless stopped before it went anywhere.
+    fn tasks_gone(&self, now: &HashSet<u64>) -> usize {
+        self.tasks
+            .iter()
+            .filter(|&(id, quit)| !*quit && !now.contains(id))
+            .count()
+    }
 }
 
 /// What ended unwatched: one notice says them all.
@@ -180,37 +213,65 @@ impl Work {
         std::mem::take(&mut *self.asked.lock())
     }
 
-    /// What runs and is shown as a card: a plan of a single step ends
-    /// before anyone could read a bar, unless the step moves bytes (one
-    /// large copy).
+    /// What runs and is shown as a card: the runs that count as an action
+    /// (a single rename ends before anyone could read a bar), and the
+    /// tasks; beside them, what the spell of work counts that ended and
+    /// what waits. Asked once a frame and once a sync: what waits is a
+    /// count the executor keeps cheap (`Executor::waiting_count`), never a
+    /// look at what each waits for.
     pub(crate) fn under_way(&self, app: &App) -> Under {
-        let plans = self
+        let mut ended = self.spell.ended();
+        let mut plans = Vec::new();
+        for running in self
             .running
             .iter()
-            .filter_map(|running| {
-                let transfer = app.executor.transfer(running.plan)?;
-                (running.total > 1 || transfer.total > 0).then(|| (running.clone(), transfer))
-            })
-            .collect();
+            .filter(|r| self.counting.contains(&r.plan))
+        {
+            match app.executor.transfer(running.plan) {
+                Some(transfer) => plans.push((running.clone(), transfer)),
+                // Ended in the core, its `Finished` not taken in yet: as it
+                // will be counted, so that the bar never dips meanwhile.
+                None if !running.cancelling => ended += 1,
+                None => {}
+            }
+        }
+        let tasks = app.tasks.running();
+        let now: HashSet<u64> = tasks.iter().map(|task| task.id).collect();
+        ended += self.spell.tasks_gone(&now);
         Under {
             plans,
-            tasks: app.tasks.running(),
-            ended: self.spell_ended,
-            waiting: app.executor.waiting().iter().filter(|w| w.weighs()).count(),
+            tasks,
+            ended,
+            waiting: app.executor.waiting_count(),
         }
     }
 
-    /// The spell of work ends once nothing runs, waits or goes on by
-    /// itself, its plans' ends taken in: what the strip counts begins
-    /// again (`spell_ended`). Asked after each sync's events, as the
-    /// executor wakes the window once it is idle.
+    /// The actions of this spell of work that ended (`Spell`).
+    #[cfg(test)]
+    pub(crate) fn spell_ended(&self) -> usize {
+        self.spell.ended()
+    }
+
+    /// After each sync's events: the tasks that ended since the last are
+    /// counted, and the spell of work ends once nothing runs, waits or
+    /// goes on by itself, its plans' ends taken in: what the strip counts
+    /// begins again. The executor wakes the window once it is idle, and a
+    /// task's end wakes it too.
     pub(crate) fn settle(&mut self, app: &App) {
-        if self.spell_ended > 0
+        let tasks = app.tasks.running();
+        let now: HashSet<u64> = tasks.iter().map(|task| task.id).collect();
+        self.spell.tasks_ended += self.spell.tasks_gone(&now);
+        self.spell.tasks = tasks
+            .iter()
+            .map(|task| (task.id, task.cancelling && task.went.unwrap_or(0.) <= 0.))
+            .collect();
+        if self.spell.ended() > 0
             && self.running.is_empty()
-            && app.tasks.running().is_empty()
+            && tasks.is_empty()
             && !app.executor.busy_or_waiting()
         {
-            self.spell_ended = 0;
+            self.spell.plans.clear();
+            self.spell.tasks_ended = 0;
         }
     }
 
@@ -225,8 +286,12 @@ impl Work {
                 total,
                 run,
                 items,
+                counts,
             } => {
                 let going_on = self.going_on.remove(&plan);
+                if counts {
+                    self.counting.insert(plan);
+                }
                 self.running
                     .push(Running::started(plan, title, run, total, items, going_on));
                 Taken::Nothing
@@ -234,10 +299,17 @@ impl Work {
             ExecEvent::GoesOn { plan, next, .. } => {
                 self.going_on.insert(next);
                 self.servers.remove(&plan);
+                // The same action, counted by what it has left.
+                self.spell.plans.remove(&plan);
                 // What the desktop was told of its wait is taken back.
                 if let Some(desktop) = &self.desktop {
                     desktop.withdraw_key(plan.0);
                 }
+                Taken::Nothing
+            }
+            ExecEvent::Retried { plan, .. } => {
+                // The same action, counted by what it has left.
+                self.spell.plans.remove(&plan);
                 Taken::Nothing
             }
             ExecEvent::WaitsForServer { plan } => {
@@ -261,6 +333,7 @@ impl Work {
             ExecEvent::Finished {
                 plan,
                 applied,
+                skipped,
                 error,
                 cancelled,
                 undoable,
@@ -268,9 +341,9 @@ impl Work {
                 said,
                 moved,
                 ran,
-                ..
             } => {
                 let done = error.is_none() && !cancelled;
+                let counts = self.counting.remove(&plan);
                 let Some(index) = self.running.iter().position(|r| r.plan == plan) else {
                     return Taken::Ended {
                         plan,
@@ -279,13 +352,15 @@ impl Work {
                         answer: None,
                     };
                 };
+                // Ended, it counts whole in the spell, as it counted while
+                // it waited and ran; cancelled before it did anything (one
+                // cancelled while it waited), it leaves the count: nothing
+                // ended, nothing waits.
+                if counts && !(cancelled && applied == 0 && skipped == 0 && moved == 0) {
+                    self.spell.plans.insert(plan);
+                }
                 let made = items.clone();
                 let running = self.running.remove(index);
-                // Counted as the strip counts it while it ran or waited:
-                // several steps, or bytes moved (`Waiting::weighs`).
-                if running.total > 1 || moved > 0 {
-                    self.spell_ended += 1;
-                }
                 let run = running.run;
                 let title = running.title.clone();
                 let stopped_by_error = error.is_some() && !cancelled;
@@ -508,7 +583,7 @@ impl Work {
             return;
         };
         let summary = summary(under);
-        let progress = match &summary {
+        let progress = match summary.as_ref().filter(|summary| summary.has_share()) {
             Some(summary) => Some(Progress {
                 fraction: summary.fraction,
                 state: if summary.paused {
@@ -595,13 +670,22 @@ mod tests {
         (tmp, app)
     }
 
+    /// Told started, counting as an action as the core says a plan of
+    /// several steps does.
     fn started(plan: PlanId, title: &str, total: usize) -> ExecEvent {
+        counted(plan, title, total, total > 1)
+    }
+
+    /// Told started, counting as an action as `counts` says (a single
+    /// heavy step counts, a single rename does not).
+    fn counted(plan: PlanId, title: &str, total: usize, counts: bool) -> ExecEvent {
         ExecEvent::Started {
             plan,
             title: title.into(),
             total,
             run: RunKind::Apply,
             items: None,
+            counts,
         }
     }
 
@@ -635,10 +719,27 @@ mod tests {
         }
     }
 
+    /// `Finished`, cancelled as asked, having done what is said.
+    fn cancelled(plan: PlanId, applied: usize, moved: u64) -> ExecEvent {
+        ExecEvent::Finished {
+            plan,
+            applied,
+            skipped: 0,
+            error: None,
+            cancelled: true,
+            undoable: applied > 0,
+            items: None,
+            said: Vec::new(),
+            moved,
+            ran: Duration::from_millis(30),
+        }
+    }
+
     /// The strip's spell of work counts each action that ended as the
-    /// strip counted it while it ran (several steps, or bytes moved), and
-    /// begins again once nothing runs or waits (ADR-114, amended
-    /// 2026-11-03): a single rename between two is no action of its own.
+    /// core counted it while it waited and ran (`Started::counts`: several
+    /// steps, or a heavy one), and begins again once nothing runs or
+    /// waits (ADR-114, amended 2026-11-03): a single rename between two is
+    /// no action of its own.
     #[test]
     fn the_spell_counts_what_ended_until_nothing_is_under_way() {
         let (_tmp, app) = app();
@@ -646,50 +747,153 @@ mod tests {
         let (first, quick, copy) = (PlanId(11), PlanId(12), PlanId(13));
         work.take(&app, started(first, "rename 2 items", 2), LOOKED_AT);
         work.take(&app, finished(first, 2, None), LOOKED_AT);
-        assert_eq!(work.spell_ended, 1);
+        assert_eq!(work.spell_ended(), 1);
         work.take(&app, started(quick, "rename it's a.txt", 1), LOOKED_AT);
         work.take(&app, finished(quick, 1, None), LOOKED_AT);
-        assert_eq!(work.spell_ended, 1, "a single rename counts for nothing");
+        assert_eq!(work.spell_ended(), 1, "a single rename counts for nothing");
+        // A single heavy step (one file copied, a folder deleted for good)
+        // counts, whatever it moved.
         work.take(
             &app,
-            started(copy, "copy it's a.txt to Backup", 1),
+            counted(copy, "copy it's a.txt to Backup", 1, true),
             LOOKED_AT,
         );
-        let moved = match finished(copy, 1, None) {
-            ExecEvent::Finished {
-                plan,
-                applied,
-                skipped,
-                error,
-                cancelled,
-                undoable,
-                items,
-                said,
-                ran,
-                ..
-            } => ExecEvent::Finished {
-                plan,
-                applied,
-                skipped,
-                error,
-                cancelled,
-                undoable,
-                items,
-                said,
-                moved: 4096,
-                ran,
-            },
-            other => other,
-        };
         // Still running: the spell goes on.
         work.settle(&app);
-        assert_eq!(work.spell_ended, 1);
-        work.take(&app, moved, LOOKED_AT);
-        assert_eq!(work.spell_ended, 2, "one file copied, its bytes moved");
+        assert_eq!(work.spell_ended(), 1);
+        work.take(&app, finished(copy, 1, None), LOOKED_AT);
+        assert_eq!(work.spell_ended(), 2, "a single heavy step");
         assert_eq!(work.under_way(&app).ended, 2);
         // Nothing runs, waits or goes on by itself: it begins again.
         work.settle(&app);
-        assert_eq!(work.spell_ended, 0);
+        assert_eq!(work.spell_ended(), 0);
+    }
+
+    /// One the core ended whose `Finished` is not taken in yet counts as it
+    /// will, so that the bar never dips between the two; one cancelled
+    /// meanwhile does not.
+    #[test]
+    fn a_run_ended_in_the_core_counts_before_its_answer_is_taken() {
+        let (_tmp, app) = app();
+        let mut work = Work::default();
+        // Told started, gone from the core's running ones: ended there.
+        work.take(&app, started(PlanId(21), "copy 2 items", 2), LOOKED_AT);
+        let under = work.under_way(&app);
+        assert!(under.plans.is_empty());
+        assert_eq!(under.ended, 1);
+        work.running[0].cancelling = true;
+        assert_eq!(work.under_way(&app).ended, 0, "cancelled, it may leave");
+    }
+
+    /// An action cancelled before it did anything, while it waited (its
+    /// Cancel, Cancel all) or as it started, leaves the count: nothing
+    /// ended, nothing waits. One cancelled after it did something ended,
+    /// and counts whole.
+    #[test]
+    fn an_action_cancelled_before_it_did_anything_leaves_the_count() {
+        let (_tmp, app) = app();
+        let mut work = Work::default();
+        work.take(&app, started(PlanId(1), "copy 4 items", 4), LOOKED_AT);
+        // Cancel all: three waiting, each told started and cancelled.
+        for plan in [PlanId(2), PlanId(3), PlanId(4)] {
+            work.take(&app, started(plan, "copy 2 items", 2), LOOKED_AT);
+            work.take(&app, cancelled(plan, 0, 0), LOOKED_AT);
+        }
+        assert_eq!(work.spell_ended(), 0, "nothing of them ended");
+        // Cancelled halfway through a file, or after a step: it did
+        // something, and ended.
+        work.take(&app, started(PlanId(5), "copy 2 items", 2), LOOKED_AT);
+        work.take(&app, cancelled(PlanId(5), 0, 4096), LOOKED_AT);
+        work.take(&app, started(PlanId(6), "copy 2 items", 2), LOOKED_AT);
+        work.take(&app, cancelled(PlanId(6), 1, 0), LOOKED_AT);
+        assert_eq!(work.spell_ended(), 2);
+    }
+
+    /// An action that goes on, by itself once its server answers again or
+    /// retried, is the same action (ADR-080, 9): the run that stopped
+    /// leaves what ended as its continuation is asked, which counts once,
+    /// by what it has left.
+    #[test]
+    fn an_action_that_goes_on_is_counted_once() {
+        let (_tmp, app) = app();
+        let mut work = Work::default();
+        // Another runs, holding the spell open.
+        work.take(&app, started(PlanId(1), "copy 9 items", 9), LOOKED_AT);
+        let (stopped, next) = (PlanId(2), PlanId(3));
+        work.take(
+            &app,
+            started(stopped, "copy 4 items to /mnt/server", 4),
+            LOOKED_AT,
+        );
+        work.take(&app, finished(stopped, 1, Some("Host is down")), LOOKED_AT);
+        assert_eq!(work.spell_ended(), 1, "stopped: it ended for now");
+        work.take(&app, ExecEvent::WaitsForServer { plan: stopped }, LOOKED_AT);
+        work.take(
+            &app,
+            ExecEvent::GoesOn {
+                plan: stopped,
+                next,
+                title: "copy 4 items to /mnt/server".into(),
+            },
+            LOOKED_AT,
+        );
+        assert_eq!(work.spell_ended(), 0, "it goes on: not ended");
+        work.take(
+            &app,
+            started(next, "copy 3 items to /mnt/server", 3),
+            LOOKED_AT,
+        );
+        work.take(&app, finished(next, 3, None), LOOKED_AT);
+        assert_eq!(work.spell_ended(), 1, "one action");
+
+        // Retried by the user: the same.
+        let (failed, retry) = (PlanId(4), PlanId(5));
+        work.take(&app, started(failed, "move 2 items to Stick", 2), LOOKED_AT);
+        work.take(&app, finished(failed, 0, Some("No space left")), LOOKED_AT);
+        assert_eq!(work.spell_ended(), 2);
+        work.take(
+            &app,
+            ExecEvent::Retried {
+                plan: failed,
+                next: retry,
+                title: "move 2 items to Stick".into(),
+            },
+            LOOKED_AT,
+        );
+        assert_eq!(work.spell_ended(), 1, "retried: it waits, not ended");
+        work.take(&app, started(retry, "move 2 items to Stick", 2), LOOKED_AT);
+        work.take(&app, finished(retry, 2, None), LOOKED_AT);
+        assert_eq!(work.spell_ended(), 2);
+    }
+
+    /// A task (a print) that ends counts whole, as a plan does, so that the
+    /// bar never falls as it ends; one stopped before it went anywhere
+    /// leaves the count.
+    #[test]
+    fn a_task_that_ends_counts_whole() {
+        let (_tmp, app) = app();
+        let mut work = Work::default();
+        // A plan runs, holding the spell open.
+        work.take(&app, started(PlanId(1), "copy 9 items", 9), LOOKED_AT);
+        let print = app
+            .tasks
+            .start("Print “it's a.pdf”", skwir_core::CancelToken::new());
+        work.settle(&app);
+        print.went(0.5);
+        drop(print);
+        // Ended, its end not settled yet: counted as it will be.
+        assert_eq!(work.under_way(&app).ended, 2, "the plan pending, the print");
+        work.settle(&app);
+        assert_eq!(work.spell_ended(), 1);
+        // Stopped before it went anywhere: nothing ended.
+        let cancel = skwir_core::CancelToken::new();
+        let quit = app.tasks.start("Print “b.pdf”", cancel.clone());
+        work.settle(&app);
+        cancel.cancel();
+        work.settle(&app);
+        drop(quit);
+        work.settle(&app);
+        assert_eq!(work.spell_ended(), 1);
     }
 
     /// What runs is followed from its start to its answer, which `Earlier`

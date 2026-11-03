@@ -495,7 +495,11 @@ each of nine). Three steps:
    below it, which tell two apart at once (`footprint::Kept`). Undo and
    Redo of an entry by its place, Undo with what came after (newest
    first, each once the one before ended), and `history` for agents.
-   Rules in `docs/invariants/operations.md` ("At once").
+   Since the review of 2026-11-03, what joins, runs or waits is compared
+   by its footprint whole with what the entries before it keep, so a
+   bounded footprint holds only its own entry's Undo, and each plan under
+   way keeps the entries it meets, so the History reads sets and compares
+   nothing. Rules in `docs/invariants/operations.md` ("At once").
 2. **The History panel** (`crates/ui/src/history.rs`). Built: the
    footer's Undo split in two (Undo of the latest; the chevron, a right
    click and Ctrl+Alt+Z open the History), each row's Undo or Redo, the
@@ -509,9 +513,11 @@ each of nine). Three steps:
    (ended whole, running by its share, waiting nothing), "2 of 3 · 47 %
    · … · 1 waiting"; Activity's header draws a segment an action.
    Counted in the window's `Work`, where cards are decided, not in the
-   core as proposed (`running` for agents unchanged). Left: a print
-   (a task) that ends is not counted as ended; an action asked and
-   cancelled while it waits leaves the count, so the bar moves on.
+   core as proposed (`running` for agents unchanged). Since the review
+   of 2026-11-03: a task that ends counts whole, an action cancelled
+   before it did anything leaves the count, an action going on by itself
+   or retried counts once, and whether an action counts is one test, the
+   core's (`counts` on `Started` and `Waiting`).
 
 Checks in `docs/STATUS-LOG.md` (2026-11-03, "Queue progress and the
 History").
@@ -529,6 +535,24 @@ printing](#grammars-and-printing) (2026-10-31); skwird's steps (ADR-050); the de
 on the machines (`docs/HELP-WANTED.md`, `docs/PORTING.md`, which lists
 what is still Linux's); Phase 8; what [Remote folders](#remote-folders)
 leave (ADR-077).
+
+**From the review of 2026-11-03** (the History and the queue's
+progress, fixed the same night):
+- Not seen in a window: a toast's Undo held by an action under way (unit
+  tests only), the strip saying "N waiting" while nothing runs (a folder
+  copy counts only once measured, so it never showed), and none of the
+  History with a screen reader (`just a11y-check` not run).
+- Tab in the History goes round within it, as a dialog's does, rather
+  than leaving the popup; focus coming back to the files when it closes
+  has no test (skwir-ui has no gpui test harness).
+- A frame drawn between the next action's `Started` being sent and the
+  window taking it in can still show the strip empty once.
+- An entry put back among later ones (a redo by entry, a retry joining
+  its first run) meets only what those later entries keep (ADR-079, 13).
+- An entry's `asked` runs grow by one with each undo or redo
+  (`HistoryRow::plans`).
+- The fixes' tests were not run against the code before them to see
+  them fail first.
 
 **From the review of 2026-11-02**:
 - Smaller copies: the page check's squares (8 px, 40 levels) are

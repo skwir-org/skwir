@@ -30,6 +30,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// The most steps of an action that is light: more, and it writes a disk
 /// as a copy does (ten thousand photos renamed).
@@ -171,42 +172,64 @@ impl Names {
             return true;
         };
         let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
-        // A name one of `names` begins with `prefix`: it follows `prefix`
-        // in the set's order.
-        let begins = |names: &BTreeSet<String>, prefix: &String| {
-            names
-                .range::<String, _>((Bound::Included(prefix), Bound::Unbounded))
-                .next()
-                .is_some_and(|name| name.starts_with(prefix.as_str()))
-        };
         // Two prefixes meet where one begins the other: each of the fewer
         // looked up in the others, as a beginning of theirs and by its own
-        // beginnings that may be one: every kept prefix ends with ` (`,
-        // unless cut to the longest (`clash::KEPT_PREFIX`).
+        // beginnings that may be one ([`kept_ends`]).
         let (few, many) = if a_kept.len() <= b_kept.len() {
             (a_kept, b_kept)
         } else {
             (b_kept, a_kept)
         };
-        let cut_from = super::clash::KEPT_PREFIX.saturating_sub(4);
         let kept_meet = || {
             few.iter().any(|p| {
-                let ends = p.match_indices(" (").map(|(at, _)| at + 2);
-                let cut = p
-                    .char_indices()
-                    .map(|(at, _)| at)
-                    .filter(|&at| at >= cut_from);
-                begins(many, p)
-                    || ends
-                        .chain(cut)
-                        .any(|end| end < p.len() && many.contains(&p[..end]))
+                begins(many, p) || kept_ends(p).any(|end| end < p.len() && many.contains(&p[..end]))
             })
         };
         small.iter().any(|name| large.contains(name))
-            || a_kept.iter().any(|prefix| begins(b, prefix))
-            || b_kept.iter().any(|prefix| begins(a, prefix))
+            || begins_any(b, a_kept)
+            || begins_any(a, b_kept)
             || kept_meet()
     }
+}
+
+/// Whether one of `names` begins with `prefix`: it follows `prefix` in
+/// the set's order.
+fn begins(names: &BTreeSet<String>, prefix: &str) -> bool {
+    names
+        .range::<str, _>((Bound::Included(prefix), Bound::Unbounded))
+        .next()
+        .is_some_and(|name| name.starts_with(prefix))
+}
+
+/// Whether one of `names` begins with one of `prefixes`, the fewer looked
+/// up in the others: each prefix as a beginning of the names, or each name
+/// by its beginnings that may be a kept prefix ([`kept_ends`]). A copy of
+/// a hundred thousand files claims as many prefixes; a rename beside it,
+/// two names.
+fn begins_any(names: &BTreeSet<String>, prefixes: &BTreeSet<String>) -> bool {
+    if prefixes.len() <= names.len() {
+        return prefixes.iter().any(|prefix| begins(names, prefix));
+    }
+    names.iter().any(|name| {
+        kept_ends(name)
+            .chain(std::iter::once(name.len()))
+            .any(|end| prefixes.contains(&name[..end]))
+    })
+}
+
+/// Where in `name` a kept prefix that begins it may end
+/// (`clash::kept_prefixes`): right after each ` (`, which every one ends
+/// with unless cut to the longest, and, for one cut so, at each character
+/// past the fewest bytes such a one keeps once its case is left out (at
+/// least a character of each of `KEPT_PREFIX`'s bytes but the three a
+/// cut may leave out, four bytes each at most).
+fn kept_ends(name: &str) -> impl Iterator<Item = usize> + '_ {
+    const SHORTEST_CUT: usize = super::clash::KEPT_PREFIX.saturating_sub(3) / 4;
+    name.match_indices(" (").map(|(at, _)| at + 2).chain(
+        name.char_indices()
+            .map(|(at, _)| at)
+            .filter(|&at| at >= SHORTEST_CUT),
+    )
 }
 
 /// What a name is compared as: its case left out, as a volume that tells
@@ -522,19 +545,82 @@ impl Footprint {
         if self.meets_whole(other) {
             return true;
         }
-        let changes = |a: &Footprint, b: &Footprint| {
-            a.writes.iter().any(|tree| {
-                meets(&b.reads, tree) || meets(&b.writes, tree) || folder_within(&b.names, tree)
-            }) || a.names.iter().any(|(folder, names)| {
-                b.names
+        // Each claim of the one of fewer looked up in the other's sets: an
+        // action of a hundred thousand paths meets one of a thousand in a
+        // thousand lookups.
+        let size = |f: &Footprint| f.reads.len() + f.writes.len() + f.names.len();
+        let (few, many) = if size(self) <= size(other) {
+            (self, other)
+        } else {
+            (other, self)
+        };
+        few.paths_meet(many)
+    }
+
+    /// Whether what `self` and `other` touch by their paths meets, each
+    /// claim of `self` looked up in `other`'s sets: a tree changed meets
+    /// what the other reads or changes at, above or below it, and the
+    /// names the other changes at or below it; a tree read, what the other
+    /// changes so; the names changed in a folder, the other's there that
+    /// may be one of them, and a tree the other reads or changes holding
+    /// the folder. Reads never meet reads.
+    fn paths_meet(&self, other: &Footprint) -> bool {
+        self.writes.iter().any(|tree| {
+            meets(&other.reads, tree)
+                || meets(&other.writes, tree)
+                || folder_within(&other.names, tree)
+        }) || self
+            .reads
+            .iter()
+            .any(|tree| meets(&other.writes, tree) || folder_within(&other.names, tree))
+            || self.names.iter().any(|(folder, names)| {
+                other
+                    .names
                     .get(folder)
                     .is_some_and(|theirs| names.meets(theirs))
                     || folder
                         .ancestors()
-                        .any(|above| b.reads.contains(above) || b.writes.contains(above))
+                        .any(|above| other.reads.contains(above) || other.writes.contains(above))
             })
-        };
-        changes(self, other) || changes(other, self)
+    }
+
+    /// The names right below `folder` its paths below it go through
+    /// (those at it are names it makes there, compared as names); `None`
+    /// when it reads or writes `folder` itself, which meets all below it.
+    /// Its paths below a folder follow it in each set's order.
+    fn heads_at(&self, folder: &Path) -> Option<Heads> {
+        if self.reads.contains(folder) || self.writes.contains(folder) {
+            return None;
+        }
+        let depth = folder.components().count();
+        let from = (Bound::Included(folder), Bound::Unbounded);
+        let below = |p: &&PathBuf| p.starts_with(folder);
+        let paths = self
+            .reads
+            .range::<Path, _>(from)
+            .take_while(below)
+            .chain(self.writes.range::<Path, _>(from).take_while(below))
+            .chain(
+                self.names
+                    .range::<Path, _>(from)
+                    .map(|(f, _)| f)
+                    .take_while(below),
+            );
+        Some(
+            paths
+                .filter_map(|p| p.components().nth(depth))
+                .map(|head| head_key(head.as_os_str()))
+                .collect(),
+        )
+    }
+
+    /// Whether the names `self` and `other` make or change in `folder`
+    /// may be one name.
+    fn names_meet_in(&self, other: &Footprint, folder: &Path) -> bool {
+        match (self.names.get(folder), other.names.get(folder)) {
+            (Some(mine), Some(theirs)) => mine.meets(theirs),
+            _ => false,
+        }
     }
 
     /// Whether `self` and `other` meet whatever their paths: one cannot
@@ -640,15 +726,36 @@ pub const KEPT_CLAIMS: usize = 1_000;
 /// footprint bounded to [`KEPT_CLAIMS`], the folder every path of it is
 /// in, and the names right below that folder its paths go through, so
 /// that two in folders apart, or through different names of one folder,
-/// are told apart at once.
+/// are told apart at once: an action in one folder (files renamed, put in
+/// the trash or copied there) by the names it makes there, compared as
+/// names, and the names right below it the rest goes through.
 #[derive(Clone, Debug, Default)]
 pub struct Kept {
-    footprint: Footprint,
+    footprint: Arc<Footprint>,
     within: Within,
-    /// The names right below `within` (its `Under` folder) the paths go
-    /// through; `None` when one path is that folder itself, which meets
-    /// everything below it, or when there is no such folder.
-    heads: Option<std::collections::HashSet<std::ffi::OsString>>,
+    /// The names right below a folder at or below `within` its paths below
+    /// it go through, by folder, each worked out once it is asked
+    /// (`Kept::heads_at`): a copy of a hundred thousand files compared with
+    /// two hundred entries in the folder it copies into reads its names
+    /// there once. `None` for a folder it reads or writes itself, which
+    /// meets everything below it. The names it makes or changes in that
+    /// folder are not among them: they are compared as names
+    /// ([`Names::meets`]).
+    heads: Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Option<Arc<Heads>>>>>,
+}
+
+/// The names right below a folder that a footprint's paths go through, by
+/// [`head_key`]: two that share none go through different names there;
+/// two names taken for one only send them to the whole comparison.
+type Heads = std::collections::HashSet<u64>;
+
+/// What a name right below a folder is kept as among [`Heads`]: its hash,
+/// one hasher's for all, with no name copied.
+fn head_key(name: &OsStr) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    name.as_encoded_bytes().hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Where every path a footprint touches is.
@@ -664,51 +771,86 @@ enum Within {
 }
 
 impl Kept {
+    /// What the history keeps of `footprint`: bounded to [`KEPT_CLAIMS`].
     pub fn new(footprint: &Footprint) -> Kept {
-        Kept::of(footprint.bounded(KEPT_CLAIMS))
+        Kept::of(Arc::new(footprint.bounded(KEPT_CLAIMS)))
     }
 
-    /// `footprint` as it is, with the folder its paths are in.
-    fn of(footprint: Footprint) -> Kept {
-        let mut within = Within::Nothing;
-        for path in footprint.paths() {
-            within = match within {
-                Within::Nothing => Within::Under(path.to_path_buf()),
-                Within::Under(folder) => {
-                    let shared: PathBuf = folder
-                        .components()
-                        .zip(path.components())
-                        .take_while(|(a, b)| a == b)
-                        .map(|(a, _)| a)
-                        .collect();
-                    if shared.as_os_str().is_empty() {
+    /// `footprint` whole, with the folder its paths are in, the Arc
+    /// shared: what joins the history, runs or waits is compared so with
+    /// the entries before it, which keep theirs bounded (ADR-079, 13). A
+    /// kept footprint only ever widens its own entry's.
+    pub fn exact(footprint: &Arc<Footprint>) -> Kept {
+        Kept::of(Arc::clone(footprint))
+    }
+
+    /// What the history keeps of `exact` ([`Kept::new`]): `exact` itself,
+    /// shared, where it fits the bound.
+    pub fn bound(exact: &Arc<Kept>) -> Arc<Kept> {
+        if exact.footprint.every || exact.footprint.claims() <= KEPT_CLAIMS {
+            Arc::clone(exact)
+        } else {
+            Arc::new(Kept::new(&exact.footprint))
+        }
+    }
+
+    /// `footprint` as it is, with the folder its paths are in: the one
+    /// the first and the last of each of its sets share, as every path
+    /// between them in their order does.
+    fn of(footprint: Arc<Footprint>) -> Kept {
+        fn ends<'a>(
+            mut set: impl DoubleEndedIterator<Item = &'a PathBuf>,
+        ) -> [Option<&'a PathBuf>; 2] {
+            let first = set.next();
+            [first, set.next_back().or(first)]
+        }
+        let within = {
+            let mut paths = ends(footprint.reads.iter())
+                .into_iter()
+                .chain(ends(footprint.writes.iter()))
+                .chain(ends(footprint.names.keys()))
+                .flatten();
+            match paths.next() {
+                None => Within::Nothing,
+                Some(first) => {
+                    let mut shared = first.components().count();
+                    for path in paths {
+                        shared = first
+                            .components()
+                            .zip(path.components())
+                            .take(shared)
+                            .take_while(|(a, b)| a == b)
+                            .count();
+                    }
+                    if shared == 0 {
                         Within::Anywhere
                     } else {
-                        Within::Under(shared)
+                        Within::Under(first.components().take(shared).collect())
                     }
                 }
-                Within::Anywhere => break,
-            };
-        }
-        let heads = match &within {
-            Within::Under(folder) => {
-                let depth = folder.components().count();
-                footprint
-                    .paths()
-                    .map(|path| {
-                        path.components()
-                            .nth(depth)
-                            .map(|c| c.as_os_str().to_owned())
-                    })
-                    .collect::<Option<std::collections::HashSet<_>>>()
             }
-            _ => None,
         };
         Kept {
             footprint,
             within,
-            heads,
+            heads: Arc::default(),
         }
+    }
+
+    /// The names right below `folder`, at or below its own folder, its
+    /// paths below it go through ([`Footprint::heads_at`]): worked out
+    /// once for each folder asked.
+    fn heads_at(&self, folder: &Path) -> Option<Arc<Heads>> {
+        let mut heads = self
+            .heads
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(known) = heads.get(folder) {
+            return known.clone();
+        }
+        let found = self.footprint.heads_at(folder).map(Arc::new);
+        heads.insert(folder.to_path_buf(), found.clone());
+        found
     }
 
     pub fn footprint(&self) -> &Footprint {
@@ -718,24 +860,14 @@ impl Kept {
     /// Whether `self` and `other` touched something in common, as
     /// [`Footprint::conflicts`] tells. Two paths meet only where one is
     /// at or below the other: so two whose paths are in folders apart
-    /// (neither within the other), or that go through different names
-    /// right below one folder, and claim nothing at it, meet only by a
-    /// store, or where one cannot say what it touches.
+    /// (neither within the other), or whose paths below the deeper one's
+    /// folder go through different names right below it, read or write
+    /// nothing at or above it and make no name there the other makes,
+    /// meet only by a store, or where one cannot say what it touches.
     pub fn conflicts(&self, other: &Kept) -> bool {
         let apart = match (&self.within, &other.within) {
-            (Within::Under(a), Within::Under(b)) if a == b => match (&self.heads, &other.heads) {
-                (Some(mine), Some(theirs)) => {
-                    let (few, many) = if mine.len() <= theirs.len() {
-                        (mine, theirs)
-                    } else {
-                        (theirs, mine)
-                    };
-                    !few.iter().any(|head| many.contains(head))
-                }
-                _ => false,
-            },
-            (Within::Under(a), Within::Under(b)) if b.starts_with(a) => self.goes_apart_from(b),
-            (Within::Under(a), Within::Under(b)) if a.starts_with(b) => other.goes_apart_from(a),
+            (Within::Under(a), Within::Under(b)) if b.starts_with(a) => self.apart_from(other, b),
+            (Within::Under(a), Within::Under(b)) if a.starts_with(b) => other.apart_from(self, a),
             // One touches no path, or theirs are in folders apart.
             (Within::Nothing, _) | (_, Within::Nothing) | (Within::Under(_), Within::Under(_)) => {
                 true
@@ -748,17 +880,32 @@ impl Kept {
         self.footprint.conflicts(&other.footprint)
     }
 
-    /// Whether none of its paths is at or above `inner`, a folder below
-    /// its own: it claims nothing at its folder, and goes through other
-    /// names below it than the one `inner` is under.
-    fn goes_apart_from(&self, inner: &Path) -> bool {
-        let (Within::Under(folder), Some(heads)) = (&self.within, &self.heads) else {
+    /// Whether `self`, whose folder is at or above `inner`, the folder
+    /// all of `deeper`'s paths are in, and `deeper` meet by no path: it
+    /// reads and writes nothing at or above `inner`, makes no name there
+    /// that `deeper` makes, and its paths below `inner` go through other
+    /// names right below it than `deeper`'s, which reads and writes
+    /// nothing at `inner` itself. A name made in a folder above `inner`
+    /// meets nothing below it.
+    fn apart_from(&self, deeper: &Kept, inner: &Path) -> bool {
+        let Some(theirs) = deeper.heads_at(inner) else {
             return false;
         };
-        inner
-            .components()
-            .nth(folder.components().count())
-            .is_some_and(|head| !heads.contains(head.as_os_str()))
+        let at_or_above = inner.ancestors().any(|above| {
+            self.footprint.reads.contains(above) || self.footprint.writes.contains(above)
+        });
+        if at_or_above || self.footprint.names_meet_in(&deeper.footprint, inner) {
+            return false;
+        }
+        let Some(mine) = self.heads_at(inner) else {
+            return false;
+        };
+        let (few, many) = if mine.len() <= theirs.len() {
+            (&*mine, &*theirs)
+        } else {
+            (&*theirs, &*mine)
+        };
+        !few.iter().any(|head| many.contains(head))
     }
 }
 
@@ -911,8 +1058,8 @@ mod tests {
     #[test]
     fn a_file_s_companions_are_claimed_with_it() {
         let rules = crate::companions::Companions::default();
-        rules.register("test", std::sync::Arc::new(crate::companions::tests::Rules));
-        let volumes = Volumes::now().with_companions(std::sync::Arc::new(rules));
+        rules.register("test", Arc::new(crate::companions::tests::Rules));
+        let volumes = Volumes::now().with_companions(Arc::new(rules));
         let rename = Footprint::default()
             .made_with(&p("/disk/notes/it’s a.txt"), &volumes)
             .made_with(&p("/disk/notes/b.txt"), &volumes);
@@ -1147,17 +1294,57 @@ mod tests {
         assert!(!a.conflicts(&c));
     }
 
+    /// Actions in one folder (files put in the trash there) are told apart
+    /// by the names they make there, compared as names: one making a name
+    /// another made, in another case, meets it; one reading the folder
+    /// whole meets them all.
+    #[test]
+    fn actions_in_one_folder_are_told_apart_by_their_names() {
+        let trash = |names: &[&str]| {
+            Kept::new(&Footprint::of_steps(names.iter().map(|name| {
+                Some(
+                    Footprint::default()
+                        .made(&p(&format!("/disk/photos/{name}")))
+                        .record_in(TRASH),
+                )
+            })))
+        };
+        let a = trash(&["it's a.jpg", "b.jpg"]);
+        let b = trash(&["c.jpg"]);
+        assert!(
+            a.heads_at(Path::new("/disk/photos")).is_some(),
+            "the folder named, not read or written"
+        );
+        assert!(!a.conflicts(&b) && !b.conflicts(&a));
+        let again = trash(&["B.JPG"]);
+        assert!(a.conflicts(&again) && again.conflicts(&a));
+        let copy = Kept::new(
+            &Footprint::default()
+                .read(&p("/disk/photos"))
+                .made(&p("/stick/photos")),
+        );
+        assert!(copy.conflicts(&a) && a.conflicts(&copy));
+        // Inside a folder made there: through the name it is made as.
+        let inside = Kept::new(&Footprint::default().made(&p("/disk/photos/c.jpg/x")));
+        assert!(!a.conflicts(&inside) && b.conflicts(&inside));
+    }
+
     mod widening {
         use super::*;
         use proptest::prelude::*;
 
         /// A footprint of a few claims among a few folders and names.
         fn footprint() -> impl Strategy<Value = Footprint> {
-            let path = (0..3usize, 0..3usize, 0..4usize).prop_map(|(a, b, n)| match n {
-                0 => p(&format!("/d{a}")),
-                1 => p(&format!("/d{a}/e{b}")),
-                _ => p(&format!("/d{a}/e{b}/it's {n}")),
-            });
+            // Names in two cases: a volume that tells none apart takes
+            // them for one.
+            let path = (0..3usize, 0..3usize, 0..4usize, any::<bool>()).prop_map(
+                |(a, b, n, upper)| match n {
+                    0 => p(&format!("/d{a}")),
+                    1 => p(&format!("/d{a}/e{b}")),
+                    _ if upper => p(&format!("/d{a}/e{b}/IT'S {n}")),
+                    _ => p(&format!("/d{a}/e{b}/it's {n}")),
+                },
+            );
             let claim = (0..5usize, path).prop_map(|(kind, path)| match kind {
                 0 => Footprint::default().read(&path),
                 1 => Footprint::default().written(&path),
@@ -1187,10 +1374,65 @@ mod tests {
                     // Tops alone cannot widen: one per drive, `/` here.
                     prop_assert!(wide.claims() <= most.max(1));
                 }
-                let (ka, kb) = (Kept::of(wide.clone()), Kept::of(b.clone()));
+                let (ka, kb) = (
+                    Kept::of(Arc::new(wide.clone())),
+                    Kept::exact(&Arc::new(b.clone())),
+                );
                 prop_assert_eq!(ka.conflicts(&kb), wide.conflicts(&b));
                 prop_assert_eq!(kb.conflicts(&ka), b.conflicts(&wide));
             }
+
+            /// Looked up from the one of fewer claims, two footprints meet
+            /// as each one's claims compared with the other's both ways do.
+            #[test]
+            fn the_fewer_claims_looked_up_answer_as_both_ways(
+                a in footprint(),
+                b in footprint(),
+            ) {
+                prop_assert_eq!(a.conflicts(&b), both_ways(&a, &b));
+                prop_assert_eq!(b.conflicts(&a), both_ways(&a, &b));
+            }
         }
+
+        /// The comparison as it was made, each one's writes and names
+        /// against all the other touches, both ways.
+        fn both_ways(a: &Footprint, b: &Footprint) -> bool {
+            let changes = |a: &Footprint, b: &Footprint| {
+                a.writes.iter().any(|tree| {
+                    meets(&b.reads, tree) || meets(&b.writes, tree) || folder_within(&b.names, tree)
+                }) || a.names.iter().any(|(folder, names)| {
+                    b.names
+                        .get(folder)
+                        .is_some_and(|theirs| names.meets(theirs))
+                        || folder
+                            .ancestors()
+                            .any(|above| b.reads.contains(above) || b.writes.contains(above))
+                })
+            };
+            a.meets_whole(b) || changes(a, b) || changes(b, a)
+        }
+    }
+
+    /// Kept prefixes meet the names they may be kept as whichever side is
+    /// larger: a copy of many files, its names settled later, meets a
+    /// name one of them may take, and no other.
+    #[test]
+    fn kept_prefixes_meet_names_looked_up_either_way() {
+        let copy = Footprint::of_steps((0..50).map(|n| {
+            Some(Footprint::default().settles_name(&p(&format!("/disk/photos/it's {n}.jpg")), true))
+        }));
+        let taken = Footprint::default().made(&p("/disk/photos/IT'S 7 (copy).jpg"));
+        let other = Footprint::default().made(&p("/disk/photos/notes.txt"));
+        assert!(copy.conflicts(&taken) && taken.conflicts(&copy));
+        assert!(!copy.conflicts(&other) && !other.conflicts(&copy));
+        // Names too long for their prefix to end with ` (`: cut.
+        let long = "x".repeat(300);
+        let cut = Footprint::of_steps((0..5).map(|n| {
+            Some(Footprint::default().settles_name(&p(&format!("/disk/photos/{n}{long}")), true))
+        }));
+        let beside = Footprint::default().made(&p(&format!("/disk/photos/3{long} (copy 2)")));
+        assert!(cut.conflicts(&beside) && beside.conflicts(&cut));
+        let apart = Footprint::default().made(&p(&format!("/disk/photos/7{long} (copy 2)")));
+        assert!(!cut.conflicts(&apart));
     }
 }

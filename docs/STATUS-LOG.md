@@ -10066,3 +10066,115 @@ every 0.7 s: 15, 19, 22, 26, 30 %, then "2 of 3 · 45 % · 1 waiting" as
 the first ended (no return to nothing), then all done. `cargo nextest
 run -p skwir-ui`: the two strip tests rewritten for the spell and
 `the_spell_counts_what_ended_until_nothing_is_under_way` added.
+
+## Review fixes (2026-11-03)
+
+Asked by the user before the release plan: a review for bugs and
+performance of ba8c9e10, ff85bcb7 and f60f8c81 (the History and the
+queue's progress). Three reviewers read one commit each, without
+building; 22 findings, two high. Each reviewer then fixed its own area in
+one tree, each owning its files, the integrator agreeing the core API the
+three crossed (`counts` on `Started` and `Waiting`,
+`Executor::waiting_count`, `ExecEvent::Retried`,
+`Shell::history_by_plan` as an `Rc`). Committed as one: each side
+compiles only with the others.
+
+**The history's rule** (ADR-079, 13; `crates/core/src/op`):
+- The History compared footprints as it was read, on the window's
+  thread, at each move of its version: 200 entries of one folder against
+  a few plans under way could take about a second. Each plan under way
+  now keeps the entries it meets, worked out once it is measured and as
+  each entry joins (`Job::meets`, `note_meets`, `Lane::note_joined`),
+  out of the journal's lock; `history()` reads sets and builds the
+  chains in one pass (`history_read`: 30 to 53 µs for a full history
+  with 24 actions under way, budget 400 µs).
+- What joins, runs or waits is compared by its footprint whole
+  (`Kept::exact`) with what the entries before it keep (`Kept::bound`):
+  a bounded footprint, reached at about 170 to 250 files copied, moved or
+  renamed into one folder, had held every earlier action in that folder,
+  while it ran and after. It now holds only its own entry's Undo.
+  Comparisons walk the smaller side and probe the larger
+  (`Footprint::conflicts`, `Names::meets`); a property test checks the
+  one-way comparison against the two-way one. A copy of 100,000 files
+  compared whole with 200 kept entries of its folder: 48 ms
+  (`history_meets_whole`, new, budget 150 ms; 561 ms before the quick
+  answer for an entry in a deeper folder). Puts into a full history:
+  5.5 to 8.9 ms (`history_put`, 25 ms), 4.1 to 6.7 ms with every entry
+  naming files right in one folder (`history_put_folder`, new, 20 ms);
+  release build, three runs, load 1.9 to 5.8.
+- A plain Undo could take back an entry a later undo still held (a chain
+  C, B, A, Ctrl+Z between, C's undo then cancelled: B undone with C
+  applied). An entry being undone now stays on its stack until its undo
+  ends (`JournalEntry::going`); no run takes an entry back while one in
+  its `blocked_by` is there; a plain Undo waits for an undo that takes
+  back what blocks its pick. Undo with what came after is one chain,
+  stopped at the first undo that does not go, said once. `with_after`
+  without an entry is an error; answers name the entries their runs took
+  (`ExecResult::entry_title`). The History no longer lists an ended plan
+  as running, nor drops an entry being undone. A plan's end reuses the
+  footprint dispatch bounded. What waits is read again only when the
+  lane changes, and the window is woken once a plan is measured.
+
+**The History panel** (`crates/ui/src/history.rs`, `toast.rs`):
+- A click on the footer's Undo or its chevron took the keyboard off the
+  files, so Enter or Space pressed Undo again; both now leave it where it
+  was, as the strip does.
+- The History is read once per version into an `Rc` with its rows by
+  plan and by entry; only the rows in view are built (a gpui list), the
+  keys walking every row and bringing it into view; what only a screen
+  reader hears is built while one listens.
+- A toast's Undo answers as the History's and Earlier's do
+  (`history::undo_held`): one that cannot act now is said, not offered,
+  with why. A toast said while the History is open keeps its time from
+  when it is drawn.
+
+**The queue's progress** (ADR-114, amended again; `work.rs`,
+`activity.rs`, `finishing.rs`):
+- Every sync and frame read what each waiting plan waits for, comparing
+  footprints; the strip now reads `waiting_count()`, which compares
+  nothing and counts plans admitted but not yet told started, so the
+  strip stays at each hand-over.
+- What ended is a set of runs: a plan going on by itself or retried
+  replaces the run it continues (ADR-080, 9), where it counted twice. An
+  action cancelled before it did anything leaves the count (it counted
+  as done, the bar jumping forward), and a task that ends (a print)
+  counts whole (the bar fell as it ended). Whether an action counts is
+  the core's one test (several steps, or heavy), for waiting, the card
+  and the end alike.
+- The strip shows while only something waits; the presence then says
+  "Waiting its turn", with no share and no Pause; Activity's Waiting
+  heading names the quick ones the strip does not count. Earlier's held
+  Undo says why on a line of its own, wrapped, and to a screen reader.
+
+Checked:
+- skwir-core: 647 tests passed (637 before; new among them: a chain cut
+  short with a plain Undo between, the widened entry holding nothing earlier while a
+  250-file copy runs and after, not-yet-told plans counted, `Retried`
+  before the new run's `Started`, the one-way comparison's equivalence,
+  also at 20,000 cases), clippy on skwir-core and skwir-bench.
+- skwir-ui: 477 tests passed (new: the held wording, `undo_held`'s
+  cases, the key walk, a held toast keeping its time, Cancel and Cancel
+  all while waiting, a retry and a plan going on counted once, a task
+  ending, the strip and the presence with only waiting work, the header
+  at 12 and 13).
+- In test windows on Xvfb (debug builds, scratch XDG folders): a click on
+  Undo, then Enter opened the folder selected; opened by the chevron,
+  Escape, then Down moved the file cursor; 24 rows scrolled, End and a
+  holder's link reaching rows out of view; a toast held 10 s showed its
+  8 s from the History's close. A copy of 250,000 files paused with two
+  behind it ("1 of 3 · paused at 19 % · 2 waiting", three segments), one
+  cancelled ("1 of 2 · 29 %", not counted as done), then resumed and
+  sampled every 0.22 s for 34 s: no frame without the strip, the share
+  never falling, "2 of 2 · 50 %" as the second started.
+- Integrator, on the tree as committed: `just lint` clean; `just test`
+  2949 passed, 30 skipped; the Windows clippy of skwir-core and skwir-ui
+  (cargo-zigbuild) clean after one allowance: the History's time helper
+  takes `&SystemTime` as serde's `serialize_with` hands it, which clippy
+  wants by value on Windows alone, where it is 8 bytes (from ba8c9e10,
+  so that lint had failed since). The first `just test` stopped at one
+  failure outside this work, `the_session_is_held_by_the_portal_and_logind`:
+  the session's hold was let go portal first, logind's descriptor dropped
+  only once the portal's Close was answered, so under load the test saw
+  the request closed and the descriptor open. The descriptor goes first
+  now (553dfaec); the desktop tests passed 8 runs in a row.
+- Not run: release-check, a11y-check, any real desktop session.

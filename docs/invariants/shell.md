@@ -640,16 +640,30 @@ of bars, split or not.
   the last pane's footer, before Undo, says how far it has gone in as
   many words as the footer has room for (`Fit`: what and how, how, the
   share alone), with Pause and Cancel for a single action. It counts the
-  spell of work (ADR-114, amended 2026-11-03): from an action started
+  spell of work (ADR-114, amended 2026-11-03): from an action asked
   with nothing under way until nothing runs, waits or goes on by itself
-  (`Work::settle`), each action counting one, those ended whole
-  (`Work::spell_ended`), those running by their own share, those
-  waiting nothing ("2 of 3 · 47 % · about 3 min left · 1 waiting"); an
-  action counts as a card does (`Waiting::weighs`). The bar goes back
-  only as more is asked, never as one ends; the time left is what runs,
-  never a guess at what waits. Activity's header says the same over a
-  bar of one segment an action, one bar past twelve; the taskbar and the
-  presence follow it. A click, or `ui.activity` (Ctrl+Shift+J),
+  (`Work::settle`), each action counting one, those ended whole (a
+  task too), those running by their own share, those waiting nothing
+  ("2 of 3 · 47 % · about 3 min left · 1 waiting"). What counts as an
+  action is one test, the core's, for what waits, the card and what
+  ended (`Waiting::counts`, `ExecEvent::Started::counts`): several
+  steps, or a heavy one; never a single rename. The bar never goes back
+  as one ends: one cancelled before it did anything leaves the count,
+  its share nothing, and one admitted and not yet told started counts
+  as waiting, so the strip stays through a hand-over ("1 of 2 · 50 % ·
+  1 waiting", or "1 waiting" before anything started). It goes back
+  only as more is asked, or as an action stopped goes on, retried or by
+  itself (`ExecEvent::Retried`, `GoesOn`): the same action, the run
+  that stopped leaving what ended, counted again by what it has left.
+  The time left is what runs, never a guess at what waits; what waits
+  is a count the executor keeps cheap (`Executor::waiting_count`),
+  never a look at what each waits for, which only Activity's list
+  reads. "N waiting" counts those that count; Activity's Waiting
+  heading says how many quick ones it lists beside them. Activity's
+  header says the same over a bar of one segment an action, one bar
+  past twelve; the taskbar and the presence follow it, with no share
+  while only something waits and nothing ended, and no Pause with
+  nothing to pause. A click, or `ui.activity` (Ctrl+Shift+J),
   opens Activity above it (one popup at a time, `toggle_popup`): each
   action's card, what waits (each with its Cancel, Cancel all for
   several), and Earlier, this session's answers with
@@ -690,23 +704,30 @@ of bars, split or not.
   Ctrl+Z, off when there is nothing to undo), its chevron, a right click
   on Undo and `ui.undo_history` (Ctrl+Alt+Z) opening the History above
   it (one popup at a time). Like the rest of the footer, the two are no
-  stops of the Tab order: their keys are the commands'. The History
-  lists the core's rows (`Executor::history`), newest first, each with
-  its own Undo, an undone one's Redo, and "Undo both" ("Undo with N
-  after it") when the actions after it that block it can be undone with
-  it. A button that cannot act now is said, not offered
+  stops of the Tab order: their keys are the commands', and a click on
+  them leaves the keyboard where it was, as on the strip (Enter or Space
+  would press Undo again); the History closed gives it back there. The
+  History lists the core's rows (`Executor::history`), newest first,
+  each with its own Undo, an undone one's Redo, and "Undo both" ("Undo
+  with N after it") when the actions after it that block it can be
+  undone with it. A button that cannot act now is said, not offered
   (`controls::inert_button`, no frame but the keyboard's), and the line
   under its title says why: the action that holds it is named by a link
   that lights that one's row and gives its Undo the keyboard. Earlier's
-  Undo buttons in Activity answer the same way, by the plan they report.
-  The rows are read again only when `Executor::history_version` moves
-  (`Shell::history`): nothing is compared as they are drawn. Undo,
+  and a toast's Undo answer the same way, by the plan they report
+  (`history::undo_held`). The rows are read again only when
+  `Executor::history_version` moves, once for the History, Earlier and
+  the toast (`history::Read`, each row by the plans that made it), and
+  only those in view are built (a `gpui::list`); the keys walk the rows
+  read, so one out of view is reached too and comes into view. Undo,
   Redo and "Undo both" from it leave it open, its rows saying what each
-  became; no toast is drawn while it is open (Earlier keeps them).
+  became; no toast is drawn while it is open (Earlier keeps them), and
+  one said meanwhile keeps its time, which begins once it is drawn.
 - **One answer at a time** (`toast.rs`), over the files at the last
   pane's lower right, above the strip or Activity pinned, where the list
   shows sizes and dates rather than names; over the preview on the whole
-  screen. Not while Activity or the History is open: Earlier holds it.
+  screen. Not while Activity or the History is open: Earlier holds it,
+  and one the History held back is drawn once it closes, for its time.
   A plan that ran
   5 s or more and moved bytes says them in its toast, and how long it
   ran ("4.8 GB in 3 min 20 s"). A toast stays at least as long as its

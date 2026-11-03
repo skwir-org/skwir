@@ -61,8 +61,10 @@ macOS otherwise compiled only.
    (`Desktop::presence`): its icon with a badge filling as the strip's
    bar (its colour: running, paused, waiting for a server, stopped, a
    question), the strip's words in its tooltip, a click opening the
-   window with Activity, a menu (Open Skwir; Pause all or Go on; Stop
-   all and quit).
+   window with Activity, a menu (Open Skwir; Pause all or Go on, while a
+   plan runs; Stop all and quit). While only something waits its turn,
+   it says so ("Waiting its turn", "1 waiting"), with no share until
+   something of the spell of work ended (ADR-114, 1, amended).
    - **Windows**: an icon in the notification area (the taskbar's button
      went with the window).
    - **Linux**: the same, wherever the desktop has a tray: a

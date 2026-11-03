@@ -99,11 +99,25 @@ pub struct Report {
     /// (`footprint::Kept`), then compared with 200 kept entries of 1 000
     /// claims each in the same folder, none meeting it.
     pub history_put: Stat,
+    /// The same of actions in one folder, as files renamed, put in the
+    /// trash or copied there are: 200 kept entries each naming 400 files
+    /// right below one folder, and an action naming 400 others there,
+    /// told apart by their names.
+    pub history_put_folder: Stat,
+    /// The history as the window reads it (`Executor::history`) over a
+    /// full history of such entries, with four actions running and
+    /// twenty waiting in the same folder: read, never compared.
+    pub history_read: Stat,
+    /// What joins the history, runs or waits is compared whole with what
+    /// the entries before it keep: a copy of 100 000 files into that
+    /// folder, its names settled later, taken whole (`Kept::exact`) and
+    /// compared with the 200 entries, none meeting it.
+    pub history_meets_whole: Stat,
 }
 
 impl Report {
     /// Each measurement by its key in the budgets file.
-    fn metrics(&self) -> [(&'static str, &Stat); 27] {
+    fn metrics(&self) -> [(&'static str, &Stat); 30] {
         [
             ("first_batch_us", &self.first_batch),
             ("list_getdents_us", &self.list_getdents),
@@ -132,13 +146,16 @@ impl Report {
             ("delete_tail_us", &self.delete_tail),
             ("tags_forget_us", &self.tags_forget),
             ("history_put_us", &self.history_put),
+            ("history_put_folder_us", &self.history_put_folder),
+            ("history_read_us", &self.history_read),
+            ("history_meets_whole_us", &self.history_meets_whole),
         ]
     }
 }
 
 /// The measurements made in memory or in a scratch folder of their own:
 /// they read no generated tree.
-const OWN_DATA: [&str; 8] = [
+const OWN_DATA: [&str; 11] = [
     "tags_index_learn_us",
     "tags_index_tally_us",
     "tags_index_change_us",
@@ -147,10 +164,13 @@ const OWN_DATA: [&str; 8] = [
     "delete_tail_us",
     "tags_forget_us",
     "history_put_us",
+    "history_put_folder_us",
+    "history_read_us",
+    "history_meets_whole_us",
 ];
 
 /// The measurements of the flat tree alone.
-const FLAT_ONLY: [&str; 7] = [
+const FLAT_ONLY: [&str; 10] = [
     "listing_sort_hydrate_us",
     "listing_sort_update_us",
     "entry_at_selection_us",
@@ -158,6 +178,9 @@ const FLAT_ONLY: [&str; 7] = [
     "tags_forget_us",
     "mime_by_name_us",
     "history_put_us",
+    "history_put_folder_us",
+    "history_read_us",
+    "history_meets_whole_us",
 ];
 
 /// The metrics a run measures, by their keys in the budgets file: those
@@ -1049,6 +1072,173 @@ fn history_put(runs: usize) -> Stat {
     )
 }
 
+/// The files an action of [`history_put_folder`] and [`history_read`]
+/// names right below their one folder: as many claims as a kept footprint
+/// holds without being widened (a name made claims the file and its name).
+const FOLDER_ACTION_FILES: usize = 400;
+
+/// The folder [`history_put_folder`] and [`history_read`] name files in.
+const HISTORY_FOLDER: &str = "/bench/history/photos";
+
+/// The footprint of action `n` of [`history_put_folder`]: its files made
+/// right below one folder, names of its own.
+fn folder_action(n: usize) -> skwir_core::op::footprint::Footprint {
+    use skwir_core::op::footprint::Footprint;
+    let folder = Path::new(HISTORY_FOLDER);
+    Footprint::of_steps(
+        (0..FOLDER_ACTION_FILES)
+            .map(|i| Some(Footprint::default().made(&folder.join(format!("it's {n}-{i}.jpg"))))),
+    )
+}
+
+/// [`Report::history_put_folder`]: 200 kept entries of actions in one
+/// folder, then a new one bounded and compared with each.
+fn history_put_folder(runs: usize) -> Stat {
+    use skwir_core::op::footprint::Kept;
+    let entries: Vec<Kept> = (0..200).map(|n| Kept::new(&folder_action(n))).collect();
+    let new = folder_action(200);
+    Stat::of(
+        (0..runs)
+            .map(|_| {
+                let t = Instant::now();
+                let kept = Kept::new(&new);
+                let met = entries.iter().filter(|e| e.conflicts(&kept)).count();
+                let took = t.elapsed();
+                assert_eq!(met, 0, "names of their own: none meets it");
+                took
+            })
+            .collect(),
+    )
+}
+
+/// [`Report::history_meets_whole`]: 200 kept entries of actions in one
+/// folder, and a copy of 100 000 files into it compared with each whole.
+fn history_meets_whole(runs: usize) -> Stat {
+    use skwir_core::op::footprint::{Footprint, Kept};
+    let entries: Vec<Kept> = (0..200).map(|n| Kept::new(&folder_action(n))).collect();
+    let folder = Path::new(HISTORY_FOLDER);
+    let copy = std::sync::Arc::new(Footprint::of_steps((0..100_000).map(|i| {
+        Some(
+            Footprint::default()
+                .read(&Path::new("/bench/card").join(format!("IMG_{i:06}.jpg")))
+                .settles_name(&folder.join(format!("IMG_{i:06}.jpg")), true),
+        )
+    })));
+    Stat::of(
+        (0..runs)
+            .map(|_| {
+                let t = Instant::now();
+                let whole = Kept::exact(&copy);
+                let met = entries.iter().filter(|e| e.conflicts(&whole)).count();
+                let took = t.elapsed();
+                assert_eq!(met, 0, "names of their own: none meets it");
+                took
+            })
+            .collect(),
+    )
+}
+
+/// A step of [`history_read`]: action `n`'s files made in one folder, on
+/// no disk, waiting for `open` where one is given.
+#[derive(Clone, Debug)]
+struct Marks {
+    n: usize,
+    open: Option<std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>>,
+}
+
+impl skwir_core::op::Operation for Marks {
+    fn kind(&self) -> &'static str {
+        "bench.marks"
+    }
+    fn args(&self) -> serde_json::Value {
+        serde_json::json!({ "n": self.n })
+    }
+    fn describe(&self) -> skwir_core::op::Change {
+        skwir_core::op::Change::Create {
+            path: Path::new(HISTORY_FOLDER).join(format!("it's {}-0.jpg", self.n)),
+            directory: false,
+            words: None,
+        }
+    }
+    fn check(&self, _: &skwir_core::op::StepContext) -> skwir_core::op::StepStatus {
+        skwir_core::op::StepStatus::Pending { reversible: true }
+    }
+    fn apply(
+        &self,
+        _: &skwir_core::op::StepContext,
+    ) -> anyhow::Result<Option<Box<dyn skwir_core::op::Operation>>> {
+        if let Some(open) = &self.open {
+            let mut opened = open.0.lock().expect("gate");
+            while !*opened {
+                opened = open.1.wait(opened).expect("gate");
+            }
+        }
+        Ok(Some(Box::new(Marks {
+            n: self.n,
+            open: None,
+        })))
+    }
+    fn clone_box(&self) -> Box<dyn skwir_core::op::Operation> {
+        Box::new(self.clone())
+    }
+    fn footprint(
+        &self,
+        _: &skwir_core::op::footprint::Volumes,
+    ) -> Option<skwir_core::op::footprint::Footprint> {
+        Some(folder_action(self.n))
+    }
+}
+
+/// [`Report::history_read`]: a full history of actions in one folder,
+/// four more running and twenty waiting there, the history read as the
+/// window reads it when it may say otherwise.
+fn history_read(runs: usize) -> Stat {
+    use skwir_core::cancel::CancelToken;
+    use skwir_core::op::{Executor, HISTORY_ENTRIES, Plan};
+    let executor = Executor::new(skwir_core::scheduler::Scheduler::new(2));
+    let plan = |n: usize, open: Option<&std::sync::Arc<_>>| {
+        Plan::with_steps(
+            format!("action {n}"),
+            vec![Box::new(Marks {
+                n,
+                open: open.cloned(),
+            })],
+        )
+    };
+    for n in 0..HISTORY_ENTRIES {
+        let done = executor.execute_blocking(&plan(n, None), &CancelToken::new());
+        assert_eq!(done.error, None, "action {n}");
+    }
+    let open = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    for n in 0..24 {
+        executor.execute(plan(HISTORY_ENTRIES + n, Some(&open)), CancelToken::new());
+    }
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while executor.history().rows.len() < HISTORY_ENTRIES + 24 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let samples = (0..runs)
+        .map(|_| {
+            let t = Instant::now();
+            let history = executor.history();
+            let took = t.elapsed();
+            assert_eq!(
+                history.rows.len(),
+                HISTORY_ENTRIES + 24,
+                "every action read"
+            );
+            took
+        })
+        .collect();
+    *open.0.lock().expect("gate") = true;
+    open.1.notify_all();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while executor.is_busy() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    Stat::of(samples)
+}
+
 /// Whether the generator could tag `dir` (see `generate::tag`).
 fn tagged(dir: &Path) -> bool {
     dir.join(".skwir-bench-tagged").exists()
@@ -1156,6 +1346,13 @@ pub fn run(root: &Path, profile: Profile, runs: usize, only: &Only) -> Report {
         delete_tail: measured(flat && want("delete_tail_us"), || delete_tail(runs)),
         tags_forget: measured(flat && want("tags_forget_us"), || tags_forget(runs)),
         history_put: measured(flat && want("history_put_us"), || history_put(runs)),
+        history_put_folder: measured(flat && want("history_put_folder_us"), || {
+            history_put_folder(runs)
+        }),
+        history_read: measured(flat && want("history_read_us"), || history_read(runs)),
+        history_meets_whole: measured(flat && want("history_meets_whole_us"), || {
+            history_meets_whole(runs)
+        }),
     }
 }
 

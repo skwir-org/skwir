@@ -2441,7 +2441,7 @@ fn at_in(order: &[EntryId], id: EntryId, at: Option<usize>) -> Option<usize> {
         .or_else(|| order.iter().position(|x| *x == id))
 }
 
-fn replayed(what: &str, title: Option<&str>, result: &op::ExecResult) -> Outcome {
+fn replayed(what: &str, title: impl Serialize, result: &op::ExecResult) -> Outcome {
     Outcome::Value(serde_json::json!({
         what: title,
         "applied": result.applied,
@@ -2665,8 +2665,10 @@ pub struct UndoArgs {
     /// else refused, saying what did, unless `with_after`.
     #[serde(default)]
     pub entry: Option<u64>,
-    /// With `entry`: take back with it the entries after it that touched
-    /// what it did, followed through, newest first (`history`'s `with`).
+    /// With `entry` (an error without it, or with `plan`): take back
+    /// with it the entries after it that touched what it did, followed
+    /// through, newest first (`history`'s `with`), the first that does not
+    /// go stopping the rest; answered with the titles of those taken back.
     #[serde(default)]
     pub with_after: bool,
 }
@@ -3623,11 +3625,15 @@ mod builtin {
             "core", Topic::Files,
             "undo",
             "Undo",
-            "Undo the most recent plan, or the plan or history entry named when nothing asked after it touched what it did (with_after: with the entries after it that did, newest first); asked from outside the window, says what it took back",
+            "Undo the most recent plan, or the plan or history entry named when nothing asked after it touched what it did (with_after, with an entry: with the entries after it that did, newest first); asked from outside the window, says what it took back, by the titles of the history's entries",
             |a, app| {
                 anyhow::ensure!(
                     !(a.plan.is_some() && a.entry.is_some()),
                     "name a plan or an entry, not both"
+                );
+                anyhow::ensure!(
+                    !a.with_after || a.entry.is_some(),
+                    "with_after takes back an entry with what came after it: name the entry"
                 );
                 if crate::scheduler::on_window_thread() {
                     let cancel = app.lifetime().child();
@@ -3644,44 +3650,48 @@ mod builtin {
                     }
                     return Ok(Outcome::Done);
                 }
-                // A script or an agent waits, and is told what it took back.
+                // A script or an agent waits, and is told what it took back:
+                // the entries its runs took back, by their titles.
                 let cancel = app.lifetime().child();
+                if let (Some(entry), true) = (a.entry, a.with_after) {
+                    // Newest first, each once the one before ended; the
+                    // first that does not go stops the rest.
+                    let mut all: Option<op::ExecResult> = None;
+                    let mut undone = Vec::new();
+                    for seq in app.executor.with_after(entry) {
+                        let Some(r) = app.executor.undo_entry_blocking(seq, &cancel) else {
+                            break;
+                        };
+                        let stop = r.error.is_some() || r.cancelled;
+                        if !stop {
+                            undone.extend(r.entry_title.clone());
+                        }
+                        all = Some(match all {
+                            None => r,
+                            Some(sum) => op::ExecResult {
+                                applied: sum.applied + r.applied,
+                                skipped: sum.skipped + r.skipped,
+                                error: sum.error.or(r.error),
+                                cancelled: sum.cancelled || r.cancelled,
+                                undoable: sum.undoable || r.undoable,
+                                complete: sum.complete && r.complete,
+                                entry_title: r.entry_title,
+                            },
+                        });
+                        if stop {
+                            break;
+                        }
+                    }
+                    let result = all.ok_or_else(|| anyhow::anyhow!("nothing to undo"))?;
+                    return Ok(replayed("undone", undone, &result));
+                }
                 let result = match (a.plan, a.entry) {
                     (Some(plan), _) => app.executor.undo_of_blocking(plan, &cancel),
-                    (None, Some(entry)) if a.with_after => {
-                        // Newest first, each once the one before ended.
-                        let mut all: Option<op::ExecResult> = None;
-                        for seq in app.executor.with_after(entry) {
-                            let Some(r) = app.executor.undo_entry_blocking(seq, &cancel) else {
-                                break;
-                            };
-                            let stop = r.error.is_some() || r.cancelled;
-                            all = Some(match all {
-                                None => r,
-                                Some(sum) => op::ExecResult {
-                                    applied: sum.applied + r.applied,
-                                    skipped: sum.skipped + r.skipped,
-                                    error: sum.error.or(r.error),
-                                    cancelled: sum.cancelled || r.cancelled,
-                                    undoable: sum.undoable || r.undoable,
-                                    complete: sum.complete && r.complete,
-                                },
-                            });
-                            if stop {
-                                break;
-                            }
-                        }
-                        all
-                    }
                     (None, Some(entry)) => app.executor.undo_entry_blocking(entry, &cancel),
                     (None, None) => app.executor.undo_blocking(&cancel),
                 }
                 .ok_or_else(|| anyhow::anyhow!("nothing to undo"))?;
-                Ok(replayed(
-                    "undone",
-                    app.executor.last_redo_title().as_deref(),
-                    &result,
-                ))
+                Ok(replayed("undone", result.entry_title.as_deref(), &result))
             },
         );
 
@@ -3705,7 +3715,7 @@ mod builtin {
                     None => app.executor.redo_blocking(&cancel),
                 }
                 .ok_or_else(|| anyhow::anyhow!("nothing to redo"))?;
-                Ok(replayed("redone", app.executor.last_undo_title().as_deref(), &result))
+                Ok(replayed("redone", result.entry_title.as_deref(), &result))
             },
         );
 

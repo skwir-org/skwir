@@ -336,6 +336,85 @@ proptest! {
     }
 }
 
+/// What an agent asked of the history is told by the entries its runs
+/// took back or applied again (ADR-079, 13): the entry named, not the
+/// latest of a stack; Undo with what came after by each it took back,
+/// newest first; and `with_after` without the entry it goes with is an
+/// error, taking nothing back.
+#[test]
+fn an_agent_is_told_the_entries_its_undo_and_redo_took() {
+    use skwir_core::command::{Invocation, Outcome};
+    let tmp = Scratch::new();
+    let root: PathBuf = tmp.path().join("tree");
+    std::fs::create_dir(&root).unwrap();
+    let app = app(tmp.path());
+    let answer = |name: &str, args: serde_json::Value| -> serde_json::Value {
+        match app.dispatch(&Invocation::with_args(name, &args)).unwrap() {
+            Outcome::Value(value) => value,
+            other => panic!("{name} {args}: expected an answer, got {other:?}"),
+        }
+    };
+    let mkdir = |name: &str, within: &Path| {
+        apply(
+            &app,
+            &plan(
+                &app,
+                "mkdir",
+                serde_json::json!({ "name": name, "in": within }),
+            ),
+        );
+    };
+    mkdir("it's a", &root);
+    mkdir("inside", &root.join("it's a"));
+    mkdir("beside", &root);
+    let rows = app.executor.history().rows;
+    let titles: Vec<&str> = rows.iter().map(|r| r.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        [
+            "new folder beside",
+            "new folder inside",
+            "new folder it's a"
+        ]
+    );
+    let (beside, inside, made) = (rows[0].entry, rows[1].entry, rows[2].entry);
+    assert_eq!(rows[2].with, [inside]);
+
+    let refused = app
+        .dispatch(&Invocation::with_args(
+            "undo",
+            &serde_json::json!({ "with_after": true }),
+        ))
+        .unwrap_err();
+    assert!(refused.to_string().contains("name the entry"), "{refused}");
+    assert!(root.join("beside").is_dir(), "nothing taken back");
+
+    let undone = answer(
+        "undo",
+        serde_json::json!({ "entry": made, "with_after": true }),
+    );
+    assert_eq!(
+        undone["undone"],
+        serde_json::json!(["new folder inside", "new folder it's a"])
+    );
+    assert!(!root.join("it's a").exists() && root.join("beside").is_dir());
+    // Put back by its entry, below the one still done: told by its title.
+    let redone = answer("redo", serde_json::json!({ "entry": inside }));
+    assert_eq!(
+        redone["error"].as_str().map(|e| e.contains("redone alone")),
+        Some(true)
+    );
+    let redone = answer("redo", serde_json::json!({ "entry": made }));
+    assert_eq!(redone["redone"], "new folder it's a");
+    assert_eq!(redone["error"], serde_json::Value::Null);
+    assert_eq!(
+        app.executor.last_undo_title().as_deref(),
+        Some("new folder beside")
+    );
+    let undone = answer("undo", serde_json::json!({ "entry": beside }));
+    assert_eq!(undone["undone"], "new folder beside");
+}
+
 /// The seed `8168ec6a…` the property found, by itself: the copy's source
 /// was found ahead of it, at `f0`; the swap then put the other file there;
 /// the rename after it names the file the copy copied. It renames that

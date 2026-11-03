@@ -43,6 +43,20 @@ tags_forget_us = 2_200
 # (391 ms before the names right below the shared folder were compared
 # first).
 history_put_us = 25_000
+# The same of 200 kept entries of actions in one folder, each naming 400
+# files right below it (renamed, trashed, copied there), and a new one
+# naming 400 others: told apart by their names, 4.4-6.7 ms (before, the
+# names the folder holds made it compare each pair's paths whole).
+history_put_folder_us = 20_000
+# The history as the window reads it over such a full history, with four
+# actions running and twenty waiting there (`Executor::history`): sets
+# read, no footprint compared, 30-53 us.
+history_read_us = 400
+# A copy of 100,000 files into that folder, taken whole (`Kept::exact`),
+# compared with those 200 kept entries, as what joins, runs or waits is:
+# its names below the folder read once, then each entry's looked up in
+# them, 48-49 ms (561 ms with each entry's claims looked up in it).
+history_meets_whole_us = 150_000
 
 [deep1m]
 first_batch_us = 500
