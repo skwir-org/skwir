@@ -996,8 +996,22 @@ fn register_commands(app: &App, trashes: &Trashes) {
             "Empty the trash",
             "Delete every file in the trash for good (plan, irreversible)",
             move |_, _| {
+                // Not read yet (`skwir cmd` runs a skwir just started):
+                // read for whoever asks, never on the window's thread, as
+                // `trash.list` and `trash.restore` do, and not under the
+                // lock the plugin's own read publishes through.
+                let unread = t.state.lock().held.is_none();
+                let read_here = if unread {
+                    anyhow::ensure!(
+                        !skwir_core::scheduler::on_window_thread(),
+                        "The trash is still being read: try again in a moment"
+                    );
+                    Some(read_held(&t.trashes()))
+                } else {
+                    None
+                };
                 let s = t.state.lock();
-                let Some(held) = s.held.as_ref() else {
+                let Some(held) = read_here.as_ref().or(s.held.as_ref()) else {
                     anyhow::bail!("The trash is still being read: try again in a moment");
                 };
                 anyhow::ensure!(!held.is_empty(), "The trash is empty");

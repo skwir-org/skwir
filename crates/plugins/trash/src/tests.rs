@@ -234,6 +234,21 @@ fn emptying_the_trash_deletes_its_files_and_what_it_said_of_them() {
     );
 }
 
+/// Asked before the plugin has read the trash (`skwir cmd` with a skwir
+/// just started), emptying reads it for whoever asks instead of refusing.
+#[test]
+fn emptying_a_trash_not_read_yet_reads_it_for_whoever_asks() {
+    let tmp = base();
+    let trash = volume_trash(&tmp.path().join("volume"));
+    let app = App::new(AppConfig::ephemeral(tmp.path().join("app"))).unwrap();
+    app.plugins.add(
+        Arc::new(TrashPlugin::with_trashes(vec![trash.clone()])),
+        &app,
+    );
+    let empty = plan(&app, "trash.empty", &serde_json::json!({}));
+    assert_eq!(empty.len(), 2);
+}
+
 /// Two records whose files are one (names of one file, hard links,
 /// trashed apart) are two items, and emptying the trash deletes both;
 /// one whose file has a name outside the trash stays on the disk, which
