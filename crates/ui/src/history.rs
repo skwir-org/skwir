@@ -256,17 +256,13 @@ impl Shell {
             .iter()
             .map(|row| state.buttons.get(&(row.entry, Part::Row)).cloned())
             .collect();
-        let count = state.list.item_count();
-        state.list.splice_focusable(0..count, focus);
-        // A height until each is measured: the list's height from the
-        // first frame, and its scrollbar.
-        let _ = state.list.clone().with_uniform_item_height(px(ROW_HINT));
-        if let Some(at) = kept.and_then(|entry| read.at.get(&entry)) {
-            state.list.scroll_to(ListOffset {
+        let at = kept
+            .and_then(|entry| read.at.get(&entry))
+            .map(|at| ListOffset {
                 item_ix: *at,
                 offset_in_item: top.offset_in_item,
             });
-        }
+        relist(&state.list, focus, at);
         state.listed = Some(Rc::clone(read));
     }
 
@@ -314,6 +310,20 @@ impl Shell {
         window.focus(&focus, cx);
         cx.notify();
     }
+}
+
+/// Put a row in `list` for each of `focus` in place of those it had, at
+/// `top` (the newest when `None`). Where it stands is said after the
+/// splice, never left to it: rows put in before the top push the top down
+/// with them, so the first rows put in an empty list (the History opened
+/// the first time) would leave it at its oldest.
+fn relist(list: &gpui::ListState, focus: Vec<Option<FocusHandle>>, top: Option<ListOffset>) {
+    let count = list.item_count();
+    list.splice_focusable(0..count, focus);
+    // A height until each is measured: the list's height from the first
+    // frame, and its scrollbar.
+    let _ = list.clone().with_uniform_item_height(px(ROW_HINT));
+    list.scroll_to(top.unwrap_or_default());
 }
 
 /// Whether `row`'s Undo (an undone one's Redo) does something pressed now:
@@ -832,7 +842,7 @@ fn history_row(
 
 #[cfg(test)]
 mod tests {
-    use super::{Part, Walk, held, stops, undo_held, walked, why};
+    use super::{OVERDRAW, Part, Walk, held, relist, stops, undo_held, walked, why};
     use crate::toast::Action;
     use skwir_core::op::{Can, Done, HistoryRow, Plan, PlanId, Since};
     use std::collections::HashMap;
@@ -1003,5 +1013,24 @@ mod tests {
         assert_eq!(walked(Walk::Last, Some(0), 4), Some(3));
         assert_eq!(walked(Walk::Next, None, 0), None);
         assert_eq!(Walk::of("ui.toolbar_close"), None);
+    }
+
+    /// The History opens at its newest, its first time too (its list was
+    /// empty), and a row kept at the top stays there as rows come.
+    #[test]
+    fn the_history_opens_at_its_newest_and_keeps_its_top_row() {
+        use gpui::{ListOffset, px};
+        let list = gpui::ListState::new(0, gpui::ListAlignment::Top, px(OVERDRAW));
+        list.scroll_to(ListOffset::default());
+        relist(&list, vec![None; 30], None);
+        assert_eq!(list.logical_scroll_top(), ListOffset::default());
+        let kept = ListOffset {
+            item_ix: 6,
+            offset_in_item: px(4.),
+        };
+        relist(&list, vec![None; 31], Some(kept));
+        assert_eq!(list.logical_scroll_top(), kept);
+        relist(&list, vec![None; 32], None);
+        assert_eq!(list.logical_scroll_top(), ListOffset::default());
     }
 }

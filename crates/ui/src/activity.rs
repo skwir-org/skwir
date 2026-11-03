@@ -1133,13 +1133,13 @@ fn popover(
     let panel = crate::toolbar::popup_panel(popup, "ui.activity", theme, cx)
         .role(gpui::Role::Group)
         .aria_label("Activity")
-        // Its rows bring the button the keyboard reaches into view.
-        .track_scroll(&reveal.scroll)
+        // Its rows scroll, beside their scrollbar.
+        .overflow_hidden()
         .w(px(400.))
         .max_h(px(520.))
         .p_0()
         .gap_0()
-        .children(body);
+        .child(scrolled("activity-popup", body, &reveal));
     Some(shell.activity.anchor.popup_above_for(
         &crate::elements::adaptive::Chosen::default(),
         vec![panel.into_any_element()],
@@ -1183,17 +1183,41 @@ pub fn tray(
             .capture_any_mouse_down(|_, window, _| window.prevent_default())
             .flex_none()
             .max_h(gpui::relative(0.5))
-            .overflow_y_scroll()
-            .track_scroll(&reveal.scroll)
             .flex()
             .flex_col()
             .border_t_1()
             .border_color(theme.border)
             .bg(theme.bg)
             .text_color(theme.text)
-            .children(body)
+            .child(scrolled("activity-tray", body, &reveal))
             .into_any_element(),
     )
+}
+
+/// Activity's `body`, scrolled by `reveal` (which brings the button the
+/// keyboard reaches into view) beside its scrollbar: in the popup, and
+/// pinned.
+fn scrolled(id: &'static str, body: Vec<AnyElement>, reveal: &Reveal) -> AnyElement {
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .min_h_0()
+        .child(
+            div()
+                .id(SharedString::from(format!("{id}-rows")))
+                .flex()
+                .flex_col()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&reveal.scroll)
+                .children(body),
+        )
+        .child(crate::elements::scrollbar::vertical(
+            SharedString::from(format!("{id}-scrollbar")),
+            crate::elements::scrollbar::Scrolls::Offset(reveal.scroll.clone()),
+        ))
+        .into_any_element()
 }
 
 /// What Activity holds, in the popup or pinned, as `under` runs: its name
