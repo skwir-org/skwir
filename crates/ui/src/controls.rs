@@ -199,7 +199,7 @@ fn button_frame(
 pub fn icon_button(
     id: impl Into<SharedString>,
     name: &str,
-    label: &'static str,
+    label: impl Into<SharedString>,
     focus: &FocusHandle,
     theme: &Theme,
 ) -> Stateful<Div> {
@@ -207,7 +207,7 @@ pub fn icon_button(
     div()
         .id(id.into())
         .role(gpui::Role::Button)
-        .aria_label(label)
+        .aria_label(label.into())
         .track_focus(focus)
         .flex_none()
         .size(px(HEIGHT))

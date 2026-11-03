@@ -560,6 +560,18 @@ was Activity's Earlier not redundant with it, and too tall pinned?
 
 Checks in `docs/STATUS-LOG.md` (2026-11-03, "The History's scroll").
 
+## Cancel all (2026-11-03)
+
+Asked by the user: a Cancel all on Activity's progress over the queue,
+and should the strip's x cancel the one running or all? They chose the
+whole queue (ADR-114, amended): the strip's buttons act on what it
+says, one action alone or, with several under way or waiting, Pause all
+and Cancel all ("Cancel all 3 actions"), what waits cancelled first;
+Activity's header holds Cancel all, Waiting's own says "Cancel waiting"
+(`ui.activity_cancel_all`, `ui.activity_pause_all`).
+
+Checks in `docs/STATUS-LOG.md` (2026-11-03, "Cancel all").
+
 ## What is left
 
 Gathered on 2026-10-20 from the notes of this plan and of

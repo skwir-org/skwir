@@ -639,8 +639,13 @@ of bars, split or not.
   ADR-114). Work under way is the window's state: a strip at the end of
   the last pane's footer, before Undo, says how far it has gone in as
   many words as the footer has room for (`Fit`: what and how, how, the
-  share alone), with Pause and Cancel for a single action. It counts the
-  spell of work (ADR-114, amended 2026-11-03): from an action asked
+  share alone). Its buttons act on what it says: one action alone, its
+  own Pause and Cancel; several under way or waiting, those stopping
+  aside, the whole queue's Pause all (Resume all once every plan is
+  paused; none while only tasks run) and Cancel all, named by its count
+  (`activity::offers`, `ui.activity_pause_all`, `ui.activity_cancel_all`:
+  what waits is cancelled first, so none starts as another ends). It
+  counts the spell of work (ADR-114, amended 2026-11-03): from an action asked
   with nothing under way until nothing runs, waits or goes on by itself
   (`Work::settle`), each action counting one, those ended whole (a
   task too), those running by their own share, those waiting nothing
@@ -678,9 +683,10 @@ of bars, split or not.
   the strip's own changes by one timer at a time, holding `Work`, not
   the window (`work::wake_after`), never a loop. A click, or `ui.activity` (Ctrl+Shift+J),
   opens Activity above it (one popup at a time, `toggle_popup`): each
-  action's card, what waits (each with its Cancel, Cancel all for
-  several), and Earlier, this session's answers the Undo history does
-  not hold, with their Retry and Undo, twenty at most, in memory only:
+  action's card under a header over the queue with Cancel all while
+  several are under way or waiting, what waits (each with its Cancel,
+  Cancel waiting for several), and Earlier, this session's answers the
+  Undo history does not hold, with their Retry and Undo, twenty at most, in memory only:
   an action that failed, was cancelled or that no journal keeps, and
   every answer a toast says that is no action's (a print's, a message);
   an action done and kept by the journal is the History's alone

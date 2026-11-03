@@ -10315,3 +10315,45 @@ heading fixed, and scrolled to the fold. `just lint` clean; `just test`
 reader on the fold, the keyboard reaching it (Tab, as the tray's other
 buttons), a toast held back by Activity in a window, Wayland's wheel
 (X11's only), release-check.
+
+## Cancel all (2026-11-03)
+
+Asked by the user: a Cancel all on Activity's progress over the queue,
+and whether the strip's x should cancel the action running or all of
+them. The strip's bar and words are the whole queue's once several are
+under way or waiting ("1 of 4 · 42 % · 3 waiting"), but its Cancel
+cancelled the one running alone (the next then started at once), and
+with several running it had no buttons. The user chose, of three (the
+whole queue, the running one named in its tooltip, none for a queue),
+the whole queue.
+
+- **The strip's buttons act on what it says** (`activity::offers`): one
+  plan or task alone, its own; several under way or waiting, those
+  stopping not counted, Pause all (Resume all once every plan running is
+  paused; none while only tasks run) and Cancel all, named by its count
+  ("Cancel all 3 actions"). While an action that joined is announced,
+  the queue's buttons stay (they act on it too).
+- **Cancel all** (`ui.activity_cancel_all`): what waits first, in one
+  pass over the queue, so that none starts as another ends, then each
+  plan running (as its Cancel) and each task. **Pause all**
+  (`ui.activity_pause_all`): pauses each plan running, or resumes them
+  all once every one is paused. Both are `ACTS`: an agent runs them only
+  once the user allows it.
+- **Activity's header** over the queue holds Cancel all while several
+  are under way or waiting; Waiting's own, which leaves what runs, now
+  says "Cancel waiting". `controls::icon_button` takes a name made at
+  run time (the strip's count).
+
+Checked on Xvfb (:93, lavapipe), copies of 250,000 files of 64 B: one
+copy alone kept its Pause and Cancel; paused from the strip, two more
+pasted waited behind it, and the strip said "1 of 3 · paused at 5 % · 2
+waiting" with Resume all and Cancel all, its tooltip "Cancel all 3
+actions"; Activity's header "1 of 3 · 5 %", "2 waiting", Cancel all,
+and "Cancel waiting" over Waiting; the header's Cancel all ended all
+three, each in Earlier as cancelled. Then, one running and one waiting,
+the strip's Pause all paused it (Resume all shown), Resume all resumed
+it ("1 of 2 · 14 % · 1 waiting"), and its Cancel all left nothing under
+way. `just lint` clean; `just test` 2957 passed, 30 skipped. New test:
+`the_strip_offers_one_action_s_buttons_or_the_whole_queue_s`. Not
+checked: a screen reader on the named buttons, Pause all with a print
+running beside a plan, release-check.

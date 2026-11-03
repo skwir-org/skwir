@@ -2333,6 +2333,14 @@ impl Shell {
             "activity" => self.toggle_activity(args, window, cx),
             "activity_pin" => self.toggle_activity_pin(window, cx),
             "activity_earlier" => self.toggle_activity_earlier(cx),
+            "activity_cancel_all" => {
+                self.activity_cancel_all();
+                cx.notify();
+            }
+            "activity_pause_all" => {
+                self.activity_pause_all();
+                cx.notify();
+            }
             "undo_history" => self.toggle_undo_history(args, window, cx),
             "history_menu" => self.toggle_history_menu(args, window, cx),
             "subfolder_menu" => self.toggle_subfolder_menu(args, window, cx),

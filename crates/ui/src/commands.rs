@@ -645,8 +645,8 @@ const SHOWS: &[&str] = &[
 /// The window's commands an agent's call runs only once the user allows
 /// it: they reach beyond the window (a program, the clipboard, an
 /// address; the terminal's selection is the desktop's primary one), take
-/// away what the terminal kept, change how the sidebar is arranged, or
-/// prompt the user for a command the agent named.
+/// away what the terminal kept, change how the sidebar is arranged, stop
+/// or pause what runs, or prompt the user for a command the agent named.
 const ACTS: &[&str] = &[
     "ui.ask",
     "ui.choose",
@@ -663,6 +663,8 @@ const ACTS: &[&str] = &[
     "ui.reader_link",
     "ui.sidebar_place",
     "ui.sidebar_section",
+    "ui.activity_cancel_all",
+    "ui.activity_pause_all",
     "ui.quit",
 ];
 
@@ -1835,6 +1837,18 @@ pub fn declare_all(app: &App) {
         "ui.activity_earlier",
         "Show Earlier in Activity",
         "Unfold Earlier at the foot of Activity kept open above the footer, or fold it again: what ended this session that the Undo history does not hold",
+    );
+    none(
+        Topic::Files,
+        "ui.activity_cancel_all",
+        "Cancel all actions",
+        "Cancel every action under way and every one waiting its turn: what each did stays, undoable, and what it left half done is taken back",
+    );
+    none(
+        Topic::Files,
+        "ui.activity_pause_all",
+        "Pause all actions",
+        "Pause every action under way, or resume them all once every one is paused; what waits keeps waiting",
     );
     declare::<Toggle>(
         app,

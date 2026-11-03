@@ -214,8 +214,9 @@ server and network. Undo history is cleared when Skwir exits.
 - **Activity** (ADR-114): what runs is a strip at the end of the last pane's
   footer, before Undo, in as many words as there is room for ("Copy 3 items
   to Backup · 42 % · about 3 min left"), with Pause and Cancel for one action,
-  several summed. A click or `Ctrl+Shift+J` opens Activity above it: each
-  action's card, what waits its turn (each with Cancel, or Cancel all), and
+  several summed, with Pause all and Cancel all. A click or `Ctrl+Shift+J`
+  opens Activity above it: each action's card, what waits its turn (each with
+  Cancel, or Cancel waiting), Cancel all over the whole queue, and
   Earlier, this session's answers the Undo history does not hold (what failed,
   with Retry, and messages). Pinned, it stands above the footer while something
   runs, taking room rather than covering the files, three cards high at most,

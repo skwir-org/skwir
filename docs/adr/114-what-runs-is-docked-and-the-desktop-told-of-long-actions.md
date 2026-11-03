@@ -50,6 +50,21 @@ and macOS otherwise compiled only.
    the longest time left. One action keeps its Pause and Cancel there.
    Paused or stopping, its bar is muted and it says so.
 
+   Amended 2026-11-03 (the user's choice): the strip's buttons act on
+   **what it says**. Its bar and words are the whole queue's once
+   several are under way or waiting, and its Cancel cancelled only the
+   one running, the next starting at once, while several running had
+   none. One action alone keeps its own Pause and Cancel; several under
+   way or waiting, those stopping not counted, have **Pause all**
+   (Resume all once every plan running is paused; none while only tasks
+   run) and **Cancel all**, named by how many it cancels ("Cancel all 4
+   actions"): what waits is cancelled first, so none starts as another
+   ends, then what runs, each keeping what it did, undoable
+   (`ui.activity_pause_all`, `ui.activity_cancel_all`, which an agent
+   runs only once the user allows it). Activity's header, over the
+   queue, holds the same Cancel all; Waiting's own, which leaves what
+   runs, says "Cancel waiting".
+
    Amended 2026-11-03 (the user's choice of the recommended options):
    the strip counts the **spell of work**, from an action asked with
    nothing under way until nothing runs, waits or goes on by itself.

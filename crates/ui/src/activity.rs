@@ -175,6 +175,8 @@ pub struct ActivityState {
     /// the one that cancels them all.
     waiting: HashMap<u64, FocusHandle>,
     cancel_waiting: Option<FocusHandle>,
+    /// The header's Cancel all, which cancels the whole queue.
+    cancel_all: Option<FocusHandle>,
     strip: Option<StripFocus>,
     pin: Option<FocusHandle>,
     /// Earlier unfolded at the foot of Activity pinned
@@ -691,7 +693,12 @@ const SEGMENTS: usize = 12;
 /// amended 2026-11-03): how far the queue started and its share, what is
 /// left of what runs and how many wait, over a bar of one segment each
 /// (`segments`); one bar past `SEGMENTS`.
-fn spell_header(summary: &Summary, a11y: bool, theme: &Theme) -> AnyElement {
+fn spell_header(
+    summary: &Summary,
+    cancel: Option<AnyElement>,
+    a11y: bool,
+    theme: &Theme,
+) -> AnyElement {
     // Nothing of it started yet: how many wait, once.
     let started = summary.at > 0;
     let said = if started {
@@ -746,14 +753,68 @@ fn spell_header(summary: &Summary, a11y: bool, theme: &Theme) -> AnyElement {
         .child(
             div()
                 .flex()
+                .items_center()
                 .justify_between()
                 .gap_2()
+                .min_h(px(22.))
                 .text_xs()
                 .child(div().text_color(theme.text).child(said))
-                .child(div().text_color(theme.text_muted).child(after)),
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(div().text_color(theme.text_muted).child(after))
+                        .children(cancel),
+                ),
         )
         .child(bar)
         .into_any_element()
+}
+
+/// Activity's Cancel all, in its header: the whole queue, `count` actions
+/// under way or waiting (`ui.activity_cancel_all`).
+fn cancel_all_button(
+    shell: &mut Shell,
+    count: usize,
+    reveal: &Reveal,
+    theme: &Theme,
+    cx: &mut Context<Shell>,
+) -> AnyElement {
+    let focus = shell
+        .activity
+        .cancel_all
+        .get_or_insert_with(|| stop(cx))
+        .clone();
+    let tip: SharedString = cancel_all_said(count).into();
+    controls::button(
+        "activity-cancel-all",
+        "Cancel all",
+        None,
+        ButtonStyle::Plain,
+        &focus,
+        theme,
+    )
+    .h(px(22.))
+    .px_2()
+    .text_xs()
+    .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
+    .child(reveal.marker(&focus))
+    .press(
+        |this, window, cx| {
+            this.run("ui.activity_cancel_all", serde_json::json!({}), window, cx);
+        },
+        cx,
+    )
+    .into_any_element()
+}
+
+/// What Cancel all says it cancels: `count` actions under way or waiting.
+fn cancel_all_said(count: usize) -> String {
+    match count {
+        1 => "Cancel 1 action".to_owned(),
+        count => format!("Cancel all {count} actions"),
+    }
 }
 
 /// A small bar: `fraction` of `width` in `color`.
@@ -777,28 +838,65 @@ fn small_bar(width: f32, fraction: f32, color: gpui::Hsla, theme: &Theme) -> gpu
 fn strip_button(
     id: &'static str,
     icon: &str,
-    label: &'static str,
+    label: impl Into<SharedString>,
     focus: &FocusHandle,
     theme: &Theme,
 ) -> gpui::Stateful<gpui::Div> {
     let tip: SharedString = label.into();
-    controls::icon_button(id, icon, label, focus, theme)
+    controls::icon_button(id, icon, tip.clone(), focus, theme)
         .size(px(20.))
         .tooltip(move |_, cx| crate::toolbar::tooltip(tip.clone(), cx))
 }
 
-/// What the strip offers beside its words.
-#[derive(Clone, Copy)]
+/// What the strip offers beside its words: its buttons act on what it
+/// says (ADR-114, amended 2026-11-03), one action alone or the whole
+/// queue.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Offers {
-    /// One plan under way: its Pause (or Resume) and Cancel.
+    /// One plan under way, nothing else: its Pause (or Resume) and Cancel.
     One { plan: PlanId, paused: bool },
-    /// One task (a print): its Cancel.
+    /// One task (a print), nothing else: its Cancel.
     Task { id: u64 },
+    /// Several under way or waiting, `count` of them not stopping: Pause
+    /// all (Resume all, `pause` saying whether every plan running is
+    /// paused; none while only tasks run, which do not pause) and Cancel
+    /// all (`ui.activity_pause_all`, `ui.activity_cancel_all`).
+    All { count: usize, pause: Option<bool> },
     /// An action an error stopped: Retry where it can be, and Dismiss.
     Stopped { plan: PlanId, retries: bool },
-    /// Several, one stopping, or Activity opened with nothing under way:
-    /// the way to Activity alone.
+    /// Every one stopping, or Activity opened with nothing under way: the
+    /// way to Activity alone.
     Nothing,
+}
+
+/// What the strip offers as `under` runs: one action's buttons while it
+/// is all there is, the whole queue's while there are more (what waits
+/// counted as the strip counts it); nothing once every one is stopping.
+fn offers(under: &Under) -> Offers {
+    let plans: Vec<&Running> = under
+        .plans
+        .iter()
+        .map(|(running, _)| running)
+        .filter(|running| !running.cancelling)
+        .collect();
+    let tasks: Vec<u64> = under
+        .tasks
+        .iter()
+        .filter(|task| !task.cancelling)
+        .map(|task| task.id)
+        .collect();
+    match (plans.as_slice(), tasks.as_slice(), under.waiting) {
+        ([], [], 0) => Offers::Nothing,
+        ([running], [], 0) => Offers::One {
+            plan: running.plan,
+            paused: running.paused,
+        },
+        ([], [id], 0) => Offers::Task { id: *id },
+        _ => Offers::All {
+            count: plans.len() + tasks.len() + under.waiting,
+            pause: (!plans.is_empty()).then(|| plans.iter().all(|running| running.paused)),
+        },
+    }
 }
 
 /// The buttons `offers` holds, built for one version of the strip: each
@@ -863,6 +961,44 @@ fn strip_buttons(
             )
             .into_any_element(),
         ],
+        Offers::All { count, pause } => {
+            let mut buttons = Vec::new();
+            if let Some(paused) = pause {
+                buttons.push(
+                    strip_button(
+                        "activity-strip-pause",
+                        if paused { "play" } else { "pause" },
+                        if paused { "Resume all" } else { "Pause all" },
+                        &focus.pause,
+                        theme,
+                    )
+                    .press(
+                        |this, window, cx| {
+                            this.run("ui.activity_pause_all", serde_json::json!({}), window, cx);
+                        },
+                        cx,
+                    )
+                    .into_any_element(),
+                );
+            }
+            buttons.push(
+                strip_button(
+                    "activity-strip-cancel",
+                    "close",
+                    cancel_all_said(count),
+                    &focus.cancel,
+                    theme,
+                )
+                .press(
+                    |this, window, cx| {
+                        this.run("ui.activity_cancel_all", serde_json::json!({}), window, cx);
+                    },
+                    cx,
+                )
+                .into_any_element(),
+            );
+            buttons
+        }
         Offers::Stopped { plan, retries } => {
             let mut buttons = Vec::new();
             if retries {
@@ -941,19 +1077,11 @@ pub fn strip(
             } else {
                 theme.accent
             };
-            let offers = match (under.plans.as_slice(), under.tasks.as_slice()) {
-                ([(running, _)], []) if !running.cancelling => Offers::One {
-                    plan: running.plan,
-                    paused: running.paused,
-                },
-                ([], [task]) if !task.cancelling => Offers::Task { id: task.id },
-                _ => Offers::Nothing,
-            };
             (
                 words(under, &summary),
                 color,
                 Some(summary.fraction),
-                offers,
+                offers(under),
             )
         }
         None => match stopped {
@@ -1006,7 +1134,8 @@ pub fn strip(
         };
         announced(under, &waiting, plan)
     });
-    // Its buttons act on the one running: while another is named, none.
+    // One action's buttons act on it: while another is named, none (the
+    // whole queue's act on the one named too).
     let offers = match (announce.as_ref().and(joined), offers) {
         (Some(named), Offers::One { plan, .. }) if named != plan => Offers::Nothing,
         (Some(_), Offers::Task { .. }) => Offers::Nothing,
@@ -1322,9 +1451,14 @@ fn body(
     shell.card_focus(under, cx);
     let a11y = shell.a11y;
     let mut parts = Vec::new();
-    // The spell of work as a whole, where it holds several actions.
+    // The spell of work as a whole, where it holds several actions, with
+    // Cancel all while several are under way or waiting.
     if let Some(summary) = summary(under).filter(|s| s.of > 1) {
-        parts.push(spell_header(&summary, a11y, theme));
+        let cancel = match offers(under) {
+            Offers::All { count, .. } => Some(cancel_all_button(shell, count, reveal, theme, cx)),
+            _ => None,
+        };
+        parts.push(spell_header(&summary, cancel, a11y, theme));
     }
     let cards = under.count();
     for (running, transfer) in &under.plans {
@@ -1547,7 +1681,8 @@ fn quick_ones(quick: usize) -> String {
 }
 
 /// Over what waits its turn: its name, how many the strip counts where some
-/// end as they start, and Cancel all when there are several.
+/// end as they start, and Cancel waiting when there are several (the
+/// header's Cancel all cancels what runs too).
 fn waiting_heading(
     shell: &mut Shell,
     count: usize,
@@ -1564,7 +1699,7 @@ fn waiting_heading(
             .clone();
         controls::button(
             "activity-waiting-cancel-all",
-            "Cancel all",
+            "Cancel waiting",
             None,
             ButtonStyle::Plain,
             &focus,
@@ -2066,6 +2201,50 @@ fn task_card(
 impl Shell {
     /// Cancel `plan`, from its card or the strip: it says it stops until
     /// it let go of what it held (operations.md, "Running").
+    /// `ui.activity_cancel_all`: cancel every action under way and every
+    /// one waiting its turn, what waits first, so that none starts as
+    /// another ends. What each did stays, undoable; what it left half done
+    /// is taken back, as by its own Cancel.
+    pub(crate) fn activity_cancel_all(&mut self) {
+        let asked: Vec<u64> = self
+            .app
+            .executor
+            .waiting()
+            .iter()
+            .map(|waiting| waiting.asked)
+            .collect();
+        self.app.executor.cancel_waiting_all(&asked);
+        let plans: Vec<PlanId> = self.work.borrow().running.iter().map(|r| r.plan).collect();
+        for plan in plans {
+            self.cancel_plan(plan);
+        }
+        for task in self.app.tasks.running() {
+            self.app.tasks.cancel(task.id);
+        }
+    }
+
+    /// `ui.activity_pause_all`: pause every action running, or resume them
+    /// all once every one is paused. What waits keeps waiting: a paused
+    /// action keeps what it holds.
+    pub(crate) fn activity_pause_all(&mut self) {
+        let plans: Vec<(PlanId, bool)> = self
+            .work
+            .borrow()
+            .running
+            .iter()
+            .filter(|running| !running.cancelling)
+            .map(|running| (running.plan, running.paused))
+            .collect();
+        let resume = !plans.is_empty() && plans.iter().all(|(_, paused)| *paused);
+        for (plan, _) in plans {
+            if resume {
+                self.app.executor.resume(plan);
+            } else {
+                self.app.executor.pause(plan);
+            }
+        }
+    }
+
     pub(crate) fn cancel_plan(&mut self, plan: PlanId) {
         if self.app.executor.cancel(plan)
             && let Some(running) = self
@@ -2151,8 +2330,8 @@ impl Shell {
 #[cfg(test)]
 mod tests {
     use super::{
-        EARLIER, Ended, Summary, Under, announced, how, keep, percent, segments, showing, summary,
-        waiting_said, words,
+        EARLIER, Ended, Offers, Summary, Under, announced, cancel_all_said, how, keep, offers,
+        percent, segments, showing, summary, waiting_said, words,
     };
     use crate::toast::{Running, waiting_words};
     use skwir_core::op::{PlanId, RunKind, Transfer};
@@ -2160,6 +2339,97 @@ mod tests {
 
     fn running(plan: u64, title: &str, total: usize) -> Running {
         Running::for_test(PlanId(plan), title, RunKind::Apply, total)
+    }
+
+    /// The strip's buttons act on what it says (ADR-114, amended
+    /// 2026-11-03): one action alone, its own; several under way or
+    /// waiting, the whole queue's, Pause all only while a plan runs and
+    /// Resume all once every one is paused; those stopping are not
+    /// counted, and once every one is, nothing.
+    #[test]
+    fn the_strip_offers_one_action_s_buttons_or_the_whole_queue_s() {
+        let under = |plans: Vec<Running>, tasks: Vec<skwir_core::task::Running>, waiting| Under {
+            plans: plans
+                .into_iter()
+                .map(|r| (r, Transfer::default()))
+                .collect(),
+            tasks,
+            ended: 0,
+            waiting,
+            next: None,
+        };
+        let task = |id: u64, cancelling| skwir_core::task::Running {
+            id,
+            title: "Print “it's a.pdf”".into(),
+            went: None,
+            cancelling,
+        };
+        let paused = |plan: u64| {
+            let mut r = running(plan, "copy “it's b” to Backup", 3);
+            r.paused = true;
+            r
+        };
+        let stopping = |plan: u64| {
+            let mut r = running(plan, "copy “it's c” to Backup", 3);
+            r.cancelling = true;
+            r
+        };
+        let alone = running(1, "copy “it's a” to Backup", 3);
+        assert_eq!(
+            offers(&under(vec![alone.clone()], Vec::new(), 0)),
+            Offers::One {
+                plan: PlanId(1),
+                paused: false
+            }
+        );
+        assert_eq!(
+            offers(&under(Vec::new(), vec![task(7, false)], 0)),
+            Offers::Task { id: 7 }
+        );
+        assert_eq!(
+            offers(&under(vec![alone.clone()], Vec::new(), 3)),
+            Offers::All {
+                count: 4,
+                pause: Some(false)
+            },
+            "one running and three waiting: the queue's"
+        );
+        assert_eq!(
+            offers(&under(vec![paused(1), paused(2)], Vec::new(), 0)),
+            Offers::All {
+                count: 2,
+                pause: Some(true)
+            }
+        );
+        assert_eq!(
+            offers(&under(vec![alone.clone(), paused(2)], Vec::new(), 0)),
+            Offers::All {
+                count: 2,
+                pause: Some(false)
+            },
+            "some running: Pause all"
+        );
+        assert_eq!(
+            offers(&under(Vec::new(), vec![task(7, false)], 1)),
+            Offers::All {
+                count: 2,
+                pause: None
+            },
+            "a print does not pause"
+        );
+        assert_eq!(
+            offers(&under(vec![stopping(2), alone.clone()], Vec::new(), 0)),
+            Offers::One {
+                plan: PlanId(1),
+                paused: false
+            },
+            "the one not stopping is all there is"
+        );
+        assert_eq!(
+            offers(&under(vec![stopping(1)], vec![task(7, true)], 0)),
+            Offers::Nothing
+        );
+        assert_eq!(cancel_all_said(4), "Cancel all 4 actions");
     }
 
     /// Never silent (ADR-114, amended 2026-11-03): an action before its

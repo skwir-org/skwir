@@ -41,20 +41,22 @@ work where the keyboard is, by topic.
   player, and what runs: how far the whole queue has come ("2 of 3 · 47 %
   · 1 waiting"), each action counting one. An action that lasts more
   than a moment is said there as it starts, on a tint for two seconds:
-  getting ready, how far it went, or waiting its turn and for what. One
-  an error stopped stays there in red until it is retried or dismissed.
+  getting ready, how far it went, or waiting its turn and for what. Its
+  Pause and Cancel act on what it shows: one action alone, or the whole
+  queue (Pause all, Cancel all) when there are several. One an error
+  stopped stays there in red until it is retried or dismissed.
 - **Activity** (a click on what runs, or `Ctrl+Shift+J`) shows each
   action's card: how much of how much, and under the bar how fast it
   goes and how long it has left (`2.0 MB/s · about 3 min left`), once a
-  few seconds of it tell, with Pause and Cancel; what waits its turn,
-  each with Cancel; and Earlier, what failed, was cancelled or cannot be
-  undone this session, with Retry, and the messages toasts gave (what was
-  done is in the Undo history). Its pin keeps it above the footer while
-  something runs, three cards high at most, Earlier folded to a line at
-  its foot. Onto
-  a server that takes what is copied after (rclone's caches), a copy
-  first says "then sent to the server", then the sending's own speed and
-  time left. Cancel stops an action within a second or two, even in the
+  few seconds of it tell, with Pause and Cancel; Cancel all over the
+  whole queue; what waits its turn, each with Cancel; and Earlier, what
+  failed, was cancelled or cannot be undone this session, with Retry, and
+  the messages toasts gave (what was done is in the Undo history). Its
+  pin keeps it above the footer while something runs, three cards high
+  at most, Earlier folded to a line at its foot. Onto a server that
+  takes what is copied after (rclone's caches), a copy first says "then
+  sent to the server", then the sending's own speed and time left.
+  Cancel stops an action within a second or two, even in the
   middle of a large file from a slow server; meanwhile its card says
   "Stopping…" while it takes back what it left half done.
   `skwir cmd running` says the same of what runs.
